@@ -596,58 +596,13 @@ The former exact-node and capability-class specialization recipes built deleted
 fixture components. They were removed by `.6.3`; there is no current runnable
 recipe for those fixture arms.
 
-### S1/4p3/bp4.1 gates
-
-```bash
-# Local (exit-code disciplined since wamn-cjv.1: any failed phase — p99 SLO,
-# cap kill at the 256 MiB ceiling, epoch Trap::Interrupt, 64/192 budget
-# differentiation — makes bench exit non-zero; job completion IS the verdict):
-./target/release/wamn-gates --log-level warn bench \
-  --hello components/target/wasm32-wasip2/release/hello.wasm \
-  --memhog components/target/wasm32-wasip2/release/memhog.wasm \
-  --busyloop components/target/wasm32-wasip2/release/busyloop.wasm
-# In-cluster gate of record (no DB/NATS; fixtures ship in the image):
-kubectl -n wamn-system apply -f deploy/gates/bench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/bench --timeout=600s
-kubectl -n wamn-system logs job/bench
-# Mutation harness (4 mutants, each must exit non-zero): scratchpad/mutate_cjv1.py
-```
-
 ### S2 gates (qps + p99, saturation, chaos/RLS/injection)
 
 ```bash
-# Local iteration (throwaway container + the same fixture SQL):
-docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
-  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
-./target/release/wamn-gates --log-level error pgbench \
-  --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all --skip-multiproject
-# --skip-multiproject: under --mode all, no WAMN_PG_ADMIN_URL means the [2.2]
-# multiproject gate can't run; this flag declares that its coverage lives in the
-# sibling superuser recipe below. Without it, --mode all now REFUSES up front
-# (a preflight bail) rather than silently skipping to a false-green (C7-2).
-# --mode attack is the wamn-cjv.2 in-band claim-override gate (pgprobe ops 7/8/9);
+# The claim-mutation SQL guard is the retained proof; the pgbench harness, its
+# pgprobe fixture, and deploy/gates/pgbench-job.yaml were deleted.
 # recipe-test: H5-S2-GUARDS | unit | wamn-runtime | lib | - | plugins::wamn_postgres::claims::tests::guard_ | 5 | crates/platform/runtime/src/plugins/wamn_postgres/claims.rs claim-mutation SQL guard
 cargo test -p wamn-runtime --lib plugins::wamn_postgres::claims::tests::guard_
-# Mutation harness (3 guard mutants, each must fail --mode attack): scratchpad/mutate_cjv2.py
-# In-cluster gate of record (p99 is measured in-cluster):
-kubectl -n wamn-system create configmap pg-init --from-file=init.sql=deploy/sql/postgres-init.sql
-kubectl -n wamn-system apply -f deploy/platform/postgres.yaml -f deploy/gates/pgbench-job.yaml
-kubectl -n wamn-system logs -f job/pgbench
-```
-
-### [2.2] production wamn:postgres
-
-```bash
-# Local iteration (same throwaway container as S2, plus WAMN_PG_ADMIN_URL):
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5450/wamn \
-  ./target/release/wamn-gates --log-level error pgbench \
-  --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
-# In-cluster gate of record (co-located, no cpu limit — S2 CFS lesson;
-# WAMN_PG_ADMIN_URL is the superuser used only to provision the project DBs):
-kubectl -n wamn-system apply -f deploy/gates/pgbench-multiproject-job.yaml
-kubectl -n wamn-system logs -f job/pgbench-multiproject
 ```
 
 #### [R18-NEG] standard_conforming_strings fail-closed (live negative)
@@ -684,34 +639,14 @@ cargo clippy -p wamn-control-provision --all-targets && cargo fmt -p wamn-contro
 docker run -d --rm --name wamn-prov-pg -p 5460:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
 WAMN_PROVISION_PG_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn cargo test -p wamn-control-provision
-# locally against the SAME throwaway postgres:18 (superuser):
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn \
-  ./target/debug/wamn-gates --log-level error provisionbench
 docker stop wamn-prov-pg
 # The production tool is `wamn-ctl provision-project --project <id>
-# In-cluster gate of record (against the shared CNPG cluster = the D6 substrate,
-# NO cpu limit — S2 CFS lesson):
+# CNPG substrate standup (the D6 substrate, NO cpu limit — S2 CFS lesson). The
+# provisionbench Job that was the gate of record here was deleted:
 kubectl apply --server-side -f deploy/infra/cnpg-operator.yaml
 kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=150s
 kubectl apply -f deploy/infra/cnpg-cluster.yaml
 kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=1 cluster/wamn-pg --timeout=300s
-# A HOST change => full docker rebuild (both --target stages + kind load BOTH images):
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/gates/provisionbench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/provisionbench --timeout=180s
-kubectl -n wamn-system logs job/provisionbench
-```
-
-### S3 gates
-
-```bash
-./target/release/wamn-gates --log-level error flowbench \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
-# In-cluster (same co-located / no-cpu-limit Job topology as pgbench):
-kubectl -n wamn-system apply -f deploy/gates/flowbench-job.yaml
-kubectl -n wamn-system logs -f job/flowbench
 ```
 
 ### S4 gates
@@ -719,28 +654,6 @@ kubectl -n wamn-system logs -f job/flowbench
 The former nodebench, `node-ts`, `node-rs`, `flow-driver`, `sample-node`, and
 `serve-node-gate` recipes were deleted by `.6.3` with the custom-node/composed
 arm. There is no retained runnable S4 nodebench gate.
-
-### S5 gates
-
-```bash
-# Local iteration (throwaway loki + collector on a docker network):
-docker network create wamn-s5 2>/dev/null || true
-docker run -d --name wamn-s5-loki --network wamn-s5 -p 3100:3100 \
-  -v "$PWD/deploy/infra/loki-local.yaml:/etc/loki/loki.yaml:ro" \
-  grafana/loki:3.4.2 -config.file=/etc/loki/loki.yaml
-docker run -d --name wamn-s5-otelcol --network wamn-s5 -p 4317:4317 -p 8888:8888 \
-  -v "$PWD/deploy/infra/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
-  otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
-OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 RUST_LOG=error \
-  LOKI_URL=http://127.0.0.1:3100 COLLECTOR_METRICS_URL=http://127.0.0.1:8888/metrics \
-  ./target/release/wamn-gates --log-level info logbench \
-  --logspewer components/target/wasm32-wasip2/release/logspewer.wasm --mode all
-# In-cluster gate of record (real Loki + collector; no cpu limit — the S2 lesson):
-kubectl -n wamn-system apply -f deploy/infra/loki.yaml -f deploy/infra/otel-collector.yaml
-kubectl -n wamn-system rollout status deploy/loki deploy/otel-collector --timeout=120s
-kubectl -n wamn-system apply -f deploy/gates/logbench-job.yaml
-kubectl -n wamn-system logs -f job/logbench
-```
 
 ### [9.1] OTel trace pipeline
 
@@ -752,33 +665,6 @@ Docs: docs/archive/observability/tracing.md
 cargo clippy -p wamn-host -p wamn-runtime -p wamn-dispatcher -p wamn-gates --all-targets \
   && cargo fmt -p wamn-host -p wamn-runtime -p wamn-dispatcher -p wamn-gates --check
 cargo build -p wamn-dispatcher -p wamn-gates   # tracebench spawns the sibling service binary
-# Local iteration (throwaway Postgres + Tempo + collector on a docker network;
-# spans are INFO):
-docker network create wamn-s5 2>/dev/null || true
-docker run -d --rm --name wamn-trace-pg --network wamn-s5 -p 5482:5432 \
-  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
-docker run -d --name wamn-s5-tempo --network wamn-s5 -p 3200:3200 \
-  -v "$PWD/deploy/infra/tempo-local.yaml:/etc/tempo/tempo.yaml:ro" \
-  grafana/tempo:2.6.1 -config.file=/etc/tempo/tempo.yaml
-docker run -d --name wamn-s5-otelcol --network wamn-s5 -p 4317:4317 -p 8888:8888 \
-  -v "$PWD/deploy/infra/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
-  otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
-OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
-  OTEL_BSP_SCHEDULE_DELAY=1000 RUST_LOG=error \
-  ./target/debug/wamn-gates --log-level info tracebench \
-  --pgprobe components/target/wasm32-wasip2/release/pgprobe.wasm \
-  --database-url postgres://postgres:postgres@127.0.0.1:5482/wamn \
-  --tempo-url http://127.0.0.1:3200
-docker stop wamn-trace-pg wamn-s5-tempo wamn-s5-otelcol
-# In-cluster gate of record (real Tempo + collector + Postgres, no cpu limit —
-# --target stages + kind load BOTH images):
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/infra/tempo.yaml -f deploy/infra/otel-collector.yaml
-kubectl -n wamn-system rollout status deploy/tempo deploy/otel-collector --timeout=120s
-kubectl -n wamn-system apply -f deploy/gates/tracebench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/tracebench --timeout=180s
-kubectl -n wamn-system logs job/tracebench
 ```
 
 ### [9.8] OTel metric set
@@ -794,41 +680,6 @@ cargo test -p wamn-execution-host -p wamn-executor -p wamn-dispatcher --no-fail-
 # recipe-test: H5-METRIC-PROOF | integration | wamn-proof-integration | lib | - | metricbench::tests:: | 7 | tests/integration/src/metricbench.rs hermetic release fixture, executor process boundary, URL isolation, scrape parsing, and body assembly
 cargo test -p wamn-proof-integration --lib metricbench::tests::
 cargo build -p wamn-dispatcher -p wamn-executor -p wamn-gates   # metricbench spawns both sibling service binaries
-# Local iteration: a throwaway Postgres (+ the NOSUPERUSER wamn_app role and the
-# host-only NOLOGIN wamn_scenario_author role the canonical DDL GRANTs to) and the
-# local collector with the new :8889 metrics pipeline. metricbench creates and
-# drops its own database, applies the canonical catalog/run-plane DDL, drives the
-# executor and dispatcher through their binaries, then scrapes :8889 for the
-# real run/queue/pool/memory families.
-docker run -d --name lane-metric-pg -e POSTGRES_PASSWORD=pg -p 127.0.0.1:15503:5432 postgres:18
-# (postgres:18 inits-then-restarts — pg_isready lies during socket-only init; if the
-# first connection is refused, wait a few seconds and retry)
-until docker exec lane-metric-pg pg_isready -U postgres; do sleep 1; done
-docker exec -e PGPASSWORD=pg lane-metric-pg psql -U postgres -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;" -c \
-  "CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-     NOINHERIT NOREPLICATION NOBYPASSRLS;"
-docker run -d --name lane-metric-otelcol -p 127.0.0.1:4317:4317 -p 127.0.0.1:8889:8889 \
-  -v "$PWD/deploy/infra/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
-  otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
-OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
-  OTEL_METRIC_EXPORT_INTERVAL=1000 RUST_LOG=error \
-  ./target/debug/wamn-gates --log-level info metricbench \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:15503/postgres \
-  --admin-database-url postgres://postgres:pg@127.0.0.1:15503/postgres \
-  --metrics-url http://127.0.0.1:8889/metrics
-docker rm -f lane-metric-pg lane-metric-otelcol
-# Phases 1-5 PASS; phase 6 (api RPS) honest-skips (in-cluster only — ProxyPre
-# bypasses the host HTTP server). In-cluster gate of record (real collector +
-# Postgres, no cpu limit — the :8889 metrics pipeline rides the same collector):
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/infra/otel-collector.yaml
-kubectl -n wamn-system rollout status deploy/otel-collector --timeout=120s
-kubectl -n wamn-system apply -f deploy/gates/metricbench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/metricbench --timeout=300s
-kubectl -n wamn-system logs job/metricbench
 ```
 
 ### [9.2] trace context propagation
@@ -845,35 +696,6 @@ cargo test -p wamn-proof-system --lib traceproof::tests::
 cargo clippy -p wamn-standard-nodes -p wamn-proof-system -p wamn-gates \
   --all-targets -- -D warnings
 cargo fmt -p wamn-standard-nodes -p wamn-proof-system -p wamn-gates --check
-
-# No component fixture: the gate invokes both public host surfaces directly.
-docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/infra/otel-collector.yaml
-kubectl -n wamn-system rollout status deploy/otel-collector --timeout=120s
-kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
-kubectl -n wamn-system rollout restart deploy/serve-echo
-kubectl -n wamn-system rollout status deploy/serve-echo --timeout=120s
-kubectl -n wamn-system delete job traceproof --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/traceproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/traceproof --timeout=180s
-kubectl -n wamn-system logs job/traceproof
-```
-
-### S6 gates
-
-```bash
-# Local iteration (throwaway container + the same fixture SQL):
-docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
-  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
-./target/release/wamn-gates --log-level error testhostbench \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn --mode all
-# In-cluster gate of record (co-located with Postgres, no cpu limit — S2 lesson;
-# WAMN_PG_ADMIN_URL is the superuser used only to provision the ephemeral schema):
-kubectl -n wamn-system apply -f deploy/gates/testhostbench-job.yaml
-kubectl -n wamn-system logs -f job/testhostbench
 ```
 
 #### [PLAN-6A / wamn-ftfc.13] public authoring contract
@@ -938,37 +760,17 @@ docker stop wamn-ftfc11-pg
 Docs: docs/archive/data-path/security-db-path.md
 
 ```bash
-REL=components/target/wasm32-wasip2/release
-# First-party DB-touching workload via --flowrunner; it must import
-# wamn:postgres and must not import wasi:sockets.
-./target/release/wamn-gates --log-level warn egressbench \
-  --flowrunner $REL/flowrunner.wasm
-
 # Static proof spans the host artifact, reusable runtime/execution adapters,
 # component import policy, executor service, and proof owners.
 cargo clippy -p wamn-host -p wamn-runtime -p wamn-component-policy \
   -p wamn-execution-host -p wamn-executor -p wamn-gates -p wamn-gate-harness --all-targets \
   && cargo fmt -p wamn-host -p wamn-runtime -p wamn-component-policy \
     -p wamn-execution-host -p wamn-executor -p wamn-gates -p wamn-gate-harness --check
-
-# E13/E15 runtime raw-socket deny, the in-cluster gate of record. sockprobe
-# independently executes the P2 TcpConnect,
-# UdpConnect, UdpOutgoingDatagram, and service/non-loopback UdpBind arms through
-# the production host store path. Raw egress is DENIED by default and PERMITTED
-# only under wamn.allow-raw-sockets; UdpBind remains service-loopback-only. The
-# conformance proof resolves exact linked wash-runtime 2.7.0 revision
-# daba602901507338e99f277e07a8e923c61dc557 and pins the shared policy plus every
-# P2/P3 mirror call site. --reject-tenant asserts a wamn:postgres importer
-# (pgprobe) is refused by the allowlist v1 (E17). Runs locally without a cluster:
-./target/release/wamn-gates --log-level warn egressbench \
-  --flowrunner $REL/flowrunner.wasm \
-  --reject-tenant $REL/pgprobe.wasm \
-  --sockprobe $REL/sockprobe.wasm
-# and in-cluster (fixtures baked in the wamn-gates image; no DB/NATS):
-kubectl -n wamn-system apply -f deploy/gates/egressbench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/egressbench --timeout=300s
-kubectl -n wamn-system logs job/egressbench
 ```
+
+The `egressbench` executable, its `pgprobe` reject-tenant fixture, and
+`deploy/gates/egressbench-job.yaml` were deleted. The retained runtime-denial
+proof is the `H5-EGRESSBENCH` recipe under [E13a] below.
 
 ### [E13a] publish-time egress-guard refusal (socketguard)
 
@@ -1174,28 +976,6 @@ cargo fmt --manifest-path components/Cargo.toml -p flowrunner --check
 git diff --check
 ```
 
-### [CALLABLE-FLOWS-POC-F1 / wamn-5wd1.42] pure receipt components
-
-Docs: `docs/archive/execution/FLOW-SPEC.md` §10.3 and `docs/archive/poc/POC-PLAN.md` F1 / Named mechanical
-deltas. Both components use the zero-import `wamn:node/handler` world, declare
-only the `main` output port, and carry the explicit `purity: pure` assertion
-that authorizes replay. The host tests run the named decimal, float-refusal,
-manifest-purity, undeclared-dependency, and interface-drift guards before the
-debug Wasm artifacts are built.
-
-```bash
-CARGO_TARGET_DIR=/tmp/wamn-target-cf-f1-components-42 \
-  cargo test --locked --manifest-path components/Cargo.toml \
-  -p normalize-receipt -p evaluate-specs
-CARGO_TARGET_DIR=/tmp/wamn-target-cf-f1-components-42 \
-  cargo build --locked --manifest-path components/Cargo.toml \
-  -p normalize-receipt -p evaluate-specs --target wasm32-wasip2
-wasm-tools component wit \
-  /tmp/wamn-target-cf-f1-components-42/wasm32-wasip2/debug/normalize_receipt.wasm
-wasm-tools component wit \
-  /tmp/wamn-target-cf-f1-components-42/wasm32-wasip2/debug/evaluate_specs.wasm
-```
-
 ### [CALLABLE-FLOWS-P4] flow invocation contract
 
 Docs: `docs/archive/execution/FLOW-SPEC.md` §8, §§9.1–9.7, §11, Phase 4.
@@ -1362,53 +1142,8 @@ cargo clippy -p wamn-run-state -p wamn-scheduler --all-targets \
 # handoff recipe below.
 ```
 
-Trusted event lineage in runner execution input has its own focused campaign.
-It proves the combined claim selector, split dispatch selector, and flowrunner
-context declaration while restoring each mutated source byte-exactly:
-
-```bash
-cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
-# The former receipt was de-claimed when the runner was repinned without
-# rerunning its mutants; bd:wamn-2jdm.5 owns a new immutable receipt.
-```
-
 D20/R6 ordering-policy evidence is historical. wamn-0h0g.4.1 deleted that
 authored/storage/runtime plane; its former proof modes are not current gates.
-
-### [PLAN-3 / wamn-vshi.5] F1 capture-on run-state baseline
-
-Docs: `docs/archive/PLAN/PLAN.md` items 1 and 3; published record in
-`docs/archive/results/ceilings.md` § PLAN-3-F1.
-
-```bash
-# Deterministic F1-path and argument guards.
-cargo test -p wamn-proof-integration runstate_baseline --no-fail-fast
-
-# Short live iteration against a throwaway PostgreSQL 18 database. The command
-# applies the production run-state DDL in an ephemeral schema and drops it.
-WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5457/postgres \
-  WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5457/postgres \
-  ./target/debug/wamn-gates --log-level error runstate-baseline \
-  --line-counts 1,10 --runs-per-size 5 --concurrency 2
-
-# Record run: build/load the gates image from the source revision being cited,
-# recreate the Job, and capture its CSV block.
-docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system delete job runstate-baseline --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/runstate-baseline-job.yaml
-kubectl -n wamn-system logs -f job/runstate-baseline
-# Extract `=== BEGIN/END CSV plan3-f1-capture-baseline ===` into
-# docs/archive/results/ceilings-data/plan3-f1-capture-baseline.csv.
-```
-
-The campaign measures the current capture-replay architecture before item 1
-rewires recovery. It uses the canonical successful F1 node path with 1, 10,
-and 100 schema-valid receipt lines. Each node boundary commits a full input and
-output capture; context-bearing nodes also update `runs.state_json`, matching
-the present source of heap/TOAST growth, WAL, and vacuum pressure. Measurements
-are curves, not budgets. Only durable-commit provenance, exact run/node counts,
-full-capture presence, and nonzero WAL are pass/fail assertions.
 
 ### [EVT-C7 / wamn-z7b.1] queue ceiling campaign — archived measurement
 
@@ -1438,24 +1173,6 @@ wamn-l5i9.9 → wamn-l5i9.4 keeps it strictly pre-CDC).
 # in wamn-proof-integration, not the wamn-gates router.
 # recipe-test: H5-WALBENCH | integration | wamn-proof-integration | lib | - | walbench::tests:: | 3 | tests/integration/src/walbench.rs rate parser, blob entropy, and catalog floor
 cargo test -p wamn-proof-integration --lib walbench::tests::
-# Local iteration (short knobs; correctness only — debug build, dev-host PG):
-docker run -d --rm --name wamn-cwal0-pg -p 5444:5432 -e POSTGRES_PASSWORD=postgres postgres:18
-docker exec wamn-cwal0-pg psql -U postgres -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
-WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5444/postgres \
-  WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5444/postgres \
-  ./target/debug/wamn-gates --log-level error walbench --mode all \
-  --iters 100 --mixed-rates 20,50 --mixed-secs 8
-docker stop wamn-cwal0-pg
-# Numbers of record (in-cluster on the fixture pod, record knobs baked into the
-# manifest; ~few min; a SINGLE run is the record — byte counts + medians, no knee
-# to poison). Needs a gates-only image (docker build --target gates); no wamn-host
-# change so the host stage is cached apart from the crates/ recompile:
-docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/gates/walbench-job.yaml
-kubectl -n wamn-system logs -f job/walbench
-# Extract the `=== BEGIN CSV <name> ===` blocks (cwal0-perop / cwal0-mixed) into
-# docs/results/ceilings-data/ and cite them from docs/archive/results/ceilings.md (§ C-WAL-0 provenance).
 ```
 
 The pre-CDC claim is made checkable, not assumed: `precheck` asserts the measured DB
@@ -1468,28 +1185,12 @@ harness: scratchpad `mutate_cwal0.py` (M1 instrument swap `pg_current_wal_insert
 `pg_current_wal_lsn` fails every `> 24 B/op` assert on an `fsync=off` PG — the fixture-pod
 kill; M2 op-batch runs `n/2` fails the exact-op-count assert).
 
-### [EVT-S-CDC-1 / wamn-l5i9.2] pg_walstream diligence spike (diligence, not a gate)
+### [EVT-S-CDC-1 / wamn-l5i9.2] pg_walstream diligence spike — harness deleted
 
 Docs: docs/archive/events/event-plane-jetstream.md §7; verdicts live in the wamn-l5i9.2 bead
-notes and feed wamn-l5i9.6 [BUILD-VS-BUY]. The harness is `poc/cdc1`
-(pg_walstream from the wamn fork, rev-pinned in the root workspace table since
-wamn-l5i9.8 — ledger: docs/archive/events/pg-walstream-fork.md).
-
-```bash
-cargo build -p wamn-cdc1 && cargo clippy -p wamn-cdc1 && cargo fmt -p wamn-cdc1 --check
-# Throwaway 2-instance CNPG cluster (torn down after the spike; NEVER reuse
-# wamn-pg or wamn-sysdb — switchover needs a standby):
-kubectl apply -f poc/cdc1/cdc1-cluster.yaml   # cluster cdc1 + NodePort 172.28.0.4:30497
-export CDC1_URL="postgresql://postgres:$(kubectl -n wamn-system get secret \
-  cdc1-superuser -o jsonpath='{.data.password}' | base64 -d)@172.28.0.4:30497/app"
-./target/debug/wamn-cdc1 setup        # tables + publication + failover slot (through the crate)
-./target/debug/wamn-cdc1 message      # (e) pg_logical_emit_message → EventType::Message
-./target/debug/wamn-cdc1 toast        # (c) unchanged-TOAST absent-vs-Null + FULL old image
-./target/debug/wamn-cdc1 stream --rows 1000000   # (d) streamed txn, VmRSS profile
-./target/debug/wamn-cdc1 soak --secs 1800        # (a) idle keepalive/feedback + canary
-./target/debug/wamn-cdc1 switchover --secs 90    # (b) then delete the primary pod mid-run
-./target/debug/wamn-cdc1 teardown && kubectl delete -f poc/cdc1/cdc1-cluster.yaml
-```
+notes and feed wamn-l5i9.6 [BUILD-VS-BUY]. The `poc/cdc1` harness and its
+`wamn-cdc1` binary went with the `poc/` tier, so the spike has no runnable
+command; its one durable output is the finding below.
 
 FINDING F1: crates.io pg_walstream 0.8.0's `slot_options.failover = true`
 emits legacy space-separated `CREATE_REPLICATION_SLOT … FAILOVER`, which PG17+
@@ -1507,12 +1208,7 @@ the rev is pinned once in the root `Cargo.toml` workspace table.
 # Fork unit tests (in a clone of dkkloimwieder/pg-walstream, branch wamn/0.8.0):
 cargo test --lib          # 1247 tests incl the parenthesized-FAILOVER pins
 # Consumer + lock sanity (in wamn):
-cargo build -p wamn-cdc1
 grep -c '^name = "pg_walstream"$' Cargo.lock   # must be 1 (git-sourced)
-# Live A/B (throwaway postgres:18 -c wal_level=logical, e.g. :5444):
-#   A: pin poc/cdc1 back to crates.io `=0.8.0` → `wamn-cdc1 setup` fails 42601
-#   B: the fork pin → setup prints `slot cdc1_spike created: … failover=true`,
-#      then `wamn-cdc1 message` passes as the streaming regression.
 ```
 
 ### [EVT-NATS / wamn-l5i9.7] streambench data-plane JetStream gate
@@ -1520,59 +1216,18 @@ grep -c '^name = "pg_walstream"$' Cargo.lock   # must be 1 (git-sourced)
 Docs: docs/archive/events/event-plane-jetstream.md §5/§7 Phase 1. Stands up the DEDICATED
 data-plane NATS (deploy/infra/nats-jetstream.yaml — a 3-node JetStream cluster, R3
 file storage, Service `evt-nats`), SEPARATE from the operator/control-plane NATS
-(Service `nats`, doorbells) which stays untouched. The gate (`streambench`, a
-pure NATS client — no wasm, no Postgres) proves the four load-bearing claims:
-publish → the `EVT_<org>_<env>` stream (subjects
-`evt.<org>.<project>.<env>.<entity>.<op>`), `Nats-Msg-Id = <project_env>:<lsn>`
-dedupe, consume in commit order, and R3 survives node loss. Accounts: single
-shared (default) account — per-org accounts + replication creds are the
-wamn-4xw seam (§11). `--mode all` / `--mode publish` also run the **E14 standing
-guard** (docs/archive/findings.md §3): over a batch shaped like the rows of ONE large
-multi-row txn (dense per-event LSNs, one commit xid), published-event count ==
-distinct `Nats-Msg-Id` count — the server-side stream-delta is the honest
-detector, since any msg-id collision is a silent JetStream dedupe.
+(Service `nats`, doorbells) which stays untouched. The `streambench` gate that
+proved publish → stream, `Nats-Msg-Id` dedupe, commit order, and R3 node-loss
+survival over it was deleted; only the substrate standup below remains.
 
 ```bash
-cargo build -p wamn-gates   # streambench compiles into the suite
-# Local iteration — a throwaway 3-node cluster is R3 (single node = R1):
-docker network create evt-nats-local
-R=nats://evt-nats-local-0:6222,nats://evt-nats-local-1:6222,nats://evt-nats-local-2:6222
-for i in 0 1 2; do docker run -d --name evt-nats-local-$i --network evt-nats-local \
-  -p $((4232+i)):4222 nats:2.10-alpine -js -sd /data --name n$i \
-  --cluster nats://0.0.0.0:6222 --cluster_name evt-local --routes "$R"; done
-./target/debug/wamn-gates --log-level error streambench --mode all \
-  --nats-url nats://localhost:4232 --replicas 3 --messages 200
-# Physical node-loss heal (degraded 2/3): publish → destroy a node → heal
-./target/debug/wamn-gates --log-level error streambench --mode publish \
-  --nats-url nats://localhost:4232 --replicas 3 -n 200
-docker rm -f evt-nats-local-2
-./target/debug/wamn-gates --log-level error streambench --mode heal \
-  --nats-url nats://localhost:4232 --replicas 3 --expect-messages 200
-docker rm -f evt-nats-local-0 evt-nats-local-1 evt-nats-local-2; docker network rm evt-nats-local
-
-# Gate of record (in-cluster). Gates-only image (no wamn-host change → host stage
-# cached apart from the crates/ recompile):
-docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-gates:dev --name wamn
+# Data-plane NATS standup (the Phase-1 substrate):
 kubectl -n wamn-system apply -f deploy/infra/nats-jetstream.yaml
 kubectl -n wamn-system rollout status statefulset/evt-nats --timeout=180s
-kubectl -n wamn-system apply -f deploy/gates/streambench-job.yaml    # --mode all: publish/consume/dedupe/stepdown
-kubectl -n wamn-system wait --for=condition=complete job/streambench --timeout=180s
-kubectl -n wamn-system logs job/streambench
-# Physical R3 heal (the runbook is in deploy/gates/streambench-job.yaml's header):
-#   streambench-pub pod → kubectl delete pod evt-nats-2 → streambench-heal pod
 ```
 
-`--mode all` proves R3 durability without k8s (a RAFT leader step-down +
-re-election, all messages survive); the two-step `publish` → `kubectl delete pod`
-→ `heal` runbook proves survival of a physical node deletion. The heal drain
-uses an R1 in-memory consumer (transient bookkeeping — the durability guarantee
-is on the R3 stream), so it succeeds while a node is still down. Mutation
-harness: scratchpad `mutate_l5i9_7.py` — M1 drops the Nats-Msg-Id on re-publish
-(dedupe assert fails), M2 creates the stream R1 not R3 (`stream is R3` fails),
-M3 makes the LSN non-monotonic-but-unique via `i^1` (commit-order assert fails),
-M4 drops the id on the focused second publish (`second publish IS a duplicate`
-fails). The data-plane NATS is left STANDING as the Phase-1 substrate (the
-reader wamn-l5i9.10 + C-JS wamn-l5i9.15 consume it); reclaim with
+The data-plane NATS is left STANDING as the Phase-1 substrate (the reader
+wamn-l5i9.10 + C-JS wamn-l5i9.15 consume it); reclaim with
 `kubectl -n wamn-system delete -f deploy/infra/nats-jetstream.yaml`.
 
 ### [EVT-PROVISION / wamn-l5i9.9] enable-cdc-project-env — publication + failover slot + reader registration
@@ -1766,26 +1421,10 @@ a gate-scoped R3 stream. `readerbench --expect-causation-run` filters the mapped
 sink entity and requires the completed run's exact `run_id` both as the sink id
 and on every delivered envelope.
 
-The Job does not deploy or reconfigure the runner and never inserts `run_queue`
-directly. Its immutable release rows are a dormant, byte-pinned extension of
-the canonical shared fixture (owner decision 2026-08-02); only the temporary
-catalog head/activation makes the invocation target admissible. Always-run
-teardown removes that activation plus the flow/run rows, sink and entity map,
-registry org, replication role/publication/slot, and JetStream stream. Final
-assertions require the original flow/run/node-run/queue counts, exact dormant
-release bytes, and zero mutable/runtime residue.
-
 ```bash
 # recipe-test: H5-CAUSATION-E2E | integration | wamn-proof-integration | lib | - | causation_e2e::tests:: | 2 | production invocation/pg-write fixture plus R3 and exact-run reader arguments
 CARGO_TARGET_DIR=/tmp/wamn-target-ec7j cargo test --locked -p wamn-proof-integration --lib causation_e2e::tests::
 cargo clippy --locked -p wamn-proof-integration -p wamn-gates --all-targets -- -D warnings
-
-docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system delete job causation-e2e --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/causation-e2e-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/causation-e2e --timeout=240s
-kubectl -n wamn-system logs job/causation-e2e  # -> overall PASS: true
 ```
 
 ### [EVT-REG / wamn-l5i9.16] registration surface — catalog + minimal API
@@ -1793,48 +1432,24 @@ kubectl -n wamn-system logs job/causation-e2e  # -> overall PASS: true
 Docs: docs/archive/events/event-plane-jetstream.md §5. The **declaration surface** the
 materializer (l5i9.17) consumes: a registration = subscribing flow id, entity id
 (the rename-proof catalog **entity id**, EVT-OIDMAP — never a table name), a
-non-empty op set, and an optional JMESPath condition. Model + validation in the
-pure `wamn-event-reg` crate;
-storage `catalog.event_registrations` (deploy/sql/catalog-schema.sql, mirrors
-`rls_policies` — jsonb doc + denormalized `flow_id`/`entity_id` columns, live-
-catalog-scoped not version-tied, tenant-RLS'd, indexed by entity for 11.8 impact
-analysis wamn-wvb); minimal CRUD builders in `wamn-api` (`registration` module —
-pinned identifiers, `$n` values, `tenant_id` server-side). NO materializer, NO
-reader change, NO UI (parked). The condition is stored as a JMESPath string and
-validated for SYNTAX at write time (the materializer owns evaluation). The
-pre-release 0.1 declaration is an exact allowlist: the retired `partition-key`
-field is refused rather than ignored. A
-condition referencing `old` ("changed-to") is expressible but its old image needs
-REPLICA IDENTITY FULL (l5i9.31) — this surface never flips replica identity. It
-does DETECT the gap (EVT-RI-ORCH, wamn-l5i9.66): a create/update that needs the
-old image on an entity still at DEFAULT returns an additive
-`pending-replica-identity-reconcile` warning (the pure
-`wamn_api::pending_replica_identity_warning` + `attach_warning`, keyed on the
-SAME `EventRegistration::requires_replica_identity_full` predicate the l5i9.31
-reconciler folds, so it can never diverge), so a caller sees the gap the periodic
-CronJob (wamn-l5i9.65) will close. Detect-only — still no ALTER under `wamn_app`.
-Note: the api-gateway does not yet ROUTE registration writes over HTTP (the
-l5i9.16 CRUD is builders-only); the guest links this warning surface and builds
-clean for wasm32, and attaches the warning when that route lands (deferred).
+non-empty op set, and an optional JMESPath condition. Model + validation live in
+the pure `wamn-event-reg` crate; storage is `catalog.event_registrations`
+(deploy/sql/catalog-schema.sql, mirrors `rls_policies` — jsonb doc + denormalized
+`flow_id`/`entity_id` columns, live-catalog-scoped not version-tied, tenant-RLS'd,
+indexed by entity for 11.8 impact analysis wamn-wvb). The condition is stored as a
+JMESPath string and validated for SYNTAX at write time (the materializer owns
+evaluation). The pre-release 0.1 declaration is an exact allowlist: the retired
+`partition-key` field is refused rather than ignored. A condition referencing
+`old` ("changed-to") is expressible but its old image needs REPLICA IDENTITY FULL
+(l5i9.31) — this surface never flips replica identity.
+
+The `wamn-api` CRUD builders, the api-gateway guest that linked them, and the
+`registration_live` live-apply gate went with `crates/data/api` and
+`components/ingress/api-gateway`; `wamn-event-reg` is the retained surface.
 
 ```bash
 cargo test -p wamn-event-reg              # validation rules (entity-by-id, ops non-empty/dedup, JMESPath syntax, schema-version, round-trip)
-cargo test -p wamn-api                     # +registration builder shapes + storage-schema drift guard + the l5i9.66 pending-reconcile warning (pure: detector direction + additive-envelope PRESENT/ABSENT)
-cargo clippy -p wamn-event-reg -p wamn-api --all-targets
-# Local live-apply gate (throwaway PG): applies the REAL catalog-schema.sql, then
-# drives create/list/get/update/delete through the wamn-api builders AS wamn_app
-# under a tenant claim — round-trips the document + proves RLS tenant isolation;
-# then (l5i9.66 phase) provisions the entity table, flips it 'd'->'f' live, and
-# asserts the warning is PRESENT on the DEFAULT table / ABSENT once FULL.
-# Hermetic (drops+recreates the catalog schema, teardown leaves nothing):
-docker run -d --name evtreg-pg -p 55433:5432 -e POSTGRES_PASSWORD=postgres postgres:18
-WAMN_API_PG_URL=postgres://postgres:postgres@127.0.0.1:55433/postgres \
-  cargo test -p wamn-api --test registration_live
-docker rm -f evtreg-pg
-# wamn-api is an api-gateway guest dep; confirm the wasm build. wamn-event-reg is
-# now a RUNTIME dep of wamn-api (the l5i9.66 warning keys on it) — pure, so it and
-# jmespath/schemars compile for wasm32 (the migration engine stays out):
-(cd components && cargo build -p api-gateway --target wasm32-wasip2)
+cargo clippy -p wamn-event-reg --all-targets
 ```
 
 ### [EVT-REG/D24 / wamn-rmxa] publish/migrate-catalog refuse an orphaning publish
@@ -1954,28 +1569,12 @@ cargo test -p wamn-runtime --lib plugins::wamn_jetstream::tests::
 # recipe-test: H5-JETSTREAM-WIT-MATERIALIZER | contract | wamn-runtime | test | jetstream_wit_coherence | - | 3 | crates/platform/runtime/tests/jetstream_wit_coherence.rs docs, host, and guest WIT copies
 cargo test -p wamn-runtime --test jetstream_wit_coherence
 (cd components && cargo build --locked -p materializer --target wasm32-wasip2)
-# Live gate — REAL guest + REAL deploy/sql DDL (include_str! — drift-proof) +
-# REAL JetStream; 17 asserts: rows/ids/keys/policy, causation thread, distinct
-# refusal counters, doorbell rings, burst drain (C-MAT numbers), and a full
-# server-side-consumer-delete redelivery proving ON CONFLICT exactly-once:
-docker run -d --name mat-pg -p 55461:5432 -e POSTGRES_PASSWORD=matpass postgres:18
-docker run -d --name mat-nats -p 44461:4222 nats:2.10 -js
-./target/debug/wamn-gates matbench \
-  --component components/target/wasm32-wasip2/debug/materializer.wasm \
-  --admin-database-url postgres://postgres:matpass@127.0.0.1:55461/postgres \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:55461/postgres \
-  --nats-url nats://127.0.0.1:44461
-docker rm -f mat-pg mat-nats
-# In-cluster: rebake host (plugin wiring) + run-worker (flowrunner causation
-# thread) + gates (matbench + /bench/materializer.wasm), kind load, then the
-# matbench Job / the CDC-write→reader→stream→materializer→run e2e.
 ```
 
 Mutation harness: scratchpad `mutate_l5i9_17.py` — M1 depth guard off-by-one,
 M2 root-`old` detection loses Subexpr context, M3 `enqueue_evt_sql` drops
 `stream_seq`, M4 `plan_claim` loses the numeric tiebreak, M6 doorbell-subject
-typo — each fails a NAMED unit test; M5 (guest skips the doorbell ring) fails
-matbench's `8 doorbell rings` assert. Apply/test/restore with sha256, DEBUG.
+typo — each fails a NAMED unit test. Apply/test/restore with sha256, DEBUG.
 
 ### Deleted samplebench/js-sample provenance
 
@@ -1999,7 +1598,7 @@ path: CDC reader → JetStream → materializer ([EVT-MAT], [EVT-READER],
 Docs: docs/archive/events/event-plane-jetstream.md §7 · decisions D19/l5i9.31/l5i9.61. The
 coverage the l5i9.19 teardown deleted with `cutbench`'s phase 3: `matbench`
 covers the old-image-absent refusal + a SYNTHESIZED FULL old image (a
-hand-published tape), and `ri_orch_live` covers the ctl flip machinery on
+hand-published tape), and `replica_identity_live` covers the ctl flip machinery on
 `pg_class.relreplident` — but NO gate proved a REAL decoded WAL old image
 reaching the materializer AFTER a live RI flip. `rie2ebench` embeds the REAL
 `wamn-cdc-reader` service body (`run_with_token`) as a tokio task next to the
@@ -2021,30 +1620,7 @@ deterministically at teardown (zero residue).
 # library rather than the command router.
 # recipe-test: H5-RIE2EBENCH | integration | wamn-proof-integration | lib | - | rie2ebench::tests:: | 2 | tests/integration/src/rie2ebench.rs frozen registration, flow, and catalog fixtures
 cargo test -p wamn-proof-integration --lib rie2ebench::tests::
-# Local gate — REAL reader + REAL materializer guest + REAL deploy/sql DDL +
-# REAL JetStream. Postgres MUST be wal_level=logical (the real slot/reader):
-docker run -d --name wamn-lanec-rie-pg -p 57231:5432 -e POSTGRES_PASSWORD=postgres \
-  postgres:18 -c wal_level=logical -c fsync=off -c synchronous_commit=off
-docker run -d --name wamn-lanec-rie-nats -p 57232:4222 nats:2.10 -js
-./target/debug/wamn-gates rie2ebench \
-  --component components/target/wasm32-wasip2/release/materializer.wasm \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:57231/postgres \
-  --nats-url nats://127.0.0.1:57232
-docker rm -f wamn-lanec-rie-pg wamn-lanec-rie-nats
-# In-cluster: deploy/gates/rie2ebench-job.yaml (cutbench-job's shape) — the
-# fixture Postgres runs wal_level=logical since l5i9.18, and the gate owns a
-# throwaway DATABASE (wamn_rie2e, created/dropped WITH FORCE) + its slot +
-# its EVT stream, so the shared fixture keeps zero residue:
-kubectl -n wamn-system apply -f deploy/gates/rie2ebench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/rie2ebench --timeout=600s
 ```
-
-Mutation harness: scratchpad `mutate_lane_c.py` — M_RI neuters the production
-reconcile flip (`wamn_ctl::reconcile_replica_identity::reconcile` skips the
-`ALTER … REPLICA IDENTITY`) so the table stays DEFAULT: the post-flip DELETE is
-refused, and rie2ebench's `post-flip DELETE fired ONE scoped :evt: delete run`
-assert FAILS. Apply/test/restore with sha256, DEBUG; rebuild wamn-gates after
-restoring the dep.
 
 ### [EVT-C-CDC / wamn-l5i9.14] cdcbench ceiling campaign (measurement, not a gate)
 
@@ -2067,8 +1643,8 @@ shapes + the wide non-TOAST-column update (FULL flattens the unchanged 6 KiB
 old image — the l5i9.63 number); per-op WAL brackets with the MEDIAN as the
 delta statistic (FPI outliers + shared-instance ambient WAL excluded — the
 C-WAL-0 per-event discipline), C-WAL-0 as the pre-CDC denominator;
-**switchover** — the timed availability drill (separate mode + target: see
-deploy/gates/cdcbench-switchover-job.yaml), cdc1's no-gap shape with the REAL
+**switchover** — the timed availability drill (a separate mode; its Job manifest
+was deleted), cdc1's no-gap shape with the REAL
 reader's R11 re-open ladder as the recovery, write blackout / publish gap /
 catch-up timed from commit wall-times + JetStream ingest timestamps.
 `--mode all` = drain+lag+ri; switchover is always explicit.
@@ -2078,35 +1654,7 @@ catch-up timed from commit wall-times + JetStream ingest timestamps.
 # wamn-proof-integration.
 # recipe-test: H5-CDCBENCH | integration | wamn-proof-integration | lib | - | cdcbench::tests:: | 4 | tests/integration/src/cdcbench.rs registration, catalog, rates, and URL helpers
 cargo test -p wamn-proof-integration --lib cdcbench::tests::
-# Local bring-up — REAL reader + REAL DDL + REAL JetStream (numbers are NOT
-# the record; the record is the in-cluster release-image job):
-docker run -d --name wamn-ccdc-pg -p 55444:5432 -e POSTGRES_PASSWORD=postgres \
-  postgres:18 -c wal_level=logical -c fsync=off -c synchronous_commit=off
-docker run -d --name wamn-ccdc-nats -p 44222:4222 nats:2 -js
-./target/debug/wamn-gates cdcbench \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:55444/postgres \
-  --nats-url nats://127.0.0.1:44222 --mode all
-# switchover bring-up: run --mode switchover --secs 45 and `docker restart
-# wamn-ccdc-pg` inside the drill window.
-docker rm -f wamn-ccdc-pg wamn-ccdc-nats
-# In-cluster CAMPAIGN OF RECORD (release gates image, sequential with other
-# jobs — the z7b.7 noise defense; CSVs from the job log → docs/results/ceilings-data/):
-kubectl -n wamn-system apply -f deploy/gates/cdcbench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/cdcbench --timeout=2400s
-# Axis 4 vs the LIVE wamn-pg pool (single-instance today → timed primary
-# recreate; trigger INSIDE the drill window, watch the log for the banner):
-kubectl -n wamn-system apply -f deploy/gates/cdcbench-switchover-job.yaml
-kubectl -n wamn-system logs -f job/cdcbench-switchover   # wait for DRILL WINDOW OPEN
-kubectl -n wamn-system delete pod wamn-pg-1              # the trigger
 ```
-
-Mutation harness: scratchpad `mutate_l5i9_14.py` — M1 neuters the reconcile
-apply (the ri legs become identical; the named `narrow DELETE grows under
-FULL` + `wide upd-slim pays the flattened old image` asserts FAIL), M2
-off-by-ones the drain completeness target (the named `stream holds exactly N
-row events` assert FAILS), M3 skips the lag final catch-up wait (the named
-`eventual completeness` assert FAILS on a still-draining stream). Apply/test/
-restore with sha256, DEBUG builds; rebuild wamn-gates after restoring a dep.
 
 ### [5.14] checkpoint/resume on replica loss
 
@@ -2271,19 +1819,6 @@ the centralized admission transaction.
 cargo test --locked -p wamn-dispatcher -p wamn-scheduler
 # recipe-test: H5-CALLABLE-CRON | integration | wamn-proof-integration | lib | - | callable_cron::tests:: | 1 | tests/integration/src/callable_cron.rs process-boundary catalog/attachment/admission proof
 cargo test --locked -p wamn-proof-integration --lib callable_cron::tests::
-docker run -d --rm --name wamn-cf-cron-pg -p 5458:5432 \
-  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
-WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
-  cargo test --locked -p wamn-dispatcher callable_cron_attachment_live \
-  -- --ignored --nocapture
-docker stop wamn-cf-cron-pg
-docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system delete job callable-flow-cron --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/callable-flow-cron-job.yaml
-kubectl -n wamn-system wait --for=condition=complete \
-  job/callable-flow-cron --timeout=180s
-kubectl -n wamn-system logs job/callable-flow-cron
 ```
 
 The former multi-mode `dispatchbench` executable was archived by
@@ -2295,67 +1830,38 @@ the dispatcher units, run-plane gate, and host-owned production-claim gate.
 The canonical F0 graph and HTTP attachment are resolved through the immutable
 artifact/release types. The proof refuses malformed input, bad idempotency keys,
 stale artifacts, bypass publication, and a third commit; both named crash seams
-recover to the same stored response and exactly two commits. The gate image is
-tagged with the implementation commit; substitute that tag without editing the
-tracked Job.
+recover to the same stored response and exactly two commits. The exact-image Job
+that carried this proof in-cluster was deleted with `deploy/gates/callable-flow-f0-job.yaml`.
 
 ```bash
 # recipe-test: H5-CALLABLE-F0 | system | wamn-proof-system | lib | - | callable_f0::tests:: | 5 | tests/system/src/callable_f0.rs F0 immutable release, HTTP attachment, refusals, and two-commit recovery
 cargo test --locked -p wamn-proof-system --lib callable_f0::tests::
-cargo test --locked -p wamn-flow --test flows f0_
-
-docker build --target gates -t wamn-gates:cf-f0-<commit> .
-kind load docker-image wamn-gates:cf-f0-<commit> --name wamn
-kubectl -n wamn-system delete job callable-flow-f0 --ignore-not-found
-sed "s/wamn-gates:cf-f0-ISSUE/wamn-gates:cf-f0-<commit>/" \
-  deploy/gates/callable-flow-f0-job.yaml | kubectl -n wamn-system apply -f -
-kubectl -n wamn-system wait --for=condition=complete \
-  job/callable-flow-f0 --timeout=180s
-kubectl -n wamn-system logs job/callable-flow-f0
 ```
 
 ### [CALLABLE-FLOWS-POC-F3 / wamn-5wd1.58] stale-hold escalation r6
 
 The canonical F3 graph and minimal cron attachment prove the scheduled-time
 cutoff, one-row notify-before-escalate loop, natural completion, and the
-same-run/new-run recovery-key distinction. The gate image is tagged with the
-implementation commit; substitute that tag without editing the tracked Job.
+same-run/new-run recovery-key distinction. The exact-image Job that carried this
+proof in-cluster was deleted with `deploy/gates/callable-flow-f3-job.yaml`.
 
 ```bash
 # recipe-test: H5-CALLABLE-F3 | system | wamn-proof-system | lib | - | callable_f3::tests:: | 5 | tests/system/src/callable_f3.rs F3 graph, attachment, recovery, and failure windows
 cargo test --locked -p wamn-proof-system --lib callable_f3::tests::
-cargo test --locked -p wamn-flow --test flows f3_
-
-docker build --target gates -t wamn-gates:cf-f3-<commit> .
-kind load docker-image wamn-gates:cf-f3-<commit> --name wamn
-kubectl -n wamn-system delete job callable-flow-f3 --ignore-not-found
-sed "s/wamn-gates:cf-f3-ISSUE/wamn-gates:cf-f3-<commit>/" \
-  deploy/gates/callable-flow-f3-job.yaml | kubectl -n wamn-system apply -f -
-kubectl -n wamn-system wait --for=condition=complete \
-  job/callable-flow-f3 --timeout=300s
-kubectl -n wamn-system logs job/callable-flow-f3
 ```
 
 ## H5-CALLABLE-F2 — immutable pure recommendation (`wamn-5wd1.61`)
 
 The package proof pins F2's direct supplied-node graph, strict request
 contract, verified component identity, internal caller policy, service-mode
-runtime refusal, and replay/effect-uncertain controls. The exact-image Job also
-hashes the baked component bytes used by the release proof.
+runtime refusal, and replay/effect-uncertain controls. The exact-image Job that
+also hashed the baked component bytes was deleted with
+`deploy/gates/callable-flow-f2-job.yaml`.
 
 ```bash
 # recipe-test: H5-CALLABLE-F2 | system | wamn-proof-system | lib | - | callable_f2::tests:: | 8 | tests/system/src/callable_f2.rs F2 direct pure component release, internal caller policy, deterministic replay, and mutation controls
 CARGO_TARGET_DIR=/tmp/wamn-target-f2-61 \
   cargo test --locked -p wamn-proof-system --lib callable_f2::tests::
-
-docker build --target gates -t wamn-gates:cf-f2-<commit> .
-kind load docker-image wamn-gates:cf-f2-<commit> --name wamn
-kubectl -n wamn-system delete job callable-flow-f2 --ignore-not-found
-sed "s/wamn-gates:cf-f2-ISSUE/wamn-gates:cf-f2-<commit>/" \
-  deploy/gates/callable-flow-f2-job.yaml | kubectl -n wamn-system apply -f -
-kubectl -n wamn-system wait --for=condition=complete \
-  job/callable-flow-f2 --timeout=300s
-kubectl -n wamn-system logs job/callable-flow-f2
 ```
 
 ## H5-CALLABLE-F4 — event child/review/callback composition (`wamn-5wd1.62`)
@@ -2370,17 +1876,6 @@ cancellation transitions.
 # recipe-test: H5-CALLABLE-F4 | system | wamn-proof-system | lib | - | callable_f4::tests:: | 10 | tests/system/src/callable_f4.rs F4 graph, registration, prior history, review/callback recovery, event scope, and child transition mutants
 CARGO_TARGET_DIR=/tmp/wamn-target-f4-62 \
   cargo test --locked -p wamn-proof-system --lib callable_f4::tests::
-CARGO_TARGET_DIR=/tmp/wamn-target-f4-62 \
-  cargo test --locked -p wamn-flow --test flows f4_
-
-docker build --target gates -t wamn-gates:cf-f4-<commit> .
-kind load docker-image wamn-gates:cf-f4-<commit> --name wamn
-kubectl -n wamn-system delete job callable-flow-f4 --ignore-not-found
-sed "s/wamn-gates:cf-f4-ISSUE/wamn-gates:cf-f4-<commit>/" \
-  deploy/gates/callable-flow-f4-job.yaml | kubectl -n wamn-system apply -f -
-kubectl -n wamn-system wait --for=condition=complete \
-  job/callable-flow-f4 --timeout=300s
-kubectl -n wamn-system logs job/callable-flow-f4
 ```
 
 ### [SR-MVP / wamn-0h0g.5.8] dispatcher reconciliation
@@ -2631,12 +2126,10 @@ Docs: docs/archive/platform/provisioning.md, docs/archive/platform/postgres-topo
 cargo test -p wamn-control-registry -p wamn-control-provision   # saga/named-db builders + drift-guards
 cargo clippy -p wamn-control-registry -p wamn-control-provision -p wamn-gates --all-targets \
   && cargo fmt -p wamn-control-registry -p wamn-control-provision -p wamn-gates --check
-# Local iteration (throwaway postgres:18; superuser url provisions wamn_app +
-# wamn_system + the per-project-env DBs + the ephemeral registry schema):
+# Local iteration (throwaway postgres:18; the superuser url drives the storage
+# live-apply below — the provisionbench harness that shared it was deleted):
 docker run -d --rm --name wamn-prov-pg -p 5460:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn \
-  ./target/debug/wamn-gates --log-level error provisionbench --mode all
 # The saga live proof rides the provisioning-owned control-storage gate:
 WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5460/wamn \
   cargo test -p wamn-control-provision --test control_storage
@@ -2875,11 +2368,9 @@ cargo clippy -p wamn-control-registry -p wamn-ctl -p wamn-gates --all-targets \
   && cargo fmt -p wamn-control-registry -p wamn-ctl -p wamn-gates --check
 # Throwaway-PG live gates (superuser url): the storage live-apply (composite
 # (org, env) FK + stamp insert-if-absent + cross-org isolation + whole-org
-# cascade) + provisionbench --mode all (tier scenarios stamp template policies):
+# cascade):
 docker run -d --rm --name wamn-8df4-pg -p 5494:5432 -e POSTGRES_PASSWORD=postgres postgres:18
 WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:5494/postgres cargo test -p wamn-control-registry
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5494/postgres \
-  ./target/debug/wamn-gates --log-level error provisionbench --mode all
 # Subcommand smoke (apply role + system-schema.sql into the throwaway DB as
 # wamn_system first — the .3 recipe): standard + dedicated orgs COEXIST (T2/T4),
 # canary derives per-org, a customized row survives a re-stamp:
@@ -2895,9 +2386,9 @@ docker stop wamn-8df4-pg
 # cross-org probe), M4 provision-org stamps nothing (scripted project-env
 # refusal), M5 validate env check any-org (org-scoping unit).
 # IN-CLUSTER gate of record: re-apply system-schema.sql into wamn-sysdb (the
-# [D6/wamn-q3n.3] block — org-scoped env_policies, NO seed), rebuild + kind-load
-# wamn-gates, run deploy/gates/provisionbench-job.yaml, then a live TEMPLATE-STAMPED
-# standup: tpl1 (standard) + tpl2 (dedicated) coexisting — tpl1 canary derives
+# [D6/wamn-q3n.3] block — org-scoped env_policies, NO seed), then a live
+# TEMPLATE-STAMPED standup: tpl1 (standard) + tpl2 (dedicated) coexisting —
+# tpl1 canary derives
 # tpl1-prod while tpl2 renders/holds tpl2-canary. Teardown deletes ONLY the new
 # clusters/CRs/org rows (org DELETE cascades policies + project-envs).
 ```
@@ -3692,29 +3183,16 @@ WAMN_SEED_PG_URL=postgres://postgres:postgres@127.0.0.1:5454/wamn cargo test -p 
 docker stop wamn-schema-compiler-pg
 ```
 
-### [4.1] REST API gateway (crates/data/entity-access + crates/data/api + components/ingress/api-gateway)
+### [4.1] entity-access read surface (crates/data/entity-access)
+
+`crates/data/api`, `components/ingress/api-gateway`, the `apibench` gate, and
+`deploy/gates/apibench-job.yaml` were deleted; `wamn-entity-access` is the
+retained crate.
 
 ```bash
-cargo test -p wamn-entity-access -p wamn-api
-cargo clippy -p wamn-entity-access -p wamn-api --all-targets \
-  && cargo fmt -p wamn-entity-access -p wamn-api --check
-# cjv.6: every list appends the unique `id ASC` tiebreaker so OFFSET pagination is
-# stable under any user sort (C5-1). Mutation (revert to the guarded append -> both
-# sort_and_paginate_are_capped_and_parametrized and user_sort_still_appends_the_id_tiebreaker
-# fail): scratchpad/mutate_cjv6.py.
-# wamn_app + seeds two tenants + the catalog snapshot the gateway reads):
-docker run -d --rm --name wamn-api-pg -p 5455:5432 -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=wamn postgres:18
-REL=components/target/wasm32-wasip2/release
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5455/wamn \
-  ./target/release/wamn-gates --log-level error apibench \
-  --api-gateway $REL/api_gateway.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5455/wamn --mode all
-docker stop wamn-api-pg
-# In-cluster gate of record (co-located with Postgres, no cpu limit — S2 lesson;
-# WAMN_PG_ADMIN_URL is the superuser used only to provision the ephemeral schema):
-kubectl -n wamn-system apply -f deploy/gates/apibench-job.yaml
-kubectl -n wamn-system logs -f job/apibench
+cargo test -p wamn-entity-access
+cargo clippy -p wamn-entity-access --all-targets \
+  && cargo fmt -p wamn-entity-access --check
 ```
 
 ### [4.1b] catalog snapshot publish + API fixture
@@ -3752,22 +3230,6 @@ cargo build --locked --manifest-path components/Cargo.toml -p flow-http \
   components/ingress/flow-http
 ```
 
-### [POC-DM1] data model via the catalog API (wamn-521, P1 build)
-
-Docs: docs/archive/poc/poc-material-receiving.md, docs/archive/poc/poc-dm1.md
-
-```bash
-cargo test -p wamn-dm1     # drift-guard + compile checks + live-apply gate (skips w/o WAMN_DM1_PG_URL)
-cargo clippy -p wamn-dm1 --all-targets && cargo fmt -p wamn-dm1 --check
-# optional throwaway-PG live-apply gate (superuser url — provisions wamn_app,
-# skips when unset):
-docker run -d --rm --name wamn-dm1-pg -p 5463:5432 -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=wamn postgres:18
-WAMN_DM1_PG_URL=postgres://postgres:postgres@127.0.0.1:5463/wamn cargo test -p wamn-dm1
-docker stop wamn-dm1-pg
-# NOTHING in-cluster (a catalog + schema deliverable, the migrate/rls/seed
-```
-
 ### [CALLABLE-FLOWS-POC-F1 / wamn-5wd1.57] receipt-received r6
 
 Docs: docs/archive/poc/poc-f1.md
@@ -3775,21 +3237,8 @@ Docs: docs/archive/poc/poc-f1.md
 ```bash
 # recipe-test: H5-CALLABLE-F1 | system | wamn-proof-system | lib | - | callable_f1::tests:: | 6 | tests/system/src/callable_f1.rs F1 release, direct pure nodes, deterministic CTE recovery, refusals, and webhook cutover
 cargo test --locked -p wamn-proof-system --lib callable_f1::tests::
-cargo test --locked --manifest-path components/Cargo.toml \
-  -p normalize-receipt -p evaluate-specs
-cargo test --locked --manifest-path components/Cargo.toml -p flowrunner \
-  f1_supplied_node_types_dispatch_through_the_custom_abi
 cargo test --locked -p wamn-proof-conformance --lib \
   docker_component_provenance::every_embedded_component_comes_from_the_locked_builder
-
-docker build --target gates -t wamn-gates:cf-f1-<commit> .
-kind load docker-image wamn-gates:cf-f1-<commit> --name wamn
-kubectl -n wamn-system delete job callable-flow-f1 --ignore-not-found
-sed "s/wamn-gates:cf-f1-ISSUE/wamn-gates:cf-f1-<commit>/" \
-  deploy/gates/callable-flow-f1-job.yaml | kubectl -n wamn-system apply -f -
-kubectl -n wamn-system wait --for=condition=complete \
-  job/callable-flow-f1 --timeout=300s
-kubectl -n wamn-system logs job/callable-flow-f1
 ```
 
 ### [CALLABLE-FLOWS-POC-W1 / wamn-5wd1.9] composed F0/F1/F3 campaign
@@ -3797,22 +3246,14 @@ kubectl -n wamn-system logs job/callable-flow-f1
 The Wave-1 gate applies the promoted POC catalog from zero, runs the production
 invocation provider and the F0/F1/F3 proofs, checks T-CTX/T-NR, and emits one
 gate evidence record binding the exact source, image, supplied component bytes,
-POC config, schema, release inputs, and deployment identity. Replace `<commit>`
-in all three positions from the same `git rev-parse HEAD`.
+POC config, schema, release inputs, and deployment identity. The in-cluster
+campaign Job was deleted with `deploy/gates/callable-flow-wave1-job.yaml`; only
+the package proof below is runnable.
 
 ```bash
 # recipe-test: H5-CALLABLE-WAVE1 | system | wamn-proof-system | lib | - | callable_wave1::tests:: | 4 | tests/system/src/callable_wave1.rs composed F0/F1/F3 identities and T-CTX/T-NR contracts
 cargo test --locked -p wamn-proof-system --lib callable_wave1::tests::
 cargo test --locked -p wamn-proof-conformance -p wamn-proof-integration -p wamn-proof-system
-
-docker build --target gates -t wamn-gates:cf-wave1-<commit> .
-kind load docker-image wamn-gates:cf-wave1-<commit> --name wamn
-kubectl -n wamn-system delete job callable-flow-wave1 --ignore-not-found
-sed "s/ISSUE/<commit>/g" deploy/gates/callable-flow-wave1-job.yaml | \
-  kubectl -n wamn-system apply -f -
-kubectl -n wamn-system wait --for=condition=complete \
-  job/callable-flow-wave1 --timeout=600s
-kubectl -n wamn-system logs job/callable-flow-wave1
 ```
 
 ### [CALLABLE-FLOWS-POC-W2 / wamn-5wd1.10] composed F0-F4 campaign
@@ -3823,7 +3264,10 @@ gate evidence record binds the source commit, exact image tag and Kubernetes-
 observed image ID, flowrunner and all three supplied custom-node components, POC configuration
 and schema, all five graph definitions, each attachment/registration input,
 release membership, deployment identity, and the four T5 measurement-hook
-shapes. The recorded T5 hooks deliberately carry no Phase-6 budgets.
+shapes. The recorded T5 hooks deliberately carry no Phase-6 budgets. The
+in-cluster campaign Job was deleted with
+`deploy/gates/callable-flow-wave2-job.yaml`; only the package proof below is
+runnable.
 
 ```bash
 # recipe-test: H5-CALLABLE-WAVE2 | system | wamn-proof-system | lib | - | callable_wave2::tests:: | 4 | tests/system/src/callable_wave2.rs F0-F4 identity evidence, mixed-identity refusal, T5 hooks, and exact-image routing
@@ -3832,23 +3276,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-wave2-10 \
 CARGO_TARGET_DIR=/tmp/wamn-target-wave2-10 \
   cargo test --locked -p wamn-proof-conformance -p wamn-proof-integration \
     -p wamn-proof-system
-
-commit="$(git rev-parse HEAD)"
-tag="wamn-gates:cf-wave2-${commit}"
-docker build --target gates -t "${tag}" .
-kind load docker-image "${tag}" --name wamn
-# Resolve IMAGE_ID from the common sha256 digest after @ in every kind node's
-# `crictl inspecti "${tag}"` repoDigests entry.
-image_id=<kind-observed-image-id>
-kubectl -n wamn-system delete job callable-flow-wave2 --ignore-not-found
-sed -e "s/ISSUE/${commit}/g" -e "s/IMAGE_ID/${image_id}/g" \
-  deploy/gates/callable-flow-wave2-job.yaml > /tmp/callable-flow-wave2-job.yaml
-kubectl -n wamn-system apply -f /tmp/callable-flow-wave2-job.yaml
-kubectl -n wamn-system wait --for=condition=complete \
-  job/callable-flow-wave2 --timeout=600s
-kubectl -n wamn-system logs job/callable-flow-wave2
-kubectl -n wamn-system get pod -l app=callable-flow-wave2 \
-  -o jsonpath='{.items[0].status.containerStatuses[0].imageID}{"\n"}'
 ```
 
 The former callable-flow aggregate mutation campaign and state-probe helper are
@@ -3911,7 +3338,7 @@ docker rm -f wamn-ri-pg
 # old-image-absent refusal changed): matbench adds an UPDATE carrying a FULL old
 # image that evaluates end to end and fires (f-old:evt:8). (The cutbench
 # phase-3 RI-flip drill retired with cutbench at l5i9.19; the reconcile verb's
-# own live gate is ri_orch_live.) Recipe: [EVT-MAT].
+# own live gate is replica_identity_live.) Recipe: [EVT-MAT].
 (cd components && cargo build -p materializer --target wasm32-wasip2)
 ```
 
@@ -3968,8 +3395,8 @@ Mutation harness: scratchpad `mutate_l5i9_61.py` — M1 `pending_old_image_gap`
 keys on the reset direction (killed by
 `replica_identity::tests::pending_old_image_gap_is_the_flip_up_direction_by_entity_id`),
 M2 `reconcile_after_apply` plans but never applies the flips (killed by the
-`ri_orch_live` live gate), M3 the `--skip-reconcile-replica-identity` escape hatch
-inverted in publish-catalog (killed by the `ri_orch_live` live gate);
+`replica_identity_live` live gate), M3 the `--skip-reconcile-replica-identity` escape hatch
+inverted in publish-catalog (killed by the `replica_identity_live` live gate);
 apply/test/restore with sha256, DEBUG builds.
 
 ### [RUN-PLANE-RECONCILE / wamn-1wdq] reconcile-run-plane — the run-plane schema migration verb
@@ -4102,62 +3529,13 @@ Docs: docs/archive/observability/dashboards.md
 # The implementation belongs to wamn-ctl; wamn-gates only routes dashproof:
 # recipe-test: H5-DASHBOARDS | unit | wamn-ctl | lib | - | provision_dashboards::tests:: | 7 | services/ctl/src/provision_dashboards.rs dashboard drift, rendering, tenant, and encoding guards
 cargo test -p wamn-ctl --lib provision_dashboards::tests::
-# (regenerate the SRE dashboard JSON after a panel change:)
-cargo run -p wamn-ctl -- provision-dashboards --emit-sre deploy/infra/grafana/dashboards
-# Local iteration: Prometheus + Grafana (SRE dashboards file-provisioned) + a
-# throwaway registry Postgres. provision-dashboards creates the per-tenant folders;
-# dashproof --local asserts everything (Tempo/Loki health soft-skipped — no
-# backends locally; Prometheus is HARD). Images pinned to the k8s manifests.
-docker network create wamn-s5 2>/dev/null || true
-docker run -d --name laneb4e-prometheus --network wamn-s5 -p 127.0.0.1:19091:9090 \
-  -v "$PWD/deploy/infra/prometheus-local.yaml:/etc/prometheus/prometheus.yml:ro" \
-  prom/prometheus:v3.1.0
-docker run -d --name laneb4e-grafana --network wamn-s5 -p 127.0.0.1:13001:3000 \
-  -e GF_SECURITY_ADMIN_USER=admin -e GF_SECURITY_ADMIN_PASSWORD=admin \
-  -v "$PWD/deploy/infra/grafana-local.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro" \
-  -v "$PWD/deploy/infra/grafana/provisioning/dashboards/providers.yaml:/etc/grafana/provisioning/dashboards/providers.yaml:ro" \
-  -v "$PWD/deploy/infra/grafana/dashboards:/var/lib/grafana/dashboards:ro" \
-  grafana/grafana:11.4.0
-docker run -d --name laneb4e-pg --network wamn-s5 -e POSTGRES_PASSWORD=pg \
-  -p 127.0.0.1:15621:5432 postgres:18
-until docker exec laneb4e-pg pg_isready -U postgres; do sleep 1; done
-docker exec -e PGPASSWORD=pg laneb4e-pg psql -U postgres -c \
-  "CREATE SCHEMA registry;
-   CREATE TABLE registry.orgs (id text PRIMARY KEY, placement_kind text NOT NULL, pool_cluster text);
-   INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
-     VALUES ('acme','dedicated',NULL), ('globex','pooled','wamn-pg');"
-SYS=postgres://postgres:pg@127.0.0.1:15621/postgres
-until curl -sf http://127.0.0.1:13001/api/health >/dev/null; do sleep 1; done
-./target/debug/wamn-ctl provision-dashboards --grafana-url http://127.0.0.1:13001 \
-  --user admin --password admin --system-database-url "$SYS"
-./target/debug/wamn-gates --log-level info dashproof --grafana-url http://127.0.0.1:13001 \
-  --user admin --password admin --local --system-database-url "$SYS"
-docker rm -f laneb4e-prometheus laneb4e-grafana laneb4e-pg
-# In-cluster gate of record (real Prometheus + Grafana; Tempo/Loki HARD; rebake
-# the gates + ctl images ONLY — no host/guest change):
-docker build --target ctl -t wamn-ctl:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-ctl:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/infra/prometheus.yaml
-kubectl -n wamn-system create configmap grafana-dashboard-provider \
-  --from-file=providers.yaml=deploy/infra/grafana/provisioning/dashboards/providers.yaml \
-  --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
-kubectl -n wamn-system create configmap grafana-dashboards-sre \
-  --from-file=deploy/infra/grafana/dashboards/wamn-sre.json \
-  --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
-kubectl -n wamn-system apply -f deploy/infra/grafana.yaml
-kubectl -n wamn-system rollout status deploy/prometheus deploy/grafana --timeout=120s
-# per-tenant folders: a one-off ctl pod driving the Grafana API against registry.orgs
-# (creds from the grafana-admin + wamn-sysdb-superuser Secrets):
-GFPW=$(kubectl -n wamn-system get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d)
-SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
-kubectl -n wamn-system run provision-dashboards --rm -i --restart=Never \
-  --image=wamn-ctl:dev --command -- wamn-ctl provision-dashboards \
-  --grafana-url http://grafana:3000 --user admin --password "$GFPW" \
-  --system-database-url "postgres://postgres:$SYSPW@wamn-sysdb-rw:5432/wamn_system"
-kubectl -n wamn-system apply -f deploy/gates/dashproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/dashproof --timeout=180s
-kubectl -n wamn-system logs job/dashproof
 ```
+
+The `provision-dashboards` verb, `services/ctl/src/provision_dashboards.rs`, the
+`dashproof` router subcommand, `deploy/infra/grafana*`, and
+`deploy/gates/dashproof-job.yaml` were all deleted; the unit recipe above is the
+only runnable command left here.
+
 ## CF-RELEASE — immutable catalog publication (`wamn-5wd1.46`)
 
 The release writer stores canonical `wamn-catalog` artifacts in

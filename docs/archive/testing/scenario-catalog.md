@@ -37,43 +37,7 @@ Every suite and case row pins a concrete `(flow_id, flow_version)`. There is **n
 "active suite" pointer** in v0: a suite tests one specific flow version, full
 stop. The `test_suites/test_cases → flows` FK `ON DELETE CASCADE` makes the
 binding structural — dropping a flow version takes its suites and their cases
-with it (proven live:
-`services/ctl/tests/suite_promote_live.rs`, `wamn-gates suiteproof`).
-
-## Promote semantics (`copy-project-env --include definition`)
-
-The definition copy (`services/ctl/src/copy_project_env.rs`,
-`exec_copy_definition`) enumerates its artifacts explicitly. Order is
-FK-significant:
-
-1. applied catalogs (2.5 migrate engine)
-2. immutable release artifacts + membership
-3. RLS policy rows (+ re-compile/apply)
-4. event registrations (verbatim)
-5. **test suites, then test cases** (verbatim, `INSERT … ON CONFLICT DO UPDATE`)
-
-The mutable `wamn_run.flows` registry — the FK target for suites — is **not
-copied**. Immutable release publication is the authoritative flow-installation
-path (5wd1.46), so the definition copy never writes `flows.active`, and the
-destination's own flow registrations are a **precondition** of a suite-carrying
-copy rather than something the copy provides.
-
-Accordingly, the **suite-orphan guard** (block 0, the D24 shape) counts
-DESTINATION-present versions only: before any mutation it refuses the copy —
-naming the orphaned suites, mutating nothing — if a carried suite pins a flow
-version the destination does not already hold. A suite promotes only onto a
-version already present on the destination. The pure decision is
-`wamn_schema_control::check_suite_orphans`; the driver read builders are
-`wamn_schema_control::sql::select_suites_for_tenant_sql` /
-`select_flow_versions_for_tenant_sql`. `verify` compares suite/case row counts
-between src and dst.
-
-The FK is the structural backstop; the guard converts what would be a bare
-mid-copy FK error into a clean, named refusal before any mutation.
-
-Suites are still keyed on the legacy test-plane `flows` registry rather than on
-the release tables; re-keying them onto the immutable release is tracked as
-`wamn-l2mi`.
+with it.
 
 ## The envelope (`crates/scenarios/model`)
 

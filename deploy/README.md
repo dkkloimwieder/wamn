@@ -22,8 +22,7 @@ the top level. When in doubt, ask which lifecycle owns the file's create/delete.
 
 Placement judgment calls, recorded: `postgres.yaml` is platform (the shared
 long-lived fixture ~8 gates and the dispatcher point at, despite its bench
-header); `serve-echo` is gates (gate support, not product);
-`publish-catalog-job.yaml` is gates (driven through production `wamn-ctl`).
+header); `serve-echo` is gates (gate support, not product).
 
 One chart, two tiers (wamn-0h0g.15.15, rulings `.13.49` + `.13.50`): the
 runtime-operator chart is installed twice with different values, and the tier

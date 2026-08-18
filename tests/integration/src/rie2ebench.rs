@@ -4,7 +4,7 @@
 //! The coverage the l5i9.19 teardown deleted with `cutbench`'s phase 3: NO gate
 //! proves a REAL decoded WAL old image reaches the materializer AFTER a live
 //! REPLICA IDENTITY flip. `matbench` covers the old-image-absent refusal and a
-//! SYNTHESIZED FULL old image (a hand-published tape); `ri_orch_live` covers the
+//! SYNTHESIZED FULL old image (a hand-published tape); `replica_identity_live` covers
 //! ctl flip machinery on `pg_class.relreplident` — but neither drives a real
 //! reader.
 //!
