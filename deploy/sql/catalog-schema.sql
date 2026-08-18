@@ -1726,6 +1726,7 @@ GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;
 CREATE INDEX event_registrations_by_entity
     ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
 
+-- BEGIN WIRING STORAGE MIGRATION (wamn-0h0g.18.2)
 -- ---------------------------------------------------------------------------
 -- Wirings: the gated tenant graph over palette components (exe-model rev 4 R3,
 -- "wirings are data"; wamn-0h0g.18.1). A wiring definition is an immutable
@@ -1868,6 +1869,50 @@ CREATE TRIGGER wiring_activation_valid
 BEFORE INSERT OR UPDATE ON catalog.wiring_activation
 FOR EACH ROW EXECUTE FUNCTION catalog.validate_wiring_activation();
 
+-- The doorbell (wamn-0h0g.18.2). Activation is seconds, not a rollout: serving
+-- processes hold a version-keyed resolution cache, so a flip has to reach them
+-- without a restart or a poll.
+--
+-- `pg_notify` from inside the flip is delivered only when that transaction
+-- COMMITS, which is why the doorbell is Postgres and not the control-plane NATS
+-- the dispatcher rings: a NATS publish cannot be in the flip's transaction, so
+-- it either announces a flip that then rolled back or is lost with no re-hint
+-- sweep to recover it (the waker's loss tolerance is bought by the dispatcher
+-- re-hinting every due row, and pointer flips have no such sweep).
+--
+-- It rides the POINTER, not the provenance row: the pointer is what the read
+-- path serves, so binding the ring to it means no writer can move what is served
+-- without ringing. `AFTER INSERT OR UPDATE` because the first activation is an
+-- INSERT and every later flip — including the rollback to the prior version — is
+-- an UPDATE of the same key.
+--
+-- Failure mode, and the listener's obligation: PostgreSQL delivers to sessions
+-- LISTENing at commit time and queues nothing for an absent one, so a listener
+-- that reconnects has missed an unknown set of flips and must drop its whole
+-- cache rather than trust the gap.
+CREATE FUNCTION catalog.notify_wiring_activation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    PERFORM pg_notify(
+        'wamn_wiring_activation',
+        json_build_object(
+            'tenant-id', NEW.tenant_id,
+            'catalog-id', NEW.catalog_id,
+            'environment', NEW.environment,
+            'wiring-id', NEW.wiring_id,
+            'enabled', NEW.enabled,
+            'confirmed-definition-hash', NEW.confirmed_definition_hash
+        )::text
+    );
+    RETURN NULL;
+END
+$$;
+CREATE TRIGGER wiring_activation_doorbell
+AFTER INSERT OR UPDATE ON catalog.wiring_activation
+FOR EACH ROW EXECUTE FUNCTION catalog.notify_wiring_activation();
+
 -- Append-only provenance: one row per flip. `source_environment` and
 -- `source_gate_report_id` are the promote half of the provenance fact (the env
 -- a wiring was proved green in and that run's report); a local flip has no
@@ -1906,3 +1951,4 @@ GRANT SELECT ON catalog.wiring_activation_events TO wamn_app;
 CREATE TRIGGER wiring_activation_events_immutable
 BEFORE UPDATE OR DELETE ON catalog.wiring_activation_events
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+-- END WIRING STORAGE MIGRATION (wamn-0h0g.18.2)

@@ -190,7 +190,11 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     EXISTS (SELECT 1 FROM information_schema.columns \
                              WHERE table_schema = 'catalog' \
                                AND table_name = 'authoring_command_audit' \
-                               AND column_name = 'provenance_commit')",
+                               AND column_name = 'provenance_commit'), \
+                    to_regclass('catalog.wirings') IS NOT NULL, \
+                    to_regclass('catalog.wiring_tombstones') IS NOT NULL, \
+                    to_regclass('catalog.wiring_activation') IS NOT NULL, \
+                    to_regclass('catalog.wiring_activation_events') IS NOT NULL",
             &[],
         )
         .await?;
@@ -331,6 +335,34 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
                 .await
                 .context("install authoring command provenance attribution")?;
+        }
+
+        // wamn-0h0g.18.2: the wiring relations, their activation guard and the
+        // activation doorbell reach an EXISTING project database only here —
+        // `catalog-schema.sql` applies whole on a fresh install and never again.
+        // All four or none: the slice is one CREATE TABLE run, so a partial
+        // install is a reconcile, not something to re-execute over.
+        let wiring_objects = [
+            release_row.get::<_, bool>(25),
+            release_row.get::<_, bool>(26),
+            release_row.get::<_, bool>(27),
+            release_row.get::<_, bool>(28),
+        ];
+        if !wiring_objects.iter().all(|present| *present) {
+            anyhow::ensure!(
+                wiring_objects.iter().all(|present| !*present),
+                "catalog wiring storage is partially installed; reconcile it before publication"
+            );
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN WIRING STORAGE MIGRATION")
+                .expect("wiring storage migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END WIRING STORAGE MIGRATION")
+                .expect("wiring storage migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install wiring storage")?;
         }
 
         ensure_authoring_catalog_privileges(client).await?;

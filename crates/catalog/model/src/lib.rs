@@ -2,13 +2,19 @@
 //!
 //! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
 //!
-//! This crate owns only the pure definition plane. Persistence, publication,
-//! activation transitions, and compatibility readers live in effect crates.
+//! This crate owns the pure definition plane, and — since wamn-0h0g.18.2 — the
+//! statement text of the wiring-activation verb over it. The pointer's write and
+//! its env-hot read are one contract confirming one definition hash, and this is
+//! the only crate the management driver and the serving plane both already
+//! depend on. Persistence, publication, activation transitions, and
+//! compatibility readers still live in effect crates: no connection,
+//! transaction, or clock is reachable from here.
 
 mod execution_node_id;
 mod execution_plan;
 mod serving_manifest;
 mod wiring;
+mod wiring_activation;
 
 pub use execution_node_id::{ExecutionNodeId, ExecutionNodeIdError};
 pub use execution_plan::{
@@ -25,6 +31,10 @@ pub use serving_manifest::{
     ServingManifest, ServingRegistration, ServingRelease, release_manifest_configmap_name,
 };
 pub use wiring::{WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringNode};
+pub use wiring_activation::{
+    WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, flip_activation,
+    previous_confirmed_definition, record_activation_event, resolve_active_wiring,
+};
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
