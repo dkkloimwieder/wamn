@@ -3699,8 +3699,6 @@ docker stop wamn-schema-compiler-pg
 
 ### [4.1] REST API gateway (crates/data/entity-access + crates/data/api + components/ingress/api-gateway)
 
-Docs: docs/archive/platform/api-gateway.md
-
 ```bash
 cargo test -p wamn-entity-access -p wamn-api
 cargo clippy -p wamn-entity-access -p wamn-api --all-targets \
@@ -3724,52 +3722,17 @@ kubectl -n wamn-system apply -f deploy/gates/apibench-job.yaml
 kubectl -n wamn-system logs -f job/apibench
 ```
 
-### [4.1b] api-gateway SERVING deployment + catalog snapshot
-
-Docs: docs/archive/platform/api-gateway.md
+### [4.1b] catalog snapshot publish + API fixture
 
 ```bash
 # Unit/fixture boundaries: publish-catalog belongs to wamn-ctl and the API
-# fixture lives in repository test support. The host remains the serving
-# artifact and the gates package remains the deployed router.
+# fixture lives in repository test support.
 # recipe-test: H5-API-PUBLISH | unit | wamn-ctl | lib | - | publish_catalog::tests:: | 1 | services/ctl/src/publish_catalog.rs pre-I/O schema boundary
 cargo test -p wamn-ctl --lib publish_catalog::tests::
 # recipe-test: H5-API-FIXTURE | fixture | wamn-test-fixtures | lib | - | apifixture::tests:: | 2 | test-support/fixtures/apifixture.rs API catalog and floor coherence
 cargo test -p wamn-test-fixtures --lib apifixture::tests::
 cargo clippy -p wamn-host -p wamn-ctl -p wamn-gates --all-targets \
   && cargo fmt -p wamn-host -p wamn-ctl -p wamn-gates --check
-# In-cluster proof of record (needs the kind 'wamn' cluster + operator + postgres):
-docker build --target host -t wamn-host:dev . \
-  && docker build --target gates -t wamn-gates:dev .   # cached; two tags, one build
-kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kind load docker-image registry:2 --name wamn
-kubectl -n wamn-system apply -f deploy/platform/registry.yaml
-kubectl -n wamn-system rollout status deploy/registry --timeout=60s
-kubectl -n wamn-system port-forward svc/registry 5000:5000 &
-wash push localhost:5000/wamn/api-gateway:dev \
-  components/target/wasm32-wasip2/release/api_gateway.wasm --insecure
-# The host group gains --allow-insecure-registries + WAMN_PG_URL. TWO releases
-# from ONE chart (wamn-0h0g.15.15), and the ORDER matters: hostgroup-default is
-# named after the host GROUP, not the release, so the operator release must be
-# upgraded first (its `hostGroups: []` deletes the old objects) or Helm refuses
-# on ownership metadata. A fresh namespace has nothing to collide with.
-helm upgrade --install -n wamn-system wamn \
-  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.7.0 \
-  -f deploy/infra/values-wamn.yaml
-helm upgrade --install -n wamn-system wamn-host \
-  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.7.0 \
-  -f deploy/platform/values-host-default.yaml
-kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
-# Provision the project schema/floor + seed + publish the snapshot:
-kubectl -n wamn-system create configmap proof-catalog \
-  --from-file=proof-catalog.json=deploy/poc/proof-catalog.json
-kubectl -n wamn-system apply -f deploy/gates/publish-catalog-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/publish-catalog --timeout=120s
-# Deploy the gateway workload, then prove it serves over the network:
-kubectl -n wamn-system apply -f deploy/platform/api-gateway-workload.yaml
-kubectl -n wamn-system apply -f deploy/gates/apiproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/apiproof --timeout=180s
-kubectl -n wamn-system logs job/apiproof
 ```
 
 ### [4.1c] callable-flow HTTP adapter (components/ingress/flow-http)
