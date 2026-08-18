@@ -12,9 +12,9 @@ mod pool;
 
 pub use pool::{
     ExecutionInstancePool, ExecutionLease, ExecutionPoolKey, ExecutionPoolLimits,
-    ExecutionPoolSnapshot, INVOCATIONS_PER_INSTANCE, InvalidExecutionPoolLimits,
-    InvocationDisposition, PoolCapacityError, PoolCleanupError, RetirementReason,
-    ReusableExecutionInstance,
+    ExecutionPoolSnapshot, INVOCATIONS_PER_INSTANCE, IdentityBindFailed,
+    InvalidExecutionPoolLimits, InvocationDisposition, PoolCapacityError, PoolCleanupError,
+    RetirementReason, ReusableExecutionInstance,
 };
 
 use effect_writer::load_effect_writer;
@@ -45,9 +45,11 @@ use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestC
 use wasmtime_wasi_http::p3::RequestOptions;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode as P3ErrorCode;
 
+use tracing::Instrument as _;
+
 use wamn_catalog::{ExecutionRuntimeRevision, HOST_EFFECT_CONTRACT_VERSION};
 use wamn_run_state::{EffectWriterErrorKind, FailKind, ResetProjectionFence, RunStatus};
-use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
+use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION, MEMORY_CAP_BYTES};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plan_artifact::OciPlanSource;
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
@@ -58,7 +60,7 @@ use wamn_runtime::plugins::runner_plan_supply::{
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
-    self, ProductionClaimResult, ProductionReapResult, WamnPostgres,
+    self, DEFAULT_PROJECT, ProductionClaimResult, ProductionReapResult, SessionClaims, WamnPostgres,
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 
@@ -602,6 +604,16 @@ struct LiveExecution {
 pub struct ExecutionHost {
     live: Option<LiveExecution>,
     postgres: Arc<WamnPostgres>,
+    logging: Arc<WamnLogging>,
+    /// This instance's CLAIM SCOPE: the key every process-resident claim
+    /// registry — `wamn:postgres`, `wasi:logging`, the egress declaration — is
+    /// keyed by, and the id the store's `Ctx` was built with.
+    ///
+    /// It names the STORE, not the tenant. It is fixed for this instance's life
+    /// so that concurrent acquisitions of different instances can never collide
+    /// on one registry entry, and so that the ids captured into the fork's
+    /// private `CtxHttpHooks` at construction stay in agreement with it. Identity
+    /// is rebound UNDER it at every checkout — see [`ExecutionAcquisition`].
     component_id: Box<str>,
     runtime_revision: TrustedExecutionRuntimeRevision,
     /// Fixed private writer. Only expired-pre-effect projection reset is active;
@@ -611,6 +623,189 @@ pub struct ExecutionHost {
     /// [9.8] `Some` when a memory limiter is attached (a budget was configured);
     /// each drive then publishes the store's high-water into the meter.
     mem: Option<MemoryMeter>,
+    /// The trace parent for the acquisition this instance is serving, so a
+    /// host-side span raised during a guest call nests under the run that caused
+    /// it. [`tracing::Span::none`] until a checkout binds one.
+    span: tracing::Span,
+}
+
+/// Everything about one execution instance that is derived from WHO it runs for.
+///
+/// A pooled instance is fungible compute. This is the state that is not: it
+/// arrives at [`checkout`](ExecutionInstancePool::checkout) and is cleared when
+/// that checkout ends, so one warm instance can serve two tenants in sequence
+/// without either seeing the other's identity.
+///
+/// # The identity tuple, element by element
+///
+/// A PARTIAL REBIND IS THE SAME LEAK WEARING A FIX, so every element is named
+/// here with where it is rebound. Adding identity-derived state to this host
+/// without adding it here re-opens `wamn-0h0g.17.7`.
+///
+/// | Element | Rebound by |
+/// |---|---|
+/// | `app.tenant` — the RLS claim | [`SessionClaims::tenant`] → `WamnPostgres::bind_session_claims` |
+/// | project (which database) | [`SessionClaims::project`] → same |
+/// | `search_path` schema | [`SessionClaims::schema`] → same |
+/// | `app.runner` — the lease owner | [`SessionClaims::runner`] → same |
+/// | `app.role` (`wamn-0h0g.23.1`) | [`SessionClaims::role`] → same |
+/// | `app.user_id` (`wamn-0h0g.23.1`) | [`SessionClaims::user_id`] → same |
+/// | the carried `(release version, manifest digest)` | [`SessionClaims::release`] → same |
+/// | the causation run context | cleared by the same call; the runner re-declares it per run |
+/// | the `wasi:logging` `(tenant, project)` claim | [`Self::claims`] → `WamnLogging::set_claim` |
+/// | the private effect-writer's project-environment scope | [`Self::effect_writer`] |
+/// | the trace parent for this acquisition | [`Self::span`] |
+///
+/// Connection-generation resolution has no element of its own: a generation is
+/// resolved per effect by `WamnPostgres::connection_effect_snapshot`, whose
+/// scope is exactly `(tenant, project, schema)` from the claims above.
+///
+/// # What is deliberately NOT rebound, and why
+///
+/// - **The claim scope itself** (`ExecutionHost::component_id`, the store's
+///   `Ctx.component_id`). It names the store, not the tenant. Rebinding it per
+///   acquisition would desynchronize it from the workload id the fork captured
+///   into its private `CtxHttpHooks` at `Ctx` construction, which is not
+///   reachable from here.
+/// - **The store's memory limiter.** Its label is the claim scope, not an
+///   identity; its high-water and denial counters start at zero on a prewarmed
+///   instance and cannot span two acquisitions, because
+///   [`ExecutionHost::reset_invocation_state`] always fails and the pool
+///   therefore destroys this instance at the end of every checkout.
+/// - **Guest linear memory, globals and tables.** Covered by the separate
+///   `INVOCATIONS_PER_INSTANCE` argument, not by this one.
+///
+/// # The one element that cannot be rebound from here
+///
+/// `ConnectionHttp` freezes `(tenant, project)` into `Box<str>` fields when the
+/// store is constructed, and the store's `Ctx.plugins` map is private to the
+/// fork, so nothing outside it can swap the plugin for a rebound one. That is a
+/// live leak channel for the trusted HTTP effect, and it is closed HERE by
+/// failing closed rather than by rebinding: `connection_effect_snapshot` refuses
+/// a caller-supplied tenant that disagrees with the tenant bound to the claim
+/// scope. A stale `ConnectionHttp` therefore produces a denial, never another
+/// tenant's rows. Making it a rebind rather than a denial needs an owner outside
+/// this crate's file domain.
+#[derive(Debug, Clone)]
+pub struct ExecutionAcquisition {
+    /// Every `wamn:postgres` claim this checkout resolves under.
+    pub claims: SessionClaims,
+    /// The private production writer scoped to this acquisition's
+    /// project-environment, or `None` where no private writer is mounted.
+    ///
+    /// Carried already-constructed rather than built here: the client owns a
+    /// connection pool, and opening one is async while a rebind is not.
+    pub effect_writer: Option<wamn_run_state::EffectWriterClient>,
+    /// The trace parent for this acquisition. [`tracing::Span::none`] leaves
+    /// host-side spans parented wherever the driving task puts them.
+    pub span: tracing::Span,
+}
+
+impl ExecutionAcquisition {
+    /// An acquisition with no trace parent and no private writer.
+    ///
+    /// The shape a caller that has neither has — a gate, a bench, or any driver
+    /// running outside a trace. Host-side spans then parent wherever the driving
+    /// task puts them, which is what they did before this seam existed.
+    pub fn untraced(claims: SessionClaims) -> Self {
+        Self {
+            claims,
+            effect_writer: None,
+            span: tracing::Span::none(),
+        }
+    }
+}
+
+/// One acquisition's identity could not be bound to a warm execution instance.
+#[derive(Debug)]
+pub struct ExecutionIdentityBindError {
+    scope: Box<str>,
+    tenant: Box<str>,
+    source: anyhow::Error,
+}
+
+impl std::fmt::Display for ExecutionIdentityBindError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "binding tenant {} to execution claim scope {} failed: {}",
+            self.tenant, self.scope, self.source
+        )
+    }
+}
+
+impl std::error::Error for ExecutionIdentityBindError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+/// A component instance cannot be reset in place from the host.
+///
+/// The host holds no handle on a component's linear memory, globals or tables —
+/// a component exports none of them — so the only host-side zeroing of guest
+/// state is destroying the store. Failing closed here is what makes
+/// [`INVOCATIONS_PER_INSTANCE`] load-bearing rather than advisory: an
+/// [`ExecutionHost`] is destroyed at the end of every checkout, whatever the
+/// configured invocation cap says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionInstanceResetUnavailable;
+
+impl std::fmt::Display for ExecutionInstanceResetUnavailable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a component instance cannot be reset in place from the host")
+    }
+}
+
+impl std::error::Error for ExecutionInstanceResetUnavailable {}
+
+impl ReusableExecutionInstance for ExecutionHost {
+    type Identity = ExecutionAcquisition;
+    type BindError = ExecutionIdentityBindError;
+    type ResetError = ExecutionInstanceResetUnavailable;
+
+    /// The platform memory ceiling the pooling allocator caps every store at.
+    fn reserved_bytes(&self) -> usize {
+        MEMORY_CAP_BYTES
+    }
+
+    /// Rebind every element of [`ExecutionAcquisition`]'s tuple under this
+    /// instance's claim scope. The table on that type is the contract; this is
+    /// the whole of its implementation, in the same order.
+    fn bind_identity(
+        &mut self,
+        acquisition: &ExecutionAcquisition,
+    ) -> Result<(), ExecutionIdentityBindError> {
+        let claims = &acquisition.claims;
+        self.postgres
+            .bind_session_claims(&self.component_id, claims)
+            .map_err(|source| ExecutionIdentityBindError {
+                scope: self.component_id.clone(),
+                tenant: claims.tenant.as_str().into(),
+                source,
+            })?;
+        self.logging.set_claim(
+            &self.component_id,
+            &claims.tenant,
+            claims.project.as_deref().unwrap_or(DEFAULT_PROJECT),
+        );
+        self.effect_writer = acquisition.effect_writer.clone();
+        self.span = acquisition.span.clone();
+        Ok(())
+    }
+
+    /// Clear the same elements. `wamn:postgres` is the RLS-load-bearing half, so
+    /// its revocation is exact; `wasi:logging` has no removal on its plugin, and
+    /// its claim is overwritten by the next bind under this same scope.
+    fn revoke_identity(&mut self) {
+        self.postgres.revoke_session_claims(&self.component_id);
+        self.effect_writer = None;
+        self.span = tracing::Span::none();
+    }
+
+    fn reset_invocation_state(&mut self) -> Result<(), ExecutionInstanceResetUnavailable> {
+        Err(ExecutionInstanceResetUnavailable)
+    }
 }
 
 impl std::fmt::Debug for ExecutionHost {
@@ -748,7 +943,7 @@ impl ExecutionHost {
         );
         plugins.insert(
             WAMN_LOGGING_ID,
-            logging as Arc<dyn HostPlugin + Send + Sync>,
+            logging.clone() as Arc<dyn HostPlugin + Send + Sync>,
         );
         plugins.insert(
             CONNECTION_HTTP_ID,
@@ -785,12 +980,20 @@ impl ExecutionHost {
         Ok(Self {
             live: Some(LiveExecution { store, run }),
             postgres: plugin,
+            logging,
             component_id: owner.into(),
             runtime_revision,
             effect_writer,
             ttl_ms: bounded_attempt_ms(ttl_ms),
             mem,
+            span: tracing::Span::none(),
         })
+    }
+
+    /// This instance's claim scope — the key its host-side claims are registered
+    /// under. Names the STORE, never the tenant; see [`ExecutionAcquisition`].
+    pub fn claim_scope(&self) -> &str {
+        &self.component_id
     }
 
     /// Return the trusted identity retained for this loaded runtime instance.
@@ -804,7 +1007,13 @@ impl ExecutionHost {
     }
 
     /// Execute one run already selected, resolved, and leased by the host.
+    ///
+    /// The guest call runs inside this acquisition's trace parent, so every
+    /// host-side span a guest import raises — `wamn.postgres` among them — nests
+    /// under the run that caused it rather than under whichever run happened to
+    /// be current when the store was built.
     async fn call_run(&mut self, run_id: &str, payload: &str) -> anyhow::Result<u32> {
+        let span = self.span.clone();
         let call = {
             let live = self
                 .live
@@ -813,6 +1022,7 @@ impl ExecutionHost {
             live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));
             live.run
                 .call_async(&mut live.store, (run_id.to_owned(), payload.to_owned()))
+                .instrument(span)
                 .await
         };
         let (result,) = match call {
@@ -1076,11 +1286,13 @@ mod tests {
             ExecutionHost {
                 live: Some(LiveExecution { store, run }),
                 postgres,
+                logging: Arc::new(WamnLogging::from_env().expect("offline logging plugin")),
                 component_id: "deadline-gate".into(),
                 runtime_revision: TrustedExecutionRuntimeRevision::from_flowrunner_bytes(&bytes),
                 effect_writer: None,
                 ttl_ms: 40,
                 mem: None,
+                span: tracing::Span::none(),
             },
             calls,
         )
@@ -1462,6 +1674,188 @@ mod tests {
             claim_guest_input(&ready),
             Some(("ready", "{\"input\":true}"))
         );
+    }
+
+    /// Records which `acq-*` spans were entered, in order.
+    ///
+    /// Hand-rolled rather than pulled from `tracing-subscriber`: the only fact
+    /// under test is which span a guest call runs inside, and a subscriber that
+    /// answers exactly that costs less than a dependency.
+    #[derive(Default)]
+    struct AcquisitionSpanLog {
+        names: std::sync::Mutex<std::collections::HashMap<u64, &'static str>>,
+        entered: std::sync::Mutex<Vec<&'static str>>,
+        next_id: std::sync::atomic::AtomicU64,
+    }
+
+    struct RecordingSubscriber(Arc<AcquisitionSpanLog>);
+
+    impl tracing::Subscriber for RecordingSubscriber {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            let id = self
+                .0
+                .next_id
+                .fetch_add(1, Ordering::SeqCst)
+                .saturating_add(1);
+            let name = span.metadata().name();
+            if name.starts_with("acq-") {
+                self.0
+                    .names
+                    .lock()
+                    .expect("span name log poisoned")
+                    .insert(id, name);
+            }
+            tracing::span::Id::from_u64(id)
+        }
+
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+        fn event(&self, _event: &tracing::Event<'_>) {}
+
+        fn enter(&self, span: &tracing::span::Id) {
+            if let Some(name) = self
+                .0
+                .names
+                .lock()
+                .expect("span name log poisoned")
+                .get(&span.into_u64())
+            {
+                self.0
+                    .entered
+                    .lock()
+                    .expect("entered log poisoned")
+                    .push(name);
+            }
+        }
+
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    fn acquisition(tenant: &str, span: tracing::Span) -> ExecutionAcquisition {
+        ExecutionAcquisition {
+            claims: SessionClaims {
+                tenant: tenant.to_string(),
+                ..SessionClaims::default()
+            },
+            effect_writer: None,
+            span,
+        }
+    }
+
+    /// The trace-parent element of the identity tuple: a guest call runs inside
+    /// the span of the acquisition it is serving, never the previous one's.
+    ///
+    /// Without the rebind, a host-side span raised while tenant B's run is
+    /// executing would nest under whatever parent the store was built with —
+    /// cross-attributing B's database work to A's trace silently, which no claim
+    /// assertion would catch. Both mutants die here: dropping `.instrument` from
+    /// `call_run` leaves the log empty, and dropping the span assignment from
+    /// `bind_identity` leaves both calls under the same (none) parent.
+    #[tokio::test]
+    async fn each_guest_call_runs_inside_its_own_acquisition_span() {
+        let log = Arc::new(AcquisitionSpanLog::default());
+        let _subscriber = tracing::subscriber::set_default(RecordingSubscriber(log.clone()));
+
+        let (mut host, _calls) = deadline_gate(Arc::from([0, 0])).await;
+
+        host.bind_identity(&acquisition("tenant-a", tracing::info_span!("acq-a")))
+            .expect("tenant A binds");
+        host.call_run("run-a", "{}").await.expect("A drives");
+        host.revoke_identity();
+        assert!(
+            host.span.is_none(),
+            "an ended checkout leaves no trace parent behind"
+        );
+
+        host.bind_identity(&acquisition("tenant-b", tracing::info_span!("acq-b")))
+            .expect("tenant B binds");
+        host.call_run("run-b", "{}").await.expect("B drives");
+
+        // One call may enter its span more than once (a future is polled more
+        // than once), so the fact under test is the ORDER of distinct parents:
+        // A's call ran only under A, B's only under B, and nothing ran under A
+        // after B acquired.
+        let mut entered = log.entered.lock().expect("entered log poisoned").clone();
+        entered.dedup();
+        assert_eq!(
+            entered,
+            vec!["acq-a", "acq-b"],
+            "each guest call must run under the span of the acquisition it serves"
+        );
+    }
+
+    /// Binding refuses an invalid claim instead of half-writing it, and the
+    /// error names both the claim scope and the tenant that was refused.
+    #[tokio::test]
+    async fn an_invalid_claim_refuses_the_bind_and_leaves_no_identity() {
+        let (mut host, _calls) = deadline_gate(Arc::from([0])).await;
+        let scope = host.claim_scope().to_string();
+
+        let refused = host
+            .bind_identity(&acquisition("not a valid tenant", tracing::Span::none()))
+            .expect_err("an invalid tenant charset is refused");
+        assert!(
+            refused.to_string().starts_with(
+                "binding tenant not a valid tenant to execution claim scope deadline-gate failed:"
+            ),
+            "the refusal names the scope and the tenant: {refused}"
+        );
+        assert_eq!(
+            host.postgres.session_claims(&scope),
+            None,
+            "a refused bind leaves nothing resolvable"
+        );
+    }
+
+    /// Every element the acquisition tuple names is bound, and every one is
+    /// cleared again — the pair is what makes the tuple exhaustive rather than
+    /// aspirational.
+    #[tokio::test]
+    async fn binding_and_revoking_cover_the_whole_claim_tuple() {
+        let (mut host, _calls) = deadline_gate(Arc::from([0])).await;
+        let scope = host.claim_scope().to_string();
+
+        let claims = SessionClaims {
+            tenant: "tenant-a".to_string(),
+            project: Some("project-a".to_string()),
+            schema: Some("schema_a".to_string()),
+            runner: Some("runner-a".to_string()),
+            role: Some("inspector".to_string()),
+            user_id: Some("11111111-1111-4111-8111-111111111111".to_string()),
+            release: None,
+        };
+        host.bind_identity(&ExecutionAcquisition::untraced(claims.clone()))
+            .expect("the full claim tuple binds");
+        assert_eq!(host.postgres.session_claims(&scope), Some(claims));
+        assert_eq!(
+            host.logging.claim_snapshot(&scope),
+            Some(("tenant-a".to_string(), "project-a".to_string()))
+        );
+
+        // A second acquisition that declares less must not inherit more: the
+        // absent claims are removed, not left standing at the previous values.
+        host.bind_identity(&ExecutionAcquisition::untraced(SessionClaims {
+            tenant: "tenant-b".to_string(),
+            ..SessionClaims::default()
+        }))
+        .expect("a narrower claim tuple binds");
+        assert_eq!(
+            host.postgres.session_claims(&scope),
+            Some(SessionClaims {
+                tenant: "tenant-b".to_string(),
+                ..SessionClaims::default()
+            }),
+            "an acquisition that declares no schema, runner or role must get the deny floors"
+        );
+
+        host.revoke_identity();
+        assert_eq!(host.postgres.session_claims(&scope), None);
     }
 
     #[test]

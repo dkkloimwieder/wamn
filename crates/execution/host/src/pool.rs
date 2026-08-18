@@ -1,28 +1,47 @@
 //! Bounded lifecycle pool for independently stored execution instances.
 //!
-//! # Pool key, and what tenant isolation rests on (wamn-0h0g.17.1)
+//! # Pool key, and what tenant isolation rests on (wamn-0h0g.17.1, .17.7)
 //!
 //! A pool is keyed by the **component digest alone** ([`ExecutionPoolKey`]), so
 //! every wiring that resolves to the same component bytes shares one warm pool.
 //! The key deliberately carries no entitlement: warm instances are no longer
 //! partitioned by tenant, which is the whole of the cross-wiring amortization.
 //!
-//! Inside this pool, isolation rests on [`INVOCATIONS_PER_INSTANCE`]: an
-//! instance is destroyed at the end of the checkout it was handed to, so no
-//! instance ever serves two invocations, and the idle set holds only
-//! never-invoked instances. No guest-visible state written during one checkout
-//! can be observed by another.
+//! Two separate arguments carry that. The first covers state this pool stores:
+//! under [`INVOCATIONS_PER_INSTANCE`] an instance is destroyed at the end of the
+//! checkout it was handed to, so no instance ever serves two invocations and the
+//! idle set holds only never-invoked instances. No guest-visible state written
+//! during one checkout can be observed by another.
 //!
-//! That argument covers state this pool stores. It does NOT cover the identity
-//! an instance carries. At HEAD the only production store constructor
-//! (`ExecutionHost::instantiate`) binds `component_id` into the store's `Ctx`
-//! and registers the `wamn:postgres` tenant/schema/runner claims under that id
-//! at construction; nothing re-injects identity at checkout, and [`checkout`]
-//! takes no identity. A digest-keyed pool is therefore only safe while every
-//! instance under one key was constructed for the same identity. Filling one
-//! digest's pool from two identities is a cross-tenant leak, and no code here
-//! can detect it — the checkout-time injection seam it would need does not
-//! exist yet.
+//! The second covers the identity an instance carries, and it is a different
+//! argument from a different mechanism. **Reuse being off is not a mitigation
+//! for misattributed identity**: `max_invocations_per_instance = 1` protects
+//! residual GUEST state, and says nothing about whose tenant claim a warm store
+//! resolves to. `wamn-0h0g.17.1` shipped on the premise that identity was
+//! injected per checkout; it was not — it was bound once at construction and
+//! held in the store's `Ctx` plus process-resident registries keyed by component
+//! id. One digest's pool filled from two identities was therefore a cross-tenant
+//! leak that nothing here could detect.
+//!
+//! # The checkout-time identity seam (wamn-0h0g.17.7)
+//!
+//! **Instances are fungible compute; identity is per-acquisition state.**
+//! [`checkout`] takes the identity of the run it is serving and rebinds the
+//! instance to it through [`ReusableExecutionInstance::bind_identity`] before
+//! any lease is handed out, and every path that ends a checkout — repooled,
+//! retired, or dropped — clears it again through
+//! [`ReusableExecutionInstance::revoke_identity`]. An idle instance resolves to
+//! no identity at all, so a store that skipped a rebind fails closed instead of
+//! serving someone else's rows.
+//!
+//! A rebind that fails leaves an instance that may be half-bound, so it is
+//! destroyed rather than returned or repooled — [`RetirementReason::IdentityBindFailed`].
+//!
+//! What "the identity" comprises, and where each element is rebound, is
+//! enumerated by the implementor: see `ExecutionAcquisition` in this crate's
+//! root module for the production tuple. A partial rebind is the same leak
+//! wearing a fix, so an implementor that adds identity-derived state without
+//! adding it to both halves has re-opened this defect.
 //!
 //! [`checkout`]: ExecutionInstancePool::checkout
 
@@ -98,12 +117,38 @@ impl Display for InvalidExecutionPoolLimits {
 
 impl std::error::Error for InvalidExecutionPoolLimits {}
 
-/// A reusable instance must reserve bounded memory and prove complete reset.
+/// A reusable instance reserves bounded memory, takes its identity at checkout,
+/// and proves complete reset.
 pub trait ReusableExecutionInstance: Debug + Send + 'static {
+    /// Everything about this instance that is derived from WHO it runs for.
+    ///
+    /// A prewarmed instance carries none of it. The pool never inspects this
+    /// type — it is opaque here precisely because the pool must not grow an
+    /// opinion about identity beyond "rebind it at every acquisition".
+    type Identity;
+
+    /// Why one identity could not be bound to this instance.
+    type BindError: std::error::Error + Send + Sync + 'static;
+
     type ResetError: std::error::Error + Send + Sync + 'static;
 
     /// Maximum bytes this live instance may consume, not its current RSS.
     fn reserved_bytes(&self) -> usize;
+
+    /// Rebind EVERY identity-derived element of this instance to `identity`.
+    ///
+    /// Called by [`ExecutionInstancePool::checkout`] before the lease exists, so
+    /// no caller can observe the instance under the identity it last served. An
+    /// element that is identity-derived and not rebound here is a cross-tenant
+    /// leak channel; enumerate them in the implementation rather than covering
+    /// the obvious ones.
+    fn bind_identity(&mut self, identity: &Self::Identity) -> Result<(), Self::BindError>;
+
+    /// Clear every element [`bind_identity`](Self::bind_identity) installed.
+    ///
+    /// Called on every path that ends a checkout, including a failed bind and a
+    /// dropped lease, so an idle or destroyed instance resolves to no identity.
+    fn revoke_identity(&mut self);
 
     /// Clear every invocation-scoped field and guest-memory sentinel.
     fn reset_invocation_state(&mut self) -> Result<(), Self::ResetError>;
@@ -116,6 +161,9 @@ pub enum RetirementReason {
     Cancelled,
     Deadline,
     CleanupFailed,
+    /// A checkout could not rebind the instance to the acquiring identity, so
+    /// the possibly half-bound instance was destroyed instead of handed out.
+    IdentityBindFailed,
     RevisionInvalidated,
     EntitlementInvalidated,
     MaxInvocations,
@@ -268,8 +316,31 @@ where
         Ok(())
     }
 
+    /// Exclusively remove one matching instance and rebind it to `identity`.
+    ///
+    /// `Ok(None)` is "no warm instance under this key"; `Err` is "one was
+    /// available and could not be made to serve you", which destroys it rather
+    /// than leaving a half-bound instance in the idle set.
+    pub fn checkout(
+        &self,
+        key: &ExecutionPoolKey,
+        identity: &T::Identity,
+    ) -> Result<Option<ExecutionLease<T>>, IdentityBindFailed<T::BindError>> {
+        let Some(mut lease) = self.take_idle(key) else {
+            return Ok(None);
+        };
+        if let Err(source) = lease.instance_mut().bind_identity(identity) {
+            lease.retire(RetirementReason::IdentityBindFailed);
+            return Err(IdentityBindFailed {
+                digest: key.digest.clone(),
+                source,
+            });
+        }
+        Ok(Some(lease))
+    }
+
     /// Exclusively remove one matching instance from the idle set.
-    pub fn checkout(&self, key: &ExecutionPoolKey) -> Option<ExecutionLease<T>> {
+    fn take_idle(&self, key: &ExecutionPoolKey) -> Option<ExecutionLease<T>> {
         self.prune_idle();
         let mut state = self
             .shared
@@ -366,6 +437,42 @@ where
     }
 }
 
+/// A checkout could not bind its identity, so the warm instance was destroyed.
+#[derive(Debug)]
+pub struct IdentityBindFailed<E> {
+    /// The component digest whose pool the instance came from.
+    digest: Arc<str>,
+    source: E,
+}
+
+impl<E> IdentityBindFailed<E> {
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+}
+
+impl<E> Display for IdentityBindFailed<E>
+where
+    E: Display,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "binding a checkout identity to a warm {} instance failed: {}",
+            self.digest, self.source
+        )
+    }
+}
+
+impl<E> std::error::Error for IdentityBindFailed<E>
+where
+    E: std::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
 /// The pool cannot admit another live instance within its count or byte bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PoolCapacityError;
@@ -448,6 +555,24 @@ where
             .expect("live execution lease owns its instance")
     }
 
+    /// Destroy this instance now, clearing its identity first.
+    ///
+    /// Every end-of-checkout path routes through here or through the revoke at
+    /// the head of [`finish`](Self::finish), so no instance is ever destroyed or
+    /// repooled while it still resolves to the identity it served.
+    fn retire(&mut self, reason: RetirementReason) {
+        let Some(mut instance) = self.instance.take() else {
+            return;
+        };
+        instance.revoke_identity();
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("execution pool lock poisoned");
+        retire_locked(&mut state, self.reserved_bytes, reason, true);
+    }
+
     /// Complete the invocation, resetting before reuse or destroying on policy.
     pub fn finish(
         mut self,
@@ -457,6 +582,10 @@ where
             .instance
             .take()
             .expect("live execution lease owns its instance");
+        // The checkout is over the moment its outcome is known, so the identity
+        // it was bound to goes first — before any branch decides whether the
+        // instance is destroyed or returned to the idle set.
+        instance.revoke_identity();
         let reserved_bytes = self.reserved_bytes;
         if let Some(reason) = disposition.retirement() {
             let mut state = self
@@ -543,20 +672,7 @@ where
     T: ReusableExecutionInstance,
 {
     fn drop(&mut self) {
-        let Some(_instance) = self.instance.take() else {
-            return;
-        };
-        let mut state = self
-            .shared
-            .state
-            .lock()
-            .expect("execution pool lock poisoned");
-        retire_locked(
-            &mut state,
-            self.reserved_bytes,
-            RetirementReason::Cancelled,
-            true,
-        );
+        self.retire(RetirementReason::Cancelled);
     }
 }
 
@@ -607,6 +723,25 @@ mod tests {
         reservation: usize,
         reset_fails: bool,
         sentinels: InvocationSentinels,
+        /// The identity this instance currently resolves to, if any. A warm,
+        /// never-checked-out instance carries `None` and must go back to `None`
+        /// on every path that ends a checkout.
+        bound: Option<String>,
+    }
+
+    /// One acquisition's identity. `refuse` is how a bind that cannot be
+    /// completed is exercised without a live plugin.
+    #[derive(Debug)]
+    struct FixtureIdentity {
+        tenant: String,
+        refuse: bool,
+    }
+
+    fn tenant(tenant: &str) -> FixtureIdentity {
+        FixtureIdentity {
+            tenant: tenant.to_string(),
+            refuse: false,
+        }
     }
 
     #[derive(Debug)]
@@ -620,11 +755,38 @@ mod tests {
 
     impl std::error::Error for FixtureResetError {}
 
+    #[derive(Debug)]
+    struct FixtureBindError;
+
+    impl Display for FixtureBindError {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("fixture identity refused")
+        }
+    }
+
+    impl std::error::Error for FixtureBindError {}
+
     impl ReusableExecutionInstance for FixtureInstance {
+        type Identity = FixtureIdentity;
+        type BindError = FixtureBindError;
         type ResetError = FixtureResetError;
 
         fn reserved_bytes(&self) -> usize {
             self.reservation
+        }
+
+        fn bind_identity(&mut self, identity: &FixtureIdentity) -> Result<(), FixtureBindError> {
+            // Deliberately writes BEFORE refusing, so a caller that kept a
+            // refused instance would be keeping a half-bound one.
+            self.bound = Some(identity.tenant.clone());
+            if identity.refuse {
+                return Err(FixtureBindError);
+            }
+            Ok(())
+        }
+
+        fn revoke_identity(&mut self) {
+            self.bound = None;
         }
 
         fn reset_invocation_state(&mut self) -> Result<(), Self::ResetError> {
@@ -656,7 +818,18 @@ mod tests {
             reservation: 1_024,
             reset_fails: false,
             sentinels: InvocationSentinels::default(),
+            bound: None,
         }
+    }
+
+    /// Check out under a throwaway identity, for tests about lifecycle rather
+    /// than about identity.
+    fn checkout(
+        pool: &ExecutionInstancePool<FixtureInstance>,
+        key: &ExecutionPoolKey,
+    ) -> Option<ExecutionLease<FixtureInstance>> {
+        pool.checkout(key, &tenant("fixture"))
+            .expect("the fixture identity binds")
     }
 
     #[test]
@@ -667,7 +840,7 @@ mod tests {
             .expect("prewarm instance");
 
         for index in 0..6 {
-            let mut lease = pool.checkout(&key).expect("warm instance available");
+            let mut lease = checkout(&pool, &key).expect("warm instance available");
             assert_eq!(
                 lease.instance().id,
                 7,
@@ -704,11 +877,11 @@ mod tests {
                 .expect("prewarm instance");
         }
 
-        let first = pool.checkout(&key).expect("first store");
-        let second = pool.checkout(&key).expect("second store");
-        let third = pool.checkout(&key).expect("third store");
+        let first = checkout(&pool, &key).expect("first store");
+        let second = checkout(&pool, &key).expect("second store");
+        let third = checkout(&pool, &key).expect("third store");
         assert!(
-            pool.checkout(&key).is_none(),
+            checkout(&pool, &key).is_none(),
             "no store can be checked out twice"
         );
         let ids = BTreeMap::from([
@@ -768,11 +941,11 @@ mod tests {
             let key = key("bundle-a");
             pool.insert(key.clone(), fixture(0))
                 .expect("prewarm instance");
-            pool.checkout(&key)
+            checkout(&pool, &key)
                 .expect("instance")
                 .finish(disposition)
                 .expect("retirement does not clean");
-            assert!(pool.checkout(&key).is_none());
+            assert!(checkout(&pool, &key).is_none());
             assert_eq!(pool.snapshot().retirements.get(&reason), Some(&1));
         }
     }
@@ -785,8 +958,7 @@ mod tests {
         dirty.reset_fails = true;
         pool.insert(key.clone(), dirty)
             .expect("prewarm dirty fixture");
-        let failure = pool
-            .checkout(&key)
+        let failure = checkout(&pool, &key)
             .expect("instance")
             .finish(InvocationDisposition::Reusable)
             .expect_err("failed cleanup is reported");
@@ -803,7 +975,7 @@ mod tests {
 
         pool.insert(key.clone(), fixture(1))
             .expect("replacement instance");
-        drop(pool.checkout(&key).expect("dropped invocation lease"));
+        drop(checkout(&pool, &key).expect("dropped invocation lease"));
         assert_eq!(
             pool.snapshot()
                 .retirements
@@ -821,11 +993,11 @@ mod tests {
         let pool_key = key("bundle-a");
         pool.insert(pool_key.clone(), fixture(0))
             .expect("first instance");
-        pool.checkout(&pool_key)
+        checkout(&pool, &pool_key)
             .expect("first invocation")
             .finish(InvocationDisposition::Reusable)
             .expect("first reset");
-        pool.checkout(&pool_key)
+        checkout(&pool, &pool_key)
             .expect("second invocation")
             .finish(InvocationDisposition::Reusable)
             .expect("max count retirement");
@@ -838,7 +1010,7 @@ mod tests {
 
         pool.insert(pool_key.clone(), fixture(1))
             .expect("first live instance");
-        let lease = pool.checkout(&pool_key).expect("checked-out instance");
+        let lease = checkout(&pool, &pool_key).expect("checked-out instance");
         pool.insert(pool_key.clone(), fixture(2))
             .expect("second live instance");
         lease
@@ -851,7 +1023,7 @@ mod tests {
             Some(&1)
         );
 
-        let revision_lease = pool.checkout(&pool_key).expect("old digest checkout");
+        let revision_lease = checkout(&pool, &pool_key).expect("old digest checkout");
         pool.invalidate_digest("bundle-a");
         revision_lease
             .finish(InvocationDisposition::Reusable)
@@ -866,7 +1038,7 @@ mod tests {
         pool.insert(pool_key.clone(), fixture(3))
             .expect("idle instance under the stale digest");
         pool.invalidate_digest("bundle-a");
-        assert!(pool.checkout(&pool_key).is_none());
+        assert!(checkout(&pool, &pool_key).is_none());
         assert_eq!(
             pool.snapshot()
                 .retirements
@@ -881,13 +1053,171 @@ mod tests {
         expiring_pool
             .insert(expiring_key.clone(), fixture(4))
             .expect("expiring instance");
-        assert!(expiring_pool.checkout(&expiring_key).is_none());
+        assert!(checkout(&expiring_pool, &expiring_key).is_none());
         assert_eq!(
             expiring_pool
                 .snapshot()
                 .retirements
                 .get(&RetirementReason::IdleAge),
             Some(&1)
+        );
+    }
+
+    /// Two identities, ONE digest pool, INTERLEAVED checkouts.
+    ///
+    /// A checks out, B checks out, both act, both end — so the assertion is made
+    /// while BOTH leases are live. A sequential pair would pass against an
+    /// implementation that bound identity once and never rebound it; this one
+    /// cannot, because two live instances under one key must resolve to two
+    /// different identities at the same instant.
+    #[test]
+    fn interleaved_checkouts_under_one_key_never_share_an_identity() {
+        let pool = ExecutionInstancePool::new(limits()).expect("valid pool limits");
+        let key = key("bundle-a");
+        pool.insert(key.clone(), fixture(0)).expect("warm A");
+        pool.insert(key.clone(), fixture(1)).expect("warm B");
+        assert!(
+            pool.snapshot().idle_instances == 2,
+            "both prewarmed instances are idle"
+        );
+
+        let mut first = pool
+            .checkout(&key, &tenant("tenant-a"))
+            .expect("tenant A binds")
+            .expect("a warm instance is available");
+        let mut second = pool
+            .checkout(&key, &tenant("tenant-b"))
+            .expect("tenant B binds")
+            .expect("the same key still has a warm instance");
+
+        assert_eq!(first.instance().bound.as_deref(), Some("tenant-a"));
+        assert_eq!(
+            second.instance().bound.as_deref(),
+            Some("tenant-b"),
+            "the second acquisition on one digest pool must not inherit the first's identity"
+        );
+
+        first.instance_mut().sentinels.tenant = Some("a-wrote".to_string());
+        second.instance_mut().sentinels.tenant = Some("b-wrote".to_string());
+        assert_ne!(first.instance().id, second.instance().id);
+
+        first
+            .finish(InvocationDisposition::Reusable)
+            .expect("A repools");
+        second
+            .finish(InvocationDisposition::Reusable)
+            .expect("B repools");
+
+        // Both went back to the idle set, and neither carries the identity it
+        // served: a warm instance an acquisition forgot to rebind fails closed.
+        let idle = checkout(&pool, &key).expect("a repooled instance");
+        assert_eq!(idle.instance().bound.as_deref(), Some("fixture"));
+        drop(idle);
+        let untouched = pool
+            .checkout(&key, &tenant("tenant-c"))
+            .expect("tenant C binds")
+            .expect("the other repooled instance");
+        assert_eq!(untouched.instance().bound.as_deref(), Some("tenant-c"));
+    }
+
+    /// Every end-of-checkout path clears the identity before the instance is
+    /// repooled or destroyed — including a dropped lease and a failed reset.
+    #[test]
+    fn every_ending_revokes_the_identity_it_served() {
+        for disposition in [
+            InvocationDisposition::Reusable,
+            InvocationDisposition::Trap,
+            InvocationDisposition::Cancelled,
+            InvocationDisposition::Deadline,
+            InvocationDisposition::RevisionInvalidated,
+            InvocationDisposition::EntitlementInvalidated,
+        ] {
+            let pool = ExecutionInstancePool::new(limits()).expect("valid pool limits");
+            let key = key("bundle-a");
+            pool.insert(key.clone(), fixture(0)).expect("warm instance");
+            pool.checkout(&key, &tenant("tenant-a"))
+                .expect("tenant A binds")
+                .expect("a warm instance is available")
+                .finish(disposition)
+                .expect("the fixture resets cleanly");
+            if disposition == InvocationDisposition::Reusable {
+                let repooled = checkout(&pool, &key).expect("the repooled instance");
+                assert_eq!(
+                    repooled.instance().bound.as_deref(),
+                    Some("fixture"),
+                    "a repooled instance must not still resolve to tenant-a"
+                );
+            }
+        }
+
+        // A dropped lease is the cancellation path: the instance is destroyed,
+        // and its identity goes with it rather than after it.
+        let pool = ExecutionInstancePool::new(limits()).expect("valid pool limits");
+        let key = key("bundle-a");
+        pool.insert(key.clone(), fixture(0)).expect("warm instance");
+        drop(
+            pool.checkout(&key, &tenant("tenant-a"))
+                .expect("tenant A binds")
+                .expect("a warm instance is available"),
+        );
+        assert_eq!(
+            pool.snapshot()
+                .retirements
+                .get(&RetirementReason::Cancelled),
+            Some(&1)
+        );
+    }
+
+    /// A refused identity destroys the instance instead of handing it out.
+    ///
+    /// The fixture writes its identity before refusing, so an implementation
+    /// that returned the instance to the idle set would be returning a
+    /// half-bound one — and the next checkout would inherit it.
+    #[test]
+    fn a_refused_identity_destroys_the_instance() {
+        let pool = ExecutionInstancePool::new(limits()).expect("valid pool limits");
+        let key = key("bundle-a");
+        pool.insert(key.clone(), fixture(0)).expect("warm instance");
+
+        let refused = pool
+            .checkout(
+                &key,
+                &FixtureIdentity {
+                    tenant: "tenant-a".to_string(),
+                    refuse: true,
+                },
+            )
+            .expect_err("a refused identity is an error, not an empty pool");
+        assert_eq!(
+            refused.to_string(),
+            "binding a checkout identity to a warm bundle-a instance failed: \
+             fixture identity refused"
+        );
+        assert_eq!(refused.digest(), "bundle-a");
+        assert_eq!(
+            pool.snapshot()
+                .retirements
+                .get(&RetirementReason::IdentityBindFailed),
+            Some(&1)
+        );
+        assert!(
+            checkout(&pool, &key).is_none(),
+            "the half-bound instance was destroyed, not repooled"
+        );
+        assert_eq!(pool.snapshot().live_instances, 0);
+    }
+
+    /// An empty pool is `Ok(None)`, not an error: "nothing warm here" and "one
+    /// was here and could not serve you" are different answers to a caller that
+    /// has to decide whether to build a fresh instance.
+    #[test]
+    fn an_empty_pool_is_not_an_identity_failure() {
+        let pool: ExecutionInstancePool<FixtureInstance> =
+            ExecutionInstancePool::new(limits()).expect("valid pool limits");
+        assert!(
+            pool.checkout(&key("bundle-a"), &tenant("tenant-a"))
+                .expect("an empty pool is not a bind failure")
+                .is_none()
         );
     }
 }

@@ -51,7 +51,7 @@ mod types;
 
 pub use claims::{
     ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, RunReleaseBinding,
-    WamnPostgres,
+    SessionClaims, WamnPostgres,
 };
 pub use pool::{
     CheckoutProbe, CredentialProvider, K8sSecretProvider, ProjectConfig, StaticCredentialProvider,

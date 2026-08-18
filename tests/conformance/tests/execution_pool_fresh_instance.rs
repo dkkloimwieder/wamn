@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use wamn_execution_host::{
-    ExecutionInstancePool, ExecutionPoolKey, ExecutionPoolLimits, INVOCATIONS_PER_INSTANCE,
-    InvocationDisposition, RetirementReason, ReusableExecutionInstance,
+    ExecutionInstancePool, ExecutionLease, ExecutionPoolKey, ExecutionPoolLimits,
+    INVOCATIONS_PER_INSTANCE, InvocationDisposition, RetirementReason, ReusableExecutionInstance,
     TrustedExecutionRuntimeRevision,
 };
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MEMORY_CAP_BYTES, build_engine};
@@ -119,6 +119,11 @@ fn window_ticks() -> u64 {
 struct PooledGuest {
     store: Store<SharedCtx>,
     run: TypedFunc<(String, String), (Result<u32, String>,)>,
+    /// The tenant this store currently resolves to, if any. This file is about
+    /// GUEST state rather than identity — `execution_pool_checkout_identity.rs`
+    /// owns that proof — but the fixture carries the field so it cannot quietly
+    /// claim an identity-free store while holding one.
+    bound: Option<String>,
 }
 
 impl std::fmt::Debug for PooledGuest {
@@ -150,6 +155,8 @@ impl std::fmt::Display for HostSideResetUnavailable {
 impl std::error::Error for HostSideResetUnavailable {}
 
 impl ReusableExecutionInstance for PooledGuest {
+    type Identity = String;
+    type BindError = std::convert::Infallible;
     type ResetError = HostSideResetUnavailable;
 
     fn reserved_bytes(&self) -> usize {
@@ -157,9 +164,28 @@ impl ReusableExecutionInstance for PooledGuest {
         64 * 1024
     }
 
+    fn bind_identity(&mut self, tenant: &String) -> Result<(), Self::BindError> {
+        self.bound = Some(tenant.clone());
+        Ok(())
+    }
+
+    fn revoke_identity(&mut self) {
+        self.bound = None;
+    }
+
     fn reset_invocation_state(&mut self) -> Result<(), Self::ResetError> {
         Err(HostSideResetUnavailable)
     }
+}
+
+/// Check out under a single throwaway tenant: these proofs vary the invocation,
+/// not the identity.
+fn checkout(
+    pool: &ExecutionInstancePool<PooledGuest>,
+    key: &ExecutionPoolKey,
+) -> Option<ExecutionLease<PooledGuest>> {
+    pool.checkout(key, &"pool-gate-tenant".to_string())
+        .expect("binding a pool-gate identity cannot fail")
 }
 
 /// Compile the guest on the production engine and pre-instantiate it once.
@@ -213,7 +239,11 @@ async fn prewarm(engine: &Engine, pre: &InstancePre<SharedCtx>) -> PooledGuest {
     let run = instance
         .get_typed_func(&mut store, "run")
         .expect("the prewarmed store exports run");
-    PooledGuest { store, run }
+    PooledGuest {
+        store,
+        run,
+        bound: None,
+    }
 }
 
 /// One checkout's work, mirroring `ExecutionHost::call_run`: re-arm this
@@ -267,7 +297,7 @@ async fn second_invocation_on_one_pool_key_sees_zeroed_guest_state_and_a_fresh_e
             .expect("prewarm one store from the per-digest InstancePre");
     }
 
-    let mut first = pool.checkout(&key).expect("a warm store is available");
+    let mut first = checkout(&pool, &key).expect("a warm store is available");
     assert_eq!(
         drive(first.instance_mut(), "run-a")
             .await
@@ -286,9 +316,8 @@ async fn second_invocation_on_one_pool_key_sees_zeroed_guest_state_and_a_fresh_e
         "reuse is off: the instance does not survive the checkout it served"
     );
 
-    let mut second = pool
-        .checkout(&key)
-        .expect("the same key still has a warm store");
+    let mut second =
+        checkout(&pool, &key).expect("the same key still has a warm store");
     assert_eq!(
         drive(second.instance_mut(), "run-b")
             .await
@@ -333,7 +362,7 @@ async fn a_recycled_pooling_slot_carries_no_bytes_from_the_destroyed_instance() 
 
     pool.insert(key.clone(), prewarm(&engine, &pre).await)
         .expect("prewarm one store");
-    let mut first = pool.checkout(&key).expect("a warm store is available");
+    let mut first = checkout(&pool, &key).expect("a warm store is available");
     assert_eq!(
         drive(first.instance_mut(), "dirty")
             .await
@@ -351,7 +380,7 @@ async fn a_recycled_pooling_slot_carries_no_bytes_from_the_destroyed_instance() 
 
     pool.insert(key.clone(), prewarm(&engine, &pre).await)
         .expect("prewarm into the freed slot");
-    let mut second = pool.checkout(&key).expect("the recycled store");
+    let mut second = checkout(&pool, &key).expect("the recycled store");
     assert_eq!(
         drive(second.instance_mut(), "recycled")
             .await
@@ -379,7 +408,7 @@ async fn an_over_budget_invocation_is_interrupted_on_the_production_engine() {
     pool.insert(key.clone(), prewarm(&engine, &pre).await)
         .expect("prewarm one store");
 
-    let mut lease = pool.checkout(&key).expect("a warm store is available");
+    let mut lease = checkout(&pool, &key).expect("a warm store is available");
     let trapped = drive(lease.instance_mut(), "over-budget")
         .await
         .expect_err("five ticks exceeds the four-tick window");

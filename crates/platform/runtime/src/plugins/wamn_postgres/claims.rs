@@ -98,6 +98,37 @@ pub struct ReleaseIdentity {
     pub manifest_digest: ManifestDigest,
 }
 
+/// The complete host-injected claim set one component id resolves to.
+///
+/// Every field is a registry this plugin keys by component id, so this type is
+/// the whole of what [`WamnPostgres::bind_session_claims`] writes and
+/// [`WamnPostgres::revoke_session_claims`] clears. Adding a registry without
+/// adding a field here leaves a claim that no acquisition rebinds — which is
+/// exactly the cross-tenant leak `wamn-0h0g.17.7` closes.
+///
+/// `None` means *no claim*, not *keep the previous one*: the deny floors
+/// (`app.role` = `''`, `app.user_id` = NULL, no `search_path` override) are what
+/// an acquisition that declares nothing must get.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionClaims {
+    /// `app.tenant` — the RLS claim. Required: a session with no tenant is
+    /// refused by [`WamnPostgres::require_tenant`] rather than run unscoped.
+    pub tenant: String,
+    /// Which project database this session resolves against. `None` ⇒ the
+    /// default project.
+    pub project: Option<String>,
+    /// `SET LOCAL search_path`. `None` ⇒ the server's own search_path.
+    pub schema: Option<String>,
+    /// `app.runner` — the durable-queue lease owner.
+    pub runner: Option<String>,
+    /// `app.role` — the caller's `roles.name` for compiled per-role RLS.
+    pub role: Option<String>,
+    /// `app.user_id` — the caller's `users.id` for compiled ownership RLS.
+    pub user_id: Option<String>,
+    /// The `(release version, manifest digest)` the claiming pod carries.
+    pub release: Option<ReleaseIdentity>,
+}
+
 /// Host-only identity used to load one HTTP effect authorization snapshot.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionEffectLookup<'a> {
@@ -859,6 +890,169 @@ impl WamnPostgres {
             .cloned()
     }
 
+    /// Bind EVERY per-component-id claim registry this plugin keeps to one
+    /// identity, for the length of one execution checkout (wamn-0h0g.17.7).
+    ///
+    /// The registries are process-resident and keyed by component id, so a
+    /// component id is a *claim scope*, not a fact about which tenant a store
+    /// was built for. This is the write half of that scope: a pooled instance is
+    /// fungible compute, and the identity it serves arrives here at acquisition
+    /// rather than at construction. Every registry
+    /// [`revoke_session_claims`](Self::revoke_session_claims) clears is written
+    /// here, so the two are exhaustive over the same set — a claim added to one
+    /// and not the other is a leak channel.
+    ///
+    /// Absent optional claims REMOVE any prior registration rather than leaving
+    /// it standing: an acquisition that declares no schema must not inherit the
+    /// previous acquisition's `search_path`.
+    ///
+    /// Validation is the same as the individual `set_*` setters, so an invalid
+    /// claim is refused here and the caller destroys the instance rather than
+    /// serving it under a half-written identity.
+    pub fn bind_session_claims(
+        &self,
+        component_id: &str,
+        claims: &SessionClaims,
+    ) -> anyhow::Result<()> {
+        self.set_tenant(component_id, &claims.tenant)?;
+        match claims.project.as_deref() {
+            Some(project) => self.set_project(component_id, project)?,
+            None => drop(
+                self.projects
+                    .write()
+                    .expect("projects lock poisoned")
+                    .remove(component_id),
+            ),
+        }
+        match claims.schema.as_deref() {
+            Some(schema) => self.set_schema(component_id, schema)?,
+            None => drop(
+                self.schemas
+                    .write()
+                    .expect("schemas lock poisoned")
+                    .remove(component_id),
+            ),
+        }
+        match claims.runner.as_deref() {
+            Some(runner) => self.set_runner(component_id, runner)?,
+            None => drop(
+                self.runners
+                    .write()
+                    .expect("runners lock poisoned")
+                    .remove(component_id),
+            ),
+        }
+        match claims.role.as_deref() {
+            Some(role) => self.set_role(component_id, role)?,
+            None => drop(
+                self.roles
+                    .write()
+                    .expect("roles lock poisoned")
+                    .remove(component_id),
+            ),
+        }
+        match claims.user_id.as_deref() {
+            Some(user_id) => self.set_user_id(component_id, user_id)?,
+            None => drop(
+                self.users
+                    .write()
+                    .expect("users lock poisoned")
+                    .remove(component_id),
+            ),
+        }
+        match claims.release.as_ref() {
+            Some(release) => self.set_release_identity(
+                component_id,
+                release.release_version,
+                release.manifest_digest.clone(),
+            )?,
+            None => drop(
+                self.release_identities
+                    .write()
+                    .expect("release identities lock poisoned")
+                    .remove(component_id),
+            ),
+        }
+        // Causation is RUN-scoped, declared by the trusted runner through
+        // `wamn:runner/causation` once the run is in hand. A binding acquisition
+        // has no run yet, so it starts undeclared — carrying the previous
+        // acquisition's run context forward would misattribute its CDC stitch.
+        self.current_run
+            .write()
+            .expect("current_run lock poisoned")
+            .remove(component_id);
+        Ok(())
+    }
+
+    /// Read back the claim set one component id currently resolves to.
+    ///
+    /// `None` is the deny floor: no tenant is bound, so
+    /// [`require_tenant`](Self::require_tenant) refuses every call made under
+    /// this id. That is what an idle, never-acquired execution instance must
+    /// report, and it is the read half of the checkout-identity seam — the pair
+    /// this and [`bind_session_claims`](Self::bind_session_claims) form is what
+    /// lets a proof assert that two concurrent acquisitions never share one
+    /// identity.
+    pub fn session_claims(&self, component_id: &str) -> Option<SessionClaims> {
+        Some(SessionClaims {
+            tenant: self.tenant_for(component_id)?,
+            project: self
+                .projects
+                .read()
+                .expect("projects lock poisoned")
+                .get(component_id)
+                .cloned(),
+            schema: self.schema_for(component_id),
+            runner: self.runner_for(component_id),
+            role: self.role_for(component_id),
+            user_id: self.user_id_for(component_id),
+            release: self.release_identity_for(component_id),
+        })
+    }
+
+    /// Clear every registration [`bind_session_claims`](Self::bind_session_claims)
+    /// installed under one component id.
+    ///
+    /// Called when a checkout ends, on every path — repooled, retired, or
+    /// dropped. An idle instance that still resolved a tenant would be a warm
+    /// store carrying identity, which is the whole defect this seam closes; and
+    /// a `require_tenant` failure is how an unbound instance fails closed
+    /// instead of serving someone else's rows.
+    pub fn revoke_session_claims(&self, component_id: &str) {
+        self.tenants
+            .write()
+            .expect("tenants lock poisoned")
+            .remove(component_id);
+        self.projects
+            .write()
+            .expect("projects lock poisoned")
+            .remove(component_id);
+        self.schemas
+            .write()
+            .expect("schemas lock poisoned")
+            .remove(component_id);
+        self.runners
+            .write()
+            .expect("runners lock poisoned")
+            .remove(component_id);
+        self.roles
+            .write()
+            .expect("roles lock poisoned")
+            .remove(component_id);
+        self.users
+            .write()
+            .expect("users lock poisoned")
+            .remove(component_id);
+        self.release_identities
+            .write()
+            .expect("release identities lock poisoned")
+            .remove(component_id);
+        self.current_run
+            .write()
+            .expect("current_run lock poisoned")
+            .remove(component_id);
+    }
+
     /// Reap EVERY per-component-id claim registry this plugin keeps for a workload
     /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
     /// the caller's role / user id, the carried release identity, and the
@@ -1017,6 +1211,30 @@ impl WamnPostgres {
 
     /// Load every host-derived HTTP authorization input in one read-only
     /// transaction under the component's injected tenant and run-state schema.
+    ///
+    /// # Why the caller's tenant is checked against the registry (wamn-0h0g.17.7)
+    ///
+    /// `tenant` arrives from `ConnectionHttp`, which froze it into a `Box<str>`
+    /// when its store was constructed
+    /// (`crates/platform/runtime/src/plugins/connection_http.rs:77`). That value
+    /// is NOT rebound at checkout — the store's `Ctx.plugins` map is private to
+    /// the fork, so nothing outside it can swap the plugin — while every other
+    /// claim on this path IS
+    /// ([`bind_session_claims`](Self::bind_session_claims)). A pooled instance
+    /// serving tenant B would therefore carry tenant A's frozen value here and
+    /// read A's rows under B's run.
+    ///
+    /// This plugin's registry is the authority on a component id's tenant, so a
+    /// caller-supplied tenant that DISAGREES with it is refused rather than
+    /// honored. The check is a denial, not a correction: silently substituting
+    /// the registered tenant would hide the divergence it exists to catch.
+    ///
+    /// An UNBOUND component id falls through to the caller's tenant, which is
+    /// the pre-seam behaviour. Every instance a checkout hands out has a bound
+    /// tenant — [`bind_session_claims`](Self::bind_session_claims) always writes
+    /// one — so the disagreement check fires on exactly the reachable leak.
+    /// Refusing the unbound case too would be stronger; it is left alone because
+    /// the only callers it would change are outside this module.
     pub async fn connection_effect_snapshot(
         &self,
         component_id: &str,
@@ -1024,6 +1242,13 @@ impl WamnPostgres {
         tenant: &str,
         lookup: &ConnectionEffectLookup<'_>,
     ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
+        if let Some(registered) = self.tenant_for(component_id) {
+            anyhow::ensure!(
+                registered == tenant,
+                "HTTP effect authorization tenant {tenant:?} disagrees with the tenant bound \
+                 to component {component_id:?}; refusing to resolve under a stale identity"
+            );
+        }
         let schema = self.schema_for(component_id);
         let (conn, policy) = self
             .checkout(project)
@@ -2213,6 +2438,200 @@ mod tests {
             .expect("drop the per-user RLS fixture");
     }
 
+    /// wamn-0h0g.17.7 — `ConnectionHttp` freezes its `(tenant, project)` at store
+    /// construction and cannot be rebound at checkout, so the registry has to
+    /// refuse it when the two disagree.
+    ///
+    /// Offline on purpose: the check runs before any pool is reached, so a
+    /// disagreement is refused with THIS message while agreement falls through
+    /// to the (absent) connection. Both halves are asserted, because a guard
+    /// that refused everything would pass the first alone.
+    #[tokio::test]
+    async fn effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim() {
+        const COMPONENT: &str = "warm-instance-0";
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            database_url: None,
+            pool_max_size: 1,
+            wait_timeout_ms: 100,
+            statement_timeout_ms: 100,
+            row_limit: 10,
+        })
+        .unwrap();
+        pg.bind_session_claims(
+            COMPONENT,
+            &SessionClaims {
+                tenant: "tenant-b".to_string(),
+                ..SessionClaims::default()
+            },
+        )
+        .expect("the acquiring tenant binds");
+
+        let lookup = ConnectionEffectLookup {
+            run_id: "run",
+            root_plan_hash: "root",
+            current_plan_hash: "current",
+            frame_id: 1,
+            local_node_id: "node",
+            occurrence: 0,
+            source_artifact_hash: "artifact",
+            requirement_name: "manager",
+        };
+
+        // A stale ConnectionHttp still carrying the tenant its store was BUILT
+        // for is refused before it can read a row.
+        let stale = pg
+            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup)
+            .await
+            .expect_err("a disagreeing tenant is refused");
+        assert!(
+            stale.to_string().contains(
+                "HTTP effect authorization tenant \"tenant-a\" disagrees with the tenant bound"
+            ),
+            "the refusal names the divergence rather than any other failure: {stale}"
+        );
+
+        // The agreeing tenant gets past the guard and fails only on the absent
+        // connection, so the guard is not simply refusing everything.
+        let agreeing = pg
+            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-b", &lookup)
+            .await
+            .expect_err("an offline plugin has no connection to resolve against");
+        assert!(
+            !agreeing.to_string().contains("disagrees with the tenant bound"),
+            "the bound tenant must pass the guard: {agreeing}"
+        );
+    }
+
+    /// The 3.2 tenant floor over rows belonging to TWO tenants, so a claim that
+    /// resolved to the wrong tenant returns the wrong rows instead of none.
+    fn two_tenant_rls_fixture_sql(schema: &str, probe: &str, a: &str, b: &str) -> String {
+        format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE; \
+             DROP ROLE IF EXISTS {probe}; \
+             CREATE ROLE {probe} LOGIN PASSWORD '{probe}' NOSUPERUSER NOBYPASSRLS; \
+             CREATE SCHEMA {schema}; \
+             CREATE TABLE {schema}.dispositions (tenant_id text NOT NULL, id int NOT NULL); \
+             ALTER TABLE {schema}.dispositions ENABLE ROW LEVEL SECURITY; \
+             CREATE POLICY dispositions_tenant ON {schema}.dispositions \
+                 USING (tenant_id = NULLIF(current_setting('app.tenant', true), '')); \
+             INSERT INTO {schema}.dispositions \
+                 VALUES ('{a}', 1), ('{a}', 2), ('{b}', 3); \
+             GRANT USAGE ON SCHEMA {schema} TO {probe}; \
+             GRANT SELECT ON {schema}.dispositions TO {probe};"
+        )
+    }
+
+    /// wamn-0h0g.17.7 — two tenants bound through the checkout seam, INTERLEAVED,
+    /// each seeing only its own rows under real RLS.
+    ///
+    /// [`WamnPostgres::bind_session_claims`] is exactly what
+    /// `ExecutionInstancePool::checkout` calls, and `app.tenant` is exactly what
+    /// the tenant policy gates on, so this is the row-level half of the seam's
+    /// acceptance: `tests/conformance/tests/execution_pool_checkout_identity.rs`
+    /// proves two concurrent checkouts on ONE digest pool bind two different
+    /// claim sets, and this proves that two such claim sets admit two disjoint
+    /// row sets on a server that cannot be talked out of it — the probe role is
+    /// NOSUPERUSER NOBYPASSRLS.
+    ///
+    /// The interleaving is what makes it adversarial: A reads, B reads, A reads
+    /// again. An implementation holding one claim per pool rather than one per
+    /// acquisition passes the first two reads and fails the third.
+    #[tokio::test]
+    async fn live_interleaved_bound_scopes_each_see_only_their_own_rows() {
+        const TENANT_A: &str = "seam-live-a";
+        const TENANT_B: &str = "seam-live-b";
+
+        let Some(admin_url) = test_pg_url() else {
+            return;
+        };
+        let suffix = std::process::id();
+        let schema = format!("wamn_seam_{suffix}");
+        let probe = format!("wamn_seam_probe_{suffix}");
+        let admin = connect_raw(&admin_url).await;
+        admin
+            .batch_execute(&two_tenant_rls_fixture_sql(
+                &schema, &probe, TENANT_A, TENANT_B,
+            ))
+            .await
+            .expect("seed the two-tenant RLS fixture as the superuser owner");
+
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some(database_url_for_role(&admin_url, &probe, &probe)),
+            pool_max_size: 2,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .unwrap();
+
+        // Two warm instances of ONE component digest, acquired by two tenants.
+        // The scopes name the INSTANCES; the tenants arrive with the acquisition.
+        let scope_a = "warm-instance-0";
+        let scope_b = "warm-instance-1";
+        let claims = |tenant: &str| SessionClaims {
+            tenant: tenant.to_string(),
+            schema: Some(schema.clone()),
+            ..SessionClaims::default()
+        };
+        pg.bind_session_claims(scope_a, &claims(TENANT_A))
+            .expect("tenant A's acquisition binds");
+        pg.bind_session_claims(scope_b, &claims(TENANT_B))
+            .expect("tenant B's acquisition binds");
+
+        // CONTROL: the table is reachable on this path at all, so a zero below is
+        // a policy denying rather than a broken fixture or search_path.
+        assert_eq!(
+            visible_rows(&pg, scope_a, "SELECT count(*) FROM dispositions").await,
+            1,
+            "control: the probe role must reach the fixture table"
+        );
+
+        assert_eq!(
+            visible_rows(&pg, scope_a, "SELECT id FROM dispositions ORDER BY id").await,
+            2,
+            "A sees exactly its own two rows"
+        );
+        assert_eq!(
+            visible_rows(&pg, scope_b, "SELECT id FROM dispositions ORDER BY id").await,
+            1,
+            "B sees exactly its own one row, never A's"
+        );
+        assert_eq!(
+            visible_rows(&pg, scope_a, "SELECT id FROM dispositions ORDER BY id").await,
+            2,
+            "A's rows are unchanged by B's acquisition of the same digest's pool"
+        );
+
+        // Ending A's checkout revokes A's identity and nothing else. The refusal
+        // is matched on the NO-TENANT code specifically: a revoke that cleared
+        // only the search_path would also make this query fail, for a reason that
+        // has nothing to do with isolation.
+        pg.revoke_session_claims(scope_a);
+        assert_eq!(pg.session_claims(scope_a), None);
+        let refused = pg
+            .one_shot(scope_a, "SELECT id FROM dispositions", &[], true)
+            .await
+            .err()
+            .expect("an unbound claim scope cannot query at all");
+        assert!(
+            matches!(&refused, PgError::QueryError((code, _)) if code == "WAMN0"),
+            "an instance whose checkout ended must resolve NO tenant, not merely \
+             fail for some other reason: {refused:?}"
+        );
+        assert_eq!(
+            visible_rows(&pg, scope_b, "SELECT id FROM dispositions ORDER BY id").await,
+            1,
+            "revoking A must not disturb B's live identity"
+        );
+
+        admin
+            .batch_execute(&format!(
+                "DROP SCHEMA {schema} CASCADE; DROP OWNED BY {probe}; DROP ROLE {probe};"
+            ))
+            .await
+            .expect("drop the two-tenant RLS fixture");
+    }
+
     // R18 — the post_create hook runs on connect; a successful checkout from the
     // pool proves the assertion passed on this server (stock PG18 = on).
     #[tokio::test]
@@ -2622,6 +3041,14 @@ mod tests {
             row_limit: 1_000,
         })
         .expect("construct production PostgreSQL plugin");
+        // wamn-0h0g.17.7: the registry is the authority on this component's
+        // tenant, so this binds the AGREEING case the production path always
+        // has — `ExecutionHost::instantiate` feeds the same tenant to the claim
+        // registry and to `ConnectionHttp`. The disagreeing case is refused; see
+        // `effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim`.
+        postgres
+            .set_tenant(COMPONENT, TENANT)
+            .expect("bind the production effect tenant claim");
         postgres
             .set_schema(COMPONENT, "wamn_run")
             .expect("set production run-state search path");
