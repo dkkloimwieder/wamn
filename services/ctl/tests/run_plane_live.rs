@@ -2191,11 +2191,11 @@ async fn rerun_lineage_cutover_leg(su: &Client) {
                       AND pg_get_constraintdef(con.oid,true) LIKE '%event_root_run_id%' \
                       AND pg_get_constraintdef(con.oid,true) LIKE '%event_depth%'), \
                    has_column_privilege('wamn_app','{SCHEMA}.runs','event_source_run_id','INSERT') \
-                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_source_run_id','UPDATE') \
+                     AND NOT has_column_privilege('wamn_app','{SCHEMA}.runs','event_source_run_id','UPDATE') \
                      AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_root_run_id','INSERT') \
-                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_root_run_id','UPDATE') \
+                     AND NOT has_column_privilege('wamn_app','{SCHEMA}.runs','event_root_run_id','UPDATE') \
                      AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_depth','INSERT') \
-                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_depth','UPDATE')"
+                     AND NOT has_column_privilege('wamn_app','{SCHEMA}.runs','event_depth','UPDATE')"
             ),
             &[],
         )
@@ -2203,6 +2203,10 @@ async fn rerun_lineage_cutover_leg(su: &Client) {
         .expect("read retained event-lineage contract");
     assert!(retained_event_contract.get::<_, bool>(0));
     assert!(retained_event_contract.get::<_, bool>(1));
+    // Event lineage is INSERT-ONCE for the guest role (wamn-0h0g.12.40): the
+    // admission writes it and `runs_event_lineage_immutable` refuses every
+    // later change, so the app must hold INSERT and must NOT hold UPDATE. This
+    // used to demand both, asserting an authority the trigger forbids.
     assert!(retained_event_contract.get::<_, bool>(2));
     assert!(
         reconcile_run_plane::reconcile(su, &schema(), false)

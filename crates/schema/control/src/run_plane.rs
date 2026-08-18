@@ -2662,7 +2662,10 @@ pub struct RunPlaneObservation {
     /// Effective `wamn_app` authority on the run capture carrier. The first
     /// value is a table-level INSERT/UPDATE grant (which covers every column);
     /// the second is effective INSERT/UPDATE on `runs.capture_mode` itself;
-    /// the third proves app INSERT+UPDATE on every other run column.
+    /// the third proves the live column grants MATCH the ratified sets
+    /// ([`RUNS_APP_INSERT_COLUMNS`] / [`RUNS_APP_UPDATE_COLUMNS`]) exactly —
+    /// not that the app holds INSERT+UPDATE on every non-capture column, which
+    /// a correctly confined table can never satisfy (wamn-0h0g.12.40).
     pub app_run_capture_privileges: (bool, bool, bool),
     /// Direct table grants for the authoring-state security surface, keyed by
     /// `(schema, table, grantee)` and containing uppercase privilege names.
@@ -3177,8 +3180,14 @@ ALTER TABLE {target}.runs
     ADD CONSTRAINT runs_execution_bundle_fk
         FOREIGN KEY (tenant_id, execution_bundle_hash)
         REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash);
-GRANT INSERT (execution_bundle_hash, release_version, manifest_digest),
-      UPDATE (execution_bundle_hash, release_version, manifest_digest)
+-- The cutover restores only the RATIFIED authority for the columns it adds
+-- (wamn-0h0g.12.40): `execution_bundle_hash` is admission-time INSERT only, and
+-- the claim record is UPDATE only. Granting all three both ways re-opened, on
+-- the legacy migration path, exactly what run-state.sql closes for fresh
+-- installs — and the pin trigger below is BEFORE UPDATE, so it never gated the
+-- INSERT half at all.
+GRANT INSERT (execution_bundle_hash),
+      UPDATE (release_version, manifest_digest)
     ON {target}.runs TO wamn_app;
 DROP INDEX IF EXISTS {target}.runs_release;
 DROP INDEX IF EXISTS {target}.runs_execution_bundle;
@@ -3227,36 +3236,114 @@ FOR EACH ROW EXECUTE FUNCTION {target}.guard_run_admission_pins_immutable();"#
     )
 }
 
+/// The exact `runs` columns `wamn_app` may INSERT (wamn-0h0g.12.40).
+///
+/// This is the ratified set that `deploy/sql/run-state.sql` grants, NOT "every
+/// canonical column except `capture_mode`". It is the column list of the
+/// callable admission's run insert, which subsumes every other app-role insert.
+/// A column added to `runs` does not join this set by being added; it joins by
+/// being written by a statement `wamn_app` executes, and then by being named
+/// here.
+const RUNS_APP_INSERT_COLUMNS: &[&str] = &[
+    "admission_context_version",
+    "attachment_id",
+    "catalog_id",
+    "catalog_version",
+    "environment",
+    "event_depth",
+    "event_root_run_id",
+    "event_source_run_id",
+    "execution_bundle_hash",
+    "flow_id",
+    "flow_version",
+    "idempotency_key",
+    "input_json",
+    "invocation_context",
+    "platform_revision",
+    "registration_id",
+    "response_deadline_at",
+    "run_deadline_at",
+    "run_id",
+    "status",
+    "tenant_id",
+    "trigger_source",
+];
+
+/// The exact `runs` columns `wamn_app` may UPDATE (wamn-0h0g.12.40).
+///
+/// The union of the run plane's claim, park, release, and terminalize
+/// statements. It is deliberately non-empty for a second reason: PostgreSQL
+/// requires `UPDATE` on at least one column for any row-locking clause, and the
+/// claim and fence paths take `FOR UPDATE`/`FOR KEY SHARE` on `runs`.
+const RUNS_APP_UPDATE_COLUMNS: &[&str] = &[
+    "caller_http_status",
+    "caller_outcome_hash",
+    "caller_outcome_json",
+    "caller_outcome_kind",
+    "caller_release_node_id",
+    "caller_released_at",
+    "fail_kind",
+    "manifest_digest",
+    "release_version",
+    "result_json",
+    "state_json",
+    "status",
+    "terminal_reason",
+    "updated_at",
+];
+
+/// The `wamn_app` column grants a `runs` column earns, or `None` for a column
+/// that no statement the application role executes ever writes.
+fn runs_app_column_grants(column: &str) -> Option<String> {
+    let ident = quote_ident(column);
+    let mut grants = Vec::new();
+    if RUNS_APP_INSERT_COLUMNS.contains(&column) {
+        grants.push(format!("INSERT ({ident})"));
+    }
+    if RUNS_APP_UPDATE_COLUMNS.contains(&column) {
+        grants.push(format!("UPDATE ({ident})"));
+    }
+    (!grants.is_empty()).then(|| grants.join(", "))
+}
+
 fn repair_run_capture_privilege_sql(
     schema: &BareSchemaName,
     available_columns: impl IntoIterator<Item = String>,
 ) -> String {
     let available_columns = available_columns.into_iter().collect::<BTreeSet<_>>();
     debug_assert!(available_columns.contains("capture_mode"));
-    let canonical_columns = record_columns(RUN_STATE_SQL, "wamn_run", "runs")
-        .into_iter()
-        .map(|(column, _)| column)
-        .collect::<BTreeSet<_>>();
-    let writable_columns = available_columns
-        .iter()
-        .filter(|column| {
-            column.as_str() != "capture_mode" && canonical_columns.contains(column.as_str())
-        })
-        .map(|column| quote_ident(column))
-        .collect::<Vec<_>>()
-        .join(", ");
+    // Only columns that BOTH exist on the live table and belong to a ratified
+    // set are granted. Intersecting with the observation is what keeps the
+    // repair from naming a column a legacy database does not have yet.
+    let granted = |ratified: &[&str]| {
+        ratified
+            .iter()
+            .filter(|column| available_columns.contains(**column))
+            .map(|column| quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let insertable_columns = granted(RUNS_APP_INSERT_COLUMNS);
+    let updatable_columns = granted(RUNS_APP_UPDATE_COLUMNS);
     let all_columns = available_columns
         .iter()
         .map(|column| quote_ident(column))
         .collect::<Vec<_>>()
         .join(", ");
     let qualified = format!("{}.runs", schema.quoted());
-    let writable_grant = if writable_columns.is_empty() {
+    let mut writable_clauses = Vec::new();
+    if !insertable_columns.is_empty() {
+        writable_clauses.push(format!("INSERT ({insertable_columns})"));
+    }
+    if !updatable_columns.is_empty() {
+        writable_clauses.push(format!("UPDATE ({updatable_columns})"));
+    }
+    let writable_grant = if writable_clauses.is_empty() {
         String::new()
     } else {
         format!(
-            "GRANT INSERT ({writable_columns}), UPDATE ({writable_columns}) \
-               ON TABLE {qualified} TO wamn_app; "
+            "GRANT {} ON TABLE {qualified} TO wamn_app; ",
+            writable_clauses.join(", ")
         )
     };
     format!(
@@ -4516,19 +4603,24 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                             schema.quoted(),
                             repair_run_capture_privilege_sql(schema, available_columns),
                         )
-                    } else if table == "runs"
+                    } else if let Some(column_grants) = (table == "runs"
                         && col != "capture_mode"
                         && (capture_mode_present
                             || (!capture_mode_present
                                 && obs.app_run_capture_privileges.0
                                 && record_cols[..record_column_index]
                                     .iter()
-                                    .any(|(column, _)| column == "capture_mode")))
+                                    .any(|(column, _)| column == "capture_mode"))))
+                    .then(|| runs_app_column_grants(col))
+                    .flatten()
                     {
+                        // A column added to `runs` earns ONLY the grants its
+                        // ratified sets name (wamn-0h0g.12.40). Granting every
+                        // new column INSERT + UPDATE unconditionally is how
+                        // `release_version` and `manifest_digest` became
+                        // app-writable with no decision behind it.
                         format!(
-                            "{add_column_sql}; GRANT INSERT ({}), UPDATE ({}) ON TABLE {}.runs TO wamn_app",
-                            quote_ident(col),
-                            quote_ident(col),
+                            "{add_column_sql}; GRANT {column_grants} ON TABLE {}.runs TO wamn_app",
                             schema.quoted(),
                         )
                     } else {
@@ -5405,14 +5497,22 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
 /// A table-level INSERT/UPDATE grant covers every present and future column,
 /// so it is observed independently from the named-column check. Both values
 /// are false when either the role, table, or capture column is absent.
+///
+/// The third value answers "do the live column grants MATCH THE RATIFIED SETS"
+/// (wamn-0h0g.12.40). It is checked PER PRIVILEGE against the two sets, not as
+/// one `bool_and` over a single blanket list: INSERT and UPDATE no longer share
+/// a column set, so a shared list can never be satisfied by a correctly
+/// confined table and the reconcile plan would never converge.
 pub fn select_run_capture_privileges_sql() -> String {
-    let writable_columns = record_columns(RUN_STATE_SQL, "wamn_run", "runs")
-        .into_iter()
-        .map(|(column, _)| column)
-        .filter(|column| column != "capture_mode")
-        .map(|column| format!("'{column}'"))
-        .collect::<Vec<_>>()
-        .join(",");
+    let quoted = |columns: &[&str]| {
+        columns
+            .iter()
+            .map(|column| format!("'{column}'"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let insert_columns = quoted(RUNS_APP_INSERT_COLUMNS);
+    let update_columns = quoted(RUNS_APP_UPDATE_COLUMNS);
     format!(
         "WITH target AS ( \
            SELECT pg_catalog.to_regclass(pg_catalog.format('%I.runs', $1::text)) AS oid \
@@ -5463,18 +5563,23 @@ pub fn select_run_capture_privileges_sql() -> String {
                WHERE acl.grantee = 0 \
                  AND acl.privilege_type IN ('INSERT','UPDATE'))), \
            COALESCE(( \
-             SELECT bool_and(CASE \
-               WHEN attribute.attname = ANY (ARRAY[{writable_columns}]::text[]) THEN \
-                 pg_catalog.has_column_privilege( \
-                   (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'INSERT') \
-                 AND pg_catalog.has_column_privilege( \
-                   (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'UPDATE') \
-               ELSE \
-                 NOT pg_catalog.has_column_privilege( \
-                   (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'INSERT') \
-                 AND NOT pg_catalog.has_column_privilege( \
-                   (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'UPDATE') \
-               END) \
+             SELECT bool_and( \
+               (CASE \
+                 WHEN attribute.attname = ANY (ARRAY[{insert_columns}]::text[]) THEN \
+                   pg_catalog.has_column_privilege( \
+                     (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'INSERT') \
+                 ELSE \
+                   NOT pg_catalog.has_column_privilege( \
+                     (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'INSERT') \
+                 END) \
+               AND (CASE \
+                 WHEN attribute.attname = ANY (ARRAY[{update_columns}]::text[]) THEN \
+                   pg_catalog.has_column_privilege( \
+                     (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'UPDATE') \
+                 ELSE \
+                   NOT pg_catalog.has_column_privilege( \
+                     (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'UPDATE') \
+                 END)) \
                FROM pg_catalog.pg_attribute AS attribute \
               WHERE attribute.attrelid = (SELECT oid FROM target) \
                 AND attribute.attnum > 0 AND NOT attribute.attisdropped), false)"

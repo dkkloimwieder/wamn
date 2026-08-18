@@ -339,30 +339,40 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 -- The guest-visible application role may drive the existing run-state columns,
 -- but it cannot author or mutate the admission-owned capture carrier. Off-path
 -- admissions omit that column and take its fail-closed database default.
+--
+-- The two column lists below are RATIFIED SETS (wamn-0h0g.12.40), not "every
+-- canonical column minus capture_mode". Each is the exact union of the columns
+-- named by statements `wamn_app` actually executes: the INSERT set is the
+-- callable admission's run insert (crates/execution/run-state/src/admission.rs
+-- `admit_sql`), which subsumes every other app-role run insert; the UPDATE set
+-- is the union of the run-plane's claim, park, release, and terminalize
+-- statements (queue/sql.rs, transitions.rs). Columns whose only writer is the
+-- management admission (`capture_mode`), the project-admin operator verb, or an
+-- uncalled builder (`fail_node`, `fail_reason` — only `update_run_failed_sql`,
+-- which nothing invokes) are DELIBERATELY ABSENT. A column added to this table
+-- does NOT join either set by default; see `repair_run_capture_privilege_sql`.
+--
+-- The UPDATE set is also what keeps `FOR UPDATE`/`FOR KEY SHARE` on `runs`
+-- legal: PostgreSQL demands UPDATE on at least one column for any row-locking
+-- clause, and the run plane locks this table in the claim and fence paths.
+--
+-- DELETE stays table-wide because `wamn-ctl prune-run-history` connects AS
+-- `wamn_app` and needs it; the statement itself is terminal-only, but the grant
+-- is not, so a live run remains deletable by an author (tracked separately).
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs FROM PUBLIC, wamn_effect_writer;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
 GRANT INSERT (
     tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
     environment, execution_bundle_hash, attachment_id, registration_id,
     event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
-    release_version, manifest_digest,
-    input_json, result_json, state_json, invocation_context,
+    input_json, invocation_context,
     admission_context_version, platform_revision, idempotency_key,
-    caller_outcome_kind, caller_outcome_json,
-    caller_http_status, caller_release_node_id, caller_outcome_hash,
-    caller_released_at, response_deadline_at, run_deadline_at, terminal_reason,
-    fail_kind, fail_node, fail_reason, created_at, updated_at
+    response_deadline_at, run_deadline_at
 ), UPDATE (
-    tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
-    environment, execution_bundle_hash, attachment_id, registration_id,
-    event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
-    release_version, manifest_digest,
-    input_json, result_json, state_json, invocation_context,
-    admission_context_version, platform_revision, idempotency_key,
+    status, release_version, manifest_digest, result_json, state_json,
     caller_outcome_kind, caller_outcome_json,
     caller_http_status, caller_release_node_id, caller_outcome_hash,
-    caller_released_at, response_deadline_at, run_deadline_at, terminal_reason,
-    fail_kind, fail_node, fail_reason, created_at, updated_at
+    caller_released_at, terminal_reason, fail_kind, updated_at
 ) ON wamn_run.runs TO wamn_app;
 GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;
 -- The private effect writer may only recheck that the fenced run still has
@@ -403,7 +413,23 @@ ALTER TABLE wamn_run.invocation_admissions FORCE ROW LEVEL SECURITY;
 CREATE POLICY invocation_admissions_tenant ON wamn_run.invocation_admissions
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.invocation_admissions TO wamn_app;
+-- The ledger is APPEND-ONLY to the guest-visible role (wamn-0h0g.12.41). The
+-- only production write is the callable admission's `ON CONFLICT DO NOTHING`
+-- insert; nothing updates a row and nothing deletes one.
+--
+-- `UPDATE (tenant_id)` is NOT a rewrite authority — it is the minimum
+-- PostgreSQL demands for the `FOR KEY SHARE OF a` in admission.rs, which
+-- requires UPDATE on at least one column for ANY row-locking clause. It is safe
+-- on `tenant_id` specifically because this table is FORCE ROW LEVEL SECURITY
+-- and `invocation_admissions_tenant`'s WITH CHECK admits only the value the
+-- USING clause already required to see the row, so the sole writable column can
+-- only ever be rewritten to the value it already holds.
+--
+-- No DELETE grant is needed for the `ON DELETE CASCADE` from `runs`: a
+-- referential-integrity action runs as the REFERENCING table's owner, not as
+-- the deleting role, so pruning a run still removes its admission.
+GRANT SELECT, INSERT ON wamn_run.invocation_admissions TO wamn_app;
+GRANT UPDATE (tenant_id) ON wamn_run.invocation_admissions TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- node_runs: one row per framed node execution.

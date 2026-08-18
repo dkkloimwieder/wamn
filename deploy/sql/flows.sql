@@ -49,4 +49,14 @@ ALTER TABLE wamn_run.flows FORCE ROW LEVEL SECURITY;
 CREATE POLICY flows_tenant ON wamn_run.flows
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.flows TO wamn_app;
+-- RETIRED RELATION — ZERO GRANTS (wamn-0h0g.12.37). The mutable `flows.active`
+-- publication path was DELETED, not delegated: `catalog.release_flows` +
+-- `catalog.flow_artifacts` are the authoritative immutable release path, and
+-- services/ctl/src/publish_catalog.rs states outright that it does not write
+-- this table. No production writer remains, and the sole production read
+-- (`wamn-ctl impact-report`) runs on a SUPERUSER connection, so no principal
+-- needs a grant here. `active_flows_sql` has no caller; the remaining inserts
+-- are test support seeding as the superuser. No statement row-locks this table,
+-- so no principal needs the UPDATE that a locking clause would demand. A
+-- retired relation holds NO grants rather than a narrowed set.
+REVOKE ALL PRIVILEGES ON wamn_run.flows FROM PUBLIC, wamn_app;

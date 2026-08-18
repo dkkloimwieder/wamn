@@ -92,6 +92,15 @@ pub fn update_run_completed_sql() -> String {
 
 /// Record the run's failure verdict. `$1` run_id, `$2` fail_kind, `$3`
 /// fail_node, `$4` fail_reason.
+///
+/// NOT GRANTED TO `wamn_app` — THIS BUILDER HAS NO CALLER (wamn-0h0g.12.40).
+/// It is the only writer of `fail_node` and `fail_reason`, so when the ratified
+/// `runs` UPDATE set was derived from the statements the application role
+/// actually executes, those two columns fell out of it. Wiring this statement
+/// up as `wamn_app` WILL fail with SQLSTATE 42501 until
+/// `deploy/sql/run-state.sql` and `RUNS_APP_UPDATE_COLUMNS` in
+/// `wamn_schema_control::run_plane` both name them. Adding a column to one
+/// without the other makes the reconcile plan diverge, so change them together.
 pub fn update_run_failed_sql() -> String {
     format!(
         "UPDATE runs SET status = '{failed}', fail_kind = $2, fail_node = $3, fail_reason = $4, \
