@@ -791,6 +791,9 @@ mod tests {
         let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
             return;
         };
+        // Shares the one live database with `publish_catalog`'s live tests
+        // (wamn-0h0g.11.29) — the lock is on the DATABASE, not the module.
+        let _live_db = crate::publish_catalog::LIVE_DB.lock().await;
         let (mut client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
         let connection_task = tokio::spawn(connection);
         crate::publish_catalog::ensure_wamn_app_role(&client)

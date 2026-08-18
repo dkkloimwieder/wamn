@@ -1735,6 +1735,26 @@ fn prepare_flow_artifact(tenant: &str, graph_json: &str) -> anyhow::Result<Prepa
     })
 }
 
+/// Serializes every live `WAMN_MIGRATE_PG_URL` test in this crate's lib target
+/// (wamn-0h0g.11.29).
+///
+/// They all share ONE database and all call [`ensure_catalog_storage`], whose
+/// `CREATE SCHEMA catalog` races itself under the default parallel harness: a
+/// fresh database produced four failures, none of them a code defect, that went
+/// away at `--test-threads=1`. A suite that fails nondeterministically under its
+/// own default invocation trains the reader to re-run until green — which is how
+/// a real failure gets dismissed.
+///
+/// The shared resource is the DATABASE, not the module, so `migrate_catalog`'s
+/// live test takes this same lock. Per-database or per-schema isolation is not
+/// available: `catalog` is hard-coded in the storage SQL, and giving each test
+/// its own database would move the race onto the CLUSTER-wide `CREATE ROLE` in
+/// [`ensure_wamn_app_role`], whose advisory lock is per-database and so would not
+/// serialize it.
+#[cfg(test)]
+pub(crate) static LIVE_DB: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1865,6 +1885,7 @@ mod tests {
         let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
             return;
         };
+        let _live_db = LIVE_DB.lock().await;
         let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
         let connection_task = tokio::spawn(connection);
         ensure_wamn_app_role(&client).await.unwrap();
@@ -1916,11 +1937,20 @@ mod tests {
         let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
             return;
         };
+        let _live_db = LIVE_DB.lock().await;
         let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
         let connection_task = tokio::spawn(connection);
         ensure_wamn_app_role(&client).await.unwrap();
         ensure_catalog_storage(&client).await.unwrap();
         let run_schema = BareSchemaName::new("cf_release_retry_probe").unwrap();
+        // Unique per RUN (wamn-0h0g.11.29): this test COMMITS its retry, so a
+        // fixed tenant made the second run against the same database fail — the
+        // already-published release swallowed the injected fault. Every other live
+        // test here already carries a per-run suffix.
+        let run_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after the epoch")
+            .as_nanos();
         for (index, stage) in [
             "after-artifacts",
             "after-journal",
@@ -1931,7 +1961,7 @@ mod tests {
         .enumerate()
         {
             let suffix = format!("{index}");
-            let tenant = format!("release-retry-{index}");
+            let tenant = format!("release-retry-{run_id}-{index}");
             let (catalog, graph) = release_fixture(&suffix);
             let document = catalog.to_json();
             seed_test_execution_bundle(&client, &tenant).await;
@@ -2034,6 +2064,7 @@ mod tests {
         let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
             return;
         };
+        let _live_db = LIVE_DB.lock().await;
         let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
         let connection_task = tokio::spawn(connection);
         ensure_wamn_app_role(&client).await.unwrap();
@@ -2259,6 +2290,7 @@ mod tests {
         let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
             return;
         };
+        let _live_db = LIVE_DB.lock().await;
         let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
         let connection_task = tokio::spawn(connection);
         ensure_wamn_app_role(&client).await.unwrap();
