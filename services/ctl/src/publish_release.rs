@@ -46,15 +46,35 @@
 //! Step A touches no deployed map, no project binding or connection generation, no
 //! project retention, no activation, no deployment attestation, no lifecycle
 //! state, and no project relation at all. The attestation is wamn-0h0g.8.21's
-//! transaction C; sealing the release manifest is wamn-0h0g.15.14's. Both
-//! [`wamn_control_provision::publish_release`] and the source audit below assert
-//! that rather than assuming it.
+//! transaction C. Both [`wamn_control_provision::publish_release`] and the source
+//! audit below assert that rather than assuming it.
+//!
+//! # The release-manifest mint (wamn-0h0g.15.14)
+//!
+//! [`mint_release_manifest`] projects a release coordinate into the mounted
+//! serving document ([`ServingManifest`]) and derives its `sha256:` identity from
+//! the RFC 8785 canonical bytes it will actually ship. It is a pure read: it
+//! appends nothing, so step A runs it inside its own transaction — after the
+//! member append, so the flow just published is in the projection, and before the
+//! commit, so no concurrent publisher can slip a member between the two.
+//!
+//! The mint is the whole of wamn-0h0g.15.14. Pushing those bytes to OCI is
+//! wamn-0h0g.15.97, writing them into the GitOps desired state is wamn-0h0g.15.98,
+//! and the attestation that makes the digest a *release* rather than a candidate
+//! is wamn-0h0g.8.21 (ruling wamn-0h0g.13.54: a digest is released iff a
+//! deployment attestation references it, distinguishable by attestation absence,
+//! with zero schema).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use tokio_postgres::{Client, Transaction};
-use wamn_catalog::{CallFlowInstruction, ExecutionPlanV2, read_execution_plan};
+use wamn_catalog::{
+    AttachmentKind, CallFlowInstruction, ExecutionPlanV2, ManifestDigest,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow, ServingManifest,
+    ServingRegistration, ServingRelease, read_execution_plan,
+};
 use wamn_control_provision::publish_release::{
     PublishReleaseError, PublishReleaseErrorKind, PublishTestedRelease, ReleaseEvidenceFacts,
     ReleaseMemberFacts, TestReportFacts, ValidatedDraftFacts, claim_publishing_tenant_sql,
@@ -68,7 +88,10 @@ use wamn_control_provision::publish_release::{
 const CALL_FLOW_NODE_TYPE: &str = "call-flow";
 
 /// What one committed publish step A left in the control database.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `PartialEq` without `Eq`: the minted manifest carries attachment definition
+/// documents as `serde_json::Value`, which is only partially equal.
+#[derive(Clone, Debug, PartialEq)]
 pub struct MintedTestedRelease {
     /// Server-minted immutable evidence timestamp; an exact retry returns it again.
     pub created_at: DateTime<Utc>,
@@ -76,6 +99,11 @@ pub struct MintedTestedRelease {
     pub tested_resolution_map_hash: String,
     /// Whether THIS call minted the release member. `false` is an exact retry.
     pub minted: bool,
+    /// The serving manifest this publish minted, projected from the release as it
+    /// stands with this member appended (wamn-0h0g.15.14). Nothing here persists
+    /// it: the OCI push, the GitOps write, and the attestation that turns the
+    /// digest into a release are wamn-0h0g.15.97, .15.98 and .8.21.
+    pub serving_manifest: MintedReleaseManifest,
 }
 
 /// Run publish step A in exactly one control-database transaction.
@@ -390,10 +418,36 @@ async fn publish(
         })?
         .get(0);
 
+    // The release-manifest mint (wamn-0h0g.15.14). It runs here, after the member
+    // append and inside the same transaction, because a projection taken before
+    // the append would omit the flow this call publishes and one taken after the
+    // commit would race the next publisher.
+    //
+    // The registration set is EMPTY here, and that is a stated limit rather than a
+    // measurement: `catalog.event_registrations` exists only in the project
+    // database and step A holds no project connection, so this transaction has no
+    // way to observe one. See [`MintReleaseManifest::registrations`]. A caller that
+    // ships these bytes must resolve that first — the mint is scoped to wamn-0h0g
+    // .15.14 and the push, the desired-state write and the attestation are
+    // wamn-0h0g.15.97, .15.98 and .8.21.
+    let no_control_side_registrations = BTreeMap::new();
+    let serving_manifest = mint_release_manifest(
+        transaction,
+        &MintReleaseManifest {
+            tenant_id: request.tenant_id,
+            catalog_id: request.catalog_id,
+            catalog_version: request.catalog_version,
+            candidate_draft_id: None,
+            registrations: &no_control_side_registrations,
+        },
+    )
+    .await?;
+
     Ok(MintedTestedRelease {
         created_at,
         tested_resolution_map_hash: map_hash,
         minted: inserted == 1,
+        serving_manifest,
     })
 }
 
@@ -545,6 +599,550 @@ fn canonical_tested_resolution_map(stored: &str) -> Result<(Vec<u8>, String), Pu
         wamn_flow::canonical_json_bytes(&map),
         wamn_flow::canonical_json_sha256(&map),
     ))
+}
+
+// ---------------------------------------------------------------------------
+// The release-manifest mint (wamn-0h0g.15.14).
+// ---------------------------------------------------------------------------
+
+/// Which release one manifest mint projects, and the candidate it overlays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MintReleaseManifest<'a> {
+    /// Tenant owning the release.
+    pub tenant_id: &'a str,
+    /// Catalog the release belongs to.
+    pub catalog_id: &'a str,
+    /// Release version being projected.
+    pub catalog_version: i32,
+    /// The `catalog.validated_flow_drafts.validated_draft_hash` whose flow
+    /// overlays its released member, or `None` for a plain release mint. A
+    /// candidate manifest is the same document minted from draft inputs — ruling
+    /// wamn-0h0g.13.54 gives it no marker, so this is the *only* place the two
+    /// cases differ.
+    pub candidate_draft_id: Option<&'a str>,
+    /// The event registrations this release serves, supplied rather than read.
+    ///
+    /// # This is a parameter because the relation is in the other database
+    ///
+    /// Every other input the mint needs is in the control database:
+    /// `catalog.release_flows`, `flow_artifacts`, `execution_bundles`,
+    /// `validated_flow_drafts`, `release_attachments` and `release_sources` are
+    /// all in `deploy/sql/control-portable-store.sql`. `catalog.event_registrations`
+    /// is **not** — it exists only in `deploy/sql/catalog-schema.sql`, the project
+    /// database's copy. Measured on PostgreSQL 18.6 by applying the control
+    /// bootstrap and listing `information_schema.tables`.
+    ///
+    /// Publish step A holds no project connection and claims no atomicity across
+    /// the two databases, by its own stated contract, so it cannot read them.
+    /// Making the set an argument keeps that fact at every call site instead of
+    /// letting an absent read look like an empty catalog — which is precisely the
+    /// dual-representation under-report wamn-0h0g.15.159 was spent deleting.
+    /// Where the projection is finally sourced is an owner decision, reported at
+    /// this bead's close.
+    pub registrations: &'a BTreeMap<String, ServingRegistration>,
+}
+
+/// One minted serving manifest: the document, its exact bytes, and their name.
+///
+/// The bytes are what a `release-manifest-<digest>` ConfigMap carries verbatim and
+/// what an OCI push uploads; the digest is derived from those same bytes rather
+/// than asserted against them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MintedReleaseManifest {
+    /// The admitted document.
+    pub manifest: ServingManifest,
+    /// `sha256:` over [`Self::canonical_bytes`].
+    pub digest: ManifestDigest,
+    /// The exact RFC 8785 canonical bytes the digest names.
+    pub canonical_bytes: Vec<u8>,
+}
+
+/// Stable prefix every release-manifest mint refusal renders with.
+pub const RELEASE_MANIFEST_MINT_REFUSAL: &str = "release-manifest-mint-refused";
+
+/// Which predicate refused a release-manifest mint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MintManifestErrorKind {
+    /// The control read itself failed; nothing was projected.
+    Storage,
+    /// No release identity row exists at the coordinate, so there is no release
+    /// to project. This is also what a mint with no claimed tenant refuses as,
+    /// because every relation it reads forces row-level security.
+    Release,
+    /// A member's stored plan is absent, fails its hash, or does not parse.
+    PlanBytes,
+    /// The named validated draft is absent, or belongs to another release.
+    CandidateDraft,
+    /// A stored attachment or registration row does not project into the frozen
+    /// serving shape.
+    Projection,
+    /// The projected document is not an admissible serving manifest — a dangling
+    /// call edge, a zero version, a malformed digest, or bytes no delivery path
+    /// can carry.
+    Document,
+}
+
+impl MintManifestErrorKind {
+    /// Stable label for logs, refusal literals, and tests.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Storage => "storage",
+            Self::Release => "release",
+            Self::PlanBytes => "plan-bytes",
+            Self::CandidateDraft => "candidate-draft",
+            Self::Projection => "projection",
+            Self::Document => "document",
+        }
+    }
+}
+
+/// One refused release-manifest mint, carrying the predicate and its context.
+#[derive(Debug)]
+pub struct MintManifestError {
+    kind: MintManifestErrorKind,
+    detail: String,
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
+}
+
+impl MintManifestError {
+    /// Refuse with a stable predicate and the context that decided it.
+    pub fn new(kind: MintManifestErrorKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+            source: None,
+        }
+    }
+
+    /// Refuse with an upstream cause retained as this error's source.
+    pub fn with_source(
+        kind: MintManifestErrorKind,
+        detail: impl Into<String>,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+            source: Some(Box::new(source)),
+        }
+    }
+
+    /// Which predicate refused.
+    pub const fn kind(&self) -> MintManifestErrorKind {
+        self.kind
+    }
+
+    /// The exact context the predicate refused on.
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+impl std::fmt::Display for MintManifestError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{RELEASE_MANIFEST_MINT_REFUSAL} ({}): {}",
+            self.kind.as_str(),
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for MintManifestError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.source {
+            Some(source) => Some(&**source),
+            None => None,
+        }
+    }
+}
+
+/// Translate a mint refusal once, at step A's boundary.
+///
+/// Four predicates map onto the step-A predicate that means the same thing.
+/// `Projection` and `Document` have no counterpart: they say the release at this
+/// coordinate does not project into a deliverable serving manifest, which is why
+/// they land on `ReleaseCoordinate`. That coarsening is deliberate and reported —
+/// the honest fix is two more [`PublishReleaseErrorKind`] variants, and that enum
+/// lives in `wamn-control-provision`, outside this bead's file domain. Nothing is
+/// lost in the meantime: the exact predicate survives on the retained source.
+impl From<MintManifestError> for PublishReleaseError {
+    fn from(error: MintManifestError) -> Self {
+        let kind = match error.kind() {
+            MintManifestErrorKind::Storage => PublishReleaseErrorKind::Storage,
+            MintManifestErrorKind::PlanBytes => PublishReleaseErrorKind::PlanBytes,
+            MintManifestErrorKind::CandidateDraft => PublishReleaseErrorKind::ValidatedDraft,
+            MintManifestErrorKind::Release
+            | MintManifestErrorKind::Projection
+            | MintManifestErrorKind::Document => PublishReleaseErrorKind::ReleaseCoordinate,
+        };
+        let detail = format!("the release manifest mint refused: {error}");
+        Self::with_source(kind, detail, error)
+    }
+}
+
+/// Every release member's identity, its source artifact, and its exact plan bytes.
+const SELECT_MANIFEST_MEMBERS_SQL: &str = "\
+     SELECT member.flow_id, member.flow_version, member.execution_bundle_hash, \
+            artifact.artifact_hash, bundle.exact_bytes \
+       FROM catalog.release_flows AS member \
+       JOIN catalog.flow_artifacts AS artifact \
+         ON artifact.tenant_id = member.tenant_id AND artifact.flow_id = member.flow_id \
+        AND artifact.flow_version = member.flow_version \
+       JOIN catalog.execution_bundles AS bundle \
+         ON bundle.tenant_id = member.tenant_id \
+        AND bundle.execution_bundle_hash = member.execution_bundle_hash \
+      WHERE member.tenant_id = $1 AND member.catalog_id = $2 \
+        AND member.catalog_version = $3 \
+      ORDER BY member.flow_id COLLATE \"C\"";
+
+/// Every release attachment with the source document it resolved against.
+///
+/// The join to `catalog.release_sources` is 1:1 and total: the attachment's
+/// `(tenant, catalog, version, source_id)` is a foreign key onto that table's
+/// primary key, so an inner join can neither drop nor duplicate a row.
+const SELECT_MANIFEST_ATTACHMENTS_SQL: &str = "\
+     SELECT exposed.attachment_id, exposed.attachment_kind, exposed.flow_id, \
+            exposed.definition_hash, exposed.definition_json::text, \
+            source.definition_json::text \
+       FROM catalog.release_attachments AS exposed \
+       JOIN catalog.release_sources AS source \
+         ON source.tenant_id = exposed.tenant_id \
+        AND source.catalog_id = exposed.catalog_id \
+        AND source.catalog_version = exposed.catalog_version \
+        AND source.source_id = exposed.source_id \
+      WHERE exposed.tenant_id = $1 AND exposed.catalog_id = $2 \
+        AND exposed.catalog_version = $3 \
+      ORDER BY exposed.attachment_id COLLATE \"C\"";
+
+/// The candidate draft's own plan, artifact, and the released base its
+/// connection requirements were resolved under.
+const SELECT_CANDIDATE_DRAFT_SQL: &str = "\
+     SELECT draft.catalog_id, draft.catalog_version, draft.flow_id, \
+            draft.runtime_flow_version, draft.draft_artifact_hash, \
+            draft.execution_bundle_hash, draft.binding_base_artifact_hash, \
+            bundle.exact_bytes \
+       FROM catalog.validated_flow_drafts AS draft \
+       JOIN catalog.execution_bundles AS bundle \
+         ON bundle.tenant_id = draft.tenant_id \
+        AND bundle.execution_bundle_hash = draft.execution_bundle_hash \
+      WHERE draft.tenant_id = $1 AND draft.validated_draft_hash = $2 \
+        FOR SHARE OF draft, bundle";
+
+/// Project one release coordinate into its serving manifest and name the bytes.
+///
+/// # Why this takes a transaction
+///
+/// Every relation read here forces row-level security, and the publishing tenant
+/// is claimed with a **transaction-local** `set_config`
+/// ([`claim_publishing_tenant_sql`]). On an autocommit connection that claim
+/// expires with the statement that set it, so each following read would see zero
+/// rows and the mint would emit a structurally valid manifest with no members and
+/// a real digest. Taking a transaction is what makes the claim outlive the claim
+/// statement; probing the release identity row first is what makes an unclaimed
+/// mint refuse instead of under-reporting.
+///
+/// # What it deliberately does not read
+///
+/// Attachment *activation* and attachment *tombstones* are environment-owned
+/// operational state, and neither reaches these bytes. Activation is absent by
+/// the frozen schema's own rule — a disabled attachment leaves
+/// `catalog.active_attachments` and refuses at admission by row absence, so an
+/// emergency off stays one statement rather than a mint plus a rollout. Tombstones
+/// are absent because they cannot apply: `catalog.apply_release_exposure` raises
+/// `tombstoned-attachment-id` when a version being applied exposes an
+/// already-tombstoned id, so a tombstoned id is never a member of a release the
+/// gate admitted. Filtering on them anyway would be worse than redundant — a
+/// tombstone is written by a *later* publication, so re-minting an older release
+/// would then name different content than the first mint did, and the digest
+/// would stop being a function of the release.
+///
+/// It reads no event registration either, for a different and blunter reason:
+/// that relation is not in this database. See
+/// [`MintReleaseManifest::registrations`].
+pub async fn mint_release_manifest(
+    transaction: &Transaction<'_>,
+    request: &MintReleaseManifest<'_>,
+) -> Result<MintedReleaseManifest, MintManifestError> {
+    transaction
+        .query_one(claim_publishing_tenant_sql(), &[&request.tenant_id])
+        .await
+        .map_err(|error| mint_storage("claim the projecting tenant", error))?;
+
+    let Some(release) = transaction
+        .query_opt(
+            lock_release_coordinate_sql(),
+            &[
+                &request.tenant_id,
+                &request.catalog_id,
+                &request.catalog_version,
+            ],
+        )
+        .await
+        .map_err(|error| mint_storage("lock the projected release coordinate", error))?
+    else {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::Release,
+            format!(
+                "catalog {:?} version {} has no release to project",
+                request.catalog_id, request.catalog_version
+            ),
+        ));
+    };
+    let catalog_version = u32::try_from(request.catalog_version).map_err(|error| {
+        MintManifestError::with_source(
+            MintManifestErrorKind::Release,
+            format!(
+                "catalog version {} is not a serving-manifest version",
+                request.catalog_version
+            ),
+            error,
+        )
+    })?;
+
+    let mut flows = project_release_members(transaction, request).await?;
+    if let Some(candidate_draft_id) = request.candidate_draft_id {
+        let (flow_id, overlay) =
+            project_candidate_overlay(transaction, request, candidate_draft_id).await?;
+        flows.insert(flow_id, overlay);
+    }
+
+    let projected = ServingManifest {
+        format_version: SERVING_MANIFEST_FORMAT_VERSION.to_string(),
+        release: ServingRelease {
+            tenant_id: request.tenant_id.to_string(),
+            catalog_id: request.catalog_id.to_string(),
+            catalog_version,
+            environment: release.get(0),
+        },
+        flows,
+        attachments: project_release_attachments(transaction, request).await?,
+        registrations: request.registrations.clone(),
+    };
+
+    // The mint admits its own output through the reader's one entry point, so the
+    // bytes it hands on are exactly the bytes a pod will accept and the digest is
+    // derived from them rather than asserted about them.
+    let canonical_bytes = projected.canonical_bytes();
+    let (manifest, digest) =
+        ServingManifest::from_canonical_bytes(&canonical_bytes).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::Document,
+                format!(
+                    "catalog {:?} version {} does not project a deliverable serving manifest",
+                    request.catalog_id, request.catalog_version
+                ),
+                error,
+            )
+        })?;
+    Ok(MintedReleaseManifest {
+        manifest,
+        digest,
+        canonical_bytes,
+    })
+}
+
+fn mint_storage(context: &'static str, error: tokio_postgres::Error) -> MintManifestError {
+    MintManifestError::with_source(MintManifestErrorKind::Storage, context, error)
+}
+
+/// Project every released member. `binding-base-artifact` is the member's own
+/// `source-artifact` here, and only here: a released flow's connection
+/// requirements are resolved under the artifact it was released as.
+async fn project_release_members(
+    transaction: &Transaction<'_>,
+    request: &MintReleaseManifest<'_>,
+) -> Result<BTreeMap<String, ServingFlow>, MintManifestError> {
+    let rows = transaction
+        .query(
+            SELECT_MANIFEST_MEMBERS_SQL,
+            &[
+                &request.tenant_id,
+                &request.catalog_id,
+                &request.catalog_version,
+            ],
+        )
+        .await
+        .map_err(|error| mint_storage("read the release members", error))?;
+
+    let mut flows = BTreeMap::new();
+    for row in rows {
+        let flow_id: String = row.get(0);
+        let flow_version: i32 = row.get(1);
+        let plan_hash: String = row.get(2);
+        let source_artifact: String = row.get(3);
+        let exact_bytes: Vec<u8> = row.get(4);
+        let plan = parse_member_plan(&flow_id, &plan_hash, &exact_bytes)?;
+        flows.insert(
+            flow_id.clone(),
+            ServingFlow {
+                flow_version: member_version(&flow_id, flow_version)?,
+                plan_hash,
+                binding_base_artifact: source_artifact.clone(),
+                source_artifact,
+                callable_contract: plan.body.callable_contract.clone(),
+                calls: member_calls(&flow_id, &plan)?,
+            },
+        );
+    }
+    Ok(flows)
+}
+
+/// Project the candidate overlay this mint carries.
+///
+/// The overlay is the whole reason `binding-base-artifact` exists (ruling
+/// wamn-0h0g.15.62). A candidate's plan is compiled from the draft's own artifact,
+/// so `source-artifact` must be the draft hash or the plan verifiers refuse the
+/// snapshot; but a draft artifact can never own a connection-binding row, so
+/// readiness and effect authority have to resolve under the released base the
+/// draft was validated against. Both values travel, and they differ.
+async fn project_candidate_overlay(
+    transaction: &Transaction<'_>,
+    request: &MintReleaseManifest<'_>,
+    candidate_draft_id: &str,
+) -> Result<(String, ServingFlow), MintManifestError> {
+    let Some(row) = transaction
+        .query_opt(
+            SELECT_CANDIDATE_DRAFT_SQL,
+            &[&request.tenant_id, &candidate_draft_id],
+        )
+        .await
+        .map_err(|error| mint_storage("lock the candidate validated draft", error))?
+    else {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::CandidateDraft,
+            format!("this tenant has no validated draft {candidate_draft_id:?}"),
+        ));
+    };
+    let draft_catalog_id: String = row.get(0);
+    let draft_catalog_version: i32 = row.get(1);
+    if draft_catalog_id != request.catalog_id || draft_catalog_version != request.catalog_version {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::CandidateDraft,
+            format!(
+                "validated draft {candidate_draft_id:?} was validated against catalog \
+                 {draft_catalog_id:?} version {draft_catalog_version}, not {:?} version {}",
+                request.catalog_id, request.catalog_version
+            ),
+        ));
+    }
+    let flow_id: String = row.get(2);
+    let flow_version: i32 = row.get(3);
+    let source_artifact: String = row.get(4);
+    let plan_hash: String = row.get(5);
+    let binding_base_artifact: String = row.get(6);
+    let exact_bytes: Vec<u8> = row.get(7);
+    let plan = parse_member_plan(&flow_id, &plan_hash, &exact_bytes)?;
+    let overlay = ServingFlow {
+        flow_version: member_version(&flow_id, flow_version)?,
+        plan_hash,
+        source_artifact,
+        binding_base_artifact,
+        callable_contract: plan.body.callable_contract.clone(),
+        calls: member_calls(&flow_id, &plan)?,
+    };
+    Ok((flow_id, overlay))
+}
+
+/// Read one member's stored plan, comparing exact bytes before parsing them.
+fn parse_member_plan(
+    flow_id: &str,
+    plan_hash: &str,
+    exact_bytes: &[u8],
+) -> Result<ExecutionPlanV2, MintManifestError> {
+    read_execution_plan(plan_hash, exact_bytes).map_err(|error| {
+        MintManifestError::with_source(
+            MintManifestErrorKind::PlanBytes,
+            format!("release member {flow_id:?} stores no valid plan at {plan_hash}"),
+            error,
+        )
+    })
+}
+
+/// The call-edge adjacency one member contributes.
+fn member_calls(
+    flow_id: &str,
+    plan: &ExecutionPlanV2,
+) -> Result<BTreeSet<String>, MintManifestError> {
+    call_flow_callees(plan).map_err(|error| {
+        MintManifestError::with_source(
+            MintManifestErrorKind::PlanBytes,
+            format!("release member {flow_id:?} has a call-flow node naming no callee"),
+            error,
+        )
+    })
+}
+
+/// Narrow a stored flow version onto the serving shape's unsigned one.
+fn member_version(flow_id: &str, flow_version: i32) -> Result<u32, MintManifestError> {
+    u32::try_from(flow_version).map_err(|error| {
+        MintManifestError::with_source(
+            MintManifestErrorKind::Projection,
+            format!("release member {flow_id:?} stores flow version {flow_version}"),
+            error,
+        )
+    })
+}
+
+/// Project every release attachment and the source document it resolved against.
+async fn project_release_attachments(
+    transaction: &Transaction<'_>,
+    request: &MintReleaseManifest<'_>,
+) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+    let rows = transaction
+        .query(
+            SELECT_MANIFEST_ATTACHMENTS_SQL,
+            &[
+                &request.tenant_id,
+                &request.catalog_id,
+                &request.catalog_version,
+            ],
+        )
+        .await
+        .map_err(|error| mint_storage("read the release attachments", error))?;
+
+    let mut attachments = BTreeMap::new();
+    for row in rows {
+        let attachment_id: String = row.get(0);
+        let stored_kind: String = row.get(1);
+        let kind = serde_json::from_value::<AttachmentKind>(Value::String(stored_kind.clone()))
+            .map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::Projection,
+                    format!("attachment {attachment_id:?} carries unknown kind {stored_kind:?}"),
+                    error,
+                )
+            })?;
+        let definition = stored_document(&attachment_id, "definition", row.get(4))?;
+        let auth_policy = stored_document(&attachment_id, "resolved source", row.get(5))?;
+        attachments.insert(
+            attachment_id,
+            ServingAttachment {
+                kind,
+                flow_id: row.get(2),
+                definition_hash: row.get(3),
+                definition,
+                auth_policy,
+            },
+        );
+    }
+    Ok(attachments)
+}
+
+/// Decode one stored jsonb document the projection carries verbatim.
+fn stored_document(
+    attachment_id: &str,
+    field: &'static str,
+    stored: String,
+) -> Result<Value, MintManifestError> {
+    serde_json::from_str(&stored).map_err(|error| {
+        MintManifestError::with_source(
+            MintManifestErrorKind::Projection,
+            format!("attachment {attachment_id:?} stores an unreadable {field}"),
+            error,
+        )
+    })
 }
 
 #[cfg(test)]
@@ -740,6 +1338,113 @@ mod tests {
                 PublishReleaseErrorKind::TestedResolutionMap
             );
         }
+    }
+
+    /// The mint reads exactly four relations, and every one of them has to be in
+    /// the database step A connects to.
+    ///
+    /// `catalog.event_registrations` is not, which is why the registration set is
+    /// an argument rather than a read — measured on PostgreSQL 18.6, pinned here
+    /// so a later lane cannot quietly add the read back and get an empty map on
+    /// every control database instead of a refusal.
+    #[test]
+    fn every_relation_the_mint_reads_is_in_the_control_portable_store() {
+        const CONTROL_STORE: &str = include_str!("../../../deploy/sql/control-portable-store.sql");
+        let source = include_str!("publish_release.rs");
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+
+        for relation in [
+            "catalog.release_flows",
+            "catalog.flow_artifacts",
+            "catalog.execution_bundles",
+            "catalog.release_attachments",
+            "catalog.release_sources",
+            "catalog.validated_flow_drafts",
+        ] {
+            assert!(
+                CONTROL_STORE.contains(&format!("CREATE TABLE IF NOT EXISTS {relation} (")),
+                "the mint reads {relation}, which the control store does not carry"
+            );
+        }
+        assert!(
+            !CONTROL_STORE.contains("catalog.event_registrations"),
+            "catalog.event_registrations reached the control store: the registration \
+             projection can stop being an argument and become a read"
+        );
+        // Prose may name the relation; a statement may not.
+        assert!(
+            !implementation.contains("FROM catalog.event_registrations"),
+            "the mint reads event_registrations from a database that does not have it, \
+             so every control-side release would project an empty registration set"
+        );
+
+        // The member read INNER JOINs each member to its artifact and to its plan
+        // bytes. Both joins are total only because `catalog.release_flows` carries
+        // a foreign key onto each one's primary key; lose either and the join
+        // silently DROPS that member instead of refusing — the same under-report
+        // wamn-0h0g.15.159 spent a bead deleting, except invisible, because a
+        // manifest missing a member is still a valid manifest with a real digest.
+        for target in [
+            "REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version)",
+            "REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)",
+        ] {
+            assert!(
+                CONTROL_STORE.contains(target),
+                "release_flows lost its {target}: the member read's inner join can now \
+                 drop a member instead of refusing"
+            );
+        }
+    }
+
+    /// Every mint predicate translates exactly once, at step A's boundary, and the
+    /// precise predicate survives the two that have no step-A counterpart.
+    #[test]
+    fn every_mint_refusal_translates_once_at_step_a() {
+        for (mint, step_a) in [
+            (
+                MintManifestErrorKind::Storage,
+                PublishReleaseErrorKind::Storage,
+            ),
+            (
+                MintManifestErrorKind::Release,
+                PublishReleaseErrorKind::ReleaseCoordinate,
+            ),
+            (
+                MintManifestErrorKind::PlanBytes,
+                PublishReleaseErrorKind::PlanBytes,
+            ),
+            (
+                MintManifestErrorKind::CandidateDraft,
+                PublishReleaseErrorKind::ValidatedDraft,
+            ),
+            (
+                MintManifestErrorKind::Projection,
+                PublishReleaseErrorKind::ReleaseCoordinate,
+            ),
+            (
+                MintManifestErrorKind::Document,
+                PublishReleaseErrorKind::ReleaseCoordinate,
+            ),
+        ] {
+            let translated =
+                PublishReleaseError::from(MintManifestError::new(mint, "why it refused"));
+            assert_eq!(translated.kind(), step_a);
+            // The coarsened pair keeps its exact predicate in the detail, which is
+            // the only reason the coarsening is admissible.
+            assert!(
+                translated.detail().contains(mint.as_str()),
+                "{} lost its predicate: {translated}",
+                mint.as_str()
+            );
+            assert!(translated.detail().contains("why it refused"));
+        }
+        assert_eq!(
+            RELEASE_MANIFEST_MINT_REFUSAL,
+            "release-manifest-mint-refused"
+        );
     }
 
     /// Step A is control-only: nothing in this module names a project relation, an
@@ -1082,19 +1787,48 @@ mod tests {
             assert_eq!(control_counts(&admin).await, (1, 1, 0, 0));
         }
 
-        // Step A sealed no release membership: that belongs to wamn-0h0g.15.14.
-        // Membership is row-per-member now, so an unsealed release is an empty
-        // catalog.release_flows rather than an empty snapshot column.
-        let members: i64 = admin
-            .query_one(
-                "SELECT count(*) FROM catalog.release_flows \
-                  WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
-                &[&TENANT, &CATALOG_ID, &CATALOG_VERSION],
-            )
-            .await
-            .expect("read the untouched release membership")
-            .get(0);
-        assert_eq!(members, 0);
+        // The release-manifest mint this publish performed (wamn-0h0g.15.14).
+        // Membership is row-per-member since wamn-0h0g.15.159, so the release the
+        // manifest projects is exactly the one member step A just appended.
+        let manifest = &minted.serving_manifest;
+        assert_eq!(
+            manifest.manifest.release,
+            ServingRelease {
+                tenant_id: TENANT.to_string(),
+                catalog_id: CATALOG_ID.to_string(),
+                catalog_version: 1,
+                environment: ENVIRONMENT.to_string(),
+            }
+        );
+        assert_eq!(
+            manifest.manifest.flows.keys().collect::<Vec<_>>(),
+            vec![FLOW_ID]
+        );
+        let member = &manifest.manifest.flows[FLOW_ID];
+        assert_eq!(member.flow_version, 2);
+        assert_eq!(member.plan_hash, tested_hash);
+        assert_eq!(member.source_artifact, ROOT_ARTIFACT);
+        // A released member resolves its bindings under its own artifact.
+        assert_eq!(member.binding_base_artifact, ROOT_ARTIFACT);
+        assert!(member.callable_contract.is_some());
+        assert!(member.calls.is_empty());
+        assert!(manifest.manifest.attachments.is_empty());
+        assert!(manifest.manifest.registrations.is_empty());
+
+        // The bytes round-trip through the one reader entry point, and the digest
+        // they derive is the one the mint handed back.
+        assert_eq!(
+            ServingManifest::from_canonical_bytes(&manifest.canonical_bytes),
+            Ok((manifest.manifest.clone(), manifest.digest.clone()))
+        );
+
+        // A repeated mint over identical content is byte-identical, so the
+        // exact retry above already re-minted the same name.
+        assert_eq!(
+            retried.serving_manifest.canonical_bytes,
+            manifest.canonical_bytes
+        );
+        assert_eq!(retried.serving_manifest.digest, manifest.digest);
 
         drop(admin);
         let _ = admin_task.await;
