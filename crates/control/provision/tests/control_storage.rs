@@ -553,6 +553,18 @@ fn no_data_plane_manifest_references_the_system_cluster() {
                 continue;
             }
             let body = std::fs::read_to_string(&path).expect("read manifest");
+            // Comments are stripped first, because the invariant is about the
+            // REQUEST PATH and a comment is not one. Naming `wamn-sysdb.yaml`
+            // as the R8b precedent while documenting a Secret reference is
+            // exactly the prose a credential-hygiene change should carry, and
+            // tripping on it pushes the next author toward the ALLOWLIST --
+            // which is the one edit that genuinely weakens this guard. Mirrors
+            // `without_yaml_comments` in tests/conformance/tests/dispatcher_boundary.rs.
+            let body = body
+                .lines()
+                .map(|line| line.split_once('#').map_or(line, |(rendered, _)| rendered))
+                .collect::<Vec<_>>()
+                .join("\n");
             if body.contains("wamn-sysdb") || body.contains("wamn_system") {
                 offenders.push(name);
             }
