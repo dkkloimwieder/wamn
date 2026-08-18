@@ -4526,6 +4526,7 @@ dependencies = [
 name = "wamn-router"
 version = "0.1.0"
 dependencies = [
+ "opentelemetry",
  "serde_json",
 ]
 

@@ -10,7 +10,14 @@ license.workspace = true
 # its own: the router is a walk, not a contract.
 serde_json = { workspace = true }
 
+# The wiring resolution cache's one instrument, beside the executor's
+# `wamn.run.*` counters. Metrics only — no SDK and no exporter: this crate
+# reports, and the process owning the pipeline configures it.
+opentelemetry = { workspace = true, features = ["metrics"] }
+
 # Deliberately NO wamn-flow: the router owns its own Wiring graph type. The node
 # language (flow docs, expression configs, reserved node types) retires with the
 # flow engine; only the walk is rehosted here (docs/exe-model.md, rev 4).
-# No pooling, no wiring cache, no runtime, no clock, no DB: siblings own those.
+# No pooling, no runtime, no clock, no DB: siblings own those. The wiring cache
+# IS here (wamn-0h0g.16.5) — the compiled graph it holds is this crate's type —
+# but it never reads the store itself.

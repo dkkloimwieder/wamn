@@ -9,10 +9,12 @@
 //! frames) removed rather than relocated. Budgets become a per-delivery **hop
 //! limit**: there are no frames to bound.
 //!
-//! The walk holds no clock, no pool, no cache, no runtime and no DB. Node
-//! invocation is a plain Rust trait so the typed WIT seam binds outside this
-//! crate; instance pooling and wiring resolution belong to the host that drives
-//! it. The walk does DECIDE the terminal [`Verdict`] — `respond` / `emit` /
+//! The walk itself holds no clock, no pool, no cache, no runtime and no DB.
+//! Node invocation is a plain Rust trait so the typed WIT seam binds outside
+//! this crate, and instance pooling belongs to the host that drives it; the
+//! store read that resolves a wiring is the host's too, but the memory it is
+//! read into ONCE is [`WiringCache`], here, because the graph it holds is this
+//! crate's type. The walk does DECIDE the terminal [`Verdict`] — `respond` / `emit` /
 //! discard — because only the walk knows which node ended the delivery; acting
 //! on that verdict (answering the caller, publishing to the boundary) is the
 //! host's.
@@ -33,6 +35,7 @@
 //! ```
 
 mod outcome;
+mod resolution;
 mod retry;
 mod terminal;
 mod walk;
@@ -42,6 +45,8 @@ use serde_json::Value;
 
 #[doc(inline)]
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
+#[doc(inline)]
+pub use resolution::{ActiveWiring, WiringCache};
 #[doc(inline)]
 pub use retry::{RetryPolicy, ThrottleKey};
 #[doc(inline)]
