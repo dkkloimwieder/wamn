@@ -1,0 +1,16 @@
+[package]
+name = "wamn-router"
+description = "wamn host router: the graph walk over a resolved wiring — frontier ordering, port routing, error-edge semantics, and the per-delivery hop limit. Node invocation is the caller's, behind a trait; the router only decides."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Payloads, per-node config, and the run-context document are JSON. No schema of
+# its own: the router is a walk, not a contract.
+serde_json = { workspace = true }
+
+# Deliberately NO wamn-flow: the router owns its own Wiring graph type. The node
+# language (flow docs, expression configs, reserved node types) retires with the
+# flow engine; only the walk is rehosted here (docs/exe-model.md, rev 4).
+# No pooling, no wiring cache, no runtime, no clock, no DB: siblings own those.
