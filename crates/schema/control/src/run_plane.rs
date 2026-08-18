@@ -2686,6 +2686,20 @@ pub struct RunPlaneObservation {
     /// Whether the host-only author may call the narrow SECURITY DEFINER
     /// catalog-head lock without gaining direct UPDATE/row-lock authority.
     pub scenario_author_can_lock_catalog_head: bool,
+    /// Whether the cluster-global dispatcher read principal exists at all
+    /// (wamn-0h0g.12.123). The reconciler owns that role's IN-DATABASE surface
+    /// but never the role itself — `provision-project-env` mints it, with a
+    /// password this verb does not have — so an absent role is not drift.
+    pub dispatch_reader_role_present: bool,
+    /// DIRECT schema-level privileges held by the dispatcher read principal on
+    /// the target schema. See
+    /// [`select_dispatch_reader_schema_privileges_sql`] for why these are
+    /// direct rather than effective.
+    pub dispatch_reader_schema_privileges: BTreeSet<String>,
+    /// DIRECT table-level privileges held by the dispatcher read principal,
+    /// keyed by relation, over every relation the repair's blanket `REVOKE` can
+    /// reach.
+    pub dispatch_reader_table_privileges: BTreeMap<String, BTreeSet<String>>,
     /// EVERY ordinary table in the target schema → its live column names.
     /// Includes entity/floor tables (ignored by the planner) and retired
     /// outbox/stored-suite tables (planned for teardown).
@@ -2815,6 +2829,14 @@ pub enum RunPlaneActionKind {
     /// Replace broad application-role run grants with column grants that omit
     /// the admission-owned `runs.capture_mode` carrier.
     RepairRunCapturePrivilege,
+    /// Converge the dispatcher read principal's in-database surface on exactly
+    /// schema `USAGE` plus `SELECT` on the two relations it reads, narrowing a
+    /// widened reader back (wamn-0h0g.12.123).
+    ///
+    /// This is the ONE run-plane privilege the pure planner does not build: its
+    /// grant text comes from `wamn_control_provision`, and the effect shell
+    /// appends the action. See `wamn_ctl::reconcile_run_plane`.
+    RepairDispatchReaderPrivilege,
     /// Strip retired keys from stored registrations.
     StripRetiredRegistrationKeys,
 }
@@ -5382,6 +5404,61 @@ pub fn select_effect_writer_run_column_privileges_sql() -> &'static str {
         AND pg_catalog.has_column_privilege( \
               actor.oid, relation.oid, attribute.attname, privilege.name) \
       ORDER BY relation.relname, attribute.attnum, privilege.name"
+}
+
+// --- Dispatcher read-principal observation (wamn-0h0g.12.123) ----------------
+//
+// `$2` carries the ROLE NAME instead of the inline literal every neighbouring
+// query uses. The name and the grant text both belong to
+// `wamn_control_provision`, which this pure crate deliberately does not depend
+// on; parameterizing keeps ONE encoding of the principal rather than a second
+// copy that can drift from the builder that grants it.
+//
+// **Both queries read DIRECT `aclitem` entries, never `has_*_privilege`.** The
+// repair is `REVOKE ALL … FROM <reader>` followed by narrow `GRANT`s, which can
+// only move the reader's OWN acl entries. An effective-privilege observation
+// also sees whatever the reader reaches through `PUBLIC` or through a group,
+// which the repair cannot revoke — so it would encode a state the grant can
+// never satisfy, drift would stay true forever, and the reconciler would plan
+// the repair on every pass without converging. That is wamn-0h0g.12.40
+// exactly, and it was only ever caught by a live gate.
+
+/// Direct schema-level privileges held by the dispatcher read principal, plus
+/// whether that cluster-global role exists at all. `$1` is the run-plane
+/// schema, `$2` the role name.
+pub fn select_dispatch_reader_schema_privileges_sql() -> &'static str {
+    "SELECT reader.oid IS NOT NULL, \
+            ARRAY( \
+              SELECT acl.privilege_type \
+                FROM pg_catalog.pg_namespace AS namespace \
+                CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE( \
+                  namespace.nspacl, \
+                  pg_catalog.acldefault('n', namespace.nspowner))) AS acl \
+               WHERE namespace.nspname = $1 \
+                 AND acl.grantee = reader.oid \
+               ORDER BY 1) \
+       FROM (SELECT 1) AS singleton \
+       LEFT JOIN pg_catalog.pg_roles AS reader ON reader.rolname = $2"
+}
+
+/// Direct table-level privileges held by the dispatcher read principal in the
+/// run-plane schema. `$1` is the schema, `$2` the role name.
+///
+/// The `relkind` filter is the OTHER half of "observe only what the repair can
+/// reach": `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA` covers tables,
+/// partitioned tables, views, materialized views and foreign tables — and NOT
+/// sequences. Observing a sequence grant here would be drift no `GRANT`/`REVOKE`
+/// in the repair could ever clear.
+pub fn select_dispatch_reader_table_privileges_sql() -> &'static str {
+    "SELECT relation.relname, acl.privilege_type \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+       JOIN pg_catalog.pg_roles AS reader ON reader.rolname = $2 \
+       CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl \
+      WHERE namespace.nspname = $1 \
+        AND relation.relkind IN ('r', 'p', 'v', 'm', 'f') \
+        AND acl.grantee = reader.oid \
+      ORDER BY 1, 2"
 }
 
 /// Whether guest-visible `wamn_app` inherits the host-only author role.
@@ -9725,6 +9802,61 @@ CREATE INDEX event_registrations_by_entity
             rewrite_schema(FLOWS_SQL, &schema)
                 .contains("CREATE UNIQUE INDEX flows_active_webhook_path ON poc_f1.flows")
         );
+    }
+
+    /// wamn-0h0g.12.123. Pinned SEPARATELY from the block below because the
+    /// exact shape of these two is the bug: `select_run_capture_privileges_sql`
+    /// encoded a grant shape the real grant could never satisfy, so drift stayed
+    /// permanently true and the reconciler planned a repair forever
+    /// (wamn-0h0g.12.40). These queries must observe ONLY what the reader's
+    /// `REVOKE`/`GRANT` repair can reach.
+    #[test]
+    fn dispatch_reader_observation_sql_is_pinned() {
+        let schema_privileges = select_dispatch_reader_schema_privileges_sql();
+        let table_privileges = select_dispatch_reader_table_privileges_sql();
+
+        // DIRECT acl entries only. `has_schema_privilege` / `has_table_privilege`
+        // would also report authority reached through PUBLIC or a group, which
+        // `REVOKE … FROM "wamn_dispatch_reader"` cannot remove.
+        for observation in [schema_privileges, table_privileges] {
+            assert!(observation.contains("aclexplode"), "{observation}");
+            assert!(
+                observation.contains("acl.grantee = reader.oid"),
+                "{observation}"
+            );
+            assert!(
+                !observation.contains("has_schema_privilege"),
+                "{observation}"
+            );
+            assert!(
+                !observation.contains("has_table_privilege"),
+                "{observation}"
+            );
+            assert!(
+                !observation.contains("has_column_privilege"),
+                "{observation}"
+            );
+            // The role name is bound, never inlined: `wamn_control_provision`
+            // owns it, and a second copy here could drift from the builder.
+            assert!(observation.contains("$2"), "{observation}");
+            assert!(
+                !observation.contains("wamn_dispatch_reader"),
+                "{observation}"
+            );
+        }
+
+        // Role absence must be observable and must not collapse into "no
+        // privileges", which would be indistinguishable from a role that exists
+        // and was never granted.
+        assert!(schema_privileges.contains("reader.oid IS NOT NULL"));
+        assert!(schema_privileges.contains("LEFT JOIN pg_catalog.pg_roles"));
+        assert!(schema_privileges.contains("acldefault('n', namespace.nspowner)"));
+
+        // Exactly the relkinds `GRANT/REVOKE … ON ALL TABLES IN SCHEMA` reaches.
+        // A sequence grant observed here would be drift the repair could never
+        // clear — the .12.40 shape again, one relkind over.
+        assert!(table_privileges.contains("relation.relkind IN ('r', 'p', 'v', 'm', 'f')"));
+        assert!(!table_privileges.contains("'S'"));
     }
 
     /// Observation SQL pins (the shell binds these verbatim; the live gate

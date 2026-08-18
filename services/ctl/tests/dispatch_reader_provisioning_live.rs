@@ -30,7 +30,11 @@ use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, sql};
 use wamn_ctl::provision_project_env::{privilege_sql, role_sql};
 
-const APP_PASSWORD: &str = "app-provisioning-probe";
+/// `ensure_app_role_sql` sets the password at CREATION ONLY, and `wamn_app` is
+/// cluster-wide and shared with every other gate pointed at this container
+/// (`run_plane_live::reset` dials it as `wamn_app`/`wamn_app`). Using any other
+/// value here would silently break those gates on whichever ran second.
+const APP_PASSWORD: &str = "wamn_app";
 const READER_PASSWORD: &str = "reader-provisioning-probe";
 const DATABASE: &str = "wamn-db-probe--dispatch--dev";
 const ORDERING_DATABASE: &str = "wamn-db-probe--ordering--dev";

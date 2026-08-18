@@ -72,6 +72,7 @@
 
 use tokio_postgres::{Client, NoTls};
 
+use wamn_control_provision::{DISPATCH_READER_ROLE, sql as provision_sql};
 use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 
@@ -82,6 +83,7 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 const SCHEMA: &str = "rp_live";
+const DISPATCH_READER_PASSWORD: &str = "dispatch-reader-run-plane-probe";
 const EMPTY_EXECUTION_BUNDLE_HASH: &str =
     "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -142,10 +144,24 @@ async fn seed_run_pin_parents(
 
 /// Hermetic reset: drop the target schema + the shared `catalog` schema and
 /// ensure the `wamn_app` role, so every leg builds its own starting state.
+/// Hermetic per CLUSTER, not merely per schema (wamn-0h0g.12.123). PostgreSQL
+/// roles are cluster-wide, and the reconciler now converges
+/// `wamn_dispatch_reader`'s in-database surface WHEN THAT ROLE EXISTS — so a
+/// reader left behind by another gate against the same container would make
+/// `current_noop_leg`'s first plan legitimately non-empty. `DROP OWNED BY` is
+/// what makes the role droppable: `DROP ROLE` refuses while any acl entry
+/// anywhere still names it. `wamn_app` and the two writer roles are only
+/// created-or-hardened because other legs dial them.
 async fn reset(su: &Client) {
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
          DROP SCHEMA IF EXISTS catalog CASCADE; \
+         DO $reader$ BEGIN \
+           IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}') THEN \
+             EXECUTE 'DROP OWNED BY {DISPATCH_READER_ROLE}'; \
+             EXECUTE 'DROP ROLE {DISPATCH_READER_ROLE}'; \
+           END IF; \
+         END $reader$; \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
            THEN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOBYPASSRLS; \
          END IF; END $$; \
@@ -402,6 +418,149 @@ async fn run_plane_reconcile_live() {
     catalog_head_share_lock_leg(&su, &url).await;
     retired_effect_disposition_cutover_leg(&su).await;
     persisted_literal_check_drift_leg(&su).await;
+    dispatch_reader_read_surface_leg(&su, &url).await;
+}
+
+/// The dispatcher read principal's in-database surface (wamn-0h0g.12.123).
+///
+/// The `SELECT` grants target relations in the run-plane schema, which does not
+/// exist at provision time — so the reconciler owns them, on the same convergent
+/// footing as every other privilege it holds. **Runs last**: it is the only leg
+/// that needs `wamn_dispatch_reader` to EXIST, and it drops the role again on the
+/// way out so nothing downstream inherits it.
+async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
+    reset(su).await;
+    install_current_run_plane(su).await;
+    let schema = schema();
+    let database: String = su
+        .query_one("SELECT current_database()", &[])
+        .await
+        .expect("read current database")
+        .get(0);
+
+    // Provisioning's half (wamn-0h0g.12.122), from the SAME builders
+    // `provision-project-env` emits: the role, and CONNECT on this database.
+    // Everything after this point must come from the reconciler alone — that is
+    // what "no manual SQL" means.
+    su.batch_execute(&provision_sql::ensure_dispatch_reader_role_sql(
+        DISPATCH_READER_PASSWORD,
+    ))
+    .await
+    .expect("mint the dispatch reader");
+    su.batch_execute(&provision_sql::grant_dispatch_reader_connect_sql(&database))
+        .await
+        .expect("grant the dispatch reader CONNECT");
+
+    // A schema at the schema of record still owes the reader its read surface:
+    // deploy/sql grants the reader nothing, and this verb is where it lands.
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("apply the reader read surface");
+    assert_eq!(
+        plan.actions
+            .iter()
+            .map(|action| action.kind)
+            .collect::<Vec<_>>(),
+        vec![RunPlaneActionKind::RepairDispatchReaderPrivilege],
+        "a current schema owes exactly the reader repair: {:#?}",
+        plan.actions
+    );
+
+    // *** THE wamn-0h0g.12.40 GUARD. *** An observation arm that encodes a shape
+    // the grant can never satisfy leaves drift permanently true, and the
+    // reconciler plans this repair on EVERY pass without ever converging. Only a
+    // live second pass against the CONVERGED database can catch that.
+    let again = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("second reconcile");
+    assert!(
+        again.is_noop(),
+        "the reader repair repeats on a converged database — the observation \
+         arm encodes a state the grant cannot reach: {:#?}",
+        again.actions
+    );
+    let dry = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("third reconcile, read-only");
+    assert!(dry.is_noop(), "dry-run drift: {:#?}", dry.actions);
+
+    // The dispatcher dials and reads, with no manual SQL between provisioning
+    // and the read.
+    let reader = connect_as(url, DISPATCH_READER_ROLE, DISPATCH_READER_PASSWORD).await;
+    for relation in ["run_queue", "effect_attempts"] {
+        reader
+            .query_one(&format!("SELECT count(*) FROM {SCHEMA}.{relation}"), &[])
+            .await
+            .unwrap_or_else(|error| panic!("reader cannot read {relation}: {error}"));
+    }
+    // …and nothing wider. `runs` is the relation the dispatcher never touches.
+    for denied in [
+        format!("SELECT count(*) FROM {SCHEMA}.runs"),
+        format!("SELECT count(*) FROM {SCHEMA}.node_runs"),
+        format!("INSERT INTO {SCHEMA}.run_queue (tenant_id) VALUES ('t')"),
+    ] {
+        let error = reader
+            .batch_execute(&denied)
+            .await
+            .expect_err(&format!("reader was allowed {denied:?}"));
+        assert_db_code(error, "42501", &denied);
+    }
+    drop(reader);
+
+    // A widened reader narrows back: the repair REVOKEs over the same scope it
+    // grants, so this is convergence and not merely a first-time install.
+    su.batch_execute(&format!(
+        "GRANT SELECT ON {SCHEMA}.runs TO \"{DISPATCH_READER_ROLE}\"; \
+         GRANT INSERT, UPDATE ON {SCHEMA}.run_queue TO \"{DISPATCH_READER_ROLE}\"; \
+         GRANT CREATE ON SCHEMA {SCHEMA} TO \"{DISPATCH_READER_ROLE}\";"
+    ))
+    .await
+    .expect("widen the reader");
+    let widened = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("observe the widened reader");
+    assert_eq!(
+        widened
+            .actions
+            .iter()
+            .map(|action| action.kind)
+            .collect::<Vec<_>>(),
+        vec![RunPlaneActionKind::RepairDispatchReaderPrivilege],
+        "a widened reader is drift: {:#?}",
+        widened.actions
+    );
+    reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("narrow the reader back");
+    let narrowed = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("reconcile after narrowing");
+    assert!(
+        narrowed.is_noop(),
+        "the narrowed reader did not converge: {:#?}",
+        narrowed.actions
+    );
+
+    let reader = connect_as(url, DISPATCH_READER_ROLE, DISPATCH_READER_PASSWORD).await;
+    let error = reader
+        .batch_execute(&format!("SELECT count(*) FROM {SCHEMA}.runs"))
+        .await
+        .expect_err("the widened SELECT on runs survived the reconcile");
+    assert_db_code(error, "42501", "narrowed reader reads runs");
+    drop(reader);
+    assert!(
+        !su.query_one(
+            "SELECT pg_catalog.has_schema_privilege($1, $2, 'CREATE')",
+            &[&DISPATCH_READER_ROLE, &SCHEMA],
+        )
+        .await
+        .expect("probe reader CREATE")
+        .get::<_, bool>(0),
+        "the widened schema CREATE survived the reconcile"
+    );
+
+    // Leave the cluster as this leg found it: the role is cluster-wide.
+    reset(su).await;
 }
 
 #[tokio::test]
@@ -452,6 +611,20 @@ async fn rerun_lineage_cutover_live() {
     };
     let su = connect(&url).await;
     rerun_lineage_cutover_leg(&su).await;
+}
+
+/// Also a leg of `run_plane_reconcile_live`, and a separate entry for the same
+/// reason `stored_suite_cutover_live` is: so it can be run — and reached — on
+/// its own. Run the whole file with `-- --test-threads=1`; the entries share the
+/// `catalog` schema, the run-plane schema, and the cluster-wide roles.
+#[tokio::test]
+async fn dispatch_reader_read_surface_live() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the dispatch-reader read-surface gate");
+        return;
+    };
+    let su = connect(&url).await;
+    dispatch_reader_read_surface_leg(&su, &url).await;
 }
 
 #[tokio::test]
