@@ -13,7 +13,8 @@
 //! the runbook/Job applies the emitted artifacts, in this order:
 //!
 //! 1. the `wamn_db_owner` title role must exist **before** the `Database` CR
-//!    (its `owner`), and the shared `wamn_app` role with it: apply the emitted
+//!    (its `owner`), and the shared `wamn_app` + scoped `wamn_dispatch_reader`
+//!    roles with it: apply the emitted
 //!    **role SQL** to the target cluster's superuser. Applying the CR first
 //!    fails reconciliation — CNPG maps `spec.owner` straight to `CREATE DATABASE
 //!    … OWNER` / `ALTER DATABASE … OWNER TO`;
@@ -22,7 +23,8 @@
 //!    and re-owns an already-existing one to it;
 //! 3. apply the emitted **privilege SQL** (`ALTER DATABASE … OWNER TO
 //!    wamn_db_owner`, then `REVOKE CONNECT, TEMPORARY FROM PUBLIC` / `GRANT
-//!    CONNECT TO wamn_app`) — the thin imperative step the `Database` CRD does
+//!    CONNECT TO wamn_app` / `GRANT CONNECT TO wamn_dispatch_reader`) — the
+//!    thin imperative step the `Database` CRD does
 //!    not cover (topology fact 3), run **after** the database exists. The owner
 //!    statement is first and must stay first: `ALTER DATABASE … OWNER TO`
 //!    rewrites the outgoing owner's ACL entry, which is where `wamn_app`'s
@@ -123,6 +125,17 @@ pub struct ProvisionProjectEnvArgs {
     /// role SQL). Env `WAMN_APP_PASSWORD`.
     #[arg(long, env = "WAMN_APP_PASSWORD", default_value = "wamn_app")]
     pub app_password: String,
+
+    /// Password for the scoped `wamn_dispatch_reader` login role — the
+    /// dispatcher's own credential (wamn-0h0g.12.66), never the runtime's.
+    /// Env `WAMN_DISPATCH_READER_PASSWORD`.
+    ///
+    /// **Deliberately has no `default_value`, unlike `--app-password` above.**
+    /// A default here would provision every project-env with a publicly known
+    /// password on a role that is `LOGIN` and reachable from outside the
+    /// cluster; provisioning refuses instead.
+    #[arg(long, env = "WAMN_DISPATCH_READER_PASSWORD")]
+    pub dispatch_reader_password: String,
 
     /// Host the runtime reaches the project-env database at. Defaults to the
     /// target cluster's read-write service `<cluster>-rw`.
@@ -256,6 +269,44 @@ pub struct ProvisionProjectEnvArgs {
     pub revoke_pat_prefix: Option<String>,
 }
 
+/// The role batch the runbook applies to the TARGET cluster's superuser before
+/// the `Database` CR (step 1). Both `wamn_app` and `wamn_db_owner` precede the
+/// CR because `wamn_db_owner` is its `spec.owner` and the CR cannot reconcile
+/// against a role that does not exist yet; `wamn_dispatch_reader` is here
+/// (wamn-0h0g.12.122) because it is cluster-global exactly as they are, and
+/// because the dispatcher's projects file already names it.
+///
+/// `pub` so the live gate applies the SAME text production uses instead of a
+/// hand-transcribed copy — the `reconcile_run_plane::reconcile` precedent.
+pub fn role_sql(app_password: &str, dispatch_reader_password: &str) -> String {
+    format!(
+        "{app}\n{owner}\n{reader}\n",
+        app = sql::ensure_app_role_sql(app_password),
+        owner = sql::ensure_db_owner_role_sql(),
+        reader = sql::ensure_dispatch_reader_role_sql(dispatch_reader_password),
+    )
+}
+
+/// The privilege batch the runbook applies AFTER the database exists (step 3).
+///
+/// **Ownership converges FIRST and must stay first.** `ALTER DATABASE … OWNER
+/// TO` rewrites the outgoing owner's ACL entry, and that entry is where a
+/// `CONNECT` granted to `wamn_app` while `wamn_app` still owned the database
+/// has merged (the hazard measured at `47b404cf`). Both `CONNECT` grants
+/// therefore follow it: `grant_dispatch_reader_connect_sql` is ADDITIVE and
+/// deliberately separate from `grant_connect_on_database_sql`, which confines
+/// `CONNECT` to `wamn_app` and revokes `PUBLIC`.
+///
+/// `pub` for the same reason as [`role_sql`].
+pub fn privilege_sql(database: &str) -> String {
+    format!(
+        "{owner};\n{connect}\n{reader_connect}\n",
+        owner = sql::set_database_owner_sql(database),
+        connect = sql::grant_connect_on_database_sql(database),
+        reader_connect = sql::grant_dispatch_reader_connect_sql(database),
+    )
+}
+
 pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     if let Some(prefix) = args.revoke_pat_prefix.as_deref() {
         let system_url = args
@@ -356,21 +407,8 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
 
     // Render the artifacts the runbook applies.
     let db_cr = render_project_env_database(&triple, &cluster, args.connection_limit);
-    // Both roles precede the CR: `wamn_db_owner` is its `spec.owner`, and the CR
-    // cannot reconcile against a role that does not exist yet.
-    let role_sql = format!(
-        "{app}\n{owner}\n",
-        app = sql::ensure_app_role_sql(&args.app_password),
-        owner = sql::ensure_db_owner_role_sql(),
-    );
-    // Ownership converges BEFORE the CONNECT grant — the owner change rewrites
-    // the outgoing owner's ACL entry, which is where a `wamn_app` grant made
-    // while `wamn_app` owned the database lives.
-    let privilege_sql = format!(
-        "{owner};\n{connect}\n",
-        owner = sql::set_database_owner_sql(&db_name),
-        connect = sql::grant_connect_on_database_sql(&db_name),
-    );
+    let role_sql = role_sql(&args.app_password, &args.dispatch_reader_password);
+    let privilege_sql = privilege_sql(&db_name);
     let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace, &app_url);
 
     println!("{}", provision_summary(&triple, &db_name, &cluster));
@@ -1989,6 +2027,10 @@ mod tests {
             "billing",
             "--env",
             "dev",
+            // Required with no default (wamn-0h0g.12.122); every invocation of
+            // this subcommand must now supply it.
+            "--dispatch-reader-password",
+            "reader-probe",
         ];
         argv.extend_from_slice(extra);
         TestCli::try_parse_from(argv).map(|cli| cli.args)
@@ -2171,12 +2213,17 @@ mod tests {
         assert!(both.emit_management_author_pat_secret.is_some());
         assert!(both.emit_route_caller_pat_secret.is_some());
 
+        // `--dispatch-reader-password` is required with no default
+        // (wamn-0h0g.12.122), so even the revoke-only invocation — which
+        // provisions nothing — must carry it.
         let revoke = TestCli::try_parse_from([
             "test",
             "--system-database-url",
             "postgresql://postgres@localhost/postgres",
             "--revoke-pat-prefix",
             "0123456789abcdef",
+            "--dispatch-reader-password",
+            "reader-probe",
         ])
         .unwrap()
         .args;
@@ -2388,6 +2435,96 @@ mod tests {
         assert!(!summary.contains("postgres://"));
         assert!(!summary.contains("password"));
         assert!(!summary.contains("app url"));
+    }
+
+    /// wamn-0h0g.12.122. The emitted privilege batch is PINNED whole: a runtime
+    /// gate that only asserts "the reader can connect" stays green when a
+    /// builder is swapped for a wider one, and stays green when the `CONNECT`
+    /// grant drifts back above the owner statement on a database that happens
+    /// to be owned by `wamn_db_owner` already. The frozen literal is the guard.
+    #[test]
+    fn the_privilege_batch_grants_reader_connect_after_the_owner_statement() {
+        let batch = privilege_sql("wamn-db-acme--billing--dev");
+        assert_eq!(
+            batch,
+            "ALTER DATABASE \"wamn-db-acme--billing--dev\" OWNER TO \"wamn_db_owner\";\n\
+             REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-acme--billing--dev\" FROM PUBLIC; \
+             GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_app\";\n\
+             GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_dispatch_reader\";\n"
+        );
+
+        // The ordering assertion, stated independently of the frozen literal so
+        // a deliberate re-pin cannot silently drop it.
+        let owner = batch
+            .find("ALTER DATABASE")
+            .expect("the owner statement is emitted");
+        let reader_connect = batch
+            .find("GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_dispatch_reader\"")
+            .expect("the reader CONNECT grant is emitted");
+        assert!(
+            owner < reader_connect,
+            "reader CONNECT must follow ALTER DATABASE … OWNER TO: {batch}"
+        );
+
+        // The additive grant must not have displaced the app-role confinement.
+        assert!(batch.contains("REVOKE CONNECT, TEMPORARY ON DATABASE"));
+        assert!(batch.contains("TO \"wamn_app\";"));
+    }
+
+    /// The role batch must actually CREATE the principal the dispatcher's
+    /// projects file names. Before wamn-0h0g.12.122 the example manifest named
+    /// a role production provisioning never created.
+    #[test]
+    fn the_role_batch_creates_the_dispatch_reader_from_the_shipped_builder() {
+        let batch = role_sql("app-secret", "reader-secret");
+        assert_eq!(
+            batch,
+            format!(
+                "{app}\n{owner}\n{reader}\n",
+                app = sql::ensure_app_role_sql("app-secret"),
+                owner = sql::ensure_db_owner_role_sql(),
+                reader = sql::ensure_dispatch_reader_role_sql("reader-secret"),
+            )
+        );
+        assert!(batch.contains(
+            "CREATE ROLE \"wamn_dispatch_reader\" LOGIN PASSWORD 'reader-secret' NOSUPERUSER \
+             NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
+        ));
+        // Each password reaches its own builder: a swapped argument would hand
+        // the dispatcher the shared application credential.
+        assert!(
+            batch.contains("CREATE ROLE \"wamn_app\" LOGIN PASSWORD 'app-secret'"),
+            "app role lost its own password: {batch}"
+        );
+        assert!(!batch.contains("\"wamn_dispatch_reader\" LOGIN PASSWORD 'app-secret'"));
+    }
+
+    /// The owner ruling: no `default_value`. `--app-password` above still
+    /// carries one, which is a separate, filed defect — this test exists so the
+    /// new argument cannot quietly acquire the same shape.
+    #[test]
+    fn the_dispatch_reader_password_has_no_default() {
+        assert!(
+            TestCli::try_parse_from([
+                "test",
+                "--org",
+                "acme",
+                "--project",
+                "billing",
+                "--env",
+                "dev",
+                "--emit-secret",
+                "/tmp/db.json",
+            ])
+            .is_err(),
+            "provisioning accepted a missing --dispatch-reader-password"
+        );
+        assert_eq!(
+            parse_args(&["--emit-secret", "/tmp/db.json"])
+                .unwrap()
+                .dispatch_reader_password,
+            "reader-probe"
+        );
     }
 
     fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl {

@@ -77,6 +77,9 @@ fn action_args(
         cluster: None,
         connection_limit: None,
         app_password: "unused".to_string(),
+        // wamn-0h0g.12.122 made this required with no default; the effect-writer
+        // generation actions never reach the role batch that consumes it.
+        dispatch_reader_password: "unused".to_string(),
         app_host: None,
         app_port: 5432,
         namespace: "wamn-system".to_string(),
