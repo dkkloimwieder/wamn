@@ -31,8 +31,12 @@ pub struct PruneRunHistoryArgs {
     pub database_url: String,
 
     /// The run-plane schema the `runs`/`node_runs` tables live in (set as the
-    /// session `search_path`). Bare identifier.
-    #[arg(long, default_value = "wamn_run")]
+    /// session `search_path`). Bare identifier, and REQUIRED: the statement this
+    /// verb drives is `DELETE FROM runs` — UNQUALIFIED — so it resolves through
+    /// that session `search_path`. A default would let an invocation that omits
+    /// the flag prune a relation the operator never named and still report
+    /// success.
+    #[arg(long)]
     pub schema: String,
 
     /// The tenant whose run history to prune — the `app.tenant` claim RLS scopes
@@ -133,5 +137,27 @@ pub async fn prune(
             .context("prune terminal runs (dry-run)")?;
         tx.rollback().await.context("roll back dry-run")?;
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// wamn-0h0g.12.115: `--schema` carries no default, and must not reacquire
+    /// one. The prune statement is `DELETE FROM runs` — unqualified
+    /// (`wamn_run_state::sql::prune_terminal_runs_sql`) — resolved through the
+    /// SESSION-level `search_path` [`super::prune`] sets with
+    /// `set_config(..., false)`. A default therefore does not fail closed: an
+    /// invocation that omits the flag deletes some other project-env's canonical
+    /// history, prints a success line naming the schema it chose for itself, and
+    /// exits 0. Both in-repo callers already name the schema, so the default
+    /// served nobody and only enabled that silent mistarget.
+    #[test]
+    fn schema_carries_no_default_and_must_be_operator_named() {
+        let implementation = include_str!("prune_run_history.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        assert!(!implementation.contains("default_value"));
+        assert!(implementation.contains("#[arg(long)]\n    pub schema: String,"));
     }
 }
