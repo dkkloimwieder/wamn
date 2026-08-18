@@ -197,17 +197,78 @@ fn negative_every_post_admission_value_has_run_identity() {
     );
 }
 
+// The node ABI is LIVE again as `wamn:node@0.2.0` (wamn-0h0g.16.2), so the pair
+// of tests below no longer says "this package is deleted" — it says the ingress
+// contract and the node contract are two contracts and must stay two. Ingress
+// speaks to a caller about a whole run (`begin`/`wait`); the node ABI speaks to
+// one pooled component instance about one graph hop. Aliasing the node ABI here
+// would put node-execution vocabulary on the caller-facing wire, where a
+// component-internal change would then break external callers.
+//
+// The ban is only worth as much as the package it names: if `wamn:node` moved or
+// vanished, "does not contain it" would pass forever while meaning nothing.
+// `positive_live_node_abi_is_registered_where_the_ban_names_it` is what keeps it
+// honest, and the two must be read together.
+
+/// Registered home of the live node ABI, repo-root-relative.
+///
+/// STAGING: the package's intended owner is `crates/execution/router`, which
+/// does not exist yet; it is bound by nothing meanwhile. When the router lands
+/// and takes ownership at `crates/execution/router/wit/package.wit`, this
+/// constant moves with it and the guard keeps biting at the new path.
+const LIVE_NODE_ABI: &str = "wit/wamn-node/package.wit";
+
+/// The one signature the router invokes. Pinned here so a silent change to the
+/// node ABI's shape cannot leave this file asserting a contract that is gone.
+const NODE_RUN_SIGNATURE: &str =
+    "run: func(ctx: node-context, input: json) -> result<emission, node-error>;";
+
+fn repo_root() -> PathBuf {
+    // CARGO_MANIFEST_DIR is crates/execution/flow-invocation; the root is three up.
+    fs::canonicalize(crate_root().join("../../.."))
+        .unwrap_or_else(|error| panic!("canonicalize repo root: {error}"))
+}
+
 #[test]
-fn negative_contract_does_not_alias_the_deleted_node_abi() {
+fn negative_ingress_contract_does_not_alias_the_live_node_abi() {
     let manifest = fs::read_to_string(crate_root().join("Cargo.toml")).expect("Cargo.toml reads");
     let wit = fs::read_to_string(crate_root().join("wit/package.wit")).expect("WIT reads");
     let rust = fs::read_to_string(crate_root().join("src/lib.rs")).expect("src/lib.rs reads");
     let executable_sources = format!("{manifest}\n{wit}\n{rust}").to_ascii_lowercase();
 
-    let forbidden = "wamn:node/";
+    // Both executable forms a reference can take: `wamn:node/types` names an
+    // interface of the package, `wamn:node@0.2.0` names the package itself
+    // (a `use`, an `include`, or the package header of a pasted-in copy).
+    for forbidden in ["wamn:node/", "wamn:node@"] {
+        assert!(
+            !executable_sources.contains(forbidden),
+            "the flow invocation contract must not alias the node ABI, but it \
+             references {forbidden:?}; node execution vocabulary does not belong \
+             on the caller-facing wire"
+        );
+    }
+}
+
+#[test]
+fn positive_live_node_abi_is_registered_where_the_ban_names_it() {
+    let path = repo_root().join(LIVE_NODE_ABI);
+    let wit = fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "the live node ABI must exist at {LIVE_NODE_ABI} for the ingress ban \
+             above to mean anything, but it did not read: {error}. If the package \
+             moved (the router taking ownership is the expected reason), update \
+             LIVE_NODE_ABI here rather than deleting this test"
+        )
+    });
+
     assert!(
-        !executable_sources.contains(forbidden),
-        "flow invocation must not alias deleted node ABI marker {forbidden:?}"
+        wit.contains("package wamn:node@0.2.0;"),
+        "{LIVE_NODE_ABI} is no longer the wamn:node@0.2.0 package the ban names"
+    );
+    assert!(
+        wit.lines().any(|line| line.trim() == NODE_RUN_SIGNATURE),
+        "{LIVE_NODE_ABI} must still export {NODE_RUN_SIGNATURE:?} — the single \
+         operation the router invokes per graph node"
     );
 }
 
