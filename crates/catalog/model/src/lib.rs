@@ -8,6 +8,7 @@
 mod execution_node_id;
 mod execution_plan;
 mod serving_manifest;
+mod wiring;
 
 pub use execution_node_id::{ExecutionNodeId, ExecutionNodeIdError};
 pub use execution_plan::{
@@ -23,6 +24,7 @@ pub use serving_manifest::{
     RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow,
     ServingManifest, ServingRegistration, ServingRelease, release_manifest_configmap_name,
 };
+pub use wiring::{WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringNode};
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -68,6 +70,7 @@ pub enum CatalogIdentityError {
     SourceMismatch { source_id: String },
     UnresolvableManifestFlow { flow_id: String },
     ManifestTooLarge { bytes: usize, limit: usize },
+    UnresolvedWiringNode { node_id: String },
 }
 
 impl fmt::Display for CatalogIdentityError {
@@ -174,6 +177,12 @@ impl fmt::Display for CatalogIdentityError {
                 write!(
                     formatter,
                     "serving manifest is {bytes} bytes, over the {limit}-byte delivery limit"
+                )
+            }
+            Self::UnresolvedWiringNode { node_id } => {
+                write!(
+                    formatter,
+                    "wiring edge names node {node_id:?}, which the document does not declare"
                 )
             }
         }
