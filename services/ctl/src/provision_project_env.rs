@@ -12,14 +12,26 @@
 //! An imperative CLI (the `provision-org` precedent). It **renders + records**;
 //! the runbook/Job applies the emitted artifacts, in this order:
 //!
-//! 1. the shared `wamn_app` role must exist **before** the `Database` CR (its
-//!    `owner`): apply the emitted **role SQL** to the target cluster's superuser;
+//! 1. the `wamn_db_owner` title role must exist **before** the `Database` CR
+//!    (its `owner`), and the shared `wamn_app` role with it: apply the emitted
+//!    **role SQL** to the target cluster's superuser. Applying the CR first
+//!    fails reconciliation — CNPG maps `spec.owner` straight to `CREATE DATABASE
+//!    … OWNER` / `ALTER DATABASE … OWNER TO`;
 //! 2. `kubectl apply -f` the emitted **`Database` CR** and wait it applied — the
-//!    CNPG operator declaratively creates the database owned by `wamn_app`;
-//! 3. apply the emitted **privilege SQL** (`REVOKE CONNECT, TEMPORARY FROM
-//!    PUBLIC` / `GRANT CONNECT TO wamn_app`) — the thin imperative step the
-//!    `Database` CRD does not cover
-//!    (topology fact 3), run **after** the database exists;
+//!    CNPG operator declaratively creates the database owned by `wamn_db_owner`,
+//!    and re-owns an already-existing one to it;
+//! 3. apply the emitted **privilege SQL** (`ALTER DATABASE … OWNER TO
+//!    wamn_db_owner`, then `REVOKE CONNECT, TEMPORARY FROM PUBLIC` / `GRANT
+//!    CONNECT TO wamn_app`) — the thin imperative step the `Database` CRD does
+//!    not cover (topology fact 3), run **after** the database exists. The owner
+//!    statement is first and must stay first: `ALTER DATABASE … OWNER TO`
+//!    rewrites the outgoing owner's ACL entry, which is where `wamn_app`'s
+//!    granted `CONNECT` merges while `wamn_app` still owns the database.
+//!    **On an EXISTING environment this step is mandatory, not optional**: the
+//!    owner change (whether issued here or by the CR reconciler in step 2)
+//!    takes `wamn_app`'s `CONNECT` with the old owner's ACL entry, and the
+//!    `GRANT` that follows is what puts it back. Stopping after step 2 leaves
+//!    the runtime unable to reach its own database;
 //! 4. `kubectl apply -f` the emitted **credential Secret** and any independently
 //!    requested management-author / route-caller PAT Secrets.
 //!
@@ -55,7 +67,7 @@ use tokio_postgres::{Config as PgConfig, GenericClient, NoTls};
 use url::Url;
 
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, EFFECT_WRITER_ROLE, EffectWriterCredentialScope,
+    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EFFECT_WRITER_ROLE, EffectWriterCredentialScope,
     EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, compose_url, effect_writer_credential,
     effect_writer_generation_role, effect_writer_scope_hash, project_env_database_name,
     project_env_namespace, project_env_secret_name, render_effect_writer_secret_manifest,
@@ -191,8 +203,9 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub emit_role_sql: Option<PathBuf>,
 
-    /// Write the privilege SQL (`REVOKE CONNECT,TEMPORARY FROM PUBLIC` / `GRANT
-    /// CONNECT TO wamn_app`; apply AFTER the database is ready) here; `-` = stdout.
+    /// Write the privilege SQL (`ALTER DATABASE … OWNER TO wamn_db_owner`, then
+    /// `REVOKE CONNECT,TEMPORARY FROM PUBLIC` / `GRANT CONNECT TO wamn_app`;
+    /// apply AFTER the database is ready) here; `-` = stdout.
     #[arg(long)]
     pub emit_privilege_sql: Option<PathBuf>,
 
@@ -343,8 +356,21 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
 
     // Render the artifacts the runbook applies.
     let db_cr = render_project_env_database(&triple, &cluster, args.connection_limit);
-    let role_sql = sql::ensure_app_role_sql(&args.app_password);
-    let privilege_sql = sql::grant_connect_on_database_sql(&db_name);
+    // Both roles precede the CR: `wamn_db_owner` is its `spec.owner`, and the CR
+    // cannot reconcile against a role that does not exist yet.
+    let role_sql = format!(
+        "{app}\n{owner}\n",
+        app = sql::ensure_app_role_sql(&args.app_password),
+        owner = sql::ensure_db_owner_role_sql(),
+    );
+    // Ownership converges BEFORE the CONNECT grant — the owner change rewrites
+    // the outgoing owner's ACL entry, which is where a `wamn_app` grant made
+    // while `wamn_app` owned the database lives.
+    let privilege_sql = format!(
+        "{owner};\n{connect}\n",
+        owner = sql::set_database_owner_sql(&db_name),
+        connect = sql::grant_connect_on_database_sql(&db_name),
+    );
     let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace, &app_url);
 
     println!("{}", provision_summary(&triple, &db_name, &cluster));
@@ -1179,7 +1205,7 @@ async fn verify_public_access_floor(client: &(impl GenericClient + Sync)) -> any
         .collect();
     anyhow::ensure!(
         databases.is_empty(),
-        "effect-writer preparation requires PUBLIC CONNECT revoked on every non-template database; still granted on {databases:?}"
+        "effect-writer preparation requires PUBLIC CONNECT revoked on every connectable database (template1 included); still granted on {databases:?}"
     );
     let public_temporary: bool = client
         .query_one(sql::public_temporary_on_current_database_sql(), &[])
@@ -1670,7 +1696,9 @@ fn render_pat_secret(
 }
 
 fn provision_summary(triple: &Triple, database: &str, cluster: &str) -> String {
-    format!("project-env {triple}: database {database:?} on cluster {cluster:?} (owner {APP_ROLE})")
+    format!(
+        "project-env {triple}: database {database:?} on cluster {cluster:?} (owner {DB_OWNER_ROLE})"
+    )
 }
 
 fn parse_secret_path(value: &str) -> Result<PathBuf, String> {
@@ -2355,7 +2383,7 @@ mod tests {
         let summary = provision_summary(&triple, "wamn-db-acme--billing--dev", "acme-dev");
         assert_eq!(
             summary,
-            "project-env acme/billing/dev: database \"wamn-db-acme--billing--dev\" on cluster \"acme-dev\" (owner wamn_app)"
+            "project-env acme/billing/dev: database \"wamn-db-acme--billing--dev\" on cluster \"acme-dev\" (owner wamn_db_owner)"
         );
         assert!(!summary.contains("postgres://"));
         assert!(!summary.contains("password"));

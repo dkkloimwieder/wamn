@@ -4,9 +4,10 @@
 //! **declaratively** via CNPG's `Database` CRD (adopted in wamn-q3n.6's
 //! provisioning rework): the operator reconciles the CR into a `CREATE DATABASE
 //! … OWNER …` on the target cluster. The imperative work the CRD does *not* cover
-//! — ensuring the shared `wamn_app` role and `REVOKE CONNECT FROM PUBLIC` /
-//! `GRANT` (the [`crate::sql`] builders) — stays a thin privilege step (topology
-//! fact 3).
+//! — ensuring the `wamn_db_owner` title role (which the CR's `spec.owner` names,
+//! so it must exist first) and the shared `wamn_app` role, then `ALTER DATABASE
+//! … OWNER TO` / `REVOKE CONNECT FROM PUBLIC` / `GRANT` (the [`crate::sql`]
+//! builders) — stays a thin privilege step (topology fact 3).
 //!
 //! Rendered as a `serde_json::Value` (`kubectl apply -f` accepts JSON — the
 //! [`render_secret_manifest`](crate::secret::render_secret_manifest) /
@@ -17,7 +18,7 @@
 use serde_json::{Value, json};
 use wamn_control_registry::Triple;
 
-use crate::name::{APP_ROLE, project_env_database_name};
+use crate::name::{DB_OWNER_ROLE, project_env_database_name};
 
 /// The CNPG API group/version the `Database` CRD lives under.
 const API_VERSION: &str = "postgresql.cnpg.io/v1";
@@ -34,12 +35,27 @@ const NAMESPACE: &str = "wamn-system";
 /// * `connection_limit` — the per-project-env `CONNECTION LIMIT`
 ///   (noisy-neighbour governance *within* a cluster); `None` ⇒ no limit (`-1`).
 ///
-/// The database is **owned by the shared least-privilege [`APP_ROLE`]**: `wamn_app`
-/// is `NOSUPERUSER NOCREATEDB NOBYPASSRLS`, so no tenant database is
-/// superuser-owned. Catalog-publish does the schema DDL as superuser and applies
-/// the per-table `FORCE ROW LEVEL SECURITY` floor there (2.4/2.5) — wamn-q3n.7
-/// establishes only the RLS-**enforceable** substrate (a `NOBYPASSRLS` owner +
-/// per-DB `CONNECT` confinement); there are no tables to protect at provision time.
+/// The database is **owned by [`DB_OWNER_ROLE`]** — `wamn_db_owner`, a NOLOGIN
+/// title holder with zero grants and zero memberships (R9). It is deliberately
+/// neither `wamn_app` nor `postgres`: guest-authored SQL executes as `wamn_app`,
+/// and database ownership confers authority no grant matrix expresses and no
+/// `REVOKE` can take back (`ALTER DATABASE`, `DROP DATABASE`, `CREATE SCHEMA`,
+/// `GRANT … ON DATABASE`, `TEMPORARY`) — `NOCREATEDB` restrains none of it on an
+/// already-owned database. `postgres` would only trade a guest-reachable owner
+/// for a superuser one.
+///
+/// CNPG maps `spec.owner` to both `CREATE DATABASE … OWNER` and `ALTER DATABASE
+/// … OWNER TO`, so this field is also the migration for databases that already
+/// exist — the reconciler converges them, and
+/// [`set_database_owner_sql`](crate::sql::set_database_owner_sql) is the same
+/// statement for the off-cluster path. **The role must exist before any CR
+/// naming it is applied.**
+///
+/// Catalog-publish does the schema DDL as superuser and applies the per-table
+/// `FORCE ROW LEVEL SECURITY` floor there (2.4/2.5) — wamn-q3n.7 establishes
+/// only the RLS-**enforceable** substrate (a `NOBYPASSRLS`, non-guest-reachable
+/// owner + per-DB `CONNECT` confinement); there are no tables to protect at
+/// provision time.
 ///
 /// `spec.ensure: present` (additive). `databaseReclaimPolicy: retain` so deleting
 /// the CR never drops the underlying tenant database (the shared-cluster
@@ -52,7 +68,7 @@ pub fn render_project_env_database(
     let name = project_env_database_name(&triple.org, &triple.project, triple.env.as_str());
     let mut spec = json!({
         "name": name,
-        "owner": APP_ROLE,
+        "owner": DB_OWNER_ROLE,
         "cluster": { "name": cluster },
         "ensure": "present",
         "databaseReclaimPolicy": "retain",
@@ -92,8 +108,11 @@ mod tests {
         assert_eq!(cr["metadata"]["name"], "wamn-db-acme--billing--dev");
         assert_eq!(cr["spec"]["name"], "wamn-db-acme--billing--dev");
         assert_eq!(cr["metadata"]["namespace"], "wamn-system");
-        // Owned by the shared least-privilege role; created on the target cluster.
-        assert_eq!(cr["spec"]["owner"], "wamn_app");
+        // Owned by the NOLOGIN title role — never by the role guest-authored SQL
+        // executes as, and never by a superuser (R9).
+        assert_eq!(cr["spec"]["owner"], "wamn_db_owner");
+        assert_ne!(cr["spec"]["owner"], "wamn_app");
+        assert_ne!(cr["spec"]["owner"], "postgres");
         assert_eq!(cr["spec"]["cluster"]["name"], "acme-dev");
         assert_eq!(cr["spec"]["ensure"], "present");
         // Identity labels so tooling never parses the name.

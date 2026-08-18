@@ -8,7 +8,7 @@
 //! database name, a role password) travel as `$n` params or quoted literals.
 
 use crate::control_author::CONTROL_AUTHOR_ROLE;
-use crate::name::{APP_ROLE, database_name};
+use crate::name::{APP_ROLE, DB_OWNER_ROLE, database_name};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
 use wamn_run_state::{EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE};
@@ -36,6 +36,65 @@ pub fn ensure_app_role_sql(password: &str) -> String {
         role = quote_ident(APP_ROLE),
         role_lit = quote_literal(APP_ROLE),
         pw = quote_literal(password),
+    )
+}
+
+/// Idempotently create or harden the database-owner role [`DB_OWNER_ROLE`] as
+/// NOLOGIN, under the shared `wamn_role_bootstrap` advisory lock — the
+/// [`ensure_control_author_acl_role_sql`] shape, so a replay that finds a
+/// drifted attribute re-`ALTER`s it instead of reporting success.
+///
+/// **Zero grants, zero memberships, no generation pair.** The role exists only
+/// to hold title; nothing connects as it, so it is deliberately outside the
+/// credential-rotation machinery. Ownership is conferred declaratively by the
+/// `Database` CR's `spec.owner`
+/// ([`render_project_env_database`](crate::render_project_env_database)) and
+/// convergently by [`set_database_owner_sql`].
+///
+/// **Apply this to the target cluster BEFORE any `Database` CR naming it** —
+/// CNPG maps `spec.owner` to `CREATE DATABASE … OWNER` / `ALTER DATABASE …
+/// OWNER TO`, and both fail against a role that does not exist yet.
+pub fn ensure_db_owner_role_sql() -> &'static str {
+    "DO $db_owner$ BEGIN \
+       PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
+       IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles \
+                      WHERE rolname = 'wamn_db_owner') THEN \
+         CREATE ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB \
+           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+       ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles \
+                     WHERE rolname = 'wamn_db_owner' \
+                       AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
+                            OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
+         ALTER ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB \
+           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+       END IF; \
+     END $db_owner$;"
+}
+
+/// `ALTER DATABASE "<database>" OWNER TO "wamn_db_owner"` — the convergence
+/// half of the ownership migration, for databases that already exist.
+///
+/// A `REVOKE` cannot express ownership, so moving an already-provisioned
+/// project-env database off its old owner is this `ALTER`, not a grant edit.
+/// It is naturally idempotent (setting the owner a database already has is a
+/// no-op), so the privilege batch stays re-runnable and no one-shot migration
+/// script is needed: fresh databases arrive owned correctly from the CR, old
+/// ones converge here, and re-applying converges again.
+///
+/// **Order is load-bearing: this must run BEFORE
+/// [`grant_connect_on_database_sql`].** `ALTER DATABASE … OWNER TO` rewrites the
+/// outgoing owner's ACL entry to the incoming owner, and `wamn_app`'s granted
+/// `CONNECT` merges into that entry while `wamn_app` is the owner — so an
+/// owner change applied *after* the grant silently destroys it.
+///
+/// Run as the superuser provisioning principal (which needs no membership in
+/// the new owner), connected to any database on the target cluster, AFTER the
+/// database exists.
+pub fn set_database_owner_sql(database: &str) -> String {
+    format!(
+        "ALTER DATABASE {db} OWNER TO {owner}",
+        db = quote_ident(database),
+        owner = quote_ident(DB_OWNER_ROLE),
     )
 }
 
@@ -271,24 +330,39 @@ pub fn effect_writer_generation_state_sql() -> &'static str {
        FROM pg_catalog.pg_authid r WHERE r.rolname = $1"
 }
 
-/// Read-only proof that no non-template database grants `CONNECT` to PUBLIC.
+/// Read-only proof that no CONNECTABLE database grants `CONNECT` to PUBLIC.
+///
+/// The filter is `datallowconn`, not `NOT datistemplate`, and must stay so:
+/// `template1` is a template AND connectable, so a template filter reported a
+/// clean floor while `template1` still carried PostgreSQL's default PUBLIC
+/// `CONNECT`. `template0` (`datallowconn = false`) is correctly out of scope —
+/// it keeps its PUBLIC `CONNECT` aclitem, which no session can use.
 pub fn public_connect_databases_sql() -> &'static str {
     "SELECT d.datname::text FROM pg_database d \
-      WHERE NOT d.datistemplate AND EXISTS ( \
+      WHERE d.datallowconn AND EXISTS ( \
         SELECT FROM aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl \
          WHERE acl.grantee = 0 AND acl.privilege_type = 'CONNECT') \
       ORDER BY d.datname::text"
 }
 
-/// Revoke PUBLIC `CONNECT` from every non-template database in this cluster.
+/// Revoke PUBLIC `CONNECT` from every CONNECTABLE database in this cluster.
 ///
 /// Database privileges are cluster catalog entries, so the DO block may target
 /// each database while connected to the exact project database. This gives ctl
 /// ownership of converging the ratified cluster-wide floor during initial
 /// generation preparation.
+///
+/// The loop selects on `datallowconn`, **not** `NOT datistemplate`. `template1`
+/// is a template with `datallowconn = true`, so a template filter left its
+/// default PUBLIC `CONNECT` untouched — and a `template1` session is a live
+/// session on the cluster from which any database that principal OWNS can be
+/// `ALTER`ed or `DROP`ped, needing no `CONNECT` on the target at all.
+/// `template0` is `datallowconn = false` and stays untouched, as it must:
+/// `CREATE DATABASE … TEMPLATE template1` does not require the creator to hold
+/// `CONNECT`, so closing the route costs no provisioning capability.
 pub fn revoke_public_connect_floor_sql() -> &'static str {
     "DO $$ DECLARE database_name text; BEGIN \
-       FOR database_name IN SELECT datname FROM pg_database WHERE NOT datistemplate LOOP \
+       FOR database_name IN SELECT datname FROM pg_database WHERE datallowconn LOOP \
          EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', database_name); \
        END LOOP; \
      END $$;"
@@ -307,6 +381,13 @@ pub fn public_temporary_on_current_database_sql() -> &'static str {
 }
 
 /// All non-template databases available for exact cross-database ACL proof.
+///
+/// This one keeps the `NOT datistemplate` filter on purpose, unlike
+/// [`public_connect_databases_sql`] / [`revoke_public_connect_floor_sql`]: the
+/// caller OPENS a session against each name it returns, and an open session on
+/// `template1` makes concurrent `CREATE DATABASE … TEMPLATE template1` fail.
+/// The floor builders only read and revoke catalog ACLs, so they can and must
+/// cover `template1`; this one cannot.
 pub fn non_template_databases_sql() -> &'static str {
     "SELECT datname::text FROM pg_database WHERE NOT datistemplate ORDER BY datname::text"
 }
@@ -525,7 +606,9 @@ pub fn upsert_control_author_tenant_mapping_sql() -> &'static str {
 
 /// Idempotently bootstrap a per-project-env **replication** role: `REPLICATION
 /// LOGIN`, otherwise least-privilege (`NOSUPERUSER NOCREATEDB NOCREATEROLE
-/// NOBYPASSRLS`). One role per project-env (a leaked credential's blast radius
+/// NOINHERIT NOBYPASSRLS` — `NOINHERIT` matches every other role this crate
+/// mints; the role holds no memberships, so it is exactness, not a live
+/// change). One role per project-env (a leaked credential's blast radius
 /// is one registration) — but note `REPLICATION` itself is CLUSTER-WIDE in
 /// Postgres: any replication role can read any database's WAL on that cluster,
 /// so on a shared pool the input-side isolation rests on handing each reader
@@ -535,7 +618,7 @@ pub fn ensure_replication_role_sql(role: &str, password: &str) -> String {
         "DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
              CREATE ROLE {role} LOGIN REPLICATION PASSWORD {pw} \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+               NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; \
            END IF; \
          END $$;",
         role = quote_ident(role),
@@ -595,17 +678,31 @@ pub fn create_failover_slot_sql(slot: &str) -> String {
 }
 
 /// Grant the replication role its read surface: `CONNECT` on the project-env
-/// database, `USAGE` on the app data schema, and `SELECT` on the schema's
-/// **current** tables (an initial-snapshot/backfill needs table reads; logical
-/// *decoding* itself reads WAL, not tables, so tables added later decode fine
-/// without a re-grant). Idempotent; run connected to the project-env database
-/// AFTER the schema exists.
+/// database, `USAGE` on the app data schema, and `SELECT` on **exactly one
+/// table** — the decode-time entity map [`ensure_entity_map_sql`], which is the
+/// reader's only table query against a project-env database.
+///
+/// It deliberately does NOT grant `SELECT ON ALL TABLES IN SCHEMA`. Logical
+/// *decoding* reads WAL, not tables, and the shipped reader performs no
+/// initial snapshot and no backfill (`StreamingMode::Off` is the pgoutput
+/// in-progress-transaction option, not a snapshot), so the blanket grant bought
+/// nothing and cost a plain-SQL read of every tenant table to the same
+/// credential — with none of the gates (the `REPLICATION` attribute, the
+/// walsender protocol, slot ownership) that guard the replication path.
+///
+/// The `REVOKE … ON ALL TABLES` is the **retroactive** half: environments
+/// provisioned before this narrowing already executed the blanket grant, and a
+/// narrower grant does not undo it. It precedes the entity-map grant because it
+/// would otherwise strip it. Idempotent; run connected to the project-env
+/// database AFTER the schema AND the entity map exist (`cdc_sql_bundle` emits
+/// [`ensure_entity_map_sql`] first).
 pub fn grant_replication_access_sql(database: &str, role: &str, schema: &str) -> String {
     let role = quote_ident(role);
     format!(
         "GRANT CONNECT ON DATABASE {db} TO {role}; \
          GRANT USAGE ON SCHEMA {schema} TO {role}; \
-         GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {role};",
+         REVOKE SELECT ON ALL TABLES IN SCHEMA {schema} FROM {role}; \
+         GRANT SELECT ON {schema}.wamn_entities TO {role};",
         db = quote_ident(database),
         schema = quote_ident(schema),
     )
@@ -1001,7 +1098,14 @@ mod tests {
         assert!(public_connect_databases_sql().contains("privilege_type = 'CONNECT'"));
         assert!(!public_connect_databases_sql().contains("TEMPORARY"));
         assert!(revoke_public_connect_floor_sql().starts_with("DO $$"));
-        assert!(revoke_public_connect_floor_sql().contains("NOT datistemplate"));
+        // The floor is CONNECTABILITY-filtered, never template-filtered:
+        // `template1` is a template AND connectable, and a template filter left
+        // PostgreSQL's default PUBLIC CONNECT on it. `template0`
+        // (`datallowconn = false`) stays out of scope either way.
+        assert!(revoke_public_connect_floor_sql().contains("WHERE datallowconn"));
+        assert!(!revoke_public_connect_floor_sql().contains("datistemplate"));
+        assert!(public_connect_databases_sql().contains("WHERE d.datallowconn"));
+        assert!(!public_connect_databases_sql().contains("datistemplate"));
         assert!(revoke_public_connect_floor_sql().contains("REVOKE CONNECT ON DATABASE %I"));
         assert!(!revoke_public_connect_floor_sql().contains("TEMPORARY"));
         assert!(public_temporary_on_current_database_sql().starts_with("SELECT EXISTS"));
@@ -1020,8 +1124,15 @@ mod tests {
         assert!(sql.contains("IF NOT EXISTS"), "idempotent guard");
         assert!(sql.contains("CREATE ROLE \"wamn_cdc_acme__billing__dev\" LOGIN REPLICATION"));
         assert!(sql.contains("PASSWORD 's3cr3t'"));
-        // The R8b tier: REPLICATION but nothing else elevated.
-        for attr in ["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOBYPASSRLS"] {
+        // The R8b tier: REPLICATION but nothing else elevated. NOINHERIT is the
+        // house default every other minted role carries.
+        for attr in [
+            "NOSUPERUSER",
+            "NOCREATEDB",
+            "NOCREATEROLE",
+            "NOINHERIT",
+            "NOBYPASSRLS",
+        ] {
             assert!(sql.contains(attr), "missing {attr}");
         }
         // A password with a quote is escaped, not injected.
@@ -1062,14 +1173,70 @@ mod tests {
         );
     }
 
+    /// The CDC role reads WAL, not tables. Its ONLY table read is the entity
+    /// map, so that is its only `SELECT` — and the retroactive `REVOKE` must
+    /// precede the entity-map grant or it would strip it.
     #[test]
-    fn replication_grants_cover_connect_usage_and_current_tables() {
+    fn replication_grants_cover_connect_usage_and_only_the_entity_map() {
         let sql = grant_replication_access_sql("wamn-db-acme--billing--dev", "wamn_cdc_x", "app");
         assert!(sql.contains(
             "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_cdc_x\""
         ));
         assert!(sql.contains("GRANT USAGE ON SCHEMA \"app\" TO \"wamn_cdc_x\""));
-        assert!(sql.contains("GRANT SELECT ON ALL TABLES IN SCHEMA \"app\" TO \"wamn_cdc_x\""));
+        assert!(sql.contains("GRANT SELECT ON \"app\".wamn_entities TO \"wamn_cdc_x\""));
+        // Never the blanket read of every tenant table.
+        assert!(!sql.contains("GRANT SELECT ON ALL TABLES"));
+        // The retroactive half, ordered before the narrow grant it would strip.
+        let revoke = sql
+            .find("REVOKE SELECT ON ALL TABLES IN SCHEMA \"app\" FROM \"wamn_cdc_x\"")
+            .expect("retroactive revoke for already-provisioned environments");
+        let grant = sql
+            .find("GRANT SELECT ON \"app\".wamn_entities")
+            .expect("entity-map grant");
+        assert!(
+            revoke < grant,
+            "the revoke would strip the entity-map grant"
+        );
+    }
+
+    /// R9: the database owner is a NOLOGIN title holder — never `wamn_app`
+    /// (guest-authored SQL runs as it) and never a superuser.
+    #[test]
+    fn db_owner_role_is_nologin_title_only_and_hardens_on_replay() {
+        let sql = ensure_db_owner_role_sql();
+        assert!(sql.contains(DB_OWNER_ROLE));
+        assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
+        assert!(sql.contains(
+            "CREATE ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB \
+             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
+        ));
+        // A replay that finds a drifted attribute repairs it, not succeeds.
+        assert!(sql.contains("ELSIF EXISTS"));
+        assert!(sql.contains(
+            "ALTER ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB \
+             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
+        ));
+        // Owner-only by construction: no grants, no memberships, no generation
+        // pair — a role nobody logs in as has nothing to rotate.
+        for forbidden in ["GRANT ", "PASSWORD", "VALID UNTIL", "LOGIN PASSWORD"] {
+            assert!(!sql.contains(forbidden), "db owner grew {forbidden}");
+        }
+        assert!(!sql.contains(APP_ROLE), "db owner is not wamn_app");
+        assert!(!sql.contains("postgres"), "db owner is not a superuser");
+    }
+
+    /// The convergence half of the ownership migration: an `ALTER`, because a
+    /// `REVOKE` cannot express ownership.
+    #[test]
+    fn database_owner_converges_to_the_title_role() {
+        assert_eq!(
+            set_database_owner_sql("wamn-db-acme--billing--dev"),
+            "ALTER DATABASE \"wamn-db-acme--billing--dev\" OWNER TO \"wamn_db_owner\""
+        );
+        // Never re-points a database at the guest-reachable role or a superuser.
+        let sql = set_database_owner_sql("wamn-db-acme--billing--dev");
+        assert!(!sql.contains("wamn_app"));
+        assert!(!sql.contains("postgres"));
     }
 
     /// The entity-map drift guard (wamn-l5i9.11): the PINNED SQL is the

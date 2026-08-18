@@ -79,14 +79,16 @@ fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
     );
 
     // Project-env DB: the CDC bundle (schema guard → publication → failover
-    // slot → grants), then a table created AFTER the publication, then the
-    // live assertions.
+    // slot → entity map → grants — the exact order `cdc_sql_bundle` emits; the
+    // entity map precedes the grants because the grants now name it), then a
+    // table created AFTER the publication, then the live assertions.
     let db_url = swap_db(&url, &db);
     let cdc_sql = format!(
-        "{schema_guard};\n{publication}\n{slot}\n{grants}\n",
+        "{schema_guard};\n{publication}\n{slot}\n{entity_map};\n{grants}\n",
         schema_guard = sql::ensure_schema_sql(schema),
         publication = sql::create_publication_sql(&cdc, schema),
         slot = sql::create_failover_slot_sql(&cdc),
+        entity_map = sql::ensure_entity_map_sql(schema),
         grants = sql::grant_replication_access_sql(&db, &cdc, schema),
     );
     run_ok(&db_url, &cdc_sql);
@@ -127,6 +129,8 @@ DO $$ BEGIN
     'the role has USAGE on the app schema';
   ASSERT has_table_privilege('{cdc}', '{schema}.receipts'::regclass, 'SELECT') = false,
     'a table created AFTER the grant is not retro-granted (decoding needs no SELECT)';
+  ASSERT has_table_privilege('{cdc}', '{schema}.wamn_entities'::regclass, 'SELECT'),
+    'the role reads the decode-time entity map — its ONE table query';
 END $$;
 "#,
         ),
@@ -135,6 +139,129 @@ END $$;
     // Teardown: slot first (releases the pinned WAL deterministically; an
     // in-use slot would block DROP DATABASE, idle ones are dropped with it),
     // then the database (removes publication + grants), then the role.
+    run_ok(&db_url, &sql::drop_replication_slot_sql(&cdc));
+    run_ok(
+        &url,
+        &format!(
+            "{drop_db};\nDROP ROLE IF EXISTS \"{cdc}\";\n",
+            drop_db = sql::drop_database_named_sql(&db),
+        ),
+    );
+}
+
+/// The CDC role's table read is the entity map and nothing else, and the
+/// narrowing is SAFE: a tenant table it cannot `SELECT` still decodes.
+///
+/// The blanket `GRANT SELECT ON ALL TABLES IN SCHEMA` the old builder emitted
+/// handed the same credential a plain-SQL read of every tenant table, with none
+/// of the gates gating the replication path (the `REPLICATION` attribute, the
+/// walsender protocol, slot ownership). This seeds an environment provisioned
+/// UNDER that old builder and then applies the current one, so the retroactive
+/// `REVOKE` is what the proof turns on — a narrowed grant alone would leave the
+/// already-executed blanket grant standing, and every assertion below would pass
+/// on new environments while production stayed wide open.
+#[test]
+fn cdc_role_reads_only_the_entity_map_and_still_decodes_tenant_tables() {
+    let Ok(url) = std::env::var("WAMN_CDC_PG_URL") else {
+        eprintln!(
+            "skipping cdc_role_reads_only_the_entity_map_and_still_decodes_tenant_tables (set WAMN_CDC_PG_URL to run)"
+        );
+        return;
+    };
+
+    let (org, project, env) = ("acme", "narrowing", "dev");
+    let db = project_env_database_name(org, project, env);
+    let cdc = cdc_object_name(org, project, env);
+    let schema = "app";
+
+    run_ok(
+        &url,
+        &format!(
+            "{drop_db};\nDROP ROLE IF EXISTS \"{cdc}\";\n{create_db};\n{role}\n",
+            drop_db = sql::drop_database_named_sql(&db),
+            create_db = sql::create_database_named_sql(&db),
+            role = sql::ensure_replication_role_sql(&cdc, "wamn_cdc"),
+        ),
+    );
+
+    let db_url = swap_db(&url, &db);
+
+    // An environment provisioned BEFORE the narrowing: a tenant table, the
+    // entity map, and the blanket read the old builder granted. Asserted, so a
+    // future refactor that silently stops seeding it turns the retroactive
+    // REVOKE proof below vacuous rather than green.
+    run_ok(
+        &db_url,
+        &format!(
+            "{schema_guard};\n\
+             CREATE TABLE {schema_ident}.receipts (id int PRIMARY KEY, tenant_secret text);\n\
+             {entity_map};\n\
+             GRANT USAGE ON SCHEMA {schema_ident} TO \"{cdc}\";\n\
+             GRANT SELECT ON ALL TABLES IN SCHEMA {schema_ident} TO \"{cdc}\";\n\
+             DO $$ BEGIN \
+               ASSERT has_table_privilege('{cdc}', '{schema}.receipts'::regclass, 'SELECT'), \
+                 'the pre-narrowing blanket grant must really be in place'; \
+             END $$;\n",
+            schema_guard = sql::ensure_schema_sql(schema),
+            schema_ident = format!("\"{schema}\""),
+            entity_map = sql::ensure_entity_map_sql(schema),
+        ),
+    );
+
+    // The publication, the slot, and the REAL current grants builder applied
+    // over that old state — twice, so the retroactive REVOKE is proven
+    // idempotent rather than a one-shot that strips its own grant on replay.
+    let narrow = format!(
+        "{publication}\n{slot}\n{grants}\n{grants}\n",
+        publication = sql::create_publication_sql(&cdc, schema),
+        slot = sql::create_failover_slot_sql(&cdc),
+        grants = sql::grant_replication_access_sql(&db, &cdc, schema),
+    );
+    run_ok(&db_url, &narrow);
+
+    // Changes to decode, on the table the role must NOT be able to read.
+    run_ok(
+        &db_url,
+        &format!("INSERT INTO {schema}.receipts VALUES (1, 'tenant-secret');\n"),
+    );
+
+    run_ok(
+        &db_url,
+        &format!(
+            r#"
+DO $$ BEGIN
+  ASSERT has_table_privilege('{cdc}', '{schema}.receipts'::regclass, 'SELECT') = false,
+    'the retroactive REVOKE removed the blanket read an old environment already had';
+  ASSERT has_table_privilege('{cdc}', '{schema}.wamn_entities'::regclass, 'SELECT'),
+    'the entity map survives the REVOKE that precedes it — the ONE table the reader queries';
+  ASSERT has_schema_privilege('{cdc}', '{schema}', 'USAGE'),
+    'schema USAGE is untouched by the narrowing';
+  ASSERT has_database_privilege('{cdc}', '{db}', 'CONNECT'),
+    'the builder still grants database CONNECT — only the table read narrowed';
+  ASSERT (SELECT rolreplication FROM pg_roles WHERE rolname = '{cdc}'),
+    'the role still carries REPLICATION (the gate the narrowing leaves in place)';
+END $$;
+
+SET ROLE "{cdc}";
+DO $$ BEGIN
+  BEGIN
+    PERFORM count(*) FROM {schema}.receipts;
+    RAISE EXCEPTION 'the CDC credential must not be able to plain-SQL read a tenant table';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM count(*) FROM {schema}.wamn_entities;
+END $$;
+DO $$ DECLARE frames bigint; BEGIN
+  SELECT count(*) INTO frames FROM pg_logical_slot_peek_binary_changes(
+    '{cdc}', NULL, NULL, 'proto_version', '1', 'publication_names', '{cdc}');
+  ASSERT frames > 0,
+    'decoding a table the role cannot SELECT still yields changes — the narrowing is SAFE';
+END $$;
+RESET ROLE;
+"#,
+        ),
+    );
+
     run_ok(&db_url, &sql::drop_replication_slot_sql(&cdc));
     run_ok(
         &url,

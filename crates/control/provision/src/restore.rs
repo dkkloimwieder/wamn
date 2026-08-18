@@ -69,9 +69,11 @@ pub fn validate_restore_scratch_name(triple: &Triple) -> Result<(), crate::Provi
 /// connection URL (`pg_restore -d`), `dump_dir` the `pg_dump -Fd` directory.
 ///
 /// * `--no-owner --no-privileges` — restore the **data**, not the source's role
-///   ownership/ACLs (the scratch DB / in-place DB is owned by `wamn_app`, not the
-///   dump's roles; the [`crate::dump`] round-trip gate's stance). Ownership is
-///   re-established by the provisioning path, not the dump.
+///   ownership/ACLs. Restored objects land owned by the connecting principal
+///   (the superuser that runs `pg_restore`), and the scratch / in-place database
+///   itself is owned by `wamn_db_owner`, not by the dump's roles (the
+///   [`crate::dump`] round-trip gate's stance). Ownership is re-established by
+///   the provisioning path, not the dump.
 /// * `clean` (in-place only) adds `--clean --if-exists`: **drop** each object
 ///   before recreating it, so restoring over the live, populated project-env
 ///   database replaces it cleanly rather than erroring on / appending to existing
