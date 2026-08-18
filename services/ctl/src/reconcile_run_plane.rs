@@ -2,7 +2,7 @@
 //! **effect shell** for the pure `wamn_schema_control` run-plane schema reconciler —
 //! THE durable migration path for provisioned run-plane schemas.
 //!
-//! `deploy/sql/run-state.sql` / `flows.sql` / `run-queue.sql` evolve, but
+//! `deploy/sql/run-state.sql` / `run-queue.sql` evolve, but
 //! nothing migrated schemas instantiated from older revisions: the live demo
 //! schemas broke on the E4 `stream_seq` column (runner 42703 warn-loops), one
 //! env had NO queue table at all, and the ephemeral fixture restart wiped

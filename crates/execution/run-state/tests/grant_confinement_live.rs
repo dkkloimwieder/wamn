@@ -1,5 +1,5 @@
 //! Ignored live gate: what the guest-visible `wamn_app` role may and may NOT do
-//! to `wamn_run.flows`, `wamn_run.runs`, and `wamn_run.invocation_admissions`
+//! to `wamn_run.runs` and `wamn_run.invocation_admissions`
 //! after the wamn-0h0g.12.37 / .12.40 / .12.41 confinements.
 //!
 //! Every denial here is asserted TWICE and deliberately so. A statement
@@ -170,7 +170,6 @@ fn install(url: &str) {
     let catalog = read("catalog-schema.sql");
     let run_state = read("run-state.sql");
     let run_queue = read("run-queue.sql");
-    let flows = read("flows.sql");
 
     success(
         url,
@@ -195,7 +194,7 @@ fn install(url: &str) {
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             {catalog} {run_state} {run_queue} {flows} \
+             {catalog} {run_state} {run_queue} \
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'prod','0.1','draft'); \
@@ -279,83 +278,6 @@ fn assert_public_holds_nothing(relation: &str) -> String {
                 AND acl.grantee = 0), 'PUBLIC holds a column grant on {relation}'; \
          END $probe$;"
     )
-}
-
-// ---------------------------------------------------------------------------
-// wamn-0h0g.12.37 — wamn_run.flows is RETIRED and holds zero grants.
-// ---------------------------------------------------------------------------
-
-#[test]
-#[ignore = "requires WAMN_RUN_STORE_PG_URL and a throwaway PostgreSQL database"]
-fn retired_flows_relation_grants_the_app_role_nothing() {
-    let _serialize = INSTALL.lock().unwrap_or_else(|poison| poison.into_inner());
-    let url = url();
-    install(&url);
-
-    // The relation still exists and the superuser read the `impact-report`
-    // verb performs still works — retirement removed AUTHORITY, not the table.
-    success(
-        &url,
-        &format!(
-            "INSERT INTO wamn_run.flows (tenant_id, flow_id, version, active, graph_json) \
-             VALUES ('t1','f',1,true,'{{}}'::jsonb); \
-             DO $probe$ BEGIN \
-               ASSERT (SELECT count(*) FROM wamn_run.flows WHERE active) = 1, \
-                      'the superuser read that impact-report uses still works'; \
-             END $probe$; \
-             {} {} {}",
-            assert_table_privileges("wamn_run.flows", &[]),
-            assert_column_set(
-                "wamn_run.flows",
-                "SELECT",
-                &[
-                    "tenant_id",
-                    "flow_id",
-                    "version",
-                    "active",
-                    "graph_json",
-                    "created_at",
-                    "updated_at"
-                ],
-                &[]
-            ),
-            assert_public_holds_nothing("wamn_run.flows"),
-        ),
-    );
-
-    // Not one of the four statements the deleted grant allowed survives. Each
-    // is RLS-LEGAL for tenant t1, so only the missing privilege can refuse it.
-    for (name, statement) in [
-        ("select", "PERFORM count(*) FROM flows"),
-        (
-            "insert",
-            "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
-             VALUES ('t1','g',1,false,'{}'::jsonb)",
-        ),
-        (
-            "update",
-            "UPDATE flows SET active = false WHERE tenant_id = 't1'",
-        ),
-        ("delete", "DELETE FROM flows WHERE tenant_id = 't1'"),
-    ] {
-        let refused = success(
-            &url,
-            &format!(
-                "{} DO $probe$ BEGIN \
-                   BEGIN \
-                     {statement}; \
-                     RAISE EXCEPTION 'probe-not-refused'; \
-                   EXCEPTION WHEN insufficient_privilege THEN NULL; \
-                   END; \
-                 END $probe$; ROLLBACK; SELECT 'refused';",
-                app_preamble()
-            ),
-        );
-        assert!(
-            refused.contains("refused"),
-            "{name} on the retired flows relation was not refused"
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -339,7 +339,6 @@ mod tests {
     use sha2::{Digest as _, Sha256};
 
     const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
-    const FLOWS_SCHEMA: &str = include_str!("../../../../deploy/sql/flows.sql");
 
     #[test]
     fn registration_flow_refs_read_tracks_event_registrations() {
@@ -357,16 +356,6 @@ mod tests {
                 CATALOG_SCHEMA.contains(col),
                 "catalog-schema.sql event_registrations no longer has {col}"
             );
-        }
-    }
-
-    #[test]
-    fn active_flows_read_tracks_flows() {
-        let sql = super::select_active_flows_sql("app");
-        assert!(FLOWS_SCHEMA.contains("CREATE TABLE wamn_run.flows"));
-        for col in ["tenant_id", "flow_id", "version", "graph_json", "active"] {
-            assert!(sql.contains(col), "read references column {col}");
-            assert!(FLOWS_SCHEMA.contains(col), "flows.sql no longer has {col}");
         }
     }
 

@@ -77,7 +77,6 @@ use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
-const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
 const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/authoring-tests.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
@@ -266,7 +265,7 @@ async fn install_current_run_plane(su: &Client) {
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply current catalog schema");
-    for ddl in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
+    for ddl in [RUN_STATE_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
         su.batch_execute(&rewrite_schema(ddl, &schema))
             .await
             .expect("apply current run-plane schema");
@@ -2063,9 +2062,6 @@ async fn shared_runner_legacy_leg(su: &Client) {
     ))
     .await
     .expect("build shared-runner legacy run plane");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
-        .await
-        .expect("apply legacy-compatible flows");
     su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
         .await
         .expect("apply authoring tests");
@@ -2801,9 +2797,6 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
-        .await
-        .expect("apply flows");
     // …and a partially converged v1-era queue: no stream_seq or lease
     // generation, one remaining partition-key column, the pre-E4 claimable
     // index, no retired whole tables, plus the outbox-era objects and a stored
@@ -3003,9 +2996,6 @@ async fn queue_missing_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
-        .await
-        .expect("apply flows");
 
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
@@ -3094,7 +3084,6 @@ async fn from_zero_leg(su: &Client) {
         "effect_attempt_dispatches",
         "effect_attempt_outcomes",
         "operator_run_actions",
-        "flows",
         "authoring_test_run_reservations",
         "authoring_test_case_runs",
         "authoring_test_reports",
@@ -3183,9 +3172,6 @@ async fn current_noop_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
-        .await
-        .expect("apply flows");
     su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
         .await
         .expect("apply authoring tests");
@@ -3203,8 +3189,8 @@ async fn current_noop_leg(su: &Client) {
     );
     assert_eq!(
         dry.at_target.len(),
-        14,
-        "all fourteen run-plane tables at target"
+        11,
+        "all eleven run-plane tables at target"
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)
@@ -3226,9 +3212,6 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
-        .await
-        .expect("apply flows");
     su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
         .await
         .expect("apply authoring tests");
@@ -3421,9 +3404,6 @@ async fn invocation_admission_retention_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
-        .await
-        .expect("apply flows");
     su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
         .await
         .expect("apply authoring tests");
@@ -3485,7 +3465,7 @@ async fn stored_suite_cutover_leg(su: &Client) {
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog before stored-suite cutover");
-    for ddl in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
+    for ddl in [RUN_STATE_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
         su.batch_execute(&rewrite_schema(ddl, &schema))
             .await
             .expect("apply current run plane before stored-suite cutover");
@@ -3821,9 +3801,6 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state before authoring additive upgrade");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
-        .await
-        .expect("apply flows before authoring additive upgrade");
     for table in [
         "flow_drafts",
         "validated_flow_drafts",
@@ -4437,7 +4414,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog-schema");
-    for ddl in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
+    for ddl in [RUN_STATE_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
         su.batch_execute(&rewrite_schema(ddl, &schema))
             .await
             .expect("apply current run-plane record");
@@ -4995,9 +4972,6 @@ async fn persisted_literal_check_drift_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
-        .await
-        .expect("apply flows");
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");

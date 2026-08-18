@@ -23,7 +23,7 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::impact_report::{compile_plan, gather_impact};
 use wamn_ctl::migrate_catalog;
-use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_runstate};
+use wamn_ctl::publish_catalog::ensure_runstate;
 use wamn_schema_control::BareSchemaName;
 
 const DATA_SCHEMA: &str = "wvb_data";
@@ -138,13 +138,9 @@ async fn reset(su: &Client) {
     su.batch_execute(catalog_schema)
         .await
         .expect("apply deploy/sql/catalog-schema.sql");
-    // Provision flows into the data schema (ensure_runstate creates it).
     ensure_runstate(su, &schema)
         .await
         .expect("ensure run-state");
-    ensure_flow_registry(su, &schema)
-        .await
-        .expect("ensure flows");
 }
 
 async fn insert_reg(su: &Client, reg_id: &str, flow_id: &str, entity_id: &str) {

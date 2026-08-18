@@ -121,7 +121,6 @@ const REG_ID: &str = "r-del";
 const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
-const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 /// The fixture catalog: one entity (`evt_disp` → `dispositions`) with a single
@@ -392,7 +391,6 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
         ("system-schema.sql", SYSTEM_SQL),
         ("run-state.sql", RUN_STATE_SQL),
         ("run-queue.sql", RUN_QUEUE_SQL),
-        ("flows.sql", FLOWS_SQL),
         ("catalog-schema.sql", CATALOG_SQL),
     ] {
         db.batch_execute(ddl)
@@ -495,14 +493,7 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
     .await
     .context("grants")?;
 
-    // The flow + the delete registration.
-    db.execute(
-        "INSERT INTO wamn_run.flows (tenant_id, flow_id, version, active, graph_json) \
-         VALUES ($1, $2, 1, true, $3::text::jsonb)",
-        &[&TENANT, &FLOW_ID, &flow_json()],
-    )
-    .await
-    .context("seed flow disp-del")?;
+    // The delete registration.
     db.execute(
         "INSERT INTO catalog.event_registrations \
          (tenant_id, catalog_id, registration_id, flow_id, entity_id, registration) \

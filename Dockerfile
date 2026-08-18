@@ -80,7 +80,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
 
 FROM root-planner AS root-source
 COPY .cargo/config.toml ./.cargo/config.toml
-# The canonical deploy DDL (sql/run-state.sql / sql/flows.sql) is include_str!'d by
+# The canonical deploy DDL (sql/run-state.sql) is include_str!'d by
 # publish-catalog's provisioning helpers — single source of truth, no clones.
 COPY deploy ./deploy
 # wamn-gates embeds the flowrunner dispatch source guard; copy only that file,

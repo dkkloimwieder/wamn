@@ -16,7 +16,7 @@ the top level. When in doubt, ask which lifecycle owns the file's create/delete.
   Deployments (`serve-echo`, `egress-escape`). Applied per gate run, deleted
   after.
 - **`sql/`** — the standalone SQL schemas (`postgres-init`, `app-schema`,
-  `catalog-schema`, `system-schema`, `run-queue`, `run-state`, `flows`).
+  `catalog-schema`, `system-schema`, `run-queue`, `run-state`).
   Several are `include_str!`'d or read by tests — paths are load-bearing
   (SR13 tracks generating these from Rust instead of hand-maintaining them).
 

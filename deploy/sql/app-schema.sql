@@ -6,8 +6,7 @@
 -- This is the AUTH/RBAC half of item 2.4. The "platform metadata" half
 -- (entities, fields, relations, flows) is ALREADY shipped and is deliberately
 -- NOT redefined here: the catalog model lives in deploy/sql/catalog-schema.sql
--- (catalog.entities / catalog.fields / catalog.relations, 3.1) and the flow
--- registry in deploy/sql/flows.sql (wamn_run.flows, POC-F1). A `deployments` table
+-- (catalog.entities / catalog.fields / catalog.relations, 3.1). A `deployments` table
 -- is deferred — a live WorkloadDeployment is a K8s CR, so a registry table would
 -- duplicate cluster state until there is a concrete reader (follow-up bead).
 --

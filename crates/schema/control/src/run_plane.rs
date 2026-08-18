@@ -1,6 +1,6 @@
 //! The run-plane schema reconciler (E4/R14-migration, wamn-1wdq).
 //!
-//! `deploy/sql/run-state.sql` / `flows.sql` / `run-queue.sql` evolve, but a
+//! `deploy/sql/run-state.sql` / `run-queue.sql` evolve, but a
 //! schema instantiated from an older revision has NO migration path: the 2jkm.41
 //! sweep found live demo schemas missing the E4 `stream_seq` column (runner
 //! drains failed 42703), the whole queue table
@@ -68,7 +68,6 @@ use wamn_pg_core::{Identifier, InvalidIdentifier};
 /// (`publish-catalog --runstate`, the f1 provisioning Job) and the wamn-9mg8
 /// stand-in drift guard pins.
 const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
-const FLOWS_SQL: &str = include_str!("../../../../deploy/sql/flows.sql");
 const AUTHORING_TESTS_SQL: &str = include_str!("../../../../deploy/sql/authoring-tests.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
@@ -473,12 +472,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         name: "operator_run_actions_prior_node_check",
         definition: "CHECK (prior_started_node_frame_id IS NULL AND prior_started_node_local_node_id IS NULL AND prior_started_node_occurrence IS NULL AND prior_started_node_status IS NULL OR prior_started_node_frame_id >= 0 AND prior_started_node_local_node_id IS NOT NULL AND prior_started_node_local_node_id ~ '^[a-z0-9-]+$'::text AND prior_started_node_occurrence >= 0 AND prior_started_node_status = 'started'::text)",
         origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "flows",
-        name: "flows_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
     },
     CheckSpec {
         table: "authoring_test_run_reservations",
@@ -1815,9 +1808,9 @@ fn disposition_provenance_migration_sql() -> &'static str {
 }
 
 /// The run-plane record files in APPLY ORDER: run-state first (schema header +
-/// `runs`, which everything FKs), then the flow registry, authoring-test
-/// persistence, and finally the queue.
-const RUN_PLANE_FILES: [&str; 4] = [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL];
+/// `runs`, which everything FKs), then authoring-test persistence, and finally
+/// the queue.
+const RUN_PLANE_FILES: [&str; 3] = [RUN_STATE_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL];
 
 #[derive(Clone, Copy)]
 enum AuthoringTableSchema {
@@ -6607,7 +6600,6 @@ CREATE INDEX event_registrations_by_entity
                 "operator_run_actions",
             ]
         );
-        assert_eq!(record_tables(FLOWS_SQL, "wamn_run"), ["flows"]);
         assert_eq!(
             record_tables(AUTHORING_TESTS_SQL, "wamn_run"),
             [
@@ -6945,8 +6937,6 @@ CREATE INDEX event_registrations_by_entity
             names,
             [
                 "effect_attempts_bulk_scope",
-                "flows_active",
-                "flows_active_webhook_path",
                 "invocation_admissions_run",
                 "node_runs_seq",
                 "run_queue_claimable",
@@ -6969,12 +6959,6 @@ CREATE INDEX event_registrations_by_entity
             "CREATE INDEX run_queue_claimable ON wamn_run.run_queue \
              (tenant_id, available_at, stream_seq, run_id, lease_expires_at)"
         );
-        // The multi-line partial expression index parses to one statement.
-        let (_, _, wh) = index_statements(FLOWS_SQL, "wamn_run")
-            .into_iter()
-            .find(|(n, _, _)| n == "flows_active_webhook_path")
-            .unwrap();
-        assert!(wh.contains("IS NOT NULL"), "{wh}");
     }
 
     /// THE load-bearing self-consistency invariant: an observation derived from
@@ -6988,8 +6972,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            12,
-            "all twelve retained run-plane tables are at target"
+            11,
+            "all eleven retained run-plane tables are at target"
         );
     }
 
@@ -8875,7 +8859,6 @@ CREATE INDEX event_registrations_by_entity
                 "effect_attempt_dispatches",
                 "effect_attempt_outcomes",
                 "operator_run_actions",
-                "flows",
                 "authoring_test_run_reservations",
                 "authoring_test_case_runs",
                 "authoring_test_reports",
@@ -9772,7 +9755,7 @@ CREATE INDEX event_registrations_by_entity
     #[test]
     fn schema_rewrite_is_dot_anchored() {
         let schema = schema("poc_f1");
-        for (ddl, table) in [(RUN_STATE_SQL, "runs"), (FLOWS_SQL, "flows")] {
+        for (ddl, table) in [(RUN_STATE_SQL, "runs")] {
             let out = rewrite_schema(ddl, &schema);
             assert!(
                 out.contains(&format!("CREATE TABLE poc_f1.{table}")),
@@ -9797,10 +9780,6 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             !rewrite_schema(RUN_STATE_SQL, &schema)
                 .contains("SET search_path = pg_catalog, pg_temp, poc_f1")
-        );
-        assert!(
-            rewrite_schema(FLOWS_SQL, &schema)
-                .contains("CREATE UNIQUE INDEX flows_active_webhook_path ON poc_f1.flows")
         );
     }
 

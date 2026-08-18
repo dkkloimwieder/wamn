@@ -2,14 +2,14 @@
 -- orchestration facts are the only retained test persistence.
 --
 -- STANDALONE ARTIFACT, ADDITIVE to deploy/sql/run-state.sql: same convention as
--- flows.sql / run-queue.sql — deliberately NOT included by
+-- run-queue.sql — deliberately NOT included by
 -- deploy/sql/postgres-init.sql. Assumes deploy/sql/run-state.sql has been applied
 -- first (the `wamn_run` schema, the guest-visible
 -- `wamn_app` role, and the host-only `wamn_scenario_author` NOLOGIN role).
 -- Provisioning a per-project schema rewrites `wamn_run` to the project
 -- schema (`wamn-ctl publish-catalog --runstate`, reconcile-run-plane).
 --
--- Security shape mirrors flows.sql: FORCE RLS keyed on
+-- Security shape mirrors run-state.sql: FORCE RLS keyed on
 -- NULLIF(current_setting('app.tenant', true), ''); an empty/absent claim reads
 -- as NULL => zero rows, and CHECK (tenant_id <> '') forbids a ''-tenant row.
 

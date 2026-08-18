@@ -15,8 +15,8 @@
 //! or altered (the shared-cluster guardrail).
 //!
 //! POC-F1 extended this into the one project-provisioning tool: `--runstate`
-//! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs),
-//! the flow registry (`deploy/sql/flows.sql`), and the authoring test
+//! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs)
+//! and the authoring test
 //! orchestration tables (`deploy/sql/authoring-tests.sql`) into the project schema —
 //! the canonical deploy files, embedded at compile time and rewritten
 //! from `wamn_run` to the target schema — when their tables are absent;
@@ -24,7 +24,6 @@
 //! applies it (deterministic ids, `ON CONFLICT DO NOTHING` — idempotent); and
 //! `--flow` resolves standard-node interfaces, constructs canonical CF-DEF-ID
 //! artifacts, and publishes artifacts + release membership + head atomically.
-//! It does not write the retired mutable `flows.active` publication path.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -71,8 +70,7 @@ pub struct PublishCatalogArgs {
     pub provision: bool,
 
     /// Also apply the run-state storage (runs/node_runs, `deploy/sql/run-state.sql`)
-    /// and the flow registry (`deploy/sql/flows.sql`) into the schema when their
-    /// tables are absent. Additive: never drops or alters.
+    /// into the schema when its tables are absent. Additive: never drops or alters.
     #[arg(long)]
     pub runstate: bool,
 
@@ -666,23 +664,6 @@ pub async fn ensure_runstate(
         .batch_execute(&ddl)
         .await
         .context("apply run-state")?;
-    Ok(true)
-}
-
-/// Apply `deploy/sql/flows.sql` (the flow registry) into `schema` when its `flows`
-/// table is absent. Returns whether it applied.
-pub async fn ensure_flow_registry(
-    client: &tokio_postgres::Client,
-    schema: &BareSchemaName,
-) -> anyhow::Result<bool> {
-    if table_exists(client, schema, "flows").await? {
-        return Ok(false);
-    }
-    let ddl = rewrite_schema(include_str!("../../../deploy/sql/flows.sql"), schema);
-    client
-        .batch_execute(&ddl)
-        .await
-        .context("apply flow registry")?;
     Ok(true)
 }
 

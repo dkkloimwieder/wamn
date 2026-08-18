@@ -18,8 +18,7 @@
 //! the user↔role linkage [`USER_ROLES`]), [`PERMISSIONS`], [`CONFIGURATIONS`],
 //! [`AUDIT_LOG`], [`API_KEYS`]. The "platform metadata" half of 2.4 (entities /
 //! fields / relations / flows) is ALREADY shipped — the catalog model in
-//! `deploy/sql/catalog-schema.sql` (3.1) and the flow registry in `deploy/sql/flows.sql`
-//! (POC-F1) — and is referenced, not redefined here.
+//! `deploy/sql/catalog-schema.sql` (3.1) — and is referenced, not redefined here.
 //!
 //! It is DISTINCT from the T1 control-plane registry (`wamn-control-registry` /
 //! `deploy/sql/system-schema.sql`): that is the platform-global system DB (orgs /
