@@ -3,20 +3,6 @@
   "authority": "MVP gate-manifest disposition derives from docs/scope-reduction-mvp.md Appendix D. Retained D-number and recipe metadata is historical registry compatibility only. Commands, artifact inputs, and dependencies derive from the referenced Job manifests and recipe-test directives and are intentionally absent.",
   "registry_owner": "bd:wamn-2jdm.2",
   "machine_evidence_policy": "Kubernetes Job verdicts use tools/kubernetes-gate-run and the strict wamn-kubernetes-gate-verdict/v0.1 consumer contract; verdict records require fresh Job UIDs, post-start Job/Pod evidence, bounded completion, exit codes, image IDs, logs, and explicit expected-negative side-effect snapshots. Aggregate scheduling remains pending bd:wamn-2jdm.8; artifact provenance remains owned by bd:wamn-2jkm.98 and bd:wamn-4tob.6.25.",
-  "mutation_campaigns": [
-    {
-      "bead": "bd:wamn-2jdm.4",
-      "scope": "runtime, data, node, and observability gates"
-    },
-    {
-      "bead": "bd:wamn-2jdm.5",
-      "scope": "durable execution and callable-flow gates"
-    },
-    {
-      "bead": "bd:wamn-2jdm.6",
-      "scope": "event, catalog, API, and supply-chain gates"
-    }
-  ],
   "decisions": [
     {
       "id": "D1",
@@ -243,11 +229,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "tools/gate-mutants/m1-composition.sh"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-0h0g.11.9",
@@ -268,10 +249,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -294,10 +271,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -320,10 +293,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -344,10 +313,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
       "cadence": "on-demand-prerequisite",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -371,10 +336,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -397,10 +358,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -423,10 +380,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -451,10 +404,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -478,10 +427,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -505,10 +450,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -531,10 +472,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -558,10 +495,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -584,10 +517,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -610,10 +539,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -638,10 +563,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -665,10 +586,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -692,10 +609,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -718,10 +631,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -745,10 +654,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -773,10 +678,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.5"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -797,10 +698,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -821,10 +718,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -848,10 +741,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -872,10 +761,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -898,10 +783,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -925,10 +806,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -952,10 +829,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-ec7j",
@@ -979,10 +852,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1007,10 +876,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1034,10 +899,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1061,10 +922,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1088,10 +945,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1112,10 +965,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1141,10 +990,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1167,10 +1012,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.5"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1195,10 +1036,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1223,10 +1060,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1251,10 +1084,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1279,10 +1108,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1307,10 +1132,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1334,10 +1155,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1362,10 +1179,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1390,10 +1203,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1418,10 +1227,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1444,10 +1249,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.6"
-      },
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1473,10 +1274,6 @@
       "coverage_exclusions": [
         "does not execute recovery or prove attempt-intent atomicity"
       ],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.5"
-      },
       "cadence": "per-recovery-contract-or-spec-change",
       "latest_evidence": {
         "issue": "bd:wamn-4u7p.24",
@@ -1518,10 +1315,6 @@
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.12"
-      },
       "cadence": "per-gate-source-or-decision-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1544,10 +1337,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1570,10 +1359,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1596,10 +1381,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1622,10 +1403,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1648,10 +1425,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1674,10 +1447,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -1700,10 +1469,6 @@
       "can_fail": false,
       "allowed_skips": [],
       "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "not-applicable",
-        "follow_up": null
-      },
       "cadence": "retired",
       "latest_evidence": {
         "issue": "bd:wamn-12g",

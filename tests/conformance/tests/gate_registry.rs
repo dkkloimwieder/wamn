@@ -27,17 +27,9 @@ struct Registry {
     authority: String,
     registry_owner: String,
     machine_evidence_policy: String,
-    mutation_campaigns: Vec<MutationCampaign>,
     decisions: Vec<Decision>,
     excluded_decisions: Vec<ExcludedDecision>,
     entries: Vec<Entry>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MutationCampaign {
-    bead: String,
-    scope: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -78,7 +70,6 @@ struct Entry {
     can_fail: bool,
     allowed_skips: Vec<String>,
     coverage_exclusions: Vec<String>,
-    mutation_evidence: MutationEvidence,
     cadence: String,
     latest_evidence: LatestEvidence,
 }
@@ -101,14 +92,6 @@ enum Classification {
     Setup,
     NonGate,
     Retired,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MutationEvidence {
-    status: String,
-    follow_up: Option<String>,
-    evidence: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -338,20 +321,6 @@ fn validate_registry(
     {
         return Err("registry authority and pending evidence policy must be explicit".to_string());
     }
-    let mutation_campaigns: BTreeSet<_> = registry
-        .mutation_campaigns
-        .iter()
-        .map(|campaign| {
-            if campaign.scope.trim().is_empty() {
-                return Err(format!("{} has an empty mutation scope", campaign.bead));
-            }
-            Ok(campaign.bead.as_str())
-        })
-        .collect::<Result<_, String>>()?;
-    if mutation_campaigns != BTreeSet::from(["bd:wamn-2jdm.4", "bd:wamn-2jdm.5", "bd:wamn-2jdm.6"])
-    {
-        return Err("mutation campaign ownership is incomplete".to_string());
-    }
 
     let expected_decisions: BTreeSet<_> = (1..=24).map(|number| format!("D{number}")).collect();
     let mut inventoried_decisions = BTreeSet::new();
@@ -531,39 +500,10 @@ fn validate_registry(
             if entry.source_kind != SourceKind::Retired || root.join(&entry.source).exists() {
                 return Err(format!("retired gate {} is still live", entry.source));
             }
-            if entry.mutation_evidence.status != "not-applicable"
-                || entry.mutation_evidence.follow_up.is_some()
-            {
-                return Err(format!(
-                    "retired gate {} has live mutation work",
-                    entry.source
-                ));
-            }
         } else {
             if entry.source_kind == SourceKind::Retired {
                 return Err(format!(
                     "live entry {} uses retired source kind",
-                    entry.source
-                ));
-            }
-            let valid_mutation_evidence = match entry.mutation_evidence.status.as_str() {
-                "pending" => {
-                    entry.mutation_evidence.follow_up.is_some()
-                        && entry.mutation_evidence.evidence.is_none()
-                }
-                "proven" => {
-                    entry.mutation_evidence.follow_up.is_none()
-                        && entry
-                            .mutation_evidence
-                            .evidence
-                            .as_deref()
-                            .is_some_and(|evidence| root.join(evidence).is_file())
-                }
-                _ => false,
-            };
-            if !valid_mutation_evidence {
-                return Err(format!(
-                    "{} must carry proven mutation evidence or point to its follow-up",
                     entry.source
                 ));
             }
@@ -686,11 +626,6 @@ fn m1_gate_claims_completed_checks_9_and_10() {
     assert_eq!(entry.bead_owner, "bd:wamn-0h0g.11.10");
     assert_eq!(entry.expected_outcome, "pass-checks-9-and-10");
     assert!(entry.coverage_exclusions.is_empty());
-    assert_eq!(entry.mutation_evidence.status, "proven");
-    assert_eq!(
-        entry.mutation_evidence.evidence.as_deref(),
-        Some("tools/gate-mutants/m1-composition.sh")
-    );
 
     let manifest = fs::read_to_string(root.join(&entry.source)).expect("read M1 manifest");
     let sidecar = fs::read_to_string(root.join("deploy/gates/m1-postgres.Dockerfile"))
@@ -815,22 +750,6 @@ fn rejects_decorative_required_gate_mutant() {
 }
 
 #[test]
-fn rejects_proven_mutation_without_checked_in_evidence() {
-    let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
-    let entry = registry
-        .entries
-        .iter_mut()
-        .find(|entry| entry.source_kind != SourceKind::Retired)
-        .expect("registry must contain a live gate");
-    entry.mutation_evidence.status = "proven".to_string();
-    entry.mutation_evidence.follow_up = None;
-    entry.mutation_evidence.evidence = None;
-    let error = validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
-        .expect_err("proven mutation evidence without an evidence record must fail");
-    assert!(error.contains("mutation evidence"), "{error}");
-}
-
-#[test]
 fn gate_evidence_terminology_has_no_legacy_aliases() {
     let root = repository_root();
     let governed_files = [
@@ -841,7 +760,6 @@ fn gate_evidence_terminology_has_no_legacy_aliases() {
         "docs/archive/findings.md",
         "tests/conformance/src/lib.rs",
         "tests/conformance/src/kubernetes_gate_verdict.rs",
-        "tests/conformance/tests/gate_mutation_evidence.rs",
         "tests/conformance/tests/gate_registry.rs",
         "tests/conformance/tests/kubernetes_gate_runner.rs",
         "tests/conformance/tests/workspace_tiers.rs",

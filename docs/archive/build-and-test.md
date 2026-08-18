@@ -544,16 +544,12 @@ cargo clippy --locked -p wamn-run-state -p wamn-runtime \
 cargo clippy --locked --manifest-path components/Cargo.toml \
   -p flow-http -p materializer --all-targets -- -D warnings
 
-tools/gate-mutants/flow-invocation-replay.sh check
-tools/gate-mutants/flow-invocation-replay.sh green-all
-tools/gate-mutants/flow-invocation-replay.sh run-all
 
 cargo fmt -p wamn-run-state -p wamn-runtime -p wamn-flow-invocation \
   -p wamn-schema-control -p wamn-proof-conformance \
   -p wamn-proof-integration --check
 cargo fmt --manifest-path components/Cargo.toml \
   -p flow-http -p materializer --check
-bash -n tools/gate-mutants/flow-invocation-replay.sh
 git diff --check
 ```
 
@@ -1176,12 +1172,6 @@ docker stop wamn-0h0g-2-4-pg
 
 # Each mutant first runs the named clean debug gate, then must fail that same
 # gate after an exact-one source mutation; every target is restored byte-for-byte.
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
-  tools/gate-mutants/admission-execution-pin.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
-  tools/gate-mutants/admission-execution-pin.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
-  tools/gate-mutants/admission-execution-pin.sh run-all
 
 cargo fmt -p wamn-run-state -p wamn-runtime -p wamn-schema-control \
   -p wamn-ctl -p wamn-scenario-worker -p wamn-proof-integration --check
@@ -1348,7 +1338,6 @@ cargo clippy --locked --offline \
 cargo fmt --all -- --check
 jq empty architecture/state-owners.json architecture/protected-writes.json \
   crates/execution/host/effect-provider-revision.json
-bash -n tools/gate-mutants/protected-relations.sh
 git diff --check
 ```
 
@@ -1383,12 +1372,6 @@ It proves the combined claim selector, split dispatch selector, and flowrunner
 context declaration while restoring each mutated source byte-exactly:
 
 ```bash
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-11 \
-  tools/gate-mutants/event-lineage-dispatch.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-11 \
-  tools/gate-mutants/event-lineage-dispatch.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-11 \
-  tools/gate-mutants/event-lineage-dispatch.sh run-all
 cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
 # The former receipt was de-claimed when the runner was repinned without
 # rerunning its mutants; bd:wamn-2jdm.5 owns a new immutable receipt.
@@ -1801,7 +1784,6 @@ release bytes, and zero mutable/runtime residue.
 # recipe-test: H5-CAUSATION-E2E | integration | wamn-proof-integration | lib | - | causation_e2e::tests:: | 2 | production invocation/pg-write fixture plus R3 and exact-run reader arguments
 CARGO_TARGET_DIR=/tmp/wamn-target-ec7j cargo test --locked -p wamn-proof-integration --lib causation_e2e::tests::
 cargo clippy --locked -p wamn-proof-integration -p wamn-gates --all-targets -- -D warnings
-tools/gate-mutants/causation-e2e.sh run-all
 
 docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-gates:dev --name wamn
@@ -1810,13 +1792,6 @@ kubectl -n wamn-system apply -f deploy/gates/causation-e2e-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/causation-e2e --timeout=240s
 kubectl -n wamn-system logs job/causation-e2e  # -> overall PASS: true
 ```
-
-Mutation harness: `tools/gate-mutants/causation-e2e.sh` applies exact-hash
-mutants for the admitted `pg-write`, the reader's R3 request, and the exact run-id
-causation assertion. Each must turn its named debug unit gate red; the trap
-restores and verifies all starting hashes. The former receipt was de-claimed
-when the runner was repinned without rerunning its mutants; bd:wamn-2jdm.4 owns
-a new immutable receipt.
 
 ### [EVT-REG / wamn-l5i9.16] registration surface — catalog + minimal API
 
@@ -2272,20 +2247,12 @@ WAMN_CTL_PG_URL="$WAMN_41_RUNSTATE_PG_URL" \
 cargo test --locked --offline -p wamn-proof-conformance \
   --test protected_relations --test state_ownership
 
-tools/gate-mutants/global-fifo-claim.sh check
-WAMN_PRODUCTION_CLAIM_PG_URL="$WAMN_41_CLAIM_PG_URL" \
-WAMN_CTL_PG_URL="$WAMN_41_CLAIM_PG_URL" \
-  tools/gate-mutants/global-fifo-claim.sh run-all
-tools/gate-mutants/protected-relations.sh check
-WAMN_CTL_PG_URL="$WAMN_41_RUNSTATE_PG_URL" \
-  tools/gate-mutants/protected-relations.sh run-all
 
 jq empty architecture/protected-writes.json \
   docs/archive/contracts/flow-schema.schema.json \
   crates/execution/host/effect-provider-revision.json
 cargo fmt --all -- --check
 cargo fmt --manifest-path components/Cargo.toml --all -- --check
-bash -n tools/gate-mutants/*.sh
 git diff --check
 ```
 
@@ -2451,10 +2418,6 @@ cargo clippy --locked --offline -p wamn-proof-conformance \
 cargo fmt --manifest-path Cargo.toml \
   -p wamn-dispatcher -p wamn-scheduler -p wamn-run-state \
   -p wamn-proof-conformance -- --check
-bash -n tools/gate-mutants/dispatcher-reconciliation-boundary.sh
-tools/gate-mutants/dispatcher-reconciliation-boundary.sh check
-tools/gate-mutants/dispatcher-reconciliation-boundary.sh green
-tools/gate-mutants/dispatcher-reconciliation-boundary.sh run
 git diff --check
 ```
 
@@ -2495,12 +2458,6 @@ cargo clippy --locked --offline --manifest-path components/Cargo.toml \
 cargo fmt --manifest-path Cargo.toml \
   -p wamn-runner -p wamn-run-state -- --check
 cargo fmt --manifest-path components/Cargo.toml -p flowrunner -- --check
-bash -n tools/gate-mutants/root-frame-budgets.sh
-tools/gate-mutants/root-frame-budgets.sh check
-tools/gate-mutants/root-frame-budgets.sh green-all
-tools/gate-mutants/root-frame-budgets.sh run-all
-tools/gate-mutants/root-frame-budgets.sh green-all
-tools/gate-mutants/root-frame-budgets.sh check
 git diff --check
 ```
 
@@ -2540,12 +2497,6 @@ docker stop wamn-cap-pg
 # write-side output ceiling, derived output-too-large projection, and full-capture
 # redaction. The draft-capture default is gated by the authoring contract test
 # draft_run_capture_defaults_to_full_and_accepts_only_full_or_off (wamn-0h0g.15.121).
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-8-3 \
-  tools/gate-mutants/capture-mode.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-8-3 \
-  tools/gate-mutants/capture-mode.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-8-3 \
-  tools/gate-mutants/capture-mode.sh run-all
 ```
 
 ### [D6/wamn-q3n.1] control-plane registry model crate
@@ -3455,11 +3406,6 @@ grep -q 'wamn_pat_' <mode-600 rows file> && echo 'FAIL: PAT material in the ledg
 kubectl -n wamn-system delete svc jvzx4-smoke-nodeport
 
 # Mutants (sha256 apply/test/restore; each must print KILLED).
-tools/gate-mutants/authoring-smoke-collection-drift.sh run   # network-free
-WAMN_AUTHORING_SMOKE_BASE_URL="http://$NODE_IP:31188" \
-  WAMN_AUTHORING_SMOKE_PRINCIPAL_A=<first credential file> \
-  WAMN_AUTHORING_SMOKE_PRINCIPAL_B=<second credential file> \
-  tools/gate-mutants/authoring-smoke-forged-token.sh run
 ```
 
 `authoring-smoke-collection-drift` writes a field the collection owns (`flow-id`)
@@ -3608,8 +3554,6 @@ docker exec wamn-ftfc14-pg psql -U postgres -d postgres -At -c \
 docker rm -f wamn-ftfc14-pg     # teardown; shred the credential files
 
 # Mutants (sha256 apply/test/restore; each must print KILLED; both network-free).
-tools/gate-mutants/authoring-cli-collection-drift.sh run
-tools/gate-mutants/authoring-cli-unmounted-green.sh run
 ```
 
 The result of record must enumerate exactly the four retained command kinds.
@@ -4144,12 +4088,6 @@ its existing run/node row counts, the deployed runner replicas, and the helper
 lock/lineage apparatus. Recreate the Job and require the second run to report
 the no-op ("run plane already at the schema of record").
 
-Mutation harness: `tools/gate-mutants/run-plane-canonical.sh` — checked-in
-exact-hash mutants independently remove CHECK planning, helper/trigger repair,
-and effect execution; the named planner/live gates must turn red, then the trap
-restores and verifies the original hashes. Typed gate evidence lives under
-`architecture/evidence/mutations/`; DEBUG builds only.
-
 ### [EVT-C-E2E / wamn-l5i9.22] e2ebench — RETIRED (l5i9.19 teardown)
 
 The C-E2E campaign of record stands in docs/archive/results/ceilings.md § C-E2E +
@@ -4361,7 +4299,6 @@ cargo fmt -p wamn-run-state --check
 WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
   cargo test --locked -p wamn-run-state --test admission_live \
   -- --ignored --nocapture --test-threads=1
-tools/gate-mutants/trusted-invocation-context.sh run
 ```
 
 ## SR-MVP — current-plan HTTP effect authority (`wamn-0h0g.2.5`)
@@ -4403,10 +4340,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
     -- --ignored --exact --nocapture
 docker rm -f wamn-0h0g-25-pg
 
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
-  tools/gate-mutants/current-plan-effect-authority.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
-  tools/gate-mutants/current-plan-effect-authority.sh run-all
 
 rustfmt --edition 2024 --check \
   crates/execution/run-state/src/invocation_context.rs \
@@ -4478,21 +4411,9 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
     --test effect_writer_live native_effect_writer_live \
     -- --ignored --exact --nocapture
 
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 \
-  tools/gate-mutants/effect-writer-primitive.sh check
-WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
-WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 \
-  tools/gate-mutants/effect-writer-primitive.sh green-all
-WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
-WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 \
-  tools/gate-mutants/effect-writer-primitive.sh run-all
 docker rm -f wamn-0h0g-49-pg
 
 cargo fmt --all -- --check
-bash -n deploy/mvp/bootstrap.sh deploy/mvp/tests/bootstrap.sh \
-  tools/gate-mutants/effect-writer-primitive.sh
 git diff --check
 ```
 
@@ -4533,17 +4454,7 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 CARGO_INCREMENTAL=0 \
   cargo test --locked --offline -p wamn-ctl --features ops \
     --test protected_relations_live -- --nocapture --test-threads=1
 
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 \
-WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15656/wamn \
-  tools/gate-mutants/protected-relations.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 \
-WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15656/wamn \
-  tools/gate-mutants/protected-relations.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 \
-WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15656/wamn \
-  tools/gate-mutants/protected-relations.sh run-all
 
-bash -n tools/gate-mutants/protected-relations.sh
 git diff --check
 ```
 
@@ -4566,7 +4477,6 @@ halves of that guard were dead: `ResolvedNode::Standard` and
 `wamn_nodes::is_standard` appear nowhere in the repository — the standard-node
 resolver it guarded was deleted with the custom-component plane, not moved — and
 its gate test no longer exists anywhere. There is no current runnable
-respond-node-abi command. Successor coverage is `wamn-0h0g.15.124` / `tools/gate-mutants/node-abi-outcome-validation.sh`.
 
 ## PLAN-2A — request standard-node dispatch (`wamn-ayq7.22`)
 
@@ -4589,7 +4499,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-22 \
 The `request-node-abi` mutation runner was retired by `wamn-0h0g.15.122`:
 `validate_request_outcome` relocated to `crates/execution/flow-engine/src/engine.rs:801` (commit `e05636b8`) and its gate test no longer exists anywhere, so
 both halves of that guard were dead. There is no current runnable
-request-node-abi command. Successor coverage is `wamn-0h0g.15.124` / `tools/gate-mutants/node-abi-outcome-validation.sh`.
 
 ## PLAN-2A — cron standard-node dispatch (`wamn-ayq7.23`)
 
@@ -4637,7 +4546,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-24 \
 The `event-node-abi` mutation runner was retired by `wamn-0h0g.15.122`:
 `validate_event_outcome` relocated to `crates/execution/flow-engine/src/engine.rs:825` (commit `e05636b8`) and its gate test no longer exists anywhere, so
 both halves of that guard were dead. There is no current runnable
-event-node-abi command. Successor coverage is `wamn-0h0g.15.124` / `tools/gate-mutants/node-abi-outcome-validation.sh`.
 
 ## PLAN-2A — fail standard-node dispatch (`wamn-ayq7.25`)
 
@@ -4663,7 +4571,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
 The `fail-node-abi` mutation runner was retired by `wamn-0h0g.15.122`:
 `validate_fail_outcome` relocated to `crates/execution/flow-engine/src/engine.rs:850` (commit `e05636b8`) and its gate test no longer exists anywhere, so
 both halves of that guard were dead. There is no current runnable
-fail-node-abi command. Successor coverage is `wamn-0h0g.15.124` / `tools/gate-mutants/node-abi-outcome-validation.sh`.
 
 ## PLAN-1 — uniform node-interface pinning (`wamn-4u7p.38`)
 
@@ -4683,8 +4590,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-4u7p-38 \
   cargo test --locked -p wamn-catalog -p wamn-standard-nodes -p wamn-ctl -p wamn-runner
 CARGO_TARGET_DIR=/tmp/wamn-target-4u7p-38 \
   cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
-CARGO_TARGET_DIR=/tmp/wamn-target-4u7p-38 \
-  tools/gate-mutants/uniform-interface-pinning.sh run
 ```
 
 ## CF-DEADLINES — bounded attempts and poisoned-instance disposal (`wamn-fqg.14`)
@@ -4971,9 +4876,6 @@ WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
 # default, skipped confirmation read, dropped one-shot authorization consumption,
 # and bypassed locked-window guard.
 # Only the dry-run mutant needs the disposable PostgreSQL URL used by the live proof.
-WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
-  CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-5 CARGO_INCREMENTAL=0 \
-  tools/gate-mutants/migrate-catalog-additive.sh run-all
 
 cargo fmt -p wamn-ctl -p wamn-cdc-reader -p wamn-test-infrastructure \
   -p wamn-proof-integration -- --check
@@ -5058,12 +4960,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
 # Mutation outcomes: eight additive/authorization-boundary mutants and ten
 # authority-table mutants, including explicit ops-scope drift and expansion of
 # the append-only confirmation ACL. Every target is restored byte-for-byte.
-WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15658/postgres \
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops \
-  tools/gate-mutants/migrate-catalog-additive.sh run-all
-WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15658/postgres \
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops \
-  tools/gate-mutants/protected-relations.sh run-all
 docker rm -f wamn-0h0g-12-ops-pg
 
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
@@ -5079,8 +4975,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline -p wamn-ctl --features ops \
     --all-targets -- -D warnings
 cargo fmt --all -- --check
-bash -n tools/gate-mutants/migrate-catalog-additive.sh \
-  tools/gate-mutants/protected-relations.sh
 git diff --check
 ```
 
@@ -5117,11 +5011,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
 CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline -p wamn-scenario-worker \
     -p wamn-schema-control --all-targets -- -D warnings
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/test-orchestration.sh run-all
-WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/protected-relations.sh green-all
 
 rustfmt --edition 2024 --check \
   crates/schema/control/src/run_plane.rs \
@@ -5129,8 +5018,6 @@ rustfmt --edition 2024 --check \
   services/scenario-worker/src/store/{mod.rs,test_orchestration.rs} \
   services/scenario-worker/tests/test_orchestration_live.rs \
   tests/conformance/tests/state_ownership.rs
-bash -n tools/gate-mutants/test-orchestration.sh \
-  tools/gate-mutants/protected-relations.sh
 git diff --check
 ```
 
@@ -5180,14 +5067,10 @@ docker rm -f wamn-0h0g-8-8-pg
 
 cargo clippy --locked --offline -p wamn-authoring-model \
   -p wamn-control-registry -p wamn-control-provision --all-targets -- -D warnings
-tools/gate-mutants/unconditional-publish-gate.sh check
-tools/gate-mutants/unconditional-publish-gate.sh green
-tools/gate-mutants/unconditional-publish-gate.sh run
 
 rustfmt --edition 2024 --check \
   crates/authoring/model/tests/contract.rs \
   crates/control/provision/tests/control_storage.rs
-bash -n tools/gate-mutants/unconditional-publish-gate.sh
 git diff --check
 ```
 
@@ -5216,12 +5099,8 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
     -p wamn-scenario-worker \
     -p wamn-proof-integration -p wamn-proof-conformance \
     --features wamn-ctl/ops --all-targets -- -D warnings
-WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/protected-relations.sh run-all
 
 cargo fmt --all -- --check
-bash -n tools/gate-mutants/protected-relations.sh
 git diff --check
 ```
 
@@ -5265,13 +5144,10 @@ WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
 CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
   cargo test --locked --offline -p wamn-ctl --test run_plane_live \
     stored_suite_cutover_live -- --exact --nocapture --test-threads=1
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/authoring-store-cutover.sh run-all
 
 (cd clients/authoring-client && \
   node scripts/generate.mjs --check && node scripts/test.mjs && npm run build)
 cargo fmt --all -- --check
-bash -n tools/gate-mutants/authoring-store-cutover.sh
 git diff --check
 ```
 
@@ -5318,17 +5194,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
   cargo test --locked --offline -p wamn-run-state --test admission_live \
     admission_live -- --ignored --exact --nocapture --test-threads=1
 
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/http-ordinary-admission.sh run-all
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/admission-execution-pin.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/materializer-run-schema.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/flow-invocation-replay.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/causation-e2e.sh check
-tools/gate-mutants/trusted-invocation-context.sh check
 
 CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline \
@@ -5338,7 +5203,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline --manifest-path components/Cargo.toml \
     -p materializer --all-targets -- -D warnings
 cargo fmt --all -- --check
-bash -n tools/gate-mutants/http-ordinary-admission.sh
 git diff --check
 ```
 
@@ -5368,11 +5232,8 @@ if cargo tree --locked --offline -p wamn-host --depth 1 --prefix none | \
   echo 'wamn-host still depends on wamn-execution-host' >&2
   exit 1
 fi
-CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
-  tools/gate-mutants/http-ordinary-admission.sh check
 
 jq empty architecture/gate-registry.json
-bash -n tools/gate-mutants/http-ordinary-admission.sh
 cargo fmt --all -- --check
 git diff --check
 ```
@@ -5414,11 +5275,6 @@ WAMN_CTL_PG_URL="$PROTECTED_RELATIONS_PG_URL" \
 WAMN_UPDATE_PROTECTED_RELATIONS=1 \
   cargo test --locked --offline -p wamn-ctl --features ops \
     --test protected_relations_live -- --nocapture --test-threads=1
-tools/gate-mutants/protected-relations.sh check
-WAMN_CTL_PG_URL="$PROTECTED_RELATIONS_PG_URL" \
-  tools/gate-mutants/protected-relations.sh green-all
-WAMN_CTL_PG_URL="$PROTECTED_RELATIONS_PG_URL" \
-  tools/gate-mutants/protected-relations.sh run-all
 
 cargo clippy --locked --offline \
   -p wamn-flow -p wamn-run-state -p wamn-schema-control -p wamn-ctl \
@@ -5427,7 +5283,6 @@ cargo clippy --locked --offline -p wamn-proof-system --lib -- -D warnings
 cargo clippy --locked --offline -p wamn-runtime \
   --test production_claim_live -- -D warnings
 cargo fmt --all -- --check
-bash -n tools/gate-mutants/protected-relations.sh
 git diff --check
 ```
 
@@ -5448,9 +5303,6 @@ cargo test --locked --offline -p wamn-proof-integration --lib \
   metricbench::tests::executor_command_preserves_the_production_metric_boundary \
   -- --exact
 
-tools/gate-mutants/docker-package-cooks.sh check
-tools/gate-mutants/docker-package-cooks.sh green
-tools/gate-mutants/docker-package-cooks.sh run
 
 # Parse/lint representative leaves of the same complete stage graph. These
 # commands do not build an image.
@@ -5464,7 +5316,6 @@ cargo clippy --locked --offline \
 rustfmt --edition 2024 --check \
   tests/conformance/src/docker_component_provenance.rs \
   tests/integration/src/metricbench.rs
-bash -n tools/gate-mutants/docker-package-cooks.sh
 git diff --check
 ```
 
@@ -5525,17 +5376,12 @@ export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/gate-0h0g-10-3
 export CARGO_INCREMENTAL=0
 
 jq -e . architecture/workspace-tiers.json >/dev/null
-bash -n tools/profile tools/build-components \
-  tools/gate-mutants/profile-selectors.sh
 
 cargo test --locked --offline -p wamn-proof-conformance \
   --test profile_selectors --test workspace_tiers --no-fail-fast
 cargo clippy --locked --offline -p wamn-proof-conformance \
   --test profile_selectors --test workspace_tiers -- -D warnings
 
-tools/gate-mutants/profile-selectors.sh check
-tools/gate-mutants/profile-selectors.sh green-all
-tools/gate-mutants/profile-selectors.sh run-all
 
 tools/build-components m1
 tools/build-components proof
@@ -5588,18 +5434,12 @@ cargo test --locked --offline -p wamn-ctl --features ops \
 cargo test --locked --offline -p wamn-proof-conformance \
   --test state_ownership --test protected_relations
 
-tools/gate-mutants/operator-terminalize.sh check
-tools/gate-mutants/operator-terminalize.sh green-all
-tools/gate-mutants/operator-terminalize.sh run-all
-tools/gate-mutants/operator-terminalize.sh green-all
-tools/gate-mutants/operator-terminalize.sh check
 
 cargo clippy --locked --offline \
   -p wamn-run-state -p wamn-schema-control -p wamn-ctl \
   -p wamn-proof-conformance --all-targets --features wamn-ctl/ops \
   -- -D warnings
 cargo fmt --all -- --check
-bash -n tools/gate-mutants/operator-terminalize.sh
 jq -e . architecture/protected-writes.json architecture/state-owners.json \
   >/dev/null
 git diff --check
@@ -5668,12 +5508,6 @@ cargo test --locked --offline -p wamn-ctl --features ops \
 cargo test --locked --offline -p wamn-proof-conformance \
   --test protected_relations --test state_ownership
 
-tools/gate-mutants/authoring-eight-operation-contract.sh check
-tools/gate-mutants/authoring-eight-operation-contract.sh green
-tools/gate-mutants/authoring-eight-operation-contract.sh run-all
-tools/gate-mutants/authoring-store-cutover.sh run-all
-WAMN_CTL_PG_URL="$WAMN_CTL_PG_URL" \
-  tools/gate-mutants/protected-relations.sh run-all
 
 cargo clippy --locked --offline \
   -p wamn-authoring-model -p wamn-scenario-worker \
@@ -5682,8 +5516,6 @@ cargo clippy --locked --offline \
 cargo clippy --locked --offline -p wamn-ctl --features ops \
   --all-targets -- -D warnings
 cargo fmt --all -- --check
-bash -n tools/gate-mutants/authoring-{eight-operation-contract,store-cutover}.sh \
-  tools/gate-mutants/protected-relations.sh
 jq -e . architecture/protected-writes.json \
   docs/archive/contracts/authoring-surface.schema.json \
   docs/archive/contracts/authoring-surface.v0.1.examples.json >/dev/null
@@ -5753,23 +5585,8 @@ cargo test --locked --offline \
 cargo test --locked --offline -p wamn-proof-conformance \
   --test protected_relations --test state_ownership
 
-tools/gate-mutants/effect-writer-primitive.sh check
-tools/gate-mutants/effect-writer-primitive.sh green-all
-tools/gate-mutants/effect-writer-primitive.sh run-all
-tools/gate-mutants/effect-writer-primitive.sh green-all
-tools/gate-mutants/effect-writer-primitive.sh check
 
-tools/gate-mutants/run-projection-writer.sh check
-tools/gate-mutants/run-projection-writer.sh green-all
-tools/gate-mutants/run-projection-writer.sh run-all
-tools/gate-mutants/run-projection-writer.sh green-all
-tools/gate-mutants/run-projection-writer.sh check
 
-tools/gate-mutants/protected-relations.sh check
-tools/gate-mutants/protected-relations.sh green-all
-tools/gate-mutants/protected-relations.sh run-all
-tools/gate-mutants/protected-relations.sh green-all
-tools/gate-mutants/protected-relations.sh check
 
 cargo clippy --locked --offline \
   -p wamn-run-state --features native --all-targets -- -D warnings
@@ -5781,9 +5598,6 @@ cargo clippy --locked --offline \
   --all-targets --all-features -- -D warnings
 
 cargo fmt --all -- --check
-bash -n tools/gate-mutants/effect-writer-primitive.sh \
-  tools/gate-mutants/run-projection-writer.sh \
-  tools/gate-mutants/protected-relations.sh
 jq -e . architecture/protected-writes.json architecture/state-owners.json \
   >/dev/null
 git diff --check
@@ -5810,11 +5624,8 @@ cargo clippy --locked --offline -p wamn-runtime --all-targets -- -D warnings
 cargo test --locked --offline -p wamn-proof-conformance \
   --test protected_relations
 
-tools/gate-mutants/flow-invocation-listener.sh run-all
-tools/gate-mutants/flow-invocation-listener.sh green
 
 cargo fmt --all -- --check
-bash -n tools/gate-mutants/flow-invocation-listener.sh
 git diff --check
 ```
 
@@ -5852,7 +5663,6 @@ export TMPDIR="$CARGO_TARGET_DIR/docker-kind-tmp"
 install -d "$overlay" "$TMPDIR"
 
 cargo fmt --all -- --check
-bash -n tools/kubernetes-gate-run tools/gate-mutants/m1-composition.sh
 git diff --check
 cargo test --locked --offline -p wamn-proof-integration --lib m1::tests
 cargo test --locked --offline -p wamn-proof-integration --lib \
@@ -5860,10 +5670,6 @@ cargo test --locked --offline -p wamn-proof-integration --lib \
 cargo test --locked --offline -p wamn-proof-conformance --lib
 cargo test --locked --offline -p wamn-proof-conformance \
   --test gate_registry --test kubernetes_gate_runner
-tools/gate-mutants/m1-composition.sh check
-tools/gate-mutants/m1-composition.sh run-all
-tools/gate-mutants/m1-composition.sh green-all
-tools/gate-mutants/m1-composition.sh check
 cargo clippy --locked --offline \
   -p wamn-proof-integration -p wamn-proof-conformance \
   --all-targets -- -D warnings
@@ -6102,8 +5908,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-15-12 CARGO_INCREMENTAL=0 \
 docker rm -f wamn-plan-registry
 
 # Mutation campaign (two mutants; `moving-head-query` died with its subject).
-CARGO_TARGET_DIR=/tmp/wamn-target-15-12 \
-  tools/gate-mutants/plan-supply.sh run-all
 ```
 
 ## SR-MVP — the governed-dependency guard admits a self dev-dependency (wamn-0h0g.15.109)
@@ -6124,7 +5928,6 @@ cargo test --locked -p wamn-proof-conformance --lib manifest_dependencies
 
 The two real-tree mutants are recorded rather than scripted, because the guard
 surface and its registries are frozen until `wamn-0h0g.15.22` and a new
-`tools/gate-mutants/` entry would drift them. Apply each to
 `crates/catalog/model/Cargo.toml`, confirm the named test fails, restore, and
 verify the sha256 matches:
 

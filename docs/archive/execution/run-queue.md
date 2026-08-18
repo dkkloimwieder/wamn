@@ -202,6 +202,3 @@ No compatibility reader or data-rewrite path exists.
   reset, exact caller replay, and the private-writer/claim/reaper fence race.
 - `run_plane_live` proves locked refusal/rollback, partial legacy shapes,
   empty convergence, exact writer ACL repair, and idempotence.
-- `tools/gate-mutants/global-fifo-claim.sh` mutation-pins the load-bearing
-  ordering, classification, fence, map-before-lease, outcome, janitor, and
-  cutover guards.
