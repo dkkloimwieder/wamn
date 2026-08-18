@@ -204,6 +204,8 @@ impl WamnPostgres {
                 schema.as_deref(),
                 Some(&runner),
                 None,
+                None,
+                None,
                 policy.statement_timeout_ms,
             )
             .await
@@ -293,6 +295,8 @@ impl WamnPostgres {
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
+                None,
+                None,
                 None,
                 policy.statement_timeout_ms,
             )

@@ -315,6 +315,8 @@ impl client::Host for ActiveCtx<'_> {
         let project = plugin.project_for(&component_id);
         let schema = plugin.schema_for(&component_id);
         let runner = plugin.runner_for(&component_id);
+        let role = plugin.role_for(&component_id);
+        let user_id = plugin.user_id_for(&component_id);
         let run = plugin.current_run_for(&component_id);
         let (conn, pp) = match plugin.checkout(&project).await {
             Ok(c) => c,
@@ -326,6 +328,8 @@ impl client::Host for ActiveCtx<'_> {
                 &tenant,
                 schema.as_deref(),
                 runner.as_deref(),
+                role.as_deref(),
+                user_id.as_deref(),
                 run.as_ref(),
                 pp.statement_timeout_ms,
             )
