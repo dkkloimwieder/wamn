@@ -328,6 +328,18 @@ fn lock_catalog_head_sql() -> String {
 /// HTTP identity is reserved in the deferred-FK ledger before the run insert.
 /// The named unique constraint chooses the concurrent winner without allowing a
 /// losing transaction to leave a partial run or queue row.
+///
+/// ARM ORDER — DRIFT BEFORE IDENTITY, the reverse of `management_admit_sql`,
+/// and deliberately so (`wamn-0h0g.15.160`). Do not "fix" the asymmetry. A
+/// keyed callable retry that must replay a stored outcome never reaches this
+/// statement at all: `lookup_invocation_recovery_sql` reads the admissions
+/// ledger before admission is even composed, and that lookup carries no head or
+/// drift operand, which is how `wamn-0h0g.7.1`'s unconditional same-key replay
+/// survives a moving catalog. A keyless request has no reusable identity by
+/// design. So everything arriving here is new work, resolved against the head
+/// the caller just read, and new work owes the head it names. The management
+/// statement has no such pre-read and replays parameters frozen at reservation
+/// time, so its exact retry has to survive its own classifier.
 fn admit_sql() -> String {
     "\
 WITH input AS ( \
@@ -622,6 +634,27 @@ SELECT CASE \
 /// alone, and answering with the presented id would hand a caller an id no run
 /// carries. Its retry sees the committed row and classifies deterministically.
 /// Only the live PostgreSQL race proof observes any of this.
+///
+/// ARM ORDER — IDENTITY BEFORE DRIFT, the reverse of `admit_sql`, and
+/// deliberately so (`wamn-0h0g.15.160`). Do not "fix" the asymmetry: the two
+/// statements answer for different producers. A management producer replays the
+/// parameters a durable control reservation froze BEFORE the run existed, so
+/// its `expected_catalog_version` is the one its run already carries, not the
+/// one the world now holds. Drift-first turned an exact retry into `head-drift`
+/// the moment any publish moved the head, and took with it the run id a crashed
+/// producer never recorded. The drift arms exist to stop NEW work entering
+/// against a stale view, and an exact retry enters nothing new — the run
+/// already exists — so the honest question order is "is this the same command?"
+/// before "is this new work coherent with the world?". No identity arm can
+/// reach `ready`, so this order can only turn a refusal into the stored answer;
+/// it can never admit anything past a moved head.
+///
+/// The divergence check's one head-derived operand — the root bundle resolved
+/// at the LIVE head — is therefore gated on the head still standing where the
+/// caller named it, which is exactly the reachability the four drift arms used
+/// to guarantee it. Ungated, the reorder would merely retype the same false
+/// refusal as `conflicting-run-identity`. Every other operand is a presented
+/// parameter, so the check stays a question about the command alone.
 fn management_admit_sql() -> String {
     "\
 WITH input AS ( \
@@ -706,10 +739,6 @@ classified AS ( \
         OR k.command_id IS NOT NULL \
         OR k.invocation_context ->> 'producer' = 'draft-scenario') \
         THEN 'invalid-input' \
-      WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
-      WHEN h.applied_catalog_version <> k.expected_catalog_version THEN 'head-drift' \
-      WHEN rf.flow_id IS NULL THEN 'definition-drift' \
-      WHEN plan.execution_bundle_hash IS NULL THEN 'missing-root-plan' \
       WHEN kr.run_id IS NOT NULL AND kr.run_id <> k.run_id \
         THEN 'conflicting-run-identity' \
       WHEN xr.run_id IS NOT NULL \
@@ -720,10 +749,16 @@ classified AS ( \
          OR xr.catalog_id IS DISTINCT FROM k.catalog_id \
          OR xr.catalog_version IS DISTINCT FROM k.expected_catalog_version \
          OR xr.environment IS DISTINCT FROM k.environment \
-         OR xr.execution_bundle_hash IS DISTINCT FROM plan.execution_bundle_hash \
+         OR (plan.execution_bundle_hash IS NOT NULL \
+           AND h.applied_catalog_version = k.expected_catalog_version \
+           AND xr.execution_bundle_hash IS DISTINCT FROM plan.execution_bundle_hash) \
          OR xr.input_json IS DISTINCT FROM k.input_json) \
         THEN 'conflicting-run-identity' \
       WHEN xr.run_id IS NOT NULL THEN 'duplicate' \
+      WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
+      WHEN h.applied_catalog_version <> k.expected_catalog_version THEN 'head-drift' \
+      WHEN rf.flow_id IS NULL THEN 'definition-drift' \
+      WHEN plan.execution_bundle_hash IS NULL THEN 'missing-root-plan' \
       ELSE 'ready' END AS result_code, \
       k.*, plan.artifact_hash, plan.execution_bundle_hash, \
       COALESCE(xr.run_id, kr.run_id) AS existing_run_id \
@@ -1235,6 +1270,42 @@ mod tests {
             AdmissionResult::from_parts("conflicting-run-identity", Some("r1".to_string())),
             Some(AdmissionResult::ConflictingRunIdentity)
         );
+    }
+
+    /// The callable and management classifiers ask their questions in OPPOSITE
+    /// orders, and `wamn-0h0g.15.160` ruled that divergence deliberate. A
+    /// management producer replays parameters frozen before its run existed, so
+    /// a publish must not turn its exact retry into a drift refusal. A callable
+    /// retry that must replay an outcome never reaches its statement at all.
+    #[test]
+    fn an_exact_management_retry_is_answered_before_the_world_is_rechecked() {
+        let management = management_admission_sql().admit;
+        let callable = admission_sql().admit;
+        let duplicate_arm = "WHEN xr.run_id IS NOT NULL THEN 'duplicate'";
+        let head_arm = "WHEN h.applied_catalog_version IS NULL THEN 'head-not-found'";
+
+        let management_duplicate = management.find(duplicate_arm).expect("duplicate arm");
+        let management_head = management.find(head_arm).expect("management head arm");
+        assert!(
+            management_duplicate < management_head,
+            "the management identity arms must precede its drift arms"
+        );
+
+        let callable_duplicate = callable.find(duplicate_arm).expect("callable duplicate arm");
+        let callable_head = callable.find(head_arm).expect("callable head arm");
+        assert!(
+            callable_head < callable_duplicate,
+            "the callable statement's drift-first order is unchanged"
+        );
+
+        // The divergence check's only head-derived operand stays inert unless
+        // the head still stands where the caller named it. Ungated, the reorder
+        // would merely retype the same refusal as a conflicting identity.
+        assert!(management.contains(
+            "OR (plan.execution_bundle_hash IS NOT NULL \
+             AND h.applied_catalog_version = k.expected_catalog_version \
+             AND xr.execution_bundle_hash IS DISTINCT FROM plan.execution_bundle_hash)"
+        ));
     }
 
     /// The effect claim path authorizes a draft-safe connection only when

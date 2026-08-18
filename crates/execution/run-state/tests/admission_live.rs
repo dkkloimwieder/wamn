@@ -73,6 +73,15 @@ fn execute_draft(run_id: &str, command_id: &str, input: &str) -> String {
     )
 }
 
+fn execute_draft_at(run_id: &str, command_id: &str, catalog_version: i32) -> String {
+    format!(
+        "EXECUTE admit_management(\
+         'draft-run','c1','dev',{catalog_version},'flow-http',1,\
+         '{run_id}','{{\"draft\":1}}','{{\"request-id\":\"draft-1\"}}','rev-test',\
+         now()+interval '1 minute','{command_id}',NULL,NULL)"
+    )
+}
+
 fn execute_case(run_id: &str, report_id: &str, ordinal: i32, context: &str) -> String {
     format!(
         "EXECUTE admit_management(\
@@ -1201,6 +1210,62 @@ fn admission_live() {
            ASSERT (SELECT execution_bundle_hash FROM wamn_run.runs WHERE run_id='http-1') \
              = 'sha256:' || encode(sha256(convert_to('{}','UTF8')), 'hex'), \
              'head movement changed the admitted run bundle'; \
+         END $$;",
+    );
+
+    // The publication above left the head on a version this environment has no
+    // release for, so every management drift arm is now armed. A management
+    // producer replays the parameters its control reservation froze, so this is
+    // the state a crashed producer wakes into (wamn-0h0g.15.160): its exact
+    // retry still returns the run it already has, and its coordinate alone
+    // still recovers the run id it never recorded. New work is unaffected —
+    // the drift arms still refuse it, from behind the identity arms.
+    for (execution, expected) in [
+        (
+            execute_draft("draft-run-1", "cmd-1", "{\"draft\":1}"),
+            "duplicate|draft-run-1",
+        ),
+        (
+            execute_draft("draft-run-3", "cmd-1", "{\"draft\":1}"),
+            "conflicting-run-identity|draft-run-1",
+        ),
+        (
+            execute_draft_at("draft-after-publish", "cmd-after-publish", 1),
+            "head-drift|",
+        ),
+        (
+            execute_draft_at("draft-unreleased", "cmd-unreleased", 2),
+            "definition-drift|",
+        ),
+    ] {
+        let result = success(
+            &url,
+            &format!(
+                "{} {} {}; COMMIT;",
+                management_preamble(),
+                prepared_management,
+                execution
+            ),
+        );
+        assert_eq!(result.trim(), expected, "{execution}");
+    }
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT applied_catalog_version FROM catalog.catalog_heads \
+                    WHERE tenant_id='t1' AND catalog_id='c1' AND environment='dev') = 2, \
+                  'the retries above ran against a moved head'; \
+           ASSERT NOT EXISTS (SELECT FROM catalog.release_flows \
+                    WHERE tenant_id='t1' AND catalog_id='c1' AND catalog_version=2); \
+           ASSERT (SELECT count(*) FROM wamn_run.runs \
+                    WHERE tenant_id='t1' AND idempotency_key='draft:cmd-1') = 1; \
+           ASSERT (SELECT catalog_version FROM wamn_run.runs WHERE run_id='draft-run-1') = 1; \
+           ASSERT (SELECT input_json FROM wamn_run.runs WHERE run_id='draft-run-1') \
+                    = '{\"draft\":1}'::jsonb; \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id IN (\
+             'draft-run-3','draft-after-publish','draft-unreleased')); \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id IN (\
+             'draft-run-3','draft-after-publish','draft-unreleased')); \
          END $$;",
     );
 }
