@@ -4449,6 +4449,7 @@ dependencies = [
  "url",
  "wamn-catalog",
  "wamn-component-policy",
+ "wamn-execution-host",
  "wamn-flow",
  "wamn-flow-invocation",
  "wamn-gate-harness",
@@ -4457,6 +4458,7 @@ dependencies = [
  "wash-runtime",
  "wasm-encoder 0.251.0",
  "wasmtime-wasi",
+ "wat",
 ]
 
 [[package]]

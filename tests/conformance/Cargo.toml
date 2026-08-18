@@ -31,4 +31,6 @@ wasmtime-wasi = { workspace = true }
 wasm-encoder = { workspace = true }
 
 [dev-dependencies]
+wamn-execution-host = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
+wat = "=1.252.0"
