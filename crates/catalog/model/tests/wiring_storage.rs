@@ -123,6 +123,76 @@ fn activation_confirms_a_definition_gated_against_the_applied_catalog_version() 
     );
 }
 
+/// The doorbell is what makes activation seconds rather than a rollout, so the
+/// events it must ring on are as load-bearing as the guard's predicates.
+/// `AFTER INSERT` alone would ring the first activation and silence every
+/// rollback, which is the one flip an operator is watching the clock on.
+#[test]
+fn the_doorbell_rings_on_the_first_flip_and_on_every_later_one() {
+    assert_declares(
+        SCHEMA,
+        "CREATE TRIGGER wiring_activation_doorbell\n\
+         AFTER INSERT OR UPDATE ON catalog.wiring_activation\n\
+         FOR EACH ROW EXECUTE FUNCTION catalog.notify_wiring_activation();",
+        "a pointer must not be able to move without ringing",
+    );
+
+    let body = section("CREATE FUNCTION catalog.notify_wiring_activation()", "$$;");
+    assert_declares(
+        body,
+        "PERFORM pg_notify(",
+        "the doorbell must ride the flip's own transaction, so it is delivered \
+         on commit and never for a flip that rolled back",
+    );
+    for carried in ["NEW.wiring_id", "NEW.enabled", "NEW.confirmed_definition_hash"] {
+        assert_declares(
+            body,
+            carried,
+            "the payload must name the pointer's new state, or a listener has to \
+             re-read to learn what changed",
+        );
+    }
+}
+
+/// `catalog-schema.sql` applies whole only on a fresh install; an existing
+/// project database sees the converge path in `ensure_catalog_storage`. Without
+/// the markers and the probe below, every wiring relation — and the doorbell on
+/// it — would reach new databases only.
+#[test]
+fn the_wiring_relations_reach_an_existing_database_through_the_converge_path() {
+    const PUBLISHER: &str = include_str!("../../../../services/ctl/src/publish_catalog.rs");
+
+    let begin = SCHEMA
+        .find("-- BEGIN WIRING STORAGE MIGRATION")
+        .expect("the wiring block is delimited for the converge path");
+    let end = SCHEMA
+        .find("-- END WIRING STORAGE MIGRATION")
+        .expect("the wiring block's converge slice is terminated");
+    let slice = &SCHEMA[begin..end];
+    for relation in WIRING_RELATIONS {
+        assert_declares(
+            slice,
+            &format!("CREATE TABLE catalog.{relation} ("),
+            "the converge slice must carry every wiring relation",
+        );
+        assert_declares(
+            PUBLISHER,
+            &format!("to_regclass('catalog.{relation}') IS NOT NULL"),
+            "the converge probe must notice a database missing this relation",
+        );
+    }
+    assert_declares(
+        slice,
+        "CREATE TRIGGER wiring_activation_doorbell",
+        "the doorbell installs with the pointer it rings for, not separately",
+    );
+    assert_declares(
+        PUBLISHER,
+        "-- BEGIN WIRING STORAGE MIGRATION",
+        "the converge path must execute the slice these markers delimit",
+    );
+}
+
 #[test]
 fn one_environment_holds_at_most_one_enabled_hash_per_wiring() {
     let table = section("CREATE TABLE catalog.wiring_activation (", "\n);");
