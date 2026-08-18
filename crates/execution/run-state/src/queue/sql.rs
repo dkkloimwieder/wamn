@@ -7,16 +7,6 @@
 
 use crate::{RunStatus, sql as run_sql};
 
-/// Insert the write-ahead run row. Params: run id, flow id, flow version.
-pub fn write_ahead_run_sql() -> String {
-    format!(
-        "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status) \
-         VALUES (current_setting('app.tenant', true), $1, $2, $3, '{dispatched}') \
-         ON CONFLICT (tenant_id, run_id) DO NOTHING",
-        dispatched = RunStatus::Dispatched.as_sql(),
-    )
-}
-
 /// Enqueue a run. Params: run id, priority, delay milliseconds.
 pub fn enqueue_sql() -> String {
     "INSERT INTO run_queue (tenant_id, run_id, priority, available_at) \
@@ -270,42 +260,6 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
     )
 }
 
-/// Atomically mark a completed run and remove its queue row.
-pub fn complete_dequeue_sql() -> String {
-    format!(
-        "WITH done AS ({completed}) {dequeue}",
-        completed = run_sql::update_run_completed().text(),
-        dequeue = dequeue_sql(),
-    )
-}
-
-/// Change `dispatched` to `running`; reclaiming `running` is a no-op.
-pub fn mark_running_sql() -> String {
-    format!(
-        "UPDATE runs SET status = '{running}' \
-          WHERE tenant_id = current_setting('app.tenant', true) \
-            AND run_id = $1 AND status = '{dispatched}'",
-        running = RunStatus::Running.as_sql(),
-        dispatched = RunStatus::Dispatched.as_sql(),
-    )
-}
-
-/// Renew a held lease. Params: run id, TTL milliseconds, owner.
-pub fn renew_lease_sql() -> String {
-    "UPDATE run_queue \
-        SET lease_expires_at = now() + ($2::bigint * interval '1 millisecond') \
-      WHERE tenant_id = current_setting('app.tenant', true) \
-        AND run_id = $1 AND lease_owner = $3"
-        .to_string()
-}
-
-/// Remove a run's queue row. `$1` is the run id.
-pub fn dequeue_sql() -> String {
-    "DELETE FROM run_queue \
-      WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1"
-        .to_string()
-}
-
 /// Wait until a later queue time, release the current lease, and clear the
 /// release record the released claim was executing under.
 ///
@@ -436,13 +390,6 @@ pub fn write_ahead_triggered_run_sql() -> String {
     )
 }
 
-/// Read active flow declarations for trigger dispatch.
-pub fn active_flows_sql() -> String {
-    "SELECT flow_id, version, graph_json::text AS graph_json FROM flows \
-      WHERE tenant_id = current_setting('app.tenant', true) AND active"
-        .to_string()
-}
-
 /// Reconcile due work using the production claim predicate and FIFO order.
 pub fn parked_due_sql(limit: usize) -> String {
     format!(
@@ -462,17 +409,4 @@ pub fn parked_due_sql(limit: usize) -> String {
           ORDER BY q.available_at, q.stream_seq, q.run_id \
           LIMIT {limit}"
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn composed_arity_flows_from_the_producing_crate() {
-        assert_eq!(run_sql::update_run_completed().arity(), 2);
-        let completed = complete_dequeue_sql();
-        assert!(completed.contains(run_sql::update_run_completed().text()));
-        assert!(completed.contains(&dequeue_sql()));
-    }
 }
