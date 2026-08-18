@@ -241,7 +241,12 @@ mod tests {
     #[test]
     fn the_env_hot_read_takes_no_row_lock_and_so_needs_no_write_grant() {
         let read = resolve_active_wiring();
-        for clause in ["FOR UPDATE", "FOR SHARE", "FOR KEY SHARE", "FOR NO KEY UPDATE"] {
+        for clause in [
+            "FOR UPDATE",
+            "FOR SHARE",
+            "FOR KEY SHARE",
+            "FOR NO KEY UPDATE",
+        ] {
             assert!(
                 !read.contains(clause),
                 "the env-hot read must not take {clause}"

@@ -144,7 +144,11 @@ fn the_doorbell_rings_on_the_first_flip_and_on_every_later_one() {
         "the doorbell must ride the flip's own transaction, so it is delivered \
          on commit and never for a flip that rolled back",
     );
-    for carried in ["NEW.wiring_id", "NEW.enabled", "NEW.confirmed_definition_hash"] {
+    for carried in [
+        "NEW.wiring_id",
+        "NEW.enabled",
+        "NEW.confirmed_definition_hash",
+    ] {
         assert_declares(
             body,
             carried,
