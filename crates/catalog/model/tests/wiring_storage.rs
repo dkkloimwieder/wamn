@@ -9,8 +9,8 @@
 //! enabled definition hash per environment" structural.
 //!
 //! It is a text guard, not a behavioural one: it proves the refusal is *written*
-//! where wamn-0h0g.18.1 says it is. Proving it *fires* needs a live PostgreSQL
-//! and belongs with the `*_live.rs` gates that already provision one.
+//! where wamn-0h0g.18.1 says it is. Proving it *fires* needs a live PostgreSQL,
+//! which is the sibling `wiring_activation_live.rs` (wamn-0h0g.18.2).
 
 use std::collections::BTreeMap;
 
