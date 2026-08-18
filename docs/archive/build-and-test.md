@@ -1155,11 +1155,6 @@ WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15624/wamn \
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
   cargo test --locked -p wamn-ctl --test run_plane_live \
   execution_pin_cutover_live -- --exact --nocapture
-WAMN_MIGRATE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15624/wamn \
-CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
-  cargo test --locked -p wamn-ctl --lib \
-  publish_catalog::tests::missing_root_plan_rolls_back_without_publication_writes \
-  -- --exact --nocapture
 
 WAMN_AUTHORING_LOOP_ADMIN_PG_URL=postgresql://postgres:postgres@127.0.0.1:15624/wamn \
 WAMN_AUTHORING_LOOP_AUTHOR_PG_URL=postgresql://wamn_authoring_loop_author:wamn-author-live@127.0.0.1:15624/wamn \
@@ -3962,10 +3957,6 @@ cargo clippy -p wamn-schema-control -p wamn-ctl --tests
 # (`reconcile_replica_identity::run` = `wamn-ctl reconcile-replica-identity
 # --catalog … --schema …`) closes 'd'->'f', a second run being a no-op.
 # Hermetic (drops+recreates its schemas):
-docker run --rm -d --name wave5-riorch-pg -e POSTGRES_PASSWORD=postgres -p 56011:5432 postgres:18
-WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:56011/postgres \
-  cargo test -p wamn-ctl --test ri_orch_live -- --nocapture
-docker rm -f wave5-riorch-pg
 ```
 
 The registration-change reconcile CronJob (wamn-l5i9.65) is

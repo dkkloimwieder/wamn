@@ -2,13 +2,12 @@
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a throwaway
 //! Postgres (recipe: docs/archive/build-and-test.md [EVT-REG/D24]); skipped cleanly when
-//! unset. Drives the REAL `wamn-ctl` verbs (`publish_catalog::run` /
-//! `migrate_catalog::run`) against the REAL storage SQL
-//! (deploy/sql/catalog-schema.sql), proving both verbs REFUSE a catalog that
-//! would remove an entity still referenced by an event registration — naming
-//! every orphan across ALL tenants — while mutating nothing. Once the
-//! registrations are deleted, the default command reaches its separate
-//! additive-only refusal for the destructive target.
+//! unset. Drives the REAL `wamn-ctl` verb `migrate_catalog::run` against the
+//! REAL storage SQL (deploy/sql/catalog-schema.sql), proving it REFUSES a
+//! catalog that would remove an entity still referenced by an event
+//! registration — naming every orphan across ALL tenants — while mutating
+//! nothing. Once the registrations are deleted, the default command reaches its
+//! separate additive-only refusal for the destructive target.
 //!
 //! wamn-0h0g.12.119 adds the fail-CLOSED half: the guard must REFUSE BY NAME a
 //! registration set it cannot read, rather than reading zero rows and clearing a
@@ -24,7 +23,7 @@ use std::sync::LazyLock;
 
 use tokio_postgres::{Client, NoTls};
 
-use wamn_ctl::{migrate_catalog, publish_catalog};
+use wamn_ctl::migrate_catalog;
 
 /// Every test in this binary rebuilds the FIXED `catalog` metadata schema in its
 /// preamble, so they must not interleave — cargo runs a binary's tests in
@@ -147,24 +146,6 @@ async fn schema_present(su: &Client, name: &str) -> bool {
     .get(0)
 }
 
-fn publish_args(catalog: std::path::PathBuf, url: &str) -> publish_catalog::PublishCatalogArgs {
-    publish_catalog::PublishCatalogArgs {
-        catalog,
-        admin_database_url: Some(url.to_string()),
-        tenant: "t1".to_string(),
-        project_config: None,
-        schema: "public".to_string(),
-        provision: false,
-        runstate: false,
-        seed_dataset: None,
-        flow: vec![],
-        exposure: None,
-        // This gate exercises only the D24 orphan guard; the EVT-RI-ORCH
-        // post-apply reconcile (l5i9.61) has its own gate (ri_orch_live).
-        skip_reconcile_replica_identity: true,
-    }
-}
-
 fn migrate_args(target: std::path::PathBuf, url: &str) -> migrate_catalog::MigrateCatalogArgs {
     migrate_catalog::MigrateCatalogArgs {
         admin_database_url: url.to_string(),
@@ -190,24 +171,6 @@ fn migrate_dry_run_args(
     }
 }
 
-/// The snapshot entity ids currently published for tenant `t1` (parsed from the
-/// stored `wamn_catalog` document) — the proof the guard mutated nothing.
-async fn snapshot_entity_ids(su: &Client) -> Vec<String> {
-    let doc: String = su
-        .query_one(
-            "SELECT document::text FROM public.wamn_catalog WHERE tenant_id = 't1'",
-            &[],
-        )
-        .await
-        .expect("read published snapshot")
-        .get(0);
-    let cat = wamn_schema_model::Catalog::from_json(&doc).expect("snapshot parses");
-    cat.entities
-        .iter()
-        .map(|e| e.id.as_str().to_string())
-        .collect()
-}
-
 /// All scenarios share the fixed `catalog` metadata schema, so they run
 /// SEQUENTIALLY under one test entry (parallel `#[tokio::test]`s would clobber
 /// each other's hermetic reset).
@@ -219,7 +182,6 @@ async fn orphan_guard_refuses_then_proceeds() {
     };
     let _serialized = SERIALIZE.lock().await;
     let su = connect(&url).await;
-    publish_scenario(&su, &url).await;
     migrate_scenario(&su, &url).await;
     dry_run_scenario(&su, &url).await;
     dry_run_no_data_schema_scenario(&su, &url).await;
@@ -514,75 +476,6 @@ async fn a_provisioned_but_empty_registration_set_still_passes_the_guard() {
     ))
     .await
     .expect("teardown");
-}
-
-async fn publish_scenario(su: &Client, url: &str) {
-    reset(su).await;
-
-    let ab = write_tmp(
-        "d24_pub_ab.json",
-        &cat_json(1, &format!("{E_SALES},{E_LINES}")),
-    );
-    let a_only = write_tmp("d24_pub_a.json", &cat_json(2, E_SALES));
-    let b_only = write_tmp("d24_pub_b.json", &cat_json(3, E_LINES));
-
-    // Seed: publish the full catalog {sales_orders, line_items} for tenant t1.
-    publish_catalog::run(publish_args(ab, url))
-        .await
-        .expect("initial publish of the full catalog");
-
-    // Two tenants register against entity `sales_orders`.
-    insert_reg(su, "t1", "reg-t1", "sales_orders").await;
-    insert_reg(su, "t2", "reg-t2", "sales_orders").await;
-
-    // Removing the UNREFERENCED entity `line_items` proceeds (keeps sales_orders).
-    publish_catalog::run(publish_args(a_only, url))
-        .await
-        .expect("publish removing an unreferenced entity proceeds");
-    assert_eq!(
-        snapshot_entity_ids(su).await,
-        vec!["sales_orders".to_string()]
-    );
-
-    // Removing `sales_orders` — still referenced by BOTH tenants — is REFUSED.
-    let err = publish_catalog::run(publish_args(b_only.clone(), url))
-        .await
-        .expect_err("orphaning publish must be refused");
-    let msg = err.to_string();
-    for needle in ["reg-t1", "reg-t2", "t1", "t2", "sales_orders"] {
-        assert!(msg.contains(needle), "refusal names {needle:?}: {msg}");
-    }
-
-    // NOTHING mutated: snapshot still {sales_orders}, both registrations intact.
-    assert_eq!(
-        snapshot_entity_ids(su).await,
-        vec!["sales_orders".to_string()]
-    );
-    assert_eq!(
-        reg_count(su).await,
-        2,
-        "registrations untouched by the refusal"
-    );
-
-    // Delete the registrations via the storage surface, then the same publish
-    // proceeds (sales_orders now unreferenced).
-    su.execute(
-        "DELETE FROM catalog.event_registrations WHERE catalog_id = 'shop'",
-        &[],
-    )
-    .await
-    .expect("owner deletes the registrations");
-    publish_catalog::run(publish_args(b_only, url))
-        .await
-        .expect("re-publish proceeds once the registrations are gone");
-    assert_eq!(
-        snapshot_entity_ids(su).await,
-        vec!["line_items".to_string()]
-    );
-
-    su.batch_execute("DROP SCHEMA IF EXISTS catalog CASCADE; DROP TABLE IF EXISTS public.wamn_catalog CASCADE; DROP TABLE IF EXISTS public.wamn_entities CASCADE")
-        .await
-        .expect("teardown");
 }
 
 async fn migrate_scenario(su: &Client, url: &str) {

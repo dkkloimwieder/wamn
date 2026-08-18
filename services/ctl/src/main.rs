@@ -5,7 +5,7 @@ use std::str::FromStr as _;
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     enable_cdc_project_env, migrate_catalog, provision, provision_org, provision_project_env,
-    publish_catalog, reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
+    reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -21,8 +21,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Write a project's catalog snapshot into the wamn_catalog table (4.1b)
-    PublishCatalog(publish_catalog::PublishCatalogArgs),
     /// Provision a per-project Postgres database + credential on the shared cluster (2.3)
     ProvisionProject(provision::ProvisionProjectArgs),
     /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (wamn-q3n.6 / D18)
@@ -58,7 +56,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        Command::PublishCatalog(args) => publish_catalog::run(args).await,
         Command::ProvisionProject(args) => provision::run(args).await,
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,

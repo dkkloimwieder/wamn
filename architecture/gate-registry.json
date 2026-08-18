@@ -284,26 +284,6 @@
     },
     {
       "source_kind": "manifest",
-      "source": "deploy/gates/publish-catalog-job.yaml",
-      "classification": "setup",
-      "decision_ids": [],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "setup-completes",
-      "can_fail": false,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "cadence": "on-demand-prerequisite",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
       "source": "deploy/gates/socketguard-job.yaml",
       "classification": "required-gate",
       "decision_ids": [

@@ -1,7 +1,6 @@
 use std::process::Command;
 
 const MVP_VERBS: &[&str] = &[
-    "publish-catalog",
     "provision-project",
     "provision-org",
     "provision-project-env",
