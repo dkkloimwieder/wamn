@@ -161,7 +161,8 @@ pub enum PublishReleaseErrorKind {
     PlanBytes,
     /// A `call-flow` callee is not a released member, or carries no contract.
     CallableContract,
-    /// The report's tested resolution map is not a canonicalizable JSON object.
+    /// The minted release manifest resolves no plan for the flow being published,
+    /// so there is no tested resolution map to record (wamn-0h0g.15.29).
     TestedResolutionMap,
     /// The coordinate already publishes a DIFFERENT release member.
     ReleaseConflict,
@@ -278,14 +279,17 @@ pub fn lock_validated_draft_sql() -> &'static str {
 
 /// Lock and read the finalized test report that gates this publish.
 ///
-/// `resolution_map::text` is read as text because the authoritative evidence form
-/// is RFC 8785 canonical bytes the driver derives from this value; the stored
-/// `jsonb` is the report's own record, never the evidence identity.
+/// It deliberately does **not** read `report.resolution_map` (wamn-0h0g.15.29).
+/// wamn-0h0g.15.7 deleted the last writer of the case-level map the report-level
+/// map aggregated, so that column now mints `'{}'` on every report; sourcing
+/// evidence from it welded an empty map to every release. The tested resolution
+/// map is derived from the release manifest instead. What the report gates here is
+/// the verdict, and only the verdict.
 ///
 /// Params: `$1` tenant, `$2` report id.
 pub fn lock_test_report_sql() -> &'static str {
     "SELECT report.validated_draft_id, report.catalog_id, report.catalog_version, \
-            report.passed, report.resolution_map::text \
+            report.passed \
        FROM wamn_run.authoring_test_reports AS report \
       WHERE report.tenant_id = $1 AND report.report_id = $2 \
         FOR SHARE"
@@ -712,8 +716,11 @@ mod tests {
         let report = lock_test_report_sql();
         assert!(report.contains("FROM wamn_run.authoring_test_reports AS report"));
         assert!(report.contains("report.report_id = $2"));
-        assert!(report.contains("report.resolution_map::text"));
         assert!(report.contains("FOR SHARE"));
+        // wamn-0h0g.15.29: the report's own map has had no writer since
+        // wamn-0h0g.15.7, so it reads `'{}'` on every report. Reading it back here
+        // would re-weld an empty tested resolution map to every release.
+        assert!(!report.contains("resolution_map"));
 
         let coordinate = lock_release_coordinate_sql();
         assert!(coordinate.contains("FROM catalog.release_manifests AS manifest"));

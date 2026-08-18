@@ -17,29 +17,42 @@
 //! 6. the callable-contract facts the tested release requires — every `call-flow`
 //!    callee is a released member of this exact release and its own plan carries a
 //!    callable contract;
-//! 7. the tested resolution map, canonicalized to exact RFC 8785 bytes by the one
-//!    landed canonicalizer.
+//! 7. the tested resolution map, derived from the release manifest this publish
+//!    mints and canonicalized to exact RFC 8785 bytes.
 //!
-//! Only then does it append exactly two rows: one `catalog.release_flows` member
-//! and one `catalog.release_flow_test_evidence` row through the landed
-//! wamn-0h0g.9.9 routine. Every conflicting reuse is refused by the pre-reads
-//! *before* either append runs, and an exact retry returns the release already
-//! minted with its original server-minted `created_at`.
+//! It appends exactly two rows: one `catalog.release_flows` member and one
+//! `catalog.release_flow_test_evidence` row through the landed wamn-0h0g.9.9
+//! routine. Every conflicting reuse is refused before the append it conflicts
+//! with, nothing is committed on any refusal, and an exact retry returns the
+//! release already minted with its original server-minted `created_at`.
 //!
-//! # `tested_resolution_map` is bytes, never JSONB
+//! # `tested_resolution_map` is manifest-derived bytes, never the report's JSONB
 //!
-//! The report stores its map as `jsonb` with a hash over PostgreSQL's `jsonb::text`
-//! rendering. That rendering is not RFC 8785 — it inserts spaces — so the evidence
-//! hash and the report hash deliberately differ. Step A derives the authoritative
-//! bytes with [`wamn_flow::canonical_json_bytes`], the workspace's single
-//! canonicalizer, and persists those exact bytes; identity is byte equality and
-//! never a reserialized projection (wamn-0h0g.9.9, owner amendment 2026-08-15).
+//! The map is `flow_id -> plan_hash` over the flows reachable from the flow being
+//! published, read off [`ServingManifest`] — the same document a pod mounts. Its
+//! authoritative form is the exact RFC 8785 bytes [`wamn_flow::canonical_json_bytes`]
+//! produces, and identity is byte equality, never a reserialized projection
+//! (wamn-0h0g.9.9, owner amendment 2026-08-15).
 //!
-//! Step A reads the map as an opaque evidence snapshot. It deliberately derives no
-//! callee resolution from it: the map's producer is broken today
-//! (wamn-0h0g.15.29 — with case-level maps deleted, reports mint `{}`), and its
-//! key/value semantics are re-sourced from the release manifest there. Callability
-//! is verified against the release itself, which is well defined now.
+//! Step A does **not** read `wamn_run.authoring_test_reports.resolution_map`
+//! (wamn-0h0g.15.29). That producer is dead: wamn-0h0g.15.7 deleted the last
+//! writer of `authoring_test_case_runs.resolution_map`, so the report-level map
+//! mints `'{}'` on every report and reading it welded an empty evidence map to
+//! every release. The map's semantics survived the deletion intact —
+//! `deploy/sql/authoring-tests.sql` calls it "the exact `flow_id ->
+//! execution_bundle_hash` object", and [`ServingManifest::reachable_flows`] is by
+//! its own doc the replacement for the walk that used to build it — so the manifest
+//! is where it is now sourced.
+//!
+//! # Why the reachable set, and not the whole release
+//!
+//! Evidence is per flow, and the gate claim it records is *this* flow exercised
+//! against *its* callees. Scoping to [`ServingManifest::reachable_flows`] is also
+//! what keeps an exact retry converging: a member is append-only at its coordinate
+//! and every reachable callee was already released when step 6 verified it, so the
+//! reachable set and its plan hashes cannot move. The whole-release map could —
+//! publishing any unrelated flow would change it, and the next retry of *this*
+//! publish would refuse itself as an `EvidenceConflict`.
 //!
 //! # Out of scope, by construction
 //!
@@ -56,7 +69,9 @@
 //! the RFC 8785 canonical bytes it will actually ship. It is a pure read: it
 //! appends nothing, so step A runs it inside its own transaction — after the
 //! member append, so the flow just published is in the projection, and before the
-//! commit, so no concurrent publisher can slip a member between the two.
+//! commit, so no concurrent publisher can slip a member between the two. Since
+//! wamn-0h0g.15.29 the tested-evidence map is derived from that same projection,
+//! which is the other reason it has to run before the evidence append.
 //!
 //! The mint is the whole of wamn-0h0g.15.14. Pushing those bytes to OCI is
 //! wamn-0h0g.15.97, writing them into the GitOps desired state is wamn-0h0g.15.98,
@@ -196,7 +211,6 @@ async fn publish(
             ),
         ));
     };
-    let stored_resolution_map: String = report.get(4);
     verify_test_report(
         request,
         &TestReportFacts {
@@ -287,10 +301,7 @@ async fn publish(
             .await?;
     }
 
-    // 7 — the tested resolution map, as exact RFC 8785 bytes.
-    let (map_bytes, map_hash) = canonical_tested_resolution_map(&stored_resolution_map)?;
-
-    // Every conflicting reuse refuses here, before either append.
+    // A conflicting member refuses here, before either append.
     let member = transaction
         .query_opt(
             lock_release_member_sql(),
@@ -312,34 +323,6 @@ async fn publish(
             },
         )?;
     }
-    if let Some(row) = transaction
-        .query_opt(
-            lock_release_evidence_sql(),
-            &[
-                &request.tenant_id,
-                &request.catalog_id,
-                &request.catalog_version,
-                &request.flow_id,
-            ],
-        )
-        .await
-        .map_err(|error| storage("lock the existing release evidence", error))?
-    {
-        verify_release_evidence(
-            request,
-            &map_bytes,
-            &map_hash,
-            &ReleaseEvidenceFacts {
-                validated_draft_id: row.get(0),
-                report_id: row.get(1),
-                source_artifact_hash: row.get(2),
-                execution_bundle_hash: row.get(3),
-                tested_resolution_map_bytes: row.get(4),
-                tested_resolution_map_hash: row.get(5),
-            },
-        )?;
-    }
-
     // Append one — the release member. `ON CONFLICT DO NOTHING` is what makes a
     // retry converge instead of reminting.
     let inserted = transaction
@@ -387,6 +370,65 @@ async fn publish(
         )?;
     }
 
+    // 7 — the release-manifest mint (wamn-0h0g.15.14) and the tested resolution
+    // map derived from it (wamn-0h0g.15.29). Both run here, after the member
+    // append and inside the same transaction, because a projection taken before
+    // the append would omit the flow this call publishes and one taken after the
+    // commit would race the next publisher.
+    //
+    // The registration set is EMPTY here, and that is a stated limit rather than a
+    // measurement: `catalog.event_registrations` exists only in the project
+    // database and step A holds no project connection, so this transaction has no
+    // way to observe one. See [`MintReleaseManifest::registrations`]. A caller that
+    // ships these bytes must resolve that first — the mint is scoped to wamn-0h0g
+    // .15.14 and the push, the desired-state write and the attestation are
+    // wamn-0h0g.15.97, .15.98 and .8.21.
+    let no_control_side_registrations = BTreeMap::new();
+    let serving_manifest = mint_release_manifest(
+        transaction,
+        &MintReleaseManifest {
+            tenant_id: request.tenant_id,
+            catalog_id: request.catalog_id,
+            catalog_version: request.catalog_version,
+            candidate_draft_id: None,
+            registrations: &no_control_side_registrations,
+        },
+    )
+    .await?;
+    let (map_bytes, map_hash) = tested_resolution_map(&serving_manifest.manifest, request.flow_id)?;
+
+    // A conflicting evidence row refuses here, before the evidence append. It
+    // cannot be checked any earlier: the map it is compared against is the one the
+    // mint above just derived. Nothing is lost by the later position — step A is
+    // one transaction, so a refusal here rolls the member append back with it.
+    if let Some(row) = transaction
+        .query_opt(
+            lock_release_evidence_sql(),
+            &[
+                &request.tenant_id,
+                &request.catalog_id,
+                &request.catalog_version,
+                &request.flow_id,
+            ],
+        )
+        .await
+        .map_err(|error| storage("lock the existing release evidence", error))?
+    {
+        verify_release_evidence(
+            request,
+            &map_bytes,
+            &map_hash,
+            &ReleaseEvidenceFacts {
+                validated_draft_id: row.get(0),
+                report_id: row.get(1),
+                source_artifact_hash: row.get(2),
+                execution_bundle_hash: row.get(3),
+                tested_resolution_map_bytes: row.get(4),
+                tested_resolution_map_hash: row.get(5),
+            },
+        )?;
+    }
+
     // Append two — the tested evidence, through the landed wamn-0h0g.9.9 routine.
     let created_at: DateTime<Utc> = transaction
         .query_one(
@@ -417,31 +459,6 @@ async fn publish(
             }
         })?
         .get(0);
-
-    // The release-manifest mint (wamn-0h0g.15.14). It runs here, after the member
-    // append and inside the same transaction, because a projection taken before
-    // the append would omit the flow this call publishes and one taken after the
-    // commit would race the next publisher.
-    //
-    // The registration set is EMPTY here, and that is a stated limit rather than a
-    // measurement: `catalog.event_registrations` exists only in the project
-    // database and step A holds no project connection, so this transaction has no
-    // way to observe one. See [`MintReleaseManifest::registrations`]. A caller that
-    // ships these bytes must resolve that first — the mint is scoped to wamn-0h0g
-    // .15.14 and the push, the desired-state write and the attestation are
-    // wamn-0h0g.15.97, .15.98 and .8.21.
-    let no_control_side_registrations = BTreeMap::new();
-    let serving_manifest = mint_release_manifest(
-        transaction,
-        &MintReleaseManifest {
-            tenant_id: request.tenant_id,
-            catalog_id: request.catalog_id,
-            catalog_version: request.catalog_version,
-            candidate_draft_id: None,
-            registrations: &no_control_side_registrations,
-        },
-    )
-    .await?;
 
     Ok(MintedTestedRelease {
         created_at,
@@ -580,21 +597,41 @@ async fn verify_callee_is_released_and_callable(
     Ok(())
 }
 
-/// Canonicalize the report's stored map into the authoritative evidence bytes.
-fn canonical_tested_resolution_map(stored: &str) -> Result<(Vec<u8>, String), PublishReleaseError> {
-    let map: serde_json::Value = serde_json::from_str(stored).map_err(|error| {
-        PublishReleaseError::with_source(
-            PublishReleaseErrorKind::TestedResolutionMap,
-            "the finalized report's tested resolution map is not JSON",
-            error,
-        )
-    })?;
-    if !map.is_object() {
+/// Derive the tested resolution map from the manifest this publish just minted.
+///
+/// The map is `flow_id -> plan_hash` over [`ServingManifest::reachable_flows`]
+/// from the flow being published — the exact `flow_id -> execution_bundle_hash`
+/// object `deploy/sql/authoring-tests.sql` names, sourced from the manifest rather
+/// than from the report (wamn-0h0g.15.29).
+///
+/// An empty reachable set is a refusal, not an empty map. That is the whole point
+/// of the bead: the map this replaced could only ever be `'{}'` once
+/// wamn-0h0g.15.7 deleted its last writer, and an empty map welded to a release is
+/// evidence of nothing.
+fn tested_resolution_map(
+    manifest: &ServingManifest,
+    root_flow_id: &str,
+) -> Result<(Vec<u8>, String), PublishReleaseError> {
+    let resolved = manifest.reachable_flows(root_flow_id);
+    if resolved.is_empty() {
         return Err(PublishReleaseError::new(
             PublishReleaseErrorKind::TestedResolutionMap,
-            "the finalized report's tested resolution map is not a JSON object",
+            format!(
+                "the minted release manifest resolves no plan for flow {root_flow_id:?}, so this \
+                 publish would record an empty tested resolution map"
+            ),
         ));
     }
+    // Driven off `manifest.flows` rather than off `resolved` so the map is built by
+    // lookup-free iteration: every key it carries is a member that exists.
+    let map = Value::Object(
+        manifest
+            .flows
+            .iter()
+            .filter(|(flow_id, _)| resolved.contains(flow_id.as_str()))
+            .map(|(flow_id, flow)| (flow_id.clone(), Value::String(flow.plan_hash.clone())))
+            .collect(),
+    );
     Ok((
         wamn_flow::canonical_json_bytes(&map),
         wamn_flow::canonical_json_sha256(&map),
@@ -1168,11 +1205,12 @@ mod tests {
     const COMMAND_HASH: &str =
         "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 
-    /// The wamn-0h0g.9.9 frozen tested-resolution-map vector, keys out of order.
-    const STORED_MAP: &str = concat!(
-        r#"{"flow-z":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","#,
-        r#""flow-a":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#
-    );
+    /// What every finalized report's `resolution_map` actually holds since
+    /// wamn-0h0g.15.7 deleted the last writer of the case-level map it aggregated.
+    /// Seeding the live proof with this is what makes it a regression proof.
+    const REPORT_MAP_AS_PRODUCED_TODAY: &str = "{}";
+
+    /// The wamn-0h0g.9.9 frozen tested-resolution-map vector.
     const CANONICAL_MAP: &[u8] = concat!(
         r#"{"flow-a":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","#,
         r#""flow-z":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#
@@ -1311,33 +1349,149 @@ mod tests {
         );
     }
 
+    /// Build a manifest carrying exactly these `(flow_id, plan_hash, callees)`.
+    fn manifest_of(members: &[(&str, &str, &[&str])]) -> ServingManifest {
+        ServingManifest {
+            format_version: SERVING_MANIFEST_FORMAT_VERSION.to_string(),
+            release: ServingRelease {
+                tenant_id: TENANT.to_string(),
+                catalog_id: CATALOG_ID.to_string(),
+                catalog_version: 1,
+                environment: ENVIRONMENT.to_string(),
+            },
+            flows: members
+                .iter()
+                .map(|(flow_id, plan_hash, calls)| {
+                    (
+                        (*flow_id).to_string(),
+                        ServingFlow {
+                            flow_version: 1,
+                            plan_hash: (*plan_hash).to_string(),
+                            source_artifact: ROOT_ARTIFACT.to_string(),
+                            binding_base_artifact: ROOT_ARTIFACT.to_string(),
+                            callable_contract: None,
+                            calls: calls.iter().map(|call| (*call).to_string()).collect(),
+                        },
+                    )
+                })
+                .collect(),
+            attachments: BTreeMap::new(),
+            registrations: BTreeMap::new(),
+        }
+    }
+
+    const PLAN_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const PLAN_Z: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const PLAN_OFF_PATH: &str =
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+    /// wamn-0h0g.15.29: the evidence map is the manifest's reachable
+    /// `flow_id -> plan_hash` projection, in exact RFC 8785 bytes.
+    ///
+    /// The expected value is the frozen wamn-0h0g.9.9 vector unchanged — the map's
+    /// *source* moved, its bytes did not. `flow-off-path` is a member of the same
+    /// release that nothing reaches from the root, and its absence is what makes
+    /// this a per-flow gate claim rather than a snapshot of the whole release.
     #[test]
-    fn the_evidence_map_is_rfc8785_bytes_not_the_stored_jsonb_rendering() {
+    fn the_evidence_map_is_the_reachable_flow_to_plan_hash_projection() {
+        let manifest = manifest_of(&[
+            ("flow-a", PLAN_A, &["flow-z"]),
+            ("flow-z", PLAN_Z, &[]),
+            ("flow-off-path", PLAN_OFF_PATH, &[]),
+        ]);
         let (bytes, hash) =
-            canonical_tested_resolution_map(STORED_MAP).expect("a JSON object canonicalizes");
+            tested_resolution_map(&manifest, "flow-a").expect("the root resolves a plan");
         assert_eq!(bytes, CANONICAL_MAP);
         assert_eq!(hash, CANONICAL_MAP_HASH);
+        assert!(
+            !String::from_utf8(bytes)
+                .expect("the map is UTF-8")
+                .contains("flow-off-path")
+        );
 
-        // PostgreSQL renders `jsonb::text` with spaces, so hashing that rendering
-        // cannot establish evidence identity: same value, different bytes.
+        // PostgreSQL renders `jsonb::text` with spaces, so the report's own hash
+        // over that rendering could never have been this evidence hash anyway.
         let jsonb_rendering = String::from_utf8(CANONICAL_MAP.to_vec())
             .expect("the canonical map is UTF-8")
             .replace("\":", "\": ")
             .replace(",\"", ", \"");
         assert_ne!(jsonb_rendering.as_bytes(), CANONICAL_MAP);
-        let (reparsed, reparsed_hash) = canonical_tested_resolution_map(&jsonb_rendering)
-            .expect("the spaced rendering canonicalizes back");
-        assert_eq!(reparsed, CANONICAL_MAP);
-        assert_eq!(reparsed_hash, CANONICAL_MAP_HASH);
+        assert_eq!(
+            wamn_flow::canonical_json_sha256(
+                &serde_json::from_str::<Value>(&jsonb_rendering).expect("the rendering is JSON")
+            ),
+            CANONICAL_MAP_HASH
+        );
 
-        for malformed in ["not json", "[]", "7", "null"] {
-            assert_eq!(
-                canonical_tested_resolution_map(malformed)
-                    .expect_err("a non-object map refuses")
-                    .kind(),
-                PublishReleaseErrorKind::TestedResolutionMap
+        // A root with no callees resolves exactly itself, never nothing.
+        let (solo, _) = tested_resolution_map(&manifest, "flow-off-path")
+            .expect("a member with no callees still resolves itself");
+        assert_eq!(
+            solo,
+            format!(r#"{{"flow-off-path":"{PLAN_OFF_PATH}"}}"#).into_bytes()
+        );
+
+        // A root the manifest does not carry refuses. This is the whole bead: the
+        // empty map is a refusal, never evidence.
+        let refusal = tested_resolution_map(&manifest, "absent-from-the-release")
+            .expect_err("an unresolvable root refuses");
+        assert_eq!(refusal.kind(), PublishReleaseErrorKind::TestedResolutionMap);
+        assert!(refusal.detail().contains("empty tested resolution map"));
+        assert_eq!(
+            tested_resolution_map(&manifest_of(&[]), "flow-a")
+                .expect_err("an empty release refuses")
+                .kind(),
+            PublishReleaseErrorKind::TestedResolutionMap
+        );
+    }
+
+    /// wamn-0h0g.15.29: step A must never re-source the map from the report.
+    #[test]
+    fn step_a_never_reads_the_reports_own_resolution_map() {
+        let source = include_str!("publish_release.rs");
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        // wamn-0h0g.15.7 deleted the last writer of the case-level map, so the
+        // report-level map is `'{}'` on every report. Reading it welds an empty
+        // evidence map to every release, which is the defect this bead closed.
+        for resurrected in [
+            "resolution_map::text",
+            "report.resolution_map",
+            "stored_resolution_map",
+            "canonical_tested_resolution_map",
+        ] {
+            assert!(
+                !implementation.contains(resurrected),
+                "step A re-sourced the tested map from the report via {resurrected}"
             );
         }
+        assert!(!lock_test_report_sql().contains("resolution_map"));
+        // The map comes from the manifest, and the derivation is the only producer.
+        assert_eq!(
+            implementation
+                .matches("tested_resolution_map(&serving_manifest")
+                .count(),
+            1
+        );
+        assert!(implementation.contains("manifest.reachable_flows(root_flow_id)"));
+        // The mint has to precede the evidence append, or there is no map to append.
+        let publish = implementation
+            .split("async fn publish(")
+            .nth(1)
+            .expect("the module defines step A");
+        let mint = publish
+            .find("mint_release_manifest(")
+            .expect("step A mints the manifest");
+        let evidence = publish
+            .find("register_release_evidence_sql()")
+            .expect("step A appends evidence");
+        let member = publish
+            .find("insert_release_flow_sql()")
+            .expect("step A appends the member");
+        assert!(member < mint, "the mint must follow the member append");
+        assert!(mint < evidence, "the mint must precede the evidence append");
     }
 
     /// The mint reads exactly four relations, and every one of them has to be in
@@ -1642,7 +1796,7 @@ mod tests {
                     &draft_id,
                     &CATALOG_ID,
                     &CATALOG_VERSION,
-                    &STORED_MAP,
+                    &REPORT_MAP_AS_PRODUCED_TODAY,
                     &passed,
                 ],
             )
@@ -1719,15 +1873,30 @@ mod tests {
             .await
             .expect("the tested release mints");
         assert!(minted.minted);
-        assert_eq!(minted.tested_resolution_map_hash, CANONICAL_MAP_HASH);
         assert_eq!(control_counts(&admin).await, (1, 1, 0, 0));
 
-        // The evidence carries the exact canonical bytes, and the report's own
-        // `jsonb::text` hash is deliberately a different value.
+        // wamn-0h0g.15.29, the regression this bead closed. The evidence map is
+        // the manifest's reachable `flow_id -> plan_hash` projection — here the one
+        // member this publish appended — and NOT the `'{}'` the report carries.
+        let expected_map = {
+            let mut object = serde_json::Map::new();
+            object.insert(FLOW_ID.to_string(), Value::String(tested_hash.clone()));
+            Value::Object(object)
+        };
+        let expected_bytes = wamn_flow::canonical_json_bytes(&expected_map);
+        assert_eq!(
+            expected_bytes,
+            format!(r#"{{"{FLOW_ID}":"{tested_hash}"}}"#).into_bytes()
+        );
+        assert_eq!(
+            minted.tested_resolution_map_hash,
+            wamn_flow::canonical_json_sha256(&expected_map)
+        );
+
         let evidence = admin
             .query_one(
                 "SELECT evidence.tested_resolution_map_bytes, \
-                        evidence.tested_resolution_map_hash, report.resolution_map_hash \
+                        evidence.tested_resolution_map_hash, report.resolution_map::text \
                    FROM catalog.release_flow_test_evidence AS evidence \
                    JOIN wamn_run.authoring_test_reports AS report \
                      ON report.tenant_id = evidence.tenant_id \
@@ -1737,9 +1906,15 @@ mod tests {
             )
             .await
             .expect("read the minted evidence");
-        assert_eq!(evidence.get::<_, Vec<u8>>(0), CANONICAL_MAP);
-        assert_eq!(evidence.get::<_, String>(1), CANONICAL_MAP_HASH);
-        assert_ne!(evidence.get::<_, String>(2), CANONICAL_MAP_HASH);
+        // The report really does hold `'{}'`, so an evidence map sourced from it
+        // would be `'{}'` too. This is the assertion that fails before the fix.
+        assert_eq!(evidence.get::<_, String>(2), "{}");
+        assert_ne!(evidence.get::<_, Vec<u8>>(0), b"{}".to_vec());
+        assert_eq!(evidence.get::<_, Vec<u8>>(0), expected_bytes);
+        assert_eq!(
+            evidence.get::<_, String>(1),
+            minted.tested_resolution_map_hash
+        );
 
         // An exact retry returns the same release and never remints.
         let retried = mint_tested_release(&mut admin, &tested)

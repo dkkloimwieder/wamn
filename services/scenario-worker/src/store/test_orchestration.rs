@@ -328,6 +328,17 @@ pub async fn finalize_test_case(
 /// answer. Observing project runs in the first place stays with wamn-0h0g.8.5.
 ///
 /// An empty slice is the ordinary case and finalizes nothing on that leg.
+///
+/// # It pins no resolution map (wamn-0h0g.15.29)
+///
+/// This used to pin the reservation's `resolution_map` from the first case run
+/// carrying one. wamn-0h0g.15.7 deleted the last writer of
+/// `authoring_test_case_runs.resolution_map`, so that select could only ever match
+/// zero rows and the statement was a no-op that read as a source. The retained
+/// columns still travel to the report as `'{}'` — the ratified spec keeps them and
+/// the report trigger compares them — but nothing downstream consumes that value:
+/// the publish gate's `tested_resolution_map` is derived from the release manifest
+/// in `wamn_ctl::publish_release`, not from this report.
 pub async fn reconcile_test_report(
     client: &mut Client,
     tenant_id: &str,
@@ -390,26 +401,6 @@ pub async fn reconcile_test_report(
         )
         .await
         .context("reconcile deadline-exhausted test cases")?;
-    transaction
-        .execute(
-            "UPDATE authoring_test_run_reservations AS reservation \
-                SET resolution_map = candidate.resolution_map, \
-                    resolution_map_hash = 'sha256:' || encode(sha256( \
-                        convert_to(candidate.resolution_map::text, 'UTF8')), 'hex') \
-               FROM ( \
-                    SELECT resolution_map \
-                      FROM authoring_test_case_runs \
-                     WHERE tenant_id = $1 AND report_id = $2 \
-                       AND resolution_map IS NOT NULL \
-                     ORDER BY ordinal LIMIT 1 \
-               ) AS candidate \
-              WHERE reservation.tenant_id = $1 AND reservation.report_id = $2 \
-                AND reservation.state = 'pending' \
-                AND reservation.resolution_map IS NULL",
-            &[&tenant_id, &report_id],
-        )
-        .await
-        .context("pin first reconciled test resolution map")?;
     let pending: i64 = transaction
         .query_one(
             "SELECT count(*) FROM authoring_test_case_runs \
@@ -574,6 +565,34 @@ mod tests {
         // The verdict is the conjunction of every case, never a disjunction.
         assert!(reconcile.contains("bool_and(test_case.passed)"));
         assert!(!reconcile.contains("bool_or("));
+    }
+
+    /// wamn-0h0g.15.29: the reconcile pins no resolution map, because the column
+    /// it used to pin one from has had no writer since wamn-0h0g.15.7.
+    #[test]
+    fn the_reconcile_pins_no_map_from_a_column_nothing_writes() {
+        let source = include_str!("test_orchestration.rs");
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        // The dead pin and every fragment of the statement that carried it.
+        for dead in [
+            "SET resolution_map = candidate.resolution_map",
+            "resolution_map IS NOT NULL",
+            "reservation.resolution_map IS NULL",
+            "pin first reconciled test resolution map",
+        ] {
+            assert!(
+                !implementation.contains(dead),
+                "the reconcile still carries the dead resolution-map pin via {dead}"
+            );
+        }
+        // The retained columns still travel to the report unchanged: the ratified
+        // spec keeps them, and the report-insert trigger compares them.
+        assert!(implementation.contains("COALESCE(reservation.resolution_map, '{}'::jsonb)"));
+        // Nothing here re-aggregates a per-case map either (wamn-0h0g.15.7).
+        assert!(!implementation.contains("run_flow_resolutions"));
     }
 
     /// The store these statements now run against.
