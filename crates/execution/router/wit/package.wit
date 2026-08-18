@@ -1,19 +1,31 @@
-package wamn:node@0.2.0;
+package wamn:node@0.1.0;
 
 /// The typed operation seam the host router invokes once per graph node.
 ///
-/// STATUS: LIVE 0.2.0 (wamn-0h0g.16.2). Revives the handler shape that was
-/// frozen as `wamn:node@0.1.0` (`docs/archive/contracts/wamn-node.wit`) against
-/// the execution model of `docs/exe-model.md` rev 4. It is 0.2.0 rather than a
-/// 0.1.x amendment because the frozen package's own compatibility rule sends any
-/// breaking change to 0.2, and this revision removes the payload store, the
-/// run/flow/attempt identity, and the durable run context.
+/// STATUS: LIVE 0.1.0 (wamn-0h0g.16.2; versioned by wamn-0h0g.16.10). This
+/// package SUPERSEDES the archived `wamn:node@0.1.0`
+/// (`docs/archive/contracts/wamn-node.wit`) WHOLESALE — it replaces that
+/// contract rather than evolving it, against the execution model of
+/// `docs/exe-model.md` rev 4. The two shapes differ: this revision drops the
+/// payload store, the run/flow/attempt identity, and the durable run context,
+/// and replaces `run-context` with `node-context`.
 ///
-/// STAGING LOCATION. This package's intended home is the router crate that
-/// invokes it (`crates/execution/router/wit/package.wit`), which does not exist
-/// yet. It lives here, owned by nothing and bound by nothing, until the router
-/// lands; relocation is a move, not an edit. Consumers vendor it the usual way,
-/// at `<consumer>/wit/deps/wamn-node/package.wit`, and every such copy is
+/// Wholesale supersession is why the archived package's own compatibility clause
+/// ("0.1.x admits only additive or clarifying changes; any breaking change waits
+/// for 0.2") is not violated here. That clause governs the EVOLUTION of a live
+/// package, and the archived one is not live: it was deleted, nothing in the tree
+/// binds it, and its name is banned outright by the two ingress guards in
+/// `crates/execution/flow-invocation/tests/wit_coherence.rs`. There is no
+/// deployed 0.1.0 consumer for a version bump to protect. So the MVP
+/// version-identity rule governs instead — every first-party `wamn:*` WIT
+/// package sits at @0.1.0 for the MVP identity window
+/// (`tests/conformance/src/version_identity.rs`) — and no exception is carved
+/// for this package. A reader diffing the archive against this file finds the
+/// supersession recorded here, not a silent redefinition.
+///
+/// SETTLED LOCATION. This package lives with the router crate that invokes it
+/// and owns it. Consumers vendor it the usual way, at
+/// `<consumer>/wit/deps/wamn-node/package.wit`, and every such copy is
 /// registered in the repo-level drift guard before it is bound.
 ///
 /// What the router does with a node is the entire justification for this

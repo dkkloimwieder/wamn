@@ -197,7 +197,7 @@ fn negative_every_post_admission_value_has_run_identity() {
     );
 }
 
-// The node ABI is LIVE again as `wamn:node@0.2.0` (wamn-0h0g.16.2), so the pair
+// The node ABI is LIVE again as `wamn:node@0.1.0` (wamn-0h0g.16.2), so the pair
 // of tests below no longer says "this package is deleted" — it says the ingress
 // contract and the node contract are two contracts and must stay two. Ingress
 // speaks to a caller about a whole run (`begin`/`wait`); the node ABI speaks to
@@ -237,7 +237,7 @@ fn negative_ingress_contract_does_not_alias_the_live_node_abi() {
     let executable_sources = format!("{manifest}\n{wit}\n{rust}").to_ascii_lowercase();
 
     // Both executable forms a reference can take: `wamn:node/types` names an
-    // interface of the package, `wamn:node@0.2.0` names the package itself
+    // interface of the package, `wamn:node@0.1.0` names the package itself
     // (a `use`, an `include`, or the package header of a pasted-in copy).
     for forbidden in ["wamn:node/", "wamn:node@"] {
         assert!(
@@ -262,8 +262,8 @@ fn positive_live_node_abi_is_registered_where_the_ban_names_it() {
     });
 
     assert!(
-        wit.contains("package wamn:node@0.2.0;"),
-        "{LIVE_NODE_ABI} is no longer the wamn:node@0.2.0 package the ban names"
+        wit.contains("package wamn:node@0.1.0;"),
+        "{LIVE_NODE_ABI} is no longer the wamn:node@0.1.0 package the ban names"
     );
     assert!(
         wit.lines().any(|line| line.trim() == NODE_RUN_SIGNATURE),

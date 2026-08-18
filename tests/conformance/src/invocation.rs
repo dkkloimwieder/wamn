@@ -9,7 +9,7 @@ use wamn_flow_invocation::{
 const WIT: &str = include_str!("../../../crates/execution/flow-invocation/wit/package.wit");
 #[cfg(test)]
 const FLOWRUNNER_WIT: &str = include_str!("../../../components/execution/flowrunner/wit/world.wit");
-/// The live node ABI (`wamn:node@0.2.0`, wamn-0h0g.16.2) — the seam the host
+/// The live node ABI (`wamn:node@0.1.0`, wamn-0h0g.16.2) — the seam the host
 /// router invokes once per graph node. Included rather than read so that losing
 /// the package fails the build outright, not just a test.
 #[cfg(test)]
@@ -45,7 +45,7 @@ mod tests {
         assert!(!code.contains("outcome-expired"));
         assert!(!code.contains("accepted("));
         assert!(!code.contains("pending("));
-        // The node ABI is live again as wamn:node@0.2.0, so this is not a
+        // The node ABI is live again as wamn:node@0.1.0, so this is not a
         // tombstone: ingress and node execution are two contracts and must stay
         // two. Ingress answers a caller about a whole run; the node ABI drives
         // one pooled component instance through one graph hop. Naming it here
@@ -208,11 +208,20 @@ mod tests {
     fn node_abi_is_live_versioned_and_router_shaped() {
         let code = code_lines(NODE_WIT).join("\n");
 
-        assert!(NODE_WIT.contains("package wamn:node@0.2.0;"));
-        // 0.2.0, not a 0.1.x amendment: the frozen 0.1.0 package's own
-        // compatibility rule sends every breaking change to 0.2, and this
-        // revision removed types and changed the signature.
-        assert!(!code.contains("package wamn:node@0.1.0;"));
+        assert!(NODE_WIT.contains("package wamn:node@0.1.0;"));
+        // @0.1.0, per the MVP version-identity rule (wamn-0h0g.16.10): this
+        // package supersedes the archived 0.1.0 wholesale rather than evolving
+        // it, so the archive's "breaking changes wait for 0.2" clause does not
+        // bind a package the archive has no live consumer for. The version
+        // literal therefore no longer separates the live shape from the archived
+        // one — the retired-vocabulary sweep at the end of this test is what
+        // does, and it must stay for that reason.
+        assert!(
+            NODE_WIT.contains("SUPERSEDES the archived `wamn:node@0.1.0`"),
+            "the package header must keep recording that it supersedes the \
+             archived 0.1.0 wholesale — without it, two different shapes sit \
+             under one version with nothing saying so"
+        );
 
         // The single operation the router invokes per graph node.
         assert!(code.contains(
