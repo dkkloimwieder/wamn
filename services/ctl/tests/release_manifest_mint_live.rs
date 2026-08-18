@@ -17,8 +17,19 @@
 //! stays on the superuser connection, where the same bypass is what makes the
 //! seed simple.
 //!
+//! # Hermetic at CLUSTER scope, not merely per-database
+//!
+//! Dropping and recreating this database's schemas is not enough. PostgreSQL
+//! ROLES and DATABASE ACLs are cluster-wide, and the control bootstrap's
+//! author-boundary guard reads one of those cluster-wide facts — see
+//! [`establish_control_connect_posture`]. The preamble therefore constructs the
+//! contaminated cluster on purpose and then converges production's posture over
+//! it, so this gate behaves identically on a pristine container and on one that
+//! already looks like a deployment.
+//!
 //! Set `WAMN_RELEASE_MANIFEST_MINT_PG_URL` to a throwaway PostgreSQL 18. The test
-//! drops and recreates every control schema in that database.
+//! drops and recreates every control schema in that database, and takes PUBLIC's
+//! `CONNECT` off that one database.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -180,7 +191,82 @@ async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
     (client, task)
 }
 
+/// Construct the contaminated cluster, then converge production's posture on it.
+///
+/// `deploy/sql/control-portable-store.sql` refuses with
+/// `control-author-authority-boundary-violated` when `wamn_scenario_author`
+/// holds `CONNECT` on the current database — the control plane's author and the
+/// project plane's author must never be reachable from one store. That guard is
+/// CORRECT and must not be relaxed to make this gate pass.
+///
+/// The trap is that it reads a CLUSTER-WIDE fact from a per-database preamble.
+/// Roles are cluster-global, and a stock database grants `CONNECT` to PUBLIC, so
+/// the moment `wamn_scenario_author` exists ANYWHERE in the cluster the guard is
+/// true for EVERY database in it. Any sibling gate that creates the role is
+/// enough — `services/ctl/tests/replica_identity_unreadable_live.rs` does, on a
+/// different database — and so is every real deployment, because
+/// `deploy/sql/postgres-init.sql` creates it. So the gate could only pass on a
+/// cluster that did not resemble production, and it failed by NAMING A GUARD,
+/// which reads as a code defect rather than an environment one.
+///
+/// So this builds the failing state deliberately rather than hoping to avoid it:
+/// create the role exactly as `postgres-init.sql` does, restore PUBLIC's stock
+/// `CONNECT`, assert the guard's fact is TRUE, and only then converge the posture
+/// production converges — PUBLIC holds no `CONNECT`, the floor
+/// `wamn_control_provision::sql::revoke_public_connect_floor_sql` establishes and
+/// the same shape `protected_relations_live` and `terminalize_effect_uncertain_live`
+/// already use. The revoke is scoped to `current_database()` rather than reusing
+/// that cluster-wide floor builder: this gate shares its cluster with its siblings
+/// and must not reach across it.
+///
+/// PUBLIC's grant is the only route, so revoking it is the whole fix. A revoke
+/// aimed at `wamn_scenario_author` itself was measured and dropped: nothing in
+/// this repository grants that role database `CONNECT` directly, so no probe
+/// could kill it.
+///
+/// It is ONE statement, and it has to stay one. Restoring PUBLIC's `CONNECT` and
+/// taking it away again in separate statements would commit a window in which
+/// this database does grant `CONNECT` to PUBLIC — and a sibling gate samples that
+/// exact fact CLUSTER-WIDE
+/// (`effect_writer_generation_live` asserts `sql::public_connect_databases_sql()`
+/// comes back empty). Inside one implicit transaction the grant is never visible
+/// to another session and only the revoke commits, so fixing one cross-gate
+/// coupling does not open another. The assertions therefore run in SQL, where
+/// they can see the uncommitted grant, rather than as Rust round trips that
+/// cannot.
+async fn establish_control_connect_posture(admin: &Client) {
+    admin
+        .batch_execute(
+            "DO $posture$ BEGIN \
+               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
+               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles \
+                              WHERE rolname = 'wamn_scenario_author') THEN \
+                 CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
+                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+               EXECUTE format('GRANT CONNECT ON DATABASE %I TO PUBLIC', current_database()); \
+               ASSERT (SELECT pg_catalog.has_database_privilege( \
+                                oid, pg_catalog.current_database(), 'CONNECT') \
+                         FROM pg_catalog.pg_roles \
+                        WHERE rolname = 'wamn_scenario_author'), \
+                 'the project author must be admitted onto this database before the \
+                  posture is converged, or this preamble proves nothing'; \
+               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database()); \
+               ASSERT NOT (SELECT pg_catalog.has_database_privilege( \
+                                    oid, pg_catalog.current_database(), 'CONNECT') \
+                             FROM pg_catalog.pg_roles \
+                            WHERE rolname = 'wamn_scenario_author'), \
+                 'the project author still reaches this control database, so the \
+                  bootstrap author-boundary guard is about to refuse — the posture, \
+                  not the guard, is what has to change'; \
+             END $posture$;",
+        )
+        .await
+        .expect("converge production's CONNECT posture on the control database");
+}
+
 async fn provision_control_store(admin: &Client) {
+    establish_control_connect_posture(admin).await;
     admin
         .batch_execute(
             "DROP SCHEMA IF EXISTS catalog CASCADE; \
