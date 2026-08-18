@@ -3,10 +3,13 @@
 # is per-environment config, and re-applying the Deployment manifest must not
 # clobber customized project entries back to these demo values.
 #
-# The example points at the shared in-cluster Postgres. Definitions and active
-# cron attachments are read from the canonical `catalog` schema; run state and
-# queue objects live in the canonical `wamn_run` schema. Real per-project
-# entries — one per provisioned project DB — land with hosting/2.3 provisioning.
+# The example points at the shared in-cluster Postgres. The dispatcher reads
+# ONLY run-plane queue state — `run_queue` and `effect_attempts`, unqualified
+# and resolved through the `schema` search_path set below. It never reads
+# `catalog`: its whole database surface is four statements (the two session
+# `SET`s, the parked-due SELECT, and the queue-depth SELECT), statically pinned
+# by tests/conformance/tests/dispatcher_boundary.rs. Real per-project entries —
+# one per provisioned project DB — land with hosting/2.3 provisioning.
 apiVersion: v1
 kind: Secret
 metadata:
