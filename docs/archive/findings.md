@@ -1904,7 +1904,7 @@ application/schema behavior; `.1.31` owns any production mixed-version promise.
 
 | ID | Sev | Finding and consequence | Bead / proof |
 |---|---:|---|---|
-| **R45** | Critical | Per-project-env Secrets all authenticate as the same cluster-global database owner. Compromise of one pooled-project Secret crosses the tenant authentication boundary. | `wamn-2jkm.85`; proof `wamn-4tob.6.12`. |
+| **R45** | Critical | Per-project-env Secrets all authenticate as the same cluster-global database owner. Compromise of one pooled-project Secret crosses the tenant authentication boundary. | `wamn-2jkm.85`; proof `wamn-4tob.6.12`. **Half closed `47b404cf`** (`wamn-0h0g.12.108`): the *owner* half is gone — `wamn_db_owner`, a NOLOGIN title-only role with zero grants and zero memberships, now owns every project-env database, and `wamn_app` holds `CONNECT` only. The reachability route that made ownership exploitable without `CONNECT` closed with it (`wamn-0h0g.12.109`: the `PUBLIC CONNECT` floor skipped `template1`, which is `datallowconn`). **Still open:** one cluster-global `wamn_app` LOGIN with one password shared across every project-env, created `IF NOT EXISTS` so it can never change, and no rotation path. That half is `wamn-0h0g.12.64` and depends on `wamn-0h0g.15.88`. |
 | **R46** | Critical | Every rendered multi-instance cluster uses asynchronous failover. Automatic promotion can omit an acknowledged commit, violating the audit's durability gate. | `wamn-2jkm.86`; proof `wamn-4tob.6.13`; recovery contract `.1.14`. |
 | **R47** | High | One MinIO root credential is used by every WAL archive, logical dump, and Loki workload. A single compromise spans recovery and observability domains. | `wamn-2jkm.87`; proof `wamn-4tob.6.14`; production isolation profile `.1.26`. |
 | **R48** | High | Standing T1/T3 manifests have no WAL/PITR resources despite documentation calling that recovery path shipped. | `wamn-2jkm.88`; proof `wamn-4tob.6.15`. |
@@ -4546,7 +4546,7 @@ prerequisite that makes everything else findable.
 | R42 | DB-broken runner can become Ready and displace healthy capacity | High | open | wamn-2jkm.77; proof wamn-4tob.6.6 |
 | R43 | Reviewed custom-node OCI identity does not determine invoked bytes | High (latent) | open | wamn-fqg.23 + wamn-0si.9; proof wamn-4tob.6.7 |
 | R44 | Event dedupe identity expires or changes across pruning and source republish | High | open | wamn-2jkm.82; proofs wamn-4tob.6.9/.6.17 |
-| R45 | Shared project database login crosses tenant boundaries | Critical | open | wamn-2jkm.85; proof wamn-4tob.6.12 |
+| R45 | Shared project database login crosses tenant boundaries | Critical | open (ownership half closed `47b404cf`) | wamn-2jkm.85; proof wamn-4tob.6.12; ownership half `wamn-0h0g.12.108`, shared-credential half `wamn-0h0g.12.64` |
 | R46 | Automatic Postgres failover can lose acknowledged writes | Critical | open | wamn-2jkm.86; proof wamn-4tob.6.13 |
 | R47 | One object-store root credential spans recovery and observability domains | High | open | wamn-2jkm.87; proof wamn-4tob.6.14 |
 | R48 | Standing T1 and T3 clusters lack the promised PITR path | High | open | wamn-2jkm.88; proof wamn-4tob.6.15 |
