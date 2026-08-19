@@ -485,6 +485,17 @@ mod tests {
                 node_id: "missing".to_owned()
             }
         );
+
+        // An absent entry spelled as the empty string is an empty identity, and
+        // reads as one — the same refusal `wiring-id` and every node id give,
+        // not the unresolved-node report a caller would go looking for a node
+        // over.
+        let mut blank = crud_wiring(Vec::new());
+        blank.entry = String::new();
+        assert_eq!(
+            WiringDocument::parse(&serde_json::to_value(&blank).expect("serializes")).unwrap_err(),
+            CatalogIdentityError::EmptyIdentity { field: "entry" }
+        );
     }
 
     #[test]
