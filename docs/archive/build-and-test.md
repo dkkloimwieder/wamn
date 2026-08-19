@@ -1258,8 +1258,13 @@ docker rm -f wamn-cdc-pg
 # In-cluster gate of record (no docker rebuild — the real debug subcommand +
 # kubectl; scratchpad incluster_l5i9_9.sh is the scripted run): register a
 # trials org + project-env on wamn-pg (q3n.7 runbook), then:
+# `--replication-password` is REQUIRED with no default since wamn-0h0g.12.134
+# (or export WAMN_REPLICATION_PASSWORD). It mints a LOGIN REPLICATION role, and
+# REPLICATION authority is cluster-wide, so a known password there reaches every
+# database on the cluster. Supply a real secret, not a placeholder.
 ./target/debug/wamn-ctl enable-cdc-project-env --org <o> --project <p> --env <e> \
   --schema app --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
+  --replication-password "$WAMN_REPLICATION_PASSWORD" \
   --emit-role-sql role.sql --emit-cdc-sql cdc.sql --emit-secret secret.json
 #   apply order: role.sql → the TARGET cluster (any DB; roles are cluster-global),
 #   cdc.sql → the PROJECT-ENV database (publication + slot are database-bound),
@@ -2087,6 +2092,18 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
 ### [D6/wamn-q3n.7] provision-project-env
 
 Docs: docs/archive/platform/provisioning.md, docs/archive/platform/postgres-topology.md
+
+> **EVERY `provision-project-env` INVOCATION BELOW IS INCOMPLETE AS WRITTEN AND
+> WILL FAIL AT ARGUMENT PARSING.** Two credentials are now required with no
+> default — `--dispatch-reader-password` since `wamn-0h0g.12.122` (2026-08-18)
+> and `--app-password` since `wamn-0h0g.12.129` (2026-08-19) — and neither flag
+> nor its env var (`WAMN_DISPATCH_READER_PASSWORD`, `WAMN_APP_PASSWORD`) appears
+> anywhere in this file. Export both, or add both flags, before running any
+> recipe in this section. The recipes are deliberately **not** rewritten
+> in place: `wamn-0h0g.12.141` carries the still-owed decision on whether these
+> requirements should be **mode-scoped** instead, since several call sites are
+> effect-writer generation modes that provision no database and never need a
+> credential at all. `deploy/mvp/bootstrap.sh` has the identical defect.
 
 ```bash
 cargo test -p wamn-control-provision -p wamn-control-registry -p wamn-ctl   # renderer/naming + project SQL + drift/subcommand units
@@ -3664,7 +3681,10 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5-components CARGO_INCREMENTAL=0 \
 docker run -d --rm --name wamn-0h0g-25-pg \
   -p 127.0.0.1:15625:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
-docker exec wamn-0h0g-25-pg pg_isready -U postgres -d wamn
+# `pg_isready` alone is NOT enough: postgres:18 reports ready during the
+# entrypoint's socket-only init phase, before TCP binds, so the first host
+# connection is refused and the test fails in 0.00s. Retry a real connect.
+until docker exec wamn-0h0g-25-pg pg_isready -U postgres -d wamn; do sleep 1; done; sleep 3
 WAMN_CONNECTION_EFFECT_PG_URL=postgresql://postgres:postgres@127.0.0.1:15625/wamn \
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
   cargo test --locked --offline -p wamn-runtime --lib \
