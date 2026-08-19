@@ -1442,6 +1442,10 @@ impl WamnPostgres {
     /// opens the txn before the transaction-LOCAL `set_config`s apply), and the
     /// claim statement is `prepare_cached`, so the steady-state round-trip count
     /// on a pooled connection matches the pre-R2 single batch.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every claim this transaction binds is an independently trusted input"
+    )]
     pub(super) async fn begin_with_claims(
         &self,
         conn: &Object,
