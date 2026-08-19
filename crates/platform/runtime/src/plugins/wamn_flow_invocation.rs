@@ -53,9 +53,9 @@ pub struct WamnFlowInvocation {
 /// span needs the same trusted `wamn.tenant` workload config the registration
 /// already consumed, not the service's view of it.
 ///
-/// There is deliberately NO project. This plugin's identity is tenant + catalog
-/// + environment; `wamn.project` is not its vocabulary. Reading the project or
-/// schema workload config back into this plugin is what the deleted
+/// There is deliberately NO project. This plugin's identity is tenant +
+/// catalog + environment; `wamn.project` is not its vocabulary. Reading the
+/// project or schema workload config back into this plugin is what the deleted
 /// inline-execution driver did, and `tests/flow_invocation_wit_coherence.rs`
 /// forbids both key constants here by name — so the span leaves the field
 /// empty, which truthfully says "this surface holds no such claim". Borrowing
