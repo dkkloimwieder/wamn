@@ -30,7 +30,9 @@ pub use serving_manifest::{
     RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow,
     ServingManifest, ServingRegistration, ServingRelease, release_manifest_configmap_name,
 };
-pub use wiring::{WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringNode};
+pub use wiring::{
+    WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringNode, WiringTerminal,
+};
 pub use wiring_activation::{
     WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, flip_activation,
     previous_confirmed_definition, record_activation_event, resolve_active_wiring,
@@ -81,6 +83,7 @@ pub enum CatalogIdentityError {
     UnresolvableManifestFlow { flow_id: String },
     ManifestTooLarge { bytes: usize, limit: usize },
     UnresolvedWiringNode { node_id: String },
+    UnresolvedWiringEntry { node_id: String },
 }
 
 impl fmt::Display for CatalogIdentityError {
@@ -193,6 +196,12 @@ impl fmt::Display for CatalogIdentityError {
                 write!(
                     formatter,
                     "wiring edge names node {node_id:?}, which the document does not declare"
+                )
+            }
+            Self::UnresolvedWiringEntry { node_id } => {
+                write!(
+                    formatter,
+                    "wiring entry names node {node_id:?}, which the document does not declare"
                 )
             }
         }

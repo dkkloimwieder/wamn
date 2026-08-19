@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use wamn_catalog::{WiringDocument, WiringNode};
+use wamn_catalog::{WiringDocument, WiringNode, WiringTerminal};
 
 const SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
@@ -258,6 +258,7 @@ fn the_documents_derived_hash_satisfies_the_stored_columns_shape() {
     let document = WiringDocument::new(
         "orders-create",
         1,
+        "in",
         BTreeMap::from([(
             "in".to_owned(),
             WiringNode {
@@ -265,6 +266,7 @@ fn the_documents_derived_hash_satisfies_the_stored_columns_shape() {
                 interface_version: "0.1.0".to_owned(),
                 operation: "handle".to_owned(),
                 params: BTreeMap::new(),
+                terminal: Some(WiringTerminal::Respond),
             },
         )]),
         Vec::new(),

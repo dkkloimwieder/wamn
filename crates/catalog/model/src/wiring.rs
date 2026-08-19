@@ -20,6 +20,17 @@
 //! a second contract; when `wamn-flow` retires (wamn-0h0g.26.5) the cases module
 //! moves, and this carrier keeps working against the moved types.
 //!
+//! # The entry and the terminal are the router's authoring source (wamn-0h0g.18.5)
+//!
+//! The router landed a typed terminal and verdict (wamn-0h0g.16.3) that nothing
+//! could populate: a document that names neither where a delivery *enters* nor
+//! which node *ends* it leaves `wamn_router::WiringNode::terminal` permanently
+//! `None` and `wamn_router::Wiring::compile`'s entry with no value to take.
+//! [`WiringDocument::entry`] and [`WiringNode::terminal`] are that source, and
+//! they are wiring **data**: this document is what `catalog.wirings.graph_json`
+//! stores and `wiring_hash` covers, so re-terminalling a graph is a new gated
+//! definition rather than an edit to a live one.
+//!
 //! # Identity
 //!
 //! [`WiringDocument::wiring_hash`] is the SHA-256 of the document's RFC 8785
@@ -45,6 +56,29 @@ use crate::{CatalogIdentityError, DefinitionHash, validate_text};
 /// The only wiring-document format shipped by the MVP.
 pub const WIRING_DOCUMENT_FORMAT_VERSION: &str = "0.1";
 
+/// How a node ends its delivery, when it is a terminal.
+///
+/// This is the *authoring source* of the router's own terminal
+/// (`wamn_router::Terminal`, `crates/execution/router/src/terminal.rs`): the
+/// retired engine decided `respond` by comparing a node's reserved type name,
+/// and the node language retires with that engine, so the wiring **declares**
+/// it as data and the walk reads it.
+///
+/// There is no `discard` token. Discard is a *verdict*, not a declaration —
+/// `wamn_router::Verdict::Discard` is what the walk settles on when the frontier
+/// empties having reached no terminal at all, so a node declaring it would be
+/// declaring the absence of itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WiringTerminal {
+    /// Release the synchronous caller waiting on this delivery, answering with
+    /// this node's emitted payload.
+    Respond,
+    /// Publish this node's emitted payload as a derived event, keyed by the
+    /// author-supplied dedup id the component put in it.
+    Emit,
+}
+
 /// One graph step: an operation of one palette component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -67,6 +101,19 @@ pub struct WiringNode {
     /// second, staler copy of it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, Value>,
+    /// The [`WiringTerminal`] this node ends the delivery with, if it is one.
+    /// Absent on ordinary nodes — most of a graph is intermediate work — and
+    /// absent from the serialized bytes when it is, so an ordinary node's
+    /// contribution to [`WiringDocument::wiring_hash`] is unchanged by this
+    /// field existing.
+    ///
+    /// Several nodes may declare one. Exclusive branches each ending the
+    /// delivery their own way is a legitimate graph; *two verdicts in one
+    /// delivery* is a refusal the walk makes on the path actually taken
+    /// (`wamn_router::ApplyErrorKind::SecondVerdict`), which a document cannot
+    /// decide by shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<WiringTerminal>,
 }
 
 /// A wire from one node's output port to a downstream node's input.
@@ -102,6 +149,15 @@ pub struct WiringDocument {
     /// Monotonic version of this wiring — `catalog.wirings.version`, the row a
     /// rollback flips back to.
     pub version: u32,
+    /// The node a delivery enters at: where the walk puts the admitted payload
+    /// and the only node it can reach without an edge.
+    ///
+    /// Required, and checked against [`WiringDocument::nodes`] here, so a graph
+    /// the router could not enter is refused at authoring rather than in the
+    /// serving path — where the same refusal is
+    /// `wamn_router::WiringErrorKind::UnresolvedEntry`, one activation and one
+    /// cache miss too late.
+    pub entry: String,
     /// The graph's nodes, keyed by node id. The router resolves the active
     /// wiring and walks these in frontier order (wamn-0h0g.16.5).
     pub nodes: BTreeMap<String, WiringNode>,
@@ -131,6 +187,7 @@ impl WiringDocument {
     pub fn new(
         wiring_id: impl Into<String>,
         version: u32,
+        entry: impl Into<String>,
         nodes: BTreeMap<String, WiringNode>,
         edges: Vec<WiringEdge>,
         cases: Vec<wamn_flow::TestSetCase>,
@@ -139,6 +196,7 @@ impl WiringDocument {
             format_version: WIRING_DOCUMENT_FORMAT_VERSION.to_string(),
             wiring_id: wiring_id.into(),
             version,
+            entry: entry.into(),
             nodes,
             edges,
             cases,
@@ -183,6 +241,12 @@ impl WiringDocument {
         }
         if self.nodes.is_empty() {
             return invalid("a wiring with no nodes has nothing for the router to walk");
+        }
+        validate_text(&self.entry, "entry")?;
+        if !self.nodes.contains_key(&self.entry) {
+            return Err(CatalogIdentityError::UnresolvedWiringEntry {
+                node_id: self.entry.clone(),
+            });
         }
 
         for (node_id, node) in &self.nodes {
@@ -238,7 +302,7 @@ mod tests {
     use serde_json::{Value, json};
     use wamn_flow::{Expect, ExpectedOutcome, MAX_TEST_SET_CASES, TestSetCase};
 
-    use super::{WiringDocument, WiringEdge, WiringNode};
+    use super::{WiringDocument, WiringEdge, WiringNode, WiringTerminal};
     use crate::CatalogIdentityError;
 
     fn node(component: &str) -> WiringNode {
@@ -247,6 +311,14 @@ mod tests {
             interface_version: "0.1.0".to_owned(),
             operation: "call".to_owned(),
             params: BTreeMap::new(),
+            terminal: None,
+        }
+    }
+
+    fn terminal_node(component: &str, terminal: WiringTerminal) -> WiringNode {
+        WiringNode {
+            terminal: Some(terminal),
+            ..node(component)
         }
     }
 
@@ -267,7 +339,10 @@ mod tests {
         let nodes = BTreeMap::from([
             ("in".to_owned(), node("http-entry")),
             ("write".to_owned(), node("entity")),
-            ("out".to_owned(), node("respond")),
+            (
+                "out".to_owned(),
+                terminal_node("respond", WiringTerminal::Respond),
+            ),
         ]);
         let edges = vec![
             WiringEdge {
@@ -283,7 +358,7 @@ mod tests {
                 to_port: None,
             },
         ];
-        WiringDocument::new("orders-create", 1, nodes, edges, cases)
+        WiringDocument::new("orders-create", 1, "in", nodes, edges, cases)
             .expect("the generated crud shape is a valid wiring")
     }
 
@@ -309,16 +384,26 @@ mod tests {
         );
 
         for foreign in [
-            json!({"format-version": "0.2", "wiring-id": "w", "version": 1,
+            json!({"format-version": "0.2", "wiring-id": "w", "version": 1, "entry": "a",
                    "nodes": {"a": {"component": "c", "interface-version": "0.1.0",
                                    "operation": "call"}}}),
-            json!({"format-version": "0.1", "wiring-id": "w", "version": 1,
+            json!({"format-version": "0.1", "wiring-id": "w", "version": 1, "entry": "a",
                    "nodes": {"a": {"component": "c", "interface-version": "0.1.0",
                                    "operation": "call"}},
                    "test-set": []}),
-            json!({"format-version": "0.1", "wiring-id": "w", "version": 1, "nodes": {}}),
+            json!({"format-version": "0.1", "wiring-id": "w", "version": 1, "entry": "a",
+                   "nodes": {}}),
+            // An entry-less document is not a wiring: the walk would have no
+            // node to put the admitted payload on.
+            json!({"format-version": "0.1", "wiring-id": "w", "version": 1,
+                   "nodes": {"a": {"component": "c", "interface-version": "0.1.0",
+                                   "operation": "call"}}}),
+            // `discard` is a verdict the walk settles on, never a declaration.
+            json!({"format-version": "0.1", "wiring-id": "w", "version": 1, "entry": "a",
+                   "nodes": {"a": {"component": "c", "interface-version": "0.1.0",
+                                   "operation": "call", "terminal": "discard"}}}),
         ] {
-            assert!(WiringDocument::parse(&foreign).is_err());
+            assert!(WiringDocument::parse(&foreign).is_err(), "{foreign}");
         }
     }
 
@@ -331,6 +416,72 @@ mod tests {
         assert_eq!(
             WiringDocument::parse(&wire).unwrap_err(),
             CatalogIdentityError::UnresolvedWiringNode {
+                node_id: "missing".to_owned()
+            }
+        );
+    }
+
+    /// The gap wamn-0h0g.18.5 closes: before it, `WiringNode` carried only
+    /// `component`/`interface-version`/`operation`/`params` and the document
+    /// carried no entry, so `wamn_router::WiringNode::terminal` had no authoring
+    /// source and `wamn_router::Wiring::compile` had no entry to be given. Both
+    /// now survive the store round trip a resolved wiring actually takes:
+    /// document -> `graph_json` bytes -> `WiringDocument::parse`.
+    #[test]
+    fn a_node_declares_its_terminal_and_the_document_declares_its_entry() {
+        let mut wiring = crud_wiring(Vec::new());
+        wiring.nodes.insert(
+            "publish".to_owned(),
+            terminal_node("bus", WiringTerminal::Emit),
+        );
+        wiring.edges.push(WiringEdge {
+            from: "write".to_owned(),
+            from_port: wamn_flow::MAIN_PORT.to_owned(),
+            to: "publish".to_owned(),
+            to_port: None,
+        });
+        let stored = serde_json::to_value(&wiring).expect("serializes");
+
+        // The two tokens are the router's own `Terminal` variants; a third
+        // spelling here would be a second contract for the same decision.
+        assert_eq!(stored["entry"], json!("in"));
+        assert_eq!(stored["nodes"]["out"]["terminal"], json!("respond"));
+        assert_eq!(stored["nodes"]["publish"]["terminal"], json!("emit"));
+        assert!(
+            !stored["nodes"]["write"]
+                .as_object()
+                .expect("an object")
+                .contains_key("terminal"),
+            "an ordinary node carries no terminal key, so its stored bytes — and \
+             the hash over them — are what they were before this field existed"
+        );
+
+        let read_back = WiringDocument::parse(&stored).expect("the stored document parses");
+        assert_eq!(read_back.entry, "in");
+        assert_eq!(
+            read_back.nodes["out"].terminal,
+            Some(WiringTerminal::Respond)
+        );
+        assert_eq!(
+            read_back.nodes["publish"].terminal,
+            Some(WiringTerminal::Emit)
+        );
+        assert_eq!(read_back.nodes["write"].terminal, None);
+        assert_eq!(read_back, wiring);
+    }
+
+    /// An entry that names nothing is refused here rather than at
+    /// `wamn_router::Wiring::compile`, which would be one activation and one
+    /// cache miss too late.
+    #[test]
+    fn the_entry_must_name_a_declared_node() {
+        let mut wiring = crud_wiring(Vec::new());
+        wiring.entry = "missing".to_owned();
+        let stored = serde_json::to_value(&wiring).expect("serializes");
+
+        assert_eq!(
+            WiringDocument::parse(&stored).unwrap_err(),
+            CatalogIdentityError::UnresolvedWiringEntry {
                 node_id: "missing".to_owned()
             }
         );
@@ -399,8 +550,24 @@ mod tests {
             .insert("relation".to_owned(), json!("orders"));
         assert_ne!(reparameterized.wiring_hash(), hash);
 
-        let mut recased = wiring;
+        let mut recased = wiring.clone();
         recased.cases[0].expect.status = Some(201);
         assert_ne!(recased.wiring_hash(), hash);
+
+        // The terminal and the entry are gated definition content, not runtime
+        // configuration: re-terminalling or re-entering a graph is a new
+        // `catalog.wirings` row to gate and flip onto, never an edit to the
+        // definition an environment already confirmed.
+        let mut reterminaled = wiring.clone();
+        reterminaled
+            .nodes
+            .get_mut("out")
+            .expect("the respond node")
+            .terminal = Some(WiringTerminal::Emit);
+        assert_ne!(reterminaled.wiring_hash(), hash);
+
+        let mut reentered = wiring;
+        reentered.entry = "write".to_owned();
+        assert_ne!(reentered.wiring_hash(), hash);
     }
 }
