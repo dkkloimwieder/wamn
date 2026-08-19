@@ -4597,6 +4597,7 @@ prerequisite that makes everything else findable.
 | R52 | Destructive migration trusts an unverified backup assertion | High | open | wamn-2jkm.92; proof wamn-4tob.6.24 |
 | R53 | Persisted runs do not pin compatible trusted-executor identity | High | open | wamn-2jkm.99; proof wamn-4tob.6.26 |
 | R54 | Development admission lacks a measured fail-closed capacity invariant | High | open | wamn-2jkm.100; proof wamn-4tob.6.27 |
+| R55 | Converge path reports success before its enforcement object exists | Med | **closed** | **class row** — opened and closed in one act (owner ruling 2026-08-19). First instance `a00c5d1a` (wamn-0h0g.20.9). Detection: apply succeeds **and** enforcement absent **and** a re-run still emits actions. Proof obligation: convergence is witnessed by a re-run producing *no actions*, never by the apply's own exit code |
 | E18 | Materializer silently accepts stale durable-consumer configuration | High | open | wamn-l5i9.69; proof wamn-4tob.6.10 |
 | E19 | Materializer durable-consumer identity collides across valid registrations | High | open | wamn-l5i9.70; proof wamn-4tob.6.16 |
 | SR15 | Custom-node host is hidden inside the general runtime artifact | Med | open | wamn-2jkm.78; component-workload proof wamn-4tob.6.28 |
@@ -5123,6 +5124,43 @@ fires. The stated design (retries park via the queue layer) is unimplemented.
 **R33 (Low)** The delay node's wake is one global `state_json` key — a
 two-delay flow never delays the second, and the stale wake is never cleared
 (wamn-2jkm.51).
+
+### R55 — A converge path reports success before its enforcement object exists *(Med, class row)*
+
+Filed **and closed in one act** at owner ruling, 2026-08-19. The instance is fully
+served by `wamn-0h0g.20.9`'s close reason and R12 is satisfied there; this row
+exists for the **class**, so the next occurrence is triaged under a name instead of
+being re-derived. Status is closed; the class stays live for citation.
+
+**The class.** A converge or migration path reports success once it has installed
+the *structural* half of what it owns — columns, types, nullability, foreign keys,
+indexes — while the *enforcement* half it also owns — a guard function, a trigger,
+a CHECK — is still absent. The completeness predicate never inspected the
+enforcement objects, so "complete" is true of the predicate and false of the plane.
+
+**Detection signature.** Three things co-occur: the apply exits success; the
+enforcement object is absent from the target; a re-run of the *same* apply still
+emits actions. Any one alone is unremarkable. Together they are this defect.
+
+**Proof obligation — the reusable part.** Convergence must be witnessed by a re-run
+that produces **no actions**, never by the apply's own return code. The operational
+test a future review can apply mechanically: *does this apply path assert that a
+second run is a no-op, or does it assert its own exit status?* The second proves
+nothing about the plane, and it is the cheaper thing to write, which is why this
+recurs.
+
+**First instance — `a00c5d1a` (wamn-0h0g.20.9)**, the legacy execution-pin cutover.
+`run_execution_pin_contract_complete` inspected only columns, types, nullability,
+FKs and indexes — never the guard or the trigger — so a single-shot
+`reconcile --apply` left the pin **unguarded and reported success**. The same
+commit fixed it.
+
+Worth carrying forward: the finding as originally written claimed the cutover would
+clobber the guard *forever*, and the lane refuted that — it does converge, on a
+third apply. The correction made the defect **narrower in time and worse in kind**:
+a loop that eventually converges is survivable, whereas one apply that reports
+success with enforcement off is not, because an operator stops after one apply.
+Convergence-in-the-limit is not the property anyone actually relies on.
 
 ---
 
