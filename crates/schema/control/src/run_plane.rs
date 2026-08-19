@@ -82,7 +82,7 @@ const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs
 const RUNS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX runs_execution_bundle ON wamn_run.runs USING btree (tenant_id, execution_bundle_hash)";
 const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
 const RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX release_flows_execution_bundle ON catalog.release_flows USING btree (tenant_id, execution_bundle_hash)";
-const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
+const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, durability_class, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 
 #[derive(Clone, Copy)]
 enum CheckOrigin {
@@ -126,6 +126,12 @@ const CHECK_SPECS: &[CheckSpec] = &[
         name: "runs_capture_mode_check",
         definition: "CHECK (capture_mode = ANY (ARRAY['full'::text, 'off'::text]))",
         origin: CheckOrigin::Inline("capture_mode"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_durability_class_check",
+        definition: "CHECK (durability_class = ANY (ARRAY['standard'::text, 'durable'::text]))",
+        origin: CheckOrigin::Inline("durability_class"),
     },
     CheckSpec {
         table: "runs",
@@ -665,7 +671,7 @@ const LOCK_CATALOG_HEAD_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.lock_ca
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
-const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id) THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
+const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode\n       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id\n                             AND OLD.durability_class = 'durable') THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
 const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-fact-immutable';\nEND\n$function$\n";
 
@@ -724,7 +730,8 @@ BEGIN
        OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash
-       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN
+       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
+       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -734,7 +741,8 @@ BEGIN
             IF NEW.status NOT IN ('dispatched', 'running')
                OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect
                            WHERE effect.tenant_id = OLD.tenant_id
-                             AND effect.run_id = OLD.run_id) THEN
+                             AND effect.run_id = OLD.run_id
+                             AND OLD.durability_class = 'durable') THEN
                 RAISE EXCEPTION USING
                     ERRCODE = '55000',
                     MESSAGE = 'run-release-record-immutable';
@@ -902,7 +910,7 @@ fn trigger_specs() -> Vec<TriggerSpec> {
             definition: RUNS_ADMISSION_PINS_TRIGGER_DEF.to_string(),
             sql: "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF \
                   catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, \
-                  release_version, manifest_digest \
+                  durability_class, release_version, manifest_digest \
                   ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
                   wamn_run.guard_run_admission_pins_immutable();"
                 .to_string(),
@@ -6704,7 +6712,14 @@ CREATE INDEX event_registrations_by_entity
         assert!(runs.contains(
             "(release_version IS NULL AND manifest_digest IS NULL)\n      OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL"
         ));
-        assert!(runs.contains("capture_mode,\n                 release_version, manifest_digest"));
+        // The durability-class carrier joins the same column-scoped guard
+        // (wamn-0h0g.20.1 rider 1): a column the trigger does not NAME never
+        // fires its transition arm, so the class would be silently mutable.
+        assert!(runs.contains(
+            "capture_mode,\n                 durability_class, release_version, manifest_digest"
+        ));
+        assert!(runs.contains("durability_class text NOT NULL DEFAULT 'standard'"));
+        assert!(runs.contains("CHECK (durability_class IN ('standard', 'durable'))"));
         assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-release-record-immutable'"));
         assert!(RUN_STATE_SQL.contains("OLD.release_version IS NOT NULL"));
         assert!(RUN_STATE_SQL.contains("OLD.manifest_digest IS NOT NULL"));
