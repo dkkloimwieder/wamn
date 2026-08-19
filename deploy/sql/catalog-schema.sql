@@ -1742,14 +1742,18 @@ CREATE INDEX event_registrations_by_entity
 -- and NAMES the catalog version it was gated against instead of being keyed by
 -- the release that carries it.
 --
--- The stored document is `WiringDocument` (crates/catalog/model): nodes
--- reference `(component, interface-version)`, edges connect declared ports,
--- parameters bind declared params, and the in-draft `cases` array rides the
--- document (the wamn-0h0g.18.4 ruling — cases attach to the WIRING, not to a
--- component). `wiring_hash` is the sha256 of that document's RFC 8785 canonical
--- bytes; like `catalog.validated_flow_drafts.graph_hash` it is not
--- CHECK-derivable from the jsonb column, which stores a parsed document rather
--- than the exact bytes.
+-- The stored document is `WiringDocument` (crates/catalog/model): `entry` names
+-- the node a delivery enters at, nodes reference `(component,
+-- interface-version)` and may declare a `terminal` of `respond` or `emit`
+-- (wamn-0h0g.18.5 — the authoring source of the router's verdict), edges connect
+-- declared ports, parameters bind declared params, and the in-draft `cases`
+-- array rides the document (the wamn-0h0g.18.4 ruling — cases attach to the
+-- WIRING, not to a component). The document is persisted WHOLE in `graph_json`
+-- and no column enumerates a field of it, which is why a document field is a
+-- model change and never a migration. `wiring_hash` is the sha256 of that
+-- document's RFC 8785 canonical bytes; like
+-- `catalog.validated_flow_drafts.graph_hash` it is not CHECK-derivable from the
+-- jsonb column, which stores a parsed document rather than the exact bytes.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.wirings (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),

@@ -251,6 +251,39 @@ fn a_definition_row_is_immutable_and_pins_a_real_catalog_version() {
     }
 }
 
+/// wamn-0h0g.18.5 added `entry` and a node `terminal` to the stored document and
+/// deliberately added NO relation and NO column. This is why that is safe: the
+/// document is persisted whole in one jsonb column whose only constraint is that
+/// it is an object, so there is nothing for the converge path
+/// (`ensure_catalog_storage`) to reach an existing database with. A later CHECK
+/// or generated column enumerating a document field would silently reach fresh
+/// installs only — so it fails here first, where the marker it needs is named.
+#[test]
+fn the_document_is_persisted_whole_so_a_new_document_field_is_never_a_migration() {
+    let table = section("CREATE TABLE catalog.wirings (", "\n);");
+    assert_declares(
+        table,
+        "graph_json      jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object')",
+        "the whole document rides one column; the model, not the DDL, knows its shape",
+    );
+
+    for field in ["entry", "terminal", "nodes", "edges", "params", "cases"] {
+        for enumeration in [
+            format!("graph_json ? '{field}'"),
+            format!("graph_json->>'{field}'"),
+            format!("graph_json -> '{field}'"),
+        ] {
+            assert!(
+                !SCHEMA.contains(&enumeration),
+                "catalog-schema.sql enumerates the document field {field:?} as \
+                 {enumeration:?}; a document field that reaches the DDL needs its own \
+                 BEGIN/END migration marker and a converge probe in \
+                 services/ctl/src/publish_catalog.rs, or it reaches fresh installs only"
+            );
+        }
+    }
+}
+
 /// The column stores what the document derives — the one end-to-end fact the
 /// two halves of this bead share.
 #[test]
