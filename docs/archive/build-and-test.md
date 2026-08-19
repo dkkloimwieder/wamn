@@ -2093,17 +2093,27 @@ kubectl -n wamn-system exec wamn-sysdb-1 -c postgres -- \
 
 Docs: docs/archive/platform/provisioning.md, docs/archive/platform/postgres-topology.md
 
-> **EVERY `provision-project-env` INVOCATION BELOW IS INCOMPLETE AS WRITTEN AND
-> WILL FAIL AT ARGUMENT PARSING.** Two credentials are now required with no
-> default — `--dispatch-reader-password` since `wamn-0h0g.12.122` (2026-08-18)
-> and `--app-password` since `wamn-0h0g.12.129` (2026-08-19) — and neither flag
-> nor its env var (`WAMN_DISPATCH_READER_PASSWORD`, `WAMN_APP_PASSWORD`) appears
-> anywhere in this file. Export both, or add both flags, before running any
-> recipe in this section. The recipes are deliberately **not** rewritten
-> in place: `wamn-0h0g.12.141` carries the still-owed decision on whether these
-> requirements should be **mode-scoped** instead, since several call sites are
-> effect-writer generation modes that provision no database and never need a
-> credential at all. `deploy/mvp/bootstrap.sh` has the identical defect.
+> **Two credentials are required, with no default, on every *provisioning*
+> invocation** — `--app-password` (`wamn-0h0g.12.129`) and
+> `--dispatch-reader-password` (`wamn-0h0g.12.122`). Set them once and the
+> recipes below pass them explicitly:
+>
+> ```bash
+> APP_PW=$(openssl rand -base64 24); READER_PW=$(openssl rand -base64 24)
+> ```
+>
+> **The requirement is mode-scoped as of `wamn-0h0g.12.141` (`ccdc66d3`).** Four
+> modes provision nothing and are exempt — the three effect-writer generation
+> actions and `--revoke-pat-prefix` — so those invocations take neither flag and
+> must not be given a placeholder one. Enforcement is at *parse* time
+> (`required_unless_present_any`), so a provisioning invocation missing either
+> credential exits 2 before it opens a connection.
+>
+> Both flags also read from `WAMN_APP_PASSWORD` / `WAMN_DISPATCH_READER_PASSWORD`.
+> Prefer the explicit flags shown here: an exported value satisfies clap
+> silently, which is what `wamn-0h0g.12.142` tracks. `deploy/mvp/bootstrap.sh`
+> needs no flags at all — its four generation and revoke call sites are exempt,
+> and its one provisioning site forwards your argv verbatim.
 
 ```bash
 cargo test -p wamn-control-provision -p wamn-control-registry -p wamn-ctl   # renderer/naming + project SQL + drift/subcommand units
@@ -2111,7 +2121,8 @@ cargo clippy -p wamn-control-provision -p wamn-control-registry -p wamn-ctl --al
   && cargo fmt -p wamn-control-provision -p wamn-control-registry -p wamn-ctl --check
 # (--cluster given => no DB needed):
 ./target/debug/wamn-ctl provision-project-env --org demo --project demo --env dev \
-  --cluster wamn-pg --emit-database - --emit-role-sql - --emit-privilege-sql - --emit-secret -
+  --cluster wamn-pg --app-password "$APP_PW" --dispatch-reader-password "$READER_PW" \
+  --emit-database - --emit-role-sql - --emit-privilege-sql - --emit-secret -
 # IN-CLUSTER live standup = the gate of record (T3 pool wamn-pg is ALWAYS up; the
 # SQL -> Database CR -> privilege SQL in order:
 kubectl -n wamn-system exec -i wamn-sysdb-1 -c postgres -- psql -U postgres -d wamn_system \
@@ -2121,7 +2132,8 @@ kubectl -n wamn-system port-forward svc/wamn-sysdb-rw 5470:5432 &
 SYSPW=$(kubectl -n wamn-system get secret wamn-sysdb-superuser -o jsonpath='{.data.password}' | base64 -d)
 WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5470/wamn_system?sslmode=disable" \
   ./target/debug/wamn-ctl provision-project-env --org demo --project demo --env dev \
-  --connection-limit 20 --emit-database /tmp/db.json --emit-role-sql /tmp/role.sql \
+  --connection-limit 20 --app-password "$APP_PW" --dispatch-reader-password "$READER_PW" \
+  --emit-database /tmp/db.json --emit-role-sql /tmp/role.sql \
   --emit-privilege-sql /tmp/priv.sql --emit-secret /tmp/secret.json   # reads placement + writes rows
 kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/role.sql
 kubectl apply -f /tmp/db.json
@@ -2161,7 +2173,8 @@ kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=3 cluster/
 kubectl -n wamn-system wait --for=jsonpath='{.status.readyInstances}'=1 cluster/gate8-dev  --timeout=180s
 for E in prod dev; do C=gate8-$E; \
   ./target/debug/wamn-ctl provision-project-env --org gate8 --project app --env $E \
-    --cluster $C --emit-database /tmp/db-$E.json --emit-role-sql /tmp/role-$E.sql \
+    --cluster $C --app-password "$APP_PW" --dispatch-reader-password "$READER_PW" \
+    --emit-database /tmp/db-$E.json --emit-role-sql /tmp/role-$E.sql \
     --emit-privilege-sql /tmp/priv-$E.sql --emit-secret /tmp/sec-$E.json; \
   kubectl -n wamn-system exec -i $C-1 -c postgres -- psql -U postgres -f - < /tmp/role-$E.sql; \
   kubectl apply -f /tmp/db-$E.json; \
@@ -2192,7 +2205,8 @@ WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5473/wamn_system?s
 # provision-project-env WITHOUT --cluster reads placement from the registered row -> wamn-pg:
 WAMN_SYSTEM_ADMIN_URL="postgres://postgres:${SYSPW}@127.0.0.1:5473/wamn_system?sslmode=disable" \
   ./target/debug/wamn-ctl provision-project-env --org t3gate --project demo --env dev \
-  --connection-limit 15 --emit-database /tmp/t3-db.json --emit-role-sql /tmp/t3-role.sql \
+  --connection-limit 15 --app-password "$APP_PW" --dispatch-reader-password "$READER_PW" \
+  --emit-database /tmp/t3-db.json --emit-role-sql /tmp/t3-role.sql \
   --emit-privilege-sql /tmp/t3-priv.sql --emit-secret /tmp/t3-secret.json   # Database CR cluster == wamn-pg
 kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/t3-role.sql
 kubectl apply -f /tmp/t3-db.json
@@ -2241,6 +2255,7 @@ SYS="postgres://postgres:${SYSPW}@127.0.0.1:5474/wamn_system?sslmode=disable"
 WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl provision-org --org t10gate --template trials --pool wamn-pg
 WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl provision-project-env \
   --org t10gate --project demo --env dev --connection-limit 10 \
+  --app-password "$APP_PW" --dispatch-reader-password "$READER_PW" \
   --emit-database /tmp/t10-db.json --emit-role-sql /tmp/t10-role.sql \
   --emit-privilege-sql /tmp/t10-priv.sql --emit-secret /tmp/t10-secret.json
 kubectl -n wamn-system exec -i wamn-pg-1 -c postgres -- psql -U postgres -f - < /tmp/t10-role.sql
@@ -2306,6 +2321,7 @@ DB="wamn-db-t11gate--demo--dev"; DUMPROOT=$(mktemp -d)
 WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl provision-org --org t11gate --template trials --pool wamn-pg
 WAMN_SYSTEM_ADMIN_URL="$SYS" ./target/debug/wamn-ctl provision-project-env \
   --org t11gate --project demo --env dev --connection-limit 10 \
+  --app-password "$APP_PW" --dispatch-reader-password "$READER_PW" \
   --emit-database /tmp/t11-db.json --emit-role-sql /tmp/t11-role.sql \
   --emit-privilege-sql /tmp/t11-priv.sql --emit-secret /tmp/t11-secret.json
 psql "$PGADMIN" -q -f /tmp/t11-role.sql
