@@ -4361,14 +4361,12 @@ verdict from a conjunction of its cases into a disjunction — a report with a
 failed case reporting `passed = true`. Each must fail its named owner test, then
 restore the exact source hash.
 
-The campaign **cannot run today**: its `EXPECTED_SHA` baselines are stale in two
-files, and the `run_plane.rs` cases come first in `mutation_ids()`, so `check`
-and `run-all` abort on mutant 1 before reaching the rest. `2dc1ee0e…` was already
-five file-revisions stale when it was introduced, so three of these mutants have
-never executed once. Every needle still anchors exactly once and every gate test
-name exists, so a pure digest re-baseline revives all six — that is
-`wamn-0h0g.15.22`'s, along with the wider finding that 109 of 135 baselines
-across 31 of 37 campaigns are stale (`wamn-0h0g.15.136`).
+The campaign **no longer exists**: `5c47074b` deleted `tools/gate-mutants/` in
+full, with owner authorization, along with the `mutation_evidence` and
+`mutation_campaigns` registry fields. The re-baseline this paragraph once
+assigned to `wamn-0h0g.15.22` therefore has no subject, and `wamn-0h0g.15.136`
+closed with the deletion. The mutants described above are retained here as a
+record of what was proven, not as a runnable procedure.
 
 ## SR-MVP — unconditional publish gate (`wamn-0h0g.8.8`)
 
@@ -4655,14 +4653,14 @@ git diff --check
 
 This mechanical gate pins the retained authoring-test DDL bytes while moving
 their path and direct Rust constants away from the deleted stored-suite name.
-The SQL payload SHA-256 remains
-`ba26e29941d5f45ef8d29117abd6a623e9cd7fa04fc7bb858f2672ebe360362c`.
+The SQL payload SHA-256 is
+`13b1543ca315d3e5d1ed6817a9eb8f8bb61717edd5885a0df17711258974cb18`.
 
 ```bash
 export CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next
 export CARGO_INCREMENTAL=0
 
-echo 'ba26e29941d5f45ef8d29117abd6a623e9cd7fa04fc7bb858f2672ebe360362c  deploy/sql/authoring-tests.sql' \
+echo '13b1543ca315d3e5d1ed6817a9eb8f8bb61717edd5885a0df17711258974cb18  deploy/sql/authoring-tests.sql' \
   | sha256sum --check
 jq empty architecture/state-owners.json
 
