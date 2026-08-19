@@ -929,6 +929,16 @@ mod tests {
             })
             .expect("build live Postgres adapter"),
         );
+        // wamn-0h0g.17.11: `connection_effect_snapshot` requires a BOUND tenant
+        // claim, not merely one that agrees. The production path always has one
+        // (`ExecutionHost::instantiate` feeds the same tenant to the registry
+        // and to `ConnectionHttp`), so this binds the same `"t1"` the
+        // `ConnectionHttp` below is constructed with — the agreeing case. What
+        // is under test here is the ABSENT run row, which still denies before
+        // the wire.
+        postgres
+            .set_tenant("draft-http-runner", "t1")
+            .expect("bind the live effect tenant claim");
         postgres
             .set_schema("draft-http-runner", "wamn_run")
             .expect("set live run schema");

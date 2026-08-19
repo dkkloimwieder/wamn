@@ -687,11 +687,12 @@ pub struct ExecutionHost {
 /// store is constructed, and the store's `Ctx.plugins` map is private to the
 /// fork, so nothing outside it can swap the plugin for a rebound one. That is a
 /// live leak channel for the trusted HTTP effect, and it is closed HERE by
-/// failing closed rather than by rebinding: `connection_effect_snapshot` refuses
-/// a caller-supplied tenant that disagrees with the tenant bound to the claim
-/// scope. A stale `ConnectionHttp` therefore produces a denial, never another
-/// tenant's rows. Making it a rebind rather than a denial needs an owner outside
-/// this crate's file domain.
+/// failing closed rather than by rebinding: `connection_effect_snapshot`
+/// REQUIRES a tenant bound to the claim scope and refuses a caller-supplied one
+/// that disagrees with it (wamn-0h0g.17.11). A stale `ConnectionHttp` therefore
+/// produces a denial, never another tenant's rows, and so does one whose scope
+/// was never bound at all. Making it a rebind rather than a denial needs an
+/// owner outside this crate's file domain.
 #[derive(Debug, Clone)]
 pub struct ExecutionAcquisition {
     /// Every `wamn:postgres` claim this checkout resolves under.

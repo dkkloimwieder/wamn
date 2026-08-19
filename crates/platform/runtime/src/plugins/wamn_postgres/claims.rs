@@ -1229,12 +1229,13 @@ impl WamnPostgres {
     /// honored. The check is a denial, not a correction: silently substituting
     /// the registered tenant would hide the divergence it exists to catch.
     ///
-    /// An UNBOUND component id falls through to the caller's tenant, which is
-    /// the pre-seam behaviour. Every instance a checkout hands out has a bound
-    /// tenant — [`bind_session_claims`](Self::bind_session_claims) always writes
-    /// one — so the disagreement check fires on exactly the reachable leak.
-    /// Refusing the unbound case too would be stronger; it is left alone because
-    /// the only callers it would change are outside this module.
+    /// An UNBOUND component id is refused outright (wamn-0h0g.17.11), not
+    /// allowed to fall through to the caller's tenant. Agreement with the
+    /// registry is only meaningful when the registry HAS an entry, so a guard
+    /// that skipped the absent case would be a guard whose strength depended on
+    /// the caller having been bound. It is the same deny floor
+    /// [`require_tenant`](Self::require_tenant) applies to every other read:
+    /// nothing resolves under an unbound claim scope.
     pub async fn connection_effect_snapshot(
         &self,
         component_id: &str,
@@ -1242,13 +1243,17 @@ impl WamnPostgres {
         tenant: &str,
         lookup: &ConnectionEffectLookup<'_>,
     ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
-        if let Some(registered) = self.tenant_for(component_id) {
-            anyhow::ensure!(
-                registered == tenant,
-                "HTTP effect authorization tenant {tenant:?} disagrees with the tenant bound \
-                 to component {component_id:?}; refusing to resolve under a stale identity"
-            );
-        }
+        let registered = self.tenant_for(component_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "HTTP effect authorization for component {component_id:?} has no bound tenant \
+                 claim; refusing to resolve under an unbound identity"
+            )
+        })?;
+        anyhow::ensure!(
+            registered == tenant,
+            "HTTP effect authorization tenant {tenant:?} disagrees with the tenant bound \
+             to component {component_id:?}; refusing to resolve under a stale identity"
+        );
         let schema = self.schema_for(component_id);
         let (conn, policy) = self
             .checkout(project)
@@ -2497,8 +2502,63 @@ mod tests {
             .await
             .expect_err("an offline plugin has no connection to resolve against");
         assert!(
-            !agreeing.to_string().contains("disagrees with the tenant bound"),
+            !agreeing
+                .to_string()
+                .contains("disagrees with the tenant bound"),
             "the bound tenant must pass the guard: {agreeing}"
+        );
+    }
+
+    /// wamn-0h0g.17.11 — the guard requires a bound claim, it does not merely
+    /// refuse disagreement.
+    ///
+    /// Agreement with the registry carries no information when the registry has
+    /// no entry, so an unbound claim scope must be refused rather than trusted
+    /// with whatever tenant the caller froze. This is the same deny floor
+    /// `require_tenant` applies to every other read: an instance that skipped a
+    /// bind resolves nothing.
+    ///
+    /// Offline on purpose: the refusal lands before any pool is reached, and the
+    /// message is asserted so a mutant that lets the unbound case fall through
+    /// fails on the message rather than passing on the (also absent) connection.
+    #[tokio::test]
+    async fn effect_snapshot_refuses_a_component_with_no_bound_tenant() {
+        const COMPONENT: &str = "never-acquired-instance";
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            database_url: None,
+            pool_max_size: 1,
+            wait_timeout_ms: 100,
+            statement_timeout_ms: 100,
+            row_limit: 10,
+        })
+        .unwrap();
+        assert_eq!(
+            pg.session_claims(COMPONENT),
+            None,
+            "the scope under test resolves no identity at all"
+        );
+
+        let lookup = ConnectionEffectLookup {
+            run_id: "run",
+            root_plan_hash: "root",
+            current_plan_hash: "current",
+            frame_id: 1,
+            local_node_id: "node",
+            occurrence: 0,
+            source_artifact_hash: "artifact",
+            requirement_name: "manager",
+        };
+
+        let unbound = pg
+            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup)
+            .await
+            .expect_err("an unbound claim scope resolves nothing");
+        assert!(
+            unbound.to_string().contains(
+                "HTTP effect authorization for component \"never-acquired-instance\" has no \
+                 bound tenant claim"
+            ),
+            "the refusal names the missing claim rather than any other failure: {unbound}"
         );
     }
 
