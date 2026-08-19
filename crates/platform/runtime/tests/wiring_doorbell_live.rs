@@ -173,7 +173,13 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // A sentinel pointer the FIRST established LISTEN must drop: it is how this
     // gate knows the subscriber is on the wire before it flips anything, and it
     // is the reconnect obligation running on the very first connection.
-    cache.insert(ENVIRONMENT, "sentinel", 1, wiring("sentinel"));
+    let sentinel = cache
+        .get(ENVIRONMENT, "sentinel")
+        .miss()
+        .expect("a fresh cache holds nothing");
+    cache
+        .insert(ENVIRONMENT, "sentinel", 1, wiring("sentinel"), sentinel)
+        .expect("nothing can have invalidated before the subscriber exists");
     let listener = WiringDoorbellListener::postgres(
         url.clone(),
         Arc::clone(&cache),
@@ -183,18 +189,26 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
         },
     );
     eventually("the doorbell established its LISTEN", || {
-        cache.get(ENVIRONMENT, "sentinel").is_none()
+        cache.get(ENVIRONMENT, "sentinel").hit().is_none()
     })
     .await;
 
     // Resolve once, then serve from memory: the hot path this whole seam exists
-    // to keep out of Postgres.
+    // to keep out of Postgres. The token is taken BEFORE the store read, which
+    // is the only order that lets a flip during the read be detected.
+    let token = cache
+        .get(ENVIRONMENT, WIRING)
+        .miss()
+        .expect("the first delivery misses");
     let version = resolve(&url).await.expect("v1 is active");
     assert_eq!(version, 1);
-    cache.insert(ENVIRONMENT, WIRING, version, wiring("v1"));
+    cache
+        .insert(ENVIRONMENT, WIRING, version, wiring("v1"), token)
+        .expect("no flip raced the first resolution");
     assert_eq!(
         cache
             .get(ENVIRONMENT, WIRING)
+            .hit()
             .expect("resident after the first resolution")
             .version,
         1
@@ -204,15 +218,22 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // statement to that memory is the DDL trigger's pg_notify.
     flip(&url, &hash('b'), true);
     eventually("the doorbell invalidated the flipped pointer", || {
-        cache.get(ENVIRONMENT, WIRING).is_none()
+        cache.get(ENVIRONMENT, WIRING).hit().is_none()
     })
     .await;
 
+    let token = cache
+        .get(ENVIRONMENT, WIRING)
+        .miss()
+        .expect("the flipped pointer was dropped");
     let version = resolve(&url).await.expect("v2 is active");
     assert_eq!(version, 2, "the store now serves the flipped version");
-    cache.insert(ENVIRONMENT, WIRING, version, wiring("v2"));
+    cache
+        .insert(ENVIRONMENT, WIRING, version, wiring("v2"), token)
+        .expect("no further flip raced the re-read");
     let served = cache
         .get(ENVIRONMENT, WIRING)
+        .hit()
         .expect("the re-read repopulated the pointer");
     assert_eq!(served.version, 2);
     assert_eq!(served.wiring.entry(), "v2");
@@ -221,18 +242,24 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // graph that was never evicted.
     flip(&url, &hash('a'), true);
     eventually("the doorbell invalidated the rolled-back pointer", || {
-        cache.get(ENVIRONMENT, WIRING).is_none()
+        cache.get(ENVIRONMENT, WIRING).hit().is_none()
     })
     .await;
     assert_eq!(cache.len(), 3, "no graph was dropped by either flip");
+    let token = cache
+        .get(ENVIRONMENT, WIRING)
+        .miss()
+        .expect("the rolled-back pointer was dropped");
     assert_eq!(resolve(&url).await.expect("v1 is active again"), 1);
 
     // Taking the wiring dark is the same statement again, and is as much an
     // invalidation: the read path stops serving it entirely.
-    cache.insert(ENVIRONMENT, WIRING, 1, wiring("v1"));
+    cache
+        .insert(ENVIRONMENT, WIRING, 1, wiring("v1"), token)
+        .expect("no flip raced the rollback re-read");
     flip(&url, &hash('a'), false);
     eventually("the doorbell invalidated the darkened pointer", || {
-        cache.get(ENVIRONMENT, WIRING).is_none()
+        cache.get(ENVIRONMENT, WIRING).hit().is_none()
     })
     .await;
     assert_eq!(

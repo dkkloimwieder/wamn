@@ -28,6 +28,23 @@
 //! `crates/platform/runtime/src/plugins/runner_plan_supply.rs`'s
 //! `ResolutionPlanCache`, which never invalidates at all because a plan is keyed
 //! by its own content hash. A pointer is not content, so this cache does.
+//!
+//! ## Resolutions in flight
+//!
+//! A miss reads the store OUTSIDE this lock, so a pointer flip can commit while
+//! that read is in the air: the reader saw the old version, the doorbell
+//! invalidated, and the reader is then holding a pointer write that is already
+//! superseded. Installing it would undo the invalidation and serve the old
+//! version until the next flip — indefinitely.
+//!
+//! So a miss is a two-part transaction. [`WiringCache::get`] hands back a
+//! [`ResolutionToken`] stamped with the generation it observed, every
+//! invalidation bumps that generation, and [`WiringCache::insert`] refuses any
+//! token an invalidation has overtaken. The generation is ONE counter for the
+//! whole cache rather than one per pointer, because a reconnect
+//! ([`WiringCache::invalidate_all`]) has to overtake every outstanding token
+//! anyway; the cost is that one wiring's flip sends other wirings' in-flight
+//! reads around again, which is a re-read, not a wrong answer.
 
 use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
@@ -61,6 +78,10 @@ struct CacheState {
     /// Compiled graphs by exact identity.
     entries: HashMap<EntryKey, Arc<Wiring>>,
     least_to_most_recent: VecDeque<EntryKey>,
+    /// Bumped by every invalidation, and by nothing else. A pointer write whose
+    /// token carries an older generation is a read from before that
+    /// invalidation, and is refused.
+    generation: u64,
 }
 
 /// The active wiring one resolution produced.
@@ -72,10 +93,51 @@ pub struct ActiveWiring {
     pub wiring: Arc<Wiring>,
 }
 
+/// A miss's receipt: the cache generation the caller began resolving in.
+///
+/// Handed out by [`WiringCache::get`] on a miss and handed back to
+/// [`WiringCache::insert`] with what the store read found. Its whole job is to
+/// let `insert` tell a read that started BEFORE an invalidation from one that
+/// started after it, and refuse the first. Take it before reading the store, not
+/// after: a token stamped after the read proves nothing about the read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolutionToken {
+    generation: u64,
+}
+
+/// What one lookup produced: the resident wiring, or the receipt to resolve
+/// under.
+#[derive(Debug, Clone)]
+pub enum Lookup {
+    /// Both the pointer and the graph it named were resident.
+    Hit(ActiveWiring),
+    /// Nothing to serve. Read the store, then hand this token back to
+    /// [`WiringCache::insert`] with what it said.
+    Miss(ResolutionToken),
+}
+
+impl Lookup {
+    /// The resident wiring, if this lookup was a hit.
+    pub fn hit(self) -> Option<ActiveWiring> {
+        match self {
+            Lookup::Hit(active) => Some(active),
+            Lookup::Miss(_) => None,
+        }
+    }
+
+    /// The token to resolve under, if this lookup was a miss.
+    pub fn miss(self) -> Option<ResolutionToken> {
+        match self {
+            Lookup::Hit(_) => None,
+            Lookup::Miss(token) => Some(token),
+        }
+    }
+}
+
 /// Entry-bounded, version-keyed cache of resolved wirings.
 ///
-/// Shared across deliveries and threads: `get` on the hot path, `insert` on a
-/// miss the caller resolved from the store, [`WiringCache::invalidate`] when the
+/// Shared across deliveries and threads: `get` on the hot path, `insert` under
+/// the token that miss handed out, [`WiringCache::invalidate`] when the
 /// activation pointer flips.
 #[derive(Debug)]
 pub struct WiringCache {
@@ -93,6 +155,7 @@ impl WiringCache {
                 active: HashMap::new(),
                 entries: HashMap::with_capacity(max_entries.get()),
                 least_to_most_recent: VecDeque::with_capacity(max_entries.get()),
+                generation: 0,
             }),
             // Beside the executor's `wamn.run.*` instruments. One counter split
             // by a two-valued attribute rather than two counters, so the hit
@@ -111,9 +174,10 @@ impl WiringCache {
     }
 
     /// The wiring this environment's pointer currently names, if both the
-    /// pointer and its graph are resident. A miss is the caller's cue to read
-    /// the store and [`WiringCache::insert`] what it found.
-    pub fn get(&self, environment: &str, wiring_id: &str) -> Option<ActiveWiring> {
+    /// pointer and its graph are resident. A miss carries the
+    /// [`ResolutionToken`] to read the store under and hand back to
+    /// [`WiringCache::insert`].
+    pub fn get(&self, environment: &str, wiring_id: &str) -> Lookup {
         let pointer = Pointer {
             environment: Arc::from(environment),
             wiring_id: Arc::from(wiring_id),
@@ -125,6 +189,10 @@ impl WiringCache {
             touch(&mut state.least_to_most_recent, &key);
             Some(ActiveWiring { version, wiring })
         });
+        // Stamped under the SAME lock hold that found the miss, so no
+        // invalidation can slip between deciding to read the store and the
+        // generation the read is attributed to.
+        let generation = state.generation;
         drop(state);
         self.lookups.add(
             1,
@@ -133,21 +201,33 @@ impl WiringCache {
                 if resolved.is_some() { "hit" } else { "miss" },
             )],
         );
-        resolved
+        match resolved {
+            Some(active) => Lookup::Hit(active),
+            None => Lookup::Miss(ResolutionToken { generation }),
+        }
     }
 
-    /// Record `version` as this pointer's active wiring and cache its graph.
+    /// Record `version` as this pointer's active wiring and cache its graph,
+    /// on the strength of the `token` the miss handed out.
     ///
     /// Returns the shared graph, which is the already-resident one when this
     /// exact version is cached — two threads racing the same miss share one
     /// compilation rather than each installing its own.
+    ///
+    /// Returns `None` when an invalidation has overtaken `token`: the store read
+    /// behind it began before a pointer flip this cache has already been told
+    /// about, so what it found may be the superseded version and NOTHING is
+    /// installed — not the pointer, not the graph. The caller's answer is to
+    /// resolve again under a fresh token; serving the read it already holds
+    /// would be serving a version the cache knows has moved.
     pub fn insert(
         &self,
         environment: &str,
         wiring_id: &str,
         version: u32,
         wiring: Wiring,
-    ) -> Arc<Wiring> {
+        token: ResolutionToken,
+    ) -> Option<Arc<Wiring>> {
         let pointer = Pointer {
             environment: Arc::from(environment),
             wiring_id: Arc::from(wiring_id),
@@ -157,10 +237,13 @@ impl WiringCache {
             version,
         };
         let mut state = self.state.lock().expect("wiring cache lock poisoned");
+        if token.generation < state.generation {
+            return None;
+        }
         state.active.insert(pointer, version);
         if let Some(resident) = state.entries.get(&key).cloned() {
             touch(&mut state.least_to_most_recent, &key);
-            return resident;
+            return Some(resident);
         }
         while state.entries.len() >= self.max_entries {
             let evicted = state
@@ -177,13 +260,18 @@ impl WiringCache {
         let wiring = Arc::new(wiring);
         state.entries.insert(key.clone(), wiring.clone());
         state.least_to_most_recent.push_back(key);
-        wiring
+        Some(wiring)
     }
 
     /// Forget which version this pointer resolves to, sending the next delivery
     /// back to the store for it. **This is the pointer-flip entry point.**
     ///
-    /// Returns whether a pointer was actually dropped.
+    /// Returns whether a pointer was actually dropped — which is NOT the same
+    /// question as whether the flip took effect. It also overtakes every
+    /// outstanding [`ResolutionToken`], so a resolution already reading the
+    /// store cannot install what it read; that happens even when no pointer was
+    /// resident, because the in-flight read is exactly the case where there is
+    /// nothing yet to drop.
     ///
     /// Its production caller is the doorbell subscriber of wamn-0h0g.18.2 (the
     /// activation verb that writes `catalog.wiring_activation` and notifies),
@@ -198,18 +286,18 @@ impl WiringCache {
             environment: Arc::from(environment),
             wiring_id: Arc::from(wiring_id),
         };
-        self.state
-            .lock()
-            .expect("wiring cache lock poisoned")
-            .active
-            .remove(&pointer)
-            .is_some()
+        let mut state = self.state.lock().expect("wiring cache lock poisoned");
+        state.generation += 1;
+        state.active.remove(&pointer).is_some()
     }
 
     /// Forget EVERY pointer, sending the next delivery of every wiring back to
     /// the store. **This is the reconnect entry point.**
     ///
-    /// Returns how many pointers were dropped.
+    /// Returns how many pointers were dropped, and overtakes every outstanding
+    /// [`ResolutionToken`] whether or not that count is zero: a resolution
+    /// already reading the store is as much a way to resume against a missed
+    /// flip as a resident pointer is.
     ///
     /// PostgreSQL delivers a `NOTIFY` only to sessions holding a `LISTEN` at
     /// commit time and queues nothing for an absent one, so a subscriber whose
@@ -226,6 +314,7 @@ impl WiringCache {
     /// write rather than a recompilation.
     pub fn invalidate_all(&self) -> usize {
         let mut state = self.state.lock().expect("wiring cache lock poisoned");
+        state.generation += 1;
         let dropped = state.active.len();
         state.active.clear();
         dropped

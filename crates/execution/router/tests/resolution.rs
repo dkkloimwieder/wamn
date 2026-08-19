@@ -37,15 +37,38 @@ fn wiring(entry: &str) -> Wiring {
     .expect("fixture wiring compiles")
 }
 
+/// One resolution end to end, exactly as the hot path performs it: miss, read
+/// the store, install what the read found under the token that miss handed out.
+/// Every fixture below resolves through here, so no test installs a pointer by a
+/// route production does not have.
+fn resolve(
+    cache: &WiringCache,
+    environment: &str,
+    wiring_id: &str,
+    version: u32,
+    graph: Wiring,
+) -> Arc<Wiring> {
+    let token = cache
+        .get(environment, wiring_id)
+        .miss()
+        .expect("a fixture resolves only what it has just found missing");
+    cache
+        .insert(environment, wiring_id, version, graph, token)
+        .expect("nothing invalidated between this fixture's miss and its install")
+}
+
 // ---- resolve once, serve from memory --------------------------------------
 
 #[test]
 fn a_resolved_wiring_is_served_from_memory_on_every_later_delivery() {
     let cache = cache(8);
-    let installed = cache.insert(ENV, "orders", 7, wiring("v7"));
+    let installed = resolve(&cache, ENV, "orders", 7, wiring("v7"));
 
     for _ in 0..3 {
-        let hit = cache.get(ENV, "orders").expect("resident after insert");
+        let hit = cache
+            .get(ENV, "orders")
+            .hit()
+            .expect("resident after insert");
         assert_eq!(hit.version, 7);
         assert!(
             Arc::ptr_eq(&hit.wiring, &installed),
@@ -58,7 +81,7 @@ fn a_resolved_wiring_is_served_from_memory_on_every_later_delivery() {
 #[test]
 fn an_unresolved_wiring_misses() {
     let cache = cache(8);
-    assert!(cache.get(ENV, "orders").is_none());
+    assert!(cache.get(ENV, "orders").hit().is_none());
     assert!(cache.is_empty());
 }
 
@@ -67,10 +90,17 @@ fn an_unresolved_wiring_misses() {
 #[test]
 fn environments_do_not_share_a_pointer() {
     let cache = cache(8);
-    cache.insert(ENV, "orders", 7, wiring("prod-v7"));
+    resolve(&cache, ENV, "orders", 7, wiring("prod-v7"));
 
-    assert!(cache.get("staging", "orders").is_none());
-    assert_eq!(cache.get(ENV, "orders").expect("prod resident").version, 7);
+    assert!(cache.get("staging", "orders").hit().is_none());
+    assert_eq!(
+        cache
+            .get(ENV, "orders")
+            .hit()
+            .expect("prod resident")
+            .version,
+        7
+    );
 }
 
 // ---- the pointer flip ------------------------------------------------------
@@ -81,8 +111,8 @@ fn environments_do_not_share_a_pointer() {
 #[test]
 fn invalidate_sends_the_next_lookup_back_to_the_store() {
     let cache = cache(8);
-    cache.insert(ENV, "orders", 7, wiring("v7"));
-    assert!(cache.get(ENV, "orders").is_some());
+    resolve(&cache, ENV, "orders", 7, wiring("v7"));
+    assert!(cache.get(ENV, "orders").hit().is_some());
 
     assert!(
         cache.invalidate(ENV, "orders"),
@@ -90,7 +120,7 @@ fn invalidate_sends_the_next_lookup_back_to_the_store() {
     );
 
     assert!(
-        cache.get(ENV, "orders").is_none(),
+        cache.get(ENV, "orders").hit().is_none(),
         "a flipped pointer must miss, or the flip never takes effect"
     );
     assert!(
@@ -99,16 +129,105 @@ fn invalidate_sends_the_next_lookup_back_to_the_store() {
     );
 }
 
+// ---- the resolution in flight ---------------------------------------------
+
+/// wamn-0h0g.16.16 — THE INTERLEAVING. A miss reads the store outside the
+/// cache's lock, so a flip can commit while that read is in the air. The read
+/// then comes back holding a version the doorbell has already invalidated, and
+/// installing it would undo the invalidation: the cache would serve the
+/// superseded version until the NEXT flip, which may never come.
+///
+/// Note that nothing is resident when the doorbell rings here — `invalidate`
+/// drops NOTHING. The in-flight read is precisely the case where there is no
+/// pointer to drop, which is why dropping pointers cannot be the whole of it.
+#[test]
+fn a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointer() {
+    let cache = cache(8);
+    // The env-hot store, as a reader sees it. The flip moves it mid-read.
+    let mut store = (7, "v7");
+
+    // t0: the delivery misses and goes to the store, which says v7.
+    let token = cache
+        .get(ENV, "orders")
+        .miss()
+        .expect("nothing is resident yet");
+    let read = store;
+
+    // t1: the activation commits. t2: the doorbell rings, before the reader is
+    // back.
+    store = (8, "v8");
+    assert!(
+        !cache.invalidate(ENV, "orders"),
+        "there is no resident pointer to drop — that is the whole difficulty"
+    );
+
+    // t3: the reader returns, holding the version from before the flip.
+    assert!(
+        cache
+            .insert(ENV, "orders", read.0, wiring(read.1), token)
+            .is_none(),
+        "a read from before the flip must not become the pointer after it"
+    );
+    assert!(
+        cache.get(ENV, "orders").hit().is_none(),
+        "the superseded version was installed and will be served until the next flip"
+    );
+
+    // And the answer to a refusal is to resolve again, which now sees the flip.
+    let retry = cache
+        .get(ENV, "orders")
+        .miss()
+        .expect("the refused install left nothing resident");
+    cache
+        .insert(ENV, "orders", store.0, wiring(store.1), retry)
+        .expect("a read that started after the flip installs");
+    assert_eq!(
+        cache
+            .get(ENV, "orders")
+            .hit()
+            .expect("the retry resolved")
+            .version,
+        8
+    );
+}
+
+/// The same interleaving against the reconnect whole-drop. A subscriber that
+/// reconnected knows of no flip in particular, so a resolution begun before it
+/// re-established its `LISTEN` is as suspect as a resident pointer is.
+#[test]
+fn a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer() {
+    let cache = cache(8);
+
+    let token = cache
+        .get(ENV, "orders")
+        .miss()
+        .expect("nothing is resident yet");
+
+    assert_eq!(
+        cache.invalidate_all(),
+        0,
+        "a reconnect with nothing resident still drops the gap it cannot see"
+    );
+
+    assert!(
+        cache
+            .insert(ENV, "orders", 7, wiring("v7"), token)
+            .is_none(),
+        "a read begun before the reconnect may not repopulate the cache"
+    );
+    assert!(cache.get(ENV, "orders").hit().is_none());
+}
+
 /// Invalidation drops the POINTER, not the graphs — which is what makes a
 /// rollback flip back to a resident version an in-memory hit.
 #[test]
 fn invalidate_keeps_the_graphs_so_a_rollback_flip_is_a_hit() {
     let cache = cache(8);
-    let seven = cache.insert(ENV, "orders", 7, wiring("v7"));
+    let seven = resolve(&cache, ENV, "orders", 7, wiring("v7"));
     cache.invalidate(ENV, "orders");
     assert_eq!(cache.len(), 1, "the graph stayed resident");
 
-    let rolled_back = cache.insert(ENV, "orders", 7, wiring("v7-recompiled"));
+    let rolled_back = resolve(&cache, ENV, "orders", 7, wiring("v7-recompiled"));
 
     assert!(
         Arc::ptr_eq(&rolled_back, &seven),
@@ -120,11 +239,14 @@ fn invalidate_keeps_the_graphs_so_a_rollback_flip_is_a_hit() {
 #[test]
 fn a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident() {
     let cache = cache(8);
-    let seven = cache.insert(ENV, "orders", 7, wiring("v7"));
+    let seven = resolve(&cache, ENV, "orders", 7, wiring("v7"));
     cache.invalidate(ENV, "orders");
-    cache.insert(ENV, "orders", 8, wiring("v8"));
+    resolve(&cache, ENV, "orders", 8, wiring("v8"));
 
-    let hit = cache.get(ENV, "orders").expect("the new version resolves");
+    let hit = cache
+        .get(ENV, "orders")
+        .hit()
+        .expect("the new version resolves");
     assert_eq!(hit.version, 8);
     assert_eq!(hit.wiring.entry(), "v8");
     assert_eq!(cache.len(), 2, "both versions are keyed separately");
@@ -140,9 +262,9 @@ fn a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident() {
 #[test]
 fn invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip() {
     let cache = cache(8);
-    cache.insert(ENV, "orders", 7, wiring("orders-v7"));
-    cache.insert(ENV, "refunds", 3, wiring("refunds-v3"));
-    cache.insert("staging", "orders", 2, wiring("staging-v2"));
+    resolve(&cache, ENV, "orders", 7, wiring("orders-v7"));
+    resolve(&cache, ENV, "refunds", 3, wiring("refunds-v3"));
+    resolve(&cache, "staging", "orders", 2, wiring("staging-v2"));
 
     assert_eq!(
         cache.invalidate_all(),
@@ -152,7 +274,7 @@ fn invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip() {
 
     for (environment, wiring_id) in [(ENV, "orders"), (ENV, "refunds"), ("staging", "orders")] {
         assert!(
-            cache.get(environment, wiring_id).is_none(),
+            cache.get(environment, wiring_id).hit().is_none(),
             "{environment}/{wiring_id} resumed against a pointer no flip was seen for"
         );
     }
@@ -170,13 +292,13 @@ fn invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip() {
 #[test]
 fn invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing() {
     let cache = cache(8);
-    let seven = cache.insert(ENV, "orders", 7, wiring("orders-v7"));
-    cache.insert(ENV, "refunds", 3, wiring("refunds-v3"));
+    let seven = resolve(&cache, ENV, "orders", 7, wiring("orders-v7"));
+    resolve(&cache, ENV, "refunds", 3, wiring("refunds-v3"));
 
     cache.invalidate_all();
 
     assert_eq!(cache.len(), 2, "the graphs stayed resident");
-    let re_read = cache.insert(ENV, "orders", 7, wiring("orders-v7-recompiled"));
+    let re_read = resolve(&cache, ENV, "orders", 7, wiring("orders-v7-recompiled"));
     assert!(
         Arc::ptr_eq(&re_read, &seven),
         "the re-read after a reconnect must land on the resident graph"
@@ -189,18 +311,21 @@ fn invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing() {
 #[test]
 fn eviction_is_bounded_and_least_recently_used() {
     let cache = cache(2);
-    cache.insert(ENV, "a", 1, wiring("a"));
-    cache.insert(ENV, "b", 1, wiring("b"));
+    resolve(&cache, ENV, "a", 1, wiring("a"));
+    resolve(&cache, ENV, "b", 1, wiring("b"));
     // Touch `a`, making `b` the least recently used.
-    cache.get(ENV, "a").expect("a is resident");
+    cache.get(ENV, "a").hit().expect("a is resident");
 
-    cache.insert(ENV, "c", 1, wiring("c"));
+    resolve(&cache, ENV, "c", 1, wiring("c"));
 
     assert_eq!(cache.len(), 2, "the entry bound holds");
-    assert!(cache.get(ENV, "a").is_some(), "the touched entry survived");
-    assert!(cache.get(ENV, "c").is_some());
     assert!(
-        cache.get(ENV, "b").is_none(),
+        cache.get(ENV, "a").hit().is_some(),
+        "the touched entry survived"
+    );
+    assert!(cache.get(ENV, "c").hit().is_some());
+    assert!(
+        cache.get(ENV, "b").hit().is_none(),
         "the least recently used entry was the one evicted"
     );
 }
@@ -210,12 +335,12 @@ fn eviction_is_bounded_and_least_recently_used() {
 #[test]
 fn an_evicted_entry_leaves_behind_no_pointer() {
     let cache = cache(1);
-    cache.insert(ENV, "a", 1, wiring("a"));
-    cache.insert(ENV, "b", 1, wiring("b"));
+    resolve(&cache, ENV, "a", 1, wiring("a"));
+    resolve(&cache, ENV, "b", 1, wiring("b"));
 
     assert_eq!(cache.len(), 1);
-    assert!(cache.get(ENV, "a").is_none());
-    assert!(cache.get(ENV, "b").is_some());
+    assert!(cache.get(ENV, "a").hit().is_none());
+    assert!(cache.get(ENV, "b").hit().is_some());
 }
 
 // ---- the instrument --------------------------------------------------------
