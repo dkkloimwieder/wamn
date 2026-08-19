@@ -1,6 +1,7 @@
 //! Claim eligibility and reclaim classification for the global FIFO queue.
 
 use super::model::{Millis, QueueEntry};
+use crate::durability::DurabilityClass;
 
 /// A queue row's claimability at a given instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +72,7 @@ impl ClaimState {
 /// available; that evidence makes an expired row eligible for non-executing
 /// terminalization regardless of crash budget.
 pub fn claim_state(entry: &QueueEntry, now: Millis) -> ClaimState {
-    production_claim_state(entry, false, now)
+    production_claim_state(entry, DurabilityClass::Standard, false, now)
 }
 
 /// Classify eligibility with immutable effect-attempt evidence.
@@ -79,18 +80,28 @@ pub fn claim_state(entry: &QueueEntry, now: Millis) -> ClaimState {
 /// An effect attempt makes an expired row eligible even after its crash budget
 /// is spent so production can remove it as `effect-uncertain`. It does not make
 /// a live lease or a future queue wait claimable.
+///
+/// THE CLASS GATE (wamn-0h0g.20.2). The effect-evidence disjunct is the crash
+/// floor's entry point into the claim path, and it opens only for
+/// [`DurabilityClass::Durable`]. On the default `standard` class this reduces to
+/// [`claim_state`] no matter what the ledger holds — plain lock-then-lease, the
+/// crash budget deciding alone. The gate lives in
+/// [`DurabilityClass::admits_effect_evidence`] so this predicate, the classifier
+/// below, and the SQL in `queue/sql.rs` all answer to one decision.
 pub fn production_claim_state(
     entry: &QueueEntry,
+    class: DurabilityClass,
     has_effect_attempt: bool,
     now: Millis,
 ) -> ClaimState {
+    let effect_evidence = class.admits_effect_evidence() && has_effect_attempt;
     if entry.available_at > now {
         ClaimState::Parked
     } else if entry.lease_expires_at.is_some_and(|t| t > now) {
         ClaimState::Leased
     } else if entry.lease_expires_at.is_some()
         && entry.attempts >= entry.max_attempts
-        && !has_effect_attempt
+        && !effect_evidence
     {
         ClaimState::Exhausted
     } else {
@@ -99,11 +110,17 @@ pub fn production_claim_state(
 }
 
 /// Classify a row already selected by the production eligibility predicate.
+///
+/// Class-gated on the same decision as [`production_claim_state`]: a `standard`
+/// run never classifies [`ProductionClaimClass::ExpiredWithAttempt`], which is
+/// what makes the composer's terminalize branch, the `Terminalized` result, and
+/// its drain-loop arm unreachable by default without deleting one of them.
 pub fn classify_production_claim(
+    class: DurabilityClass,
     had_prior_lease: bool,
     has_effect_attempt: bool,
 ) -> ProductionClaimClass {
-    if has_effect_attempt {
+    if class.admits_effect_evidence() && has_effect_attempt {
         ProductionClaimClass::ExpiredWithAttempt
     } else if had_prior_lease {
         ProductionClaimClass::ExpiredPreEffect

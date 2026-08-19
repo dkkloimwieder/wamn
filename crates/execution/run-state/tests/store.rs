@@ -269,8 +269,18 @@ fn run_state_sql_matches_the_model() {
         "capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'"
     ));
     assert!(sql.contains("OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode"));
+    // The durability-class carrier (wamn-0h0g.20.1): CHECK-frozen literals, a
+    // fail-open-to-the-cheap-tier default, an admission pin under the same
+    // guard, and NO writer — it is withheld from `wamn_app`'s INSERT set below,
+    // so every production run today takes the database default.
+    assert!(sql.contains("durability_class text NOT NULL DEFAULT 'standard'"));
+    assert!(sql.contains("CONSTRAINT runs_durability_class_check"));
+    assert!(sql.contains("CHECK (durability_class IN ('standard', 'durable'))"));
+    assert!(sql.contains("OR NEW.durability_class IS DISTINCT FROM OLD.durability_class"));
+    // RIDER 1 of the ruling: an unnamed column's transition arm silently never
+    // fires, so the column-scoped trigger MUST name the class.
     assert!(sql.contains(
-        "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,\n                 release_version, manifest_digest"
+        "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,\n                 durability_class, release_version, manifest_digest"
     ));
     // The claim-time release record: NULL at admission, written by the claiming
     // worker, and cleared again by EVERY arm that reopens claimability — the
@@ -305,6 +315,10 @@ fn run_state_sql_matches_the_model() {
     assert!(runs_grants.contains("GRANT INSERT ("));
     assert!(runs_grants.contains("), UPDATE ("));
     assert!(!runs_grants.contains("capture_mode"));
+    // The class carrier is withheld from the guest-visible role in BOTH sets:
+    // an admission that could choose its own durability class would buy the
+    // premium crash floor without a policy saying so.
+    assert!(!runs_grants.contains("durability_class"));
     assert!(!sql.contains("payload_size  bigint"));
     assert!(!sql.contains("preview_head  text"));
     assert!(!sql.contains("redacted      boolean"));

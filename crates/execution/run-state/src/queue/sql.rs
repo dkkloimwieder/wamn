@@ -5,6 +5,7 @@
 //! plane. The production claim is deliberately split into small statements
 //! composed by one host-owned transaction: lock, classify, then grant a lease.
 
+use crate::durability::DURABLE_CLASS_SQL_PREDICATE;
 use crate::{RunStatus, sql as run_sql};
 
 /// Enqueue a run. Params: run id, priority, delay milliseconds.
@@ -33,10 +34,18 @@ pub fn enqueue_evt_sql() -> String {
 /// `effect-uncertain`. `AS MATERIALIZED` is the evaluation fence that makes
 /// `LIMIT 1` exact under cached prepared-statement plans.
 ///
+/// The effect-attempt disjunct is CLASS-GATED (wamn-0h0g.20.2): it fires only
+/// for a `durable` run. On the default `standard` class the crash budget is the
+/// whole eligibility story, so a budget-spent expired lease is left for the
+/// janitor exactly as it would be with no effect ledger at all. The predicate is
+/// correlated to `selected_run`, the row this statement already joins and locks,
+/// so the gate costs no extra relation and no extra lookup.
+///
 /// The projection is exactly what the host composer decodes: the run id, the
-/// reset fence, the status it validates, and the authoritative input it hands
-/// the guest. The release identity a claim records is NOT read here — it comes
-/// from the claiming pod, and the lease grant writes it.
+/// reset fence, the status it validates, the authoritative input it hands
+/// the guest, and the durability class it gates the rest of the turn on. The
+/// release identity a claim records is NOT read here — it comes from the
+/// claiming pod, and the lease grant writes it.
 pub fn select_production_claim_sql() -> String {
     format!(
         "WITH candidate AS MATERIALIZED ( \
@@ -57,6 +66,7 @@ pub fn select_production_claim_sql() -> String {
                         SELECT 1 FROM effect_attempts AS effect \
                          WHERE effect.tenant_id = q.tenant_id \
                            AND effect.run_id = q.run_id \
+                           AND selected_run.{durable} \
                     ) \
                 ) \
               ORDER BY q.available_at, q.stream_seq, q.run_id \
@@ -66,11 +76,13 @@ pub fn select_production_claim_sql() -> String {
          SELECT candidate.run_id, candidate.had_prior_lease, \
                 candidate.lease_owner, candidate.lease_expires_at::text, \
                 candidate.lease_generation, r.status, \
-                ({execution_input})::text AS input_json \
+                ({execution_input})::text AS input_json, \
+                r.durability_class \
            FROM candidate \
            JOIN runs AS r \
              ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",
         execution_input = run_sql::execution_input_sql("r"),
+        durable = DURABLE_CLASS_SQL_PREDICATE,
     )
 }
 
@@ -79,6 +91,16 @@ pub fn select_production_claim_sql() -> String {
 /// `$1` is the selected run id. This deliberately runs as a second statement:
 /// under READ COMMITTED it receives a fresh snapshot after any lock wait, so an
 /// effect attempt committed before classification cannot be missed.
+///
+/// NOT CLASS-GATED IN SQL, BY DESIGN (wamn-0h0g.20.2). Two roles execute this
+/// text: the claim composer as `wamn_app`, and the private effect writer as
+/// `wamn_effect_writer`, whose whole authority over `runs` is
+/// `SELECT (tenant_id, run_id, status)`. A `durability_class` correlation here
+/// would make the writer's own fence recheck a permission failure. The gate is
+/// therefore applied by the CALLER: the claim composer already carries the class
+/// on the candidate row it locked, and on the `standard` class it never issues
+/// this statement at all. The statement survives verbatim for the premium tier —
+/// unreachable by default, not deleted.
 pub fn select_claim_effect_attempt_sql() -> String {
     "SELECT EXISTS ( \
          SELECT 1 FROM effect_attempts AS effect \
@@ -282,7 +304,18 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
 /// `wamn_run.guard_run_admission_pins_immutable` refuses that erasure for the
 /// same reason, so this predicate is also what keeps the park from ever
 /// aborting on the guard.
+///
+/// THE CLASS GATE ON THIS PREDICATE IS COUPLED TO THAT GUARD AND MUST MOVE WITH
+/// IT (wamn-0h0g.20.2). `deploy/sql/run-state.sql` carries the identical
+/// `durability_class = 'durable'` conjunct on the guard's `EXISTS`. Gate one and
+/// not the other and the run plane breaks in one of two ways: gate only here and
+/// the guard refuses the erasure this statement attempts, aborting the park;
+/// gate only the guard and a `standard` run keeps a release record across a park
+/// that should have cleared it, so a waking pod on a different release refuses at
+/// the grant, spends no crash budget (a released lease is not crash evidence),
+/// and the run is its tenant's FIFO head forever — wamn-0h0g.15.82 exactly.
 pub fn park_sql() -> String {
+    format!(
     "WITH parked AS ( \
          UPDATE run_queue \
             SET available_at = now() + ($2::bigint * interval '1 millisecond'), \
@@ -297,8 +330,10 @@ pub fn park_sql() -> String {
         AND NOT EXISTS ( \
             SELECT 1 FROM effect_attempts AS effect \
              WHERE effect.tenant_id = parked.tenant_id \
-               AND effect.run_id = parked.run_id)"
-        .to_string()
+               AND effect.run_id = parked.run_id \
+               AND r.{durable})",
+        durable = DURABLE_CLASS_SQL_PREDICATE,
+    )
 }
 
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
@@ -306,11 +341,15 @@ pub fn park_sql() -> String {
 /// `$1` is the grace period in milliseconds. Effect evidence is deliberately
 /// not read in this statement: the host performs the same fresh-snapshot
 /// classification used by the ordinary production claimant after these locks
-/// are held, so a concurrent committed effect attempt cannot be missed.
+/// are held, so a concurrent committed effect attempt cannot be missed. The
+/// durability class rides the projection for the same reason the claim's does —
+/// the reaper gates that fresh-snapshot classification on it, and the run row is
+/// already joined and locked here.
 pub fn select_exhausted_production_sql() -> String {
     format!(
         "SELECT q.tenant_id, q.run_id, selected_run.status, \
-                selected_run.flow_id, selected_run.flow_version \
+                selected_run.flow_id, selected_run.flow_version, \
+                selected_run.durability_class \
            FROM run_queue AS q \
            JOIN runs AS selected_run \
              ON selected_run.tenant_id = q.tenant_id \
@@ -391,6 +430,21 @@ pub fn write_ahead_triggered_run_sql() -> String {
 }
 
 /// Reconcile due work using the production claim predicate and FIFO order.
+///
+/// DELIBERATELY NOT CLASS-GATED (wamn-0h0g.20.2), and it cannot be. This is the
+/// dispatcher's statement, and the dispatcher runs as the scoped read role whose
+/// confinement `services/dispatcher/tests/read_authority.rs` asserts: SELECT on
+/// `run_queue` and `effect_attempts`, and explicitly NOT on `runs`. Correlating
+/// this predicate to `runs.durability_class` — the carrier wamn-0h0g.20.1 ruled —
+/// would make the dispatcher's every sweep a permission failure, so the ruling's
+/// "the claim path reads ONE column" holds at the claim and not here.
+///
+/// Nothing is lost. What this statement produces is a WAKE HINT, not a state
+/// transition: the dispatcher rings a doorbell and the executor's own claim
+/// re-decides under [`select_production_claim_sql`], which IS gated. An
+/// over-selected row is therefore declined at the claim, one statement later.
+/// Under-selecting would be the real defect, and this predicate can only
+/// over-select relative to the gated one.
 pub fn parked_due_sql(limit: usize) -> String {
     format!(
         "SELECT q.run_id FROM run_queue AS q \

@@ -1,4 +1,5 @@
 use serde_json::json;
+use wamn_run_state::DurabilityClass;
 use wamn_run_state::queue::{
     ClaimState, JanitorVerdict, ProductionClaimClass, QueueEntry, advance_claim_attempts_sql,
     claim_state, classify_production_claim, clear_pre_effect_state_sql, enqueue_evt_sql,
@@ -34,7 +35,7 @@ fn claim_state_preserves_budget_and_effect_attempt_escape() {
     };
     assert_eq!(claim_state(&exhausted, 100), ClaimState::Exhausted);
     assert_eq!(
-        production_claim_state(&exhausted, true, 100),
+        production_claim_state(&exhausted, DurabilityClass::Durable, true, 100),
         ClaimState::Ready
     );
 }
@@ -42,21 +43,149 @@ fn claim_state_preserves_budget_and_effect_attempt_escape() {
 #[test]
 fn reclaim_classifier_has_exact_three_actions() {
     assert_eq!(
-        classify_production_claim(false, false),
+        classify_production_claim(DurabilityClass::Durable, false, false),
         ProductionClaimClass::Ordinary
     );
     assert_eq!(
-        classify_production_claim(false, true),
+        classify_production_claim(DurabilityClass::Durable, false, true),
         ProductionClaimClass::ExpiredWithAttempt
     );
     assert_eq!(
-        classify_production_claim(true, false),
+        classify_production_claim(DurabilityClass::Durable, true, false),
         ProductionClaimClass::ExpiredPreEffect
     );
     assert_eq!(
-        classify_production_claim(true, true),
+        classify_production_claim(DurabilityClass::Durable, true, true),
         ProductionClaimClass::ExpiredWithAttempt
     );
+}
+
+#[test]
+fn the_default_class_takes_plain_lock_then_lease() {
+    // wamn-0h0g.20.2 (a): the eligibility predicate's effect-evidence disjunct
+    // opens ONLY for the premium class. A budget-spent expired lease is the
+    // janitor's on the default tier no matter what the effect ledger holds.
+    let exhausted = QueueEntry {
+        lease_expires_at: Some(90),
+        attempts: 2,
+        ..QueueEntry::ready("t1", "spent", 50, 2)
+    };
+    assert_eq!(
+        production_claim_state(&exhausted, DurabilityClass::Standard, true, 100),
+        ClaimState::Exhausted,
+        "the default class was let into the shelved crash floor"
+    );
+    assert_eq!(
+        production_claim_state(&exhausted, DurabilityClass::Durable, true, 100),
+        ClaimState::Ready,
+        "the premium class no longer reaches the floor it pays for"
+    );
+
+    // With the gate closed, the class-carrying predicate is EXACTLY the
+    // no-effect view — the shelf changes nothing else about eligibility.
+    for entry in [
+        QueueEntry::ready("t1", "ready", 50, 2),
+        QueueEntry {
+            available_at: 101,
+            ..QueueEntry::ready("t1", "parked", 50, 2)
+        },
+        QueueEntry {
+            lease_owner: Some("runner-a".into()),
+            lease_expires_at: Some(200),
+            ..QueueEntry::ready("t1", "leased", 50, 2)
+        },
+        exhausted.clone(),
+    ] {
+        assert_eq!(
+            production_claim_state(&entry, DurabilityClass::Standard, true, 100),
+            claim_state(&entry, 100),
+            "the default class diverged from the no-effect predicate on {}",
+            entry.run_id
+        );
+    }
+}
+
+#[test]
+fn the_default_class_never_classifies_expired_with_attempt() {
+    // (b), (c) and (d) of wamn-0h0g.20.2 are UNREACHABLE, not deleted: this is
+    // the only producer of the variant that reaches them.
+    for had_prior_lease in [false, true] {
+        assert_ne!(
+            classify_production_claim(DurabilityClass::Standard, had_prior_lease, true),
+            ProductionClaimClass::ExpiredWithAttempt,
+            "the default class reached the shelved floor \
+             (had_prior_lease={had_prior_lease})"
+        );
+    }
+    assert_eq!(
+        classify_production_claim(DurabilityClass::Standard, true, true),
+        ProductionClaimClass::ExpiredPreEffect
+    );
+    assert_eq!(
+        classify_production_claim(DurabilityClass::Standard, false, true),
+        ProductionClaimClass::Ordinary
+    );
+}
+
+#[test]
+fn the_class_gate_carries_one_sql_literal_at_every_gated_statement() {
+    // One spelling, one place to audit. `select_production_claim_sql` gates its
+    // eligibility disjunct; `park_sql` gates the release-record erasure it
+    // shares with `guard_run_admission_pins_immutable`.
+    let predicate = "durability_class = 'durable'";
+    let candidate = select_production_claim_sql();
+    assert_eq!(
+        candidate.matches(predicate).count(),
+        1,
+        "the claim's class gate is not exactly one predicate"
+    );
+    assert!(candidate.contains(&format!("AND selected_run.{predicate}")));
+    // The gate rides the row the statement already joins and locks: no second
+    // relation, no second lookup.
+    assert_eq!(candidate.matches("JOIN runs").count(), 2);
+
+    let park = park_sql();
+    assert_eq!(park.matches(predicate).count(), 1);
+    assert!(park.contains(&format!("AND r.{predicate}")));
+
+    // The class rides both host-decoded projections.
+    assert!(candidate.contains("r.durability_class"));
+    assert!(select_exhausted_production_sql().contains("selected_run.durability_class"));
+}
+
+#[test]
+fn the_class_gate_and_the_release_record_guard_move_together() {
+    // A HALF-APPLIED gate is the wamn-0h0g.15.82 bug resurrected: gate only the
+    // park and the database guard refuses the erasure the park attempts; gate
+    // only the guard and a `standard` run keeps a release record across a park,
+    // so a waking pod on a different release refuses at the grant, spends no
+    // crash budget, and owns its tenant's FIFO head forever.
+    const RUN_STATE_DDL: &str = include_str!("../../../../deploy/sql/run-state.sql");
+    let park = park_sql();
+    let predicate = "durability_class = 'durable'";
+
+    assert!(park.contains("AND NOT EXISTS"));
+    assert!(park.contains("FROM effect_attempts AS effect"));
+    assert!(park.contains(&format!("AND r.{predicate}")));
+
+    let guard_start = RUN_STATE_DDL
+        .find("CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()")
+        .expect("the release-record guard is the park's counterpart");
+    let guard_end = RUN_STATE_DDL[guard_start..]
+        .find("CREATE TABLE wamn_run.runs")
+        .expect("the guard precedes the table it guards")
+        + guard_start;
+    let guard = &RUN_STATE_DDL[guard_start..guard_end];
+    assert!(guard.contains("FROM wamn_run.effect_attempts AS effect"));
+    assert!(
+        guard.contains(&format!("AND OLD.{predicate}")),
+        "the guard's effect-attempt leg is not class-gated in lockstep with park_sql"
+    );
+
+    // The class itself is an admission pin: the column-scoped trigger must NAME
+    // it or its transition arm never fires (wamn-0h0g.20.1 rider 1).
+    assert!(RUN_STATE_DDL.contains("execution_bundle_hash, capture_mode,\n                 durability_class, release_version, manifest_digest"));
+    assert!(guard.contains("NEW.durability_class IS DISTINCT FROM OLD.durability_class"));
 }
 
 #[test]
@@ -223,6 +352,19 @@ fn dispatcher_reconciliation_mirrors_claim_eligibility_and_order() {
     assert!(wake.contains("FROM effect_attempts AS effect"));
     assert!(wake.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
     assert!(!wake.contains("partition_key"));
+
+    // THE CLASS GATE STOPS HERE, AND MUST (wamn-0h0g.20.2). The dispatcher runs
+    // as a scoped reader holding SELECT on `run_queue` and `effect_attempts` and
+    // explicitly NOT on `runs` (services/dispatcher/tests/read_authority.rs), so
+    // correlating this to `runs.durability_class` would make every sweep a
+    // permission failure. It produces a WAKE HINT; the executor's own claim
+    // re-decides under the gated predicate one statement later, and this one can
+    // only ever over-select relative to it.
+    assert!(
+        !wake.contains("runs"),
+        "the reconciliation hint must not read a relation its role cannot see"
+    );
+    assert!(!wake.contains("durability_class"));
 }
 
 #[test]

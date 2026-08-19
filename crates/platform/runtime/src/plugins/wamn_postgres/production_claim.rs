@@ -12,7 +12,7 @@ use wamn_run_state::queue::{
     serialize_effect_intent_sql, terminalize_effect_uncertain_claim_sql,
     terminalize_exhausted_production_sql,
 };
-use wamn_run_state::{EffectUncertainFailure, FailKind, RunStatus};
+use wamn_run_state::{DurabilityClass, EffectUncertainFailure, FailKind, RunStatus};
 
 use super::{ReleaseIdentity, WamnPostgres};
 
@@ -135,6 +135,10 @@ struct SelectedClaim {
     prior_lease_generation: i64,
     status: RunStatus,
     payload: String,
+    /// The class the run was admitted under, read off the row this turn already
+    /// locked. Everything the crash floor does in this transaction is gated on
+    /// it (wamn-0h0g.20.2).
+    durability_class: DurabilityClass,
 }
 
 #[derive(Debug)]
@@ -143,6 +147,7 @@ struct ExhaustedClaim {
     status: RunStatus,
     root_flow_id: String,
     flow_version: i32,
+    durability_class: DurabilityClass,
 }
 
 impl WamnPostgres {
@@ -369,20 +374,34 @@ async fn claim_in_transaction(
         ));
     }
 
-    serialize_effect_intent(connection, &selected.run_id, "production claim").await?;
+    // THE CLASS GATE (wamn-0h0g.20.2). The default class takes plain
+    // lock-then-lease: no advisory fence, no effect snapshot, no classification
+    // — the two statements below exist ONLY to read immutable effect evidence,
+    // and evidence a `standard` run's claim path may not act on is evidence it
+    // must not pay to read on the queue's hottest turn. The premium class takes
+    // today's lock-then-classify-then-lease, unchanged, byte for byte.
+    let has_effect_attempt = if selected.durability_class.admits_effect_evidence() {
+        serialize_effect_intent(connection, &selected.run_id, "production claim").await?;
 
-    let effect_sql = select_claim_effect_attempt_sql();
-    let effect_statement = connection
-        .prepare_cached(&effect_sql)
-        .await
-        .map_err(|error| storage("prepare effect-attempt classification", error))?;
-    let effect_row = connection
-        .query_one(&effect_statement, &[&selected.run_id])
-        .await
-        .map_err(|error| storage("classify effect-attempt evidence", error))?;
-    let has_effect_attempt = row_value(&effect_row, 0, "effect-attempt evidence")?;
+        let effect_sql = select_claim_effect_attempt_sql();
+        let effect_statement = connection
+            .prepare_cached(&effect_sql)
+            .await
+            .map_err(|error| storage("prepare effect-attempt classification", error))?;
+        let effect_row = connection
+            .query_one(&effect_statement, &[&selected.run_id])
+            .await
+            .map_err(|error| storage("classify effect-attempt evidence", error))?;
+        row_value(&effect_row, 0, "effect-attempt evidence")?
+    } else {
+        false
+    };
 
-    match classify_production_claim(selected.had_prior_lease, has_effect_attempt) {
+    match classify_production_claim(
+        selected.durability_class,
+        selected.had_prior_lease,
+        has_effect_attempt,
+    ) {
         ProductionClaimClass::ExpiredWithAttempt => {
             return terminalize_effect_uncertain(connection, &selected)
                 .await
@@ -531,11 +550,13 @@ async fn reap_in_transaction(
             format!("unknown run status {status_text:?}"),
         )
     })?;
+    let class_text: String = row_value(&row, 5, "exhausted run durability class")?;
     let selected = ExhaustedClaim {
         run_id: row_value(&row, 1, "exhausted run id")?,
         status,
         root_flow_id: row_value(&row, 3, "exhausted root flow id")?,
         flow_version: row_value(&row, 4, "exhausted root flow version")?,
+        durability_class: DurabilityClass::from_sql_or_default(&class_text),
     };
     if !matches!(selected.status, RunStatus::Dispatched | RunStatus::Running) {
         return Err(ProductionClaimError::new(
@@ -545,21 +566,27 @@ async fn reap_in_transaction(
         ));
     }
 
-    serialize_effect_intent(connection, &selected.run_id, "exhausted-run reaper").await?;
+    // The same class gate the claim turn applies (wamn-0h0g.20.2). A `standard`
+    // run has no effect-uncertain hand-off to make, so the janitor reaps it to
+    // `infrastructure-failure` directly and `ProductionReapResult::EffectAttempt`
+    // is unreachable — the variant survives for the premium tier.
+    if selected.durability_class.admits_effect_evidence() {
+        serialize_effect_intent(connection, &selected.run_id, "exhausted-run reaper").await?;
 
-    let effect_sql = select_claim_effect_attempt_sql();
-    let effect = connection
-        .prepare_cached(&effect_sql)
-        .await
-        .map_err(|error| storage("prepare exhausted effect classification", error))?;
-    let row = connection
-        .query_one(&effect, &[&selected.run_id])
-        .await
-        .map_err(|error| storage("classify exhausted effect evidence", error))?;
-    if row_value(&row, 0, "exhausted effect-attempt evidence")? {
-        return Ok(ProductionReapResult::EffectAttempt {
-            run_id: selected.run_id,
-        });
+        let effect_sql = select_claim_effect_attempt_sql();
+        let effect = connection
+            .prepare_cached(&effect_sql)
+            .await
+            .map_err(|error| storage("prepare exhausted effect classification", error))?;
+        let row = connection
+            .query_one(&effect, &[&selected.run_id])
+            .await
+            .map_err(|error| storage("classify exhausted effect evidence", error))?;
+        if row_value(&row, 0, "exhausted effect-attempt evidence")? {
+            return Ok(ProductionReapResult::EffectAttempt {
+                run_id: selected.run_id,
+            });
+        }
     }
 
     let (body, body_hash) = generic_failure_outcome(
@@ -711,6 +738,11 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
             format!("unknown run status {status:?}"),
         )
     })?;
+    // An unknown literal decodes to the CHEAP tier, never to `durable`
+    // (wamn-0h0g.20.1): a claim must not enroll a run in premium machinery on
+    // the strength of data it could not parse, and it must not fail the queue
+    // either.
+    let class_text: String = row_value(row, 7, "durability class")?;
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
@@ -719,6 +751,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         prior_lease_generation: row_value(row, 4, "prior lease generation")?,
         status,
         payload: row_value(row, 6, "authoritative input")?,
+        durability_class: DurabilityClass::from_sql_or_default(&class_text),
     })
 }
 
@@ -888,6 +921,7 @@ mod tests {
             "candidate.lease_generation",
             "r.status",
             "AS input_json",
+            "r.durability_class",
         ]
         .into_iter()
         .enumerate()
@@ -896,6 +930,61 @@ mod tests {
                 panic!("projected column {index} ({column}) is absent or out of order")
             });
             cursor += offset + column.len();
+        }
+    }
+
+    #[test]
+    fn the_default_class_never_reaches_the_crash_floor_arms() {
+        // (b), (c) and (d) of wamn-0h0g.20.2 are made UNREACHABLE by the gate at
+        // (a) rather than deleted: `classify_production_claim` is the only
+        // producer of `ExpiredWithAttempt`, which is the only path to
+        // `terminalize_effect_uncertain` and so to `ProductionClaimResult::
+        // Terminalized` and its drain-loop arm.
+        for had_prior_lease in [false, true] {
+            for has_effect_attempt in [false, true] {
+                let class = classify_production_claim(
+                    DurabilityClass::Standard,
+                    had_prior_lease,
+                    has_effect_attempt,
+                );
+                assert_ne!(
+                    class,
+                    ProductionClaimClass::ExpiredWithAttempt,
+                    "the default class reached the shelved floor \
+                     (had_prior_lease={had_prior_lease}, attempt={has_effect_attempt})"
+                );
+            }
+        }
+        assert_eq!(
+            classify_production_claim(DurabilityClass::Durable, true, true),
+            ProductionClaimClass::ExpiredWithAttempt,
+            "the premium class no longer reaches the floor it pays for"
+        );
+    }
+
+    #[test]
+    fn the_effect_snapshot_statements_are_issued_only_for_the_premium_class() {
+        // The default tier's turn is plain lock-then-lease: the advisory fence
+        // and the effect snapshot exist only to read evidence it may not act on.
+        let source = include_str!("production_claim.rs");
+        for (start_marker, end_marker) in [
+            ("async fn claim_in_transaction(", "async fn reap_in_transaction("),
+            ("async fn reap_in_transaction(", "async fn serialize_effect_intent("),
+        ] {
+            let start = source.find(start_marker).unwrap();
+            let end = source.find(end_marker).unwrap();
+            let body = &source[start..end];
+            let gate = body
+                .find("durability_class.admits_effect_evidence()")
+                .unwrap_or_else(|| panic!("{start_marker} does not consult the class gate"));
+            let fence = body.find("serialize_effect_intent(connection").unwrap();
+            let snapshot = body
+                .find("let effect_sql = select_claim_effect_attempt_sql()")
+                .unwrap();
+            assert!(
+                gate < fence && gate < snapshot,
+                "{start_marker} reads effect evidence before the class gate decides"
+            );
         }
     }
 

@@ -36,6 +36,8 @@ pub mod admission;
 pub mod attempt;
 /// Node-level I/O capture and durable output projection.
 pub mod capture;
+/// The durability class a run was admitted under, and the crash-floor gate.
+pub mod durability;
 /// Shared strict credential document for the private native effect writer.
 #[cfg(feature = "effect-writer-credential")]
 pub mod effect_writer_credential;
@@ -65,6 +67,7 @@ pub use capture::{
     CaptureMode, Captured, NodeOutputProjection, OutputTooLarge, derive as derive_capture,
     project_output,
 };
+pub use durability::{DURABLE_CLASS_SQL_PREDICATE, DurabilityClass};
 #[cfg(feature = "native")]
 pub use effect_writer::{
     BeginEffectAttempt, EffectAttempt, EffectAttemptId, EffectDispatchPermit, EffectOutcome,

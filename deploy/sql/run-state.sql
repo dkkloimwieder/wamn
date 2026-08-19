@@ -135,11 +135,22 @@ $$;
 --   * STILL RUNNABLE. A terminal run keeps the audit link to the plan hashes it
 --     finished under. Nothing reopens a terminal run's claimability, so nothing
 --     needs to erase it.
---   * NO IMMUTABLE EFFECT ATTEMPT. An attributed effect names the release that
---     fired it, and that link is never rewritten out from under it. This is the
---     leg that refuses a mid-effect release rewrite; a run carrying an attempt
---     is classified terminal effect-uncertain by its next claim and never
---     re-executes under a second release.
+--   * NO IMMUTABLE EFFECT ATTEMPT, ON A `durable` RUN. An attributed effect
+--     names the release that fired it, and that link is never rewritten out
+--     from under it. This is the leg that refuses a mid-effect release rewrite;
+--     a run carrying an attempt is classified terminal effect-uncertain by its
+--     next claim and never re-executes under a second release.
+--     THE CLASS PREDICATE IS LOAD-BEARING, NOT DECORATION (wamn-0h0g.20.2).
+--     `queue/sql.rs` `park_sql` carries the SAME `durability_class = 'durable'`
+--     predicate on the SAME `EXISTS(effect_attempts)`, and the two must move
+--     together in BOTH directions. Gate only the park and this guard refuses
+--     the erasure the park attempts, aborting the park. Gate only this guard
+--     and a `standard` run keeps a release record across a park it should have
+--     cleared, so a waking pod on a different release refuses at the grant —
+--     and because a released lease is not crash evidence the refusal spends no
+--     budget, the janitor can never reap it, and the run is its tenant's FIFO
+--     head forever. That is exactly wamn-0h0g.15.82, resurrected by a half-
+--     applied class gate.
 -- The `node_runs` leg that stood beside them was dropped by wamn-0h0g.15.82. It
 -- encoded the OLD contract, "the release this RUN executed under"; under the
 -- redefined contract an executed node is a HISTORY fact, not a current-claim
@@ -158,7 +169,8 @@ BEGIN
        OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash
-       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN
+       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
+       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -168,7 +180,8 @@ BEGIN
             IF NEW.status NOT IN ('dispatched', 'running')
                OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect
                            WHERE effect.tenant_id = OLD.tenant_id
-                             AND effect.run_id = OLD.run_id) THEN
+                             AND effect.run_id = OLD.run_id
+                             AND OLD.durability_class = 'durable') THEN
                 RAISE EXCEPTION USING
                     ERRCODE = '55000',
                     MESSAGE = 'run-release-record-immutable';
@@ -218,6 +231,18 @@ CREATE TABLE wamn_run.runs (
     trigger_source  text,
     capture_mode    text NOT NULL DEFAULT 'off'
         CONSTRAINT runs_capture_mode_check CHECK (capture_mode IN ('full', 'off')),
+    -- The DURABILITY CLASS the run was admitted under (wamn-0h0g.20.1). The
+    -- carrier is per-run; the SOURCE is the env/org policy consulted at
+    -- admission, never a caller parameter — the same authority rationale that
+    -- keeps `capture_mode` off the admission parameter list. `standard` is R2's
+    -- default crash floor (plain lock-then-lease, no claim-time effect
+    -- classification); `durable` re-enables the premium floor at path 3's
+    -- claim. The default is FAIL-OPEN TO THE CHEAP TIER: an admission that
+    -- omits the column (every admission today — the column is withheld from
+    -- `wamn_app`'s INSERT set below) takes `standard`, never `durable`.
+    durability_class text NOT NULL DEFAULT 'standard'
+        CONSTRAINT runs_durability_class_check
+        CHECK (durability_class IN ('standard', 'durable')),
     -- The claim-time release record. A run is NOT version-pinned at admission:
     -- it executes under the release its CLAIMING pod carries, and the worker
     -- writes that pod's own release identity here when it takes the lease,
@@ -333,12 +358,14 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,
-                 release_version, manifest_digest
+                 durability_class, release_version, manifest_digest
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 -- The guest-visible application role may drive the existing run-state columns,
--- but it cannot author or mutate the admission-owned capture carrier. Off-path
--- admissions omit that column and take its fail-closed database default.
+-- but it cannot author or mutate the admission-owned capture carrier, nor the
+-- admission-owned durability-class carrier. Off-path admissions omit those
+-- columns and take their fail-closed database defaults (`off` for capture;
+-- `standard` — the CHEAP tier — for the class).
 --
 -- The two column lists below are RATIFIED SETS (wamn-0h0g.12.40), not "every
 -- canonical column minus capture_mode". Each is the exact union of the columns
@@ -349,8 +376,11 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 -- statements (queue/sql.rs, transitions.rs). Columns whose only writer is the
 -- management admission (`capture_mode`), the project-admin operator verb, or an
 -- uncalled builder (`fail_node`, `fail_reason` — only `update_run_failed_sql`,
--- which nothing invokes) are DELIBERATELY ABSENT. A column added to this table
--- does NOT join either set by default; see `repair_run_capture_privilege_sql`.
+-- which nothing invokes) are DELIBERATELY ABSENT, as is `durability_class`,
+-- which today has NO writer at all: nothing admits a `durable` run yet, so the
+-- carrier exists solely to be read by the claim path and every production run
+-- takes the database default. A column added to this table does NOT join
+-- either set by default; see `repair_run_capture_privilege_sql`.
 --
 -- The UPDATE set is also what keeps `FOR UPDATE`/`FOR KEY SHARE` on `runs`
 -- legal: PostgreSQL demands UPDATE on at least one column for any row-locking
