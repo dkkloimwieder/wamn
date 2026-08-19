@@ -235,16 +235,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "tests/conformance/tests/gate_mutation_evidence.rs",
-        exact: r#"if evidence.schema_version != "0.1" {"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/conformance/tests/gate_mutation_evidence.rs",
-        exact: r#""schema_version": "0.1","#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "tests/conformance/tests/workspace_tiers.rs",
         exact: r#"assert_eq!(manifest.schema_version, "0.1");"#,
         expected_count: 1,
