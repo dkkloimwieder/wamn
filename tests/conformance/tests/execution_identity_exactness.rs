@@ -215,6 +215,62 @@ async fn instantiate_registers_the_same_project_the_connection_effect_path_froze
     );
 }
 
+/// The `ConnectionHttp` half of wamn-0h0g.17.9, which no runtime assertion can
+/// reach.
+///
+/// `ConnectionHttp` freezes its project into a private `Box<str>` and is moved
+/// into the store's `Ctx.plugins` map, which is private to the fork — there is
+/// no handle from outside the store to read it back. So the only way to assert
+/// that the value registered on the plugin and the value frozen into
+/// `ConnectionHttp` are the SAME value is to assert that `instantiate` passes
+/// the same binding to both, on the one source section that constructs them.
+///
+/// Kills the mutant the runtime test above cannot: registering
+/// `identity.project` on the plugin while handing `DEFAULT_PROJECT` (or any
+/// other expression) to `ConnectionHttp::new`, which re-opens the split with the
+/// registry now on the other side of it.
+#[test]
+fn instantiate_hands_one_project_binding_to_the_registry_and_to_connection_http() {
+    let host = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("the conformance package lives at tests/conformance")
+            .join("crates/execution/host/src/lib.rs"),
+    )
+    .expect("read the execution host source");
+
+    let (_, body) = host
+        .split_once("    pub async fn instantiate(")
+        .expect("execution host declares instantiate");
+    let instantiate = body
+        .split_once("    pub fn claim_scope(&self)")
+        .map(|(section, _)| section)
+        .expect("instantiate ends before claim_scope");
+
+    assert!(
+        instantiate.contains("plugin.set_project(owner, project)?;"),
+        "instantiate must register the identity's project on the wamn:postgres \
+         plugin, which is what the guest data path resolves"
+    );
+
+    let connection_http = instantiate
+        .split_once("ConnectionHttp::new(")
+        .map(|(_, rest)| {
+            rest.split_once(");")
+                .map(|(args, _)| args)
+                .expect("the ConnectionHttp::new call is closed")
+        })
+        .expect("instantiate constructs the trusted HTTP effect");
+    assert!(
+        connection_http
+            .lines()
+            .any(|line| line.trim() == "project,"),
+        "ConnectionHttp must freeze the SAME `project` binding the plugin was \
+         registered with, not a separately resolved value: {connection_http}"
+    );
+}
+
 /// wamn-0h0g.17.10 — ending a checkout leaves NOTHING resolvable.
 ///
 /// Three process-resident registries are keyed by the claim scope and are
