@@ -607,7 +607,14 @@ than either a fact or a refutation
 
 ARC2 adds no duplicate security or topology finding: the shared database,
 replication, broker, builder, and ownership gaps already have the Beads owners
-named above or the ARC1 decision beads. ARC4–ARC9 must use this matrix to judge
+named above or the ARC1 decision beads. **Flagged UNVERIFIABLE by the
+2026-08-19 sweep and left standing as a caution:** this sentence disposes of
+five categories onto the rows above it, but of §C.3's six rows only two name a
+bead at all — Databases (the one proven false, corrected above) and Brokers.
+Processes, Kubernetes, Images/forks, and Object storage name no owner, so the
+blanket claim cannot be checked from what it points at. This is the same shape
+as the R28 clause-4 failure: a coverage assertion whose referent is too vague
+to falsify is not evidence of coverage. ARC4–ARC9 must use this matrix to judge
 whether each shared authority is compatible with the promised deployment
 class; STR1 supplies the physical repository/deployable ownership map.
 
@@ -676,7 +683,7 @@ external sink are distinct durability/acknowledgement boundaries.
 | **Start and complete a synchronous flow** | The concrete path is the F1 POC webhook: an ERP caller crosses HTTP to a tenant component, which reloads the active flow, writes a run before effects, marks it running, drives nodes, persists terminal state, and then answers (`components/poc-webhook-f1/src/lib.rs:67-140`). Each run-state call is a separate Postgres capability transaction. | Each POST mints a new server run ID and accepts no stable delivery identity. A host death can leave an unqueued run in `dispatched`/`running`; queue reconciliation cannot see it. Client retry creates a new run and may repeat an effect (`docs/archive/poc/poc-f1.md:158-170`). Recovery is currently delegated to a caller retry with no ownership of the orphan. Signals required: delivery key, run lineage/state, effect key/count, deadline, sweeper outcome, and HTTP retry result. | **POC-specific write-ahead path; deterministic recovery is incomplete.** R36/`wamn-2jkm.72` (delivery identity), R37/`.73` (orphan owner), combined proof `wamn-4tob.6.3`. |
 | **Schedule, park, wake, resume, retry, and replay** | Dispatcher/worker identities operate on project DB state. `runs` plus `run_queue` are atomic authority; NATS is only a hint. Deterministic cron IDs/anchors, leases, `SKIP LOCKED`, re-hints, lease expiry, and transactional completion/dead-letter transitions support recovery (`docs/archive/execution/run-queue.md:24-98`, `docs/archive/execution/run-queue.md:191-315`, `docs/archive/execution/run-queue.md:432-616`). Resume loads the persisted flow version and retry state (`components/flowrunner/src/lib.rs:1318-1447`). | Node/effect execution is at least once: death after effect and before checkpoint re-executes it, so the sink must honor the occurrence idempotency key (`docs/archive/execution/run-state.md:87-100`). A crash-exhausted blocking head deliberately waits for authorized redrive (`wamn-umt4`). Replay/partial-rerun exists only as a pure planner with no production effect-shell caller (`crates/wamn-run-store/src/rerun.rs:1-13`, `crates/wamn-run-store/src/rerun.rs:83-133`). | **Async queue/park/wake/resume is the strongest execution path; replay is model-only.** R39/`wamn-2jkm.69`; `.13` defers latency targets to `.1.37/.1.38`, development recovery is `.14`, and production recovery is `.20`–`.24`. |
 | **Database commit to CDC/event to run** | The tenant transaction commits to WAL first. Reader publication is transaction-framed; it waits for broker acknowledgements before advancing confirmed/applied LSN (`crates/wamn-cdc-reader/src/lib.rs:739-794`, `crates/wamn-cdc-reader/src/lib.rs:839-939`). JetStream is durable delivery authority. Materializer inserts deterministic run plus queue row in one transaction; only the insert winner enqueues (`components/materializer/src/main.rs:340-388`). | Reader/broker and broker/materializer delivery are at least once; deterministic run-row creation is exactly once for the `(flow,event)` identity. Fire failures NACK; a lost post-commit doorbell only delays. Deterministic refusals and malformed messages instead ACK/TERM after process-local counters/stderr and an optional local report (`components/materializer/src/main.rs:427-550`). Recovery owners are DB/event operators for slot/gap incidents and materializer operators for refusal/backlog; required signals include LSN, stream sequence, consumer state, registration, run ID, and durable refusal reason. | **Composed and resumable through run creation, not end-to-end exactly once.** Durable refusal provenance is R38/`wamn-2jkm.74`; proof `wamn-4tob.6.4`; slot-gap implementation remains `wamn-l5i9.35`, with production outage policy in `.1.19`. |
-| **Build, sign, publish, deploy, and invoke custom node** | Builder/artifact operator crosses source/toolchain, signing, OCI, deployment, then runtime grant boundaries. Intended authority is reviewed source → tested bytes → digest/signature/SBOM/manifest → OCI. Runner emits a stable per-occurrence signed invocation and host-injected grants (`docs/archive/platform/builder.md:1-55`, `docs/archive/platform/builder.md:121-171`, `components/flowrunner/src/lib.rs:606-697`). | Current ingestion is a baked fixture; the emitted serve-node path mounts component bytes from a ConfigMap and does not fetch/verify the OCI artifact. Host signing is optional and invocation can fall back to network trust (`docs/archive/platform/builder.md:173-209`, `deploy/platform/serve-node.yaml:43-138`, `crates/wamn-host/src/serve_node.rs:109-160`). A reviewed artifact and invoked artifact can therefore diverge. Required proof records every digest and substitutes bytes at each mutable handoff. | **Build/publish and invocation are useful but disconnected primitives.** R43 maps to existing `wamn-fqg.23` plus `wamn-0si.9`; no duplicate remediation bead. End-to-end proof is `wamn-4tob.6.7`. |
+| **Build, sign, publish, deploy, and invoke custom node** | Builder/artifact operator crosses source/toolchain, signing, OCI, deployment, then runtime grant boundaries. Intended authority is reviewed source → tested bytes → digest/signature/SBOM/manifest → OCI. Runner emits a stable per-occurrence signed invocation and host-injected grants (`docs/archive/platform/builder.md:1-55`, `docs/archive/platform/builder.md:121-171`, `components/flowrunner/src/lib.rs:606-697`). | Current ingestion is a baked fixture; the emitted serve-node path mounts component bytes from a ConfigMap and does not fetch/verify the OCI artifact. Host signing is optional and invocation can fall back to network trust (`docs/archive/platform/builder.md:173-209`, `deploy/platform/serve-node.yaml:43-138`, `crates/wamn-host/src/serve_node.rs:109-160`). A reviewed artifact and invoked artifact can therefore diverge. Required proof records every digest and substitutes bytes at each mutable handoff. | **Build/publish and invocation are useful but disconnected primitives.** R43 maps to existing `wamn-fqg.23` plus `wamn-0si.9`; no duplicate remediation bead. End-to-end proof is `wamn-4tob.6.7`. **Dimension split, 2026-08-19 sweep:** those two beads cover *byte identity* (OCI fetch-by-digest, digest/signature verification at admission) and are DEFERRED. They do **not** cover the *network-trust fallback* this row also disposes of; that dimension's owners are `wamn-fqg.22/.31/.32`, all CLOSED having shipped only the mechanism — the default stayed network-trust. Largely moot since the serve-node plane was deleted, but the citation did not span the claim. |
 | **Copy, back up, restore, and upgrade environment** | DB/control operators own dump/PITR artifacts, T1 metadata, superuser restore, serving cutover, and release artifacts. Scratch restore is the default; copy quiesces the source and stages snapshot/restore/verification (`crates/wamn-ctl/src/restore_project_env.rs:260-314`, `crates/wamn-ctl/src/copy_project_env.rs:357-408`, `crates/wamn-ctl/src/copy_project_env.rs:892-1038`). | Copy external effects and saga advancement are separate; restart does not resume from durable per-step receipts. `exec_cutover` prints repoint instructions and succeeds, so the saga can complete before serving identity changes (`crates/wamn-ctl/src/copy_project_env.rs:268-343`, `crates/wamn-ctl/src/copy_project_env.rs:1041-1053`). In-place restore runs `pg_restore --clean` against the live DB after only a confirmation flag, without traffic fencing or post-restore verification (`crates/wamn-ctl/src/restore_project_env.rs:290-324`). Fleet mixed-version upgrade is still `.16`. | **Backup/copy/restore primitives exist; resumable cutover and safe destructive recovery do not.** R40/`wamn-2jkm.75`, R41/`.76`, proof `wamn-4tob.6.5`; orchestration coordinates with `wamn-2ib`. |
 
 Runner rollout is a cross-cutting failure in the execution journey: there is
@@ -1729,7 +1736,13 @@ actually become hard blockers. Existing owners remain:
 - runtime/trust/roadmap/contract/build/target verdicts: ARC8, ARC10, ARC11,
   STR3, STR5–STR9; and
 - user/API authentication and authorization: `wamn-0xd`, `wamn-sbh`,
-  `wamn-117`, subject to the active pivot.
+  `wamn-117`, subject to the active pivot. **Dimension split, 2026-08-19
+  sweep: none of the three establishes caller identity at the API edge.**
+  `wamn-0xd` scopes itself as the bridge for an already-trusted principal,
+  explicitly separate from the first-party identity authority; `wamn-sbh` is
+  authorization; `wamn-117` is later federation. Edge authentication was
+  subsequently built for the *management* surface only
+  (`wamn-ctc8.6/.7/.8/.9`, closed). See also M.2, corrected the same day.
 
 The entity-operation seam, scenario-serving artifact conflict, route-registry
 contract, proposed owner roles, and package names are routed unknowns within
@@ -1910,7 +1923,7 @@ application/schema behavior; `.1.31` owns any production mixed-version promise.
 | **R48** | High | Standing T1/T3 manifests have no WAL/PITR resources despite documentation calling that recovery path shipped. | `wamn-2jkm.88`; proof `wamn-4tob.6.15`. |
 | **R54** | High | The exploratory deployment has no authoritative, measured capacity budget or atomic capacity reservation. It can continue allocating or activating project-scoped resources until an independent downstream limit fails, contradicting the owner-set fail-closed development contract. | `wamn-2jkm.100`; proof `wamn-4tob.6.27`; contract `.1.12`. |
 
-Existing R28 remains the cluster-wide CDC credential owner; R34, R40, and R41
+Existing R28 remains the cluster-wide CDC **`REPLICATION`-authority** owner — **corrected 2026-08-19: it is no longer the *credential* owner.** The static-default-password clause transferred to `wamn-0h0g.12.134` (closed, `c3a079ec`) in the same clause split that narrowed R28; citing R28 for the credential dimension repeats the row-569 mis-assertion. R34, R40, and R41
 retain convergence, copy, and restore ownership. `wamn-q3n.12` is only the
 pool-pressure metric/escalation seam; it does not supply R54's compound
 admission authority. None of these findings closes because a target topology
@@ -2053,7 +2066,7 @@ R44 continues to own source-derived run identity and the post-pruning horizon.
 | Materializer commits, then dies before ACK | Same-sequence redelivery collapses while the run row survives; pruning then consumer rewind can recreate it. | R44; existing proof `.6.9`. |
 | Two valid registration identities sanitize to one durable name | Both loops share one cursor while applying different flow/condition state, permitting missed, stolen, or misrouted events. | E19/`wamn-l5i9.70`; proof `.6.16`. |
 | Existing consumer configuration differs from the requested filter/ACK policy | Bind can report success while the server retains stale behavior. | E18/`wamn-l5i9.69`; proof `.6.10`. |
-| JetStream unavailable/full | Reader holds feedback; WAL grows until the configured slot bound can invalidate capture. | Existing R29/slot-loss work plus ARC9; compare `.6.18`. |
+| JetStream unavailable/full | Reader holds feedback; WAL grows until the configured slot bound can invalidate capture. | Existing R29/slot-loss work plus ARC9; compare `.6.18`. **Dimension split, 2026-08-19 sweep:** R29/`wamn-2jkm.47` is a create-or-keep *shape* read-back defect and does **not** own broker-outage → WAL-growth → slot-invalidation. That chain is R50/`wamn-2jkm.90` plus `wamn-l5i9.35`, neither cited here. |
 | Logical-slot state is not ready on the promoted primary | Logical replication cannot safely resume merely because a database replica was promoted. PostgreSQL says slot synchronization is asynchronous and readiness must be verified ([logical-replication failover](https://www.postgresql.org/docs/17/logical-replication-failover.html)). | R29 and ARC9; do not recreate a missing slot silently. |
 | Worker dies after an external effect | Queue reclaim repeats the occurrence. | Existing sink-idempotency/flow recovery owners; unaffected by broker choice. |
 
@@ -2315,7 +2328,7 @@ network, operator, backup, and recovery authority are bounded together.
 
 | Principal or artifact | Identity, authority, and lifecycle evidence | Maximum credible compromise radius | Enforcement verdict |
 |---|---|---|---|
-| **External API caller** | No caller identity enters the gateway; the component uses static deployment claims (`deploy/platform/api-gateway-workload.yaml:18-21,37-77`, `components/api-gateway/src/lib.rs:41-100`). Authentication remains explicitly out of scope (`docs/archive/platform/api-gateway.md:107-115`). | Every caller reaching one deployment collapses into its platform workload identity. | **Unknown product boundary.** Existing owners are `wamn-0xd`, `wamn-sbh`, and `wamn-fqg.39`; external authentication must remain separate from internal invocation identity. |
+| **External API caller** | No caller identity enters the gateway; the component uses static deployment claims (`deploy/platform/api-gateway-workload.yaml:18-21,37-77`, `components/api-gateway/src/lib.rs:41-100`). Authentication remains explicitly out of scope (`docs/archive/platform/api-gateway.md:107-115`). | Every caller reaching one deployment collapses into its platform workload identity. | **Unknown product boundary.** Existing owners are `wamn-0xd`, `wamn-sbh`, and `wamn-fqg.39`; external authentication must remain separate from internal invocation identity. **Dimension split, 2026-08-19 sweep — none of the three owns caller-identity verification at the generated-API edge.** `wamn-0xd` scopes itself as the *bridge* for an already-trusted principal; `wamn-sbh` is authz, not authn; `wamn-fqg.39` is the flow-http ingress adapter, a different component, and is CLOSED. Edge authentication was later built only for the management surface (`wamn-ctc8.6/.7/.8/.9`, closed). Mitigating: `components/api-gateway` no longer exists in-tree. |
 | **API gateway and default host group** | The host injects tenant/project/schema claims, one static database URL, and one host-wide event-NATS URL (`deploy/infra/values-wamn.yaml:14-50`). | A host/plugin compromise reaches every component and project authorized by those shared connections. | Plugin exposure is structural; tenant meaning still depends on configuration and shared authorities. |
 | **Project database login** | Per-project Secret names carry the same cluster-global `wamn_app` owner/login (`crates/wamn-provision/src/database.rs:27-78`, `crates/wamn-provision/src/sql.rs:25-41,88-105`). | Every project database in the same cluster. | **Contradicted:** R45/`wamn-2jkm.85`, proof `.6.12`. A Secret name is not a distinct principal. |
 | **Standard-node author/code** | Dispatch policy narrows honest SDK calls, but one flowrunner world imports the union used by all standard nodes (`crates/wamn-nodes/src/policy.rs:5-14,39-117`, `components/flowrunner/wit/world.wit:25-67`). | The runner component's complete imported capability set and project credentials. | **Logical defence in depth, not hostile-code isolation.** Standard nodes are trusted platform code. |
@@ -2325,8 +2338,8 @@ network, operator, backup, and recovery authority are bounded together.
 | **Runner test doubles** | The production worker binary can switch clock/random/egress doubles, default off; the production manifest does not enable them (`crates/wamn-run-worker/src/lib.rs:62-87,174-188,723-760`, `deploy/platform/runner.yaml:158-186`). | Equal to an operator already able to mutate the runner pod and its mounted authorities. | Convention rather than artifact isolation; no separate-image finding without a distinct caller, credential, state, or scale boundary. |
 | **Build toolchain** | `cargo`/`jco` execute inside a zero-token pod, but tenant package code runs before artifact lint and tests (`deploy/platform/builder-job.yaml:3-14,35-77`, `crates/wamn-builder/src/build.rs:194-217,439-489`). | Everything mounted or reachable by the builder process. | Host process isolation is structural; package-code hostility is latent until `wamn-0si.7` ingests user source. Cargo build scripts can execute arbitrary build-time tasks ([Cargo build scripts](https://doc.rust-lang.org/stable/cargo/reference/build-scripts.html)). |
 | **Builder signer/publisher** | The same container that executes package code mounts `/etc/wamn/signing`, loads the private key, and receives the registry destination (`deploy/platform/builder-job.yaml:39-77`, `crates/wamn-builder/src/build.rs:474-489`). | Artifact signing, release publication, and any reusable private key material. | **Contradicted:** new R49. A dependency-name allowlist does not constrain the root package's own build script (`crates/wamn-builder/src/allowlist.rs:1-11,29-56`). |
-| **OCI artifact and registry** | One unauthenticated plain-HTTP `registry:2` replica uses `emptyDir`; mutable tags and local ConfigMap node bytes are not tied to the reviewed digest (`deploy/platform/registry.yaml:1-19,24-73`). | Every mutable/rebuilt custom-node artifact and all bytes lost on restart. | Existing R43, SR17, `wamn-0si.9/.10/.13`, `wamn-fqg.23`, and proof `.6.7`; no duplicate finding. |
-| **Dispatcher** | A zero-token native service holds all configured project URLs and the shared runtime TLS identity although it only publishes doorbells (`deploy/platform/dispatcher.yaml:41-46,69-71,94-126`). | All configured projects plus every subject allowed to the shared runtime identity. | Process/Kubernetes boundary proven; NATS least privilege contradicted and already owned by `wamn-ngb` and `wamn-286`. |
+| **OCI artifact and registry** | One unauthenticated plain-HTTP `registry:2` replica uses `emptyDir`; mutable tags and local ConfigMap node bytes are not tied to the reviewed digest (`deploy/platform/registry.yaml:1-19,24-73`). | Every mutable/rebuilt custom-node artifact and all bytes lost on restart. | Existing R43, SR17, `wamn-0si.9/.10/.13`, `wamn-fqg.23`, and proof `.6.7`; no duplicate finding. **Dimension split, 2026-08-19 sweep:** the *unauthenticated plain-HTTP registry* dimension mapped only to `wamn-0si.13`, which is CLOSED because the builder's OCI **push** path was deleted — the client went away, the server did not. `deploy/platform/registry.yaml` is still plain HTTP requiring `--allow-insecure-registries`. That dimension is live and owned by `wamn-0h0g.15.155` (registry over TLS) and `wamn-0h0g.15.17` (registry + pull credentials), neither cited here. The `emptyDir` dimension (`wamn-0si.10`, deferred) was separately fixed in the manifest. |
+| **Dispatcher** | A zero-token native service holds all configured project URLs and the shared runtime TLS identity although it only publishes doorbells (`deploy/platform/dispatcher.yaml:41-46,69-71,94-126`). | All configured projects plus every subject allowed to the shared runtime identity. | Process/Kubernetes boundary proven; NATS least privilege contradicted and owned by `wamn-ngb`. **Corrected 2026-08-19: `wamn-286` is a database-role bead and owns no NATS scope at all.** More importantly, this cell's stated radius is "All configured projects", and `wamn-286`'s own text declares the aggregation of every project's DB credentials in one always-on pod **inherent and accepted** — it narrows what those credentials may read, it does not own the aggregation. Both beads DEFERRED. |
 | **Waker** | A namespace Role allows `get/patch` on Deployments and scale; the pod also reuses runtime TLS (`deploy/platform/waker.yaml:20-53,71-95`). | Scaling every Deployment in `wamn-system` plus the subjects allowed to the shared runtime identity. | Kubernetes scope structural; broker scope remains `wamn-fqg.37`. |
 | **Runtime/scheduler NATS identity** | Host group, runner, dispatcher, and waker reuse `wasmcloud-runtime-tls`; server ACLs live in a remote chart, not this repository. | At least the shared identity family; exact server privilege is unproven. | Shared credential is proven; precise ACL is **unknown**. Do not infer more than manifest comments until a live/config proof. |
 | **CDC reader/login** | Per-env names mask a `LOGIN REPLICATION` role whose PostgreSQL authority is cluster-wide; the CLI also carries a static default password (`crates/wamn-provision/src/sql.rs:115-143`, `crates/wamn-provision/src/secret.rs:93-127`, `crates/wamn-ctl/src/enable_cdc_project_env.rs:80-83,150-172`). | Every database/WAL stream reachable on the cluster; cross-cluster radius depends on actual default reuse. | **Two dimensions, split 2026-08-19 (R28 clause 1).** *Static default password:* **transferred out of R28** to `wamn-0h0g.12.134`, closed by `c3a079ec` — `--replication-password` lost its default and now refuses at parse time. *Cluster-wide `REPLICATION` authority:* **contradicted registration isolation**, retained on R28/`wamn-2jkm.46` (deferred); proof `.6.21`. PostgreSQL describes `REPLICATION` as highly privileged ([role attributes](https://www.postgresql.org/docs/17/role-attributes.html)). |
@@ -2415,6 +2428,12 @@ No duplicate finding is created for shared `wamn_app` (R45), shared object-store
 root (R47), cluster-wide CDC (R28), unsigned/unverified node bytes (R43), broker
 identity (`wamn-4xw`), consumer collisions (E19), runtime doorbell credentials
 (`wamn-ngb`/`wamn-fqg.37`), or dedicated-profile ambiguity (`.1.26`).
+**Corrected 2026-08-19 sweep — the runtime-doorbell dedupe does not span its
+claim.** M.2 names *four* holders of `wasmcloud-runtime-tls`: host group,
+runner, dispatcher, and waker. `wamn-ngb` covers the dispatcher and
+`wamn-fqg.37` covered the waker and is CLOSED. **The runner and the host group
+have no owner** — filed 2026-08-19 as `wamn-2jkm.103`. The other seven dedupes in this sentence
+were checked and hold (all deferred).
 `wamn-4tob.6.20` proves broker/materializer authorization, and `.6.21` proves
 CDC credential scope and rotation. The current dedicated-placement gap is
 recorded as a contract input, not R50: `.1.15` makes no current dedicated
@@ -2491,13 +2510,13 @@ within owner-selected bounds.
 | **Total T1 loss** | Cluster/PVC absence and failed control verbs. | Database expert. The standing manifest has no ObjectStore/ScheduledBackup; the documented PITR path is deferred to reprovision (`docs/archive/platform/postgres-topology.md:292-316`). | RPO/RTO **U**, expert/manual, **C** to a credible standing restore path: R48/proof `.6.15`. |
 | **T2/T4 primary failure** | CNPG status plus reader disconnect/preflight. Separate org/env clusters bound the database incident, but every renderer uses asynchronous failover (`crates/wamn-provision/src/org.rs:144-169,182-227`). | Database operator; automatic promotion followed by explicit logical-slot readiness verification before CDC resumes. | Acknowledged-write RPO non-zero/**U** (R46); RTO **U**. |
 | **T3 primary, node, or PVC loss** | Pod/CNPG/connection failure. One instance and one PVC serve all admitted pooled trials (`deploy/infra/cnpg-cluster.yaml:22-48`). | Kubernetes can restart against a surviving PVC; node/PVC loss needs a restore/rebuild that is not standing. | Exploratory **development-only implementation**, not an accepted topology. No production HA/durability claim or numeric RTO. CloudNativePG remains the database operator; target topology and failure envelope are deferred to `.1.35/.1.24`. |
-| **Logical slot after promotion** | Reader preflight checks existence, active state, confirmed position, and `wal_status`; missing/lost refuses rather than silently recreating (`crates/wamn-cdc-reader/src/lib.rs:35-48,461-490,650-705`). | Database/event operator verifies the synchronized slot and standby position; otherwise re-enables capture and explicitly assesses the gap/backfill. | RPO can be zero only for a ready slot with retained WAL; otherwise gap **U**. RTO **U**. PostgreSQL says slot synchronization is asynchronous and readiness must be verified ([logical replication failover](https://www.postgresql.org/docs/current/logical-replication-failover.html)). Existing R29 owns reconciliation. |
+| **Logical slot after promotion** | Reader preflight checks existence, active state, confirmed position, and `wal_status`; missing/lost refuses rather than silently recreating (`crates/wamn-cdc-reader/src/lib.rs:35-48,461-490,650-705`). | Database/event operator verifies the synchronized slot and standby position; otherwise re-enables capture and explicitly assesses the gap/backfill. | RPO can be zero only for a ready slot with retained WAL; otherwise gap **U**. RTO **U**. PostgreSQL says slot synchronization is asynchronous and readiness must be verified ([logical replication failover](https://www.postgresql.org/docs/current/logical-replication-failover.html)). Existing R29 owns reconciliation. **Dimension split, 2026-08-19 sweep:** R29 owns slot/publication *shape* convergence including the `failover` flag. The *recovery procedure* this cell actually describes — post-promotion readiness verification and explicit capture-gap/backfill assessment — is `wamn-l5i9.35`, not cited here. |
 | **One JetStream node lost** | NATS health, leader/quorum advisories, and stream state. The R3 three-node cluster has preferred anti-affinity; the gate proves one node deletion only (`deploy/infra/nats-jetstream.yaml:21-22,105-196`). | RAFT elects with intact quorum; event operator replaces the peer if needed. | Product RPO/RTO **U**. A three-replica group needs two available replicas ([JetStream clustering](https://docs.nats.io/running-a-nats-service/configuration/clustering/jetstream_clustering)). |
 | **JetStream quorum unavailable** | Publish retries/stall records and quorum-lost advisory. The reader withholds source feedback, so source WAL grows; the blast crosses broker and source database. | Event operator restores quorum without dropping the logical slot. | Zero event RPO only while the slot remains valid; configured WAL buffer is 1 GiB (`deploy/infra/cnpg-cluster.yaml:54-63`). No development outage-duration or capacity promise; `.1.19` owns the measured production policy and `.6.18` compares fewer-authority alternatives. |
 | **JetStream storage full** | `CDC_PUBLISH_STALLED`, broker errors/advisories, filesystem/PVC metrics, and reader slot-headroom records. Each server advertises 3 GB file store on a 1 GiB PVC, while Limits streams omit `max_bytes` and `max_age` (`deploy/infra/nats-jetstream.yaml:39-45,189-196`, `crates/wamn-cdc-reader/src/lib.rs:603-612`). | Manual event/storage expansion or retention repair while preserving the slot. No compatible capacity invariant or runbook exists. | **I, High:** physical disk can fail before the declared broker limit; continued stall can invalidate the bounded source slot. RPO zero until invalidation, then gap **U**; RTO **U**. R50/proof `.6.22`. NATS exposes server/account resource limits and streams otherwise permit unbounded limits ([resource management](https://docs.nats.io/running-a-nats-service/configuration/resource_management), [streams](https://docs.nats.io/nats-concepts/jetstream/streams)). |
 | **All JetStream PVCs lost** | Stream/consumer absence. Repository search finds no stream/account snapshot, restore implementation, or runbook. The reader has already advanced source feedback after every publish ACK (`crates/wamn-cdc-reader/src/lib.rs:900-938`). | Event/recovery expert; proactive external snapshots could restore broker state, or the selected state model can remove the broker as authority. Neither is implemented. | **I, High:** broker-only acknowledged events may be beyond recyclable source WAL and unrecoverable. RPO can include all unmaterialized broker events; RTO unbounded/**U**. R51/proof `.6.23`. NATS DR requires proactive backups when storage/quorum cannot be recovered ([JetStream disaster recovery](https://docs.nats.io/running-a-nats-service/nats_admin/jetstream_admin/disaster_recovery)). |
 | **CDC transient sever or stall** | Structured `CDC_PUBLISH_STALLED`, preflight/reopen ladder, and slot-headroom logs; the important slot fields are not all exported metrics (`crates/wamn-cdc-reader/src/lib.rs:49-60,1134-1273`). | Reader automatically backs off/reopens while productive; Kubernetes restarts after a fatal cap; permanent broker/slot faults require event operator action. | RPO zero while the slot remains valid. Recorded 2.17 s local recovery is mechanism evidence, not a product RTO; `.1.19/.22` own the later production policy and `wamn-2jkm.54/.55` own metrics/proof. |
-| **Slot WAL exhaustion/invalidation** | `CDC_SLOT_WAL_LOW/EXTENDED/UNRESERVED/INVALIDATED`, lag, and safe-byte records (`crates/wamn-cdc-reader/src/lib.rs:1200-1271`). | Fix downstream before invalidation; afterward an expert must re-enable and assess replay/backfill. Shared T3 WAL pressure affects co-tenants. | A capture gap must be explicit, never silent. No development buffer/threshold is selected; `.1.19` owns the production decision. Existing R29/`wamn-l5i9.35/.55`; no duplicate. |
+| **Slot WAL exhaustion/invalidation** | `CDC_SLOT_WAL_LOW/EXTENDED/UNRESERVED/INVALIDATED`, lag, and safe-byte records (`crates/wamn-cdc-reader/src/lib.rs:1200-1271`). | Fix downstream before invalidation; afterward an expert must re-enable and assess replay/backfill. Shared T3 WAL pressure affects co-tenants. | A capture gap must be explicit, never silent. No development buffer/threshold is selected; `.1.19` owns the production decision. Existing R29/`wamn-l5i9.35`/**`wamn-2jkm.55`**; no duplicate. **Corrected 2026-08-19 sweep — the third id was wrong:** `wamn-l5i9.55` is the CLOSED E14 streambench `Nats-Msg-Id` distinctness guard and is unrelated to slot WAL exhaustion; the intended bead is `wamn-2jkm.55` (reader-live E2 `slot_safe_wal_bytes` assertions), which the line above cites correctly. Separately, this cell's "Shared T3 WAL pressure affects co-tenants" has **no named owner at all** — filed 2026-08-19 as `wamn-2jkm.105`. |
 | **Materializer stale config or identity collision** | E18 accepts stale durable configuration silently; E19 collides valid registration names. Process health is not detection. | Event operator repairs deterministic identity/config, recreates the consumer, and assesses stolen/missed delivery. | RPO/RTO **U**; E18/proof `.6.10`, E19/proof `.6.16`. |
 | **Source republish or consumer rewind** | A duplicate may surface only as another run/effect; retention deletes the dedupe row. | Reconcile with stable source database/capture epoch/event/registration identity; no safe automatic inference exists. | Duplicate horizon **U**, R44/proofs `.6.9/.6.17`. |
 | **Dispatcher duplication** | Database conflicts and queue state. Write-ahead/enqueue use conflict-safe deterministic keys; cron tick identity is deterministic (`docs/archive/execution/run-queue.md:521-533`). | Automatic; duplicate dispatchers and doorbells collapse at the Postgres authority. | RPO zero at the run/queue transaction; **P**. No product RTO claim. |
@@ -2605,6 +2624,13 @@ No new finding is minted for regional DR/Secret/etcd authority
 (`wamn-0vz`/`wamn-coo`), slot invalidation/failover (R29 and reader owners),
 or existing R34/R40/R41/R42/R44/R46/R48/E18/E19/SR17. None is closed by this
 assessment.
+**Corrected 2026-08-19 sweep — the dispatcher-progress dedupe does not span its
+claim.** `wamn-0vz`/`wamn-coo` are SLO/alerting beads that presuppose a signal
+and hard-wait on `.1.38`. The N.1 defect is a *signal-source* gap: queue depth
+is emitted by the dispatcher's own tick, so total dispatcher disappearance is
+indistinguishable from an idle queue. **No bead owned an independent
+freshness/progress signal** — filed 2026-08-19 as `wamn-2jkm.104`. The remaining dedupes in this
+sentence were checked and hold (all deferred).
 
 ### N.5 Target recovery and operations invariants
 
@@ -2852,8 +2878,15 @@ fail-closed, and production code must not depend on `wamn-gates`.
   ARC11/STR9 own the surviving executor and final package/deploy topology.
 
 No implementation change or live gate ran. The source contract defect is
-recorded as open, the flowrunner split remains open under its existing owner,
-and every “leave alone” verdict is an audit conclusion rather than a closure.
+recorded as open, and every “leave alone” verdict is an audit conclusion rather
+than a closure.
+**Corrected 2026-08-19 sweep — this previously read "the flowrunner split
+remains open under its existing owner", and that was FALSE.** The owner is
+`wamn-cjv.11` and it is CLOSED: "the flowrunner guest retires, and the walk
+rehosts into the host-side router — there is no shell left to thin." The
+sentence read as an open-work reassurance while nothing was tracking it.
+O.3's own fallback instruction — apply the responsibility partition to that
+executor instead — was never re-homed onto the router; filed 2026-08-19 as `wamn-2jkm.106`.
 
 ---
 
@@ -3449,7 +3482,15 @@ The uncovered work deduplicates to existing owners:
 `wamn-cjv.25` (global docs currency/index/prose), `wamn-2jkm.63`
 (platform-plan amendment and D23), `wamn-2jkm.28` (runbook topology),
 `wamn-2jkm.59` (Postgres topology), ARC11 (accepted decisions), and STR9
-(target metadata/cross-link enforcement). No new finding, decision, or proof
+(target metadata/cross-link enforcement).
+**Dimension split, 2026-08-19 sweep:** `wamn-cjv.25`'s scope is an enumerated
+eight-item batch plus broken intra-doc links — it does **not** cover this
+section's root-`README.md` staleness or the `docs/archive/README.md`
+subsystem-map omissions. And "STR9" cites `wamn-4tob.2.9`, a CLOSED audit task
+whose closure routed work to granular beads this row never names; ARC11
+(`wamn-4tob.1.11`) is likewise closed. The doc-metadata contract and
+cross-link enforcement therefore have no live named owner.
+No new finding, decision, or proof
 Bead is created by STR8. No canonical decision, implementation file, external
 input, or live system was changed.
 
@@ -4633,6 +4674,35 @@ prerequisite that makes everything else findable.
 **Deferred by owner decision:** CI/LICENSE (§5.4 records the evidence-based
 re-open argument, unactioned); TRUNCATE handling (E5 — the prior question is
 undecided, see §5.3).
+
+### Coverage-claim sweep, 2026-08-19
+
+Owner-ruled after R28 clause 4 turned out to be false. A row that disposes of a
+risk by asserting some other owner already covers it is making a load-bearing
+claim, and the assertion is itself what stops anyone checking. Every such claim
+in this ledger — and, by the same ruling, every bead close reason — was checked
+against the cited owner's *actual scope*.
+
+**Ledger rows: 32 claims checked, 13 corrected** (plus one, §C.2's ARC2
+sentence, flagged unverifiable and left standing as a caution). Every corrected
+row now carries its dimension split inline rather than a blanket citation.
+
+**Bead close reasons: 169 claims checked, 7 corrected.** Every bead id named in
+any close reason across all 1,278 closed beads was checked against the roster
+and **all of them exist** — so the failure mode here was never a dangling id.
+It was (a) claims naming nothing at all, and (b) claims naming a real bead
+whose scope did not contain the handoff. The second is the subtler and the more
+common, and no search for a missing bead would find it.
+
+Untracked dimensions filed the same day: `wamn-2jkm.103`–`.106`,
+`wamn-0h0g.26.10`, `wamn-0h0g.15.174`–`.178`.
+
+**The recurring shape, stated once so it need not be re-derived:** the
+dangerous citation is not the wrong one, it is the *adjacent* one — a bead that
+plainly covers the topic while missing one dimension of it. `wamn-286` really
+is about the dispatcher's database role, and really does not own NATS scope.
+R28 really was the CDC credential owner, until the clause transfer moved that
+half elsewhere. Adjacency is what makes these read as covered.
 
 ---
 
