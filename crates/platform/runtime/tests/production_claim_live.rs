@@ -162,7 +162,10 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
                state_json jsonb, invocation_context jsonb NOT NULL DEFAULT '{{}}', \
                trigger_source text, event_source_run_id text, event_root_run_id text, \
                event_depth int, admission_context_version text, platform_revision text, \
-               capture_mode text, release_version int, manifest_digest text, \
+               capture_mode text, \
+               durability_class text NOT NULL DEFAULT 'standard' \
+                 CHECK (durability_class IN ('standard', 'durable')), \
+               release_version int, manifest_digest text, \
                idempotency_key text, response_deadline_at timestamptz, \
                run_deadline_at timestamptz, \
                fail_kind text, fail_node text, fail_reason text, \
@@ -481,6 +484,16 @@ async fn seed_run(
     Ok(())
 }
 
+/// Seed a live-leased run ON THE PREMIUM TIER.
+///
+/// Every caller of this helper goes on to write an effect attempt, and the
+/// crash floor that reads those attempts is class-gated (wamn-0h0g.20.2): on
+/// the default `standard` class the claim takes no advisory fence, reads no
+/// effect snapshot, and never classifies `ExpiredWithAttempt`, so an
+/// effect-uncertain proof seeded `standard` would prove nothing. Saying
+/// `durable` here is what keeps these legs pointed at the tier they belong to;
+/// partitioning the file into surviving-spine and shelved-floor suites is
+/// wamn-0h0g.20.4's.
 async fn seed_live_effect_run(
     client: &Client,
     run_id: &str,
@@ -492,7 +505,7 @@ async fn seed_live_effect_run(
         .execute(
             &format!(
                 "WITH running AS ( \
-                    UPDATE {SCHEMA}.runs SET status='running' \
+                    UPDATE {SCHEMA}.runs SET status='running', durability_class='durable' \
                      WHERE tenant_id=$1 AND run_id=$2 \
                      RETURNING tenant_id,run_id) \
                  UPDATE {SCHEMA}.run_queue AS q \
@@ -920,10 +933,13 @@ async fn production_claim_live() -> anyhow::Result<()> {
     admin
         .execute(
             &format!(
+                // Premium tier: this leg proves the reaper waits on the writer's
+                // effect fence, and the fence is class-gated (wamn-0h0g.20.2).
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
-                    environment,execution_bundle_hash,trigger_source) \
-                 VALUES ($1,'effect-race','root',1,'running','cat-main',1,'test',$2,'http')"
+                    environment,execution_bundle_hash,trigger_source,durability_class) \
+                 VALUES ($1,'effect-race','root',1,'running','cat-main',1,'test',$2,'http', \
+                         'durable')"
             ),
             &[&TENANT, &release_hash],
         )

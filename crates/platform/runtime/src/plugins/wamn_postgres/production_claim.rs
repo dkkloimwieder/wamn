@@ -768,12 +768,21 @@ where
     })
 }
 
+/// Build a storage failure that still carries what PostgreSQL actually said.
+///
+/// `tokio_postgres::Error`'s `Display` renders a database failure as the literal
+/// string `"db error"` and appends NOTHING (0.7.18, `error/mod.rs:394`) — the
+/// `DbError` is reachable only through `source()`. A detail built from
+/// `to_string()` alone therefore discards the message, the SQLSTATE, and the
+/// constraint or trigger name, so every refused claim reads identically in logs
+/// and in a caller's assertion. The database's own text is the whole diagnostic
+/// value of this error, so it is spliced back in here.
 fn storage(operation: &'static str, error: tokio_postgres::Error) -> ProductionClaimError {
-    ProductionClaimError::new(
-        ProductionClaimErrorKind::Storage,
-        operation,
-        error.to_string(),
-    )
+    let detail = match error.as_db_error() {
+        Some(db_error) => format!("{error}: {db_error}"),
+        None => error.to_string(),
+    };
+    ProductionClaimError::new(ProductionClaimErrorKind::Storage, operation, detail)
 }
 
 #[cfg(test)]
