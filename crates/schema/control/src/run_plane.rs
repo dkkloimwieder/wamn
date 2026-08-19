@@ -788,6 +788,19 @@ const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
     wamn_run.guard_event_lineage_immutable();";
 
+/// The ONE encoding of the admission-pin trigger's `CREATE` (wamn-0h0g.20.9).
+///
+/// Both the steady-state trigger repair and the legacy execution-pin cutover
+/// emit this. They used to carry independent copies, and the cutover's copy
+/// never grew the `durability_class` arm wamn-0h0g.20.1 added here — so the
+/// cutover silently dropped that column's enforcement and left the reconciler
+/// repairing what the cutover had just clobbered.
+const RUNS_ADMISSION_PINS_TRIGGER_SQL: &str = "CREATE TRIGGER runs_admission_pins_immutable \
+    BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, \
+    capture_mode, durability_class, release_version, manifest_digest \
+    ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
+    wamn_run.guard_run_admission_pins_immutable();";
+
 struct HelperSpec {
     name: &'static str,
     definition: Cow<'static, str>,
@@ -908,12 +921,7 @@ fn trigger_specs() -> Vec<TriggerSpec> {
             table: "runs".to_string(),
             name: "runs_admission_pins_immutable".to_string(),
             definition: RUNS_ADMISSION_PINS_TRIGGER_DEF.to_string(),
-            sql: "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF \
-                  catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, \
-                  durability_class, release_version, manifest_digest \
-                  ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
-                  wamn_run.guard_run_admission_pins_immutable();"
-                .to_string(),
+            sql: RUNS_ADMISSION_PINS_TRIGGER_SQL.to_string(),
         },
     ];
     for table in [
@@ -3082,8 +3090,36 @@ $execution_pin_preflight$;"#
     )
 }
 
+/// The schema of record's own inline definition of one `runs` column, verbatim.
+///
+/// Used where a migration must ADD a canonical column: taking the text from the
+/// record is what keeps the added column's type, default, and named CHECK from
+/// becoming a second encoding that drifts (wamn-0h0g.20.9).
+fn runs_record_column_def(column: &str) -> String {
+    record_columns(RUN_STATE_SQL, "wamn_run", "runs")
+        .into_iter()
+        .find_map(|(name, definition)| (name == column).then_some(definition))
+        .unwrap_or_else(|| panic!("the schema of record must define runs.{column}"))
+}
+
 fn execution_pin_cutover_sql(schema: &BareSchemaName) -> String {
     let target = schema.quoted();
+    // The admission-pin trigger below names `capture_mode` and
+    // `durability_class`, and PostgreSQL validates a `BEFORE UPDATE OF` column
+    // list at CREATE TRIGGER time — so on a legacy database that predates
+    // either column the whole cutover aborted with `column "capture_mode" of
+    // relation "runs" does not exist`. Both ride this ADD block, WITH the
+    // record's inline named CHECK: their checks are `CheckOrigin::Inline`, and
+    // the exact-CHECK pass below skips an inline spec whose column the
+    // OBSERVATION lacks, so a bare ADD here would leave the column unconstrained
+    // for a whole reconcile turn and re-open the non-convergence this fixes.
+    let capture_mode_column = runs_record_column_def("capture_mode");
+    let durability_class_column = runs_record_column_def("durability_class");
+    // One encoding of the guard and its trigger, shared with the steady-state
+    // helper/trigger repair. A private copy here is what dropped
+    // `durability_class` from both the guard body and the trigger's column list.
+    let admission_pin_guard = rewrite_schema(GUARD_RUN_ADMISSION_PINS_SQL, schema);
+    let admission_pin_trigger = rewrite_schema(RUNS_ADMISSION_PINS_TRIGGER_SQL, schema);
     format!(
         r#"LOCK TABLE catalog.release_flows, {target}.runs IN ACCESS EXCLUSIVE MODE;
 DO $execution_pin_preflight$
@@ -3114,7 +3150,9 @@ CREATE INDEX release_flows_execution_bundle
 ALTER TABLE {target}.runs
     ADD COLUMN IF NOT EXISTS execution_bundle_hash text,
     ADD COLUMN IF NOT EXISTS release_version int,
-    ADD COLUMN IF NOT EXISTS manifest_digest text;
+    ADD COLUMN IF NOT EXISTS manifest_digest text,
+    ADD COLUMN IF NOT EXISTS {capture_mode_column},
+    ADD COLUMN IF NOT EXISTS {durability_class_column};
 ALTER TABLE {target}.runs
     ALTER COLUMN catalog_id TYPE text USING catalog_id::text,
     ALTER COLUMN catalog_version TYPE integer USING catalog_version::integer,
@@ -3150,46 +3188,9 @@ DROP INDEX IF EXISTS {target}.runs_release;
 DROP INDEX IF EXISTS {target}.runs_execution_bundle;
 CREATE INDEX runs_release ON {target}.runs (tenant_id, catalog_id, catalog_version);
 CREATE INDEX runs_execution_bundle ON {target}.runs (tenant_id, execution_bundle_hash);
-CREATE OR REPLACE FUNCTION {target}.guard_run_admission_pins_immutable()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $execution_pin_guard$
-BEGIN
-    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
-       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
-       OR NEW.environment IS DISTINCT FROM OLD.environment
-       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash
-       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'run-admission-pin-immutable';
-    END IF;
-    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN
-        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN
-            IF NEW.status NOT IN ('dispatched', 'running')
-               OR EXISTS (SELECT 1 FROM {target}.effect_attempts AS effect
-                           WHERE effect.tenant_id = OLD.tenant_id
-                             AND effect.run_id = OLD.run_id) THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '55000',
-                    MESSAGE = 'run-release-record-immutable';
-            END IF;
-        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version
-           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '55000',
-                MESSAGE = 'run-release-record-immutable';
-        END IF;
-    END IF;
-    RETURN NEW;
-END
-$execution_pin_guard$;
+{admission_pin_guard}
 DROP TRIGGER IF EXISTS runs_admission_pins_immutable ON {target}.runs;
-CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,
-                 release_version, manifest_digest
-ON {target}.runs
-FOR EACH ROW EXECUTE FUNCTION {target}.guard_run_admission_pins_immutable();"#
+{admission_pin_trigger}"#
     )
 }
 
@@ -4510,10 +4511,18 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 }
                 // The pin cutover installs the claim-time record columns itself,
                 // because the trigger it recreates names them. Skipping here is
-                // what keeps that from colliding with a plain ADD COLUMN.
+                // what keeps that from colliding with a plain ADD COLUMN. The
+                // admission pins the trigger also names — `capture_mode` and
+                // `durability_class` — ride the same rule (wamn-0h0g.20.9): a
+                // plain ADD COLUMN is planned AFTER the cutover, so a legacy
+                // database missing either one aborted the cutover at CREATE
+                // TRIGGER before the column could ever be added.
                 if execution_pin_cutover_needed
                     && table == "runs"
-                    && matches!(col.as_str(), "release_version" | "manifest_digest")
+                    && matches!(
+                        col.as_str(),
+                        "release_version" | "manifest_digest" | "capture_mode" | "durability_class"
+                    )
                 {
                     continue;
                 }
@@ -4662,7 +4671,16 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     // them. This also lets one reconcile turn converge a partial queue shape.
     plan.actions.extend(effect_writer_run_read_repairs);
 
-    if !capture_mode_present && run_capture_privileges_drifted && !obs.app_run_capture_privileges.0
+    // A broad legacy grant is normally narrowed by the `capture_mode` AddColumn
+    // branch above. The pin cutover now owns that ADD (wamn-0h0g.20.9), so on
+    // that path the branch never runs and the narrowing has to happen here
+    // instead — otherwise the cutover would hand `wamn_app` write authority over
+    // the capture carrier it just created. Every record column exists by the
+    // time this action executes: the cutover and the AddColumn pass both precede
+    // it.
+    if !capture_mode_present
+        && run_capture_privileges_drifted
+        && (!obs.app_run_capture_privileges.0 || execution_pin_cutover_needed)
     {
         let record_columns = record_columns(RUN_STATE_SQL, "wamn_run", "runs")
             .into_iter()
@@ -7446,6 +7464,166 @@ CREATE INDEX event_registrations_by_entity
         assert!(sql.contains("runs_admission_pins_immutable"));
         assert!(!sql.contains("BEGIN;"));
         assert!(!sql.contains("COMMIT;"));
+    }
+
+    /// The cutover ADDs every admission pin its trigger NAMES, and its guard and
+    /// trigger are the canonical ones rather than a private copy
+    /// (wamn-0h0g.20.9).
+    ///
+    /// PostgreSQL validates `BEFORE UPDATE OF <columns>` at CREATE TRIGGER time,
+    /// so a column the trigger names but the cutover never adds aborts the whole
+    /// migration on a legacy database; and a column the trigger does NOT name is
+    /// silently unguarded (the wamn-0h0g.20.1 unnamed-arm class).
+    #[test]
+    fn the_execution_pin_cutover_adds_every_admission_pin_its_trigger_names() {
+        let schema = schema("demo");
+        let sql = execution_pin_cutover_sql(&schema);
+
+        for column in ["capture_mode", "durability_class"] {
+            let clause = format!(
+                "ADD COLUMN IF NOT EXISTS {}",
+                runs_record_column_def(column)
+            );
+            let added = sql
+                .find(&clause)
+                .unwrap_or_else(|| panic!("cutover must add runs.{column} canonically: {sql}"));
+            let named = sql
+                .find(&format!("{column}, "))
+                .unwrap_or_else(|| panic!("pin trigger must name {column}: {sql}"));
+            assert!(
+                added < named,
+                "{column} is added before the trigger names it: {sql}"
+            );
+        }
+        // Added WITH the record's inline named CHECK. An inline CHECK spec is
+        // skipped by the exact-CHECK pass while the OBSERVATION lacks its
+        // column, so a bare ADD would leave the column unconstrained until the
+        // NEXT reconcile turn — the same non-convergence this bead closes.
+        assert!(sql.contains("CONSTRAINT runs_capture_mode_check"));
+        assert!(sql.contains("CONSTRAINT runs_durability_class_check"));
+
+        // One encoding: the cutover's guard and trigger ARE the steady-state
+        // repair's, so the reconciler can never observe drift it just wrote.
+        let guard = helper_specs()
+            .into_iter()
+            .find(|spec| spec.name == "guard_run_admission_pins_immutable")
+            .expect("the admission-pin guard is a helper of record");
+        assert!(sql.contains(&rewrite_schema(&guard.sql, &schema)));
+        let trigger = trigger_specs()
+            .into_iter()
+            .find(|spec| spec.name == "runs_admission_pins_immutable")
+            .expect("the admission-pin trigger is a trigger of record");
+        assert!(sql.contains(&rewrite_schema(&trigger.sql, &schema)));
+    }
+
+    /// A legacy database missing BOTH admission-pin carriers converges in ONE
+    /// pass: the cutover owns the ADD, no plain `AddColumn` races it, and the
+    /// broad legacy grant is still narrowed off the capture carrier.
+    #[test]
+    fn legacy_runs_missing_both_pin_carriers_take_them_from_the_cutover() {
+        let mut obs = observation_at_record();
+        obs.column_types.insert(
+            ("runs".to_string(), "catalog_version".to_string()),
+            "bigint".to_string(),
+        );
+        obs.app_run_capture_privileges = (true, false, true);
+        let runs = obs.tables.get_mut("runs").expect("runs table");
+        runs.remove("capture_mode");
+        runs.remove("durability_class");
+        for check in [
+            "runs_capture_mode_check",
+            "runs_durability_class_check",
+            "runs_capture_mode_source_check",
+        ] {
+            obs.checks.remove(&("runs".to_string(), check.to_string()));
+        }
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let cutover = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::ExecutionPinCutover)
+            .unwrap_or_else(|| panic!("pin cutover planned; actions: {:#?}", plan.actions));
+
+        for column in ["capture_mode", "durability_class"] {
+            assert!(
+                !plan.actions.iter().any(|action| {
+                    action.kind == RunPlaneActionKind::AddColumn
+                        && action.target == format!("runs.{column}")
+                }),
+                "{column} must not be added twice: {:#?}",
+                plan.actions
+            );
+            assert!(
+                plan.actions[cutover]
+                    .sql
+                    .contains(&format!("ADD COLUMN IF NOT EXISTS {column} "))
+            );
+            // The inline CHECK rides the ADD, so no separate repair is planned
+            // for it — which is only true because the ADD is not bare.
+            assert!(
+                !plan.actions.iter().any(|action| {
+                    action.kind == RunPlaneActionKind::RepairConstraint
+                        && action.target == format!("runs.runs_{column}_check")
+                }),
+                "the inline CHECK rides the cutover's ADD: {:#?}",
+                plan.actions
+            );
+        }
+        // The table-origin check that NAMES capture_mode is still repaired
+        // separately; it is not skipped by the absent-column rule.
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairConstraint
+                && action.target == "runs.runs_capture_mode_source_check"
+        }));
+        // The narrowing the AddColumn branch used to do still happens, after the
+        // cutover has created the carrier.
+        let narrowing = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::RepairRunCapturePrivilege)
+            .unwrap_or_else(|| {
+                panic!(
+                    "broad legacy grant is narrowed off capture_mode: {:#?}",
+                    plan.actions
+                )
+            });
+        assert_eq!(plan.actions[narrowing].target, "runs.capture_mode");
+        assert!(cutover < narrowing);
+    }
+
+    /// Why the cutover's ADD carries the inline CHECK rather than being bare.
+    ///
+    /// A bare `ADD COLUMN` leaves exactly this observation behind — carrier
+    /// present, its inline CHECK absent — because the exact-CHECK pass skips an
+    /// inline spec while the OBSERVATION lacks the column. The pass that follows
+    /// is therefore NOT a no-op, which is the predicate wamn-0h0g.20.9 exists to
+    /// restore.
+    #[test]
+    fn a_pin_carrier_added_without_its_inline_check_does_not_converge() {
+        for (column, check) in [
+            ("capture_mode", "runs_capture_mode_check"),
+            ("durability_class", "runs_durability_class_check"),
+        ] {
+            let mut obs = observation_at_record();
+            obs.checks.remove(&("runs".to_string(), check.to_string()));
+            assert!(
+                obs.tables
+                    .get("runs")
+                    .is_some_and(|columns| columns.contains(column)),
+                "the bare-ADD state has the carrier without its CHECK"
+            );
+
+            let plan = plan_run_plane(&schema("demo"), &obs);
+            assert!(
+                plan.actions.iter().any(|action| {
+                    action.kind == RunPlaneActionKind::RepairConstraint
+                        && action.target == format!("runs.{check}")
+                }),
+                "a bare {column} costs a second reconcile turn: {:#?}",
+                plan.actions
+            );
+        }
     }
 
     #[test]

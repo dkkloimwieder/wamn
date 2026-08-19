@@ -859,6 +859,73 @@ async fn execution_pin_cutover_leg(su: &Client) {
     );
     assert!(!catalog_column_exists(su, "release_flows", "execution_bundle_hash").await);
     assert!(!column_exists(su, "runs", "execution_bundle_hash").await);
+
+    // The population wamn-0h0g.20.9 is really about: a legacy database that ALSO
+    // predates the admission-pin carriers. PostgreSQL validates a
+    // `BEFORE UPDATE OF <columns>` list at CREATE TRIGGER time, so a cutover
+    // naming a column it never ADDs aborts here — and only here, which is why
+    // the carrier-present leg above stayed green while the migration was broken.
+    reset(su).await;
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply current catalog for carrier-less legacy cutover");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply current runs for carrier-less legacy cutover");
+    regress_execution_pin_contract(su).await;
+    // The pin trigger and its function are already gone, so each column drops
+    // with only its own constraints and column grants depending on it.
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.runs \
+           DROP COLUMN capture_mode, \
+           DROP COLUMN durability_class;"
+    ))
+    .await
+    .expect("regress the admission-pin carriers");
+    assert!(!column_exists(su, "runs", "capture_mode").await);
+    assert!(!column_exists(su, "runs", "durability_class").await);
+
+    reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("carrier-less legacy schema accepts the execution-pin cutover");
+    for (column, check) in [
+        ("capture_mode", "runs_capture_mode_check"),
+        ("durability_class", "runs_durability_class_check"),
+    ] {
+        assert!(column_exists(su, "runs", column).await, "{column} restored");
+        let constrained: bool = su
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = $1)",
+                &[&check],
+            )
+            .await
+            .expect("observe restored carrier CHECK")
+            .get(0);
+        assert!(constrained, "{column} regained {check}");
+    }
+    // The carrier a column-scoped trigger does not NAME is silently unguarded
+    // (the wamn-0h0g.20.1 unnamed-arm class), so the migration must restore the
+    // full column list, not merely the columns it happened to add.
+    let trigger: String = su
+        .query_one(
+            "SELECT pg_get_triggerdef(oid) FROM pg_trigger \
+              WHERE tgname = 'runs_admission_pins_immutable' AND NOT tgisinternal",
+            &[],
+        )
+        .await
+        .expect("observe restored admission-pin trigger")
+        .get(0);
+    assert!(trigger.contains("capture_mode"), "{trigger}");
+    assert!(trigger.contains("durability_class"), "{trigger}");
+
+    let again = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("carrier-less legacy cutover is idempotent");
+    assert!(
+        again.is_noop(),
+        "carrier cutover converged: {:#?}",
+        again.actions
+    );
 }
 
 /// Persisted authored ordering bytes have no lossless global-FIFO backfill.
