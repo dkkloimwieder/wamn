@@ -1,10 +1,12 @@
-//! Ignored live gate for the wiring activation verb (wamn-0h0g.18.2).
+//! Ignored live gates for the wiring relations (wamn-0h0g.18.2, .18.5).
 //!
-//! The sibling `wiring_storage.rs` pins what the DDL *says*. This proves what it
+//! The sibling `wiring_storage.rs` pins what the DDL *says*. These prove what it
 //! *does*, which no pure test can reach: that the pointer flip and the rollback
 //! are one statement, that the doorbell rings on commit and only on commit, that
-//! a disabled or tombstoned pointer resolves to nothing, and that the app role
-//! can serve the read without any grant beyond `SELECT`.
+//! a disabled or tombstoned pointer resolves to nothing, that the app role can
+//! serve the read without any grant beyond `SELECT`, and that a document
+//! declaring an entry and terminals reaches a CONVERGED database and comes back
+//! out of `graph_json` with the same derived identity.
 //!
 //! Every statement under test is the real builder from `wamn_catalog`, executed
 //! through `PREPARE`/`EXECUTE` so the gate cannot pass against text that only
@@ -19,13 +21,31 @@
 //!   cargo test -p wamn-catalog --test wiring_activation_live -- --ignored
 //! ```
 
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::process::{Command, Output, Stdio};
+use std::sync::{Mutex, MutexGuard};
 
 use wamn_catalog::{
-    WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, flip_activation,
-    previous_confirmed_definition, record_activation_event, resolve_active_wiring,
+    WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, WiringDocument, WiringEdge, WiringNode,
+    WiringTerminal, flip_activation, previous_confirmed_definition, record_activation_event,
+    resolve_active_wiring,
 };
+
+/// Every gate here rewrites the ONE `catalog` schema of the one database
+/// `WAMN_CATALOG_PG_URL` names, so they take turns. Without this the default
+/// harness runs them concurrently and each sees the other's `DROP SCHEMA
+/// catalog CASCADE` land mid-install — a red that says nothing about the DDL.
+static DATABASE: Mutex<()> = Mutex::new(());
+
+/// Claim the database for the duration of one gate. A poisoned lock is a gate
+/// that already failed and reported why; the next one still gets a clean schema
+/// from its own preamble.
+fn exclusive() -> MutexGuard<'static, ()> {
+    DATABASE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn psql(url: &str, script: &str) -> Output {
     let mut child = Command::new("psql")
@@ -175,6 +195,7 @@ fn read(label: &str) -> String {
 #[test]
 #[ignore = "requires WAMN_CATALOG_PG_URL and a throwaway PostgreSQL database"]
 fn wiring_activation_live() {
+    let _database = exclusive();
     let url = std::env::var("WAMN_CATALOG_PG_URL")
         .expect("set WAMN_CATALOG_PG_URL to the throwaway superuser database");
 
@@ -311,5 +332,155 @@ fn wiring_activation_live() {
     assert!(
         denied.contains("permission denied"),
         "the flip is a management-plane write; the app role must not reach it: {denied}"
+    );
+}
+
+/// The entry and the terminal reach an EXISTING database and survive the column.
+///
+/// wamn-0h0g.18.5 adds no relation and no column — the document rides
+/// `catalog.wirings.graph_json` whole — so the claim to prove is not that a new
+/// object installs, but that a database converged by the SAME slice
+/// `ensure_catalog_storage` executes accepts the new document and gives it back
+/// unchanged. `graph_json` is `jsonb`, which reorders keys and drops duplicates,
+/// so "unchanged" is checked the only way that matters here: the re-parsed
+/// document derives the identical `wiring_hash`.
+///
+/// The database is put into the pre-migration state on purpose — the four wiring
+/// relations dropped — so the converge slice is genuinely exercised rather than
+/// skipped over an install that already had them.
+#[test]
+#[ignore = "requires WAMN_CATALOG_PG_URL and a throwaway PostgreSQL database"]
+fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() {
+    let _database = exclusive();
+    let url = std::env::var("WAMN_CATALOG_PG_URL")
+        .expect("set WAMN_CATALOG_PG_URL to the throwaway superuser database");
+
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+    let schema = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
+        .expect("read catalog DDL");
+    let begin = schema
+        .find("-- BEGIN WIRING STORAGE MIGRATION")
+        .expect("the converge slice is delimited");
+    let end = schema
+        .find("-- END WIRING STORAGE MIGRATION")
+        .expect("the converge slice is terminated");
+    let converge_slice = &schema[begin..end];
+
+    let node = |component: &str, operation: &str, terminal| WiringNode {
+        component: component.to_owned(),
+        interface_version: "0.1.0".to_owned(),
+        operation: operation.to_owned(),
+        params: BTreeMap::new(),
+        terminal,
+    };
+    let document = WiringDocument::new(
+        "orders-create",
+        1,
+        "in",
+        BTreeMap::from([
+            ("in".to_owned(), node("http-entry", "handle", None)),
+            ("write".to_owned(), node("entity", "create", None)),
+            (
+                "out".to_owned(),
+                node("respond", "emit", Some(WiringTerminal::Respond)),
+            ),
+            (
+                "publish".to_owned(),
+                node("bus", "emit", Some(WiringTerminal::Emit)),
+            ),
+        ]),
+        vec![
+            WiringEdge {
+                from: "in".to_owned(),
+                from_port: "main".to_owned(),
+                to: "write".to_owned(),
+                to_port: None,
+            },
+            WiringEdge {
+                from: "write".to_owned(),
+                from_port: "main".to_owned(),
+                to: "out".to_owned(),
+                to_port: None,
+            },
+            WiringEdge {
+                from: "write".to_owned(),
+                from_port: "main".to_owned(),
+                to: "publish".to_owned(),
+                to_port: None,
+            },
+        ],
+        Vec::new(),
+    )
+    .expect("a wiring declaring an entry and two terminals is a valid document");
+    let wire = serde_json::to_string(&document).expect("the document serializes");
+
+    // The probe is the one `ensure_catalog_storage` reads, spelled exactly as it
+    // spells it, so a database it would converge is the database this reports on.
+    let probe = |label: &str| {
+        format!(
+            "SELECT '{label}=' || (to_regclass('catalog.wirings') IS NOT NULL)::text || \
+                    (to_regclass('catalog.wiring_tombstones') IS NOT NULL)::text || \
+                    (to_regclass('catalog.wiring_activation') IS NOT NULL)::text || \
+                    (to_regclass('catalog.wiring_activation_events') IS NOT NULL)::text;\n"
+        )
+    };
+
+    let mut script = preamble();
+    script.push_str(
+        "DROP TABLE catalog.wiring_activation_events, catalog.wiring_activation, \
+                    catalog.wiring_tombstones, catalog.wirings CASCADE;\n\
+         DROP FUNCTION catalog.validate_wiring_activation();\n\
+         DROP FUNCTION catalog.notify_wiring_activation();\n",
+    );
+    script.push_str(&probe("before"));
+    script.push_str(converge_slice);
+    script.push_str(&probe("after"));
+    script.push_str(&format!(
+        "SET app.tenant = 't1';\n\
+         INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
+                gated_catalog_version, graph_json, wiring_hash, gate_report_id) \
+         VALUES ('t1','shop','orders-create',1,1,$doc${wire}$doc$,'{digest}','gate-1');\n\
+         SELECT 'stored=' || graph_json::text FROM catalog.wirings \
+          WHERE wiring_id = 'orders-create' AND version = 1;\n",
+        digest = document.wiring_hash(),
+    ));
+
+    let stdout = success(&url, &script);
+    let reported = |label: &str| {
+        stdout
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{label}=")))
+            .unwrap_or_else(|| panic!("{label} was not reported\n{stdout}"))
+    };
+
+    assert_eq!(
+        reported("before"),
+        "falsefalsefalsefalse",
+        "the database must start in the pre-migration state the converge path exists for"
+    );
+    assert_eq!(
+        reported("after"),
+        "truetruetruetrue",
+        "the converge slice must install all four relations, not a subset"
+    );
+
+    let stored = serde_json::from_str::<serde_json::Value>(reported("stored"))
+        .expect("the column gives back JSON");
+    let read_back = WiringDocument::parse(&stored).expect("the stored document parses");
+    assert_eq!(read_back.entry, "in", "the entry survived the jsonb column");
+    assert_eq!(
+        read_back.nodes["out"].terminal,
+        Some(WiringTerminal::Respond)
+    );
+    assert_eq!(
+        read_back.nodes["publish"].terminal,
+        Some(WiringTerminal::Emit)
+    );
+    assert_eq!(read_back.nodes["write"].terminal, None);
+    assert_eq!(
+        read_back.wiring_hash(),
+        document.wiring_hash(),
+        "jsonb reorders keys, so identity must be derived from the parsed document \
+         and not from the bytes the column happened to return"
     );
 }
