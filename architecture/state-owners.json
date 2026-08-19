@@ -155,11 +155,6 @@
       "scope": "production-project-database"
     },
     {
-      "path": "deploy/sql/flows.sql",
-      "kind": "ddl",
-      "scope": "production-project-database"
-    },
-    {
       "path": "deploy/sql/authoring-tests.sql",
       "kind": "ddl",
       "scope": "production-project-database"
@@ -396,6 +391,23 @@
       "readers": [
         "registry-store",
         "provision-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "registry.retired_project_envs",
+      "plane": "control",
+      "semantic_owner": "registry-store",
+      "migration_owners": [
+        "registry-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "system-schema-installer"
+      ],
+      "readers": [
+        "registry-store"
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -714,17 +726,6 @@
       "drift_gate": "SR13:control-portable-live"
     },
     {
-      "id": "wamn_run.authoring_test_sets",
-      "plane": "control",
-      "semantic_owner": "scenario-worker",
-      "migration_owners": ["control-portable-store-installer"],
-      "schema_source": "deploy/sql/control-portable-store.sql",
-      "writers": ["control-portable-store-installer"],
-      "readers": [],
-      "compatibility_horizon": "platform-schema-major",
-      "drift_gate": "SR13:control-portable-live"
-    },
-    {
       "id": "wamn_run.authoring_test_run_reservations",
       "plane": "control",
       "semantic_owner": "scenario-worker",
@@ -754,6 +755,17 @@
       "schema_source": "deploy/sql/control-portable-store.sql",
       "writers": ["control-portable-store-installer"],
       "readers": [],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "wamn_authority.author_login_tenants",
+      "plane": "control",
+      "semantic_owner": "provision-store",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer", "provision-store"],
+      "readers": ["provision-store"],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:control-portable-live"
     },
@@ -793,7 +805,6 @@
       ],
       "readers": [
         "ctl-copy",
-        "execution-host",
         "materializer",
         "scenario-worker"
       ],
@@ -864,7 +875,6 @@
       "readers": [
         "ctl-copy",
         "ctl-migrate",
-        "execution-host",
         "materializer",
         "scenario-worker"
       ],
@@ -924,7 +934,6 @@
       "readers": [
         "scenario-worker",
         "run-state",
-        "execution-host",
         "flowrunner"
       ],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
@@ -1326,6 +1335,76 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
+      "id": "catalog.wirings",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer"
+      ],
+      "readers": [
+        "catalog-model"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.wiring_tombstones",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer"
+      ],
+      "readers": [
+        "catalog-model"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.wiring_activation",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer",
+        "catalog-model"
+      ],
+      "readers": [
+        "catalog-model"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.wiring_activation_events",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer",
+        "catalog-model"
+      ],
+      "readers": [
+        "catalog-model"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
       "id": "catalog.event_registrations",
       "plane": "project",
       "semantic_owner": "event-registration-model",
@@ -1467,45 +1546,6 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "wamn_run.flows",
-      "plane": "project",
-      "semantic_owner": "flow-model",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/flows.sql",
-      "writers": [
-      ],
-      "readers": [
-        "flowrunner",
-        "dispatcher"
-      ],
-      "compatibility_horizon": "flow-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare",
-      "lifecycle": "retired",
-      "superseded_by": [
-        "catalog.flow_artifacts",
-        "catalog.release_flows"
-      ]
-    },
-    {
-      "id": "wamn_run.authoring_test_sets",
-      "plane": "project",
-      "semantic_owner": "scenario-worker",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/authoring-tests.sql",
-      "writers": [
-        "scenario-worker"
-      ],
-      "readers": [
-        "scenario-worker"
-      ],
-      "compatibility_horizon": "scenario-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
       "id": "wamn_run.authoring_test_run_reservations",
       "plane": "project",
       "semantic_owner": "scenario-worker",
@@ -1595,26 +1635,6 @@
         "run-state"
       ],
       "compatibility_horizon": "caller-outcome-retention-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.run_flow_resolutions",
-      "plane": "project",
-      "semantic_owner": "run-state",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/run-state.sql",
-      "writers": [
-        "run-state",
-        "execution-host"
-      ],
-      "readers": [
-        "run-state",
-        "execution-host",
-        "flowrunner"
-      ],
-      "compatibility_horizon": "persisted-run-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {

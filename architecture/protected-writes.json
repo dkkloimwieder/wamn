@@ -1133,41 +1133,6 @@
       ]
     },
     {
-      "scope": "production-control-database-portable-store",
-      "relation": "wamn_run.authoring_test_sets",
-      "ops": false,
-      "installer": "control-portable-store-installer",
-      "owner": "scenario-worker",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "wamn_system",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "no",
-      "guards": [
-        "constraint:authoring_test_sets_byte_length_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (byte_length >= 1 AND byte_length <= 1048576)",
-        "constraint:authoring_test_sets_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (test_set_hash = ('sha256:'::text || encode(sha256(exact_bytes), 'hex'::text)))",
-        "constraint:authoring_test_sets_check2;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (NOT (convert_from(exact_bytes, 'UTF8'::name)::jsonb ->> 'schema-version'::text) IS DISTINCT FROM schema_version)",
-        "constraint:authoring_test_sets_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (byte_length = octet_length(exact_bytes))",
-        "constraint:authoring_test_sets_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, test_set_hash)",
-        "constraint:authoring_test_sets_schema_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (schema_version = '0.1'::text)",
-        "constraint:authoring_test_sets_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "policy:authoring_test_sets_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
-        "row-security:enabled=true;forced=true",
-        "trigger:authoring_test_sets_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER authoring_test_sets_immutable BEFORE DELETE OR UPDATE ON wamn_run.authoring_test_sets FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
-      ]
-    },
-    {
       "scope": "production-project-database",
       "relation": "<app_schema>.<catalog_entity_name>",
       "ops": false,
@@ -2842,49 +2807,6 @@
     },
     {
       "scope": "production-project-database",
-      "relation": "wamn_run.authoring_test_sets",
-      "ops": false,
-      "installer": "schema-control",
-      "owner": "scenario-worker",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        },
-        {
-          "role": "wamn_scenario_author",
-          "basis": "grant",
-          "operations": [
-            "insert"
-          ]
-        }
-      ],
-      "author-reachable": "no",
-      "guards": [
-        "constraint:authoring_test_sets_byte_length_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (byte_length >= 1 AND byte_length <= 1048576)",
-        "constraint:authoring_test_sets_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (test_set_hash = ('sha256:'::text || encode(sha256(exact_bytes), 'hex'::text)))",
-        "constraint:authoring_test_sets_check2;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (NOT (convert_from(exact_bytes, 'UTF8'::name)::jsonb ->> 'schema-version'::text) IS DISTINCT FROM schema_version)",
-        "constraint:authoring_test_sets_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (byte_length = octet_length(exact_bytes))",
-        "constraint:authoring_test_sets_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, test_set_hash)",
-        "constraint:authoring_test_sets_schema_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (schema_version = '0.1'::text)",
-        "constraint:authoring_test_sets_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "policy:authoring_test_sets_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
-        "row-security:enabled=true;forced=true",
-        "trigger:authoring_test_sets_delete_immutable;mode=origin;function=wamn_run.reject_immutable_authoring_test_set_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER authoring_test_sets_delete_immutable BEFORE DELETE ON wamn_run.authoring_test_sets FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()",
-        "trigger:authoring_test_sets_update_immutable;mode=origin;function=wamn_run.reject_immutable_authoring_test_set_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER authoring_test_sets_update_immutable BEFORE UPDATE ON wamn_run.authoring_test_sets FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()"
-      ]
-    },
-    {
-      "scope": "production-project-database",
       "relation": "wamn_run.effect_attempt_dispatches",
       "ops": false,
       "installer": "schema-control",
@@ -3026,45 +2948,6 @@
     },
     {
       "scope": "production-project-database",
-      "relation": "wamn_run.flows",
-      "ops": false,
-      "installer": "schema-control",
-      "owner": "flow-model",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "author SQL, RLS-bounded",
-      "guards": [
-        "constraint:flows_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, flow_id, version)",
-        "constraint:flows_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "policy:flows_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
-        "row-security:enabled=true;forced=true",
-        "unique-index:flows_active_webhook_path;valid=true;ready=true;definition=CREATE UNIQUE INDEX flows_active_webhook_path ON wamn_run.flows USING btree (tenant_id, ((graph_json -> 'trigger'::text) ->> 'path'::text)) WHERE active AND ((graph_json -> 'trigger'::text) ->> 'type'::text) = 'webhook'::text AND ((graph_json -> 'trigger'::text) ->> 'path'::text) IS NOT NULL"
-      ]
-    },
-    {
-      "scope": "production-project-database",
       "relation": "wamn_run.invocation_admissions",
       "ops": false,
       "installer": "run-state",
@@ -3189,49 +3072,6 @@
         "row-security:enabled=true;forced=true",
         "trigger:operator_run_actions_delete_immutable;mode=origin;function=wamn_run.reject_immutable_operator_run_action_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER operator_run_actions_delete_immutable BEFORE DELETE ON wamn_run.operator_run_actions FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_operator_run_action_change()",
         "trigger:operator_run_actions_update_immutable;mode=origin;function=wamn_run.reject_immutable_operator_run_action_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER operator_run_actions_update_immutable BEFORE UPDATE ON wamn_run.operator_run_actions FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_operator_run_action_change()"
-      ]
-    },
-    {
-      "scope": "production-project-database",
-      "relation": "wamn_run.run_flow_resolutions",
-      "ops": false,
-      "installer": "schema-control",
-      "owner": "run-state",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "insert"
-          ]
-        }
-      ],
-      "author-reachable": "author SQL, RLS-bounded",
-      "guards": [
-        "constraint:run_flow_resolutions_execution_bundle_fk;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, execution_bundle_hash) REFERENCES catalog.execution_bundles(tenant_id, execution_bundle_hash)",
-        "constraint:run_flow_resolutions_execution_bundle_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
-        "constraint:run_flow_resolutions_flow_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (flow_id <> ''::text)",
-        "constraint:run_flow_resolutions_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, run_id, flow_id)",
-        "constraint:run_flow_resolutions_run_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (run_id <> ''::text)",
-        "constraint:run_flow_resolutions_source_artifact_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (source_artifact_hash <> ''::text)",
-        "constraint:run_flow_resolutions_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "policy:run_flow_resolutions_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
-        "row-security:enabled=true;forced=true",
-        "trigger:run_flow_resolutions_delete_immutable;mode=origin;function=wamn_run.reject_immutable_flow_resolution_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER run_flow_resolutions_delete_immutable BEFORE DELETE ON wamn_run.run_flow_resolutions FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_flow_resolution_change()",
-        "trigger:run_flow_resolutions_update_immutable;mode=origin;function=wamn_run.reject_immutable_flow_resolution_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER run_flow_resolutions_update_immutable BEFORE UPDATE ON wamn_run.run_flow_resolutions FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_flow_resolution_change()"
       ]
     },
     {

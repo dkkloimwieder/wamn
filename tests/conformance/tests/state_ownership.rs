@@ -1626,27 +1626,20 @@ fn conflicting_second_migration_owner_is_rejected() {
     assert!(error.contains("exactly one migration owner"), "{error}");
 }
 
-/// The relation this test is anchored on was the only witness the
-/// "no static writer ⇒ author-SQL writable" rule ever had, and it was the
-/// counterexample: its writer was deleted, not delegated. `writers: []` now
-/// licenses author ownership **or** a completed retirement, never both.
+/// The rule this proves had exactly one witness, `wamn_run.flows`, and that
+/// relation was deleted by `wamn-0h0g.12.102`. `writers: []` still licenses
+/// author ownership **or** a completed retirement, never both, so the positive
+/// arm is proven against a constructed retirement.
 #[test]
 fn a_retired_relation_may_have_no_static_writer_when_it_names_its_successor() {
     let repository = repository();
-    let manifest = read_manifest(&repository);
-    let flows = manifest
-        .objects
-        .iter()
-        .find(|object| object.id == "wamn_run.flows" && object.ownership.plane == "project")
-        .expect("flows ownership record");
+    let mut manifest = read_manifest(&repository);
+    let retired = retired_relation(&mut manifest).clone();
 
-    assert!(flows.ownership.writers.is_empty());
-    assert_eq!(flows.ownership.lifecycle, Lifecycle::Retired);
-    assert_eq!(
-        flows.ownership.superseded_by,
-        ["catalog.flow_artifacts", "catalog.release_flows"]
-    );
-    for successor in &flows.ownership.superseded_by {
+    assert!(retired.writers.is_empty());
+    assert_eq!(retired.lifecycle, Lifecycle::Retired);
+    assert!(!retired.superseded_by.is_empty());
+    for successor in &retired.superseded_by {
         assert!(
             is_registered_in_plane(&manifest, successor, "project"),
             "{successor} is not a registered project-plane relation"
@@ -1658,8 +1651,10 @@ fn a_retired_relation_may_have_no_static_writer_when_it_names_its_successor() {
 /// Binding decay clause (owner ruling R10): `retired` is transitional and its
 /// population must trend to zero. Pinning the roster forces every retirement
 /// and every disposition through a conscious edit here, so the state cannot
-/// become a third ownership category that deletions park in forever. The
-/// disposition bead for the sole inhabitant is `wamn-0h0g.12.102`.
+/// become a third ownership category that deletions park in forever. The sole
+/// inhabitant, `wamn_run.flows`, was disposed of by `wamn-0h0g.12.102`, so the
+/// population is now empty and must stay that way until a new retirement is
+/// deliberately declared here.
 #[test]
 fn the_retired_population_is_pinned_by_the_decay_clause() {
     let manifest = read_manifest(&repository());
@@ -1676,27 +1671,30 @@ fn the_retired_population_is_pinned_by_the_decay_clause() {
                 .map(|family| family.id.as_str()),
         )
         .collect::<BTreeSet<_>>();
-    assert_eq!(retired, BTreeSet::from(["wamn_run.flows"]));
+    assert!(
+        retired.is_empty(),
+        "the retired population must trend to zero, found {retired:?}"
+    );
 }
 
 #[test]
 fn retired_relation_without_a_successor_is_rejected() {
     let repository = repository();
     let mut manifest = read_manifest(&repository);
-    retired_flows(&mut manifest).superseded_by.clear();
+    retired_relation(&mut manifest).superseded_by.clear();
     let error = validate_manifest(&repository, &manifest).unwrap_err();
     assert!(
         error.contains("must name the relation that took over"),
         "{error}"
     );
-    assert!(error.contains("wamn_run.flows"), "{error}");
+    assert!(error.contains("wamn_run.operator_run_actions"), "{error}");
 }
 
 #[test]
 fn retired_relation_with_an_unregistered_successor_is_rejected() {
     let repository = repository();
     let mut manifest = read_manifest(&repository);
-    retired_flows(&mut manifest).superseded_by = vec!["catalog.does_not_exist".to_string()];
+    retired_relation(&mut manifest).superseded_by = vec!["catalog.does_not_exist".to_string()];
     let error = validate_manifest(&repository, &manifest).unwrap_err();
     assert!(error.contains("catalog.does_not_exist"), "{error}");
     assert!(
@@ -1712,7 +1710,7 @@ fn retired_relation_with_an_unregistered_successor_is_rejected() {
 fn retired_relation_cannot_forward_across_planes() {
     let repository = repository();
     let mut manifest = read_manifest(&repository);
-    retired_flows(&mut manifest).superseded_by = vec!["registry.orgs".to_string()];
+    retired_relation(&mut manifest).superseded_by = vec!["registry.orgs".to_string()];
     let error = validate_manifest(&repository, &manifest).unwrap_err();
     assert!(
         error.contains("is not registered in the `project` plane"),
@@ -1725,7 +1723,8 @@ fn retired_relation_cannot_forward_across_planes() {
 fn retired_relation_cannot_supersede_itself() {
     let repository = repository();
     let mut manifest = read_manifest(&repository);
-    retired_flows(&mut manifest).superseded_by = vec!["wamn_run.flows".to_string()];
+    retired_relation(&mut manifest).superseded_by =
+        vec!["wamn_run.operator_run_actions".to_string()];
     let error = validate_manifest(&repository, &manifest).unwrap_err();
     assert!(error.contains("cannot supersede itself"), "{error}");
 }
@@ -1734,7 +1733,7 @@ fn retired_relation_cannot_supersede_itself() {
 fn retired_relation_cannot_regain_a_static_writer() {
     let repository = repository();
     let mut manifest = read_manifest(&repository);
-    retired_flows(&mut manifest)
+    retired_relation(&mut manifest)
         .writers
         .push("dispatcher".to_string());
     let error = validate_manifest(&repository, &manifest).unwrap_err();
@@ -1756,13 +1755,22 @@ fn an_active_relation_cannot_hold_a_forwarding_address() {
     );
 }
 
-fn retired_flows(manifest: &mut Manifest) -> &mut Ownership {
-    &mut manifest
+/// Synthesizes a completed retirement for the probes below to break one arm of.
+/// The manifest's `retired` population is empty by the decay clause, so the rule
+/// is proven against a constructed retirement rather than a parked relation.
+fn retired_relation(manifest: &mut Manifest) -> &mut Ownership {
+    let ownership = &mut manifest
         .objects
         .iter_mut()
-        .find(|object| object.id == "wamn_run.flows" && object.ownership.plane == "project")
-        .expect("flows ownership record")
-        .ownership
+        .find(|object| {
+            object.id == "wamn_run.operator_run_actions" && object.ownership.plane == "project"
+        })
+        .expect("operator-run-action ownership record")
+        .ownership;
+    ownership.writers.clear();
+    ownership.lifecycle = Lifecycle::Retired;
+    ownership.superseded_by = vec!["wamn_run.runs".to_string()];
+    ownership
 }
 
 #[test]

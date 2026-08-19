@@ -198,7 +198,7 @@ fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
     }));
     relations
         .sort_by(|left, right| (&left.scope, &left.relation).cmp(&(&right.scope, &right.relation)));
-    assert_eq!(relations.len(), 87, "protected relation count drifted");
+    assert_eq!(relations.len(), 89, "protected relation count drifted");
     relations
 }
 
