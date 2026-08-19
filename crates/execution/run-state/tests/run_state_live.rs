@@ -74,6 +74,11 @@ fn run_state_live() {
                  CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
                END IF; \
+               IF NOT EXISTS \
+                 (SELECT FROM pg_roles WHERE rolname = 'wamn_run_projection_writer') THEN \
+                 CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
              END $$; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \

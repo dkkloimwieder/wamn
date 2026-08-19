@@ -80,6 +80,10 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
                  CREATE ROLE wamn_effect_writer NOLOGIN; \
                END IF; \
+               IF NOT EXISTS \
+                 (SELECT 1 FROM pg_roles WHERE rolname = 'wamn_run_projection_writer') THEN \
+                 CREATE ROLE wamn_run_projection_writer NOLOGIN; \
+               END IF; \
              END $$;"
         ))
         .await

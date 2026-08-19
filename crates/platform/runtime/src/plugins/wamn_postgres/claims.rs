@@ -2781,6 +2781,15 @@ mod tests {
                      CREATE ROLE wamn_scenario_author NOLOGIN \
                        NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
                    END IF; \
+                   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
+                     CREATE ROLE wamn_effect_writer NOLOGIN \
+                       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+                   END IF; \
+                   IF NOT EXISTS (SELECT FROM pg_roles \
+                                   WHERE rolname = 'wamn_run_projection_writer') THEN \
+                     CREATE ROLE wamn_run_projection_writer NOLOGIN \
+                       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+                   END IF; \
                  END $$; \
                  ALTER ROLE wamn_app WITH LOGIN PASSWORD 'wamn_app' \
                    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
@@ -3087,7 +3096,7 @@ mod tests {
                 "SELECT has_table_privilege('wamn_app','wamn_run.effect_attempts','SELECT'), \
                         has_table_privilege('wamn_app','wamn_run.effect_attempts','INSERT'), \
                         has_function_privilege( \
-                          'wamn_app','wamn_run.guard_effect_fact_append()','EXECUTE')",
+                          'wamn_app','wamn_run.reject_immutable_effect_fact_change()','EXECUTE')",
                 &[],
             )
             .await
@@ -3234,7 +3243,7 @@ mod tests {
                 "SELECT has_table_privilege('wamn_app','wamn_run.effect_attempts','SELECT'), \
                         has_table_privilege('wamn_app','wamn_run.effect_attempts','INSERT'), \
                         has_function_privilege( \
-                          'wamn_app','wamn_run.guard_effect_fact_append()','EXECUTE')",
+                          'wamn_app','wamn_run.reject_immutable_effect_fact_change()','EXECUTE')",
                 &[],
             )
             .await
