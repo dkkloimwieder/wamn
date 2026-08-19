@@ -265,13 +265,25 @@ ALTER TABLE catalog.release_manifests
 -- `verified_publisher_principal`, which this function always supplies as NULL
 -- because publication provenance is minted by the publishing path, not here.
 --
--- The membership half of that literal did not vanish, it moved up a tier: the
--- ctl preflights (services/ctl/src/publish_catalog.rs and copy_project_env.rs)
--- now derive the member set from catalog.release_flows and raise the SAME
--- literal on a mismatch. Do not re-add a membership RAISE below; under
--- row-per-member truth the primary key refuses a CHANGED member, the
--- UPDATE/DELETE immutability triggers refuse a REMOVED one, and an ADDED one is
--- permitted by ruling.
+-- The membership half of that literal is not enforced here, and must not be
+-- re-added below: this function is handed only the release coordinate, never a
+-- member set, so it has nothing to compare. Membership is structural instead,
+-- and each of the three cases has its own enforcement:
+--   CHANGED  refused by catalog.release_flows' primary key, which covers the
+--            member coordinate and leaves flow_version and
+--            execution_bundle_hash outside the key, and by the
+--            release_flows_immutable UPDATE trigger, which closes the
+--            mutate-in-place route.
+--   REMOVED  refused by the release_flows_delete_immutable trigger.
+--   ADDED    permitted by ruling; append-only is the point (wamn-0h0g.15.159).
+--
+-- What that guarantees is that a divergent member is never STORED, not that
+-- every writer is told so: the production append carries ON CONFLICT DO NOTHING
+-- so an identical retry converges, and the same clause silently discards a
+-- divergent member instead of raising. The diagnosable refusal lives in
+-- services/ctl/src/publish_release.rs, which locks and verifies the existing
+-- member before its append and again on the concurrent-append arm, and refuses
+-- as a release conflict rather than reusing this literal.
 CREATE FUNCTION catalog.register_release_manifest(
     p_tenant_id text,
     p_catalog_id text,
