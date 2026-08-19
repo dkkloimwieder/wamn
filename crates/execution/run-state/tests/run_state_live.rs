@@ -382,16 +382,16 @@ fn run_state_live() {
         &url,
         "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status) VALUES \
+            execution_bundle_hash,status,durability_class) VALUES \
            ('t1','record-claim','f',1,'cat',1,'prod', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'dispatched'), \
+            'dispatched','standard'), \
            ('t1','record-unpaired','f',1,'cat',1,'prod', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'running'), \
+            'running','standard'), \
            ('t1','record-effect','f',1,'cat',1,'prod', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'dispatched'); \
+            'dispatched','durable'); \
          INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES \
            ('t1','record-claim'),('t1','record-effect');",
     );
@@ -488,6 +488,13 @@ fn run_state_live() {
     // The other erasure precondition: an attributed effect names the release that
     // fired it, and that link is never rewritten out from under it. `record-effect`
     // is still `running`, so only the effect evidence can refuse here.
+    //
+    // THIS LEG IS A PREMIUM-TIER PROOF (wamn-0h0g.20.2). The guard's
+    // effect-attempt arm is class-gated, so `record-effect` is admitted
+    // `durable` above; on the default `standard` class the same run erases its
+    // record freely, which is what the leg below asserts and what keeps the
+    // queue park from ever aborting on the guard. The split into
+    // surviving-spine and shelved-floor suites is wamn-0h0g.20.4's.
     success(
         &url,
         "INSERT INTO wamn_run.effect_attempts \
@@ -518,6 +525,115 @@ fn run_state_live() {
         app_preamble()
     );
     success(&url, &effect_script);
+
+    // THE COMPLEMENT, AND THE HALF THE CLASS GATE MAKES LOAD-BEARING
+    // (wamn-0h0g.20.2). The identical run on the DEFAULT class erases its
+    // record freely even while carrying an attributed effect. If this leg ever
+    // reds, `park_sql` — which carries the same class predicate on the same
+    // `EXISTS` — aborts on this guard for every standard run that ever reached
+    // the effect ledger, and the run plane loses the arm that reopens
+    // claimability (wamn-0h0g.15.82).
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status,durability_class) VALUES \
+           ('t1','record-standard-effect','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'running','standard'); \
+         UPDATE wamn_run.runs SET release_version = 4, manifest_digest = \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+          WHERE run_id = 'record-standard-effect'; \
+         INSERT INTO wamn_run.effect_attempts \
+           (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,local_node_id, \
+            source_artifact_hash,requirement_name,occurrence,seq,generation_fact_kind, \
+            attempt_deadline_at,attempt_input_ref) \
+         VALUES ('t1','record-standard-effect', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',0, \
+           'effect-node', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'manager',0,1,'not-required','2099-01-01T00:00:00Z','standard-effect-input');",
+    );
+    let standard_class_script = format!(
+        "{} \
+         UPDATE runs SET release_version = NULL, manifest_digest = NULL \
+          WHERE run_id = 'record-standard-effect'; \
+         DO $$ BEGIN \
+           ASSERT (SELECT release_version FROM runs \
+                    WHERE run_id='record-standard-effect') IS NULL, \
+                  'the default class could not clear a record the park must clear'; \
+         END $$; COMMIT;",
+        app_preamble()
+    );
+    success(&url, &standard_class_script);
+
+    // The class is defended TWICE, and the two guards are independent.
+    //
+    // First, by the column grant: `wamn_app` holds neither INSERT nor UPDATE on
+    // `durability_class`, so the guest-visible role cannot buy the premium tier
+    // at all — the refusal is `insufficient_privilege`, before any trigger runs.
+    let class_grant_script = format!(
+        "{} \
+         DO $$ DECLARE refusal text; BEGIN \
+           BEGIN \
+             UPDATE runs SET durability_class = 'durable' \
+              WHERE run_id = 'record-standard-effect'; \
+             ASSERT false, 'the app role holds write authority over the class'; \
+           EXCEPTION WHEN insufficient_privilege THEN \
+             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
+             ASSERT refusal = 'permission denied for table runs', refusal; \
+           END; \
+         END $$; COMMIT;",
+        app_preamble()
+    );
+    success(&url, &class_grant_script);
+
+    // Second, by the column-scoped trigger, which is what defends the class
+    // against a role the grant does not stop. RIDER 1 of wamn-0h0g.20.1: a
+    // column the trigger does not NAME never fires its transition arm, so this
+    // leg is the only thing that can tell a named column from an unnamed one.
+    success(
+        &url,
+        "DO $$ DECLARE refusal text; BEGIN \
+           BEGIN \
+             UPDATE wamn_run.runs SET durability_class = 'durable' \
+              WHERE run_id = 'record-standard-effect'; \
+             ASSERT false, 'an admitted run changed its durability class'; \
+           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
+             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
+             ASSERT refusal = 'run-admission-pin-immutable', refusal; \
+           END; \
+           ASSERT (SELECT durability_class FROM wamn_run.runs \
+                    WHERE run_id='record-standard-effect') = 'standard', \
+                  'the refused class change leaked through'; \
+         END $$;",
+    );
+
+    // The ruled literal set and the fail-open default, against the INSTALLED
+    // DDL rather than the file: `standard` is what an admission that names no
+    // class takes, and nothing outside the pair is storable. The unruled literal
+    // is tried on an INSERT deliberately — a BEFORE UPDATE trigger runs ahead of
+    // constraint checking, so an UPDATE would prove the trigger again, not the
+    // CHECK.
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT durability_class FROM wamn_run.runs \
+                    WHERE run_id='record-claim') = 'standard', \
+                  'the absent-policy default is not the cheap tier'; \
+           BEGIN \
+             INSERT INTO wamn_run.runs \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                environment,execution_bundle_hash,status,durability_class) \
+             VALUES ('t1','record-unruled-class','f',1,'cat',1,'prod', \
+               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+               'running','premium'); \
+             ASSERT false, 'the class CHECK admitted an unruled literal'; \
+           EXCEPTION WHEN check_violation THEN NULL; \
+           END; \
+         END $$;",
+    );
 
     // Half a record never reaches the guard — its record arms do not fire while
     // both OLD values are NULL — so `runs_release_record_check` is the only thing
