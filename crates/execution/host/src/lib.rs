@@ -855,6 +855,13 @@ impl ExecutionHost {
         // Non-spoofable, host-injected: the guest reads these from its session,
         // never chooses them. set_runner validates the owner charset.
         plugin.set_tenant(owner, tenant)?;
+        // wamn-0h0g.17.9: the SAME project the `ConnectionHttp` built below
+        // freezes into its `Box<str>`. This plugin's registry is what the
+        // guest's own data path resolves (`project_for`), and an unregistered
+        // project falls back to `DEFAULT_PROJECT` — so omitting this leaves one
+        // process resolving TWO databases the moment the configured project is
+        // not the default.
+        plugin.set_project(owner, project)?;
         if let Some(s) = schema {
             plugin.set_schema(owner, s)?;
         }
