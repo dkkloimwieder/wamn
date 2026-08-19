@@ -56,8 +56,17 @@ use opentelemetry::metrics::Counter;
 use crate::wiring::Wiring;
 
 /// One `(environment, wiring)` activation pointer — the key
-/// `catalog.wiring_activation` is scoped by, minus the tenant and catalog a
-/// serving process already fixes.
+/// `catalog.wiring_activation` is scoped by, minus the tenant and catalog.
+///
+/// **HAZARD: this key is NOT tenant-scoped.** It carried a claim that a serving
+/// process already fixes the tenant and catalog. That claim is false: the
+/// sibling plugin in the SAME process
+/// (`crates/platform/runtime/src/plugins/wamn_flow_invocation.rs`) takes
+/// tenant/catalog/environment PER WORKLOAD BIND, so one process serves many
+/// triples. Two tenants sharing an environment name and a wiring id would
+/// collide here, and the second would be served the first's graph. Keying
+/// decision owed — see `wamn-0h0g.12.138`. Do not wire a production driver
+/// against this path until it is ruled.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Pointer {
     environment: Arc<str>,
@@ -139,6 +148,12 @@ impl Lookup {
 /// Shared across deliveries and threads: `get` on the hot path, `insert` under
 /// the token that miss handed out, [`WiringCache::invalidate`] when the
 /// activation pointer flips.
+///
+/// **HAZARD: not tenant-scoped.** No entry point here takes a tenant — see
+/// [`Pointer`]. One shared instance in a multi-tenant process would cross-serve
+/// wirings. Keying decision owed — see `wamn-0h0g.12.138`. **No production
+/// process may construct one until that is ruled**; today none does, which is
+/// the only reason this is latent.
 #[derive(Debug)]
 pub struct WiringCache {
     max_entries: usize,
@@ -147,7 +162,12 @@ pub struct WiringCache {
 }
 
 impl WiringCache {
-    /// A cache holding at most `max_entries` compiled wirings (a chart value).
+    /// A cache holding at most `max_entries` compiled wirings.
+    ///
+    /// The bound is a constructor argument and NOTHING SETS IT FROM A CHART.
+    /// This said "(a chart value)"; no such knob exists, and every caller today
+    /// is a test. Stated plainly rather than aspirationally — `docs/PLAN/PLAN.md`
+    /// records the identical doc-comment-as-mechanism defect for pooling.
     pub fn new(max_entries: NonZeroUsize) -> WiringCache {
         WiringCache {
             max_entries: max_entries.get(),

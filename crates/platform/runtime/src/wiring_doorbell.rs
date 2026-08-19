@@ -54,13 +54,21 @@ use wamn_router::WiringCache;
 /// outcome listener's delay: the same transport with the same failure mode.
 const DOORBELL_RECONNECT_DELAY: Duration = Duration::from_millis(250);
 
-/// The tenant and catalog a serving process is fixed to.
+/// The tenant and catalog THIS DOORBELL filters notices by.
 ///
-/// [`WiringCache`]'s pointer key is `(environment, wiring)` only, because a
-/// serving process already fixes these two. `pg_notify` is per-DATABASE and
-/// tenants share a database under row-level security, so without this filter one
-/// tenant's flip would drop another tenant's identically-named pointer — not a
-/// stale serve, but a store read nobody asked for.
+/// `pg_notify` is per-DATABASE and tenants share a database under row-level
+/// security, so without this filter one tenant's flip would drop another
+/// tenant's identically-named pointer — not a stale serve, but a store read
+/// nobody asked for.
+///
+/// **HAZARD: this scope filters the DOORBELL, and does NOT scope the CACHE.**
+/// This doc previously justified [`WiringCache`]'s `(environment, wiring)`
+/// pointer key by asserting that a serving process is fixed to one tenant and
+/// catalog. That assertion is FALSE — the sibling plugin in this same process
+/// ([`flow_invocation`](crate::flow_invocation)'s registrations) is keyed per
+/// workload bind, so one process serves many triples. The cache itself takes no
+/// tenant at any entry point. Keying decision owed — see `wamn-0h0g.12.138`. Do
+/// not wire a production driver against this path until it is ruled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DoorbellScope {
     pub tenant_id: String,
