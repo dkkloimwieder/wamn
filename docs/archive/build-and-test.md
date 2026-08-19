@@ -5465,3 +5465,66 @@ MESSAGE (`carries non-writer database ACL`), and that is the load-bearing line.
 `GOVERNED_JSON_SCHEMAS` (6). Only the literals carry two independent faults, which
 is why the JSON half deliberately still short-circuits — a missing JSON file has no
 second expectation to report.
+
+### [wamn-0h0g.20.4] the split production-claim live suites
+
+`production_claim_live.rs` no longer holds the effect-uncertain floor. It is now
+two `#[ignore]`d binaries over one shared fixture module
+(`crates/platform/runtime/tests/common/mod.rs`):
+
+* `production_claim_live` — the surviving spine, on the DEFAULT `standard`
+  class. Env `WAMN_PRODUCTION_CLAIM_PG_URL` (unchanged).
+* `production_claim_durable_live` — the shelved crash floor, on the PREMIUM
+  `durable` class. Env `WAMN_DURABLE_TIER_PG_URL` (new).
+
+Both install schemas `wamn_claim_live` and `catalog` and DROP them on teardown,
+so they MUST NOT run concurrently against the same database. Prefer a fresh
+container per suite: the fixture creates an `wamn_effect_writer_*` LOGIN role,
+and PostgreSQL roles are CLUSTER-WIDE, so a reused cluster fails the second run
+with `password authentication failed` rather than an assertion.
+
+```bash
+# compile + lint both (debug, no database)
+cargo test --locked --offline -p wamn-runtime \
+  --test production_claim_live --test production_claim_durable_live --no-run
+
+# the pure queue proofs (no database)
+cargo test --locked --offline -p wamn-run-state --test queue
+
+# live — one throwaway PostgreSQL 18 PER SUITE
+docker run -d --name wamn-claim-spine -e POSTGRES_PASSWORD=pw \
+  -e POSTGRES_DB=claimspine -p 55441:5432 postgres:18
+WAMN_PRODUCTION_CLAIM_PG_URL="postgres://postgres:pw@127.0.0.1:55441/claimspine" \
+  cargo test --locked -p wamn-runtime --test production_claim_live \
+  production_claim_live -- --ignored --exact --nocapture --test-threads=1
+
+docker run -d --name wamn-claim-durable -e POSTGRES_PASSWORD=pw \
+  -e POSTGRES_DB=claimdurable -p 55442:5432 postgres:18
+WAMN_DURABLE_TIER_PG_URL="postgres://postgres:pw@127.0.0.1:55442/claimdurable" \
+  cargo test --locked -p wamn-runtime --test production_claim_durable_live \
+  production_claim_durable_live -- --ignored --exact --nocapture --test-threads=1
+
+docker rm -f wamn-claim-spine wamn-claim-durable
+```
+
+`docker exec ... pg_isready` reports ready BEFORE TCP binds; retry the first
+host connection rather than trusting it.
+
+**The class gate is proven live by the PAIR, not by either suite alone.** The
+spine's `standard-ledger` leg gives a `standard` run an attributed
+`effect_attempts` row and asserts the claim is `Empty` and the reap is `Reaped`;
+the durable suite's `effect-race` leg is the same row shape on the other class
+and both results flip, to `Terminalized` and `EffectAttempt`. Mutating
+`DurabilityClass::admits_effect_evidence` (`crates/execution/run-state/src/
+durability.rs`) to `true` fails the spine suite at its `standard-ledger` leg
+with `left: EffectAttempt / right: Reaped` — verified on a fresh container, so
+the leg is load-bearing rather than vacuous.
+
+Existing recipes naming `--test production_claim_live` (≈ lines 1763, 4605,
+4625, 4917) still work unchanged; add `--test production_claim_durable_live`
+beside each to keep covering the shelved floor.
+
+Known baseline red on the documented clippy recipe, NOT caused by this bead:
+`cargo clippy -p wamn-runtime --test production_claim_live -- -D warnings` fails
+in the lib at `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`
+(`too_many_arguments`, 9/7) before clippy reaches any test target.
