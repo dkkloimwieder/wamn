@@ -253,6 +253,11 @@ async fn prepare_scratch_database(client: &Client) {
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
                ELSE ALTER ROLE wamn_ops NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_control_author') THEN \
+                 CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               ELSE ALTER ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
              END $$; \
              REVOKE wamn_scenario_author FROM wamn_app; \
              DO $$ BEGIN \
@@ -504,7 +509,7 @@ async fn generate_rows(
              JOIN pg_catalog.pg_roles owner ON owner.oid=c.relowner \
              WHERE c.relkind IN ('r','p') \
                AND n.nspname IN ('registry','provisioning','identity','catalog', \
-                                  'app_system','wamn_run','audit_app') \
+                                  'app_system','wamn_run','wamn_authority','audit_app') \
              ORDER BY 1",
             &[],
         )
