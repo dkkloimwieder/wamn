@@ -85,6 +85,8 @@ fn runs_stand_in() -> String {
           CHECK (status IN ('dispatched', 'running', 'completed', 'failed', \
                             'infrastructure-failure', 'effect-uncertain')), \
         trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
+        durability_class text NOT NULL DEFAULT 'standard' \
+          CHECK (durability_class IN ('standard', 'durable')), \
         release_version int, manifest_digest text, \
         input_json jsonb, result_json jsonb, state_json jsonb, \
         invocation_context jsonb NOT NULL DEFAULT '{}'::jsonb, \
