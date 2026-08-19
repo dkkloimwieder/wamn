@@ -85,6 +85,21 @@ impl RunnerEgressPolicy {
             .insert(component_id.to_string(), parsed);
     }
 
+    /// Remove `component_id`'s declaration entirely (wamn-0h0g.17.10).
+    ///
+    /// The counterpart of [`set_declared`](Self::set_declared), for a claim
+    /// scope that is a POOLED execution instance: the declaration belongs to the
+    /// run that supplied it, so it must leave when that run's checkout ends
+    /// rather than stand until the next run overwrites it. `allows_connection`
+    /// treats an absent declaration as "no flow-level narrowing", so removing it
+    /// restores exactly the never-supplied state a prewarmed instance has.
+    pub fn clear_declared(&self, component_id: &str) {
+        self.declared
+            .write()
+            .expect("declared lock poisoned")
+            .remove(component_id);
+    }
+
     /// The component's resolved egress set. `None` (never supplied) and
     /// `Some(empty)` both mean deny-all to the caller — the distinction only
     /// matters for logging.
@@ -166,6 +181,33 @@ mod tests {
         policy.set_declared("runner", &[]);
         let set = policy.declared("runner").expect("declared");
         assert!(set.is_empty(), "declared-empty is stored");
+    }
+
+    /// wamn-0h0g.17.10 — clearing REMOVES rather than replaces.
+    ///
+    /// A pooled instance's declaration must not survive the checkout that
+    /// supplied it. `set_declared(id, &[])` is not a substitute: an empty
+    /// declaration is stored and read back as `Some(empty)`, which is a
+    /// deny-all NARROWING, while an absent one is the never-supplied state a
+    /// prewarmed instance has. Both halves are asserted so a clear implemented
+    /// as an empty write fails here.
+    #[test]
+    fn clearing_a_declaration_removes_it_rather_than_storing_an_empty_one() {
+        let policy = RunnerEgressPolicy::default();
+        policy.set_declared("runner", &["notify.example".into()]);
+        policy.set_declared("other-runner", &["notify.example".into()]);
+
+        policy.clear_declared("runner");
+        assert_eq!(
+            policy.declared("runner").map(|hosts| hosts.len()),
+            None,
+            "a cleared scope is absent, not declared-empty"
+        );
+        assert_eq!(
+            policy.declared("other-runner").map(|hosts| hosts.len()),
+            Some(1),
+            "clearing one claim scope must not disturb another's declaration"
+        );
     }
 
     #[test]

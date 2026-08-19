@@ -605,6 +605,11 @@ pub struct ExecutionHost {
     live: Option<LiveExecution>,
     postgres: Arc<WamnPostgres>,
     logging: Arc<WamnLogging>,
+    /// The third process-resident registry keyed by this instance's claim scope.
+    /// Held so [`revoke_identity`](ReusableExecutionInstance::revoke_identity)
+    /// can clear the declaration the served run supplied (wamn-0h0g.17.10); the
+    /// store reaches the same `Arc` through its plugin map.
+    egress: Arc<RunnerEgressPolicy>,
     /// This instance's CLAIM SCOPE: the key every process-resident claim
     /// registry — `wamn:postgres`, `wasi:logging`, the egress declaration — is
     /// keyed by, and the id the store's `Ctx` was built with.
@@ -653,6 +658,7 @@ pub struct ExecutionHost {
 /// | the carried `(release version, manifest digest)` | [`SessionClaims::release`] → same |
 /// | the causation run context | cleared by the same call; the runner re-declares it per run |
 /// | the `wasi:logging` `(tenant, project)` claim | [`Self::claims`] → `WamnLogging::set_claim` |
+/// | the `wamn:runner/egress` declaration | cleared at revoke; the runner re-declares it per run |
 /// | the private effect-writer's project-environment scope | [`Self::effect_writer`] |
 /// | the trace parent for this acquisition | [`Self::span`] |
 ///
@@ -794,11 +800,17 @@ impl ReusableExecutionInstance for ExecutionHost {
         Ok(())
     }
 
-    /// Clear the same elements. `wamn:postgres` is the RLS-load-bearing half, so
-    /// its revocation is exact; `wasi:logging` has no removal on its plugin, and
-    /// its claim is overwritten by the next bind under this same scope.
+    /// Clear the same elements, EXACTLY: every process-resident registry keyed
+    /// by this claim scope is removed from, not merely left to be overwritten by
+    /// the next bind (wamn-0h0g.17.10). An idle pooled instance therefore
+    /// resolves no tenant, no log-enrichment claim, and no egress allowlist —
+    /// the three registries `bind_identity` and the run it served write to.
     fn revoke_identity(&mut self) {
         self.postgres.revoke_session_claims(&self.component_id);
+        self.logging.clear_claim(&self.component_id);
+        // Declared by the trusted runner per run through `wamn:runner/egress`
+        // rather than at bind, so this is the ONLY place it is removed.
+        self.egress.clear_declared(&self.component_id);
         self.effect_writer = None;
         self.span = tracing::Span::none();
     }
@@ -917,6 +929,10 @@ impl ExecutionHost {
             mode,
             egress_policy,
         } = capabilities;
+        // Retained on the instance so revocation can clear the run's declaration
+        // (wamn-0h0g.17.10); the `Production` arm below moves its own handle into
+        // the outgoing-HTTP gate.
+        let egress = egress_policy.clone();
         let connection_allowed_hosts = match &mode {
             CapabilityMode::Production { allowed_hosts }
             | CapabilityMode::Injected { allowed_hosts, .. } => allowed_hosts.clone(),
@@ -988,6 +1004,7 @@ impl ExecutionHost {
             live: Some(LiveExecution { store, run }),
             postgres: plugin,
             logging,
+            egress,
             component_id: owner.into(),
             runtime_revision,
             effect_writer,

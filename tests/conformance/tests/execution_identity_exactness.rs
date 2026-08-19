@@ -1,29 +1,42 @@
-//! Construction of an execution instance registers its project EXACTLY
-//! (wamn-0h0g.17.9).
+//! The execution identity seam is EXACT at both ends (wamn-0h0g.17.9,
+//! wamn-0h0g.17.10).
 //!
-//! `execution_pool_checkout_identity.rs` proves the checkout seam is
-//! *isolating*: two interleaved checkouts on one digest pool never
-//! cross-attribute. That argument says nothing about a SINGLE instance's
-//! construction, which is what this proves.
+//! `execution_pool_checkout_identity.rs` proves the seam is *isolating*: two
+//! interleaved checkouts on one digest pool never cross-attribute. That argument
+//! says nothing about the two exactness properties proved here, both of which
+//! are about a SINGLE instance:
 //!
-//! `ExecutionHost::instantiate` hands the SAME `project` to `ConnectionHttp`
-//! (which freezes it) and to the `wamn:postgres` claim registry (which the
-//! guest's own data path reads through `project_for`). If it registers only
-//! some of the identity tuple, the two halves of one process resolve DIFFERENT
-//! databases.
+//! 1. **Construction is complete** (wamn-0h0g.17.9). `ExecutionHost::instantiate`
+//!    hands the SAME `project` to `ConnectionHttp` (which freezes it) and to the
+//!    `wamn:postgres` claim registry (which the guest's own data path reads
+//!    through `project_for`). If it registers only some of the identity tuple,
+//!    the two halves of one process resolve DIFFERENT databases.
+//!
+//! 2. **Revocation is complete** (wamn-0h0g.17.10). Ending a checkout must leave
+//!    the instance carrying no resolvable identity in ANY process-resident
+//!    registry — `wamn:postgres`, `wasi:logging`, and the `wamn:runner/egress`
+//!    declaration alike. A registry that is written at bind and not cleared at
+//!    revoke leaves an idle pooled instance resolving the tenant it last served.
 //!
 //! Every instance here is built by `ExecutionHost::instantiate` — the one
 //! production store constructor — so the registries asserted are the real ones
-//! the RLS session and the log enrichment read.
+//! the RLS session, the log enrichment, and the outgoing-HTTP gate read.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
+use wamn_execution_host::{
+    ExecutionAcquisition, ExecutionHost, ExecutionIdentity, ExecutionInstancePool,
+    ExecutionPoolKey, ExecutionPoolLimits, INVOCATIONS_PER_INSTANCE, InvocationDisposition,
+    TrustedExecutionRuntimeRevision, production_capabilities,
+};
 use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
-use wamn_runtime::plugins::wamn_postgres::{DEFAULT_PROJECT, WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::plugins::wamn_postgres::{
+    DEFAULT_PROJECT, SessionClaims, WamnPostgres, WamnPostgresConfig,
+};
 
 /// A component with the flowrunner's export signature and no imports.
 ///
@@ -96,6 +109,16 @@ fn offline_postgres() -> Arc<WamnPostgres> {
     )
 }
 
+fn limits() -> ExecutionPoolLimits {
+    ExecutionPoolLimits {
+        max_instances: 2,
+        max_reserved_bytes: usize::MAX,
+        max_idle_per_digest: 2,
+        max_invocations_per_instance: INVOCATIONS_PER_INSTANCE,
+        max_idle_age: Duration::from_secs(60),
+    }
+}
+
 /// Build one instance through the production constructor, under `project`.
 async fn instantiate(
     engine: &wash_runtime::engine::Engine,
@@ -127,6 +150,12 @@ async fn instantiate(
     )
     .await
     .expect("instantiate a flowrunner instance")
+}
+
+fn digest_key(bytes: &[u8]) -> ExecutionPoolKey {
+    ExecutionPoolKey::new(
+        TrustedExecutionRuntimeRevision::from_flowrunner_bytes(bytes).flowrunner_component_digest(),
+    )
 }
 
 /// wamn-0h0g.17.9 — one process, one project, both paths.
@@ -184,4 +213,148 @@ async fn instantiate_registers_the_same_project_the_connection_effect_path_froze
         Some(("construction-tenant".to_string(), OTHER_PROJECT.to_string())),
         "the wasi:logging claim carries the same project as the data path"
     );
+}
+
+/// wamn-0h0g.17.10 — ending a checkout leaves NOTHING resolvable.
+///
+/// Three process-resident registries are keyed by the claim scope and are
+/// identity-derived: the `wamn:postgres` claims, the `wasi:logging`
+/// `(tenant, project)` claim, and the `wamn:runner/egress` declaration the
+/// trusted runner supplies for the run it drives. `revoke_identity` clearing
+/// only the first leaves an idle pooled instance still resolving a logging
+/// claim and an egress allowlist for the tenant it last served —
+/// overwritten-on-next-bind rather than removed.
+#[tokio::test]
+async fn ending_a_checkout_revokes_every_registry_the_instance_resolved_under() {
+    let engine = build_engine(&[]).expect("the production pooling engine");
+    let bytes = wat::parse_str(GUEST).expect("encode the identity gate component");
+    let postgres = offline_postgres();
+    let logging = Arc::new(WamnLogging::from_env().expect("offline wasi:logging plugin"));
+    let egress = Arc::new(RunnerEgressPolicy::default());
+
+    let pool = ExecutionInstancePool::new(limits()).expect("valid pool limits");
+    let key = digest_key(&bytes);
+    let host = instantiate(
+        &engine,
+        &bytes,
+        postgres.clone(),
+        logging.clone(),
+        egress.clone(),
+        "instance-to-revoke",
+        OTHER_PROJECT,
+    )
+    .await;
+    let scope = host.claim_scope().to_string();
+    pool.insert(key.clone(), host)
+        .expect("prewarm one instance");
+
+    let lease = pool
+        .checkout(
+            &key,
+            &ExecutionAcquisition::untraced(SessionClaims {
+                tenant: "tenant-a".to_string(),
+                project: Some("tenant-a-project".to_string()),
+                schema: Some("schema_a".to_string()),
+                runner: Some("runner-a".to_string()),
+                role: None,
+                user_id: None,
+                release: None,
+            }),
+        )
+        .expect("tenant A binds")
+        .expect("a warm instance is available");
+
+    // The run this checkout serves declares its resolved egress through the
+    // trusted `wamn:runner/egress` channel, which writes THIS registry under
+    // THIS claim scope. Written here directly because the channel is only
+    // reachable from inside a guest call, and the registry is the subject.
+    egress.set_declared(&scope, &["effects.example.com".to_string()]);
+
+    assert_eq!(
+        postgres
+            .session_claims(&scope)
+            .expect("bound during the checkout")
+            .tenant,
+        "tenant-a"
+    );
+    assert_eq!(
+        logging.claim_snapshot(&scope),
+        Some(("tenant-a".to_string(), "tenant-a-project".to_string()))
+    );
+    assert!(
+        egress.declared(&scope).is_some(),
+        "the run declared an egress set under this claim scope"
+    );
+
+    drop(lease);
+
+    assert_eq!(
+        postgres.session_claims(&scope),
+        None,
+        "the postgres claims are revoked when the checkout ends"
+    );
+    assert_eq!(
+        logging.claim_snapshot(&scope),
+        None,
+        "an idle instance must not still resolve the logging claim of the tenant \
+         it last served — overwritten-on-next-bind is not revocation"
+    );
+    assert_eq!(
+        egress.declared(&scope),
+        None,
+        "an idle instance must not still resolve the egress allowlist of the run \
+         it last served"
+    );
+}
+
+/// The same exactness on the path a lease takes when its disposition is
+/// declared rather than dropped, so the clear is not attached to one exit only.
+#[tokio::test]
+async fn a_finished_lease_revokes_every_registry_too() {
+    let engine = build_engine(&[]).expect("the production pooling engine");
+    let bytes = wat::parse_str(GUEST).expect("encode the identity gate component");
+    let postgres = offline_postgres();
+    let logging = Arc::new(WamnLogging::from_env().expect("offline wasi:logging plugin"));
+    let egress = Arc::new(RunnerEgressPolicy::default());
+
+    let pool = ExecutionInstancePool::new(limits()).expect("valid pool limits");
+    let key = digest_key(&bytes);
+    let host = instantiate(
+        &engine,
+        &bytes,
+        postgres.clone(),
+        logging.clone(),
+        egress.clone(),
+        "instance-to-finish",
+        OTHER_PROJECT,
+    )
+    .await;
+    let scope = host.claim_scope().to_string();
+    pool.insert(key.clone(), host)
+        .expect("prewarm one instance");
+
+    let lease = pool
+        .checkout(
+            &key,
+            &ExecutionAcquisition::untraced(SessionClaims {
+                tenant: "tenant-b".to_string(),
+                project: Some("tenant-b-project".to_string()),
+                schema: None,
+                runner: None,
+                role: None,
+                user_id: None,
+                release: None,
+            }),
+        )
+        .expect("tenant B binds")
+        .expect("a warm instance is available");
+    egress.set_declared(&scope, &["effects.example.com".to_string()]);
+
+    lease
+        .finish(InvocationDisposition::Reusable)
+        .expect("this instance is destroyed at the end of its checkout");
+
+    assert_eq!(postgres.session_claims(&scope), None);
+    assert_eq!(logging.claim_snapshot(&scope), None);
+    assert_eq!(egress.declared(&scope), None);
 }

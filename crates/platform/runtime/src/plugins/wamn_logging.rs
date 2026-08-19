@@ -324,6 +324,22 @@ impl WamnLogging {
         );
     }
 
+    /// Remove the registered claim for a component id (wamn-0h0g.17.10).
+    ///
+    /// The counterpart of [`set_claim`](Self::set_claim), for a claim scope that
+    /// is a POOLED execution instance rather than a workload: identity arrives
+    /// at checkout and must leave when that checkout ends, so an idle instance
+    /// does not still resolve the tenant it last served. Removing is not the
+    /// same as letting the next bind overwrite — between the two, an
+    /// unregistered scope enriches with the `claim_for` sentinel instead of a
+    /// stale tenant.
+    pub fn clear_claim(&self, component_id: &str) {
+        self.claims
+            .write()
+            .expect("claims lock poisoned")
+            .remove(component_id);
+    }
+
     /// Read back the registered `(tenant, project)` claim for a component id, or
     /// `None` when nothing was registered (the `claim_for` sentinel path). The
     /// run-worker wiring test asserts the host-injected identity landed here.
@@ -704,6 +720,41 @@ mod tests {
         assert_eq!(r.node, "log-node");
         assert_eq!(r.seq, Some(7));
         assert_eq!(r.trace_id.as_deref(), Some(VALID_TRACE_ID));
+    }
+
+    /// wamn-0h0g.17.10 — clearing a claim REMOVES it, so a scope that is no
+    /// longer bound enriches with the `claim_for` sentinel rather than with the
+    /// tenant it last served.
+    ///
+    /// The record assertion is the load-bearing half: a `clear_claim` that only
+    /// blanked the readback while leaving the enrichment map populated would
+    /// still ship another tenant's identity on every record.
+    #[tokio::test]
+    async fn clearing_a_claim_returns_the_scope_to_the_unregistered_sentinel() {
+        let (plugin, capture) =
+            WamnLogging::new_with_capture(WamnLoggingConfig::default()).expect("plugin");
+        plugin.set_claim("comp-1", "acme", "receiving");
+        plugin.set_claim("comp-2", "globex", "shipping");
+
+        plugin.clear_claim("comp-1");
+        assert_eq!(plugin.claim_snapshot("comp-1"), None);
+        assert_eq!(
+            plugin.claim_snapshot("comp-2"),
+            Some(("globex".to_string(), "shipping".to_string())),
+            "clearing one claim scope must not disturb another's claim"
+        );
+
+        let ctx = r#"{"flow":"f","run":"r","node":"n","seq":0}"#;
+        plugin.ingest("comp-1", Level::Info, ctx, "after revocation".into());
+        wait_drained(&plugin).await;
+
+        let recs = capture.snapshot();
+        assert_eq!(recs.len(), 1, "one emitted record");
+        assert_eq!(
+            recs[0].tenant, "unregistered",
+            "a revoked scope must not still enrich with the tenant it last served"
+        );
+        assert_eq!(recs[0].project, "unregistered");
     }
 
     /// A valid traceparent attaches the run's trace_id to the record; an absent
