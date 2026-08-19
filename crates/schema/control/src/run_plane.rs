@@ -6597,7 +6597,7 @@ CREATE INDEX event_registrations_by_entity
         }
         assert_eq!(
             catalog.len(),
-            30,
+            34,
             "catalog-schema.sql table count: {catalog:?}"
         );
     }

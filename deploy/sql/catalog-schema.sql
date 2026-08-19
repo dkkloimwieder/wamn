@@ -1680,52 +1680,6 @@ CREATE POLICY seed_datasets_tenant ON catalog.seed_datasets
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.seed_datasets TO wamn_app;
 
--- ---------------------------------------------------------------------------
--- Event registrations (EVT-REG, D19 v3 §5, crates/events/registration). One row per
--- registration: a subscribing flow's declaration of WHICH entity's row events it
--- wants (`entity_id`), WHICH ops, and an optional condition filter. The
--- materializer (crates/... l5i9.17) is the
--- consumer — a durable consumer per registration, condition evaluated there
--- (hot-editable). Managed through the minimal CRUD surface in crates/data/entity-access
--- (`registration` module); the editor panel lands later (EVT-TRIGGER-UX).
---
--- `entity_id` is the stable catalog ENTITY ID, not a table name, so a table
--- rename never orphans a registration (EVT-OIDMAP, wamn-l5i9.11); it matches the
--- CDC envelope's `entity` segment. It is a DENORMALIZED column — the full
--- declaration is the `registration` jsonb (crates/events/registration is the source
--- of truth for its semantics; the DB does not enumerate ops/condition as
--- columns) — so 11.8 impact analysis (wamn-wvb) can enumerate "which
--- registrations reference entity X" without opening every document, and the
--- materializer's per-entity sweep is indexed (`event_registrations_by_entity`).
--- Like catalog.rls_policies, registrations attach to the LIVE catalog, not a
--- specific catalog VERSION (a registration is hot-editable), so there is no
--- catalog_version column or version FK.
--- ---------------------------------------------------------------------------
-CREATE TABLE catalog.event_registrations (
-    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
-    catalog_id      text NOT NULL,
-    registration_id text NOT NULL,
-    flow_id         text NOT NULL,
-    entity_id       text NOT NULL,
-    registration    jsonb NOT NULL,
-    PRIMARY KEY (tenant_id, catalog_id, registration_id)
-);
-ALTER TABLE catalog.event_registrations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE catalog.event_registrations FORCE ROW LEVEL SECURITY;
-CREATE POLICY event_registrations_tenant ON catalog.event_registrations
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT ON catalog.event_registrations TO wamn_app;
--- wamn-0h0g.12.29: callable-flow admission locks the live registration with
--- `FOR KEY SHARE` as wamn_app, and PostgreSQL demands UPDATE on at least one
--- column for ANY row-locking clause. `tenant_id` is the only column whose
--- FORCE-RLS WITH CHECK admits nothing but the value already in the row, so this
--- grant buys the lock and carries no semantic rewrite authority.
-GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;
--- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
-CREATE INDEX event_registrations_by_entity
-    ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
-
 -- BEGIN WIRING STORAGE MIGRATION (wamn-0h0g.18.2)
 -- ---------------------------------------------------------------------------
 -- Wirings: the gated tenant graph over palette components (exe-model rev 4 R3,
@@ -1956,3 +1910,49 @@ CREATE TRIGGER wiring_activation_events_immutable
 BEFORE UPDATE OR DELETE ON catalog.wiring_activation_events
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 -- END WIRING STORAGE MIGRATION (wamn-0h0g.18.2)
+
+-- ---------------------------------------------------------------------------
+-- Event registrations (EVT-REG, D19 v3 §5, crates/events/registration). One row per
+-- registration: a subscribing flow's declaration of WHICH entity's row events it
+-- wants (`entity_id`), WHICH ops, and an optional condition filter. The
+-- materializer (crates/... l5i9.17) is the
+-- consumer — a durable consumer per registration, condition evaluated there
+-- (hot-editable). Managed through the minimal CRUD surface in crates/data/entity-access
+-- (`registration` module); the editor panel lands later (EVT-TRIGGER-UX).
+--
+-- `entity_id` is the stable catalog ENTITY ID, not a table name, so a table
+-- rename never orphans a registration (EVT-OIDMAP, wamn-l5i9.11); it matches the
+-- CDC envelope's `entity` segment. It is a DENORMALIZED column — the full
+-- declaration is the `registration` jsonb (crates/events/registration is the source
+-- of truth for its semantics; the DB does not enumerate ops/condition as
+-- columns) — so 11.8 impact analysis (wamn-wvb) can enumerate "which
+-- registrations reference entity X" without opening every document, and the
+-- materializer's per-entity sweep is indexed (`event_registrations_by_entity`).
+-- Like catalog.rls_policies, registrations attach to the LIVE catalog, not a
+-- specific catalog VERSION (a registration is hot-editable), so there is no
+-- catalog_version column or version FK.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.event_registrations (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id      text NOT NULL,
+    registration_id text NOT NULL,
+    flow_id         text NOT NULL,
+    entity_id       text NOT NULL,
+    registration    jsonb NOT NULL,
+    PRIMARY KEY (tenant_id, catalog_id, registration_id)
+);
+ALTER TABLE catalog.event_registrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.event_registrations FORCE ROW LEVEL SECURITY;
+CREATE POLICY event_registrations_tenant ON catalog.event_registrations
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.event_registrations TO wamn_app;
+-- wamn-0h0g.12.29: callable-flow admission locks the live registration with
+-- `FOR KEY SHARE` as wamn_app, and PostgreSQL demands UPDATE on at least one
+-- column for ANY row-locking clause. `tenant_id` is the only column whose
+-- FORCE-RLS WITH CHECK admits nothing but the value already in the row, so this
+-- grant buys the lock and carries no semantic rewrite authority.
+GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;
+-- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
+CREATE INDEX event_registrations_by_entity
+    ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
