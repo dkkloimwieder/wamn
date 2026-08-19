@@ -329,6 +329,41 @@ fn lock_catalog_head_sql() -> String {
 /// The named unique constraint chooses the concurrent winner without allowing a
 /// losing transaction to leave a partial run or queue row.
 ///
+/// THE BOUNDARY KEY (wamn-0h0g.19.7). An event's `idempotency_key` is composed
+/// once, in `input` as `event_idempotency_key`, and read from there by BOTH the
+/// existence lookup and the run insert — one expression, so the key a run is
+/// stored under and the key a retry is found by cannot drift apart.
+///
+/// Two identities, disjoint by construction:
+///
+/// * `evt:<registration>:dedup:<id>` when the event carries the author-supplied
+///   [`wamn_router::DEDUP_ID_FIELD`] string. This is what makes R2's default
+///   sellable: emit is AT-LEAST-ONCE, so one logical derived event can reach the
+///   stream twice as two messages at two different stream positions. Keyed by
+///   stream position those are two runs; keyed by the author's id they are one,
+///   and the `runs_idempotency` partial unique index — not an application check
+///   — is what enforces it. At-least-once in-stream becomes exactly-once
+///   ADMITTED at the boundary.
+/// * `evt:<registration>:<stream-seq>` when it does not. A `bigint` rendering
+///   can never collide with the literal `dedup:` prefix, so an author-keyed run
+///   and a position-keyed run can never claim each other's identity.
+///
+/// The key is derived from the presented event body rather than taken as a
+/// parameter because the parameter numbers are already fixed by the guests
+/// binding this statement positionally, and because the id is the AUTHOR's fact:
+/// the emitting component derives it from the identities in its `node-context`,
+/// exactly as an HTTP caller supplies a client key.
+///
+/// THE DEPTH-0 LINEAGE CARVE-OUT rides with it, and is not a loosening. At
+/// `event_depth = 0` the DDL CHECK already forces
+/// `event_source_run_id = run_id AND event_root_run_id = run_id`, so comparing
+/// those columns against a stored row is comparing RUN IDS — and a run id is
+/// minted fresh per admission attempt, so a second delivery of the same
+/// author-keyed event would answer `conflicting-run-identity` instead of
+/// `duplicate` purely because it minted a different id. No other keyed match in
+/// this statement compares run ids either. At `event_depth > 0` the lineage is
+/// real causal information and stays compared, exactly as before.
+///
 /// ARM ORDER — DRIFT BEFORE IDENTITY, the reverse of `management_admit_sql`,
 /// and deliberately so (`wamn-0h0g.15.160`). Do not "fix" the asymmetry. A
 /// keyed callable retry that must replay a stored outcome never reaches this
@@ -355,7 +390,12 @@ WITH input AS ( \
            $18::text AS registration_id, $19::bigint AS event_seq, \
            $20::text::jsonb AS registration_document, $21::text AS registration_hash, \
            $22::text AS event_source_run_id, $23::text AS event_root_run_id, \
-           $24::int AS event_depth \
+           $24::int AS event_depth, \
+           CASE WHEN $1::text = 'event' THEN 'evt:' || $18::text || ':' \
+             || COALESCE('dedup:' || NULLIF(CASE \
+                  WHEN jsonb_typeof($10::text::jsonb) = 'object' \
+                    THEN $10::text::jsonb ->> 'dedup-id' END, ''), \
+                $19::bigint::text) END AS event_idempotency_key \
 ), \
 locked_head AS MATERIALIZED ( \
     SELECT h.applied_catalog_version \
@@ -425,7 +465,7 @@ existing_identity_run AS MATERIALIZED ( \
      WHERE r.tenant_id = i.tenant_id \
        AND (r.run_id = COALESCE((SELECT run_id FROM existing_http), i.run_id) \
          OR (i.producer = 'event' \
-           AND r.idempotency_key = 'evt:' || i.registration_id || ':' || i.event_seq::text)) \
+           AND r.idempotency_key = i.event_idempotency_key)) \
      FOR KEY SHARE OF r \
 ), \
 classified AS ( \
@@ -502,8 +542,9 @@ classified AS ( \
          OR xr.execution_bundle_hash IS DISTINCT FROM rp.execution_bundle_hash \
          OR xr.attachment_id IS DISTINCT FROM i.attachment_id \
          OR xr.registration_id IS DISTINCT FROM i.registration_id \
-         OR xr.event_source_run_id IS DISTINCT FROM i.event_source_run_id \
-         OR xr.event_root_run_id IS DISTINCT FROM i.event_root_run_id \
+         OR (COALESCE(i.event_depth, 0) <> 0 \
+           AND (xr.event_source_run_id IS DISTINCT FROM i.event_source_run_id \
+             OR xr.event_root_run_id IS DISTINCT FROM i.event_root_run_id)) \
          OR xr.event_depth IS DISTINCT FROM i.event_depth \
          OR xr.capture_mode IS DISTINCT FROM 'off' \
          OR xr.input_json IS DISTINCT FROM i.input_json) \
@@ -566,8 +607,7 @@ created_run AS ( \
                               to_jsonb(c.registration_hash), true) \
                ELSE c.invocation_context END), \
            '0.1', c.platform_revision, \
-           CASE WHEN c.producer = 'event' \
-             THEN 'evt:' || c.registration_id || ':' || c.event_seq::text END, \
+           c.event_idempotency_key, \
            c.response_deadline_at, c.run_deadline_at \
       FROM classified AS c WHERE c.result_code = 'ready' \
        AND (c.producer <> 'http' OR EXISTS (SELECT 1 FROM created_http)) \
@@ -944,6 +984,70 @@ mod tests {
     }
 
     #[test]
+    fn the_boundary_keys_a_derived_event_on_the_author_dedup_id() {
+        // wamn-0h0g.19.7. Emit is AT-LEAST-ONCE, so one logical derived event
+        // can reach the stream twice at two different positions. Keyed by
+        // position that is two runs; keyed by the author's id it is one, and
+        // `runs_idempotency` — not an application check — enforces it.
+        let sql = admission_sql().admit().to_string();
+        assert!(sql.contains("$10::text::jsonb ->> 'dedup-id'"));
+        assert!(sql.contains("'dedup:' || NULLIF"));
+        // Malformed or absent falls back to the landed stream-position identity
+        // rather than to a degenerate key: an empty id is NOT an id.
+        assert!(sql.contains("jsonb_typeof($10::text::jsonb) = 'object'"));
+        assert!(sql.contains("END, ''), $19::bigint::text) END AS event_idempotency_key"));
+        // The parameter count is UNCHANGED. Every guest binds this statement
+        // positionally, so the key is derived from the presented body, exactly
+        // as `capture_mode` and `trigger_source` are derived from the producer.
+        assert!(sql.contains("$24"));
+        assert!(!sql.contains("$25"));
+    }
+
+    #[test]
+    fn the_two_event_identities_are_disjoint_by_construction() {
+        // A `bigint` rendering can never collide with the literal `dedup:`
+        // prefix, so an author-keyed run and a position-keyed run can never
+        // claim each other's identity. This is why the discriminator is a
+        // PREFIX and not, say, the raw id appended in the seq's place.
+        let sql = admission_sql().admit().to_string();
+        let key_start = sql
+            .find("CASE WHEN $1::text = 'event' THEN 'evt:'")
+            .expect("the boundary key is composed in `input`");
+        let key = &sql[key_start..key_start + 260];
+        assert!(key.contains("'dedup:'"));
+        assert!(key.contains("$19::bigint::text"));
+        // COALESCE order is load-bearing: the AUTHOR's id wins when present.
+        assert!(
+            key.find("'dedup:'").unwrap() < key.find("$19::bigint::text").unwrap(),
+            "the stream position outranked the author-supplied id"
+        );
+    }
+
+    #[test]
+    fn the_depth_zero_lineage_is_not_a_divergence_operand() {
+        // At depth 0 the DDL CHECK forces source = root = run_id, so comparing
+        // those columns is comparing RUN IDS — and a run id is minted fresh per
+        // admission attempt. Left in, a second delivery of the same
+        // author-keyed event answers `conflicting-run-identity` instead of
+        // `duplicate`, which is the whole promise of wamn-0h0g.19.7 lost to an
+        // operand that carries no information. At depth > 0 the lineage is real
+        // causal information and stays compared.
+        let sql = admission_sql().admit().to_string();
+        assert!(sql.contains(
+            "OR (COALESCE(i.event_depth, 0) <> 0 \
+             AND (xr.event_source_run_id IS DISTINCT FROM i.event_source_run_id \
+             OR xr.event_root_run_id IS DISTINCT FROM i.event_root_run_id))"
+        ));
+        // The depth itself is still compared unconditionally, and the lineage
+        // VALIDATOR is untouched — a depth-0 event still has to name itself.
+        assert!(sql.contains("OR xr.event_depth IS DISTINCT FROM i.event_depth"));
+        assert!(sql.contains(
+            "i.event_depth = 0 AND (i.event_source_run_id <> i.run_id \
+             OR i.event_root_run_id <> i.run_id)"
+        ));
+    }
+
+    #[test]
     fn admission_persists_the_versioned_release_artifact_principal() {
         let sql = admission_sql().admit().to_string();
         assert!(sql.contains("JOIN catalog.flow_artifacts AS a"));
@@ -1002,7 +1106,12 @@ mod tests {
         assert!(!sql.contains("lease_expires_at"));
         assert!(!sql.contains("lease_generation"));
         assert!(sql.contains("THEN c.event_seq ELSE 0 END"));
-        assert!(sql.contains("'evt:' || c.registration_id"));
+        // The boundary key is composed ONCE in `input` and read from there by
+        // both the existence lookup and the run insert (wamn-0h0g.19.7), so the
+        // key a run is stored under cannot drift from the key a retry finds.
+        assert_eq!(sql.matches("'evt:' || $18::text").count(), 1);
+        assert_eq!(sql.matches("event_idempotency_key").count(), 3);
+        assert!(sql.contains("r.idempotency_key = i.event_idempotency_key"));
         assert!(!sql.contains("partition_key"));
         assert!(!sql.contains("partition_policy"));
         assert!(!sql.contains("existing_queue"));

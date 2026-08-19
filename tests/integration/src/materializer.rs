@@ -45,7 +45,15 @@ pub mod tests {
         let sql = admission_transaction(AdmissionTransition::CallableFlow { schema: &schema })
             .admit()
             .to_string();
-        assert!(sql.contains("'evt:' || i.registration_id || ':' || i.event_seq::text"));
+        // The event identity is composed ONCE in `input` and read from there by
+        // both the existence lookup and the run insert (wamn-0h0g.19.7). The
+        // stream position remains the identity for an event carrying no
+        // author-supplied dedup id — which is every event the CDC materializer
+        // produces — so this proof's subject is unchanged; what moved is that a
+        // ROUTER-emitted derived event can now present its own key instead.
+        assert!(sql.contains("'evt:' || $18::text || ':'"));
+        assert!(sql.contains("$19::bigint::text) END AS event_idempotency_key"));
+        assert!(sql.contains("r.idempotency_key = i.event_idempotency_key"));
         assert!(sql.contains("er.registration <> i.registration_document"));
         assert!(sql.contains("'{registration-hash}'"));
         assert!(sql.contains("CASE WHEN c.producer = 'event' THEN c.registration_id END"));
