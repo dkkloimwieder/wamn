@@ -14,6 +14,11 @@ wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-flow-invocation = { workspace = true }
 wamn-pg-core = { workspace = true }
+# wamn-0h0g.16.15: the pointer-flip doorbell subscriber. The router crate
+# declares no DB, no pooling, no runtime and no clock, so the LISTEN connection
+# that rings its WiringCache cannot live there; it lives here, beside the only
+# other LISTEN in the tree (`flow_invocation.rs`, `wamn_run_outcome`).
+wamn-router = { workspace = true }
 wamn-run-state = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }

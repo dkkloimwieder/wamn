@@ -4590,6 +4590,7 @@ dependencies = [
  "wamn-flow",
  "wamn-flow-invocation",
  "wamn-pg-core",
+ "wamn-router",
  "wamn-run-state",
  "wash-runtime",
  "wasmtime-wasi",

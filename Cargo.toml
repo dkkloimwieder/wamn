@@ -117,6 +117,7 @@ wamn-project-state = { path = "crates/identity/project-state", version = "0.1.0"
 wamn-proof-conformance = { path = "tests/conformance", version = "0.1.0" }
 wamn-proof-integration = { path = "tests/integration", version = "0.1.0" }
 wamn-proof-system = { path = "tests/system", version = "0.1.0" }
+wamn-router = { path = "crates/execution/router", version = "0.1.0" }
 wamn-run-state = { path = "crates/execution/run-state", version = "0.1.0" }
 wamn-runner = { path = "crates/execution/flow-engine", version = "0.1.0" }
 wamn-runtime = { path = "crates/platform/runtime", version = "0.1.0" }

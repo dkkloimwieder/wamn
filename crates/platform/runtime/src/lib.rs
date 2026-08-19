@@ -10,6 +10,7 @@ pub mod memory_metrics;
 pub mod plan_artifact;
 pub mod plugins;
 pub mod release_manifest;
+pub mod wiring_doorbell;
 
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
