@@ -1331,9 +1331,6 @@ fn resolve_target<'a>(
     }
 
     let basename = normalized.rsplit('.').next().unwrap_or(&normalized);
-    if basename == "wamn_catalog" {
-        return family(manifest, "app-schema-catalog-snapshot");
-    }
     if basename == "wamn_entities" {
         return family(manifest, "app-schema-entity-map");
     }
@@ -1808,7 +1805,7 @@ fn temporary_writer_cannot_expand_with_matching_dynamic_declaration() {
         error.contains("may appear only on its locked writer-family scope"),
         "{error}"
     );
-    assert!(error.contains("app-schema-catalog-snapshot"), "{error}");
+    assert!(error.contains("app-schema-entity-map"), "{error}");
 }
 
 #[test]

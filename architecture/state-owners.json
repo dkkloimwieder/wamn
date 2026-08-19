@@ -170,12 +170,6 @@
       "scope": "production-project-database"
     },
     {
-      "path": "services/ctl/src/publish_catalog.rs",
-      "kind": "inline-family",
-      "scope": "production-project-database",
-      "marker": "CREATE TABLE IF NOT EXISTS wamn_catalog"
-    },
-    {
       "path": "crates/control/provision/src/sql.rs",
       "kind": "inline-family",
       "scope": "production-project-database",
@@ -1756,24 +1750,6 @@
     }
   ],
   "families": [
-    {
-      "id": "app-schema-catalog-snapshot",
-      "plane": "project",
-      "pattern": "<app_schema>.wamn_catalog",
-      "semantic_owner": "schema-model",
-      "migration_owners": [
-        "ctl-publish"
-      ],
-      "schema_source": "services/ctl/src/publish_catalog.rs",
-      "writers": [
-        "ctl-publish"
-      ],
-      "readers": [
-        "flowrunner"
-      ],
-      "compatibility_horizon": "one-published-catalog-generation-and-single-version-development-release",
-      "drift_gate": "R35:transactional-pinned-serving-generation"
-    },
     {
       "id": "app-schema-entity-map",
       "plane": "project",
