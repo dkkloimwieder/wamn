@@ -42,6 +42,17 @@ the plan names and wires the sink:
    plain `tracing::info_span!`, so it nests under whatever span is current (a
    request handler, or a trigger span) and threads into that trace.
 
+1b. **`wamn.http_effect` / `wamn.jetstream` / `wamn.invocation` spans**
+   (`wamn-0h0g.24.3`) — the same treatment for the three host plugins that
+   emitted nothing, so every effect a guest causes is visible, not just the DB
+   ones. Each keeps its own constant name (`tracing` requires one) and its own
+   `effect.operation` field, and all four share one `wamn.tenant` /
+   `wamn.project` / `wamn.component` block from the `effect_span!` macro in
+   `crates/platform/runtime/src/plugins/effect_span.rs`.
+   `tests/conformance/tests/effect_spans.rs` holds every effect surface to it and
+   freezes the published `wamn.postgres` name and `db.*` fields against another
+   rename.
+
 2. **`wamn.trigger` span** — the dispatcher
    (`services/dispatcher/src/lib.rs`, `trigger_span`) roots a fired run's
    trace with `wamn.flow` / `wamn.run_id` / `wamn.flow_version` /

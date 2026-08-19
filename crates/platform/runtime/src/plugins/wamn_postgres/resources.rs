@@ -16,6 +16,8 @@ use wash_runtime::wasmtime::component::Resource;
 
 use wamn_event_wire::Causation;
 
+use crate::plugins::effect_span::{EffectIdentity, effect_span, record_effect_ms};
+
 use super::claims::{OneShotResult, reject_claim_mutation};
 use super::pool::destroy_connection;
 use super::types::{PgParam, columns_of, decode_row, map_pg_error};
@@ -215,6 +217,13 @@ impl causation::Host for ActiveCtx<'_> {
 /// (query / execute / txn.query / txn.execute) and `wamn.project`. On the global
 /// meter beside the 9.1 `wamn.postgres` span — a no-op until a provider is
 /// installed (`OTEL_*`). Recorded around the awaited call at each `db_span` site.
+///
+/// PUBLISHED, AND FROZEN. `tests/integration/src/metricbench.rs` polls
+/// `wamn_postgres_query_duration_ms_count` against the running collector and
+/// blocks the in-cluster gate on it, and asserts it again over pinned fixture
+/// text; `docs/archive/observability/dashboards.md` slices a deployed Grafana
+/// panel by `db_operation`. Renaming either the instrument or the label breaks
+/// the gate loudly and the dashboards silently.
 static QUERY_DURATION_MS: std::sync::LazyLock<opentelemetry::metrics::Histogram<f64>> =
     std::sync::LazyLock::new(|| {
         opentelemetry::global::meter("wamn-postgres")
@@ -223,37 +232,38 @@ static QUERY_DURATION_MS: std::sync::LazyLock<opentelemetry::metrics::Histogram<
             .build()
     });
 
+/// The operation label of [`QUERY_DURATION_MS`]. Frozen with the instrument.
+const DB_OPERATION: &str = "db.operation";
+
 /// Record one guest DB call's wall time on [`QUERY_DURATION_MS`]. `op` matches
 /// the `db_span` operation; `project` is the executing component's project.
 fn record_query_ms(op: &'static str, project: &str, elapsed: std::time::Duration) {
-    QUERY_DURATION_MS.record(
-        elapsed.as_secs_f64() * 1000.0,
-        &[
-            opentelemetry::KeyValue::new("db.operation", op),
-            opentelemetry::KeyValue::new("wamn.project", project.to_string()),
-        ],
-    );
+    record_effect_ms(&QUERY_DURATION_MS, DB_OPERATION, op, project, elapsed);
 }
 
 /// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
 /// the executing component's tenant/project (the same claim maps that inject
-/// `app.tenant`; the guest cannot spoof them). Emitted through the process's
-/// global `tracing` subscriber, which the fork's `initialize_observability`
-/// bridges to OTel and exports over OTLP when `OTEL_*` is set — so the span
-/// nests under whatever span is current (a request handler, or a
-/// `wamn-dispatcher::trigger_span`) and threads into that trace. Enriching a
-/// host-created span keeps 9.1 wamn-side (no fork patch); `run_id`/`node_id`
-/// enrichment on this span awaits the 9.2 guest→host run-context contract.
+/// `app.tenant`; the guest cannot spoof them). The name and the `db.*` fields are
+/// this surface's own — a Tempo panel in `dashboards.md` slices traces by the
+/// span name — while the `wamn.*` identity block is [`effect_span`]'s, shared with
+/// every other effect surface.
+///
+/// `run_id`/`node_id` enrichment awaits a guest→host run-context contract; the
+/// trusted HTTP effect is the one surface whose WIT carries those coordinates
+/// today.
 fn db_span(plugin: &WamnPostgres, component_id: &str, op: &'static str) -> tracing::Span {
     let tenant = plugin.tenant_for(component_id).unwrap_or_default();
     let project = plugin.project_for(component_id);
-    tracing::info_span!(
+    effect_span!(
         "wamn.postgres",
+        EffectIdentity {
+            tenant: &tenant,
+            project: &project,
+            component: component_id,
+        },
+        None,
         db.system = "postgresql",
         db.operation = op,
-        wamn.tenant = %tenant,
-        wamn.project = %project,
-        wamn.component = %component_id,
     )
 }
 
@@ -307,37 +317,45 @@ impl client::Host for ActiveCtx<'_> {
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgTransaction>, PgError>> {
         let plugin = plugin_of(self)?;
         let component_id = self.component_id.to_string();
-
-        let tenant = match plugin.require_tenant(&component_id) {
-            Ok(t) => t,
-            Err(e) => return Ok(Err(e)),
-        };
         let project = plugin.project_for(&component_id);
-        let schema = plugin.schema_for(&component_id);
-        let runner = plugin.runner_for(&component_id);
-        let role = plugin.role_for(&component_id);
-        let user_id = plugin.user_id_for(&component_id);
-        let run = plugin.current_run_for(&component_id);
-        let (conn, pp) = match plugin.checkout(&project).await {
-            Ok(c) => c,
+        let span = db_span(&plugin, &component_id, "begin");
+        let t0 = std::time::Instant::now();
+
+        // Both round trips — the pool checkout and the claim-stamping BEGIN —
+        // are the one effect, so one span covers both.
+        let opened = async {
+            let tenant = plugin.require_tenant(&component_id)?;
+            let schema = plugin.schema_for(&component_id);
+            let runner = plugin.runner_for(&component_id);
+            let role = plugin.role_for(&component_id);
+            let user_id = plugin.user_id_for(&component_id);
+            let run = plugin.current_run_for(&component_id);
+            let (conn, pp) = plugin.checkout(&project).await?;
+            if let Err(e) = plugin
+                .begin_with_claims(
+                    &conn,
+                    &tenant,
+                    schema.as_deref(),
+                    runner.as_deref(),
+                    role.as_deref(),
+                    user_id.as_deref(),
+                    run.as_ref(),
+                    pp.statement_timeout_ms,
+                )
+                .await
+            {
+                plugin.destroy(conn);
+                return Err(e);
+            }
+            Ok((conn, pp))
+        }
+        .instrument(span)
+        .await;
+        record_query_ms("begin", &project, t0.elapsed());
+        let (conn, pp) = match opened {
+            Ok(opened) => opened,
             Err(e) => return Ok(Err(e)),
         };
-        if let Err(e) = plugin
-            .begin_with_claims(
-                &conn,
-                &tenant,
-                schema.as_deref(),
-                runner.as_deref(),
-                role.as_deref(),
-                user_id.as_deref(),
-                run.as_ref(),
-                pp.statement_timeout_ms,
-            )
-            .await
-        {
-            plugin.destroy(conn);
-            return Ok(Err(e));
-        }
         let txn = PgTransaction {
             state: Arc::new(std::sync::Mutex::new(TxnState {
                 conn: Some(conn),
@@ -414,12 +432,17 @@ impl client::HostTransaction for ActiveCtx<'_> {
         if let Err(e) = reject_claim_mutation(&sql) {
             return Ok(Err(e));
         }
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let span = db_span(&plugin, &component_id, "txn.open_cursor");
+        let project = plugin.project_for(&component_id);
         let txn = self.table.get_mut(&rep)?;
         txn.cursor_seq += 1;
         let name = format!("wamn_c{}", txn.cursor_seq);
         let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
 
         let declare = format!("DECLARE {name} CURSOR FOR {sql}");
+        let t0 = std::time::Instant::now();
         let result = with_txn_conn(&state, &destroyed, |conn| async move {
             let r = async {
                 let stmt = conn.prepare(&declare).await?;
@@ -430,7 +453,9 @@ impl client::HostTransaction for ActiveCtx<'_> {
             .await;
             (conn, r)
         })
+        .instrument(span)
         .await;
+        record_query_ms("txn.open_cursor", &project, t0.elapsed());
         Ok(match result {
             Ok(_) => Ok(self.table.push(PgCursor {
                 state,
@@ -445,18 +470,36 @@ impl client::HostTransaction for ActiveCtx<'_> {
         &mut self,
         rep: Resource<PgTransaction>,
     ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let span = db_span(&plugin, &component_id, "txn.commit");
+        let project = plugin.project_for(&component_id);
         let txn = self.table.get(&rep)?;
         let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
-        Ok(finish_txn(&state, &destroyed, "COMMIT").await)
+        let t0 = std::time::Instant::now();
+        let result = finish_txn(&state, &destroyed, "COMMIT")
+            .instrument(span)
+            .await;
+        record_query_ms("txn.commit", &project, t0.elapsed());
+        Ok(result)
     }
 
     async fn rollback(
         &mut self,
         rep: Resource<PgTransaction>,
     ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let span = db_span(&plugin, &component_id, "txn.rollback");
+        let project = plugin.project_for(&component_id);
         let txn = self.table.get(&rep)?;
         let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
-        Ok(finish_txn(&state, &destroyed, "ROLLBACK").await)
+        let t0 = std::time::Instant::now();
+        let result = finish_txn(&state, &destroyed, "ROLLBACK")
+            .instrument(span)
+            .await;
+        record_query_ms("txn.rollback", &project, t0.elapsed());
+        Ok(result)
     }
 
     async fn drop(&mut self, rep: Resource<PgTransaction>) -> wash_runtime::wasmtime::Result<()> {
@@ -516,13 +559,18 @@ impl client::HostCursor for ActiveCtx<'_> {
         rep: Resource<PgCursor>,
         max_rows: u32,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let span = db_span(&plugin, &component_id, "cursor.fetch");
+        let project = plugin.project_for(&component_id);
         let cursor = self.table.get(&rep)?;
         let (state, destroyed, name) = (
             cursor.state.clone(),
             cursor.destroyed.clone(),
             cursor.name.clone(),
         );
-        Ok(with_txn_conn(&state, &destroyed, |conn| async move {
+        let t0 = std::time::Instant::now();
+        let fetched = with_txn_conn(&state, &destroyed, |conn| async move {
             let r = async {
                 let sql = format!("FETCH FORWARD {max_rows} FROM {name}");
                 let stmt = conn.prepare(&sql).await?;
@@ -533,8 +581,10 @@ impl client::HostCursor for ActiveCtx<'_> {
             .await;
             (conn, r)
         })
-        .await
-        .and_then(|(columns, rows)| {
+        .instrument(span)
+        .await;
+        record_query_ms("cursor.fetch", &project, t0.elapsed());
+        Ok(fetched.and_then(|(columns, rows)| {
             let rows = rows.iter().map(decode_row).collect::<Result<Vec<_>, _>>()?;
             Ok(RowSet { columns, rows })
         }))

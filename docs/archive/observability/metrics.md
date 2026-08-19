@@ -42,6 +42,7 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
 | `wamn.run_queue.depth` | observable gauge (i64) | `wamn.tenant`, `wamn.project` | dispatcher `tick_project` (`services/dispatcher/src/lib.rs`, `RUN_QUEUE_DEPTH_SQL`) |
 | `wamn.postgres.pool.{size,available,waiting}` | observable gauge (u64) | `wamn.project` | `WamnPostgres::register_pool_metrics` (deadpool `Pool::status()`) |
 | `wamn.postgres.query.duration_ms` | histogram | `db.operation` (query/execute/txn.query/txn.execute), `wamn.project` | the `db_span` sites (`crates/platform/runtime/src/plugins/wamn_postgres/resources.rs`) |
+| `wamn.{http_effect,jetstream,invocation}.duration_ms` | histogram | `effect.operation`, `wamn.project` | the `effect_span!` sites in `plugins/{connection_http,wamn_jetstream,wamn_flow_invocation}.rs` (`wamn-0h0g.24.3`) |
 | `wamn.memory.denied` | observable counter (u64) | `component` | `MemoryMeter` (`crates/platform/runtime/src/memory_metrics.rs`) |
 | `wamn.memory.high_water_bytes` | observable gauge (u64) | `component` | `MemoryMeter` |
 | `wamn.memory.budget_bytes` | observable gauge (u64) | `component` | `MemoryMeter` (budgeted stores only) |
@@ -75,6 +76,12 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
 - **Postgres pool + query latency.** Pool gauges read deadpool `Pool::status()`
   per project; the latency histogram wraps the awaited call at the four `db_span`
   sites (`db.operation` = query/execute/txn.query/txn.execute).
+- **Non-postgres effect latency.** `wamn-0h0g.24.3` gave the outbound HTTP,
+  JetStream and flow-invocation effects the instrument they never had, one per
+  surface so the name identifies it exactly as `wamn.postgres.query.duration_ms`
+  does. They share a recording body, not a series. `wamn.project` is empty on
+  `wamn.invocation.duration_ms`: that plugin's identity is tenant + catalog +
+  environment and it holds no project claim.
 - **Per-component memory.** Bridges the D16 fork limiter
   (`WamnStoreLimiter`) — high-water, denial count, budget — through the read-only
   accessors the carried fork commit adds; the run-worker publishes its

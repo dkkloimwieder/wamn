@@ -24,6 +24,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tracing::Instrument as _;
 use wamn_catalog::ServingManifest;
 use wamn_flow::node_contract::normalize_portable_http_target;
 use wamn_run_state::invocation_context::HttpEffectPrincipal;
@@ -36,6 +37,10 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 use crate::connection_authority::{
     AuthorityError, NetworkPolicy, TlsPolicy, TokioDnsResolver, TransportDecision,
     parse_http_connection_authority, resolve_http_request,
+};
+use crate::plugins::effect_span::{
+    EFFECT_OPERATION, EffectIdentity, EffectRun, HTTP_EFFECT_DURATION_MS, effect_span,
+    record_effect_ms,
 };
 use crate::release_manifest::ReleaseManifestWeld;
 
@@ -574,9 +579,36 @@ impl http_effect::Host for ActiveCtx<'_> {
         request: RelativeRequest,
     ) -> wash_runtime::wasmtime::Result<Result<Response, EffectError>> {
         let plugin = plugin_of(self)?;
+        // The tenant/project are the plugin's frozen construction-time claims and
+        // the run coordinates are the guest's own declaration — a trace label
+        // here, and separately the subject of `authorize_plan_closure` inside.
+        let span = effect_span!(
+            "wamn.http_effect",
+            EffectIdentity {
+                tenant: &plugin.tenant,
+                project: &plugin.project,
+                component: self.component_id.as_ref(),
+            },
+            Some(EffectRun {
+                run_id: &context.run_id,
+                node_id: &context.local_node_id,
+                occurrence: context.occurrence,
+                requirement: &context.requirement_name,
+            }),
+            effect.operation = "send",
+        );
+        let started = std::time::Instant::now();
         let result = plugin
             .send(self.component_id.as_ref(), &context, &request)
+            .instrument(span)
             .await;
+        record_effect_ms(
+            &HTTP_EFFECT_DURATION_MS,
+            EFFECT_OPERATION,
+            "send",
+            &plugin.project,
+            started.elapsed(),
+        );
         if let Err(error) = &result {
             tracing::warn!(
                 error = ?error,

@@ -5,6 +5,7 @@ use std::str::FromStr as _;
 use std::sync::RwLock;
 
 use deadpool_postgres::{Manager, Pool};
+use tracing::Instrument as _;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -14,6 +15,9 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 use crate::flow_invocation::{
     InvocationFailure, InvocationService, InvocationServiceConfig, PostgresInvocationBackend,
     SharedOutcomeListener,
+};
+use crate::plugins::effect_span::{
+    EFFECT_OPERATION, EffectIdentity, INVOCATION_DURATION_MS, effect_span, record_effect_ms,
 };
 
 mod bindings {
@@ -38,7 +42,47 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
 pub struct WamnFlowInvocation {
     backend: Option<PostgresInvocationBackend>,
     outcome_listener: Option<SharedOutcomeListener>,
-    services: RwLock<HashMap<String, InvocationService<PostgresInvocationBackend>>>,
+    services: RwLock<HashMap<String, Registration>>,
+}
+
+/// One registered component's invocation service and the bind-time tenant claim
+/// its effect spans are enriched with.
+///
+/// The tenant is held HERE rather than read back out of the service because
+/// [`InvocationService`]'s config is private and gets no getter for this: the
+/// span needs the same trusted `wamn.tenant` workload config the registration
+/// already consumed, not the service's view of it.
+///
+/// There is deliberately NO project. This plugin's identity is tenant + catalog
+/// + environment; `wamn.project` is not its vocabulary. Reading the project or
+/// schema workload config back into this plugin is what the deleted
+/// inline-execution driver did, and `tests/flow_invocation_wit_coherence.rs`
+/// forbids both key constants here by name — so the span leaves the field
+/// empty, which truthfully says "this surface holds no such claim". Borrowing
+/// the catalog id to fill it would not be true.
+#[derive(Clone)]
+struct Registration {
+    service: InvocationService<PostgresInvocationBackend>,
+    tenant: Box<str>,
+}
+
+/// The span one flow-invocation effect opens, enriched from the component's
+/// bind-time tenant claim.
+fn invocation_span(
+    registration: &Registration,
+    component_id: &str,
+    operation: &'static str,
+) -> tracing::Span {
+    effect_span!(
+        "wamn.invocation",
+        EffectIdentity {
+            tenant: &registration.tenant,
+            project: "",
+            component: component_id,
+        },
+        None,
+        effect.operation = operation,
+    )
 }
 
 impl WamnFlowInvocation {
@@ -87,11 +131,17 @@ impl WamnFlowInvocation {
         self.services
             .write()
             .expect("flow-invocation services lock poisoned")
-            .insert(component_id.to_string(), service);
+            .insert(
+                component_id.to_string(),
+                Registration {
+                    service,
+                    tenant: tenant.into(),
+                },
+            );
         Ok(())
     }
 
-    fn service(&self, component_id: &str) -> Option<InvocationService<PostgresInvocationBackend>> {
+    fn registration(&self, component_id: &str) -> Option<Registration> {
         self.services
             .read()
             .expect("flow-invocation services lock poisoned")
@@ -166,7 +216,7 @@ impl invocation::Host for ActiveCtx<'_> {
     ) -> wash_runtime::wasmtime::Result<Result<invocation::BeginResult, invocation::InvocationError>>
     {
         let plugin = self.try_get_plugin::<WamnFlowInvocation>(WAMN_FLOW_INVOCATION_ID)?;
-        let service = plugin.service(&self.component_id).ok_or_else(|| {
+        let registration = plugin.registration(&self.component_id).ok_or_else(|| {
             wash_runtime::wasmtime::Error::msg("flow invocation component is not registered")
         })?;
         let request = wamn_flow_invocation::InvokeRequest {
@@ -185,11 +235,17 @@ impl invocation::Host for ActiveCtx<'_> {
                     tracestate: trace.tracestate,
                 }),
         };
-        Ok(service
-            .begin(request)
-            .await
-            .map(map_begin)
-            .map_err(map_invocation_error))
+        let span = invocation_span(&registration, self.component_id.as_ref(), "begin");
+        let started = std::time::Instant::now();
+        let outcome = registration.service.begin(request).instrument(span).await;
+        record_effect_ms(
+            &INVOCATION_DURATION_MS,
+            EFFECT_OPERATION,
+            "begin",
+            "",
+            started.elapsed(),
+        );
+        Ok(outcome.map(map_begin).map_err(map_invocation_error))
     }
 
     async fn wait(
@@ -200,12 +256,24 @@ impl invocation::Host for ActiveCtx<'_> {
         Result<Option<invocation::InvokeResult>, invocation::InvocationError>,
     > {
         let plugin = self.try_get_plugin::<WamnFlowInvocation>(WAMN_FLOW_INVOCATION_ID)?;
-        let service = plugin.service(&self.component_id).ok_or_else(|| {
+        let registration = plugin.registration(&self.component_id).ok_or_else(|| {
             wash_runtime::wasmtime::Error::msg("flow invocation component is not registered")
         })?;
-        Ok(service
+        let span = invocation_span(&registration, self.component_id.as_ref(), "wait");
+        let started = std::time::Instant::now();
+        let outcome = registration
+            .service
             .wait(run_id, timeout_ms)
-            .await
+            .instrument(span)
+            .await;
+        record_effect_ms(
+            &INVOCATION_DURATION_MS,
+            EFFECT_OPERATION,
+            "wait",
+            "",
+            started.elapsed(),
+        );
+        Ok(outcome
             .map(|outcome| outcome.map(map_result))
             .map_err(map_invocation_error))
     }

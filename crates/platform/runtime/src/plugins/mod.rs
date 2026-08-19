@@ -1,4 +1,5 @@
 pub mod connection_http;
+pub(crate) mod effect_span;
 pub mod flow_http_routing;
 pub mod runner_egress;
 pub mod runner_plan_supply;

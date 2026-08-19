@@ -49,6 +49,7 @@ use async_nats::jetstream::message::AckKind;
 use async_nats::jetstream::publish::PublishAck as NatsPublishAck;
 use futures_util::StreamExt as _;
 use tokio::sync::Mutex;
+use tracing::Instrument as _;
 use wamn_catalog::ServingManifest;
 use wamn_control_registry::identifiers::{
     ExecutionTargetId, doorbell_subject, mvp_execution_target_id,
@@ -61,6 +62,10 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Linker, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+use crate::plugins::effect_span::{
+    EFFECT_OPERATION, EffectIdentity, JETSTREAM_DURATION_MS, effect_span, record_effect_ms,
+};
+use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, PROJECT_CONFIG_KEY, TENANT_CONFIG_KEY};
 use crate::release_manifest::ReleaseManifestWeld;
 
 mod bindings {
@@ -132,10 +137,42 @@ pub struct WamnJetstream {
     /// Per-component execution target for the doorbell subject, registered at
     /// workload bind by the trusted MVP placement adapter — never guest-supplied.
     execution_targets: std::sync::RwLock<HashMap<String, ExecutionTargetId>>,
+    /// Per-component tenant/project claim, registered at workload bind from the
+    /// same trusted `wamn.tenant` / `wamn.project` config the `wamn:postgres`
+    /// claims read. It exists only to enrich this plugin's effect spans: before
+    /// `wamn-0h0g.24.3` the bind read the tenant, derived the execution target
+    /// from it and discarded it, so nothing here could say whose event plane a
+    /// publish or an ack belonged to.
+    claims: std::sync::RwLock<HashMap<String, JetstreamClaim>>,
     /// The release this process serves, held BY REFERENCE — reader 4 of the
     /// release-manifest weld. `None` ⇒ this process carries no release; see
     /// [`WamnJetstream::with_release`].
     release: Option<Arc<ReleaseManifestWeld>>,
+}
+
+/// One component's bind-time tenant/project claim.
+#[derive(Clone, Debug)]
+struct JetstreamClaim {
+    tenant: Box<str>,
+    project: Box<str>,
+}
+
+/// The span one `wamn:jetstream` effect opens, enriched from the component's
+/// bind-time claim.
+fn js_span(claim: &JetstreamClaim, component_id: &str, operation: &'static str) -> tracing::Span {
+    // The span name is the host capability, not the wire: `doorbell.ring`
+    // publishes on the CONTROL-plane core-NATS connection and is still
+    // `wamn.jetstream`, because this plugin is what an operator would open next.
+    effect_span!(
+        "wamn.jetstream",
+        EffectIdentity {
+            tenant: &claim.tenant,
+            project: &claim.project,
+            component: component_id,
+        },
+        None,
+        effect.operation = operation,
+    )
 }
 
 impl WamnJetstream {
@@ -145,6 +182,7 @@ impl WamnJetstream {
             ctx: Mutex::new(None),
             doorbell_nats: None,
             execution_targets: std::sync::RwLock::new(HashMap::new()),
+            claims: std::sync::RwLock::new(HashMap::new()),
             release: None,
         }
     }
@@ -211,6 +249,37 @@ impl WamnJetstream {
             .cloned()
     }
 
+    /// Register a component's bind-time tenant/project claim for span
+    /// enrichment. Both come from the trusted workload config; neither is
+    /// validated here, because nothing but a trace label depends on them.
+    fn set_claim(&self, component_id: &str, tenant: Option<&str>, project: Option<&str>) {
+        self.claims
+            .write()
+            .expect("jetstream claims lock poisoned")
+            .insert(
+                component_id.to_string(),
+                JetstreamClaim {
+                    tenant: tenant.unwrap_or_default().into(),
+                    project: project.unwrap_or(DEFAULT_PROJECT).into(),
+                },
+            );
+    }
+
+    /// The claim registered for a component, or the unclaimed default. An
+    /// unregistered component is a store built without the bind path (a bench,
+    /// a hand-linked fixture), not a guest that withheld its identity.
+    fn claim_for(&self, component_id: &str) -> JetstreamClaim {
+        self.claims
+            .read()
+            .expect("jetstream claims lock poisoned")
+            .get(component_id)
+            .cloned()
+            .unwrap_or_else(|| JetstreamClaim {
+                tenant: Box::default(),
+                project: DEFAULT_PROJECT.into(),
+            })
+    }
+
     /// Resolve (lazily connect + memoize) the JetStream context. Unconfigured or
     /// unreachable ⇒ `connection-unavailable`.
     async fn ensure_ctx(&self) -> Result<Context, JsError> {
@@ -268,12 +337,15 @@ impl HostPlugin for WamnJetstream {
         // The sole MVP placement adapter maps the same trusted `wamn.tenant`
         // config the postgres claims use into a distinct validated execution
         // target. The guest supplies neither the tenant nor the target.
-        if let Some(tenant) = item
-            .local_resources()
-            .config
-            .get(crate::plugins::wamn_postgres::TENANT_CONFIG_KEY)
-        {
-            let tenant = tenant.clone();
+        let (tenant, project) = {
+            let config = &item.local_resources().config;
+            (
+                config.get(TENANT_CONFIG_KEY).cloned(),
+                config.get(PROJECT_CONFIG_KEY).cloned(),
+            )
+        };
+        self.set_claim(item.id(), tenant.as_deref(), project.as_deref());
+        if let Some(tenant) = tenant {
             let execution_target_id = mvp_execution_target_id(&tenant)?;
             self.set_execution_target(item.id(), execution_target_id.clone());
             tracing::debug!(
@@ -476,45 +548,65 @@ impl consumer::Host for ActiveCtx<'_> {
         config: consumer::ConsumerConfig,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<JsConsumer>, JsError>> {
         let plugin = plugin_of(self)?;
-        // THE RELEASE GATE, and the only place it is applied. Every message
-        // resource a guest can reach came from a consumer bound here, so refusing
-        // the bind refuses delivery for that whole registration before one event
-        // is handed over — which is what "before reaching any component" means.
-        // Filtering per delivered message instead would make the host take over
-        // the ack disposition the WIT deliberately leaves to the guest.
-        if let Some(refusal) = bind_refusal(plugin.serving_manifest(), &config.filter_subject) {
-            tracing::warn!(
-                target: "wamn::jetstream",
-                durable = %config.durable,
-                filter_subject = %config.filter_subject,
-                refusal = %refusal,
-                "consumer bind refused: the serving release does not register this source"
-            );
-            return Ok(Err(JsError::Other(refusal)));
+        let component_id = self.component_id.to_string();
+        let claim = plugin.claim_for(&component_id);
+        let span = js_span(&claim, &component_id, "bind");
+        let started = std::time::Instant::now();
+        // The whole bind — the release gate and all three round trips — runs
+        // inside the span, so a refusal is attributed to the same effect the
+        // successful bind would have been.
+        let bound = async {
+            // THE RELEASE GATE, and the only place it is applied. Every message
+            // resource a guest can reach came from a consumer bound here, so
+            // refusing the bind refuses delivery for that whole registration
+            // before one event is handed over — which is what "before reaching
+            // any component" means. Filtering per delivered message instead would
+            // make the host take over the ack disposition the WIT deliberately
+            // leaves to the guest.
+            if let Some(refusal) = bind_refusal(plugin.serving_manifest(), &config.filter_subject) {
+                tracing::warn!(
+                    target: "wamn::jetstream",
+                    durable = %config.durable,
+                    filter_subject = %config.filter_subject,
+                    refusal = %refusal,
+                    "consumer bind refused: the serving release does not register this source"
+                );
+                return Err(JsError::Other(refusal));
+            }
+            let ctx = plugin.ensure_ctx().await?;
+            let stream = ctx
+                .get_stream(&config.stream_name)
+                .await
+                .map_err(|e| map_get_stream_err(&config.stream_name, &e))?;
+            let pull = PullConfig {
+                durable_name: Some(config.durable.clone()),
+                ack_policy: AckPolicy::Explicit,
+                filter_subject: config.filter_subject.clone(),
+                ack_wait: Duration::from_millis(config.ack_wait_ms),
+                max_deliver: if config.max_deliver == 0 {
+                    -1
+                } else {
+                    i64::from(config.max_deliver)
+                },
+                ..Default::default()
+            };
+            stream
+                .get_or_create_consumer(&config.durable, pull)
+                .await
+                .map_err(|e| JsError::Other(format!("bind consumer: {e}")))
         }
-        let ctx = match plugin.ensure_ctx().await {
+        .instrument(span)
+        .await;
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "bind",
+            &claim.project,
+            started.elapsed(),
+        );
+        let bound = match bound {
             Ok(c) => c,
             Err(e) => return Ok(Err(e)),
-        };
-        let stream = match ctx.get_stream(&config.stream_name).await {
-            Ok(s) => s,
-            Err(e) => return Ok(Err(map_get_stream_err(&config.stream_name, &e))),
-        };
-        let pull = PullConfig {
-            durable_name: Some(config.durable.clone()),
-            ack_policy: AckPolicy::Explicit,
-            filter_subject: config.filter_subject.clone(),
-            ack_wait: Duration::from_millis(config.ack_wait_ms),
-            max_deliver: if config.max_deliver == 0 {
-                -1
-            } else {
-                i64::from(config.max_deliver)
-            },
-            ..Default::default()
-        };
-        let bound = match stream.get_or_create_consumer(&config.durable, pull).await {
-            Ok(c) => c,
-            Err(e) => return Ok(Err(JsError::Other(format!("bind consumer: {e}")))),
         };
         Ok(Ok(self.table.push(JsConsumer { consumer: bound })?))
     }
@@ -530,24 +622,45 @@ impl consumer::HostDurableConsumer for ActiveCtx<'_> {
         // Clone the consumer out so the table borrow does not span the push of
         // the message resources below (Consumer is a cheap Arc-backed handle).
         let consumer = self.table.get(&rep)?.consumer.clone();
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let claim = plugin.claim_for(&component_id);
+        let span = js_span(&claim, &component_id, "fetch");
+        let started = std::time::Instant::now();
 
-        let mut fetch = consumer.fetch().max_messages(max_messages as usize);
-        if expires_ms > 0 {
-            fetch = fetch.expires(Duration::from_millis(expires_ms));
-        }
-        let mut batch = match fetch.messages().await {
-            Ok(b) => b,
-            Err(e) => return Ok(Err(JsError::Other(format!("fetch: {e}")))),
-        };
-
-        let mut pulled = Vec::new();
-        while let Some(item) = batch.next().await {
-            match item {
-                Ok(msg) => pulled.push(JsMessage { msg }),
-                // Boxed dyn error — stringify (map_err with anyhow!, not .context).
-                Err(e) => return Ok(Err(JsError::Other(format!("fetch message: {e}")))),
+        let pulled = async {
+            let mut fetch = consumer.fetch().max_messages(max_messages as usize);
+            if expires_ms > 0 {
+                fetch = fetch.expires(Duration::from_millis(expires_ms));
             }
+            let mut batch = fetch
+                .messages()
+                .await
+                .map_err(|e| JsError::Other(format!("fetch: {e}")))?;
+
+            let mut pulled = Vec::new();
+            while let Some(item) = batch.next().await {
+                match item {
+                    Ok(msg) => pulled.push(JsMessage { msg }),
+                    // Boxed dyn error — stringify (map_err with anyhow!, not .context).
+                    Err(e) => return Err(JsError::Other(format!("fetch message: {e}"))),
+                }
+            }
+            Ok(pulled)
         }
+        .instrument(span)
+        .await;
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "fetch",
+            &claim.project,
+            started.elapsed(),
+        );
+        let pulled = match pulled {
+            Ok(p) => p,
+            Err(e) => return Ok(Err(e)),
+        };
 
         let mut handles = Vec::with_capacity(pulled.len());
         for m in pulled {
@@ -605,10 +718,24 @@ impl consumer::HostMessage for ActiveCtx<'_> {
         rep: Resource<JsMessage>,
     ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
         let msg = self.table.get(&rep)?.msg.clone();
-        Ok(msg
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let claim = plugin.claim_for(&component_id);
+        let span = js_span(&claim, &component_id, "ack");
+        let started = std::time::Instant::now();
+        let result = msg
             .ack()
+            .instrument(span)
             .await
-            .map_err(|e| JsError::AckFailed(e.to_string())))
+            .map_err(|e| JsError::AckFailed(e.to_string()));
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "ack",
+            &claim.project,
+            started.elapsed(),
+        );
+        Ok(result)
     }
 
     async fn nack(
@@ -617,10 +744,24 @@ impl consumer::HostMessage for ActiveCtx<'_> {
         delay_ms: u64,
     ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
         let msg = self.table.get(&rep)?.msg.clone();
-        Ok(msg
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let claim = plugin.claim_for(&component_id);
+        let span = js_span(&claim, &component_id, "nack");
+        let started = std::time::Instant::now();
+        let result = msg
             .ack_with(nack_ack_kind(delay_ms))
+            .instrument(span)
             .await
-            .map_err(|e| JsError::AckFailed(e.to_string())))
+            .map_err(|e| JsError::AckFailed(e.to_string()));
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "nack",
+            &claim.project,
+            started.elapsed(),
+        );
+        Ok(result)
     }
 
     async fn term(
@@ -628,10 +769,24 @@ impl consumer::HostMessage for ActiveCtx<'_> {
         rep: Resource<JsMessage>,
     ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
         let msg = self.table.get(&rep)?.msg.clone();
-        Ok(msg
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let claim = plugin.claim_for(&component_id);
+        let span = js_span(&claim, &component_id, "term");
+        let started = std::time::Instant::now();
+        let result = msg
             .ack_with(AckKind::Term)
+            .instrument(span)
             .await
-            .map_err(|e| JsError::AckFailed(e.to_string())))
+            .map_err(|e| JsError::AckFailed(e.to_string()));
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "term",
+            &claim.project,
+            started.elapsed(),
+        );
+        Ok(result)
     }
 
     async fn drop(&mut self, rep: Resource<JsMessage>) -> wash_runtime::wasmtime::Result<()> {
@@ -661,16 +816,30 @@ impl doorbell::Host for ActiveCtx<'_> {
             return Ok(Err(JsError::ConnectionUnavailable));
         };
         let subject = doorbell_subject(&execution_target_id);
+        let claim = plugin.claim_for(&component_id);
+        let span = js_span(&claim, &component_id, "doorbell.ring");
+        let started = std::time::Instant::now();
         // Publish + flush: the hint must be ON THE WIRE when ring returns, or a
         // buffered publish could outlive the caller's interest (the async-nats
         // client buffers while disconnected — flushing surfaces that as an err).
-        if let Err(e) = nats.publish(subject, run_id.into_bytes().into()).await {
-            return Ok(Err(JsError::Other(format!("doorbell publish: {e}"))));
+        let result = async {
+            nats.publish(subject, run_id.into_bytes().into())
+                .await
+                .map_err(|e| JsError::Other(format!("doorbell publish: {e}")))?;
+            nats.flush()
+                .await
+                .map_err(|e| JsError::Other(format!("doorbell flush: {e}")))
         }
-        if let Err(e) = nats.flush().await {
-            return Ok(Err(JsError::Other(format!("doorbell flush: {e}"))));
-        }
-        Ok(Ok(()))
+        .instrument(span)
+        .await;
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "doorbell.ring",
+            &claim.project,
+            started.elapsed(),
+        );
+        Ok(result)
     }
 }
 
@@ -682,21 +851,34 @@ impl producer::Host for ActiveCtx<'_> {
         body: Vec<u8>,
     ) -> wash_runtime::wasmtime::Result<Result<producer::PublishAck, JsError>> {
         let plugin = plugin_of(self)?;
-        let ctx = match plugin.ensure_ctx().await {
-            Ok(c) => c,
-            Err(e) => return Ok(Err(e)),
-        };
-        let map = to_header_map(&headers);
-        // Two awaits: the send future, then the server-ack future. The awaited
-        // PublishAck is the only delivery truth (async-nats 0.47).
-        let ack_future = match ctx.publish_with_headers(subject, map, body.into()).await {
-            Ok(f) => f,
-            Err(e) => return Ok(Err(JsError::PublishRejected(e.to_string()))),
-        };
-        Ok(match ack_future.await {
-            Ok(ack) => Ok(to_publish_ack(&ack)),
-            Err(e) => Err(JsError::PublishRejected(e.to_string())),
-        })
+        let component_id = self.component_id.to_string();
+        let claim = plugin.claim_for(&component_id);
+        let span = js_span(&claim, &component_id, "publish");
+        let started = std::time::Instant::now();
+        let result = async {
+            let ctx = plugin.ensure_ctx().await?;
+            let map = to_header_map(&headers);
+            // Two awaits: the send future, then the server-ack future. The awaited
+            // PublishAck is the only delivery truth (async-nats 0.47).
+            let ack_future = ctx
+                .publish_with_headers(subject, map, body.into())
+                .await
+                .map_err(|e| JsError::PublishRejected(e.to_string()))?;
+            ack_future
+                .await
+                .map(|ack| to_publish_ack(&ack))
+                .map_err(|e| JsError::PublishRejected(e.to_string()))
+        }
+        .instrument(span)
+        .await;
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "publish",
+            &claim.project,
+            started.elapsed(),
+        );
+        Ok(result)
     }
 }
 
