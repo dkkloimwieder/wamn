@@ -377,6 +377,16 @@ mod tests {
             json!({"from": "in", "to": "write"}),
             "main-port edges serialize without the port"
         );
+        // The port names are PERSISTED bytes, not an internal convention. The
+        // walk that reads a stored edge back filters it against
+        // `wamn_router::MAIN_PORT`/`ERROR_PORT`, which are declared
+        // independently of these (`crates/execution/router/src/outcome.rs`) and
+        // outlive `wamn-flow`'s retirement (wamn-0h0g.26.5). They agree today;
+        // if either side is renamed without the other, every stored edge goes
+        // silently dead — the walk simply finds no successors — so the stored
+        // spelling is pinned here rather than inherited.
+        assert_eq!(wamn_flow::MAIN_PORT, "main");
+        assert_eq!(wamn_flow::ERROR_PORT, "error");
         assert_eq!(wire["cases"][0]["case-id"], json!("roundtrip"));
         assert_eq!(
             WiringDocument::parse(&wire).expect("the exact document parses"),
