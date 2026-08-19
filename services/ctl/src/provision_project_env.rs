@@ -131,12 +131,24 @@ pub struct ProvisionProjectEnvArgs {
     /// guest-authored SQL executes as; a 2026-08-19 verifier read measured it
     /// live on every cluster the role existed on, because nothing ever
     /// overrode it. Provisioning refuses instead (wamn-0h0g.12.129).
+    ///
+    /// **Required only where it is consumed** (wamn-0h0g.12.141): the exempt
+    /// list is `--emit-secret`'s, member for member, because the credential and
+    /// the Secret are wanted by exactly the same invocations. The refusal stays
+    /// a parse error — mode-scoping narrows *when* the guard fires, never
+    /// weakens it into a runtime check.
     #[arg(
         long,
         env = "WAMN_APP_PASSWORD",
-        value_name = "PASSWORD ($WAMN_APP_PASSWORD)"
+        value_name = "PASSWORD ($WAMN_APP_PASSWORD)",
+        required_unless_present_any = [
+            "revoke_pat_prefix",
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation"
+        ]
     )]
-    pub app_password: String,
+    pub app_password: Option<String>,
 
     /// Password for the scoped `wamn_dispatch_reader` login role — the
     /// dispatcher's own credential (wamn-0h0g.12.66), never the runtime's.
@@ -147,8 +159,21 @@ pub struct ProvisionProjectEnvArgs {
     /// A default here would provision every project-env with a publicly known
     /// password on a role that is `LOGIN` and reachable from outside the
     /// cluster; provisioning refuses instead.
-    #[arg(long, env = "WAMN_DISPATCH_READER_PASSWORD")]
-    pub dispatch_reader_password: String,
+    ///
+    /// Mode-scoped on the same four exempt modes as `--app-password` above:
+    /// both feed [`role_sql`], so both are owed by exactly the invocations that
+    /// reach it (wamn-0h0g.12.141).
+    #[arg(
+        long,
+        env = "WAMN_DISPATCH_READER_PASSWORD",
+        required_unless_present_any = [
+            "revoke_pat_prefix",
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation"
+        ]
+    )]
+    pub dispatch_reader_password: Option<String>,
 
     /// Host the runtime reaches the project-env database at. Defaults to the
     /// target cluster's read-write service `<cluster>-rw`.
@@ -410,17 +435,24 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         .app_host
         .clone()
         .unwrap_or_else(|| format!("{cluster}-rw"));
-    let app_url = compose_url(
-        APP_ROLE,
-        &args.app_password,
-        &app_host,
-        args.app_port,
-        &db_name,
-    );
+    // Both credentials are `required_unless_present_any` over the four modes
+    // that provision nothing, and every one of those has already returned
+    // above. A missing credential here is a broken parser contract, not a user
+    // error: re-checking it would plant a second, weaker enforcement point and
+    // hollow out the parse-time refusal (wamn-0h0g.12.141).
+    let app_password = args
+        .app_password
+        .as_deref()
+        .expect("clap requires --app-password on every provisioning invocation");
+    let dispatch_reader_password = args
+        .dispatch_reader_password
+        .as_deref()
+        .expect("clap requires --dispatch-reader-password on every provisioning invocation");
+    let app_url = compose_url(APP_ROLE, app_password, &app_host, args.app_port, &db_name);
 
     // Render the artifacts the runbook applies.
     let db_cr = render_project_env_database(&triple, &cluster, args.connection_limit);
-    let role_sql = role_sql(&args.app_password, &args.dispatch_reader_password);
+    let role_sql = role_sql(app_password, dispatch_reader_password);
     let privilege_sql = privilege_sql(&db_name);
     let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace, &app_url);
 
@@ -2040,8 +2072,11 @@ mod tests {
             "billing",
             "--env",
             "dev",
-            // Required with no default (wamn-0h0g.12.122); every invocation of
-            // this subcommand must now supply it.
+            // Required with no default on a PROVISIONING invocation
+            // (wamn-0h0g.12.122), which is every invocation this helper builds.
+            // The four credential-free modes are exempt (wamn-0h0g.12.141) and
+            // must therefore be parsed bare — see
+            // `the_credential_free_modes_parse_without_either_password`.
             "--dispatch-reader-password",
             "reader-probe",
             // Likewise since wamn-0h0g.12.129.
@@ -2230,10 +2265,11 @@ mod tests {
         assert!(both.emit_route_caller_pat_secret.is_some());
 
         // `--dispatch-reader-password` (wamn-0h0g.12.122) and `--app-password`
-        // (wamn-0h0g.12.129) are both required with no default, so even the
-        // revoke-only invocation — which provisions nothing — must carry both.
-        // That the requirement is not mode-scoped is a known CLI-contract
-        // defect, filed as wamn-0h0g.12.141.
+        // (wamn-0h0g.12.129) are required with no default, but only where they
+        // are consumed: wamn-0h0g.12.141 scoped both to the provisioning modes,
+        // so revoke-only may carry them and need not. Passing them here keeps
+        // this case about the PAT flags; the exemption itself is proven by
+        // `the_credential_free_modes_parse_without_either_password`.
         let revoke = TestCli::try_parse_from([
             "test",
             "--system-database-url",
@@ -2543,8 +2579,9 @@ mod tests {
         assert_eq!(
             parse_args(&["--emit-secret", "/tmp/db.json"])
                 .unwrap()
-                .dispatch_reader_password,
-            "reader-probe"
+                .dispatch_reader_password
+                .as_deref(),
+            Some("reader-probe")
         );
     }
 
@@ -2571,6 +2608,62 @@ mod tests {
             .is_err(),
             "provisioning accepted a missing --app-password"
         );
+    }
+
+    /// The other half of the two guards above (wamn-0h0g.12.141). Refusing a
+    /// missing credential is only half the contract: the four modes that
+    /// provision nothing reach neither [`compose_url`] nor [`role_sql`], so the
+    /// parser must not demand a secret they would immediately discard — which
+    /// is what forced `deploy/mvp/bootstrap.sh`'s generation and revoke call
+    /// sites to invent one. The exempt list is `--emit-secret`'s: the
+    /// credentials and the Secret are owed by the same invocations.
+    ///
+    /// Deliberately built on a bare `TestCli::try_parse_from` rather than
+    /// [`parse_args`], which injects both credentials and would leave every
+    /// assertion here vacuous.
+    #[test]
+    fn the_credential_free_modes_parse_without_either_password() {
+        let revoke = TestCli::try_parse_from([
+            "test",
+            "--system-database-url",
+            "postgresql://postgres@localhost/postgres",
+            "--revoke-pat-prefix",
+            "0123456789abcdef",
+        ])
+        .expect("revoke provisions nothing and needs no database credential")
+        .args;
+        assert!(revoke.app_password.is_none());
+        assert!(revoke.dispatch_reader_password.is_none());
+
+        for action in [
+            "--prepare-effect-writer-generation",
+            "--retire-effect-writer-generation",
+            "--abort-effect-writer-generation",
+        ] {
+            let parsed = TestCli::try_parse_from([
+                "test",
+                "--org",
+                "acme",
+                "--project",
+                "billing",
+                "--env",
+                "dev",
+                "--target-admin-database-url",
+                "postgresql://postgres@localhost/wamn-db-acme--billing--dev",
+                action,
+                "a",
+            ])
+            .unwrap_or_else(|e| panic!("{action} demanded a database credential: {e}"))
+            .args;
+            assert!(
+                parsed.app_password.is_none(),
+                "{action} acquired an --app-password"
+            );
+            assert!(
+                parsed.dispatch_reader_password.is_none(),
+                "{action} acquired a --dispatch-reader-password"
+            );
+        }
     }
 
     fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl {

@@ -76,10 +76,12 @@ fn action_args(
         system_database_url: None,
         cluster: None,
         connection_limit: None,
-        app_password: "unused".to_string(),
-        // wamn-0h0g.12.122 made this required with no default; the effect-writer
-        // generation actions never reach the role batch that consumes it.
-        dispatch_reader_password: "unused".to_string(),
+        // The effect-writer generation actions never reach the role batch that
+        // consumes either credential, and since wamn-0h0g.12.141 the parser
+        // exempts them from both flags — so `None` is what a real invocation of
+        // these actions carries.
+        app_password: None,
+        dispatch_reader_password: None,
         app_host: None,
         app_port: 5432,
         namespace: "wamn-system".to_string(),
