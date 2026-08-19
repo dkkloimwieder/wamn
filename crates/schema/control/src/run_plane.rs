@@ -9904,19 +9904,17 @@ CREATE INDEX event_registrations_by_entity
     #[test]
     fn schema_rewrite_is_dot_anchored() {
         let schema = schema("poc_f1");
-        for (ddl, table) in [(RUN_STATE_SQL, "runs")] {
-            let out = rewrite_schema(ddl, &schema);
-            assert!(
-                out.contains(&format!("CREATE TABLE poc_f1.{table}")),
-                "{table}"
-            );
-            assert!(!out.contains("wamn_run."), "no qualified wamn_run left");
-            assert!(!out.contains("SCHEMA wamn_run"), "schema header rewritten");
-        }
+        // `run-state.sql` is the ONLY record file production rewrites whole
+        // (`publish_catalog::ensure_runstate`) and the only one carrying the
+        // schema header; the retired `flows.sql` was the second element of this
+        // sweep until wamn-0h0g.12.102 (e45ca35b) deleted it with its call site.
+        let out = rewrite_schema(RUN_STATE_SQL, &schema);
+        assert!(out.contains("CREATE TABLE poc_f1.runs"), "runs");
+        assert!(!out.contains("wamn_run."), "no qualified wamn_run left");
+        assert!(!out.contains("SCHEMA wamn_run"), "schema header rewritten");
         // The GUARDED schema-create form rewrites too (the pre-wamn-1wdq bug:
         // `SCHEMA wamn_run` is not a substring of `SCHEMA IF NOT EXISTS
         // wamn_run`, so the header create silently targeted `wamn_run`).
-        let out = rewrite_schema(RUN_STATE_SQL, &schema);
         assert!(out.contains("CREATE SCHEMA IF NOT EXISTS poc_f1 "));
         assert!(!out.contains("IF NOT EXISTS wamn_run"));
         // The prose mention of the wamn_run_store crate must survive verbatim.
