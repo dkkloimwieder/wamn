@@ -2,7 +2,27 @@
 //!
 //! This module deliberately exports no SQL or general writer interface. The
 //! non-default native feature keeps private statements beside their opaque
-//! connection-backed adapter; no production effect caller is activated here.
+//! connection-backed adapter.
+//!
+//! THIS MODULE HAS A LIVE PRODUCTION CALLER, and the halves differ
+//! (wamn-0h0g.20.2 — the previous claim that none was activated was stale, and
+//! a stale "nothing calls this" is how shelved code gets deleted out from under
+//! a live path):
+//!
+//! * [`EffectWriterClient::reset_expired_pre_effect_projection`] IS ACTIVATED.
+//!   The host loads the writer in `crates/execution/host/src/lib.rs`
+//!   (`load_effect_writer`, ~:847) and invokes the reset inside the drain
+//!   loop's `ProductionClaimResult::ResetRequired` arm (~:1116). That arm is
+//!   reachable only for a run whose claim classified `ExpiredPreEffect`, which
+//!   the class gate leaves reachable on BOTH tiers — a pre-effect reclaim needs
+//!   no effect ledger.
+//! * [`EffectWriterClient::begin_attempt`] and
+//!   [`EffectWriterClient::record_outcome`] — the effect ATTEMPT ledger proper
+//!   — have no production caller. Every call site is a live gate
+//!   (`tests/effect_writer_live.rs`,
+//!   `crates/platform/runtime/tests/production_claim_live.rs`). Those are the
+//!   entry points wamn-0h0g.20.3 parks behind the class gate; this file is not
+//!   deletable while the reset half stands.
 
 use std::time::SystemTime;
 

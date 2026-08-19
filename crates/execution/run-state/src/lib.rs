@@ -42,7 +42,8 @@ pub mod durability;
 #[cfg(feature = "effect-writer-credential")]
 pub mod effect_writer_credential;
 // Host-only effect-ledger statements stay out of the default guest-safe graph.
-// The first production caller/invocation is intentionally deferred to .5.4.
+// The projection-reset half HAS a production caller (the host drain loop's
+// `ResetRequired` arm); the attempt-ledger half does not. See the module doc.
 #[cfg(feature = "native")]
 mod effect_writer;
 /// Durable lookup and bounded-wait queries for flow invocation.
