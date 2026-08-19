@@ -300,6 +300,27 @@ async fn install_legacy_partition_plane(su: &Client) {
     .expect("install retired partition plane");
 }
 
+/// The retired flow registry (`deploy/sql/flows.sql`), deleted by
+/// wamn-0h0g.12.102 (e45ca35b). It is no longer one of the run-plane files
+/// `install_current_run_plane` applies — but `partition_plane_cutover_sql`
+/// still locks and preflights it for schemas that physically retain the table,
+/// so a leg proving that refusal must install it. Mirrors the unit-side
+/// fixture `run_plane::add_legacy_flow_registry`.
+async fn install_legacy_flow_registry(su: &Client) {
+    su.batch_execute(&format!(
+        "CREATE TABLE {SCHEMA}.flows ( \
+           tenant_id text NOT NULL CHECK (tenant_id <> ''), \
+           flow_id text NOT NULL, version int NOT NULL, \
+           active boolean NOT NULL DEFAULT false, \
+           graph_json jsonb NOT NULL, \
+           created_at timestamptz NOT NULL DEFAULT now(), \
+           updated_at timestamptz NOT NULL DEFAULT now(), \
+           PRIMARY KEY (tenant_id,flow_id,version));"
+    ))
+    .await
+    .expect("install retired flow registry");
+}
+
 async fn install_legacy_child_run_state(su: &Client) {
     su.batch_execute(&format!(
         "ALTER TABLE {SCHEMA}.runs \
@@ -934,6 +955,7 @@ async fn execution_pin_cutover_leg(su: &Client) {
 async fn partition_plane_authored_ordering_refusal_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
+    install_legacy_flow_registry(su).await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.flows \
            (tenant_id,flow_id,version,graph_json) VALUES \
