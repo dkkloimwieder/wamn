@@ -883,12 +883,13 @@ BEGIN
         )
     )
     SELECT encode(sha256(convert_to(string_agg(
-        relation || '|' || fact, E'\n' ORDER BY relation, fact
+        relation || '|' || fact,
+        E'\n' ORDER BY relation COLLATE "C", fact COLLATE "C"
     ), 'UTF8')), 'hex')
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '749c6904e8f8506b5bbc3fd6a7a45e80d177ae9546f89bbd78cfb7f2478ada37'
+       '6666b100885d0c8c9e94a6c1cdaceb1997ad884db6e2d654b38806ebf6aaaf9a'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';

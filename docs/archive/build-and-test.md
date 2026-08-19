@@ -3764,6 +3764,17 @@ three true rows are `provisioning.dumps`, `provisioning.copy_sagas`, and
 `provisioning.migration_confirmations`. This audit changes no production
 permission and all schema, package, and wire identities remain `0.1`/`0.1.0`.
 
+**Rule — every fingerprint sort pins its collation.** A shape fingerprint built
+with `string_agg(... ORDER BY ...)` and compared to a checked-in constant MUST
+apply `COLLATE "C"` to every sort key. Without it the aggregation order, and so
+the hash, depends on the gate host's `lc_collate`, and the constant silently
+means "correct on the machine that computed it". `wamn-0h0g.15.32` applied this
+to the evidence and attestation fingerprints in
+`deploy/sql/control-portable-store.sql` and missed the retained-shape one, which
+`wamn-0h0g.15.172` completed. When adding a fingerprint, pin the collation in
+the same commit that introduces it — a later retrofit changes the sort and costs
+a second re-pin.
+
 ```bash
 jq empty architecture/protected-writes.json
 
