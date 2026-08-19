@@ -135,6 +135,23 @@ pub(crate) fn pg_to_api(v: &PgValue) -> SqlValue {
 /// Payloads: create/get/update → the (returned) row object; delete →
 /// `{"deleted": true, "id": ...}`; list → the row array. A missing row is
 /// `Terminal("not-found")` — routable down the error edge.
+///
+/// # Parked for deletion — wamn-0h0g.26.8
+///
+/// `a1ecc789` deleted the only installer of `<app_schema>.wamn_catalog`, the
+/// snapshot [`NodeCtx::catalog_json`] reads, so on a freshly provisioned project
+/// this node's catalog resolution can no longer succeed. `wamn-0h0g.11.46`
+/// removed the relation from the ownership manifests and parked the guest read
+/// closed; this node, the `catalog_json` capability and the `"postgres"` entry
+/// in [`NODE_TYPES`](crate::NODE_TYPES) are deleted together by
+/// `wamn-0h0g.26.8`, sequenced with the flow-layer retirement rather than
+/// piecemeal.
+///
+/// It is deliberately not deleted yet: this is the **only** shipped node type
+/// whose config names an entity **by name**, so it is the sole producer of the
+/// name-keyed edge that impact analysis traces and that `impactproof` proves.
+/// That gate's disposition — retire or re-scope — is `wamn-0h0g.26.9`, and it
+/// is decided there, not defaulted by whoever deletes this struct.
 pub(crate) struct PostgresEntity;
 
 impl Node for PostgresEntity {

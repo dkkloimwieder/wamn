@@ -203,16 +203,21 @@ impl sdk::NodeCtx for CapsCtx {
         client::execute(sql, &params).map_err(wit_err_to_sdk)
     }
 
+    /// Parked closed for deletion — `wamn-0h0g.26.8`.
+    ///
+    /// `a1ecc789` deleted the only installer of `<app_schema>.wamn_catalog`, so
+    /// on a freshly provisioned project the relation does not exist and never
+    /// will; `wamn-0h0g.11.46` removed it from the ownership manifests. Until
+    /// `wamn-0h0g.26.8` deletes this capability along with the entity node that
+    /// consumes it, the absent relation is mapped onto the designed refusal
+    /// below instead of escaping as a raw `42P01 undefined_table` — the path
+    /// refuses by design rather than being left dead-ish for something to wire
+    /// a draft run into.
     fn catalog_json(&mut self) -> Result<String, sdk::PgCapError> {
-        let result = client::query("SELECT document::text FROM wamn_catalog LIMIT 1", &[])
-            .map_err(wit_err_to_sdk)?;
-        match result.rows.first().and_then(|row| row.first()) {
-            Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Ok(value.clone()),
-            _ => Err(sdk::PgCapError::QueryError {
-                code: String::new(),
-                message: "no catalog snapshot published for this project".into(),
-            }),
-        }
+        catalog_from_rows(
+            client::query("SELECT document::text FROM wamn_catalog LIMIT 1", &[])
+                .map(|result| result.rows),
+        )
     }
 
     fn raw_sql_enabled(&self) -> bool {
@@ -251,6 +256,42 @@ fn wit_to_sdk(value: &SqlValue) -> sdk::PgValue {
         SqlValue::Uuid(value) => sdk::PgValue::Uuid(value.clone()),
     }
 }
+
+/// The designed refusal for a project with no readable catalog snapshot. Both
+/// the absent relation and an installed-but-empty one answer with this, so the
+/// guest sees one refusal rather than a raw SQLSTATE it cannot act on.
+fn no_catalog_snapshot() -> sdk::PgCapError {
+    sdk::PgCapError::QueryError {
+        code: String::new(),
+        message: "no catalog snapshot published for this project".into(),
+    }
+}
+
+/// Decide the catalog capability's answer from the snapshot query's outcome.
+///
+/// Split out of `CapsCtx::catalog_json` so the parked-closed behaviour is
+/// testable without the host: `42P01 undefined_table` — which is
+/// what a project provisioned after `a1ecc789` raises, the installer having
+/// been deleted — answers with the same designed refusal as an installed but
+/// unpublished snapshot, instead of escaping as a raw SQLSTATE.
+fn catalog_from_rows(
+    result: Result<Vec<Vec<SqlValue>>, PgError>,
+) -> Result<String, sdk::PgCapError> {
+    let rows = match result {
+        Ok(rows) => rows,
+        Err(PgError::QueryError((code, _))) if code == UNDEFINED_TABLE => {
+            return Err(no_catalog_snapshot());
+        }
+        Err(error) => return Err(wit_err_to_sdk(error)),
+    };
+    match rows.first().and_then(|row| row.first()) {
+        Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Ok(value.clone()),
+        _ => Err(no_catalog_snapshot()),
+    }
+}
+
+/// SQLSTATE `42P01`, raised when the relation in a statement does not exist.
+const UNDEFINED_TABLE: &str = "42P01";
 
 fn wit_err_to_sdk(error: PgError) -> sdk::PgCapError {
     match error {
@@ -364,6 +405,51 @@ mod tests {
 
     fn hash(byte: char) -> String {
         format!("sha256:{}", byte.to_string().repeat(64))
+    }
+
+    /// The snapshot relation has had no installer since `a1ecc789`, so a project
+    /// provisioned after it raises `42P01` here. That must reach the guest as
+    /// the designed refusal, not as a raw SQLSTATE: the capability is parked
+    /// closed until `wamn-0h0g.26.8` deletes it. Deleting the `UNDEFINED_TABLE`
+    /// arm fails this case.
+    #[test]
+    fn an_absent_snapshot_relation_answers_with_the_designed_refusal() {
+        let absent = Err(PgError::QueryError((
+            UNDEFINED_TABLE.to_string(),
+            "relation \"wamn_catalog\" does not exist".to_string(),
+        )));
+        assert_eq!(catalog_from_rows(absent), Err(no_catalog_snapshot()));
+    }
+
+    /// The refusal is reached by two roads — absent relation and installed but
+    /// unpublished — and both must be indistinguishable to the guest.
+    #[test]
+    fn an_unpublished_snapshot_answers_the_same_way_as_an_absent_one() {
+        assert_eq!(catalog_from_rows(Ok(Vec::new())), Err(no_catalog_snapshot()));
+    }
+
+    /// Only `42P01` is absorbed. Every other failure still surfaces its own
+    /// error, so parking this path did not swallow real faults.
+    #[test]
+    fn other_query_failures_are_not_absorbed_into_the_refusal() {
+        let denied = catalog_from_rows(Err(PgError::PermissionDenied));
+        assert_eq!(denied, Err(sdk::PgCapError::PermissionDenied));
+
+        let other = catalog_from_rows(Err(PgError::QueryError((
+            "42501".to_string(),
+            "permission denied for table wamn_catalog".to_string(),
+        ))));
+        assert_ne!(other, Err(no_catalog_snapshot()));
+    }
+
+    /// The success path is unchanged by the parking.
+    #[test]
+    fn a_published_snapshot_still_returns_its_document() {
+        let published = Ok(vec![vec![SqlValue::Text("{\"catalog-id\":\"c\"}".into())]]);
+        assert_eq!(
+            catalog_from_rows(published),
+            Ok("{\"catalog-id\":\"c\"}".to_string())
+        );
     }
 
     fn supplied_plan(flow_id: &str, source_artifact_hash: &str) -> plan_supply::ResolutionPlan {
