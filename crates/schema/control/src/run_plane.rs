@@ -6491,6 +6491,27 @@ CREATE INDEX event_registrations_by_entity
              (tenant_id, available_at, stream_seq, lease_expires_at)"
                 .to_string(),
         );
+        add_legacy_flow_registry(obs);
+    }
+
+    /// The retired flow registry (`deploy/sql/flows.sql`), deleted by
+    /// wamn-0h0g.12.102 (e45ca35b). It is no longer one of `RUN_PLANE_FILES`,
+    /// so an observation derived from the record no longer carries it — but
+    /// `partition_plane_cutover_sql` still locks and preflights it for schemas
+    /// that physically retain the table, so the fixture must inject it.
+    fn add_legacy_flow_registry(obs: &mut RunPlaneObservation) {
+        obs.tables.insert(
+            "flows".to_string(),
+            BTreeSet::from([
+                "tenant_id".to_string(),
+                "flow_id".to_string(),
+                "version".to_string(),
+                "active".to_string(),
+                "graph_json".to_string(),
+                "created_at".to_string(),
+                "updated_at".to_string(),
+            ]),
+        );
     }
 
     fn add_legacy_child_run_state(obs: &mut RunPlaneObservation) {
@@ -7781,6 +7802,7 @@ CREATE INDEX event_registrations_by_entity
     #[test]
     fn persisted_retired_flow_ordering_is_a_leading_reprovision_refusal() {
         let mut obs = observation_at_record();
+        add_legacy_flow_registry(&mut obs);
         obs.retired_authored_ordering_rows = 2;
 
         let plan = plan_run_plane(&schema("demo"), &obs);
