@@ -57,6 +57,35 @@ fn run_state_live() {
     // prove the DDL's column grants by executing under this role, and a leftover
     // role from an earlier database carrying SUPERUSER or BYPASSRLS would pass them
     // with no grants at all (wamn-0h0g.15.23).
+    //
+    // THE TWO WRITER ROLES BELOW ARE HAND-ROLLED, AND THAT IS A RULED DIVERGENCE
+    // (wamn-0h0g.20.15: accept the divergence, comment it, close at P3). Every other
+    // live bootstrap now mints them from the production builder; this one structurally
+    // cannot. `wamn-run-state` ships INSIDE the guest components
+    // (components/Cargo.toml:25), and `components` is a SEPARATE cargo workspace that
+    // has never heard of `wamn-control-provision`. On top of that,
+    // tests/conformance/tests/workspace_tiers.rs computes each tier's path-dependency
+    // closure KIND-BLIND — it filters on `dependency.path` alone and never on kind — so
+    // a DEV-dependency counts exactly like a real one, and adding the builder here reds
+    // `workspace_tier_membership_matches_live_classification` with "selected package
+    // wamn-control-provision missing from cargo metadata". Teaching that closure to skip
+    // dev-dependencies was rejected: it weakens a conformance guard to make one test
+    // prettier.
+    //
+    // THE DRIFT CONTRACT. The `wamn_effect_writer` and `wamn_run_projection_writer`
+    // blocks below mirror `ensure_effect_writer_acl_role_sql` in
+    // crates/control/provision/src/sql.rs attribute-for-attribute: NOLOGIN NOSUPERUSER
+    // NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS. ANY CHANGE TO THAT
+    // PRODUCTION ATTRIBUTE SET UPDATES THIS BLOCK IN THE SAME COMMIT. The mirrored
+    // surface is the attribute list and nothing else: the role NAMES are already shared,
+    // since `EFFECT_WRITER_ROLE` and `RUN_PROJECTION_WRITER_ROLE` are this crate's own
+    // constants (src/effect_writer_credential.rs) and the production builder imports them
+    // FROM here. The `pg_roles` assertion after this bootstrap is what holds the mirror
+    // to its word.
+    //
+    // REOPEN TRIGGER: a SECOND consumer needing this attribute set. Minting a shared
+    // cross-workspace home crate for one reader was rejected as infrastructure built for
+    // a single caller; a second reader is when that crate earns its existence.
     success(
         &url,
         &format!(
@@ -95,6 +124,28 @@ fn run_state_live() {
                (tenant_id,catalog_id,catalog_version) \
              VALUES ('t1','cat',1);"
         ),
+    );
+
+    // The mirror above is create-only — unlike `wamn_app` it has no `ELSE ALTER` arm —
+    // and roles are CLUSTER-WIDE, so a `wamn_effect_writer` left behind by an earlier
+    // database is silently kept with whatever attributes it already carries. This is the
+    // leg that makes the drift contract checkable rather than aspirational: it reds both
+    // when the block above stops matching the production attribute set and when the
+    // cluster this suite was pointed at is not the throwaway it is documented to be.
+    success(
+        &url,
+        "DO $$ DECLARE mirrored text; BEGIN \
+           SELECT string_agg(rolname, ',' ORDER BY rolname) INTO mirrored FROM pg_roles \
+            WHERE rolname IN ('wamn_effect_writer','wamn_run_projection_writer') \
+              AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin \
+              AND NOT rolinherit AND NOT rolcreatedb AND NOT rolcreaterole \
+              AND NOT rolreplication; \
+           ASSERT mirrored = 'wamn_effect_writer,wamn_run_projection_writer', \
+                  'the writer roles must carry exactly the attributes \
+                   ensure_effect_writer_acl_role_sql mints (NOLOGIN NOSUPERUSER \
+                   NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS); \
+                   conforming roles were: ' || coalesce(mirrored, '<none>'); \
+         END $$;",
     );
 
     let release = release_caller_sql();
