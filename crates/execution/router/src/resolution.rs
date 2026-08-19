@@ -187,11 +187,12 @@ impl WiringCache {
     ///
     /// Its production caller is the doorbell subscriber of wamn-0h0g.18.2 (the
     /// activation verb that writes `catalog.wiring_activation` and notifies),
-    /// which **is not wired to this method yet** — joining the two is a
-    /// follow-up, and until it lands nothing in the tree calls this outside its
-    /// tests. Deliberately does NOT drop the cached graphs: a version is
-    /// immutable, so only the pointer can go stale, and keeping the entries is
-    /// what makes a rollback flip an in-memory hit.
+    /// joined to this method by wamn-0h0g.16.15:
+    /// `crates/platform/runtime/src/wiring_doorbell.rs`. Deliberately does NOT
+    /// drop the cached graphs: a version is immutable, so only the pointer can
+    /// go stale, and keeping the entries is what makes a rollback flip an
+    /// in-memory hit. A subscriber that RECONNECTED has missed an unknown set of
+    /// flips and must call [`WiringCache::invalidate_all`] instead.
     pub fn invalidate(&self, environment: &str, wiring_id: &str) -> bool {
         let pointer = Pointer {
             environment: Arc::from(environment),
@@ -203,6 +204,31 @@ impl WiringCache {
             .active
             .remove(&pointer)
             .is_some()
+    }
+
+    /// Forget EVERY pointer, sending the next delivery of every wiring back to
+    /// the store. **This is the reconnect entry point.**
+    ///
+    /// Returns how many pointers were dropped.
+    ///
+    /// PostgreSQL delivers a `NOTIFY` only to sessions holding a `LISTEN` at
+    /// commit time and queues nothing for an absent one, so a subscriber whose
+    /// connection dropped has missed an unknown set of flips
+    /// (`deploy/sql/catalog-schema.sql`, the `wiring_activation_doorbell`
+    /// comment). Resuming would serve a stale active version indefinitely with
+    /// nothing to signal it, so a reconnect drops the lot instead of trusting
+    /// the gap.
+    ///
+    /// Like [`WiringCache::invalidate`] it keeps the cached graphs: a version is
+    /// immutable, so a missed flip can only have moved a POINTER. Every entry is
+    /// still the right answer to its own `(environment, wiring, version)` key,
+    /// and keeping them is what makes the re-read after a reconnect a pointer
+    /// write rather than a recompilation.
+    pub fn invalidate_all(&self) -> usize {
+        let mut state = self.state.lock().expect("wiring cache lock poisoned");
+        let dropped = state.active.len();
+        state.active.clear();
+        dropped
     }
 
     /// Compiled graphs currently resident, against the entry bound.

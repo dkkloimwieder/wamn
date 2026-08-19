@@ -76,9 +76,8 @@ fn environments_do_not_share_a_pointer() {
 // ---- the pointer flip ------------------------------------------------------
 
 /// The direct proof that `invalidate` works. Its production caller is the
-/// doorbell subscriber of wamn-0h0g.18.2, which is NOT wired to it yet — so this
-/// test is currently the only thing exercising the seam, and is what stops the
-/// method rotting before the joining bead lands.
+/// doorbell subscriber of wamn-0h0g.18.2, joined to it by wamn-0h0g.16.15 in
+/// `crates/platform/runtime/src/wiring_doorbell.rs`.
 #[test]
 fn invalidate_sends_the_next_lookup_back_to_the_store() {
     let cache = cache(8);
@@ -130,6 +129,59 @@ fn a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident() {
     assert_eq!(hit.wiring.entry(), "v8");
     assert_eq!(cache.len(), 2, "both versions are keyed separately");
     assert!(!Arc::ptr_eq(&hit.wiring, &seven));
+}
+
+// ---- the reconnect ---------------------------------------------------------
+
+/// The transport's only loss mode. A subscriber whose `LISTEN` connection
+/// dropped missed an unknown set of flips — PostgreSQL queues nothing for an
+/// absent session — so it may not resume against ANY pointer, not just the ones
+/// it happens to know changed.
+#[test]
+fn invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip() {
+    let cache = cache(8);
+    cache.insert(ENV, "orders", 7, wiring("orders-v7"));
+    cache.insert(ENV, "refunds", 3, wiring("refunds-v3"));
+    cache.insert("staging", "orders", 2, wiring("staging-v2"));
+
+    assert_eq!(
+        cache.invalidate_all(),
+        3,
+        "every pointer the process held is suspect after a reconnect"
+    );
+
+    for (environment, wiring_id) in [(ENV, "orders"), (ENV, "refunds"), ("staging", "orders")] {
+        assert!(
+            cache.get(environment, wiring_id).is_none(),
+            "{environment}/{wiring_id} resumed against a pointer no flip was seen for"
+        );
+    }
+    assert_eq!(
+        cache.invalidate_all(),
+        0,
+        "and there is nothing left to drop"
+    );
+}
+
+/// The reconnect drop is still POINTER-only. A version is immutable, so a missed
+/// flip can only have moved a pointer; every graph is still the right answer to
+/// its own key, and keeping them makes the re-read a pointer write rather than a
+/// recompilation of the whole environment.
+#[test]
+fn invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing() {
+    let cache = cache(8);
+    let seven = cache.insert(ENV, "orders", 7, wiring("orders-v7"));
+    cache.insert(ENV, "refunds", 3, wiring("refunds-v3"));
+
+    cache.invalidate_all();
+
+    assert_eq!(cache.len(), 2, "the graphs stayed resident");
+    let re_read = cache.insert(ENV, "orders", 7, wiring("orders-v7-recompiled"));
+    assert!(
+        Arc::ptr_eq(&re_read, &seven),
+        "the re-read after a reconnect must land on the resident graph"
+    );
+    assert_eq!(cache.len(), 2, "and install no second copy");
 }
 
 // ---- bounded, deterministic eviction --------------------------------------
