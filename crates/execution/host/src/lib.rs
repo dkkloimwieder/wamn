@@ -1312,6 +1312,7 @@ mod tests {
                 live: Some(LiveExecution { store, run }),
                 postgres,
                 logging: Arc::new(WamnLogging::from_env().expect("offline logging plugin")),
+                egress: Arc::new(RunnerEgressPolicy::default()),
                 component_id: "deadline-gate".into(),
                 runtime_revision: TrustedExecutionRuntimeRevision::from_flowrunner_bytes(&bytes),
                 effect_writer: None,
