@@ -393,11 +393,6 @@ mod tests {
                    "test-set": []}),
             json!({"format-version": "0.1", "wiring-id": "w", "version": 1, "entry": "a",
                    "nodes": {}}),
-            // An entry-less document is not a wiring: the walk would have no
-            // node to put the admitted payload on.
-            json!({"format-version": "0.1", "wiring-id": "w", "version": 1,
-                   "nodes": {"a": {"component": "c", "interface-version": "0.1.0",
-                                   "operation": "call"}}}),
             // `discard` is a verdict the walk settles on, never a declaration.
             json!({"format-version": "0.1", "wiring-id": "w", "version": 1, "entry": "a",
                    "nodes": {"a": {"component": "c", "interface-version": "0.1.0",
@@ -496,6 +491,21 @@ mod tests {
             WiringDocument::parse(&serde_json::to_value(&blank).expect("serializes")).unwrap_err(),
             CatalogIdentityError::EmptyIdentity { field: "entry" }
         );
+
+        // The field is required at the WIRE, never defaulted and then rejected.
+        // That is the whole backward-compatibility statement: a graph_json
+        // written before wamn-0h0g.18.5 is refused as a *document*, so it can
+        // never be read back as a wiring that happens to enter nowhere.
+        let mut absent = serde_json::to_value(crud_wiring(Vec::new())).expect("serializes");
+        absent
+            .as_object_mut()
+            .expect("an object")
+            .remove("entry")
+            .expect("the entry the document serialized");
+        let refusal = WiringDocument::parse(&absent)
+            .expect_err("an entry-less document is not a wiring")
+            .to_string();
+        assert!(refusal.contains("missing field `entry`"), "{refusal}");
     }
 
     #[test]
