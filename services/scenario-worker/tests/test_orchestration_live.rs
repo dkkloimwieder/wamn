@@ -66,6 +66,11 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         return;
     };
     let (mut client, connection_task) = connect(&url).await;
+    // wamn-0h0g.20.14: the two effect-ledger ACL roles come from the REAL
+    // provisioning builder, so this proof cannot drift from the roles production
+    // mints. `wamn_app` and `wamn_scenario_author` stay hand-rolled: the builder
+    // covers only the two writer roles.
+    let effect_writer_roles = wamn_control_provision::sql::ensure_effect_writer_acl_role_sql();
     client
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
@@ -77,14 +82,8 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
                  CREATE ROLE wamn_scenario_author NOLOGIN; \
                END IF; \
-               IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
-                 CREATE ROLE wamn_effect_writer NOLOGIN; \
-               END IF; \
-               IF NOT EXISTS \
-                 (SELECT 1 FROM pg_roles WHERE rolname = 'wamn_run_projection_writer') THEN \
-                 CREATE ROLE wamn_run_projection_writer NOLOGIN; \
-               END IF; \
-             END $$;"
+             END $$; \
+             {effect_writer_roles}"
         ))
         .await
         .expect("reset orchestration schemas and roles");

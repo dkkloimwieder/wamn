@@ -2770,8 +2770,13 @@ mod tests {
             "WAMN_CONNECTION_EFFECT_PG_URL must name a disposable superuser database"
         );
 
+        // wamn-0h0g.20.14: the two effect-ledger ACL roles come from the REAL
+        // provisioning builder, so this proof cannot drift from the roles
+        // production mints. `wamn_app` and `wamn_scenario_author` stay
+        // hand-rolled: the builder covers only the two writer roles.
+        let effect_writer_roles = wamn_control_provision::sql::ensure_effect_writer_acl_role_sql();
         admin
-            .batch_execute(
+            .batch_execute(&format!(
                 "DO $$ BEGIN \
                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
                      CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' \
@@ -2781,23 +2786,15 @@ mod tests {
                      CREATE ROLE wamn_scenario_author NOLOGIN \
                        NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
                    END IF; \
-                   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
-                     CREATE ROLE wamn_effect_writer NOLOGIN \
-                       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-                   END IF; \
-                   IF NOT EXISTS (SELECT FROM pg_roles \
-                                   WHERE rolname = 'wamn_run_projection_writer') THEN \
-                     CREATE ROLE wamn_run_projection_writer NOLOGIN \
-                       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-                   END IF; \
                  END $$; \
+                 {effect_writer_roles} \
                  ALTER ROLE wamn_app WITH LOGIN PASSWORD 'wamn_app' \
                    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
                  ALTER ROLE wamn_scenario_author WITH NOLOGIN \
                    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
                  DROP SCHEMA IF EXISTS wamn_run CASCADE; \
                  DROP SCHEMA IF EXISTS catalog CASCADE;",
-            )
+            ))
             .await
             .expect("reset disposable effect authority schemas and roles");
         admin

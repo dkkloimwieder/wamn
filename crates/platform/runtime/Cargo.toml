@@ -47,6 +47,11 @@ wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
 wamn-run-state = { workspace = true, features = ["native"] }
+# wamn-0h0g.20.14: the live effect-authority proof bootstraps the two stable
+# effect-ledger ACL roles from the REAL provisioning builder rather than a copy,
+# so the proof cannot drift from the SQL production applies. Dev-only: the
+# shipped runtime links no provisioner.
+wamn-control-provision = { workspace = true }
 # M-TEST-UTIL: the release-manifest weld's test fixtures build manifests from
 # parts, which wamn-catalog gates behind `test-util`. A DEV-dependency feature
 # does not reach the production graph, so this crate's own build still cannot
