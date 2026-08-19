@@ -45,8 +45,21 @@ pub struct ProvisionProjectArgs {
     pub admin_database_url: Option<String>,
 
     /// Password for the shared `wamn_app` role (used when the role is first
-    /// created and embedded in the emitted URL); env `WAMN_APP_PASSWORD`.
-    #[arg(long, env = "WAMN_APP_PASSWORD", default_value = "wamn_app")]
+    /// created and embedded in the emitted URL). Supply it with
+    /// `--app-password` or the env var `WAMN_APP_PASSWORD`.
+    ///
+    /// **Deliberately has no `default_value`** — the same shape
+    /// `--dispatch-reader-password` takes in `provision-project-env`
+    /// (wamn-0h0g.12.122). A default here provisioned every environment with a
+    /// publicly known password on a `LOGIN` role that guest-authored SQL
+    /// executes as; a 2026-08-19 verifier read measured it live on every
+    /// cluster the role existed on, because nothing ever overrode it.
+    /// Provisioning refuses instead (wamn-0h0g.12.129).
+    #[arg(
+        long,
+        env = "WAMN_APP_PASSWORD",
+        value_name = "PASSWORD ($WAMN_APP_PASSWORD)"
+    )]
     pub app_password: String,
 
     /// Host the runtime reaches the project database at (the cluster's `-rw`
@@ -215,7 +228,36 @@ fn write_json(path: &PathBuf, doc: &serde_json::Value) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_host_port;
+    use clap::Parser;
+
+    use super::{ProvisionProjectArgs, parse_host_port};
+
+    #[derive(Debug, Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: ProvisionProjectArgs,
+    }
+
+    /// No `default_value` on `--app-password` (wamn-0h0g.12.129). A default
+    /// minted the shared `wamn_app` `LOGIN` role — the role guest-authored SQL
+    /// executes as — with a publicly known password; a 2026-08-19 verifier read
+    /// measured it live on every cluster the role existed on, because nothing
+    /// ever overrode it. This test exists so the argument cannot quietly
+    /// re-acquire one.
+    #[test]
+    fn the_app_password_has_no_default() {
+        assert!(
+            TestCli::try_parse_from(["test", "--project", "billing"]).is_err(),
+            "provisioning accepted a missing --app-password"
+        );
+        assert_eq!(
+            TestCli::try_parse_from(["test", "--project", "billing", "--app-password", "probe"])
+                .unwrap()
+                .args
+                .app_password,
+            "probe"
+        );
+    }
 
     #[test]
     fn host_port_derives_from_the_admin_url() {

@@ -78,8 +78,21 @@ pub struct EnableCdcProjectEnvArgs {
     pub cluster: Option<String>,
 
     /// Password for the per-project-env replication role (embedded in the
-    /// emitted URL + role SQL). Env `WAMN_REPLICATION_PASSWORD`.
-    #[arg(long, env = "WAMN_REPLICATION_PASSWORD", default_value = "wamn_cdc")]
+    /// emitted URL + role SQL). Supply it with `--replication-password` or the
+    /// env var `WAMN_REPLICATION_PASSWORD`.
+    ///
+    /// **Deliberately has no `default_value`** — the same shape
+    /// `--dispatch-reader-password` takes in `provision-project-env`
+    /// (wamn-0h0g.12.122). A default here minted a `LOGIN REPLICATION` role
+    /// with a publicly known password, and `REPLICATION` authority is
+    /// cluster-wide: it can open a replication session against any database on
+    /// the cluster and decode co-tenant WAL. Provisioning refuses instead
+    /// (wamn-0h0g.12.134).
+    #[arg(
+        long,
+        env = "WAMN_REPLICATION_PASSWORD",
+        value_name = "PASSWORD ($WAMN_REPLICATION_PASSWORD)"
+    )]
     pub replication_password: String,
 
     /// Host the reader reaches the project-env database at. Defaults to the
@@ -305,7 +318,48 @@ fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+
     use super::*;
+
+    #[derive(Debug, Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: EnableCdcProjectEnvArgs,
+    }
+
+    /// No `default_value` on `--replication-password` (wamn-0h0g.12.134). A
+    /// default minted a `LOGIN REPLICATION` role with a publicly known
+    /// password, and `REPLICATION` authority is cluster-wide — a stolen
+    /// credential can open a replication session against any database on the
+    /// cluster and decode co-tenant WAL, which slot/publication naming does not
+    /// constrain. This test exists so the argument cannot quietly re-acquire
+    /// one.
+    #[test]
+    fn the_replication_password_has_no_default() {
+        let base = [
+            "test",
+            "--org",
+            "acme",
+            "--project",
+            "billing",
+            "--env",
+            "dev",
+        ];
+        assert!(
+            TestCli::try_parse_from(base).is_err(),
+            "CDC enablement accepted a missing --replication-password"
+        );
+        let mut with = base.to_vec();
+        with.extend_from_slice(&["--replication-password", "probe"]);
+        assert_eq!(
+            TestCli::try_parse_from(with)
+                .unwrap()
+                .args
+                .replication_password,
+            "probe"
+        );
+    }
 
     /// The CDC bundle's statements land in dependency order: the schema guard
     /// before the publication (FOR TABLES IN SCHEMA needs the schema), the

@@ -122,15 +122,28 @@ pub struct ProvisionProjectEnvArgs {
     pub connection_limit: Option<i64>,
 
     /// Password for the shared `wamn_app` role (embedded in the emitted URL + the
-    /// role SQL). Env `WAMN_APP_PASSWORD`.
-    #[arg(long, env = "WAMN_APP_PASSWORD", default_value = "wamn_app")]
+    /// role SQL). Supply it with `--app-password` or the env var
+    /// `WAMN_APP_PASSWORD`.
+    ///
+    /// **Deliberately has no `default_value`**, matching
+    /// `--dispatch-reader-password` below. A default here provisioned every
+    /// project-env with a publicly known password on a `LOGIN` role that
+    /// guest-authored SQL executes as; a 2026-08-19 verifier read measured it
+    /// live on every cluster the role existed on, because nothing ever
+    /// overrode it. Provisioning refuses instead (wamn-0h0g.12.129).
+    #[arg(
+        long,
+        env = "WAMN_APP_PASSWORD",
+        value_name = "PASSWORD ($WAMN_APP_PASSWORD)"
+    )]
     pub app_password: String,
 
     /// Password for the scoped `wamn_dispatch_reader` login role — the
     /// dispatcher's own credential (wamn-0h0g.12.66), never the runtime's.
     /// Env `WAMN_DISPATCH_READER_PASSWORD`.
     ///
-    /// **Deliberately has no `default_value`, unlike `--app-password` above.**
+    /// **Deliberately has no `default_value`** — as `--app-password` above now
+    /// also does not, since wamn-0h0g.12.129 closed that gap.
     /// A default here would provision every project-env with a publicly known
     /// password on a role that is `LOGIN` and reachable from outside the
     /// cluster; provisioning refuses instead.
@@ -2031,6 +2044,9 @@ mod tests {
             // this subcommand must now supply it.
             "--dispatch-reader-password",
             "reader-probe",
+            // Likewise since wamn-0h0g.12.129.
+            "--app-password",
+            "app-probe",
         ];
         argv.extend_from_slice(extra);
         TestCli::try_parse_from(argv).map(|cli| cli.args)
@@ -2213,9 +2229,11 @@ mod tests {
         assert!(both.emit_management_author_pat_secret.is_some());
         assert!(both.emit_route_caller_pat_secret.is_some());
 
-        // `--dispatch-reader-password` is required with no default
-        // (wamn-0h0g.12.122), so even the revoke-only invocation — which
-        // provisions nothing — must carry it.
+        // `--dispatch-reader-password` (wamn-0h0g.12.122) and `--app-password`
+        // (wamn-0h0g.12.129) are both required with no default, so even the
+        // revoke-only invocation — which provisions nothing — must carry both.
+        // That the requirement is not mode-scoped is a known CLI-contract
+        // defect, filed as wamn-0h0g.12.141.
         let revoke = TestCli::try_parse_from([
             "test",
             "--system-database-url",
@@ -2224,6 +2242,8 @@ mod tests {
             "0123456789abcdef",
             "--dispatch-reader-password",
             "reader-probe",
+            "--app-password",
+            "app-probe",
         ])
         .unwrap()
         .args;
@@ -2499,9 +2519,10 @@ mod tests {
         assert!(!batch.contains("\"wamn_dispatch_reader\" LOGIN PASSWORD 'app-secret'"));
     }
 
-    /// The owner ruling: no `default_value`. `--app-password` above still
-    /// carries one, which is a separate, filed defect — this test exists so the
-    /// new argument cannot quietly acquire the same shape.
+    /// The owner ruling: no `default_value`. This test exists so the argument
+    /// cannot quietly re-acquire one. `--app-password` above carried the same
+    /// defect when this was written; wamn-0h0g.12.129 has since removed it, so
+    /// both credentials on this command now refuse rather than defaulting.
     #[test]
     fn the_dispatch_reader_password_has_no_default() {
         assert!(
@@ -2524,6 +2545,31 @@ mod tests {
                 .unwrap()
                 .dispatch_reader_password,
             "reader-probe"
+        );
+    }
+
+    /// The sibling guard for `--app-password` (wamn-0h0g.12.129). A default
+    /// here minted every project-env's `wamn_app` — the role guest-authored SQL
+    /// executes as — with a publicly known password, and a verifier read on
+    /// 2026-08-19 measured that live on every cluster the role existed on.
+    #[test]
+    fn the_app_password_has_no_default() {
+        assert!(
+            TestCli::try_parse_from([
+                "test",
+                "--org",
+                "acme",
+                "--project",
+                "billing",
+                "--env",
+                "dev",
+                "--dispatch-reader-password",
+                "reader-probe",
+                "--emit-secret",
+                "/tmp/db.json",
+            ])
+            .is_err(),
+            "provisioning accepted a missing --app-password"
         );
     }
 

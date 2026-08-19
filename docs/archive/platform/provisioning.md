@@ -76,7 +76,7 @@ and runs the pure builders:
 |---|---|
 | `--project <id>` | Project id: a lowercase slug `[a-z0-9-]`, start/end alphanumeric. Maps to database + Secret `wamn-db-<project>`. The reserved `wamn` prefix (wamn-66x) is rejected. |
 | `--admin-database-url` / `WAMN_PG_ADMIN_URL` | Superuser URL to the cluster maintenance database. |
-| `--app-password` / `WAMN_APP_PASSWORD` | Password for the shared `wamn_app` role (default `wamn_app`, matching the hand-written schemas). |
+| `--app-password` / `WAMN_APP_PASSWORD` | **Required — no default.** Password for the shared `wamn_app` role. It once defaulted to the role's own name "matching the hand-written schemas"; that default was never overridden anywhere, so provisioning refuses instead (wamn-0h0g.12.129). |
 | `--app-host` / `--app-port` | Runtime-facing host/port (default: the admin URL's). |
 | `--emit-secret <path>` | Write the credential `Secret` (JSON manifest; `-` = stdout) — `kubectl apply -f`. |
 | `--emit-projects-file <path>` | Write the `WAMN_PG_PROJECTS_FILE` entry (`-` = stdout). |
@@ -457,7 +457,7 @@ admits only `[a-z0-9_]`):
 | `--schema` | the app DATA schema the publication covers (default `public`; the `--schema` catalog-publish uses, NOT `app_system`) |
 | `--system-database-url` | T1 superuser URL (`WAMN_SYSTEM_ADMIN_URL`): derive the cluster + record the registration |
 | `--cluster` | override the derived cluster (required in render-only mode) |
-| `--replication-password` / `--db-host` / `--db-port` | the replication-role credential/endpoint in the emitted URL |
+| `--replication-password` / `--db-host` / `--db-port` | the replication-role credential/endpoint in the emitted URL. **`--replication-password` is required — no default** (`WAMN_REPLICATION_PASSWORD`): `REPLICATION` authority is cluster-wide, so a known password there reaches every database on the cluster (wamn-0h0g.12.134). |
 | `--stream` | override the recorded JetStream stream (default `EVT_<org>_<env>`) |
 | `--emit-role-sql` / `--emit-cdc-sql` / `--emit-secret` | the three artifacts |
 
