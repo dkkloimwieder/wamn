@@ -9,6 +9,7 @@ default-members = [
   "crates/execution/flow-invocation",
   "crates/execution/flow-model",
   "crates/execution/host",
+  "crates/execution/router",
   "crates/execution/run-state",
   "crates/execution/scheduler",
   "crates/execution/standard-nodes",

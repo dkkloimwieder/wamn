@@ -1,5 +1,7 @@
 //! # wamn-router — the host-side graph walk
 //!
+//! MVP outcome: crash floor · M0 execution · flow composition.
+//!
 //! Per delivery: walk a resolved [`Wiring`] in frontier order, invoke each
 //! node's component operation through the caller's [`NodeInvoker`], route the
 //! emitted payload by **port**, and stop when the frontier empties or a failure

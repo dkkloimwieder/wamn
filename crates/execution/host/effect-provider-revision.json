@@ -63,6 +63,12 @@
       "features": []
     },
     {
+      "name": "wamn-router",
+      "version": "0.1.0",
+      "root": "crates/execution/router",
+      "features": []
+    },
+    {
       "name": "wamn-run-state",
       "version": "0.1.0",
       "root": "crates/execution/run-state",
@@ -6202,6 +6208,70 @@
       "value": "^1"
     },
     {
+      "tag": "dependency/wamn-router/all-targets/opentelemetry/default-features",
+      "value": "false"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/opentelemetry/features",
+      "value": "metrics"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/opentelemetry/optional",
+      "value": "false"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/opentelemetry/package",
+      "value": "opentelemetry"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/opentelemetry/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/opentelemetry/source",
+      "value": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/opentelemetry/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/opentelemetry/version",
+      "value": "^0.31"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/serde_json/default-features",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/serde_json/features",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/serde_json/optional",
+      "value": "false"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/serde_json/package",
+      "value": "serde_json"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/serde_json/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/serde_json/source",
+      "value": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/serde_json/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-router/all-targets/serde_json/version",
+      "value": "^1"
+    },
+    {
       "tag": "dependency/wamn-run-state/all-targets/chrono/default-features",
       "value": "false"
     },
@@ -7514,6 +7584,38 @@
       "value": "^0.1.0"
     },
     {
+      "tag": "dependency/wamn-runtime/all-targets/wamn-router/default-features",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-runtime/all-targets/wamn-router/features",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-runtime/all-targets/wamn-router/optional",
+      "value": "false"
+    },
+    {
+      "tag": "dependency/wamn-runtime/all-targets/wamn-router/package",
+      "value": "wamn-router"
+    },
+    {
+      "tag": "dependency/wamn-runtime/all-targets/wamn-router/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-runtime/all-targets/wamn-router/source",
+      "value": "path:crates/execution/router"
+    },
+    {
+      "tag": "dependency/wamn-runtime/all-targets/wamn-router/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-runtime/all-targets/wamn-router/version",
+      "value": "^0.1.0"
+    },
+    {
       "tag": "dependency/wamn-runtime/all-targets/wamn-run-state/default-features",
       "value": "true"
     },
@@ -7751,6 +7853,18 @@
     },
     {
       "tag": "package/wamn-pg-core/version",
+      "value": "0.1.0"
+    },
+    {
+      "tag": "package/wamn-router/edition",
+      "value": "2024"
+    },
+    {
+      "tag": "package/wamn-router/license",
+      "value": "Apache-2.0"
+    },
+    {
+      "tag": "package/wamn-router/version",
       "value": "0.1.0"
     },
     {

@@ -215,8 +215,8 @@ cargo test --locked --offline -p wamn-proof-conformance --lib ip_name_lookup::
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **38 root + 6 component packages**. The selection
-combines the exact 19 root `default-members` with named explicit selectors.
+selection for the current **39 root + 6 component packages**. The selection
+combines the exact 20 root `default-members` with named explicit selectors.
 `tests/conformance/tests/workspace_tiers.rs` compares those sets with live,
 locked Cargo metadata and `architecture/package-roles.json`.
 
@@ -263,15 +263,15 @@ membership never constitutes deployed proof or release admission.
 
 ### Bare Cargo semantics and full coverage
 
-The root virtual workspace has 19 exact `default-members`; the component
+The root virtual workspace has 20 exact `default-members`; the component
 workspace has none. Consequently:
 
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
-  select the 19-package MVP developer floor. Bare `cargo test` uses each
+  select the 20-package MVP developer floor. Bare `cargo test` uses each
   selected package's default test targets.
-- A manual root command that must cover all 38 members uses `--workspace`.
+- A manual root command that must cover all 39 members uses `--workspace`.
   The full-CI helper below provides the same exhaustive membership coverage
-  with 38 explicit `--package` selectors plus `--all-targets --no-fail-fast`.
+  with 39 explicit `--package` selectors plus `--all-targets --no-fail-fast`.
 - From `components/`, the same bare commands select all 6 component members.
   The production guest build remains
   `cargo build --workspace --target wasm32-wasip2`.
@@ -315,7 +315,7 @@ cargo test --workspace --all-targets --no-fail-fast
   cargo's, so a red sweep reads as exit 0. If a log is required, redirect
   (`> log 2>&1`) or set `-o pipefail`, and read cargo's own status.
 - Bare `cargo test` is not a substitute: from the repository root it selects the
-  19 `default-members` and only each one's *default* test targets.
+  20 `default-members` and only each one's *default* test targets.
 - The component workspace is outside root `--workspace` and needs its own leg.
 - Contract-owning guards additionally have a runner of record,
   `tools/contract-diff run`, whose legs include
@@ -5179,7 +5179,7 @@ git diff --check
 
 ## SR-MVP — repo-local lint (`wamn-0h0g.11.16`)
 
-The blocking lint check derives both package selections from Cargo: all 38 root
+The blocking lint check derives both package selections from Cargo: all 39 root
 workspace members and all six component workspace members. Root targets run
 Clippy with warnings denied; component targets do the same for
 native and `wasm32-wasip2`. Rustfmt checks both complete workspaces. Cargo owns

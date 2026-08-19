@@ -15,7 +15,7 @@ const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
 const BUILD_AND_TEST_DOCS: &str = "docs/archive/build-and-test.md";
 const SPECIALIZATION_FIXTURES: [(&str, &str); 0] = [];
-const ROOT_DEFAULT_MEMBER_PATHS: [&str; 19] = [
+const ROOT_DEFAULT_MEMBER_PATHS: [&str; 20] = [
     "crates/authoring/model",
     "crates/catalog/model",
     "crates/data/entity-access",
@@ -23,6 +23,7 @@ const ROOT_DEFAULT_MEMBER_PATHS: [&str; 19] = [
     "crates/execution/flow-invocation",
     "crates/execution/flow-model",
     "crates/execution/host",
+    "crates/execution/router",
     "crates/execution/run-state",
     "crates/execution/scheduler",
     "crates/execution/standard-nodes",
@@ -1096,10 +1097,10 @@ fn bare_cargo_commands_select_exact_defaults_and_workspace_remains_exhaustive() 
         .iter()
         .map(|entry| (entry.working_directory.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
-    assert_eq!(workspace_names(&root_metadata).len(), 38);
-    assert_eq!(default_member_names(&root_metadata).len(), 19);
+    assert_eq!(workspace_names(&root_metadata).len(), 39);
+    assert_eq!(default_member_names(&root_metadata).len(), 20);
 
-    for (working_directory, package_count) in [(".", 19), ("components", 6)] {
+    for (working_directory, package_count) in [(".", 20), ("components", 6)] {
         let entry = semantics
             .get(working_directory)
             .unwrap_or_else(|| panic!("missing bare Cargo semantics for {working_directory}"));

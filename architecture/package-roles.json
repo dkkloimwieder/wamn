@@ -288,6 +288,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-router",
+      "manifest_path": "crates/execution/router/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-run-state",
       "manifest_path": "crates/execution/run-state/Cargo.toml",
       "role": "persistence",

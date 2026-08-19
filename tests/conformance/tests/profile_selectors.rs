@@ -174,7 +174,7 @@ fn profile_contract_matches_locked_metadata() {
     let component_members =
         names_for_ids(&component_metadata, &component_metadata.workspace_members);
 
-    assert_eq!(root_members.len(), 38);
+    assert_eq!(root_members.len(), 39);
     assert_eq!(component_members.len(), 6);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
@@ -222,11 +222,11 @@ fn profile_contract_matches_locked_metadata() {
     );
 
     let profile_counts = [
-        ("m1", 23),
-        ("m2", 25),
-        ("deploy", 31),
-        ("full", 38),
-        ("ops", 38),
+        ("m1", 24),
+        ("m2", 26),
+        ("deploy", 32),
+        ("full", 39),
+        ("ops", 39),
     ];
     let mut profiles = BTreeMap::new();
     for (profile, expected_count) in profile_counts {

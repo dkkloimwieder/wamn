@@ -8,7 +8,7 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL: &str = "tools/repo-lint";
-const ROOT_MEMBER_COUNT: usize = 38;
+const ROOT_MEMBER_COUNT: usize = 39;
 const COMPONENT_MEMBER_COUNT: usize = 6;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);

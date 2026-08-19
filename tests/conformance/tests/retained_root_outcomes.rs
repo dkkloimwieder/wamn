@@ -129,6 +129,11 @@ const RETAINED_ROOTS: &[(&str, &str, &str)] = &[
     ),
     ("wamn-proof-system", "tests/system/src/lib.rs", PROOF_FLOOR),
     (
+        "wamn-router",
+        "crates/execution/router/src/lib.rs",
+        CRASH_FLOOR,
+    ),
+    (
         "wamn-run-state",
         "crates/execution/run-state/src/lib.rs",
         CRASH_FLOOR,
