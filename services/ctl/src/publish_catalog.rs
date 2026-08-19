@@ -25,7 +25,6 @@
 //! `--flow` resolves standard-node interfaces, constructs canonical CF-DEF-ID
 //! artifacts, and publishes artifacts + release membership + head atomically.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -728,50 +727,6 @@ pub fn seed_dataset_sql(
     plan.sql().map_err(|e| anyhow::anyhow!("seed sql: {e}"))
 }
 
-/// The flow ids two release-membership documents both name at DIFFERENT content.
-///
-/// Release membership is grow-only by owner rulings R1/R5 (wamn-0h0g.15.159): the
-/// database now COMMITS an append to a sealed release, so two representations of
-/// one release need not carry the same members and a differing member COUNT is no
-/// longer evidence of anything. A flow id both sides carry at a different
-/// flow-version or artifact hash is the one divergence no append can explain, and
-/// it is what `catalog-release-content-conflict` names from here on. A member only
-/// one side carries is the permitted append and is not reported.
-///
-/// Both arguments are the [`wamn_schema_control::sql::select_release_members_sql`]
-/// shape — an array of `{flow-id, flow-version, artifact-hash}` — and both are
-/// produced by this process or by that statement, never by a caller, so an entry
-/// that is not an object with a string `flow-id` is skipped rather than defended
-/// against.
-pub(crate) fn divergent_release_members(
-    stored: &serde_json::Value,
-    requested: &serde_json::Value,
-) -> Vec<String> {
-    let requested = index_release_members(requested);
-    index_release_members(stored)
-        .into_iter()
-        .filter(|(flow_id, member)| requested.get(flow_id).is_some_and(|other| other != member))
-        .map(|(flow_id, _)| flow_id)
-        .collect()
-}
-
-/// Index one membership document by flow id, keeping the whole member as the
-/// value: the ids are the keys, so comparing members compares everything else.
-fn index_release_members(
-    members: &serde_json::Value,
-) -> BTreeMap<String, &serde_json::Map<String, serde_json::Value>> {
-    members
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|member| {
-            let member = member.as_object()?;
-            let flow_id = member.get("flow-id")?.as_str()?;
-            Some((flow_id.to_string(), member))
-        })
-        .collect()
-}
-
 /// Serializes every live `WAMN_MIGRATE_PG_URL` test in this crate's lib target
 /// (wamn-0h0g.11.29).
 ///
@@ -867,34 +822,5 @@ mod tests {
         assert!(crate::CONTROL_DEFINITION_PUBLISH_REFUSAL.ends_with("wamn-0h0g.15.14"));
         assert!(!crate::CONTROL_DEFINITION_PUBLISH_REFUSAL.contains("8.19"));
         assert!(!crate::CONTROL_DEFINITION_PUBLISH_REFUSAL.contains("8.22"));
-    }
-
-    fn member(flow_id: &str, flow_version: i32, artifact_hash: &str) -> serde_json::Value {
-        serde_json::json!({
-            "flow-id": flow_id,
-            "flow-version": flow_version,
-            "artifact-hash": artifact_hash,
-        })
-    }
-
-    #[test]
-    fn only_a_member_both_sides_carry_at_different_content_is_a_release_conflict() {
-        let one = serde_json::json!([member("a", 1, "ah-a")]);
-        let grown = serde_json::json!([member("a", 1, "ah-a"), member("b", 1, "ah-b")]);
-
-        // wamn-0h0g.15.163: the two directions of a permitted grow-only append.
-        assert!(divergent_release_members(&one, &one).is_empty());
-        assert!(divergent_release_members(&grown, &one).is_empty());
-        assert!(divergent_release_members(&one, &grown).is_empty());
-        assert!(divergent_release_members(&serde_json::json!([]), &grown).is_empty());
-
-        // A shared flow id at different content is the one divergence no append
-        // explains — in either field, and named individually.
-        let rehashed = serde_json::json!([member("a", 1, "ah-other"), member("b", 1, "ah-b")]);
-        assert_eq!(divergent_release_members(&grown, &rehashed), vec!["a"]);
-        let reversioned = serde_json::json!([member("a", 2, "ah-a")]);
-        assert_eq!(divergent_release_members(&grown, &reversioned), vec!["a"]);
-        let both = serde_json::json!([member("a", 2, "ah-a"), member("b", 1, "ah-other")]);
-        assert_eq!(divergent_release_members(&grown, &both), vec!["a", "b"]);
     }
 }
