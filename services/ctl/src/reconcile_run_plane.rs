@@ -77,7 +77,56 @@ use wamn_schema_control::{
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
-const LEADING_CUTOVER_ACTIONS: [RunPlaneActionKind; 10] = [
+/// The action kinds permitted to execute BEFORE
+/// [`crate::publish_catalog::ensure_wamn_app_role`] in [`reconcile`].
+///
+/// **This is a permission, not an ordering assertion.** Membership never claims
+/// an action leads the plan; it says the action MAY lead it. Every member either
+/// refuses outright — the two `Verify*` role boundaries are pure `DO` blocks
+/// that `RAISE` or do nothing — or opens with an `ACCESS EXCLUSIVE` lock and a
+/// preflight that refuses before it migrates anything. `ensure_wamn_app_role` is
+/// itself a WRITE: it `CREATE ROLE`s `wamn_app`, hardens `wamn_scenario_author`,
+/// and `REVOKE`s the membership between them. So the property this buys is
+/// **refuse before you mutate** — the reconciler must not create or re-harden
+/// cluster roles on a database it is about to refuse to touch. A refusal fails
+/// the batch, `reconcile` returns `Err`, and the bootstrap below never runs.
+///
+/// **`ExecutionPinCutover` earns membership on ONE path.**
+/// `wamn_schema_control::plan_run_plane` pushes that kind twice, and only the
+/// first push can lead: on the populated-refusal early return — pin contract
+/// incomplete AND `runs`/`catalog.release_flows` holding rows — it is pushed
+/// into an empty plan and the planner RETURNS, so the action is the whole plan
+/// and the loop in [`reconcile`] finds it at index 0. The second push, on the
+/// empty-database path that actually performs the migration, is deliberately
+/// mid-plan and can never lead. Reading only that second push makes this member
+/// look dead; it is not (wamn-0h0g.20.13 was filed on exactly that misreading).
+/// `EffectWriterCutover` has the identical two-push shape — a populated-ledger
+/// early return plus a mid-plan push — and invites the identical misreading.
+///
+/// **The written order is NOT execution order.** The lookup is `contains`, which
+/// is order-insensitive, so the order here is decoration. The planner emits both
+/// `Verify*` kinds AFTER `PartitionPlaneCutover` and `ChildRunCutover` — the
+/// reverse of how they are listed. `pre_role_bootstrap_allowlist_is_exact` pins
+/// this array by equality and so freezes the order: it certifies the SET, and
+/// must not be read as certifying a sequence.
+///
+/// **One wrinkle, unreachable in practice.** `execution_pin_cutover_sql` is the
+/// only allowlisted builder whose SQL names `wamn_app` (`GRANT INSERT
+/// (execution_bundle_hash), UPDATE (release_version, manifest_digest) ON
+/// {target}.runs TO wamn_app`) — the one member carrying a dependency on the
+/// bootstrap it is permitted to precede. It cannot fire: that builder leads only
+/// via the populated early return, and its own preflight raises `55000` on
+/// exactly the nonempty tables that put it there, so the `GRANT` is never
+/// reached. Recorded, not coded around.
+///
+/// **The hazard to actually guard** lives in the planner, invisible from here:
+/// 1. A NEW refusing cutover pushed into the plan without being added to this
+///    array — the loop stops before it, `ensure_wamn_app_role` mutates roles,
+///    and only then does the new action refuse.
+/// 2. A non-allowlisted push interleaved AHEAD of allowlisted ones — the loop
+///    consumes a PREFIX, so the first non-member truncates it and silently
+///    strips the pre-bootstrap property from every allowlisted action behind it.
+const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 10] = [
     RunPlaneActionKind::VerifyEffectWriterRole,
     RunPlaneActionKind::VerifyRunProjectionWriterRole,
     RunPlaneActionKind::ExecutionPinCutover,
@@ -156,7 +205,7 @@ pub async fn reconcile(
         while plan
             .actions
             .get(applied)
-            .is_some_and(|action| LEADING_CUTOVER_ACTIONS.contains(&action.kind))
+            .is_some_and(|action| PRE_ROLE_BOOTSTRAP_ACTIONS.contains(&action.kind))
         {
             let action = &plan.actions[applied];
             client
@@ -852,18 +901,55 @@ mod tests {
         );
     }
 
-    /// The repair is NOT a cutover: it must run after the creates, never before.
+    /// The one POSITIVE reachability assertion behind
+    /// [`PRE_ROLE_BOOTSTRAP_ACTIONS`]: on a populated schema whose execution-pin
+    /// contract is incomplete, the plan [`reconcile`] walks is EXACTLY the
+    /// refusing cutover, and that kind is allowlisted — so the whole plan runs
+    /// ahead of `ensure_wamn_app_role`, which never touches a database about to
+    /// refuse.
+    ///
+    /// Two independent facts hold that up, and this is the only place in this
+    /// crate pinning either: the kind's membership above, and
+    /// `wamn_schema_control::plan_run_plane`'s early return, which is what makes
+    /// the cutover the WHOLE plan rather than the head of an 89-action one.
+    /// Deleting either turns this red.
     #[test]
-    fn the_reader_repair_is_not_a_leading_cutover() {
+    fn a_populated_execution_pin_refusal_leads_the_pre_bootstrap_prefix() {
+        let obs = RunPlaneObservation {
+            tables: BTreeMap::from([("runs".to_string(), BTreeSet::new())]),
+            run_rows: 1,
+            ..Default::default()
+        };
+
+        let plan = plan_run_plane(&schema(), &obs);
+        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+        assert_eq!(
+            plan.actions[0].kind,
+            RunPlaneActionKind::ExecutionPinCutover
+        );
+        assert!(PRE_ROLE_BOOTSTRAP_ACTIONS.contains(&plan.actions[0].kind));
+        // …and the shell appends nothing behind it, so the plan `reconcile`
+        // walks IS this plan: all of it runs before the role bootstrap.
+        assert_eq!(
+            dispatch_reader_read_surface_action(&schema(), &obs, true),
+            None
+        );
+    }
+
+    /// The repair is NOT a pre-bootstrap action: it must run after the creates,
+    /// never before.
+    #[test]
+    fn the_reader_repair_is_not_a_pre_role_bootstrap_action() {
         assert!(
-            !LEADING_CUTOVER_ACTIONS.contains(&RunPlaneActionKind::RepairDispatchReaderPrivilege)
+            !PRE_ROLE_BOOTSTRAP_ACTIONS
+                .contains(&RunPlaneActionKind::RepairDispatchReaderPrivilege)
         );
     }
 
     #[test]
-    fn leading_cutover_allowlist_is_exact() {
+    fn pre_role_bootstrap_allowlist_is_exact() {
         assert_eq!(
-            LEADING_CUTOVER_ACTIONS,
+            PRE_ROLE_BOOTSTRAP_ACTIONS,
             [
                 RunPlaneActionKind::VerifyEffectWriterRole,
                 RunPlaneActionKind::VerifyRunProjectionWriterRole,
@@ -877,6 +963,6 @@ mod tests {
                 RunPlaneActionKind::RetiredEffectDispositionCutover,
             ]
         );
-        assert!(!LEADING_CUTOVER_ACTIONS.contains(&RunPlaneActionKind::EnsureSchema));
+        assert!(!PRE_ROLE_BOOTSTRAP_ACTIONS.contains(&RunPlaneActionKind::EnsureSchema));
     }
 }
