@@ -214,16 +214,14 @@ BEGIN
                 RAISE EXCEPTION USING ERRCODE = '55000',
                     MESSAGE = 'authoring-test-case-deadline-exhausted';
             END IF;
-            IF NEW.failure_kind = 'effect-uncertain'
-               AND NOT EXISTS (
-                   SELECT 1 FROM wamn_run.runs AS run
-                   WHERE run.tenant_id = NEW.tenant_id
-                     AND run.run_id = NEW.run_id
-                     AND run.status = 'effect-uncertain'
-               ) THEN
-                RAISE EXCEPTION USING ERRCODE = '55000',
-                    MESSAGE = 'authoring-test-case-not-effect-uncertain';
-            END IF;
+            -- No cross-plane recheck of the 'effect-uncertain' outcome
+            -- (wamn-0h0g.20.12): wamn-0h0g.8.18 moved these three relations to
+            -- the CONTROL database while the project run plane stayed
+            -- project-local, so the terminal status arrives at the store as an
+            -- already-observed argument rather than a join. This arm was the
+            -- last statement in the record still naming a project-local
+            -- relation; a guard that cannot be satisfied from the plane it
+            -- runs in is not enforcement.
         ELSE
             RAISE EXCEPTION USING ERRCODE = '55000',
                 MESSAGE = 'authoring-test-case-unexpected-operation';

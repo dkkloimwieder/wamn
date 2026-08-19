@@ -4701,13 +4701,22 @@ git diff --check
 This mechanical gate pins the retained authoring-test DDL bytes while moving
 their path and direct Rust constants away from the deleted stored-suite name.
 The SQL payload SHA-256 is
-`13b1543ca315d3e5d1ed6817a9eb8f8bb61717edd5885a0df17711258974cb18`.
+`73e08867f0b29d8c6aec39b47a68c33bf1d38f48374bf4cf9320083df161fb9f`.
+
+> **Re-pinned 2026-08-19** (`wamn-0h0g.20.12`), from
+> `13b1543ca315d3e5d1ed6817a9eb8f8bb61717edd5885a0df17711258974cb18`. The
+> effect-uncertain trigger arm was deleted: it demanded a `wamn_run.runs` row
+> that `wamn-0h0g.8.18` had already stopped producing, it does not exist in the
+> production control store, and it encoded the very cross-database join the
+> owning crate's own conformance test forbids by token. A pin is a record of
+> intended bytes, so it moves when the bytes are deliberately changed — verify
+> against the commit, not against this line alone.
 
 ```bash
 export CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next
 export CARGO_INCREMENTAL=0
 
-echo '13b1543ca315d3e5d1ed6817a9eb8f8bb61717edd5885a0df17711258974cb18  deploy/sql/authoring-tests.sql' \
+echo '73e08867f0b29d8c6aec39b47a68c33bf1d38f48374bf4cf9320083df161fb9f  deploy/sql/authoring-tests.sql' \
   | sha256sum --check
 jq empty architecture/state-owners.json
 

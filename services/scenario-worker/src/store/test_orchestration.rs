@@ -507,6 +507,13 @@ mod tests {
 
     /// wamn-0h0g.8.18: no statement here names a project-local relation, so none
     /// of them can be a cross-database join.
+    ///
+    /// wamn-0h0g.20.12: the DDL record is scanned by the SAME token list. This
+    /// guard used to read only the Rust module, so when wamn-0h0g.8.18 removed
+    /// the join from `reconcile_test_report` nothing noticed that the record's
+    /// own `BEFORE UPDATE` trigger still rechecked an `effect-uncertain`
+    /// outcome against the project run plane — a recheck no write from the
+    /// control database could ever satisfy.
     #[test]
     fn no_statement_reaches_the_project_run_plane() {
         let source = include_str!("test_orchestration.rs");
@@ -514,17 +521,21 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .expect("the module has an implementation");
-        for project_local in [
-            "FROM runs",
-            "JOIN runs",
-            " runs AS ",
-            "run.status",
-            "run.run_id",
-        ] {
-            assert!(
-                !implementation.contains(project_local),
-                "a statement reaches the project run plane via {project_local}"
-            );
+        let ddl = include_str!("../../../../deploy/sql/authoring-tests.sql");
+        for (origin, scanned) in [("a statement", implementation), ("the DDL record", ddl)] {
+            for project_local in [
+                "FROM runs",
+                "JOIN runs",
+                " runs AS ",
+                "run.status",
+                "run.run_id",
+                "wamn_run.runs",
+            ] {
+                assert!(
+                    !scanned.contains(project_local),
+                    "{origin} reaches the project run plane via {project_local}"
+                );
+            }
         }
         // The already-observed terminal status arrives as a bound parameter.
         assert!(implementation.contains("test_case.run_id = ANY($3::text[])"));
