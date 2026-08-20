@@ -622,6 +622,107 @@ CREATE TRIGGER release_attachments_delete_immutable
 BEFORE DELETE ON catalog.release_attachments
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
+-- BEGIN RELEASE COPY CONFLICT ROUTINES MIGRATION (wamn-0h0g.11.49)
+CREATE FUNCTION catalog.register_release_source(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_catalog_version int,
+    p_source_id text,
+    p_source_kind text,
+    p_definition_json jsonb,
+    p_source_hash text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO catalog.release_sources (
+        tenant_id, catalog_id, catalog_version, source_id, source_kind,
+        definition_json, source_hash
+    )
+    VALUES (
+        p_tenant_id, p_catalog_id, p_catalog_version, p_source_id, p_source_kind,
+        p_definition_json, p_source_hash
+    )
+    ON CONFLICT (tenant_id, catalog_id, catalog_version, source_id) DO NOTHING;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM catalog.release_sources
+        WHERE tenant_id = p_tenant_id
+          AND catalog_id = p_catalog_id
+          AND catalog_version = p_catalog_version
+          AND source_id = p_source_id
+          AND source_kind = p_source_kind
+          AND definition_json = p_definition_json
+          AND source_hash = p_source_hash
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23505',
+            MESSAGE = 'catalog-release-source-content-conflict';
+    END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.register_release_source(
+    text, text, int, text, text, jsonb, text
+) FROM PUBLIC;
+
+CREATE FUNCTION catalog.register_release_attachment(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_catalog_version int,
+    p_attachment_id text,
+    p_attachment_kind text,
+    p_flow_id text,
+    p_source_id text,
+    p_definition_hash text,
+    p_definition_json jsonb,
+    p_route_host text,
+    p_route_path text,
+    p_route_template text,
+    p_route_method text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO catalog.release_attachments (
+        tenant_id, catalog_id, catalog_version, attachment_id, attachment_kind,
+        flow_id, source_id, definition_hash, definition_json, route_host,
+        route_path, route_template, route_method
+    )
+    VALUES (
+        p_tenant_id, p_catalog_id, p_catalog_version, p_attachment_id,
+        p_attachment_kind, p_flow_id, p_source_id, p_definition_hash,
+        p_definition_json, p_route_host, p_route_path, p_route_template,
+        p_route_method
+    )
+    ON CONFLICT (tenant_id, catalog_id, catalog_version, attachment_id) DO NOTHING;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM catalog.release_attachments
+        WHERE tenant_id = p_tenant_id
+          AND catalog_id = p_catalog_id
+          AND catalog_version = p_catalog_version
+          AND attachment_id = p_attachment_id
+          AND attachment_kind = p_attachment_kind
+          AND flow_id = p_flow_id
+          AND source_id = p_source_id
+          AND definition_hash = p_definition_hash
+          AND definition_json = p_definition_json
+          AND route_host IS NOT DISTINCT FROM p_route_host
+          AND route_path IS NOT DISTINCT FROM p_route_path
+          AND route_template IS NOT DISTINCT FROM p_route_template
+          AND route_method IS NOT DISTINCT FROM p_route_method
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23505',
+            MESSAGE = 'catalog-release-attachment-content-conflict';
+    END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.register_release_attachment(
+    text, text, int, text, text, text, text, text, jsonb, text, text, text, text
+) FROM PUBLIC;
+-- END RELEASE COPY CONFLICT ROUTINES MIGRATION (wamn-0h0g.11.49)
+
 CREATE TABLE catalog.attachment_tombstones (
     tenant_id     text NOT NULL CHECK (tenant_id <> ''),
     catalog_id    text NOT NULL,

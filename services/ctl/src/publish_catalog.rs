@@ -193,7 +193,9 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     to_regclass('catalog.wirings') IS NOT NULL, \
                     to_regclass('catalog.wiring_tombstones') IS NOT NULL, \
                     to_regclass('catalog.wiring_activation') IS NOT NULL, \
-                    to_regclass('catalog.wiring_activation_events') IS NOT NULL",
+                    to_regclass('catalog.wiring_activation_events') IS NOT NULL, \
+                    to_regprocedure('catalog.register_release_source(text,text,integer,text,text,jsonb,text)') IS NOT NULL, \
+                    to_regprocedure('catalog.register_release_attachment(text,text,integer,text,text,text,text,text,jsonb,text,text,text,text)') IS NOT NULL",
             &[],
         )
         .await?;
@@ -362,6 +364,27 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
                 .await
                 .context("install wiring storage")?;
+        }
+
+        let release_copy_routines = [
+            release_row.get::<_, bool>(29),
+            release_row.get::<_, bool>(30),
+        ];
+        if !release_copy_routines.iter().all(|present| *present) {
+            anyhow::ensure!(
+                release_copy_routines.iter().all(|present| !*present),
+                "catalog release copy conflict routines are partially installed; reconcile them before publication"
+            );
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN RELEASE COPY CONFLICT ROUTINES MIGRATION")
+                .expect("release copy conflict routines migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END RELEASE COPY CONFLICT ROUTINES MIGRATION")
+                .expect("release copy conflict routines migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install release copy conflict routines")?;
         }
 
         ensure_authoring_catalog_privileges(client).await?;
@@ -750,6 +773,75 @@ pub(crate) static LIVE_DB: std::sync::LazyLock<tokio::sync::Mutex<()>> =
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn release_copy_routines_present(client: &tokio_postgres::Client) -> bool {
+        client
+            .query_one(
+                "SELECT \
+                   to_regprocedure('catalog.register_release_source(text,text,integer,text,text,jsonb,text)') IS NOT NULL \
+                   AND to_regprocedure('catalog.register_release_attachment(text,text,integer,text,text,text,text,text,jsonb,text,text,text,text)') IS NOT NULL",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0)
+    }
+
+    #[tokio::test]
+    async fn existing_catalog_converges_release_copy_conflict_routines() {
+        let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
+            return;
+        };
+        let _live_db = LIVE_DB.lock().await;
+        let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+            .await
+            .unwrap();
+        let connection_task = tokio::spawn(connection);
+
+        ensure_catalog_storage(&client).await.unwrap();
+        assert!(release_copy_routines_present(&client).await);
+        client
+            .batch_execute(
+                "DROP FUNCTION catalog.register_release_source(\
+                   text, text, integer, text, text, jsonb, text); \
+                 DROP FUNCTION catalog.register_release_attachment(\
+                   text, text, integer, text, text, text, text, text, jsonb, \
+                   text, text, text, text)",
+            )
+            .await
+            .unwrap();
+        assert!(!release_copy_routines_present(&client).await);
+
+        ensure_catalog_storage(&client).await.unwrap();
+        assert!(release_copy_routines_present(&client).await);
+
+        client
+            .batch_execute(
+                "DROP FUNCTION catalog.register_release_source(\
+                   text, text, integer, text, text, jsonb, text)",
+            )
+            .await
+            .unwrap();
+        let partial = ensure_catalog_storage(&client).await.unwrap_err();
+        assert!(
+            partial
+                .to_string()
+                .contains("catalog release copy conflict routines are partially installed")
+        );
+        client
+            .batch_execute(
+                "DROP FUNCTION catalog.register_release_attachment(\
+                   text, text, integer, text, text, text, text, text, jsonb, \
+                   text, text, text, text)",
+            )
+            .await
+            .unwrap();
+        ensure_catalog_storage(&client).await.unwrap();
+        assert!(release_copy_routines_present(&client).await);
+
+        drop(client);
+        connection_task.await.unwrap().unwrap();
+    }
 
     #[tokio::test]
     async fn invalid_schema_is_rejected_before_catalog_io_or_admin_connect() {

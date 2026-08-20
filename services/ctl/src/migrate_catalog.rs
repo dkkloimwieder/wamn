@@ -576,32 +576,73 @@ async fn carry_forward_release(
     .await
     .context("seal migrated release exposure")?;
     if let Some(source_version) = current_version {
-        tx.execute(
-            "INSERT INTO catalog.release_sources \
-               (tenant_id, catalog_id, catalog_version, source_id, source_kind, \
-                definition_json, source_hash) \
-             SELECT tenant_id, catalog_id, $4, source_id, source_kind, \
-                    definition_json, source_hash \
-             FROM catalog.release_sources \
-             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
-            &[&tenant, &catalog_id, &source_version, &target_version],
-        )
-        .await
-        .context("carry migrated release sources forward")?;
-        tx.execute(
-            "INSERT INTO catalog.release_attachments \
-               (tenant_id, catalog_id, catalog_version, attachment_id, attachment_kind, \
-                flow_id, source_id, definition_hash, definition_json, route_host, \
-                route_path, route_template, route_method) \
-             SELECT tenant_id, catalog_id, $4, attachment_id, attachment_kind, \
-                    flow_id, source_id, definition_hash, definition_json, route_host, \
-                    route_path, route_template, route_method \
-             FROM catalog.release_attachments \
-             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
-            &[&tenant, &catalog_id, &source_version, &target_version],
-        )
-        .await
-        .context("carry migrated release attachments forward")?;
+        let sources = tx
+            .query(
+                wamn_schema_control::sql::select_release_sources_sql(),
+                &[&tenant, &catalog_id, &source_version],
+            )
+            .await
+            .context("read migrated release sources")?;
+        for source in sources {
+            let source_id: String = source.get(0);
+            let source_kind: String = source.get(1);
+            let definition_json: String = source.get(2);
+            let source_hash: String = source.get(3);
+            tx.execute(
+                wamn_schema_control::sql::insert_release_source_sql(),
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &target_version,
+                    &source_id,
+                    &source_kind,
+                    &definition_json,
+                    &source_hash,
+                ],
+            )
+            .await
+            .context("carry migrated release source forward")?;
+        }
+
+        let attachments = tx
+            .query(
+                wamn_schema_control::sql::select_release_attachments_sql(),
+                &[&tenant, &catalog_id, &source_version],
+            )
+            .await
+            .context("read migrated release attachments")?;
+        for attachment in attachments {
+            let attachment_id: String = attachment.get(0);
+            let attachment_kind: String = attachment.get(1);
+            let flow_id: String = attachment.get(2);
+            let source_id: String = attachment.get(3);
+            let definition_hash: String = attachment.get(4);
+            let definition_json: String = attachment.get(5);
+            let route_host: Option<String> = attachment.get(6);
+            let route_path: Option<String> = attachment.get(7);
+            let route_template: Option<String> = attachment.get(8);
+            let route_method: Option<String> = attachment.get(9);
+            tx.execute(
+                wamn_schema_control::sql::insert_release_attachment_sql(),
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &target_version,
+                    &attachment_id,
+                    &attachment_kind,
+                    &flow_id,
+                    &source_id,
+                    &definition_hash,
+                    &definition_json,
+                    &route_host,
+                    &route_path,
+                    &route_template,
+                    &route_method,
+                ],
+            )
+            .await
+            .context("carry migrated release attachment forward")?;
+        }
     }
     tx.execute(
         wamn_schema_control::sql::apply_release_exposure_sql(),
@@ -837,11 +878,16 @@ mod tests {
         assert!(default.contains("drop column orders.note"));
     }
 
-    /// Proves row-shape equivalence only on conflict-free target coordinates.
-    /// The raw migration path deliberately retains native `23505` behavior for
-    /// occupied coordinates; conflict parity is deferred to `wamn-0h0g.11.49`.
+    fn assert_database_error(error: &tokio_postgres::Error, code: &str, message: &str) {
+        let database = error.as_db_error().expect("database error");
+        assert_eq!(database.code().code(), code);
+        assert_eq!(database.message(), message);
+    }
+
+    /// Guards row-shape equivalence, exact retries, divergent-content refusal,
+    /// scope isolation, and the table-owned integrity constraints.
     #[tokio::test]
-    async fn migration_matches_shared_builders_on_conflict_free_targets() {
+    async fn migration_matches_shared_builders_and_conflict_contract() {
         let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
             return;
         };
@@ -927,6 +973,21 @@ mod tests {
         .unwrap();
         let migrated_bytes = release_definition_bytes(&tx, &tenant, &catalog_id, 2).await;
         assert_eq!(migrated_bytes, builder_bytes);
+        carry_forward_release(
+            &tx,
+            &tenant,
+            &catalog_id,
+            Some(1),
+            2,
+            "dev",
+            &BareSchemaName::new("pg_temp").unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            release_definition_bytes(&tx, &tenant, &catalog_id, 2).await,
+            migrated_bytes,
+        );
         let snapshot = String::from_utf8(builder_bytes).unwrap();
         for fixed in [
             "main-source-hash",
@@ -969,6 +1030,300 @@ mod tests {
             .unwrap()
             .get(0);
         assert!(isolated, "migration crossed tenant/catalog/version scope");
+
+        for (source_kind, definition_json, source_hash) in [
+            (
+                "caller-policy",
+                r#"{"fixture":"main","kind":"auth"}"#,
+                "main-source-hash",
+            ),
+            (
+                "auth",
+                r#"{"fixture":"different","kind":"auth"}"#,
+                "main-source-hash",
+            ),
+            (
+                "auth",
+                r#"{"fixture":"main","kind":"auth"}"#,
+                "different-source-hash",
+            ),
+        ] {
+            tx.batch_execute("SAVEPOINT divergent_source")
+                .await
+                .unwrap();
+            let error = tx
+                .execute(
+                    wamn_schema_control::sql::insert_release_source_sql(),
+                    &[
+                        &tenant,
+                        &catalog_id,
+                        &2_i32,
+                        &"main-source",
+                        &source_kind,
+                        &definition_json,
+                        &source_hash,
+                    ],
+                )
+                .await
+                .unwrap_err();
+            assert_database_error(&error, "23505", "catalog-release-source-content-conflict");
+            tx.batch_execute("ROLLBACK TO SAVEPOINT divergent_source")
+                .await
+                .unwrap();
+        }
+
+        let original_definition = r#"{"fixture":"main","kind":"http"}"#;
+        let original_route_host = Some("api.example.test");
+        let original_route_path = Some("/main/orders");
+        let original_route_template = Some("/{tenant}/orders");
+        let original_route_method = Some("POST");
+        for (
+            attachment_kind,
+            flow_id,
+            source_id,
+            definition_hash,
+            definition_json,
+            route_host,
+            route_path,
+            route_template,
+            route_method,
+        ) in [
+            (
+                "studio",
+                "main-flow",
+                "main-source",
+                "main-http-hash",
+                original_definition,
+                original_route_host,
+                original_route_path,
+                original_route_template,
+                original_route_method,
+            ),
+            (
+                "http",
+                "different-flow",
+                "main-source",
+                "main-http-hash",
+                original_definition,
+                original_route_host,
+                original_route_path,
+                original_route_template,
+                original_route_method,
+            ),
+            (
+                "http",
+                "main-flow",
+                "different-source",
+                "main-http-hash",
+                original_definition,
+                original_route_host,
+                original_route_path,
+                original_route_template,
+                original_route_method,
+            ),
+            (
+                "http",
+                "main-flow",
+                "main-source",
+                "different-http-hash",
+                original_definition,
+                original_route_host,
+                original_route_path,
+                original_route_template,
+                original_route_method,
+            ),
+            (
+                "http",
+                "main-flow",
+                "main-source",
+                "main-http-hash",
+                r#"{"fixture":"different","kind":"http"}"#,
+                original_route_host,
+                original_route_path,
+                original_route_template,
+                original_route_method,
+            ),
+            (
+                "http",
+                "main-flow",
+                "main-source",
+                "main-http-hash",
+                original_definition,
+                Some("other.example.test"),
+                original_route_path,
+                original_route_template,
+                original_route_method,
+            ),
+            (
+                "http",
+                "main-flow",
+                "main-source",
+                "main-http-hash",
+                original_definition,
+                original_route_host,
+                Some("/different/orders"),
+                original_route_template,
+                original_route_method,
+            ),
+            (
+                "http",
+                "main-flow",
+                "main-source",
+                "main-http-hash",
+                original_definition,
+                original_route_host,
+                original_route_path,
+                Some("/different/{order}"),
+                original_route_method,
+            ),
+            (
+                "http",
+                "main-flow",
+                "main-source",
+                "main-http-hash",
+                original_definition,
+                original_route_host,
+                original_route_path,
+                original_route_template,
+                Some("PUT"),
+            ),
+        ] {
+            tx.batch_execute("SAVEPOINT divergent_attachment")
+                .await
+                .unwrap();
+            let error = tx
+                .execute(
+                    wamn_schema_control::sql::insert_release_attachment_sql(),
+                    &[
+                        &tenant,
+                        &catalog_id,
+                        &2_i32,
+                        &"main-http",
+                        &attachment_kind,
+                        &flow_id,
+                        &source_id,
+                        &definition_hash,
+                        &definition_json,
+                        &route_host,
+                        &route_path,
+                        &route_template,
+                        &route_method,
+                    ],
+                )
+                .await
+                .unwrap_err();
+            assert_database_error(
+                &error,
+                "23505",
+                "catalog-release-attachment-content-conflict",
+            );
+            tx.batch_execute("ROLLBACK TO SAVEPOINT divergent_attachment")
+                .await
+                .unwrap();
+        }
+
+        tx.batch_execute("SAVEPOINT source_check").await.unwrap();
+        let source_check = tx
+            .execute(
+                wamn_schema_control::sql::insert_release_source_sql(),
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &2_i32,
+                    &"invalid-kind-source",
+                    &"invalid-kind",
+                    &r#"{}"#,
+                    &"invalid-kind-hash",
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(source_check.code().map(|code| code.code()), Some("23514"));
+        tx.batch_execute("ROLLBACK TO SAVEPOINT source_check")
+            .await
+            .unwrap();
+
+        tx.batch_execute("SAVEPOINT source_fk").await.unwrap();
+        let source_fk = tx
+            .execute(
+                wamn_schema_control::sql::insert_release_source_sql(),
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &999_i32,
+                    &"missing-release-source",
+                    &"auth",
+                    &r#"{}"#,
+                    &"missing-release-hash",
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(source_fk.code().map(|code| code.code()), Some("23503"));
+        tx.batch_execute("ROLLBACK TO SAVEPOINT source_fk")
+            .await
+            .unwrap();
+
+        tx.batch_execute("SAVEPOINT attachment_check")
+            .await
+            .unwrap();
+        let route = Some("must-be-null");
+        let no_route: Option<&str> = None;
+        let attachment_check = tx
+            .execute(
+                wamn_schema_control::sql::insert_release_attachment_sql(),
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &2_i32,
+                    &"invalid-route-attachment",
+                    &"internal",
+                    &"main-flow",
+                    &"main-source",
+                    &"invalid-route-hash",
+                    &r#"{}"#,
+                    &route,
+                    &no_route,
+                    &no_route,
+                    &no_route,
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            attachment_check.code().map(|code| code.code()),
+            Some("23514")
+        );
+        tx.batch_execute("ROLLBACK TO SAVEPOINT attachment_check")
+            .await
+            .unwrap();
+
+        tx.batch_execute("SAVEPOINT attachment_fk").await.unwrap();
+        let attachment_fk = tx
+            .execute(
+                wamn_schema_control::sql::insert_release_attachment_sql(),
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &2_i32,
+                    &"missing-flow-attachment",
+                    &"internal",
+                    &"missing-flow",
+                    &"main-source",
+                    &"missing-flow-hash",
+                    &r#"{}"#,
+                    &no_route,
+                    &no_route,
+                    &no_route,
+                    &no_route,
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(attachment_fk.code().map(|code| code.code()), Some("23503"));
+        tx.batch_execute("ROLLBACK TO SAVEPOINT attachment_fk")
+            .await
+            .unwrap();
 
         tx.execute(
             wamn_schema_control::sql::advance_catalog_head_sql(),

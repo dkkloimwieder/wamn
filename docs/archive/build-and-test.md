@@ -3526,13 +3526,17 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-release-46 \
 The exposure gate validates route, mapping, source, and entry matching in the
 pure preflight model and pins immutable definition, activation, tombstone, and
 authoritative-view storage. The live migration guard seeds source and attachment
-rows through the shared builders, carries them through the production
-`migrate_catalog` path at a fresh target coordinate, and compares every
-persisted conflict-free row field, including opaque hashes, canonical JSON,
-nullable route columns, and tenant/catalog/version scope. Primary-key conflict
-parity is deliberately excluded: raw migration retains native PostgreSQL
-`23505` behavior until `wamn-0h0g.11.49` converges both paths on
-insert-or-verify-identical typed refusals.
+rows through the shared builders and carries them through the production
+`migrate_catalog` path using the same insert-or-verify-identical routines. It
+compares every persisted row field, repeats an exact copy byte-identically, and
+proves frozen PostgreSQL `23505` source and attachment content-conflict refusals
+for every divergent non-key field, including hashes, canonical JSON, and
+null-safe route columns. It also preserves tenant/catalog/version scope plus
+table CHECK and FK enforcement. The existing-catalog guard drops both routines,
+reconverges them through `ensure_catalog_storage`, and refuses a partial
+installation. Named bare-DO-NOTHING, omitted-field, tenant-scope, hash,
+nullable-route, and missing-routine-probe mutants must fail these live guards
+and be hash-verified restored.
 
 ```bash
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
@@ -3541,7 +3545,13 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
 WAMN_MIGRATE_PG_URL="$THROWAWAY_PG_URL" \
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
   cargo test --locked -p wamn-ctl --lib \
-    migrate_catalog::tests::migration_matches_shared_builders_on_conflict_free_targets \
+    migrate_catalog::tests::migration_matches_shared_builders_and_conflict_contract \
+    -- --exact --nocapture
+
+WAMN_MIGRATE_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
+  cargo test --locked -p wamn-ctl --lib \
+    publish_catalog::tests::existing_catalog_converges_release_copy_conflict_routines \
     -- --exact --nocapture
 
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \

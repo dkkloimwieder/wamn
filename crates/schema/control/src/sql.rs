@@ -186,23 +186,19 @@ pub fn register_release_exposure_manifest_sql() -> &'static str {
     "SELECT catalog.register_release_exposure_manifest($1, $2, $3, $4::text::jsonb)"
 }
 
-/// Persist one immutable source definition.
+/// Register one immutable source definition. An identical identity retry is a
+/// no-op; differing content raises `catalog-release-source-content-conflict`.
 pub fn insert_release_source_sql() -> &'static str {
-    "INSERT INTO catalog.release_sources \
-       (tenant_id, catalog_id, catalog_version, source_id, source_kind, \
-        definition_json, source_hash) \
-     VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
-     ON CONFLICT (tenant_id, catalog_id, catalog_version, source_id) DO NOTHING"
+    "SELECT catalog.register_release_source(\
+       $1, $2, $3, $4, $5, $6::text::jsonb, $7)"
 }
 
-/// Persist one fully resolved immutable attachment definition.
+/// Register one fully resolved immutable attachment definition. An identical
+/// identity retry is a no-op; differing content raises
+/// `catalog-release-attachment-content-conflict`.
 pub fn insert_release_attachment_sql() -> &'static str {
-    "INSERT INTO catalog.release_attachments \
-       (tenant_id, catalog_id, catalog_version, attachment_id, attachment_kind, \
-        flow_id, source_id, definition_hash, definition_json, route_host, \
-        route_path, route_template, route_method) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10, $11, $12, $13) \
-     ON CONFLICT (tenant_id, catalog_id, catalog_version, attachment_id) DO NOTHING"
+    "SELECT catalog.register_release_attachment(\
+       $1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10, $11, $12, $13)"
 }
 
 /// Carry activation for unchanged definitions and tombstone removed IDs.
@@ -210,7 +206,7 @@ pub fn apply_release_exposure_sql() -> &'static str {
     "SELECT catalog.apply_release_exposure($1, $2, $3, $4, $5)"
 }
 
-/// Read every source definition copied by `copy-project-env`.
+/// Read every source definition carried forward by `migrate-catalog`.
 pub fn select_release_sources_sql() -> &'static str {
     "SELECT source_id, source_kind, definition_json::text, source_hash \
      FROM catalog.release_sources \
@@ -218,7 +214,7 @@ pub fn select_release_sources_sql() -> &'static str {
      ORDER BY source_id"
 }
 
-/// Read every resolved attachment definition copied by `copy-project-env`.
+/// Read every resolved attachment definition carried forward by `migrate-catalog`.
 pub fn select_release_attachments_sql() -> &'static str {
     "SELECT attachment_id, attachment_kind, flow_id, source_id, definition_hash, \
             definition_json::text, route_host, route_path, route_template, route_method \
@@ -439,8 +435,34 @@ mod tests {
         );
         assert!(super::insert_release_flow_sql().contains("flow_version, execution_bundle_hash"));
         assert!(super::insert_release_flow_sql().contains("DO NOTHING"));
-        assert!(super::insert_release_source_sql().contains("DO NOTHING"));
-        assert!(super::insert_release_attachment_sql().contains("DO NOTHING"));
+        assert_eq!(
+            super::insert_release_source_sql(),
+            "SELECT catalog.register_release_source(\
+       $1, $2, $3, $4, $5, $6::text::jsonb, $7)"
+        );
+        assert_eq!(
+            super::insert_release_attachment_sql(),
+            "SELECT catalog.register_release_attachment(\
+       $1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10, $11, $12, $13)"
+        );
+        for required in [
+            "MESSAGE = 'catalog-release-source-content-conflict'",
+            "WHERE tenant_id = p_tenant_id",
+            "AND source_kind = p_source_kind",
+            "AND definition_json = p_definition_json",
+            "AND source_hash = p_source_hash",
+            "MESSAGE = 'catalog-release-attachment-content-conflict'",
+            "AND attachment_kind = p_attachment_kind",
+            "AND flow_id = p_flow_id",
+            "AND source_id = p_source_id",
+            "AND definition_hash = p_definition_hash",
+            "AND route_host IS NOT DISTINCT FROM p_route_host",
+            "AND route_path IS NOT DISTINCT FROM p_route_path",
+            "AND route_template IS NOT DISTINCT FROM p_route_template",
+            "AND route_method IS NOT DISTINCT FROM p_route_method",
+        ] {
+            assert!(CATALOG_SCHEMA.contains(required), "missing {required}");
+        }
         assert!(super::apply_release_exposure_sql().contains("apply_release_exposure"));
         assert!(super::advance_catalog_head_sql().contains("DO UPDATE"));
     }
