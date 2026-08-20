@@ -1800,9 +1800,20 @@ assertions into the M2 gate.
 ### [CALLABLE-FLOWS-P2A / wamn-5wd1.49] cron attachment admission
 
 The positive cron scheduler path and its `callable_cron` proof were deleted by
-`wamn-0h0g.5.6` (`25129131`). Cron is now a refused attachment kind, so no
-runnable positive-path recipe remains; `wamn-0h0g.11.50` owns the missing
-typed-refusal proof.
+`wamn-0h0g.5.6` (`25129131`). Cron is now a refused attachment kind. The
+anonymous callable boundary deliberately returns the same
+`404 attachment-not-found` response for an active cron attachment and a genuinely
+absent attachment, so it proves non-executability without disclosing that the
+cron configuration exists.
+
+```bash
+WAMN_FLOW_INVOCATION_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-callable-cron-refusal \
+  cargo test --locked --offline -p wamn-runtime \
+    --test flow_invocation_admission_live \
+    cron_attachment_and_absent_path_have_indistinguishable_not_found_responses \
+    -- --ignored --exact --nocapture --test-threads=1
+```
 
 The former multi-mode `dispatchbench` executable was archived by
 `wamn-0h0g.4.1`. Current centralized admission and queue behavior are covered by

@@ -1,5 +1,4 @@
-//! Live proof that the PostgreSQL invocation backend returns no run identity
-//! when its admission transaction fails at commit.
+//! Live proofs for the PostgreSQL invocation and admission boundary.
 //!
 //! Run this only against a disposable PostgreSQL 18 database. The fixture
 //! recreates the canonical `catalog` and `wamn_run` schemas and creates the
@@ -9,16 +8,19 @@ use anyhow::Context as _;
 use chrono::{TimeDelta, Utc};
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
-use wamn_flow_invocation::{InvocationError, InvokeRequest};
+use wamn_flow_invocation::{BeginResult, InvocationError, InvokeRequest};
 use wamn_run_state::invocation::InvocationTarget;
 use wamn_runtime::flow_invocation::{
-    HttpAdmission, InvocationBackend, InvocationServiceConfig, PostgresInvocationBackend,
+    HttpAdmission, InvocationBackend, InvocationService, InvocationServiceConfig,
+    PostgresInvocationBackend,
 };
 
 const TENANT: &str = "d15-write-ahead";
 const CATALOG: &str = "d15-catalog";
 const ENVIRONMENT: &str = "dev";
 const ATTACHMENT: &str = "http-a";
+const CRON_ATTACHMENT: &str = "cron-a";
+const ABSENT_ATTACHMENT: &str = "absent-a";
 const FLOW: &str = "flow-http";
 const DEFINITION_HASH: &str = "sha256:http";
 
@@ -104,17 +106,28 @@ async fn install_fixture(client: &Client) -> anyhow::Result<()> {
                 route_method) \
              VALUES ('{TENANT}','{CATALOG}',1,'{ATTACHMENT}','http','{FLOW}','auth-a', \
                '{DEFINITION_HASH}','{{}}','example.test','/echo','/echo','POST'); \
+             INSERT INTO catalog.release_attachments \
+               (tenant_id,catalog_id,catalog_version,attachment_id,attachment_kind,flow_id, \
+                source_id,definition_hash,definition_json) \
+             VALUES ('{TENANT}','{CATALOG}',1,'{CRON_ATTACHMENT}','cron','{FLOW}','auth-a', \
+               '{DEFINITION_HASH}','{{\"run-deadline-ms\":60000}}'); \
              INSERT INTO catalog.catalog_heads \
                (tenant_id,catalog_id,environment,applied_catalog_version) \
              VALUES ('{TENANT}','{CATALOG}','{ENVIRONMENT}',1); \
              INSERT INTO catalog.attachment_activation \
                (tenant_id,catalog_id,environment,attachment_id,confirmed_definition_hash,enabled) \
              VALUES ('{TENANT}','{CATALOG}','{ENVIRONMENT}','{ATTACHMENT}', \
+               '{DEFINITION_HASH}',true), \
+                    ('{TENANT}','{CATALOG}','{ENVIRONMENT}','{CRON_ATTACHMENT}', \
                '{DEFINITION_HASH}',true);"
         ))
         .await
-        .context("seed the active HTTP release")?;
+        .context("seed the active release")?;
 
+    Ok(())
+}
+
+async fn install_commit_fault(client: &Client) -> anyhow::Result<()> {
     client
         .batch_execute(
             "CREATE FUNCTION wamn_run.fail_d15_admission_commit() \
@@ -165,6 +178,52 @@ fn admission() -> HttpAdmission {
     }
 }
 
+fn config() -> InvocationServiceConfig {
+    InvocationServiceConfig {
+        tenant_id: TENANT.to_string(),
+        catalog_id: CATALOG.to_string(),
+        environment: ENVIRONMENT.to_string(),
+        platform_revision: "d15-test".to_string(),
+    }
+}
+
+async fn refusal_for(
+    service: &InvocationService<PostgresInvocationBackend>,
+    attachment_id: &str,
+) -> anyhow::Result<(u16, Vec<u8>)> {
+    let mut request = admission().request;
+    request.attachment_id = attachment_id.to_string();
+    let BeginResult::Rejected(rejection) = service.begin(request).await? else {
+        anyhow::bail!("a non-callable attachment must not be admitted");
+    };
+    Ok((rejection.status, rejection.code.into_bytes()))
+}
+
+#[tokio::test]
+#[ignore = "requires WAMN_FLOW_INVOCATION_PG_URL and a disposable PostgreSQL 18 database"]
+async fn cron_attachment_and_absent_path_have_indistinguishable_not_found_responses()
+-> anyhow::Result<()> {
+    let url = std::env::var("WAMN_FLOW_INVOCATION_PG_URL")
+        .context("set WAMN_FLOW_INVOCATION_PG_URL to a disposable PostgreSQL 18 database")?;
+    let admin = connect(&url).await?;
+    install_fixture(&admin).await?;
+
+    let service = InvocationService::new(
+        PostgresInvocationBackend::from_database_url(&url)?,
+        config(),
+    );
+    let cron = refusal_for(&service, CRON_ATTACHMENT).await?;
+    let absent = refusal_for(&service, ABSENT_ATTACHMENT).await?;
+
+    assert_eq!(cron, (404, b"attachment-not-found".to_vec()));
+    assert_eq!(absent, (404, b"attachment-not-found".to_vec()));
+    assert_eq!(
+        cron, absent,
+        "the anonymous callable surface must not disclose that the cron attachment exists"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires WAMN_FLOW_INVOCATION_PG_URL and a disposable PostgreSQL 18 database"]
 async fn commit_failure_returns_no_admission_identity_or_rows() -> anyhow::Result<()> {
@@ -172,14 +231,10 @@ async fn commit_failure_returns_no_admission_identity_or_rows() -> anyhow::Resul
         .context("set WAMN_FLOW_INVOCATION_PG_URL to a disposable PostgreSQL 18 database")?;
     let admin = connect(&url).await?;
     install_fixture(&admin).await?;
+    install_commit_fault(&admin).await?;
 
     let backend = PostgresInvocationBackend::from_database_url(&url)?;
-    let config = InvocationServiceConfig {
-        tenant_id: TENANT.to_string(),
-        catalog_id: CATALOG.to_string(),
-        environment: ENVIRONMENT.to_string(),
-        platform_revision: "d15-test".to_string(),
-    };
+    let config = config();
     let failure = backend
         .admit(&config, &admission())
         .await
