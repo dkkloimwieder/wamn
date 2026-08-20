@@ -5284,8 +5284,10 @@ declaration, renaming it, or repointing the path is still refused.
 cargo test --locked -p wamn-proof-conformance --lib manifest_dependencies
 ```
 
-The two real-tree mutants are recorded rather than scripted, because the guard
-surface and its registries are frozen until `wamn-0h0g.15.22` and a new
+The two real-tree mutants are recorded rather than scripted because the guard
+surface and its registries remain frozen through the `wamn-0h0g.15.181`
+adjudication prerequisite and the one-time `wamn-0h0g.15.173` regeneration;
+`wamn-0h0g.15.182` already restored the live harness. Apply each edit to
 `crates/catalog/model/Cargo.toml`, confirm the named test fails, restore, and
 verify the sha256 matches:
 
@@ -5331,8 +5333,11 @@ cargo test --locked -p wamn-host
 cargo test --locked -p wamn-proof-conformance --lib runtime_inventory
 ```
 
-Mutants are recorded rather than scripted (the guard surface is frozen until
-`wamn-0h0g.15.22`). Apply, confirm the named test fails, restore, verify the sha256:
+Mutants are recorded rather than scripted because the guard surface and its
+registries remain frozen through the `wamn-0h0g.15.181` adjudication prerequisite
+and the one-time `wamn-0h0g.15.173` regeneration; `wamn-0h0g.15.182` already
+restored the live harness. Apply, confirm the named test fails, restore, and verify
+the sha256:
 
 | mutant | edit | must fail |
 | --- | --- | --- |
@@ -5399,8 +5404,9 @@ re-anchor `wamn-0h0g.15.182`. Regenerate the protected inventory from the live
 schema; do not hand-edit the generated JSON or weaken the static comparison.
 
 `effect_provider_revision` carries a `WAMN_UPDATE_EFFECT_PROVIDER_MANIFEST`
-regeneration escape hatch. It belongs to `wamn-0h0g.15.22`'s registry
-regeneration, not to a guard run.
+regeneration escape hatch. Set it only for an intentional regeneration of
+`crates/execution/host/effect-provider-revision.json`; ordinary guard runs leave
+it unset.
 
 **Guards reachable only through the whole-package command.** Thirteen guards have
 no named recipe anywhere above; the whole-package sweep is what covers them.

@@ -326,8 +326,9 @@ authority. The role is an admission capability, not another data owner.
 > database read left to authorize; registry pull credentials, not a
 > database role, carry that authorization (`wamn-0h0g.15.17`). Deleted
 > with the role: its Secret, the separate connection pool, its
-> `protected-writes.json` entry (registries regenerate exactly once at
-> wave end, `wamn-0h0g.15.22`), and the bootstrap role probes for it
+> `protected-writes.json` entry (the remaining one-time regeneration is
+> `wamn-0h0g.15.173`, gated by `wamn-0h0g.15.181`; `wamn-0h0g.15.182`
+> repaired its live harness), and the bootstrap role probes for it
 > (ruling 6; `wamn-0h0g.15.23`). The landed plane of
 > `wamn-0h0g.9.10` / `.5.14` — 19 files including the
 > `artifact-reader-credential.sh`, `control-artifact-reader.sh`, and
@@ -479,9 +480,12 @@ fetch, and one pre-RC cutover train replace those contracts.
 > (dedicated role)" (OCI pull by digest; no role, no Secret) ·
 > "relocate the release→generation retention rows into step B" (there
 > is no B) · the `protected-writes.json` line — manifest, adjacency,
-> and the artifact-read role never join it, and every registry and
-> guard baseline regenerates exactly once at wave end
-> (`wamn-0h0g.15.22`) · the bootstrap journey's artifact-reader role
+> and the artifact-read role never join it; the already-green registry
+> and guard baselines were discharged before the umbrella split-close,
+> while the remaining `protected-writes.json` regeneration is
+> `wamn-0h0g.15.173` after `wamn-0h0g.15.181`, with
+> `wamn-0h0g.15.182` carrying the harness repair · the bootstrap journey's
+> artifact-reader role
 > probes (ruling 6; the deploy-and-resolve verification itself is not
 > ruled on, but its resolve leg becomes a mounted-manifest read). The
 > M2 cold-fetch leg stands.

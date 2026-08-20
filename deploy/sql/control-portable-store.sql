@@ -10,7 +10,7 @@
 --
 -- `control-portable-retained-shape-drift` and the release-evidence constraint
 -- fingerprint below are apply-time digests: they must be regenerated whenever
--- a retained relation's shape moves (wamn-0h0g.15.22).
+-- a retained relation's shape moves; the owning schema change regenerates both.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE SCHEMA IF NOT EXISTS catalog AUTHORIZATION wamn_system;

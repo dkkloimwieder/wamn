@@ -66,8 +66,9 @@ New epics (all `[SR-MVP]`, label `exe-model`, children carry grounded file:line 
 ## 3 · Sequencing
 
 **Wave 13 (already planned) is unchanged** — the deploy-simplification hygiene head
-(`.15.22` registries regeneration, `.15.29`, `.12.122/.12.123`, `.12.119`, `.11.27/.11.29`)
-stands under the redirect and still precedes the `.15.25` RC.
+(`.15.181` confinement gate → `.15.173` protected-writes regeneration, `.15.29`,
+`.12.122/.12.123`, `.12.119`, `.11.27/.11.29`) stands under the redirect and still
+precedes the `.15.25` RC.
 
 Then the EXE waves, by dependency shape (hard edges are in bd):
 
@@ -95,8 +96,8 @@ Then the EXE waves, by dependency shape (hard edges are in bd):
 8. **Demolition** — `.26.1–.26.7` in their recorded order (get-run → capture →
    node_runs (after the class gate) → guest/engine (after the conformance port) →
    flow-model (after extractions) → plans/compiler (after the catalog/model split and
-   manifest re-projection) → test mass). Registries re-baseline once at wave end per
-   the `.15.22` discipline.
+   manifest re-projection) → test mass). Registries re-baseline once at wave end under
+   the one-regeneration rule (`.15.161`).
 
 ## 4 · Spec corrections earned by grounding (input to rev 5)
 
