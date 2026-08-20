@@ -4,11 +4,13 @@
 -- audit_log, and api_keys.
 --
 -- This is the AUTH/RBAC half of item 2.4. The "platform metadata" half
--- (entities, fields, relations, flows) is ALREADY shipped and is deliberately
--- NOT redefined here: the catalog model lives in deploy/sql/catalog-schema.sql
--- (catalog.entities / catalog.fields / catalog.relations, 3.1). A `deployments` table
--- is deferred — a live WorkloadDeployment is a K8s CR, so a registry table would
--- duplicate cluster state until there is a concrete reader (follow-up bead).
+-- (entities, fields, relations, flow artifacts, and release membership) is
+-- ALREADY shipped and is deliberately NOT redefined here: the catalog model
+-- lives in deploy/sql/catalog-schema.sql (catalog.entities / catalog.fields /
+-- catalog.relations / catalog.flow_artifacts / catalog.release_flows, 3.1). A
+-- `deployments` table is deferred — a live WorkloadDeployment is a K8s CR, so a
+-- registry table would duplicate cluster state until there is a concrete reader
+-- (follow-up bead).
 --
 -- DISTINCT FROM the T1 control-plane registry (deploy/sql/system-schema.sql,
 -- wamn-q3n.3): that is the PLATFORM-GLOBAL system DB (orgs / projects /

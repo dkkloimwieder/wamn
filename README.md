@@ -79,13 +79,19 @@ tests/
   system/               deployed public-surface journeys
   orchestrator/         compatibility CLI for the existing wamn-gates commands
 
-deploy/                 Kubernetes manifests + standalone SQL schemas
-  kind-config.yaml      local kind cluster definition
-  values-wamn.yaml      runtime-operator Helm values (custom host image)
-  *.sql                 postgres-init, catalog-schema, run-state, run-queue,
+deploy/                 deployment, gate, schema, and bootstrap assets
+  infra/                install-once cluster infrastructure
+    kind-config.yaml    local kind cluster definition
+    values-wamn.yaml    runtime-operator Helm values (custom host image)
+  platform/             long-lived production/platform manifests
+  gates/                gate/bench Jobs and their support assets
+    *-job.yaml          in-cluster gate-of-record Jobs
+  sql/                  standalone SQL schemas
+    *.sql               postgres-init, catalog-schema, run-state, run-queue,
                         authoring-tests, system-schema, app-schema, ops-schema,
                         control-portable-store
-  *-job.yaml            in-cluster gate-of-record Jobs
+  mvp/                  bootstrap scripts; outside SR8 lifecycle tiers
+                        (pre-tier provisioning; runs before any tier exists)
 
 docs/                   design source of truth (PLAN/PLAN.md roadmap,
                         platform-plan.md decision table, WIT contracts,

@@ -880,18 +880,17 @@ included — is durably recorded**. Quiesce = `ALTER DATABASE … SET
 default_transaction_read_only = on` + terminating existing backends so pooled
 sessions re-dial under the new default, then *proven* by a write probe that must
 fail `read_only_sql_transaction` (25006); reads stay live through the copy
-window. Verify = exact per-table row counts of the data schema (data/both) /
-applied-document byte-equality + flows/RLS row counts (definition); a mismatch
-fails the saga and the run. After a successful cutover the src stays quiesced
-(it is retired); on failure the un-quiesce statement is printed. The resumable /
+window. Verify = exact table-set and per-table row-count equality in the data
+schema; a mismatch fails the saga and the run. After a successful cutover the
+src stays quiesced (it is retired); on failure the un-quiesce statement is
+printed. The resumable /
 compensating orchestrator that drives this saga across crashes is 10.1
 (`wamn-2ib`) — this subcommand ships the primitive + the gate it enforces.
 
 **Preconditions.** The dst database exists (`provision-project-env` + its
-`Database` CR); for a definition copy the dst carries the catalog storage schema
-(`deploy/sql/catalog-schema.sql`) — the flow registry is ensured on demand. The
-snapshot is recorded under the src triple in `provisioning.dumps`, so the src
-must be registered in the T1 registry when recording.
+`Database` CR). The snapshot is recorded under the src triple in
+`provisioning.dumps`, so the src must be registered in the T1 registry when
+recording.
 
 Gate: the throwaway-PG e2e (cross-org definition deploy incl. live RLS policies
 on the dst; a data copy into a pre-populated dst **fails verify** and fails the

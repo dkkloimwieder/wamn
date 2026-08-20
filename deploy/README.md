@@ -2,6 +2,8 @@
 
 Four tiers. A new file goes in exactly one tier; nothing lands at
 the top level. When in doubt, ask which lifecycle owns the file's create/delete.
+`mvp/` is the classified exception: its bootstrap scripts remain outside the SR8
+lifecycle tiers because pre-tier provisioning runs before any tier exists.
 
 - **`infra/`** — install-once cluster infrastructure, applied by hand at cluster
   standup and rarely touched: operators (CNPG, barman plugin), the data-plane

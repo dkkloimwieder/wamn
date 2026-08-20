@@ -3768,7 +3768,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     }
 
     // 1. Missing run-plane tables → EnsureSchema once, then per-table sections
-    //    in file order (FKs resolve: runs before node_runs/flows/queue).
+    //    in file order (FKs resolve: runs before node_runs and run_queue).
     let mut any_missing = false;
     let mut creates = Vec::new();
     for file in RUN_PLANE_FILES {
@@ -6512,11 +6512,12 @@ CREATE INDEX event_registrations_by_entity
         add_legacy_flow_registry(obs);
     }
 
-    /// The retired flow registry (`deploy/sql/flows.sql`), deleted by
-    /// wamn-0h0g.12.102 (e45ca35b). It is no longer one of `RUN_PLANE_FILES`,
-    /// so an observation derived from the record no longer carries it — but
-    /// `partition_plane_cutover_sql` still locks and preflights it for schemas
-    /// that physically retain the table, so the fixture must inject it.
+    /// The legacy flow registry (fixture-only), formerly `deploy/sql/flows.sql`,
+    /// was deleted by wamn-0h0g.12.102 (e45ca35b). It is no longer one of
+    /// `RUN_PLANE_FILES`, so an observation derived from the record no longer
+    /// carries it — but `partition_plane_cutover_sql` still locks and preflights
+    /// it for schemas that physically retain the table, so the fixture must
+    /// inject it.
     fn add_legacy_flow_registry(obs: &mut RunPlaneObservation) {
         obs.tables.insert(
             "flows".to_string(),
@@ -9877,8 +9878,8 @@ CREATE INDEX event_registrations_by_entity
     }
 
     /// The queue-missing manifestation (the live poc_f1 case): run-state and
-    /// flows present, queue absent → exactly the global queue create (plus the
-    /// idempotent schema ensure).
+    /// legacy flow registry (fixture-only) present, queue absent → exactly the
+    /// global queue create (plus the idempotent schema ensure).
     #[test]
     fn queue_missing_plans_only_the_queue_creates() {
         let mut obs = observation_at_record();
@@ -9906,8 +9907,9 @@ CREATE INDEX event_registrations_by_entity
         let schema = schema("poc_f1");
         // `run-state.sql` is the ONLY record file production rewrites whole
         // (`publish_catalog::ensure_runstate`) and the only one carrying the
-        // schema header; the retired `flows.sql` was the second element of this
-        // sweep until wamn-0h0g.12.102 (e45ca35b) deleted it with its call site.
+        // schema header; the legacy flow registry (fixture-only) was the second
+        // input to this sweep until wamn-0h0g.12.102 (e45ca35b) deleted it with
+        // its call site.
         let out = rewrite_schema(RUN_STATE_SQL, &schema);
         assert!(out.contains("CREATE TABLE poc_f1.runs"), "runs");
         assert!(!out.contains("wamn_run."), "no qualified wamn_run left");
