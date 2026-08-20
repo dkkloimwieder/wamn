@@ -704,9 +704,8 @@ mod tests {
         assert!(!CopyInclude::Definition.wants_data());
         // Flag closure: every representable axis is classified, and exactly one is
         // still available.
-        let closed = |include: CopyInclude| {
-            matches!(include, CopyInclude::Definition | CopyInclude::Both)
-        };
+        let closed =
+            |include: CopyInclude| matches!(include, CopyInclude::Definition | CopyInclude::Both);
         assert!(closed(CopyInclude::from(IncludeArg::Definition)));
         assert!(closed(CopyInclude::from(IncludeArg::Both)));
         assert!(!closed(CopyInclude::from(IncludeArg::Data)));

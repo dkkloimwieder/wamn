@@ -19,7 +19,11 @@ fn sample() -> Registry {
 
     // Each env carries the instance suffix provisioning minted for it — 8 bytes of
     // `[a-z0-9]`, the part of a derived physical name the triple cannot supply.
-    let envs = [("dev", "k3m9x2p7"), ("prod", "q80zdw41"), ("canary", "0z9a8b7c")];
+    let envs = [
+        ("dev", "k3m9x2p7"),
+        ("prod", "q80zdw41"),
+        ("canary", "0z9a8b7c"),
+    ];
     let mut project_envs = Vec::new();
     for (org, project, secret_prefix) in [("acme", "billing", "acme"), ("try", "demo", "try")] {
         for (env, instance) in envs {
@@ -112,7 +116,10 @@ fn the_instance_suffix_is_a_required_wire_field_in_both_directions() {
     };
     let json = serde_json::to_string(&pe).expect("serializes");
     assert!(json.contains("\"instance-suffix\":\"k3m9x2p7\""));
-    assert_eq!(serde_json::from_str::<ProjectEnv>(&json).expect("parses"), pe);
+    assert_eq!(
+        serde_json::from_str::<ProjectEnv>(&json).expect("parses"),
+        pe
+    );
 
     // A pre-field document: refused, and the refusal names the missing field.
     let older = r#"{"triple":{"org":"acme","project":"billing","env":"prod"},

@@ -30,9 +30,7 @@ use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
-use wamn_runtime::plugins::wamn_postgres::{
-    SessionClaims, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_runtime::plugins::wamn_postgres::{SessionClaims, WamnPostgres, WamnPostgresConfig};
 
 /// A component with the flowrunner's export signature and no imports.
 ///
@@ -168,7 +166,9 @@ fn acquisition(tenant: &str, schema: &str, runner: &str) -> ExecutionAcquisition
 /// built from one component share ONE pool — which is the whole of the
 /// cross-wiring amortization the rekey bought, and the whole of the exposure.
 fn digest_key(bytes: &[u8]) -> ExecutionPoolKey {
-    ExecutionPoolKey::new(TrustedExecutionRuntimeRevision::from_flowrunner_bytes(bytes).flowrunner_component_digest())
+    ExecutionPoolKey::new(
+        TrustedExecutionRuntimeRevision::from_flowrunner_bytes(bytes).flowrunner_component_digest(),
+    )
 }
 
 /// Two tenants, one digest pool, interleaved checkouts, no cross-bleed.
@@ -317,7 +317,8 @@ async fn an_idle_instance_carries_no_resolvable_identity_once_a_checkout_has_end
     )
     .await;
     let scope = host.claim_scope().to_string();
-    pool.insert(key.clone(), host).expect("prewarm one instance");
+    pool.insert(key.clone(), host)
+        .expect("prewarm one instance");
 
     let lease = pool
         .checkout(&key, &acquisition("tenant-a", "schema_a", "runner-a"))

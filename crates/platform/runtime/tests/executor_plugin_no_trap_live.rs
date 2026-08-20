@@ -529,17 +529,20 @@ fn plan_supply_guest() -> String {
 #[ignore = "wamn-0h0g.15.133: the guest's imported-instance function type carries a COMPOUND result, which wasmtime 47 rejects as \"instance not valid to be used as import\"; a primitive result validates. The harness itself is proven by runner_egress, which passes."]
 async fn runner_plan_supply_maps_a_missing_release_to_unavailable_not_a_trap() {
     let postgres = Arc::new(offline_postgres());
-    let supply = Arc::new(
-        RunnerPlanSupply::new(postgres, None, 8).expect("plan cache limit is valid"),
-    );
+    let supply =
+        Arc::new(RunnerPlanSupply::new(postgres, None, 8).expect("plan cache limit is valid"));
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(
         RUNNER_PLAN_SUPPLY_ID,
         supply as Arc<dyn HostPlugin + Send + Sync>,
     );
 
-    let (outcome, trail) =
-        drive_guest(&plan_supply_guest(), plugins, runner_plan_supply::add_to_linker).await;
+    let (outcome, trail) = drive_guest(
+        &plan_supply_guest(),
+        plugins,
+        runner_plan_supply::add_to_linker,
+    )
+    .await;
 
     outcome.expect("the guest survived the plan-supply refusal");
     // `1` is `err`, `3` is `unavailable` — the fourth case of `supply-error`. A
@@ -798,8 +801,12 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
         effect as Arc<dyn HostPlugin + Send + Sync>,
     );
 
-    let (outcome, trail) =
-        drive_guest(&http_effect_guest(), plugins, connection_http::add_to_linker).await;
+    let (outcome, trail) = drive_guest(
+        &http_effect_guest(),
+        plugins,
+        connection_http::add_to_linker,
+    )
+    .await;
 
     outcome.expect("the guest survived the effect refusal");
     // Only the ok/err discriminant is asserted. `invalid-context` is case ZERO

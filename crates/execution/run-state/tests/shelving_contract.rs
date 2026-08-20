@@ -26,7 +26,10 @@ const ROUTER_MANIFEST: &str = include_str!("../../router/Cargo.toml");
 const ROUTER_SOURCES: &[(&str, &str)] = &[
     ("lib.rs", include_str!("../../router/src/lib.rs")),
     ("outcome.rs", include_str!("../../router/src/outcome.rs")),
-    ("resolution.rs", include_str!("../../router/src/resolution.rs")),
+    (
+        "resolution.rs",
+        include_str!("../../router/src/resolution.rs"),
+    ),
     ("retry.rs", include_str!("../../router/src/retry.rs")),
     ("terminal.rs", include_str!("../../router/src/terminal.rs")),
     ("walk.rs", include_str!("../../router/src/walk.rs")),
@@ -127,10 +130,7 @@ fn the_gate_is_data_not_a_build_flag() {
     // in one binary. Turning the premium tier on must therefore be a per-run
     // DATA change, and nothing about the class may be conditionally compiled.
     for (path, source) in [
-        (
-            "durability.rs",
-            include_str!("../src/durability.rs"),
-        ),
+        ("durability.rs", include_str!("../src/durability.rs")),
         ("queue/claim.rs", include_str!("../src/queue/claim.rs")),
         ("queue/sql.rs", include_str!("../src/queue/sql.rs")),
     ] {

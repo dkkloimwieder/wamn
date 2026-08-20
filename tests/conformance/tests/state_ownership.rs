@@ -1550,11 +1550,7 @@ fn host_owned_production_claim_authority_is_explicit_and_bounded() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         writes,
-        BTreeSet::from([
-            "wamn_run.node_runs",
-            "wamn_run.run_queue",
-            "wamn_run.runs",
-        ])
+        BTreeSet::from(["wamn_run.node_runs", "wamn_run.run_queue", "wamn_run.runs",])
     );
 
     let reads = manifest

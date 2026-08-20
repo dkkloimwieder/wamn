@@ -105,15 +105,17 @@ impl Backend for GuestBackend {
         // error channel buys here is that the failure *answers* at all instead
         // of trapping this instance. A pre-run `rejection` stays what it always
         // was — a decided outcome the caller is told verbatim.
-        Ok(match invocation::begin(&request).map_err(|_| ProviderError)? {
-            invocation::BeginResult::Admitted(admitted) => BeginResult::Admitted(Admitted {
-                run_id: admitted.run_id,
-            }),
-            invocation::BeginResult::Rejected(rejection) => BeginResult::Rejected(Rejection {
-                status: rejection.status,
-                code: rejection.code,
-            }),
-        })
+        Ok(
+            match invocation::begin(&request).map_err(|_| ProviderError)? {
+                invocation::BeginResult::Admitted(admitted) => BeginResult::Admitted(Admitted {
+                    run_id: admitted.run_id,
+                }),
+                invocation::BeginResult::Rejected(rejection) => BeginResult::Rejected(Rejection {
+                    status: rejection.status,
+                    code: rejection.code,
+                }),
+            },
+        )
     }
 
     fn wait(

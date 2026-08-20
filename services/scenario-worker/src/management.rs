@@ -981,10 +981,7 @@ mod tests {
             let at = serve
                 .find(io)
                 .unwrap_or_else(|| panic!("serve performs {io}"));
-            assert!(
-                checked < at,
-                "{io} runs before the fail-closed scope check"
-            );
+            assert!(checked < at, "{io} runs before the fail-closed scope check");
         }
         let implementation = source
             .split("#[cfg(test)]")

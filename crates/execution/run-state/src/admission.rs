@@ -1400,7 +1400,9 @@ mod tests {
             "the management identity arms must precede its drift arms"
         );
 
-        let callable_duplicate = callable.find(duplicate_arm).expect("callable duplicate arm");
+        let callable_duplicate = callable
+            .find(duplicate_arm)
+            .expect("callable duplicate arm");
         let callable_head = callable.find(head_arm).expect("callable head arm");
         assert!(
             callable_head < callable_duplicate,

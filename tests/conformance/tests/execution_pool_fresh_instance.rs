@@ -316,8 +316,7 @@ async fn second_invocation_on_one_pool_key_sees_zeroed_guest_state_and_a_fresh_e
         "reuse is off: the instance does not survive the checkout it served"
     );
 
-    let mut second =
-        checkout(&pool, &key).expect("the same key still has a warm store");
+    let mut second = checkout(&pool, &key).expect("the same key still has a warm store");
     assert_eq!(
         drive(second.instance_mut(), "run-b")
             .await

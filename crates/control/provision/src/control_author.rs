@@ -308,7 +308,11 @@ mod tests {
         assert_eq!(b.len(), 62);
         let digest = &a["wamn_control_author_".len()..a.len() - 2];
         assert_eq!(digest.len(), CONTROL_AUTHOR_SCOPE_HASH_HEX_LEN);
-        assert!(digest.chars().all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
+        assert!(
+            digest
+                .chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        );
 
         // The two planes must never derive one name from the other's scope. Only
         // the domain separator distinguishes the preimages, so this is the
@@ -330,10 +334,22 @@ mod tests {
         );
         // Every component participates.
         let base = control_author_scope_hash(ORG, PROJECT, ENVIRONMENT, DATABASE);
-        assert_ne!(base, control_author_scope_hash("other", PROJECT, ENVIRONMENT, DATABASE));
-        assert_ne!(base, control_author_scope_hash(ORG, "other", ENVIRONMENT, DATABASE));
-        assert_ne!(base, control_author_scope_hash(ORG, PROJECT, "prod", DATABASE));
-        assert_ne!(base, control_author_scope_hash(ORG, PROJECT, ENVIRONMENT, "other-db"));
+        assert_ne!(
+            base,
+            control_author_scope_hash("other", PROJECT, ENVIRONMENT, DATABASE)
+        );
+        assert_ne!(
+            base,
+            control_author_scope_hash(ORG, "other", ENVIRONMENT, DATABASE)
+        );
+        assert_ne!(
+            base,
+            control_author_scope_hash(ORG, PROJECT, "prod", DATABASE)
+        );
+        assert_ne!(
+            base,
+            control_author_scope_hash(ORG, PROJECT, ENVIRONMENT, "other-db")
+        );
     }
 
     #[test]
@@ -361,7 +377,10 @@ mod tests {
         for (input, expected) in [
             ("", ControlAuthoringUrlErrorKind::Absent),
             ("not a url", ControlAuthoringUrlErrorKind::Malformed),
-            ("postgres:///only-a-path", ControlAuthoringUrlErrorKind::Malformed),
+            (
+                "postgres:///only-a-path",
+                ControlAuthoringUrlErrorKind::Malformed,
+            ),
             (
                 "mysql://wamn_control_author_x_a:secret@control.invalid/wamn-system",
                 ControlAuthoringUrlErrorKind::Scheme,
@@ -377,7 +396,11 @@ mod tests {
             let error =
                 parse_control_authoring_url(&url(&admitted, path), ORG, PROJECT, ENVIRONMENT)
                     .expect_err("a non-database path must refuse");
-            assert_eq!(error.kind(), ControlAuthoringUrlErrorKind::Database, "{path:?}");
+            assert_eq!(
+                error.kind(),
+                ControlAuthoringUrlErrorKind::Database,
+                "{path:?}"
+            );
         }
 
         // A query or fragment on a connection input.
@@ -389,31 +412,26 @@ mod tests {
                 ENVIRONMENT,
             )
             .expect_err("a decorated connection input must refuse");
-            assert_eq!(error.kind(), ControlAuthoringUrlErrorKind::Extra, "{suffix:?}");
+            assert_eq!(
+                error.kind(),
+                ControlAuthoringUrlErrorKind::Extra,
+                "{suffix:?}"
+            );
         }
 
         // The identity half: a plain role, the project plane's author role, the
         // stable NOLOGIN role itself, and a generation minted for another scope.
-        let foreign = control_author_generation_role(
-            ORG,
-            PROJECT,
-            "prod",
-            DATABASE,
-            CredentialGeneration::A,
-        );
+        let foreign =
+            control_author_generation_role(ORG, PROJECT, "prod", DATABASE, CredentialGeneration::A);
         for user in [
             "wamn_app",
             "wamn_scenario_author",
             CONTROL_AUTHOR_ROLE,
             foreign.as_str(),
         ] {
-            let error = parse_control_authoring_url(
-                &url(user, DATABASE),
-                ORG,
-                PROJECT,
-                ENVIRONMENT,
-            )
-            .expect_err("an out-of-scope identity must refuse");
+            let error =
+                parse_control_authoring_url(&url(user, DATABASE), ORG, PROJECT, ENVIRONMENT)
+                    .expect_err("an out-of-scope identity must refuse");
             assert_eq!(error.kind(), ControlAuthoringUrlErrorKind::Role, "{user}");
         }
 
@@ -431,13 +449,9 @@ mod tests {
 
     #[test]
     fn a_refusal_never_echoes_the_connection_input() {
-        let error = parse_control_authoring_url(
-            &url("wamn_app", DATABASE),
-            ORG,
-            PROJECT,
-            ENVIRONMENT,
-        )
-        .expect_err("an out-of-scope identity must refuse");
+        let error =
+            parse_control_authoring_url(&url("wamn_app", DATABASE), ORG, PROJECT, ENVIRONMENT)
+                .expect_err("an out-of-scope identity must refuse");
         for rendered in [format!("{error}"), format!("{error:?}")] {
             assert!(!rendered.contains("secret"), "{rendered}");
             assert!(!rendered.contains("control.invalid"), "{rendered}");

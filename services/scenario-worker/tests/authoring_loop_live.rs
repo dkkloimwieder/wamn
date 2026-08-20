@@ -156,7 +156,9 @@ async fn reset_and_provision(
         .await
         .context("map the control-author login to its one tenant")?;
     admin
-        .batch_execute(&format!("SELECT set_config('app.tenant', '{TENANT}', false);"))
+        .batch_execute(&format!(
+            "SELECT set_config('app.tenant', '{TENANT}', false);"
+        ))
         .await
         .context("scope the seeding session")?;
 

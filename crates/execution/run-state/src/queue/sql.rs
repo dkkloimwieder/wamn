@@ -316,7 +316,7 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
 /// and the run is its tenant's FIFO head forever — wamn-0h0g.15.82 exactly.
 pub fn park_sql() -> String {
     format!(
-    "WITH parked AS ( \
+        "WITH parked AS ( \
          UPDATE run_queue \
             SET available_at = now() + ($2::bigint * interval '1 millisecond'), \
                 lease_owner = NULL, lease_expires_at = NULL \

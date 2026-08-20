@@ -329,9 +329,7 @@ fn control_author_authority_is_the_exact_ratified_class() {
         .next()
         .expect("the author policy block closes");
     assert!(author_policies.contains("AS RESTRICTIVE TO wamn_control_author"));
-    assert!(
-        author_policies.contains("USING (tenant_id = wamn_authority.session_author_tenant())")
-    );
+    assert!(author_policies.contains("USING (tenant_id = wamn_authority.session_author_tenant())"));
     assert!(
         author_policies.contains("WITH CHECK (tenant_id = wamn_authority.session_author_tenant())")
     );
@@ -389,9 +387,9 @@ fn control_author_authority_is_the_exact_ratified_class() {
 
     // The mapping relation itself is owner-only and carries no policy, because
     // FORCE ROW LEVEL SECURITY applies to the owner the resolver runs as.
-    assert!(stripped.contains(
-        "REVOKE ALL ON TABLE wamn_authority.author_login_tenants FROM PUBLIC"
-    ));
+    assert!(
+        stripped.contains("REVOKE ALL ON TABLE wamn_authority.author_login_tenants FROM PUBLIC")
+    );
     assert!(!stripped.contains("'wamn_authority.author_login_tenants'"));
 
     // The bounded set is asserted at apply time, not merely intended.
@@ -766,7 +764,7 @@ fn control_author_two_tenant_authority_holds_on_postgres() {
              CREATE ROLE wamn_portable_probe NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
            END IF;\n\
-         END $$;\n"
+         END $$;\n",
     );
     // ctl owns the stable NOLOGIN role and the scoped LOGIN generations; this is
     // the exact text it applies.

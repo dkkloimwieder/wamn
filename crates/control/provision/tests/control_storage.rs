@@ -264,7 +264,10 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
             "secret_namespace",
             "instance_suffix",
         ] {
-            assert!(reader.contains(col), "project-env read builder missing {col}");
+            assert!(
+                reader.contains(col),
+                "project-env read builder missing {col}"
+            );
         }
     }
     assert!(

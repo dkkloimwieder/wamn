@@ -221,8 +221,7 @@ SELECT current_user = session_user, \
 /// The mapping — not the caller-set `app.tenant` — decides which tenant this
 /// login may reach. An unmapped login resolves NULL, so the comparison is NULL
 /// and the process refuses.
-const AUTHORING_TENANT_BINDING_SQL: &str =
-    "SELECT wamn_authority.session_author_tenant() = $1";
+const AUTHORING_TENANT_BINDING_SQL: &str = "SELECT wamn_authority.session_author_tenant() = $1";
 
 /// `app.tenant` is retained as a CONSISTENCY ASSERTION ONLY (wamn-0h0g.8.18).
 ///
@@ -1274,15 +1273,14 @@ mod tests {
         );
         // Tenant authority is not self-service: no privilege at all on the mapping.
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("mapping_privilege.privilege"));
-        assert!(
-            AUTHORING_ROLE_PROBE_SQL.contains(
-                "ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']"
-            )
-        );
+        assert!(AUTHORING_ROLE_PROBE_SQL.contains(
+            "ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']"
+        ));
         // The resolver is reachable; the mapped tenant is checked separately so a
         // missing mapping and a missing privilege are distinguishable failures.
         assert!(
-            AUTHORING_ROLE_PROBE_SQL.contains("'wamn_authority.session_author_tenant()', 'EXECUTE'")
+            AUTHORING_ROLE_PROBE_SQL
+                .contains("'wamn_authority.session_author_tenant()', 'EXECUTE'")
         );
         assert_eq!(
             AUTHORING_TENANT_BINDING_SQL,

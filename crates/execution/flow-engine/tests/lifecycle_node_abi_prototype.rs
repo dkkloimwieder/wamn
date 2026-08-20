@@ -395,8 +395,14 @@ fn request_emissions_that_replace_context_or_leave_the_main_port_are_refused() {
     ] {
         let mut candidate = state.clone();
         let refusal = plan.apply(&mut candidate, &dispatch, smuggled, 0);
-        assert_eq!(refusal, Err(wamn_runner::ApplyError::InvalidRequestEmission));
-        assert_eq!(candidate, state, "a refusal must not mutate lifecycle state");
+        assert_eq!(
+            refusal,
+            Err(wamn_runner::ApplyError::InvalidRequestEmission)
+        );
+        assert_eq!(
+            candidate, state,
+            "a refusal must not mutate lifecycle state"
+        );
     }
 }
 
@@ -424,6 +430,9 @@ fn event_emissions_that_replace_context_or_leave_the_main_port_are_refused() {
         let mut candidate = state.clone();
         let refusal = plan.apply(&mut candidate, &dispatch, smuggled, 0);
         assert_eq!(refusal, Err(wamn_runner::ApplyError::InvalidEventEmission));
-        assert_eq!(candidate, state, "a refusal must not mutate lifecycle state");
+        assert_eq!(
+            candidate, state,
+            "a refusal must not mutate lifecycle state"
+        );
     }
 }

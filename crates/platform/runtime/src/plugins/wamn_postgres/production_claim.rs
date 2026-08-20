@@ -977,8 +977,14 @@ mod tests {
         // and the effect snapshot exist only to read evidence it may not act on.
         let source = include_str!("production_claim.rs");
         for (start_marker, end_marker) in [
-            ("async fn claim_in_transaction(", "async fn reap_in_transaction("),
-            ("async fn reap_in_transaction(", "async fn serialize_effect_intent("),
+            (
+                "async fn claim_in_transaction(",
+                "async fn reap_in_transaction(",
+            ),
+            (
+                "async fn reap_in_transaction(",
+                "async fn serialize_effect_intent(",
+            ),
         ] {
             let start = source.find(start_marker).unwrap();
             let end = source.find(end_marker).unwrap();

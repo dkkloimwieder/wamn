@@ -6,8 +6,7 @@ use std::path::{Path, PathBuf};
 // and reused, so a signature edit cannot pass by updating only one assertion.
 const BEGIN_SIGNATURE: &str =
     "begin: func(req: invoke-request) -> result<begin-result, invocation-error>;";
-const WAIT_SIGNATURE: &str =
-    "wait: func(run-id: string, timeout-ms: u32) -> result<option<invoke-result>, invocation-error>;";
+const WAIT_SIGNATURE: &str = "wait: func(run-id: string, timeout-ms: u32) -> result<option<invoke-result>, invocation-error>;";
 
 fn crate_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()

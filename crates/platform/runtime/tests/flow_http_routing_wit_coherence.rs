@@ -139,7 +139,10 @@ fn route_definition_carries_exactly_the_fields_the_host_fills_and_the_guest_read
     deadline-override: option<u64>,"#;
 
     for copy in [HOST_COPY, HTTP_COPY] {
-        assert_eq!(item_body(copy, "record route-definition {"), ROUTE_DEFINITION);
+        assert_eq!(
+            item_body(copy, "record route-definition {"),
+            ROUTE_DEFINITION
+        );
     }
 }
 

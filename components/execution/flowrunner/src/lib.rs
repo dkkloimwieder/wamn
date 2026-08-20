@@ -425,7 +425,10 @@ mod tests {
     /// unpublished — and both must be indistinguishable to the guest.
     #[test]
     fn an_unpublished_snapshot_answers_the_same_way_as_an_absent_one() {
-        assert_eq!(catalog_from_rows(Ok(Vec::new())), Err(no_catalog_snapshot()));
+        assert_eq!(
+            catalog_from_rows(Ok(Vec::new())),
+            Err(no_catalog_snapshot())
+        );
     }
 
     /// Only `42P01` is absorbed. Every other failure still surfaces its own

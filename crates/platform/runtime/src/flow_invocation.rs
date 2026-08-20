@@ -566,10 +566,7 @@ impl PostgresInvocationBackend {
     }
 }
 
-async fn set_tenant(
-    transaction: &Transaction<'_>,
-    tenant: &str,
-) -> Result<(), InvocationFailure> {
+async fn set_tenant(transaction: &Transaction<'_>, tenant: &str) -> Result<(), InvocationFailure> {
     transaction
         .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
         .await
@@ -770,7 +767,9 @@ fn decode_target(row: Row) -> Result<InvocationTarget, InvocationFailure> {
 
 fn decode_outcome(row: &Row) -> Result<InvocationOutcome, InvocationFailure> {
     let missing = |field: &'static str| store_corrupt("decode released outcome").with_field(field);
-    let body: String = row.get::<_, Option<String>>(3).ok_or_else(|| missing("body"))?;
+    let body: String = row
+        .get::<_, Option<String>>(3)
+        .ok_or_else(|| missing("body"))?;
     let status = row
         .get::<_, Option<i32>>(4)
         .map(u16::try_from)
@@ -892,8 +891,7 @@ fn deadlines(
         .map(i64::try_from)
         .transpose()
         .map_err(|_| {
-            store_corrupt("narrow stored attachment definition")
-                .with_field("response-deadline-ms")
+            store_corrupt("narrow stored attachment definition").with_field("response-deadline-ms")
         })?
         .map(|milliseconds| now + TimeDelta::milliseconds(milliseconds));
     Ok((response, run))
@@ -954,8 +952,9 @@ fn to_invoke_result(outcome: InvocationOutcome) -> Result<InvokeResult, Invocati
                         store_corrupt("decode stored effect uncertainty").with_source(source)
                     })?;
                 if stored.run_id() != outcome.run_id {
-                    return Err(store_corrupt("decode stored effect uncertainty")
-                        .with_field("run-id"));
+                    return Err(
+                        store_corrupt("decode stored effect uncertainty").with_field("run-id")
+                    );
                 }
                 return Ok(InvokeResult::Failed(Failure {
                     status: EFFECT_UNCERTAIN_HTTP_STATUS,
