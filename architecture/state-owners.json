@@ -965,6 +965,7 @@
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
+        "catalog-schema-installer",
         "schema-control",
         "ctl-publish",
         "ctl-copy",
@@ -986,6 +987,7 @@
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
+        "catalog-schema-installer",
         "schema-control",
         "ctl-publish",
         "ctl-copy",
