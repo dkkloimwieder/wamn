@@ -312,7 +312,10 @@ mod tests {
     #[test]
     fn runnerbench_stand_in_carries_production_claim_surfaces() {
         let ddl = runner_ddl("wamn_run");
-        for required in ["CREATE TABLE wamn_run.effect_attempts"] {
+        for required in [
+            "CREATE TABLE wamn_run.effect_attempts",
+            "CREATE TABLE wamn_run.node_runs",
+        ] {
             assert!(ddl.contains(required), "runnerbench DDL lacks {required}");
         }
 

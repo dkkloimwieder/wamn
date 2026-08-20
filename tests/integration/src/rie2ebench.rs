@@ -148,6 +148,11 @@ fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
 
 /// The delete-subscribed flow (one typed event entry — the materializer fires on
 /// the REGISTRATION match; matbench proves it).
+///
+/// Test-only since `wamn-0h0g.12.102` deleted the `wamn_run.flows` relation and
+/// with it the seeding INSERT: the gate path now derives flow identity from
+/// `load_release`, so the drift guard below is this fixture's only consumer.
+#[cfg(test)]
 fn flow_json() -> String {
     serde_json::json!({
         "schema-version": "0.1", "flow-id": FLOW_ID, "version": 1,
