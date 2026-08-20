@@ -83,7 +83,8 @@ deploy/                 Kubernetes manifests + standalone SQL schemas
   kind-config.yaml      local kind cluster definition
   values-wamn.yaml      runtime-operator Helm values (custom host image)
   *.sql                 postgres-init, catalog-schema, run-state, run-queue,
-                        system-schema, app-schema, flows
+                        authoring-tests, system-schema, app-schema, ops-schema,
+                        control-portable-store
   *-job.yaml            in-cluster gate-of-record Jobs
 
 docs/                   design source of truth (PLAN/PLAN.md roadmap,

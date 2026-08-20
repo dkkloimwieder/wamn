@@ -103,8 +103,11 @@ both pure (time is a `now_ms` argument):
 
 ## The component — driving the engine
 
-`components/execution/flowrunner` loads the active flow (`SELECT graph_json FROM flows …`,
-now a `wamn-flow` document), compiles a `Plan`, and drives it. The native standard
+`components/execution/flowrunner` loads the run's already-compiled plans from the
+trusted host supply (`wamn:runner/plan-supply`'s `load-run-snapshot`, hash-verified
+`ExecutionPlanV2` bundles) and drives them; the `SELECT graph_json FROM flows …`
+read described here went with `wamn_run.flows`, retired by `wamn-0h0g.12.102`
+(`e45ca35b`). The native standard
 nodes are the `NodeOutcome` producers: `webhook-in` / `transform` / `conditional` /
 `respond` are pure same-binary calls; `pg-write` writes to the sink; `delay` reads
 wall-clock and waits within the current invocation; `http-call` makes a

@@ -78,7 +78,7 @@ connection would then see). Together these make "an empty claim sees nothing" a
 structural guarantee rather than an invariant that merely happens to hold. The
 same NULLIF + CHECK shape is mirrored in the hand-written run schemas
 (`deploy/sql/run-state.sql`, `run-queue.sql`, `catalog-schema.sql`,
-`postgres-init.sql`, `flows.sql`).
+`postgres-init.sql`).
 
 All tables are created first, then foreign keys, constraints, indexes, and unit
 comments are attached — so a foreign key never precedes its target table.

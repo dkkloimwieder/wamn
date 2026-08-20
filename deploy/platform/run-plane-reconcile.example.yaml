@@ -7,8 +7,9 @@
 # WHAT IT COVERS (idempotent; a schema at the record is a no-op):
 #   - missing retained record columns (for example E4 stream_seq)
 #   - a stale claimable-index definition (recreated WITH stream_seq)
-#   - wholly-missing retained tables (run_queue, flows, runs/node_runs —
-#     from-zero included)
+#   - wholly-missing retained tables (run_queue, runs/node_runs —
+#     from-zero included; the flows registry is no longer retained or
+#     reconciled — wamn-0h0g.12.102 (e45ca35b) retired it)
 #   - the locked partition-plane cutover: drained legacy lease state is removed,
 #     while nonempty dead-letter history refuses with archive/reprovision guidance
 #   - exact record CHECK constraints, the run-state helper functions, and the

@@ -288,6 +288,11 @@ a named prerequisite of any future parallel dispatch.
 
 ### 5.1 Current state (verified)
 
+**Superseded — retained as the before-picture 5.2 exists to replace.** The flow
+half is realized: `wamn-0h0g.12.102` (`e45ca35b`) retired `wamn_run.flows` and
+`deploy/sql/flows.sql`, so the mutable registry described below no longer
+exists and `catalog.release_flows` (5.2) is what ships.
+
 Version-scoped: `entities`, `fields`, `relations`, `indexes`, `constraints`.
 Unversioned: `rls_policies`, `seed_datasets`, `event_registrations`. Flows
 live outside the catalog (`wamn_run.flows`, mutable `active`) and **flow

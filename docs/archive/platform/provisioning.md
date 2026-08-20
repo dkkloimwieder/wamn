@@ -551,7 +551,7 @@ force-tick is `kubectl create job --from=cronjob/…`).
 ## `wamn-ctl reconcile-run-plane` (wamn-1wdq, E4/R14-migration)
 
 Reconcile ONE project-env's **run-plane schema** to the deploy/sql schema of
-record (`run-state.sql` + `flows.sql` + `run-queue.sql`, embedded at compile
+record (`run-state.sql` + `authoring-tests.sql` + `run-queue.sql`, embedded at compile
 time and rewritten `wamn_run` → `--schema`), plus the per-database `catalog`
 metadata schema (`catalog-schema.sql`). This is the durable migration path the
 run plane previously lacked. It now converges schemas instantiated before the

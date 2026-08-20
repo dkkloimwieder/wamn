@@ -17,7 +17,7 @@
 #
 # IDENTITY (host-injected, non-spoofable): `wamn.tenant` drives BOTH the
 # wamn:postgres RLS claim and the doorbell subject (`wamn.doorbell.<tenant>`);
-# `wamn.schema` is the search_path its unqualified runs/run_queue/flows reads
+# `wamn.schema` is the search_path its unqualified runs/run_queue reads
 # resolve in; `wamn.project` selects the per-project pool. The WAMN_MAT_*
 # environment is guest-side SUBSCRIPTION config only (stream name + subject
 # segments + the tenant label for the event tenant-guard compare) — RLS holds

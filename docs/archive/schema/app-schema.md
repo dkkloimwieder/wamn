@@ -14,7 +14,10 @@ not redefined**:
 
 - `catalog.entities` / `catalog.fields` / `catalog.relations` —
   `deploy/sql/catalog-schema.sql` (the 3.1 `wamn-schema-model` model's storage).
-- `wamn_run.flows` — `deploy/sql/flows.sql` (the POC-F1 flow registry).
+- `catalog.release_flows` — `deploy/sql/catalog-schema.sql` (the immutable
+  release membership). The mutable POC-F1 registry it replaced,
+  `wamn_run.flows` / `deploy/sql/flows.sql`, was retired by `wamn-0h0g.12.102`
+  (`e45ca35b`).
 
 A `deployments` table is **deferred**: a live workload is a Kubernetes
 `WorkloadDeployment` CR, so a registry table would duplicate cluster state until
