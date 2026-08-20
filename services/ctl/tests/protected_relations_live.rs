@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, NoTls};
 
-use wamn_ctl::publish_catalog::{self, PublishCatalogArgs};
+use wamn_ctl::migrate_catalog::{self, MigrateCatalogArgs};
 use wamn_ctl::reconcile_run_plane;
 use wamn_schema_control::BareSchemaName;
 
@@ -324,22 +324,19 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
         serde_json::to_vec_pretty(&catalog).expect("serialize witness catalog"),
     )
     .expect("write witness catalog");
-    let publish_result = publish_catalog::run(PublishCatalogArgs {
-        catalog: catalog_path.clone(),
-        admin_database_url: Some(url.to_string()),
+    let migrate_result = migrate_catalog::run(MigrateCatalogArgs {
+        admin_database_url: url.to_string(),
         tenant: "protected-relation-audit".to_string(),
-        project_config: None,
+        environment: "dev".to_string(),
         schema: WITNESS_SCHEMA.to_string(),
-        provision: true,
-        runstate: false,
-        seed_dataset: None,
-        flow: Vec::new(),
-        exposure: None,
+        target: catalog_path.clone(),
+        base: None,
+        dry_run: false,
         skip_reconcile_replica_identity: true,
     })
     .await;
     let _ = std::fs::remove_file(&catalog_path);
-    publish_result.expect("install canonical application-family witnesses");
+    migrate_result.expect("install canonical application-family witnesses");
 
     assert!(repository.join(MANIFEST_PATH).is_file());
 }
