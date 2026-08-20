@@ -113,30 +113,60 @@ wamn_require_cargo() {
   fi
 }
 
+WAMN_ANY_LEG_FAILED=0
+
+wamn_report_leg() {
+  local -r label="$1"
+  local -r exit_code="$2"
+  if ((exit_code == 0)); then
+    printf 'repo-lint: PASS: %s\n' "$label" >&2
+  else
+    printf 'repo-lint: FAIL: %s (exit %d)\n' "$label" "$exit_code" >&2
+    WAMN_ANY_LEG_FAILED=1
+  fi
+}
+
 wamn_run() {
   local -r label="$1"
   shift
   printf 'repo-lint: %s\n' "$label" >&2
-  "$WAMN_CARGO" "$@"
+  local exit_code=0
+  "$WAMN_CARGO" "$@" || exit_code=$?
+  wamn_report_leg "$label" "$exit_code"
+}
+
+wamn_run_connection_http_native_clippy() {
+  local -r label='connection-http-standard native Clippy'
+  printf 'repo-lint: %s\n' "$label" >&2
+  local exit_code=0
+  RUSTFLAGS="$WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS" \
+    "$WAMN_CARGO" "${WAMN_CONNECTION_HTTP_NATIVE_CLIPPY[@]}" || exit_code=$?
+  wamn_report_leg "$label" "$exit_code"
 }
 
 # Pin the per-invocation client construction that keeps credentialed HTTP
 # egress free of cross-generation connection reuse.
 wamn_connection_http_construction() {
-  printf 'repo-lint: connection HTTP per-invocation client\n' >&2
-  [[ -r "$WAMN_CONNECTION_HTTP_SOURCE" ]] || {
-    wamn_fail 65 "connection HTTP source is unreadable: $WAMN_CONNECTION_HTTP_SOURCE"
-  }
+  local -r label='connection HTTP per-invocation client'
+  printf 'repo-lint: %s\n' "$label" >&2
+  if [[ ! -r "$WAMN_CONNECTION_HTTP_SOURCE" ]]; then
+    printf 'repo-lint: connection HTTP source is unreadable: %s\n' \
+      "$WAMN_CONNECTION_HTTP_SOURCE" >&2
+    wamn_report_leg "$label" 65
+    return
+  fi
 
   local builders
   builders="$(
     { grep -o -F -e "$WAMN_CONNECTION_HTTP_BUILDER" -- "$WAMN_CONNECTION_HTTP_SOURCE" || true; } |
       wc -l
   )"
-  ((builders == 1)) || {
-    wamn_fail 65 "connection_http.rs must contain exactly one" \
-      "${WAMN_CONNECTION_HTTP_BUILDER}) construction; found $builders"
-  }
+  if ((builders != 1)); then
+    printf 'repo-lint: connection_http.rs must contain exactly one %s) construction; found %d\n' \
+      "$WAMN_CONNECTION_HTTP_BUILDER" "$builders" >&2
+    wamn_report_leg "$label" 65
+    return
+  fi
 
   local index found
   for index in "${!WAMN_CONNECTION_HTTP_REFUSED_PATTERN[@]}"; do
@@ -144,11 +174,14 @@ wamn_connection_http_construction() {
       grep -n -E -e "${WAMN_CONNECTION_HTTP_REFUSED_PATTERN[index]}" \
         -- "$WAMN_CONNECTION_HTTP_SOURCE" || true
     })"
-    [[ -z "$found" ]] || {
-      wamn_fail 65 "connection_http.rs ${WAMN_CONNECTION_HTTP_REFUSED_REASON[index]}:" \
-        "$found"
-    }
+    if [[ -n "$found" ]]; then
+      printf 'repo-lint: connection_http.rs %s: %s\n' \
+        "${WAMN_CONNECTION_HTTP_REFUSED_REASON[index]}" "$found" >&2
+      wamn_report_leg "$label" 65
+      return
+    fi
   done
+  wamn_report_leg "$label" 0
 }
 
 (($# <= 1)) || wamn_usage_error 'expected at most one command'
@@ -166,12 +199,11 @@ case "$WAMN_COMMAND" in
     wamn_run 'components rustfmt' "${WAMN_COMPONENT_FORMAT[@]}"
     wamn_run 'root Clippy' "${WAMN_ROOT_CLIPPY[@]}"
     wamn_run 'components native Clippy' "${WAMN_COMPONENT_NATIVE_CLIPPY[@]}"
-    printf 'repo-lint: connection-http-standard native Clippy\n' >&2
-    RUSTFLAGS="$WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS" \
-      "$WAMN_CARGO" "${WAMN_CONNECTION_HTTP_NATIVE_CLIPPY[@]}"
+    wamn_run_connection_http_native_clippy
     wamn_run 'flowrunner native Clippy' "${WAMN_FLOWRUNNER_NATIVE_CLIPPY[@]}"
     wamn_run 'components wasm Clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
     wamn_run 'flowrunner wasm Clippy' "${WAMN_FLOWRUNNER_WASM_CLIPPY[@]}"
+    ((WAMN_ANY_LEG_FAILED == 0))
     ;;
   *)
     wamn_usage_error "unknown command '$WAMN_COMMAND'"

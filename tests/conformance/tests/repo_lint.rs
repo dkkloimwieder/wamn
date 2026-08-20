@@ -10,6 +10,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const TOOL: &str = "tools/repo-lint";
 const ROOT_MEMBER_COUNT: usize = 39;
 const COMPONENT_MEMBER_COUNT: usize = 6;
+const LEG_LABELS: [&str; 9] = [
+    "connection HTTP per-invocation client",
+    "root rustfmt",
+    "components rustfmt",
+    "root Clippy",
+    "components native Clippy",
+    "connection-http-standard native Clippy",
+    "flowrunner native Clippy",
+    "components wasm Clippy",
+    "flowrunner wasm Clippy",
+];
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -103,6 +114,27 @@ fn captured_invocations(path: &Path) -> Vec<Vec<String>> {
         }
     }
     calls
+}
+
+fn leg_statuses(output: &Output) -> Vec<String> {
+    std::str::from_utf8(&output.stderr)
+        .expect("repo-lint stderr must be UTF-8")
+        .lines()
+        .filter(|line| {
+            line.starts_with("repo-lint: PASS: ") || line.starts_with("repo-lint: FAIL: ")
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+fn assert_leg_statuses(output: &Output, failure: Option<(&str, i32)>) {
+    let expected = LEG_LABELS.map(|label| match failure {
+        Some((failed, exit_code)) if label == failed => {
+            format!("repo-lint: FAIL: {label} (exit {exit_code})")
+        }
+        _ => format!("repo-lint: PASS: {label}"),
+    });
+    assert_eq!(leg_statuses(output), expected);
 }
 
 fn workspace_member_count(root: &Path, manifest: &Path) -> usize {
@@ -286,25 +318,73 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
             .collect::<Vec<_>>(),
         ["", "", "", "", "-C panic=abort", "", "", ""]
     );
+    assert_leg_statuses(&output, None);
 }
 
 #[test]
-fn repo_lint_stops_at_the_first_failed_leg() {
+fn repo_lint_reports_every_leg_when_an_early_leg_fails() {
     let root = repository_root();
     let directory = TestDirectory::new();
     executable(&directory.path("fake cargo"), FAKE_CARGO);
 
     let output = tool_command(&root, &directory)
-        .env("WAMN_FAKE_CARGO_FAIL_AT", "3")
+        .env("WAMN_FAKE_CARGO_FAIL_AT", "1")
         .arg("run")
         .output()
         .expect("run failing repo-lint tool");
-    assert_eq!(output.status.code(), Some(23));
+    assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        3,
-        "repo-lint must not continue after a failed Cargo leg"
+        8,
+        "an early failure must not hide a later Cargo leg"
     );
+    assert_leg_statuses(&output, Some(("root rustfmt", 23)));
+}
+
+#[test]
+fn repo_lint_reports_every_cargo_leg_when_the_static_leg_fails() {
+    let root = repository_root();
+    let directory = TestDirectory::new();
+    executable(&directory.path("fake cargo"), FAKE_CARGO);
+    executable(&directory.path("grep"), "#!/usr/bin/env bash\nexit 1\n");
+
+    let path = format!(
+        "{}:{}",
+        directory.0.display(),
+        std::env::var("PATH").expect("test process must have PATH")
+    );
+    let output = tool_command(&root, &directory)
+        .env("PATH", path)
+        .arg("run")
+        .output()
+        .expect("run failing repo-lint tool");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        captured_invocations(&directory.path("cargo calls")).len(),
+        8,
+        "a static-leg failure must not hide any Cargo leg"
+    );
+    assert_leg_statuses(&output, Some(("connection HTTP per-invocation client", 65)));
+}
+
+#[test]
+fn repo_lint_returns_failure_when_the_last_leg_fails() {
+    let root = repository_root();
+    let directory = TestDirectory::new();
+    executable(&directory.path("fake cargo"), FAKE_CARGO);
+
+    let output = tool_command(&root, &directory)
+        .env("WAMN_FAKE_CARGO_FAIL_AT", "8")
+        .arg("run")
+        .output()
+        .expect("run failing repo-lint tool");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        captured_invocations(&directory.path("cargo calls")).len(),
+        8,
+        "the final Cargo leg must run"
+    );
+    assert_leg_statuses(&output, Some(("flowrunner wasm Clippy", 23)));
 }
 
 #[test]
