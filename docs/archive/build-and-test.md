@@ -1593,31 +1593,20 @@ Phase 2 (status note) + the l5i9.18 bead. Post-teardown, row events have ONE
 path: CDC reader → JetStream → materializer ([EVT-MAT], [EVT-READER],
 [EVT-NATS], [E10-E2E] are the standing gates).
 
-### [EVT-RI-E2E / wamn-3glr] rie2ebench — reader-inclusive REPLICA IDENTITY flip e2e
+### [EVT-RI-E2E / wamn-3glr] retired reader-inclusive REPLICA IDENTITY fixture guards
 
-Docs: docs/archive/events/event-plane-jetstream.md §7 · decisions D19/l5i9.31/l5i9.61. The
-coverage the l5i9.19 teardown deleted with `cutbench`'s phase 3: `matbench`
-covers the old-image-absent refusal + a SYNTHESIZED FULL old image (a
-hand-published tape), and `replica_identity_live` covers the ctl flip machinery on
-`pg_class.relreplident` — but NO gate proved a REAL decoded WAL old image
-reaching the materializer AFTER a live RI flip. `rie2ebench` embeds the REAL
-`wamn-cdc-reader` service body (`run_with_token`) as a tokio task next to the
-REAL materializer guest (matbench harness shape), over a throwaway
-`wal_level=logical` Postgres + throwaway JetStream it OWNS. ONE FULL-flipped
-entity (`dispositions`, a bare `id uuid` PK), ONE delete-subscribed flow:
-(1) pre-flip DELETE under RI DEFAULT → the reader decodes a key-only old image →
-the materializer REFUSES it (`tenant-unscopable`, alertable, never
-condition-false); (2) flip RI→FULL via the REAL `reconcile_replica_identity`;
-(3) post-flip DELETE under RI FULL → the reader decodes a REAL full old image
-carrying `tenant_id` → the materializer tenant-scopes it and enqueues a scoped
-`disp-del:evt:<stream_seq>` run + rings the doorbell. Asserts the NON-RETROACTIVE
-boundary: the pre-flip DEFAULT delete stays refused (never retro-fires). The slot
-is created LAST (provisioning + seed writes stay uncaptured) and dropped
-deterministically at teardown (zero residue).
+The live rie2ebench harness and Job were retired by wamn-0h0g.12.156 after
+wamn-0h0g.11.22 (ef976d38) removed their only command route and manifest. The
+retained H5 recipe is not an end-to-end cutover gate: it verifies only the frozen
+historical event-registration, legacy flow-graph, and catalog fixture shapes.
+replica_identity_live continues to cover the ctl flip mechanics; no retained gate
+drives a real decoded WAL old image through the CDC reader and materializer across
+a live replica-identity flip. metricbench is the living runnable benchmark
+successor, but it does not cover that deliberately retired functional dimension.
 
 ```bash
-# Integration-proof boundary: rie2ebench fixtures are owned by the integration
-# library rather than the command router.
+# Retained proof boundary: historical rie2ebench fixtures are unit-tested in the
+# integration library; no command route or live harness remains.
 # recipe-test: H5-RIE2EBENCH | integration | wamn-proof-integration | lib | - | rie2ebench::tests:: | 2 | tests/integration/src/rie2ebench.rs frozen registration, flow, and catalog fixtures
 cargo test -p wamn-proof-integration --lib rie2ebench::tests::
 ```
