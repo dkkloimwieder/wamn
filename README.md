@@ -3,8 +3,9 @@
 A wasmCloud-based managed low-code platform: a data/schema layer, a flow engine,
 and a four-tier Postgres control plane, all hosted on a customized wasmCloud
 runtime. **`docs/` is the design source of truth** — start with
-`docs/archive/PLAN/PLAN.md` (the roadmap and decision map); `docs/archive/platform-plan.md`
-holds the D-number decision table as the archive of record.
+`docs/exe-model.md` (the controlling execution model) and `docs/PLAN/PLAN.md`
+(the active ordering and decision map); `docs/archive/platform-plan.md` holds
+the D-number decision table as the archive of record.
 
 `services/host` is the production washlet host. Production queue execution and
 deterministic scenario execution are separate artifacts which share
@@ -93,9 +94,9 @@ deploy/                 deployment, gate, schema, and bootstrap assets
   mvp/                  bootstrap scripts; outside SR8 lifecycle tiers
                         (pre-tier provisioning; runs before any tier exists)
 
-docs/                   design source of truth (PLAN/PLAN.md roadmap,
-                        platform-plan.md decision table, WIT contracts,
-                        per-subsystem specs)
+docs/                   design source of truth (exe-model.md authority,
+                        PLAN/PLAN.md ordering map, archive/platform-plan.md
+                        decision table, WIT contracts, per-subsystem specs)
 
 Cargo.toml              root workspace; pins the wash-runtime fork rev
 Dockerfile              shared build plus one final stage per deployable artifact
@@ -176,7 +177,9 @@ kubectl -n wamn-system logs -f job/<subsystem>
 
 ## More
 
-- `docs/archive/PLAN/PLAN.md` — the authoritative roadmap and decision map.
+- `docs/exe-model.md` — the controlling execution-model authority.
+- `docs/PLAN/PLAN.md` — the active ordering and decision map.
+- `docs/archive/platform-plan.md` — the D-number decision archive of record.
 - `docs/` — design source of truth (per-subsystem specs, WIT contracts).
 - `docs/archive/build-and-test.md` — every subsystem's build + gate commands.
 - `CLAUDE.md` / `AGENTS.md` — instructions for AI coding agents (identical).
