@@ -59,7 +59,6 @@ New epics (all `[SR-MVP]`, label `exe-model`, children carry grounded file:line 
 | `wamn-0h0g.17.4` | What g2br.16 clamps once the router owns instantiation (it is a no-op for the executor today) |
 | `wamn-0h0g.15.164` | Registration projection source — spec forecloses (c); (a) move relation vs (b) composing publisher |
 | `wamn-0h0g.15.165` | Manifest digest vs release version: pin registrations at mint vs many-digests-per-release |
-| `wamn-0h0g.15.135` | UdpBind authority at the fork pin (pre-existing, unchanged) |
 | `wamn-dggp.39` | Loop-console run screen under the retiring read surface (one-screen ruling; track survives) |
 
 ## 3 · Sequencing

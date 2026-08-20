@@ -184,6 +184,33 @@ fn fork_ledger_records_exact_ten_policy_commits_and_exit_conditions() {
             "carried-policy exit condition drifted: {exit_condition}"
         );
     }
+    let raw_udp = rows
+        .iter()
+        .find(|row| row.contains("`a9f9c57d`"))
+        .expect("carried-policy ledger must retain the raw-UDP row");
+    for required in [
+        "both Component and Service guests may `UdpBind` on loopback or unspecified addresses",
+        "`raw_socket_opt_out_shapes_an_empty_allowlist_under_enforce`",
+        "an empty allowlist under `Enforce`",
+        "`egress_peers` stays empty",
+        "discard every unsolicited off-box datagram",
+        "Private per-workload virtual-network receive remains possible",
+        "bounded wakeup and syscall cost",
+    ] {
+        assert!(
+            raw_udp.contains(required),
+            "raw-UDP ledger row lost accepted-posture evidence {required:?}"
+        );
+    }
+    for stale in [
+        "`UdpBind` is service-loopback-only",
+        "denied for non-service components",
+    ] {
+        assert!(
+            !raw_udp.contains(stale),
+            "raw-UDP ledger row restored the rejected bind-posture claim {stale:?}"
+        );
+    }
     for hygiene in NON_POLICY_COMMITS {
         assert!(
             !commits.contains(&hygiene),

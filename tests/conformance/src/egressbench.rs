@@ -450,13 +450,14 @@ async fn assert_runtime_sockets(sockprobe: &[u8]) -> anyhow::Result<bool> {
     if pass {
         println!(
             "    PASS: TcpConnect, UdpConnect, and UdpOutgoingDatagram deny by default and \
-             permit only on opt-in; UdpBind remains service-loopback-only; every \
+             permit only on opt-in; UdpBind permits loopback but denies a concrete \
+             non-loopback address; every \
              host.wasmcloud.internal dial is refused, including the port the workload listed"
         );
     } else {
         println!(
-            "    FAIL: expected each raw-egress arm denied/default + permitted/opt-in, UdpBind \
-             service-loopback-only, and every host-loopback arm denied in all three runs; \
+            "    FAIL: expected each raw-egress arm denied/default + permitted/opt-in, a \
+             concrete non-loopback UdpBind denied, and every host-loopback arm denied in all three runs; \
              deny={deny:?}, optin={optin:?}, loopback={loopback:?}"
         );
     }
@@ -745,7 +746,7 @@ mod tests {
     }
 
     #[test]
-    fn udp_bind_arm_rejects_service_scope_or_address_widening() {
+    fn udp_bind_arm_rejects_concrete_non_loopback_address() {
         let (deny, optin) = canonical_verdicts();
         assert!(runtime_verdicts_pass(&deny, &optin));
         let mutant = SocketVerdicts {
@@ -754,7 +755,7 @@ mod tests {
         };
         assert!(
             !runtime_verdicts_pass(&mutant, &optin),
-            "UdpBind service-non-loopback widening mutation survived"
+            "UdpBind concrete-non-loopback widening mutation survived"
         );
     }
 
@@ -983,12 +984,55 @@ mod tests {
             p2.contains(".check(local_address, SocketAddrUse::UdpBind)"),
             "P2 UdpBind must consult the shared socket policy"
         );
+        let p2_policy = p2
+            .find(".check(addr, SocketAddrUse::UdpOutgoingDatagram)")
+            .expect("P2 network send must consult the outgoing-datagram policy");
+        let p2_peer_insert = p2
+            .find("peers.insert(addr);")
+            .expect("P2 network send must record an admitted egress peer");
+        assert!(
+            p2_policy < p2_peer_insert,
+            "P2 must admit the destination before it can populate egress_peers"
+        );
+        assert!(
+            p2.contains(concat!(
+                "            if let Some(peers) = stream.egress_peers.as_ref()\n",
+                "                && !peers\n",
+                "                    .lock()\n",
+                "                    .is_ok_and(|peers| peers.contains(&received_addr))\n",
+                "            {\n",
+                "                return Ok(None);\n",
+                "            }"
+            )),
+            "P2 must discard an off-box datagram whose sender is absent from egress_peers"
+        );
         let p3 = fork_source("src/sockets/host_udp_p3.rs");
         assert!(
             p3.contains("(self.ctx.socket_addr_check)(local_address, SocketAddrUse::UdpBind)")
                 && p3.contains(".into_allowed()"),
             "P3 UdpBind mirror must consult the shared socket policy AND consume the decision \
              fallibly"
+        );
+        let p3_policy = p3
+            .find("let allowed = check(remote_address, SocketAddrUse::UdpOutgoingDatagram)")
+            .expect("P3 network send must consult the outgoing-datagram policy");
+        let p3_peer_insert = p3
+            .find("peers.insert(a);")
+            .expect("P3 network send must record an admitted egress peer");
+        assert!(
+            p3_policy < p3_peer_insert,
+            "P3 must admit the destination before it can populate egress_peers"
+        );
+        assert!(
+            p3.contains(concat!(
+                "                        if let Some(peers) = egress_peers.as_ref()\n",
+                "                            && !peers.lock().is_ok_and(|peers| peers.contains(&addr))\n",
+                "                        {\n",
+                "                            continue;\n",
+                "                        }"
+            )),
+            "P3 must keep waiting rather than deliver an off-box datagram whose sender is absent \
+             from egress_peers"
         );
     }
 
