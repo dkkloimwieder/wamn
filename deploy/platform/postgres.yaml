@@ -95,11 +95,16 @@ spec:
     - port: 5432
       targetPort: 5432
 ---
-# The fixture's superuser credential as a Secret, so admin Jobs (f1-provision,
-# the replica-identity-reconcile CronJob) reference it via secretKeyRef instead
-# of inline plaintext — one rotation point. Mirrors POSTGRES_PASSWORD above;
-# key shape matches the CNPG-generated `<cluster>-superuser` Secrets so job env
-# wiring is portable between the fixture and a CNPG target.
+# The fixture's superuser credential as a Secret, so one-shot admin and gate
+# Jobs reference it via secretKeyRef instead of inline plaintext — one rotation
+# point. The periodic replica-identity reconciler introduced by c37cbc5e was
+# retired by wamn-0h0g.12.70: its deleted fixture made the Job unstartable while
+# this standing credential mount still cost authority. Mirrors
+# POSTGRES_PASSWORD above; the key shape matches CNPG-generated
+# `<cluster>-superuser` Secrets so one-shot Job wiring stays portable. The
+# retained shared fixture Secret is an accepted interim; wamn-0h0g.12.170 owns
+# inventorying and narrowing its surviving consumers before any promotion or
+# fixture unfreeze.
 apiVersion: v1
 kind: Secret
 metadata:

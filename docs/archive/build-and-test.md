@@ -3326,53 +3326,66 @@ M3 `alter_replica_identity_sql` emits the wrong keyword (killed by
 `replica_identity::tests::alter_and_read_sql_are_pinned`); apply/test/restore
 with sha256, DEBUG builds.
 
-### [EVT-RI-ORCH / wamn-l5i9.61] publish/migrate-catalog auto-reconcile REPLICA IDENTITY
+### [EVT-RI-ORCH / wamn-l5i9.61; authority retirement / wamn-0h0g.12.70] migration auto-reconcile and one-shot repair
 
 Docs: docs/archive/platform/provisioning.md (`reconcile-replica-identity`, "Automatic caller").
-Wires the l5i9.31 reconciler into an OPERATIONAL caller: `publish-catalog` and
-`migrate-catalog` run the RI reconcile as their last step (they already connect
-as the superuser `ALTER … REPLICA IDENTITY` needs), scoped strictly to the
-verb's `--schema`, so a catalog apply never leaves an entity that needs the old
-image on DEFAULT — a permanent gap, since the flip is non-retroactive.
-**Decision:** run reconcile INSIDE the verbs (auto-ALTER), NOT a D24-style
-refuse-if-drifted, because the verbs' role can already ALTER and the pass is
-idempotent + schema-scoped (no cross-schema blast; the cross-tenant union is only
-in WHICH registrations demand FULL, all tables in the one schema). Escape hatch:
-`--skip-reconcile-replica-identity`. The registration-change path (writes under
-`wamn_app`, which cannot ALTER) is left to the automatic caller + the manual verb
-for now; the pure detect surface is `ReplicaIdentityPlan::pending_old_image_gap`
-(the entities with an open old-image gap). Shared shell:
-`reconcile_replica_identity::reconcile_after_apply`.
+The living automatic boundary is `migrate-catalog`: after its apply transaction
+commits, it invokes the shared reconciler on the verb's `--schema`. The pass is
+idempotent and schema-scoped; `--skip-reconcile-replica-identity` leaves the
+explicit one-shot operator command responsible for repair. `publish-catalog` is
+a refusal-only compatibility stub, and release publication does not apply entity
+DDL, so neither is a reconciliation caller.
+
+Registration changes written under `wamn_app` cannot `ALTER TABLE` and may open
+an old-image gap on an already-applied catalog. The API warning and
+`reconcile-replica-identity --dry-run` expose that drift; the same command
+without `--dry-run` repairs it. There is no periodic scheduler or always-on
+holder of this repair authority.
 
 ```bash
 cargo test -p wamn-schema-control --lib   # pending_old_image_gap direction + no-gap-on-reset (+ the l5i9.31 derivation)
 cargo clippy -p wamn-schema-control -p wamn-ctl --tests
-# Live gate (throwaway PG; plain postgres:18 — the flip sets the pg_class flag,
-# no wal_level=logical needed): drives the REAL verbs — publish --provision
-# provisions the floor AND flips the needing entity 'd'->'f' (cross-tenant union)
-# while the bystander stays 'd'; re-publish is idempotent; --skip-reconcile-
-# replica-identity leaves RI as-is; a plain re-publish resets 'f'->'d'; and a
-# first-materialization migrate flips the entity to FULL after its apply tx
-# commits; and (wamn-l5i9.65 phase) a registration create on an ALREADY-applied
-# catalog opens an old-image gap `pending_old_image_gap` detects, which the
-# standalone verb run EXACTLY as the periodic CronJob's command line
-# (`reconcile_replica_identity::run` = `wamn-ctl reconcile-replica-identity
-# --catalog … --schema …`) closes 'd'->'f', a second run being a no-op.
-# Hermetic (drops+recreates its schemas):
+
+# Migration and explicit-operator proof on a fresh plain PostgreSQL 18:
+docker run -d --name wamn-ri-orch-pg -p 5463:5432 \
+  -e POSTGRES_PASSWORD=postgres postgres:18
+docker exec wamn-ri-orch-pg pg_isready -h 127.0.0.1 -U postgres
+WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:5463/postgres \
+  cargo test --locked --offline -p wamn-ctl --test ri_orch_live \
+    -- --ignored --nocapture --test-threads=1
+docker rm -f wamn-ri-orch-pg
+
+# Fail-closed absent/RLS-hidden registration proof on its own fresh database:
+docker run -d --name wamn-ri-unreadable-pg -p 5464:5432 \
+  -e POSTGRES_PASSWORD=postgres postgres:18
+docker exec wamn-ri-unreadable-pg pg_isready -h 127.0.0.1 -U postgres
+WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:5464/postgres \
+  cargo test --locked --offline -p wamn-ctl \
+    --test replica_identity_unreadable_live -- --nocapture --test-threads=1
+docker rm -f wamn-ri-unreadable-pg
+
+# One-shot CLI shape and structural absence of recurring superuser authority:
+cargo test --locked --offline -p wamn-ctl --test verb_surface
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test replica_identity_authority
 ```
 
-The registration-change reconcile CronJob (wamn-l5i9.65) is
-`deploy/platform/replica-identity-reconcile.example.yaml` (one per project-env);
-in-cluster it is `kubectl apply`'d and a tick is forced with `kubectl create job
---from=cronjob/replica-identity-reconcile-poc-f1 …`.
+Commit `c37cbc5e` originally scheduled the one-shot command. The Job was later
+suspended in `7fdd7235`, then became unstartable when `3554f140` deleted its
+fixture ConfigMap while its mutable spec still distributed a standing
+superuser reference. `wamn-0h0g.12.70` deletes that spec. The retained shared
+fixture Secret is an accepted interim owned for inventory and narrowing by
+`wamn-0h0g.12.170`; promotion toward tenant data or fixture unfreeze is its
+immediate tripwire.
 
-Mutation harness: scratchpad `mutate_l5i9_61.py` — M1 `pending_old_image_gap`
-keys on the reset direction (killed by
-`replica_identity::tests::pending_old_image_gap_is_the_flip_up_direction_by_entity_id`),
-M2 `reconcile_after_apply` plans but never applies the flips (killed by the
-`replica_identity_live` live gate), M3 the `--skip-reconcile-replica-identity` escape hatch
-inverted in publish-catalog (killed by the `replica_identity_live` live gate);
-apply/test/restore with sha256, DEBUG builds.
+Named retirement mutants, applied and restored with SHA-256 receipts in DEBUG
+builds: M1 restores
+`deploy/platform/replica-identity-reconcile.example.yaml` and is killed by
+`recurring_replica_identity_superuser_authority_is_absent`; M2 skips
+`migrate-catalog`'s post-commit hook and is killed by
+`migrate_catalog_reconciles_replica_identity_after_commit`; M3 makes the
+operator command plan-only and is killed by
+`operator_repair_is_dry_runnable_scoped_and_idempotent`.
 
 ### [RUN-PLANE-RECONCILE / wamn-1wdq] reconcile-run-plane — the run-plane schema migration verb
 

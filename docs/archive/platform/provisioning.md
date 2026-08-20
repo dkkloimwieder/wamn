@@ -524,29 +524,36 @@ newly registered changed-to condition evaluates only from the flip forward (the
 materializer treats an absent old image as cannot-evaluate, never
 condition-false). It is idempotent — a reconcile at target flips nothing.
 
-**Automatic caller (EVT-RI-ORCH, wamn-l5i9.61).** `publish-catalog` and
-`migrate-catalog` now run this reconcile automatically as their last step (they
-already connect as the superuser the `ALTER` needs), scoped strictly to the
-verb's `--schema`, so a catalog apply never leaves an entity that needs the old
+**Automatic caller (EVT-RI-ORCH, wamn-l5i9.61).** `migrate-catalog` runs this
+reconcile automatically after its apply transaction commits. It already holds
+the superuser authority the `ALTER` needs and scopes the pass strictly to the
+verb's `--schema`, so a migration never leaves an entity that needs the old
 image on DEFAULT. Pass `--skip-reconcile-replica-identity` to opt out and run the
-standalone verb yourself.
+one-shot operator command separately. The retired `publish-catalog` command is
+a refusal-only compatibility stub and is not an automatic caller; release
+publication does not apply entity DDL or change replica identity.
 
-**Registration-change caller (EVT-RI-ORCH, wamn-l5i9.65).** A REGISTRATION
-change on an ALREADY-applied catalog — a registration create/update/delete that
-adds or removes an old-image / delete subscription — is written via the wamn-api
-surface under `wamn_app`, which cannot `ALTER`, so it leaves the entity's table
-at DEFAULT: an old-image gap until the next publish/migrate. That path is now
-covered automatically by a periodic **CronJob** that runs this verb per
-project-env on a ~5 min cadence (`deploy/platform/replica-identity-reconcile.example.yaml`
-— deploy one per project-env; the owner decision was a CronJob over the shipped
-verb, NOT a new long-lived service or a dispatcher-drained queue). The gap
-therefore closes within one cadence (≤5 min); the manual "run the verb after a
-registration change" step is **retired** in favor of that cadence. wamn-l5i9.66
-surfaces a `pending-replica-identity-reconcile` warning in the api-gateway
-registration create/update response so a caller sees the gap immediately —
-covering the ≤1-cadence window. `reconcile-replica-identity --dry-run` remains
-the read-only surface that names every entity still needing a flip (an operator
-force-tick is `kubectl create job --from=cronjob/…`).
+**Registration-change repair (EVT-RI-ORCH, wamn-0h0g.12.70).** A registration
+create/update/delete on an already-applied catalog runs under `wamn_app`, which
+cannot `ALTER`, so a change that adds an old-image or delete subscription can
+leave an old-image gap until the next migration or an operator repair. Run
+`reconcile-replica-identity --dry-run` with the applied catalog JSON to name the
+pending flips, then run the same command without `--dry-run` to repair them;
+re-running at the target state is a no-op. The API warning
+`pending-replica-identity-reconcile` remains the immediate detection surface.
+
+The original scheduling choice, commit `c37cbc5e` (wamn-l5i9.65), put that
+one-shot command behind a periodic CronJob. The premise later changed: the Job
+was suspended in `7fdd7235`, its `f1-fixtures` ConfigMap disappeared with the
+POC tier in `3554f140`, and the unstartable spec still distributed a standing
+superuser credential. `wamn-0h0g.12.70` therefore retires the CronJob and keeps
+authority present only while `migrate-catalog` or the explicit operator command
+runs. The prior SECURITY DEFINER alternative remains rejected; no always-on
+service inherits this repair authority. The shared fixture-superuser Secret
+remains for verified one-shot consumers, leaving its grant surface over-scoped
+by one retired consumer's worth. `wamn-0h0g.12.170` owns the complete consumer
+inventory and credential narrowing; any promotion toward tenant data or
+unfreezing the fixture is the immediate tripwire.
 
 ## `wamn-ctl reconcile-run-plane` (wamn-1wdq, E4/R14-migration)
 

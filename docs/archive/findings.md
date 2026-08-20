@@ -2138,9 +2138,21 @@ root, but not one credential:
 |---|---|
 | `publish-catalog`, `migrate-catalog`, `impact-report`, `pin-run` | Project schema/catalog/run/test reads or writes; remain one-shot operator actions. |
 | `provision-project`, `provision-org`, `provision-project-env`, `enable-cdc-project-env` | Cluster/T1 administration plus rendered Database, Cluster, Secret, ObjectStore, slot/publication, and role effects. They must not move into always-on request services. |
-| `reconcile-replica-identity`, `reconcile-run-plane`, `prune-run-history` | Checked Job/CronJob execution with distinct superuser/app-role schedules. Keep separate from dispatcher so scheduling code does not inherit repair privilege. |
+| `reconcile-replica-identity`, `reconcile-run-plane`, `prune-run-history` | `reconcile-replica-identity` is a `migrate-catalog` post-commit hook plus an explicit one-shot operator repair; `reconcile-run-plane` and `prune-run-history` retain their separately checked Job/CronJob lifecycles. Keep all three separate from dispatcher so scheduling code does not inherit repair privilege. |
 | `provision-dashboards` | T1 registry plus Grafana administration, or render-only output. |
 | `dump-project-env`, `restore-project-env`, `copy-project-env` | Recovery/export/copy authority plus external PostgreSQL clients and object bytes. Rendered dump workloads choose their own PostgreSQL/MinIO images, but direct ctl execution must also be honest. |
+
+**Replica-identity authority correction (2026-08-20;
+`wamn-0h0g.12.70`).** Commit `c37cbc5e` scheduled the one-shot repair
+command, but the path was later suspended in `7fdd7235` and became unstartable
+when `3554f140` deleted its fixture ConfigMap. The retired spec nevertheless
+continued to distribute `postgres-fixture-superuser`. The recurring spec and
+that reference are now deleted; migration and explicit operator invocation are
+the living repair boundaries. The shared fixture Secret remains an accepted
+interim for retained consumers, leaving its grant surface over-scoped by one
+dead consumer's worth. `wamn-0h0g.12.170` owns the complete consumer inventory
+and credential narrowing. Any promotion toward tenant data or unfreezing of
+the fixture is the immediate tripwire.
 
 The `ctl` image explicitly omits `pg_dump`/`pg_restore`
 (`Dockerfile:41-48`). `dump-project-env --run-now` shells the tools

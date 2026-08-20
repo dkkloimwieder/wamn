@@ -14,23 +14,23 @@
 //!
 //! **Ownership:** `ALTER TABLE … REPLICA IDENTITY` needs table ownership — the
 //! `wamn_app` role cannot run it — so this connects as a **superuser**, like
-//! `publish-catalog --provision` / `migrate-catalog`. Table/schema ownership
-//! ALONE is not enough (wamn-0h0g.12.103): `catalog.event_registrations` is
+//! `migrate-catalog`. Table/schema ownership ALONE is not enough
+//! (wamn-0h0g.12.103): `catalog.event_registrations` is
 //! `FORCE ROW LEVEL SECURITY`, so even its own non-superuser owner reads zero
 //! registrations with no error, and the reconcile now REFUSES that instead of
-//! planning a reset of every entity to DEFAULT. Which identity this verb is
-//! actually given is wamn-0h0g.12.70's question, not this module's; the refusal
-//! only makes an inadequate one loud.
+//! planning a reset of every entity to DEFAULT. The operator supplies that
+//! authority only while invoking this one-shot command; wamn-0h0g.12.70 retired
+//! the suspended, unstartable CronJob that distributed it on a recurring spec.
 //!
 //! **NON-RETROACTIVE:** a flip to FULL enriches only WAL written AFTER it. Events
 //! captured before the flip permanently lack the old image; a newly registered
 //! changed-to condition evaluates only from the flip forward (the materializer
 //! treats an absent old image as cannot-evaluate, never condition-false).
 //!
-//! **Operational note:** run this whenever the catalog or its registrations
-//! change (after `publish-catalog` / `migrate-catalog`, and after a
-//! registration create/delete that adds or removes an old-image / delete
-//! subscription). It is idempotent — a reconcile at the target state is a no-op.
+//! **Operational note:** `migrate-catalog` runs this automatically after a
+//! successful apply. Run this command after a registration create/delete that
+//! adds or removes an old-image / delete subscription. It is idempotent — a
+//! reconcile at the target state is a no-op.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -53,7 +53,7 @@ pub struct ReconcileReplicaIdentityArgs {
     pub admin_database_url: String,
 
     /// Path to the applied catalog JSON (the entity-id → table-name map the
-    /// reconciler flips against — the same document you `publish-catalog`).
+    /// reconciler flips against — the same document you `migrate-catalog`).
     #[arg(long)]
     pub catalog: PathBuf,
 
@@ -92,18 +92,18 @@ pub async fn run(args: ReconcileReplicaIdentityArgs) -> anyhow::Result<()> {
 }
 
 /// The operational caller (EVT-RI-ORCH, wamn-l5i9.61): run the RI reconcile as a
-/// post-apply step INSIDE `publish-catalog` / `migrate-catalog`, so a catalog
-/// apply never leaves an entity that needs the old image on REPLICA IDENTITY
-/// DEFAULT (the non-retroactive flip makes that window a permanent old-image
-/// gap). Those verbs already connect as the superuser `ALTER … REPLICA IDENTITY`
-/// requires; this reuses the SAME tested `reconcile` path the standalone verb and
-/// the live gate exercise, applies the flips, and prints a concise summary.
+/// post-apply step from `migrate-catalog`, so a catalog migration never leaves
+/// an entity that needs the old image on REPLICA IDENTITY DEFAULT (the
+/// non-retroactive flip makes that window a permanent old-image gap). Migration
+/// already connects as the superuser `ALTER … REPLICA IDENTITY` requires; this
+/// reuses the SAME tested `reconcile` path the standalone verb and live gate
+/// exercise, applies the flips, and prints a concise summary.
 ///
 /// Blast radius: scoped STRICTLY to `schema` — the project-env's own data schema
 /// the verb was already writing to. The cross-tenant union is only in WHICH
 /// registrations demand FULL (RI is per-table, tables are shared within the
 /// schema); no table outside `schema` is ever read or altered. Idempotent: a
-/// reconcile at target flips nothing. The verbs gate this behind
+/// reconcile at target flips nothing. The migration verb gates this behind
 /// `--skip-reconcile-replica-identity` for the rare operator who wants to run the
 /// standalone verb separately.
 pub async fn reconcile_after_apply(
@@ -219,8 +219,8 @@ async fn read_registrations(
         )
         .await;
     // Best-effort restore: a failed read inside a caller's open transaction
-    // (publish-catalog holds one) aborts it, so RESET cannot run and the caller
-    // is already unwinding to a ROLLBACK that restores the GUC anyway.
+    // aborts it, so RESET cannot run and the caller is already unwinding to a
+    // ROLLBACK that restores the GUC anyway.
     let _ = client.batch_execute("RESET row_security").await;
     let rows = read.map_err(|e| {
         anyhow::Error::new(e).context(UnreadableRegistrations {
@@ -289,7 +289,7 @@ fn print_plan(plan: &ReplicaIdentityPlan, dry_run: bool) {
     }
     for t in &plan.skipped_absent {
         println!(
-            "  [skip] table {t} does not exist yet (floor not applied) — reconcile after publish-catalog --provision"
+            "  [skip] table {t} does not exist yet (floor not applied) — reconcile after migrate-catalog applies the floor"
         );
     }
 }

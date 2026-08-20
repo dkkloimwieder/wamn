@@ -31,7 +31,7 @@ enum Command {
     EnableCdcProjectEnv(enable_cdc_project_env::EnableCdcProjectEnvArgs),
     /// Apply a catalog to a project DB: versioned, forward-only migration + lifecycle + history (2.5)
     MigrateCatalog(migrate_catalog::MigrateCatalogArgs),
-    /// Reconcile per-entity REPLICA IDENTITY FULL from the catalog's registrations (old-image/delete needs) — idempotent ALTERs (wamn-l5i9.31)
+    /// Detect or repair per-entity REPLICA IDENTITY drift from the catalog's registrations — one-shot, idempotent ALTERs (wamn-l5i9.31)
     ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
     /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
     ReconcileRunPlane(reconcile_run_plane::ReconcileRunPlaneArgs),

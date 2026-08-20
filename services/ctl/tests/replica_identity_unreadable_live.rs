@@ -329,10 +329,10 @@ async fn a_provisioned_environment_with_no_registrations_still_reconciles() {
         .expect("reconcile at target still succeeds");
     assert!(plan.is_noop(), "reconcile at target flips nothing");
 
-    // The post-apply caller shape (EVT-RI-ORCH): `publish-catalog` runs the
-    // reconcile INSIDE its own open publication transaction, so the read's
-    // `row_security = off` must survive being set and reset there and must not
-    // leak past the COMMIT. (`migrate-catalog` runs it after commit instead.)
+    // The reusable caller shape (EVT-RI-ORCH): if reconcile runs inside an open
+    // operator transaction, the read's `row_security = off` must survive being
+    // set and reset there and must not leak past the COMMIT. The live automatic
+    // caller, `migrate-catalog`, runs it after commit instead.
     su.batch_execute("BEGIN").await.expect("open a caller tx");
     reconcile(&su, &catalog(), DATA_SCHEMA, true)
         .await

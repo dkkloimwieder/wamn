@@ -123,7 +123,9 @@ async fn reset(su: &Client) {
         "DROP SCHEMA IF EXISTS catalog CASCADE; \
          DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE; \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
-           THEN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app'; END IF; END $$;"
+           THEN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app'; END IF; \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') \
+           THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $$;"
     ))
     .await
     .expect("reset schemas + ensure wamn_app role");

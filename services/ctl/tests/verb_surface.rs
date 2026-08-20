@@ -61,6 +61,24 @@ fn mvp_migrate_catalog_has_no_destructive_override() {
 }
 
 #[test]
+fn replica_identity_repair_is_an_explicit_one_shot_operator_surface() {
+    let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "reconcile-replica-identity");
+    assert!(
+        output.contains("Detect or repair per-entity REPLICA IDENTITY drift"),
+        "operator help must state the command's drift-repair purpose"
+    );
+    for flag in ["--admin-database-url", "--catalog", "--schema", "--dry-run"] {
+        assert!(output.contains(flag), "operator repair omitted {flag}");
+    }
+    for recurring in ["--schedule", "--cadence"] {
+        assert!(
+            !output.contains(recurring),
+            "one-shot operator repair exposed recurring control {recurring}"
+        );
+    }
+}
+
+#[test]
 #[cfg(not(feature = "ops"))]
 fn mvp_provision_org_has_no_backup_surface() {
     let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "provision-org");
