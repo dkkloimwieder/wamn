@@ -1370,10 +1370,13 @@ that *assumes* the envelope waits; anything a single pilot exercises does not.
   lease generation. Core NATS carries lossy doorbells only, and no `LISTEN`/`NOTIFY`
   anywhere — which is what keeps transaction-mode pooling available later. *Revisit at
   >~1k discrete runs/sec for one project — run the tuning matrix first.*
-- **D15** — every run is durable through that one transaction; the synchronous producer
-  differs only in *placement* — its queue row is born claimed, executing inline — never in
-  durability. **Conditional:** the mechanism binds, but the SLO numbers were recorded
-  "pending explicit product sign-off" which never happened. Claim no latency credit.
+- **D15** — queue-backed synchronous admission is write-ahead, never inline. An accepted
+  path-3 invocation commits its run, ordinary unleased queue row, and any HTTP admission
+  ledger in one transaction before returning the durable run identity; execution begins
+  only through a later worker claim. Reuse of the same scoped client key, fingerprint, and
+  definition converges on the same run; eligible keyless requests intentionally do not.
+  The former born-claimed/direct-dispatch and reduced-audit arms are superseded by
+  execution-model rev 4. Claim no latency credit or effect replay guarantee.
 - **D5** — measure against strict per-host connection-pool caps with the DB path left
   CPU-quota-uncapped. Transaction-mode pooling is the pre-authorised escalation. The
   replication connection cannot sit behind a transaction-mode pooler.

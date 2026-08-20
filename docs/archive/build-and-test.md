@@ -1493,13 +1493,8 @@ docker rm -f wave3-pg-rmxa
 
 ### [CALLABLE-FLOWS-POC-F1 / wamn-3rj] F1 shared fixture coherence
 
-The shared F1 fixture retains its independent catalog, flow, seed, and burst
-coherence check.
-
-```bash
-# recipe-test: H5-F1-FIXTURE | system | wamn-test-fixtures | lib | - | f1fixture::tests:: | 1 | shared F1 catalog, flow, seed, and burst fixture coherence
-cargo test --locked -p wamn-test-fixtures --lib f1fixture::tests::
-```
+The shared `f1fixture` scaffolding was deleted with the demo/POC surface by
+`wamn-0h0g.12.2` (`3554f140`); no runnable F1-fixture recipe remains.
 
 ### [11.8 / wamn-wvb] schema-change impact analysis — affected flows/API
 
@@ -1815,16 +1810,10 @@ assertions into the M2 gate.
 
 ### [CALLABLE-FLOWS-P2A / wamn-5wd1.49] cron attachment admission
 
-The dispatcher reads only the authoritative active cron-attachment projection,
-synthesizes the normative `scheduled-at`/`fired-at` input, and commits the
-generation-0 deterministic run, available queue row, and durable anchor through
-the centralized admission transaction.
-
-```bash
-cargo test --locked -p wamn-dispatcher -p wamn-scheduler
-# recipe-test: H5-CALLABLE-CRON | integration | wamn-proof-integration | lib | - | callable_cron::tests:: | 1 | tests/integration/src/callable_cron.rs process-boundary catalog/attachment/admission proof
-cargo test --locked -p wamn-proof-integration --lib callable_cron::tests::
-```
+The positive cron scheduler path and its `callable_cron` proof were deleted by
+`wamn-0h0g.5.6` (`25129131`). Cron is now a refused attachment kind, so no
+runnable positive-path recipe remains; `wamn-0h0g.11.50` owns the missing
+typed-refusal proof.
 
 The former multi-mode `dispatchbench` executable was archived by
 `wamn-0h0g.4.1`. Current centralized admission and queue behavior are covered by
@@ -1832,56 +1821,29 @@ the dispatcher units, run-plane gate, and host-owned production-claim gate.
 
 ### [CALLABLE-FLOWS-POC-F0 / wamn-5wd1.56] echo release and two-commit path
 
-The canonical F0 graph and HTTP attachment are resolved through the immutable
-artifact/release types. The proof refuses malformed input, bad idempotency keys,
-stale artifacts, bypass publication, and a third commit; both named crash seams
-recover to the same stored response and exactly two commits. The exact-image Job
-that carried this proof in-cluster was deleted with `deploy/gates/callable-flow-f0-job.yaml`.
-
-```bash
-# recipe-test: H5-CALLABLE-F0 | system | wamn-proof-system | lib | - | callable_f0::tests:: | 5 | tests/system/src/callable_f0.rs F0 immutable release, HTTP attachment, refusals, and two-commit recovery
-cargo test --locked -p wamn-proof-system --lib callable_f0::tests::
-```
+The former F0 proof covered immutable release, HTTP attachment, refusal, and
+two-commit recovery behavior. It and its exact-image Job were deleted with the
+demo/POC surface by `wamn-0h0g.12.2` (`3554f140`); no runnable F0 recipe remains.
 
 ### [CALLABLE-FLOWS-POC-F3 / wamn-5wd1.58] stale-hold escalation r6
 
-The canonical F3 graph and minimal cron attachment prove the scheduled-time
-cutoff, one-row notify-before-escalate loop, natural completion, and the
-same-run/new-run recovery-key distinction. The exact-image Job that carried this
-proof in-cluster was deleted with `deploy/gates/callable-flow-f3-job.yaml`.
-
-```bash
-# recipe-test: H5-CALLABLE-F3 | system | wamn-proof-system | lib | - | callable_f3::tests:: | 5 | tests/system/src/callable_f3.rs F3 graph, attachment, recovery, and failure windows
-cargo test --locked -p wamn-proof-system --lib callable_f3::tests::
-```
+The former F3 proof covered the scheduled-time cutoff, escalation loop,
+completion, and recovery-key distinction. It and its exact-image Job were
+deleted with the demo/POC surface by `wamn-0h0g.12.2` (`3554f140`); no runnable
+F3 recipe remains.
 
 ## H5-CALLABLE-F2 — immutable pure recommendation (`wamn-5wd1.61`)
 
-The package proof pins F2's direct supplied-node graph, strict request
-contract, verified component identity, internal caller policy, service-mode
-runtime refusal, and replay/effect-uncertain controls. The exact-image Job that
-also hashed the baked component bytes was deleted with
-`deploy/gates/callable-flow-f2-job.yaml`.
-
-```bash
-# recipe-test: H5-CALLABLE-F2 | system | wamn-proof-system | lib | - | callable_f2::tests:: | 8 | tests/system/src/callable_f2.rs F2 direct pure component release, internal caller policy, deterministic replay, and mutation controls
-CARGO_TARGET_DIR=/tmp/wamn-target-f2-61 \
-  cargo test --locked -p wamn-proof-system --lib callable_f2::tests::
-```
+The former F2 proof covered supplied-node identity, request and caller policy,
+runtime refusal, replay, and effect-uncertain controls. It and its exact-image
+Job were deleted with the demo/POC surface by `wamn-0h0g.12.2` (`3554f140`); no
+runnable F2 recipe remains.
 
 ## H5-CALLABLE-F4 — event child/review/callback composition (`wamn-5wd1.62`)
 
-The package proof pins F4's canonical event graph and live registration,
-strictly-prior `(decided_at,id)` history, service-mode F2 invocation, unique
-review read-back, occurrence-keyed callback, fully-scoped event admission, and
-the existing child create/recover, atomic wake, and generation-seized
-cancellation transitions.
-
-```bash
-# recipe-test: H5-CALLABLE-F4 | system | wamn-proof-system | lib | - | callable_f4::tests:: | 10 | tests/system/src/callable_f4.rs F4 graph, registration, prior history, review/callback recovery, event scope, and child transition mutants
-CARGO_TARGET_DIR=/tmp/wamn-target-f4-62 \
-  cargo test --locked -p wamn-proof-system --lib callable_f4::tests::
-```
+The former F4 proof covered event registration, prior history, review/callback
+recovery, event scope, and child transitions. It was deleted with the demo/POC
+surface by `wamn-0h0g.12.2` (`3554f140`); no runnable F4 recipe remains.
 
 ### [SR-MVP / wamn-0h0g.5.8] dispatcher reconciliation
 
@@ -3228,18 +3190,18 @@ cargo clippy -p wamn-entity-access --all-targets \
   && cargo fmt -p wamn-entity-access --check
 ```
 
-### [4.1b] catalog snapshot publish + API fixture
+### [4.1b] catalog snapshot publish and retired API fixture
 
 ```bash
-# Unit/fixture boundaries: publish-catalog belongs to wamn-ctl and the API
-# fixture lives in repository test support.
+# The retained publish-catalog boundary belongs to wamn-ctl.
 # recipe-test: H5-API-PUBLISH | unit | wamn-ctl | lib | - | publish_catalog::tests:: | 1 | services/ctl/src/publish_catalog.rs pre-I/O schema boundary
 cargo test -p wamn-ctl --lib publish_catalog::tests::
-# recipe-test: H5-API-FIXTURE | fixture | wamn-test-fixtures | lib | - | apifixture::tests:: | 2 | test-support/fixtures/apifixture.rs API catalog and floor coherence
-cargo test -p wamn-test-fixtures --lib apifixture::tests::
 cargo clippy -p wamn-host -p wamn-ctl -p wamn-gates --all-targets \
   && cargo fmt -p wamn-host -p wamn-ctl -p wamn-gates --check
 ```
+
+The `apifixture` scaffolding was deleted with the demo/POC surface by
+`wamn-0h0g.12.2` (`3554f140`); no runnable API-fixture recipe remains.
 
 ### [4.1c] callable-flow HTTP adapter (components/ingress/flow-http)
 
@@ -3267,54 +3229,34 @@ cargo build --locked --manifest-path components/Cargo.toml -p flow-http \
 
 Docs: docs/archive/poc/poc-f1.md
 
-```bash
-# recipe-test: H5-CALLABLE-F1 | system | wamn-proof-system | lib | - | callable_f1::tests:: | 6 | tests/system/src/callable_f1.rs F1 release, direct pure nodes, deterministic CTE recovery, refusals, and webhook cutover
-cargo test --locked -p wamn-proof-system --lib callable_f1::tests::
-cargo test --locked -p wamn-proof-conformance --lib \
-  docker_component_provenance::every_embedded_component_comes_from_the_locked_builder
-```
+The F1 package proof was deleted with the demo/POC surface by
+`wamn-0h0g.12.2` (`3554f140`); no runnable F1 recipe remains.
 
 ### [CALLABLE-FLOWS-POC-W1 / wamn-5wd1.9] composed F0/F1/F3 campaign
 
-The Wave-1 gate applies the promoted POC catalog from zero, runs the production
-invocation provider and the F0/F1/F3 proofs, checks T-CTX/T-NR, and emits one
+The former Wave-1 gate applied the promoted POC catalog from zero, ran the production
+invocation provider and the F0/F1/F3 proofs, checked T-CTX/T-NR, and emitted one
 gate evidence record binding the exact source, image, supplied component bytes,
-POC config, schema, release inputs, and deployment identity. The in-cluster
-campaign Job was deleted with `deploy/gates/callable-flow-wave1-job.yaml`; only
-the package proof below is runnable.
-
-```bash
-# recipe-test: H5-CALLABLE-WAVE1 | system | wamn-proof-system | lib | - | callable_wave1::tests:: | 4 | tests/system/src/callable_wave1.rs composed F0/F1/F3 identities and T-CTX/T-NR contracts
-cargo test --locked -p wamn-proof-system --lib callable_wave1::tests::
-cargo test --locked -p wamn-proof-conformance -p wamn-proof-integration -p wamn-proof-system
-```
+POC config, schema, release inputs, and deployment identity. Its Job and package
+proof were deleted with the demo/POC surface by `wamn-0h0g.12.2` (`3554f140`);
+no runnable Wave-1 recipe remains.
 
 ### [CALLABLE-FLOWS-POC-W2 / wamn-5wd1.10] composed F0-F4 campaign
 
-The serial Wave-2 gate reuses the Wave-1 from-zero schema and production
-invocation campaign, then composes the F2/F4 contract and recovery proofs. Its
+The former serial Wave-2 gate reused the Wave-1 from-zero schema and production
+invocation campaign, then composed the F2/F4 contract and recovery proofs. Its
 gate evidence record binds the source commit, exact image tag and Kubernetes-
 observed image ID, flowrunner and all three supplied custom-node components, POC configuration
 and schema, all five graph definitions, each attachment/registration input,
 release membership, deployment identity, and the four T5 measurement-hook
 shapes. The recorded T5 hooks deliberately carry no Phase-6 budgets. The
-in-cluster campaign Job was deleted with
-`deploy/gates/callable-flow-wave2-job.yaml`; only the package proof below is
-runnable.
+in-cluster Job and package proof were deleted with the demo/POC surface by
+`wamn-0h0g.12.2` (`3554f140`); no runnable Wave-2 recipe remains.
 
-```bash
-# recipe-test: H5-CALLABLE-WAVE2 | system | wamn-proof-system | lib | - | callable_wave2::tests:: | 4 | tests/system/src/callable_wave2.rs F0-F4 identity evidence, mixed-identity refusal, T5 hooks, and exact-image routing
-CARGO_TARGET_DIR=/tmp/wamn-target-wave2-10 \
-  cargo test --locked -p wamn-proof-system --lib callable_wave2::tests::
-CARGO_TARGET_DIR=/tmp/wamn-target-wave2-10 \
-  cargo test --locked -p wamn-proof-conformance -p wamn-proof-integration \
-    -p wamn-proof-system
-```
-
-The former callable-flow aggregate mutation campaign and state-probe helper are
-not present in the MVP-reduced tree. The retained callable-flow recipes above
-remain the current runnable gates; there is no current aggregate mutation
-command or checked-in aggregate evidence record in this file.
+The callable-flow aggregate campaign, state-probe helper, and package proofs are
+not present in the MVP-reduced tree. There is no current recipe for those
+deleted POC campaigns, aggregate mutation command, or checked-in aggregate
+evidence record in this file.
 
 ### Deleted time-shift component provenance
 
@@ -3556,18 +3498,10 @@ is provenance only; there is no current runnable builder/buildproof command.
 
 Docs: docs/archive/observability/dashboards.md
 
-```bash
-# Unit tests (dashboards-as-code drift guards: metric names vs docs/archive/observability/metrics.md,
-# the checked-in SRE JSON vs the render, tenant->folder uid mapping, base64/auth).
-# The implementation belongs to wamn-ctl; wamn-gates only routes dashproof:
-# recipe-test: H5-DASHBOARDS | unit | wamn-ctl | lib | - | provision_dashboards::tests:: | 7 | services/ctl/src/provision_dashboards.rs dashboard drift, rendering, tenant, and encoding guards
-cargo test -p wamn-ctl --lib provision_dashboards::tests::
-```
-
 The `provision-dashboards` verb, `services/ctl/src/provision_dashboards.rs`, the
 `dashproof` router subcommand, `deploy/infra/grafana*`, and
-`deploy/gates/dashproof-job.yaml` were all deleted; the unit recipe above is the
-only runnable command left here.
+`deploy/gates/dashproof-job.yaml` were deleted with the observability extras by
+`wamn-0h0g.12.3` (`d1c9e471`); no runnable dashboard recipe remains.
 
 ## CF-RELEASE — immutable catalog publication (`wamn-5wd1.46`)
 
@@ -3640,14 +3574,13 @@ current authority. The retained contract is one immutable attempt and at most
 one first-insert-wins dispatch per effectful occurrence; the current gate of
 record is **SR-MVP — inaccessible effect-writer primitive** below.
 
-### [PLAN-1 / wamn-4u7p.24] FLOW-SPEC recovery authority
+### [PLAN-1 / wamn-4u7p.24] retired FLOW-SPEC recovery authority
 
-# recipe-test: PLAN-1-FLOW-SPEC-RECOVERY | conformance | wamn-proof-conformance | test | flow_spec_recovery_authority | - | 4 | shipped three-layer recovery authority, legacy classifier exclusions, source/DDL pins, and docs links/cross-references
-
-```bash
-CARGO_TARGET_DIR=/tmp/wamn-target-plan-1-flow-spec \
-  cargo test --locked -p wamn-proof-conformance --test flow_spec_recovery_authority
-```
+The four-test `flow_spec_recovery_authority` proof was deleted by `24219bc0`
+with the recovery representation whose fields and readers it pinned. D15 now
+follows its living subject to **SR-MVP — ordinary HTTP admission** below, where
+its current queue-backed write-ahead contract has a live primary recipe. No
+runnable recovery-authority recipe remains.
 
 ## PLAN-2B — typed trusted invocation context (`wamn-99wl`)
 
@@ -4554,12 +4487,24 @@ git diff --check
 
 ## SR-MVP — ordinary HTTP admission (`wamn-0h0g.5.1`)
 
-`flow-http` final admission commits one `dispatched` run and one immediately
-available queue row with owner/expiry `NULL` and generation zero before `begin`
-returns. Duplicate admission retains the winning run identity, and `begin`
-never enters guest execution.
+D15's surviving referent is the synchronous path-3 write-ahead contract, not
+the deleted recovery representation. An accepted invocation commits one
+`dispatched` run, one immediately available unleased queue row, and any HTTP
+admission ledger in one transaction before returning a durable run identity.
+Execution begins only through a later worker claim. Reuse of the same scoped
+client key, fingerprint, and definition converges on the same run; eligible
+keyless requests intentionally do not. D15 grants no inline execution,
+reduced-audit path, latency credit, or effect replay guarantee.
 
 ```bash
+# recipe-test: D15-WRITE-AHEAD-ADMISSION | integration | wamn-runtime | test | flow_invocation_admission_live | commit_failure_returns_no_admission_identity_or_rows | 1 | deferred commit failure returns no admission identity and rolls back run, queue, and HTTP ledger; CALLABLE-EVENT-LINEAGE supplies live atomicity and same-key convergence
+WAMN_FLOW_INVOCATION_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-runtime \
+    --test flow_invocation_admission_live \
+    commit_failure_returns_no_admission_identity_or_rows \
+    -- --ignored --exact --nocapture --test-threads=1
+
 CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
   cargo test --locked --offline \
     -p wamn-run-state -p wamn-runtime -p wamn-proof-integration
@@ -5481,12 +5426,14 @@ cargo test --locked --offline -p wamn-proof-conformance \
 ```
 
 These are commands, not `# recipe-test:` directives, and deliberately so. The
-`gate_registry` guard pins the directive inventory at exactly 36 and requires the
+`gate_registry` guard pins the directive inventory at exactly 25, requires the
 directive-ID set to equal the `Recipe`-kind entry set in
-`architecture/gate-registry.json`. Adding a directive without the matching
-registry entry fails `gate_registry` with `recipe registry drift`, and that
-registry is frozen until `wamn-0h0g.15.22` regenerates it. Promoting these
-thirteen to directives is that bead's work, not this one's.
+`architecture/gate-registry.json`, and resolves every package, target, and test
+filter to at least its declared test floor. Adding a directive without a
+matching registry entry fails with `recipe registry drift`; naming a missing or
+under-populated selector fails before it can claim coverage. Promoting any of
+these commands requires both a registry entry and a structurally resolving
+selector.
 
 ## SR-MVP — guard-mechanism repairs and ctl kind-filter coverage (wamn-0h0g.15.114, .15.115, .15.108)
 
