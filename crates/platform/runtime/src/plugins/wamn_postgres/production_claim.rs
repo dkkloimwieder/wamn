@@ -195,7 +195,7 @@ impl WamnPostgres {
         let release = self.release_identity_for(component_id);
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout(&project).await.map_err(|error| {
+        let (connection, policy) = self.checkout_platform(&project).await.map_err(|error| {
             ProductionClaimError::new(
                 ProductionClaimErrorKind::Storage,
                 "checkout project connection",
@@ -287,7 +287,7 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout(&project).await.map_err(|error| {
+        let (connection, policy) = self.checkout_platform(&project).await.map_err(|error| {
             ProductionClaimError::new(
                 ProductionClaimErrorKind::Storage,
                 "checkout janitor connection",
@@ -788,6 +788,27 @@ fn storage(operation: &'static str, error: tokio_postgres::Error) -> ProductionC
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn production_claim_and_reaper_use_only_the_platform_pool() {
+        let source = include_str!("production_claim.rs");
+        let claim_start = source
+            .find("pub async fn claim_next_production(")
+            .expect("production claim method");
+        let reaper_start = source
+            .find("pub async fn reap_one_exhausted_production(")
+            .expect("production reaper method");
+        let transaction_start = source
+            .find("async fn claim_in_transaction(")
+            .expect("claim transaction helper");
+        for body in [
+            &source[claim_start..reaper_start],
+            &source[reaper_start..transaction_start],
+        ] {
+            assert!(body.contains(".checkout_platform(&project)"));
+            assert!(!body.contains("checkout_guest"));
+        }
+    }
 
     #[test]
     fn generic_refusal_body_is_exact_and_message_free() {

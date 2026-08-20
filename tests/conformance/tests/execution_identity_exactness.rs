@@ -100,7 +100,8 @@ fn offline_postgres() -> Arc<WamnPostgres> {
     Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             database_url: None,
-            pool_max_size: 1,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
             wait_timeout_ms: 100,
             statement_timeout_ms: 100,
             row_limit: 10,

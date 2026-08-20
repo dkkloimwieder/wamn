@@ -181,6 +181,9 @@ spec:
                 secretKeyRef:
                   name: wamn-runner-db
                   key: url
+            # Reserve 2/16 connections for host-owned work so guest-held sessions cannot starve claims.
+            - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
+            - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
             # Ordinary host-held project-environment identity. The private
             # credential path and URL have no CLI or environment override.
             - { name: WAMN_ORG, value: "demo" }

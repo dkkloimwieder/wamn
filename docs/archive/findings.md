@@ -4587,7 +4587,7 @@ prerequisite that makes everything else findable.
 | R42 | DB-broken runner can become Ready and displace healthy capacity | High | open | wamn-2jkm.77; proof wamn-4tob.6.6 |
 | R43 | Reviewed custom-node OCI identity does not determine invoked bytes | High (latent) | open | wamn-fqg.23 + wamn-0si.9; proof wamn-4tob.6.7 |
 | R44 | Event dedupe identity expires or changes across pruning and source republish | High | open | wamn-2jkm.82; proofs wamn-4tob.6.9/.6.17 |
-| R45 | Shared project database login crosses tenant boundaries | Critical | open (ownership half closed `47b404cf`) | wamn-2jkm.85; proof wamn-4tob.6.12; ownership half `wamn-0h0g.12.108`, shared-credential half `wamn-0h0g.12.64` |
+| R45 | Shared project database login crosses tenant boundaries | Critical | open (ownership half closed `47b404cf`) | wamn-2jkm.85; proof wamn-4tob.6.12; ownership half `wamn-0h0g.12.108`; `wamn-0h0g.12.63`: lifecycle split grants no database boundary; broad `wamn_app` credential accepted-interim; non-settable identity/RLS redesign and grant-partition owner `wamn-0h0g.22.4`; separate cluster-global credential-isolation owner `wamn-0h0g.12.64`; tripwire: any tenant promotion |
 | R46 | Automatic Postgres failover can lose acknowledged writes | Critical | open | wamn-2jkm.86; proof wamn-4tob.6.13 |
 | R47 | One object-store root credential spans recovery and observability domains | High | open | wamn-2jkm.87; proof wamn-4tob.6.14 |
 | R48 | Standing T1 and T3 clusters lack the promised PITR path | High | open | wamn-2jkm.88; proof wamn-4tob.6.15 |

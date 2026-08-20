@@ -19,8 +19,9 @@ use wamn_catalog::ManifestDigest;
 use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
 
 use super::pool::{
-    CheckoutProbe, CredentialProvider, ProjectConfig, ProjectPool, StaticCredentialProvider,
-    WamnPostgresConfig, destroy_connection, standard_conforming_strings_hook,
+    CheckoutProbe, CredentialProvider, PoolLifecycle, ProjectConfig, ProjectPool,
+    StaticCredentialProvider, WamnPostgresConfig, destroy_connection,
+    standard_conforming_strings_hook,
 };
 use super::resources::{run_execute, run_query};
 use super::types::map_pg_error;
@@ -29,10 +30,12 @@ use super::{DEFAULT_PROJECT, PgError, RowSet, SqlValue};
 pub struct WamnPostgres {
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
-    /// project id → live pool + policy, built lazily on first use and memoized
-    /// for the plugin's lifetime. Strict per-host caps (D5 hybrid v0/P1); a
-    /// pgBouncer tier, when added, sits under this map transparently.
-    pools: std::sync::RwLock<HashMap<String, Arc<ProjectPool>>>,
+    /// Guest-visible project pools, built lazily and never shared with host-owned
+    /// claim or authorization work.
+    guest_pools: std::sync::RwLock<HashMap<String, Arc<ProjectPool>>>,
+    /// Host-owned claim, authorization, and plan-supply project pools. Keeping a
+    /// distinct cache makes cross-lifecycle session reuse unrepresentable.
+    platform_pools: std::sync::RwLock<HashMap<String, Arc<ProjectPool>>>,
     /// component id → tenant claim.
     tenants: std::sync::RwLock<HashMap<String, String>>,
     /// component id → project id (which database). Absent ⇒ the default project.
@@ -565,7 +568,8 @@ impl WamnPostgres {
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
         Self {
             provider,
-            pools: std::sync::RwLock::new(HashMap::new()),
+            guest_pools: std::sync::RwLock::new(HashMap::new()),
+            platform_pools: std::sync::RwLock::new(HashMap::new()),
             tenants: std::sync::RwLock::new(HashMap::new()),
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
@@ -599,7 +603,7 @@ impl WamnPostgres {
     }
 
     /// Build a deadpool pool for one project's connection config.
-    fn build_pool(cfg: &ProjectConfig) -> anyhow::Result<Pool> {
+    fn build_pool(cfg: &ProjectConfig, lifecycle: PoolLifecycle) -> anyhow::Result<Pool> {
         let pg_config: tokio_postgres::Config = cfg
             .database_url
             .parse()
@@ -613,7 +617,7 @@ impl WamnPostgres {
         );
         let timeout = std::time::Duration::from_millis(cfg.wait_timeout_ms);
         Ok(Pool::builder(mgr)
-            .max_size(cfg.pool_max_size)
+            .max_size(lifecycle.max_size(cfg))
             .timeouts(Timeouts {
                 wait: Some(timeout),
                 create: Some(timeout),
@@ -627,34 +631,71 @@ impl WamnPostgres {
 
     /// Resolve + lazily build (memoized) the pool for a project. Unknown project
     /// or a build/resolution failure ⇒ `connection-unavailable`.
-    fn ensure_pool(&self, project: &str) -> Result<Arc<ProjectPool>, PgError> {
-        if let Some(pp) = self.pools.read().expect("pools lock poisoned").get(project) {
+    fn pools(
+        &self,
+        lifecycle: PoolLifecycle,
+    ) -> &std::sync::RwLock<HashMap<String, Arc<ProjectPool>>> {
+        match lifecycle {
+            PoolLifecycle::Guest => &self.guest_pools,
+            PoolLifecycle::Platform => &self.platform_pools,
+        }
+    }
+
+    fn ensure_pool(
+        &self,
+        lifecycle: PoolLifecycle,
+        project: &str,
+    ) -> Result<Arc<ProjectPool>, PgError> {
+        let pools = self.pools(lifecycle);
+        if let Some(pp) = pools.read().expect("pools lock poisoned").get(project) {
             return Ok(pp.clone());
         }
         let cfg = match self.provider.resolve(project) {
             Ok(Some(c)) => c,
             Ok(None) => {
-                tracing::warn!(project, "wamn:postgres: no credentials for project");
+                tracing::warn!(
+                    project,
+                    lifecycle = lifecycle.label(),
+                    "wamn:postgres: no credentials for project"
+                );
                 return Err(PgError::ConnectionUnavailable);
             }
             Err(e) => {
-                tracing::warn!(project, error = %e, "wamn:postgres: credential resolution failed");
+                tracing::warn!(
+                    project,
+                    lifecycle = lifecycle.label(),
+                    error = %e,
+                    "wamn:postgres: credential resolution failed"
+                );
                 return Err(PgError::ConnectionUnavailable);
             }
         };
-        let pp = match Self::build_pool(&cfg) {
+        let pp = match Self::build_pool(&cfg, lifecycle) {
             Ok(pool) => Arc::new(ProjectPool {
                 pool,
                 statement_timeout_ms: cfg.statement_timeout_ms,
                 row_limit: cfg.row_limit,
             }),
             Err(e) => {
-                tracing::warn!(project, error = %e, "wamn:postgres: pool build failed");
+                tracing::warn!(
+                    project,
+                    lifecycle = lifecycle.label(),
+                    error = %e,
+                    "wamn:postgres: pool build failed"
+                );
                 return Err(PgError::ConnectionUnavailable);
             }
         };
-        let mut w = self.pools.write().expect("pools lock poisoned");
+        let mut w = pools.write().expect("pools lock poisoned");
         Ok(w.entry(project.to_string()).or_insert(pp).clone())
+    }
+
+    fn ensure_guest_pool(&self, project: &str) -> Result<Arc<ProjectPool>, PgError> {
+        self.ensure_pool(PoolLifecycle::Guest, project)
+    }
+
+    fn ensure_platform_pool(&self, project: &str) -> Result<Arc<ProjectPool>, PgError> {
+        self.ensure_pool(PoolLifecycle::Platform, project)
     }
 
     /// Register the tenant claim for a component id. The bench harness calls
@@ -703,9 +744,17 @@ impl WamnPostgres {
             .unwrap_or_else(|| DEFAULT_PROJECT.to_string())
     }
 
-    /// Number of live (built) project pools — gate observability.
+    /// Number of live (built) project/lifecycle pools — gate observability.
     pub fn project_pool_count(&self) -> usize {
-        self.pools.read().expect("pools lock poisoned").len()
+        self.guest_pools
+            .read()
+            .expect("guest pools lock poisoned")
+            .len()
+            + self
+                .platform_pools
+                .read()
+                .expect("platform pools lock poisoned")
+                .len()
     }
 
     /// Register the `search_path` schema for a component id. When set, every
@@ -1057,14 +1106,15 @@ impl WamnPostgres {
     /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
     /// the caller's role / user id, the carried release identity, and the
     /// causation run context — all set at
-    /// workload bind (or via the
-    /// runner channel) and keyed by component id. Without this a stale claim
+    /// workload bind (or via the runner channel) and keyed by component id.
+    /// Without this a stale claim
     /// survives unbind, the maps grow across workload churn, and a rebound
-    /// component id inherits the prior claim. The `pools` map is deliberately NOT
-    /// touched: it is keyed by PROJECT (shared, memoized for the plugin's
-    /// lifetime), not by component id. Keyed like the fork's builtin postgres
-    /// plugin — a workload's component ids are prefixed by the workload id — so
-    /// everything NOT under it is retained; an unknown workload id is a no-op.
+    /// component id inherits the prior claim. The lifecycle pool maps are
+    /// deliberately NOT touched: they are keyed by PROJECT (shared and memoized
+    /// within each lifecycle for the plugin's lifetime), not by component id.
+    /// Keyed like the fork's builtin postgres plugin — a workload's component ids
+    /// are prefixed by the workload id — so everything NOT under it is retained;
+    /// an unknown workload id is a no-op.
     pub(super) fn clear_component_claims(&self, workload_id: &str) {
         let retain = |c: &String| !c.starts_with(workload_id);
         self.tenants
@@ -1106,16 +1156,33 @@ impl WamnPostgres {
         self.destroyed.load(Ordering::Relaxed)
     }
 
-    /// (size, available, waiting) of a project's pool, if it has been built.
+    fn pool_status_all_by_lifecycle(&self) -> Vec<(PoolLifecycle, String, (usize, usize, usize))> {
+        let mut statuses = Vec::new();
+        for (lifecycle, pools) in [
+            (PoolLifecycle::Guest, &self.guest_pools),
+            (PoolLifecycle::Platform, &self.platform_pools),
+        ] {
+            statuses.extend(pools.read().expect("pools lock poisoned").iter().map(
+                |(project, pp)| {
+                    let status = pp.pool.status();
+                    (
+                        lifecycle,
+                        project.clone(),
+                        (status.size, status.available, status.waiting),
+                    )
+                },
+            ));
+        }
+        statuses
+    }
+
+    /// Aggregate (size, available, waiting) across a project's built lifecycle pools.
     pub fn pool_status_of(&self, project: &str) -> Option<(usize, usize, usize)> {
-        self.pools
-            .read()
-            .expect("pools lock poisoned")
-            .get(project)
-            .map(|pp| {
-                let s = pp.pool.status();
-                (s.size, s.available, s.waiting)
-            })
+        self.pool_status_all_by_lifecycle()
+            .into_iter()
+            .filter(|(_, candidate, _)| candidate == project)
+            .map(|(_, _, status)| status)
+            .reduce(|left, right| (left.0 + right.0, left.1 + right.1, left.2 + right.2))
     }
 
     /// Default-project pool status (single-DB benches).
@@ -1123,26 +1190,26 @@ impl WamnPostgres {
         self.pool_status_of(DEFAULT_PROJECT)
     }
 
-    /// `(project, (size, available, waiting))` for every built pool — the
-    /// snapshot the [9.8] pool-saturation observable gauges fold over.
+    /// `(project, (size, available, waiting))` aggregated across every built
+    /// lifecycle pool. The observable gauges use the unaggregated private view.
     pub fn pool_status_all(&self) -> Vec<(String, (usize, usize, usize))> {
-        self.pools
-            .read()
-            .expect("pools lock poisoned")
-            .iter()
-            .map(|(project, pp)| {
-                let s = pp.pool.status();
-                (project.clone(), (s.size, s.available, s.waiting))
-            })
-            .collect()
+        let mut aggregate = HashMap::<String, (usize, usize, usize)>::new();
+        for (_, project, status) in self.pool_status_all_by_lifecycle() {
+            let total = aggregate.entry(project).or_insert((0, 0, 0));
+            total.0 += status.0;
+            total.1 += status.1;
+            total.2 += status.2;
+        }
+        aggregate.into_iter().collect()
     }
 
     /// [9.8] Register the `wamn.postgres.pool.{size,available,waiting}` observable
-    /// gauges (deadpool `Pool::status()`), keyed by `wamn.project`. The callbacks
-    /// hold a `Weak` back to the plugin so registration never keeps it alive, and
-    /// they observe every currently-built pool at export time. Call ONCE per
-    /// process (observable instruments warn on duplicate registration); a no-op
-    /// until the global meter provider is installed (`OTEL_*`).
+    /// gauges (deadpool `Pool::status()`), keyed by `wamn.project` and
+    /// `wamn.pool.lifecycle`. The callbacks hold a `Weak` back to the plugin so
+    /// registration never keeps it alive, and they observe every currently-built
+    /// pool at export time. Call ONCE per process (observable instruments warn on
+    /// duplicate registration); a no-op until the global meter provider is
+    /// installed (`OTEL_*`).
     pub fn register_pool_metrics(self: &std::sync::Arc<Self>) {
         use opentelemetry::KeyValue;
         let meter = opentelemetry::global::meter("wamn-postgres");
@@ -1172,8 +1239,14 @@ impl WamnPostgres {
                 .with_description(desc)
                 .with_callback(move |o| {
                     if let Some(plugin) = weak.upgrade() {
-                        for (project, status) in plugin.pool_status_all() {
-                            o.observe(read(&status), &[KeyValue::new("wamn.project", project)]);
+                        for (lifecycle, project, status) in plugin.pool_status_all_by_lifecycle() {
+                            o.observe(
+                                read(&status),
+                                &[
+                                    KeyValue::new("wamn.project", project),
+                                    KeyValue::new("wamn.pool.lifecycle", lifecycle.label()),
+                                ],
+                            );
                         }
                     }
                 })
@@ -1189,10 +1262,11 @@ impl WamnPostgres {
 
     /// Check out a raw connection from a project's (lazily built) pool and
     /// report its state *before* any claim injection. Gate verification only —
-    /// not reachable from guests.
+    /// not reachable from guests and not a platform work path. It deliberately
+    /// observes the guest lifecycle that the conformance gate is proving.
     pub async fn probe_checkout_of(&self, project: &str) -> anyhow::Result<CheckoutProbe> {
         let pp = self
-            .ensure_pool(project)
+            .ensure_guest_pool(project)
             .map_err(|_| anyhow::anyhow!("no pool for project {project:?}"))?;
         let conn = pp.pool.get().await?;
         let row = conn
@@ -1256,7 +1330,7 @@ impl WamnPostgres {
         );
         let schema = self.schema_for(component_id);
         let (conn, policy) = self
-            .checkout(project)
+            .checkout_platform(project)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
@@ -1358,7 +1432,7 @@ impl WamnPostgres {
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
         let (conn, policy) = self
-            .checkout(&project)
+            .checkout_platform(&project)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
@@ -1413,19 +1487,42 @@ impl WamnPostgres {
         destroy_connection(obj, &self.destroyed);
     }
 
-    /// Check out a connection from a project's (lazily built) pool, returning
-    /// the pool handle too so its statement-timeout/row-limit policy travels
-    /// with the call.
-    pub(super) async fn checkout(
+    async fn checkout_lifecycle(
         &self,
+        lifecycle: PoolLifecycle,
         project: &str,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
-        let pp = self.ensure_pool(project)?;
+        let pp = match lifecycle {
+            PoolLifecycle::Guest => self.ensure_guest_pool(project)?,
+            PoolLifecycle::Platform => self.ensure_platform_pool(project)?,
+        };
         let obj = pp.pool.get().await.map_err(|e| {
-            tracing::warn!(project, error = %e, "wamn:postgres pool checkout failed");
+            tracing::warn!(
+                project,
+                lifecycle = lifecycle.label(),
+                error = %e,
+                "wamn:postgres pool checkout failed"
+            );
             PgError::ConnectionUnavailable
         })?;
         Ok((obj, pp))
+    }
+
+    /// Check out a connection reserved for guest-visible `wamn:postgres` calls.
+    pub(super) async fn checkout_guest(
+        &self,
+        project: &str,
+    ) -> Result<(Object, Arc<ProjectPool>), PgError> {
+        self.checkout_lifecycle(PoolLifecycle::Guest, project).await
+    }
+
+    /// Check out a connection reserved for host-owned platform work.
+    pub(super) async fn checkout_platform(
+        &self,
+        project: &str,
+    ) -> Result<(Object, Arc<ProjectPool>), PgError> {
+        self.checkout_lifecycle(PoolLifecycle::Platform, project)
+            .await
     }
 
     /// `BEGIN` + claim/limit injection. The claims are injected by ONE fully
@@ -1520,7 +1617,7 @@ impl WamnPostgres {
         let role = self.role_for(component_id);
         let user_id = self.user_id_for(component_id);
         let run = self.current_run_for(component_id);
-        let (conn, pp) = self.checkout(&project).await?;
+        let (conn, pp) = self.checkout_guest(&project).await?;
         if let Err(e) = self
             .begin_with_claims(
                 &conn,
@@ -1576,6 +1673,103 @@ pub(super) enum OneShotResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guest_and_host_owned_paths_are_pinned_to_distinct_pool_lifecycles() {
+        let claims = include_str!("claims.rs");
+        let effect_start = claims
+            .find("pub async fn connection_effect_snapshot(")
+            .expect("effect snapshot method");
+        let binding_start = claims
+            .find("pub async fn run_release_binding(")
+            .expect("run release binding method");
+        let destroy_start = claims[binding_start..]
+            .find("pub(super) fn destroy(")
+            .map(|offset| binding_start + offset)
+            .expect("destroy method after run release binding");
+        assert!(claims[effect_start..binding_start].contains(".checkout_platform(project)"));
+        assert!(claims[binding_start..destroy_start].contains(".checkout_platform(&project)"));
+
+        let guest_checkout_start = claims
+            .find("pub(super) async fn checkout_guest(")
+            .expect("guest checkout method");
+        let platform_checkout_start = claims
+            .find("pub(super) async fn checkout_platform(")
+            .expect("platform checkout method");
+        let claims_begin_start = claims[platform_checkout_start..]
+            .find("pub(super) async fn begin_with_claims(")
+            .map(|offset| platform_checkout_start + offset)
+            .expect("claim injection method after lifecycle checkouts");
+        assert!(
+            claims[guest_checkout_start..platform_checkout_start].contains("PoolLifecycle::Guest")
+        );
+        assert!(
+            claims[platform_checkout_start..claims_begin_start].contains("PoolLifecycle::Platform")
+        );
+
+        let one_shot_start = claims
+            .find("pub(super) async fn one_shot(")
+            .expect("one-shot guest method");
+        let one_shot_end = claims
+            .find("pub(super) enum OneShotResult")
+            .expect("one-shot result after method");
+        assert!(claims[one_shot_start..one_shot_end].contains(".checkout_guest(&project)"));
+
+        let resources = include_str!("resources.rs");
+        let begin_start = resources
+            .find("async fn begin(")
+            .expect("guest begin method");
+        let transaction_start = resources
+            .find("impl client::HostTransaction")
+            .expect("transaction host implementation");
+        assert!(
+            resources[begin_start..transaction_start].contains("plugin.checkout_guest(&project)")
+        );
+    }
+
+    #[test]
+    fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
+        let postgres = WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some("postgres://localhost/pool-lifecycle-proof".to_string()),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 100,
+            statement_timeout_ms: 100,
+            row_limit: 10,
+        })
+        .expect("construct lazy lifecycle pools");
+
+        let guest_first = postgres
+            .ensure_guest_pool(DEFAULT_PROJECT)
+            .expect("first guest pool");
+        let platform_first = postgres
+            .ensure_platform_pool(DEFAULT_PROJECT)
+            .expect("first platform pool");
+        let platform_second = postgres
+            .ensure_platform_pool(DEFAULT_PROJECT)
+            .expect("memoized platform pool");
+        let guest_second = postgres
+            .ensure_guest_pool(DEFAULT_PROJECT)
+            .expect("memoized guest pool");
+
+        assert!(Arc::ptr_eq(&guest_first, &guest_second));
+        assert!(Arc::ptr_eq(&platform_first, &platform_second));
+        assert!(!Arc::ptr_eq(&guest_first, &platform_first));
+
+        let mut lifecycle_labels = postgres
+            .pool_status_all_by_lifecycle()
+            .into_iter()
+            .map(|(lifecycle, project, _)| (lifecycle.label(), project))
+            .collect::<Vec<_>>();
+        lifecycle_labels.sort_unstable();
+        assert_eq!(
+            lifecycle_labels,
+            [
+                ("guest", DEFAULT_PROJECT.to_string()),
+                ("platform", DEFAULT_PROJECT.to_string()),
+            ]
+        );
+    }
 
     /// Renamed from `plan_supply_reads_only_immutable_run_map_and_bundle_identity`
     /// (wamn-0h0g.15.12): plan supply no longer reads bundle bytes at all, so the
@@ -2164,14 +2358,15 @@ mod tests {
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
             database_url: Some(url),
-            pool_max_size: 2,
+            guest_pool_max_size: 2,
+            platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
             row_limit: 1_000,
         })
         .unwrap();
         let user_id = "11111111-1111-4111-8111-111111111111";
-        let (conn, _pp) = pg.checkout(DEFAULT_PROJECT).await.unwrap();
+        let (conn, _pp) = pg.checkout_guest(DEFAULT_PROJECT).await.unwrap();
         pg.begin_with_claims(
             &conn,
             "acme",
@@ -2285,7 +2480,8 @@ mod tests {
 
         let pg = WamnPostgres::new(WamnPostgresConfig {
             database_url: Some(database_url_for_role(&admin_url, &probe, &probe)),
-            pool_max_size: 2,
+            guest_pool_max_size: 2,
+            platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
             row_limit: 1_000,
@@ -2366,7 +2562,8 @@ mod tests {
 
         let pg = WamnPostgres::new(WamnPostgresConfig {
             database_url: Some(database_url_for_role(&admin_url, &probe, &probe)),
-            pool_max_size: 2,
+            guest_pool_max_size: 2,
+            platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
             row_limit: 1_000,
@@ -2381,7 +2578,7 @@ mod tests {
         // the caller's own row — and a bare `SET LOCAL` on that same transaction
         // clears the exempt-role gate and reveals BOTH. So the escalation the
         // guard refuses below is real, not hypothetical.
-        let (conn, _pp) = pg.checkout(DEFAULT_PROJECT).await.unwrap();
+        let (conn, _pp) = pg.checkout_guest(DEFAULT_PROJECT).await.unwrap();
         pg.begin_with_claims(
             &conn,
             TENANT,
@@ -2460,7 +2657,8 @@ mod tests {
         const COMPONENT: &str = "warm-instance-0";
         let pg = WamnPostgres::new(WamnPostgresConfig {
             database_url: None,
-            pool_max_size: 1,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
             wait_timeout_ms: 100,
             statement_timeout_ms: 100,
             row_limit: 10,
@@ -2530,7 +2728,8 @@ mod tests {
         const COMPONENT: &str = "never-acquired-instance";
         let pg = WamnPostgres::new(WamnPostgresConfig {
             database_url: None,
-            pool_max_size: 1,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
             wait_timeout_ms: 100,
             statement_timeout_ms: 100,
             row_limit: 10,
@@ -2621,7 +2820,8 @@ mod tests {
 
         let pg = WamnPostgres::new(WamnPostgresConfig {
             database_url: Some(database_url_for_role(&admin_url, &probe, &probe)),
-            pool_max_size: 2,
+            guest_pool_max_size: 2,
+            platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
             row_limit: 1_000,
@@ -2705,7 +2905,8 @@ mod tests {
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
             database_url: Some(url),
-            pool_max_size: 1,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
             row_limit: 1_000,
@@ -2714,7 +2915,7 @@ mod tests {
         // The checkout builds the pool (with the R18 hook) and creates a physical
         // connection; the hook must pass for this to be Ok.
         let (conn, _pp) = pg
-            .checkout(DEFAULT_PROJECT)
+            .checkout_guest(DEFAULT_PROJECT)
             .await
             .expect("checkout ok (scs=on)");
         let scs: String = conn
@@ -2723,6 +2924,100 @@ mod tests {
             .unwrap()
             .get(0);
         assert_eq!(scs, "on");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires WAMN_POOL_LIFECYCLE_PG_URL for a disposable PostgreSQL database"]
+    async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving() {
+        let url = std::env::var("WAMN_POOL_LIFECYCLE_PG_URL")
+            .expect("set WAMN_POOL_LIFECYCLE_PG_URL to a disposable PostgreSQL database");
+        let postgres = WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some(url),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 250,
+            statement_timeout_ms: 1_000,
+            row_limit: 10,
+        })
+        .expect("construct size-one lifecycle pools");
+
+        let (guest, _) = postgres
+            .checkout_guest(DEFAULT_PROJECT)
+            .await
+            .expect("hold the only guest connection");
+        let guest_row = guest
+            .query_one(
+                "SELECT pg_backend_pid(), \
+                 set_config('wamn.pool_lifecycle_probe', 'guest', false)",
+                &[],
+            )
+            .await
+            .expect("mark guest session");
+        let guest_pid = guest_row.get::<_, i32>(0);
+
+        // This checkout happens while the sole guest slot remains held. Sharing
+        // either pool/cache makes it hit the 250 ms wait bound and fail here.
+        let (platform, _) = postgres
+            .checkout_platform(DEFAULT_PROJECT)
+            .await
+            .expect("platform headroom remains available while guest is saturated");
+        let platform_row = platform
+            .query_one(
+                "SELECT pg_backend_pid(), \
+                 current_setting('wamn.pool_lifecycle_probe', true)",
+                &[],
+            )
+            .await
+            .expect("read untouched platform session");
+        let platform_pid = platform_row.get::<_, i32>(0);
+        let platform_marker = platform_row.get::<_, Option<String>>(1);
+        assert_ne!(guest_pid, platform_pid);
+        assert!(platform_marker.is_none());
+        platform
+            .query_one(
+                "SELECT set_config('wamn.pool_lifecycle_probe', 'platform', false)",
+                &[],
+            )
+            .await
+            .expect("mark platform session");
+        drop(platform);
+        drop(guest);
+
+        let (guest_again, _) = postgres
+            .checkout_guest(DEFAULT_PROJECT)
+            .await
+            .expect("reacquire guest lifecycle");
+        let guest_again_row = guest_again
+            .query_one(
+                "SELECT pg_backend_pid(), \
+                 current_setting('wamn.pool_lifecycle_probe', true)",
+                &[],
+            )
+            .await
+            .expect("read guest session after repool");
+        assert_eq!(guest_again_row.get::<_, i32>(0), guest_pid);
+        assert_eq!(
+            guest_again_row.get::<_, Option<String>>(1).as_deref(),
+            Some("guest")
+        );
+
+        let (platform_again, _) = postgres
+            .checkout_platform(DEFAULT_PROJECT)
+            .await
+            .expect("reacquire platform lifecycle");
+        let platform_again_row = platform_again
+            .query_one(
+                "SELECT pg_backend_pid(), \
+                 current_setting('wamn.pool_lifecycle_probe', true)",
+                &[],
+            )
+            .await
+            .expect("read platform session after repool");
+        assert_eq!(platform_again_row.get::<_, i32>(0), platform_pid);
+        assert_eq!(
+            platform_again_row.get::<_, Option<String>>(1).as_deref(),
+            Some("platform")
+        );
     }
 
     /// Full PostgreSQL proof for current-frame HTTP authority. The configured
@@ -3105,7 +3400,8 @@ mod tests {
         let app_url = database_url_for_role(&admin_url, "wamn_app", "wamn_app");
         let postgres = WamnPostgres::new(WamnPostgresConfig {
             database_url: Some(app_url),
-            pool_max_size: 1,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
             row_limit: 1_000,
@@ -3291,14 +3587,15 @@ mod tests {
         // `connection-unavailable` variant the guest sees.
         let pg = WamnPostgres::new(WamnPostgresConfig {
             database_url: Some(url.clone()),
-            pool_max_size: 1,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
             row_limit: 1_000,
         })
         .unwrap();
         // (`matches!`, not `expect_err`, so the Ok type need not be `Debug`.)
-        let result = pg.checkout(DEFAULT_PROJECT).await;
+        let result = pg.checkout_guest(DEFAULT_PROJECT).await;
         assert!(
             matches!(result, Err(PgError::ConnectionUnavailable)),
             "scs=off must fail CLOSED as the guest-visible connection-unavailable \
@@ -3309,13 +3606,17 @@ mod tests {
         // connection-unavailable) and confirm it is the R18 post_create hook —
         // not an auth/other failure that ALSO maps to connection-unavailable. The
         // control above already ruled out server-down; this pins the cause.
-        let pool = WamnPostgres::build_pool(&ProjectConfig {
-            database_url: url,
-            pool_max_size: 1,
-            wait_timeout_ms: 2_000,
-            statement_timeout_ms: 5_000,
-            row_limit: 1_000,
-        })
+        let pool = WamnPostgres::build_pool(
+            &ProjectConfig {
+                database_url: url,
+                guest_pool_max_size: 1,
+                platform_pool_max_size: 1,
+                wait_timeout_ms: 2_000,
+                statement_timeout_ms: 5_000,
+                row_limit: 1_000,
+            },
+            PoolLifecycle::Guest,
+        )
         .expect("pool builds (url parses; the hook runs at checkout, not build)");
         let raw_err = match pool.get().await {
             Ok(_) => panic!("raw checkout unexpectedly SUCCEEDED against a scs=off server"),

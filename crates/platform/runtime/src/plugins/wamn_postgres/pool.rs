@@ -11,6 +11,9 @@ use deadpool_postgres::{Hook, HookError, Object, Pool};
 
 use crate::engine::MAX_HOST_CALL_DURATION;
 
+const DEFAULT_GUEST_POOL_MAX_SIZE: usize = 14;
+const DEFAULT_PLATFORM_POOL_MAX_SIZE: usize = 2;
+
 fn bounded_wait_timeout_ms(value: u64) -> u64 {
     value.clamp(1, MAX_HOST_CALL_DURATION.as_millis() as u64)
 }
@@ -24,7 +27,10 @@ pub struct WamnPostgresConfig {
     /// `postgres://user:pass@host:port/db`. None = plugin registers but every
     /// call returns `connection-unavailable`.
     pub database_url: Option<String>,
-    pub pool_max_size: usize,
+    /// Connections reserved for guest-visible `wamn:postgres` calls.
+    pub guest_pool_max_size: usize,
+    /// Connections reserved for host-owned claim, authorization, and plan-supply work.
+    pub platform_pool_max_size: usize,
     /// Max wait for a pool checkout before `connection-unavailable`.
     pub wait_timeout_ms: u64,
     /// Host-enforced `statement_timeout`, injected per transaction.
@@ -43,7 +49,13 @@ impl WamnPostgresConfig {
         }
         Self {
             database_url: std::env::var("WAMN_PG_URL").ok(),
-            pool_max_size: num("WAMN_PG_POOL_MAX", 16),
+            // Preserve the former total of 16 while reserving one measured
+            // platform operation plus one headroom slot against guest starvation.
+            guest_pool_max_size: num("WAMN_PG_GUEST_POOL_MAX", DEFAULT_GUEST_POOL_MAX_SIZE),
+            platform_pool_max_size: num(
+                "WAMN_PG_PLATFORM_POOL_MAX",
+                DEFAULT_PLATFORM_POOL_MAX_SIZE,
+            ),
             wait_timeout_ms: bounded_wait_timeout_ms(num("WAMN_PG_WAIT_TIMEOUT_MS", 2_000)),
             statement_timeout_ms: bounded_statement_timeout_ms(num(
                 "WAMN_PG_STATEMENT_TIMEOUT_MS",
@@ -65,7 +77,8 @@ impl WamnPostgresConfig {
 #[derive(Clone, Debug)]
 pub struct ProjectConfig {
     pub database_url: String,
-    pub pool_max_size: usize,
+    pub guest_pool_max_size: usize,
+    pub platform_pool_max_size: usize,
     pub wait_timeout_ms: u64,
     pub statement_timeout_ms: u32,
     pub row_limit: u64,
@@ -76,7 +89,8 @@ impl ProjectConfig {
     pub(super) fn from_global(url: String, cfg: &WamnPostgresConfig) -> Self {
         Self {
             database_url: url,
-            pool_max_size: cfg.pool_max_size,
+            guest_pool_max_size: cfg.guest_pool_max_size,
+            platform_pool_max_size: cfg.platform_pool_max_size,
             wait_timeout_ms: cfg.wait_timeout_ms,
             statement_timeout_ms: cfg.statement_timeout_ms,
             row_limit: cfg.row_limit,
@@ -135,6 +149,11 @@ impl StaticCredentialProvider {
             .context("WAMN_PG_PROJECTS_FILE must be a JSON object")?;
         let mut out = HashMap::new();
         for (name, entry) in obj {
+            anyhow::ensure!(
+                entry.get("pool_max_size").is_none(),
+                "project {name:?} uses retired \"pool_max_size\"; configure \
+                 \"guest_pool_max_size\" and \"platform_pool_max_size\" separately"
+            );
             let url = entry
                 .get("url")
                 .and_then(|u| u.as_str())
@@ -145,7 +164,14 @@ impl StaticCredentialProvider {
                 name.clone(),
                 ProjectConfig {
                     database_url: url,
-                    pool_max_size: u64_or("pool_max_size", base.pool_max_size as u64) as usize,
+                    guest_pool_max_size: u64_or(
+                        "guest_pool_max_size",
+                        base.guest_pool_max_size as u64,
+                    ) as usize,
+                    platform_pool_max_size: u64_or(
+                        "platform_pool_max_size",
+                        base.platform_pool_max_size as u64,
+                    ) as usize,
                     wait_timeout_ms: bounded_wait_timeout_ms(u64_or(
                         "wait_timeout_ms",
                         base.wait_timeout_ms,
@@ -200,6 +226,29 @@ pub(super) struct ProjectPool {
     pub(super) pool: Pool,
     pub(super) statement_timeout_ms: u32,
     pub(super) row_limit: u64,
+}
+
+/// Connection lifecycle whose pool owns a checked-out PostgreSQL session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PoolLifecycle {
+    Guest,
+    Platform,
+}
+
+impl PoolLifecycle {
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::Guest => "guest",
+            Self::Platform => "platform",
+        }
+    }
+
+    pub(super) const fn max_size(self, config: &ProjectConfig) -> usize {
+        match self {
+            Self::Guest => config.guest_pool_max_size,
+            Self::Platform => config.platform_pool_max_size,
+        }
+    }
 }
 
 /// Raw checkout state, observed before any claim injection. Gate probes use
@@ -283,5 +332,53 @@ mod tests {
         assert_eq!(bounded_wait_timeout_ms(u64::MAX), max);
         assert_eq!(bounded_statement_timeout_ms(0), 1);
         assert_eq!(u64::from(bounded_statement_timeout_ms(u64::MAX)), max);
+    }
+
+    #[test]
+    fn project_config_names_each_lifecycle_budget_and_refuses_the_retired_key() {
+        let base = WamnPostgresConfig {
+            database_url: None,
+            guest_pool_max_size: 14,
+            platform_pool_max_size: 2,
+            wait_timeout_ms: 100,
+            statement_timeout_ms: 100,
+            row_limit: 10,
+        };
+        let projects = StaticCredentialProvider::projects_from_json(
+            r#"{"p":{"url":"postgres://localhost/p","guest_pool_max_size":7,"platform_pool_max_size":3}}"#,
+            &base,
+        )
+        .expect("separately named lifecycle budgets parse");
+        let project = projects.get("p").expect("project p");
+        assert_eq!(project.guest_pool_max_size, 7);
+        assert_eq!(project.platform_pool_max_size, 3);
+
+        let retired = StaticCredentialProvider::projects_from_json(
+            r#"{"p":{"url":"postgres://localhost/p","pool_max_size":10}}"#,
+            &base,
+        )
+        .expect_err("the ambiguous pre-split key must refuse");
+        assert!(retired.to_string().contains("retired \"pool_max_size\""));
+    }
+
+    #[test]
+    fn shipping_manifests_pin_the_split_budget_and_its_starvation_rationale() {
+        assert_eq!(
+            DEFAULT_GUEST_POOL_MAX_SIZE + DEFAULT_PLATFORM_POOL_MAX_SIZE,
+            16
+        );
+        assert_eq!(DEFAULT_PLATFORM_POOL_MAX_SIZE, 2);
+
+        for manifest in [
+            include_str!("../../../../../../deploy/platform/runner.yaml"),
+            include_str!("../../../../../../deploy/platform/values-host-default.yaml"),
+        ] {
+            assert!(manifest.contains("WAMN_PG_GUEST_POOL_MAX, value: \"14\""));
+            assert!(manifest.contains("WAMN_PG_PLATFORM_POOL_MAX, value: \"2\""));
+            assert!(manifest.contains("cannot starve"));
+        }
+
+        let source = include_str!("pool.rs");
+        assert!(!source.contains("num(\"WAMN_PG_POOL_MAX\""));
     }
 }

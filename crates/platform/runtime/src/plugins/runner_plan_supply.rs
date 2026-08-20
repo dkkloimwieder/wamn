@@ -860,7 +860,8 @@ mod tests {
         let postgres = Arc::new(
             WamnPostgres::new(WamnPostgresConfig {
                 database_url: None,
-                pool_max_size: 1,
+                guest_pool_max_size: 1,
+                platform_pool_max_size: 1,
                 wait_timeout_ms: 1_000,
                 statement_timeout_ms: 1_000,
                 row_limit: 1,

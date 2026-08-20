@@ -330,7 +330,7 @@ impl client::Host for ActiveCtx<'_> {
             let role = plugin.role_for(&component_id);
             let user_id = plugin.user_id_for(&component_id);
             let run = plugin.current_run_for(&component_id);
-            let (conn, pp) = plugin.checkout(&project).await?;
+            let (conn, pp) = plugin.checkout_guest(&project).await?;
             if let Err(e) = plugin
                 .begin_with_claims(
                     &conn,

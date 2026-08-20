@@ -61,7 +61,6 @@ New epics (all `[SR-MVP]`, label `exe-model`, children carry grounded file:line 
 | `wamn-0h0g.15.165` | Manifest digest vs release version: pin registrations at mint vs many-digests-per-release |
 | `wamn-0h0g.15.135` | UdpBind authority at the fork pin (pre-existing, unchanged) |
 | `wamn-dggp.39` | Loop-console run screen under the retiring read surface (one-screen ruling; track survives) |
-| `wamn-0h0g.12.63` / `wamn-1nd` | Pre-existing: deferred 1nd transitively gates open .12.44; RLS re-key now also feeds `.22.4` |
 
 ## 3 · Sequencing
 

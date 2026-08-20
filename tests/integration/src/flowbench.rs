@@ -72,7 +72,7 @@ pub struct FlowBenchArgs {
     #[arg(long, default_value_t = 5)]
     pub hotreload_iters: usize,
 
-    /// Pool max size (passed to the plugin)
+    /// Guest pool max size (passed to the plugin)
     #[arg(long, default_value_t = 8)]
     pub pool_max: usize,
 }
@@ -267,7 +267,7 @@ pub async fn run(args: FlowBenchArgs) -> anyhow::Result<()> {
     if let Some(url) = &args.database_url {
         cfg.database_url = Some(url.clone());
     }
-    cfg.pool_max_size = args.pool_max;
+    cfg.guest_pool_max_size = args.pool_max;
     if db_needed && cfg.database_url.is_none() {
         bail!("no database url: pass --database-url or set DATABASE_URL / WAMN_PG_URL");
     }

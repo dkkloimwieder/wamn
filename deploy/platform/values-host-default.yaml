@@ -127,6 +127,9 @@ runtime:
             secretKeyRef:
               name: wamn-host-db
               key: url
+        # Keep 2/16 connections reserved so guest-held sessions cannot starve host-owned work.
+        - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
+        - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
         # [l5i9.17] The data-plane (event-plane) NATS for the wamn:jetstream
         # plugin — the materializer Service workload's stream/doorbell path.
         # Absent, the plugin still links and returns connection-unavailable.

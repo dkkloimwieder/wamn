@@ -707,30 +707,52 @@ pub async fn run(args: MetricBenchArgs) -> anyhow::Result<()> {
             );
 
             // === (5) pool saturation + query latency (from the drives' DB writes) =
-            // The guest's configured Postgres pool is `default`, independently of
-            // the executor identity's unique project label. Correlate both families
-            // through the OTel resource instance shared by this executor process.
+            // Both configured Postgres lifecycle pools are `default`, independently
+            // of the executor identity's unique project label. Require both labels
+            // and correlate them with query metrics through the shared OTel instance.
             let executor_instance =
                 executor_instance.unwrap_or_else(|| "instance=\"<missing>\"".to_string());
-            let (pool_ok, (pool_size, query_count)) = poll(&args.metrics_url, |text| {
-                let pool_present =
-                    present_with_labels(text, "wamn_postgres_pool_size", &[&executor_instance]);
-                let pool_size = labels_sum(text, "wamn_postgres_pool_size", &[&executor_instance]);
-                let query_count = labels_sum(
-                    text,
-                    "wamn_postgres_query_duration_ms_count",
-                    &[&executor_instance],
-                );
-                (pool_present && query_count > 0.0, (pool_size, query_count))
-            })
-            .await;
+            let guest_lifecycle = "wamn_pool_lifecycle=\"guest\"";
+            let platform_lifecycle = "wamn_pool_lifecycle=\"platform\"";
+            let (pool_ok, (guest_pool_size, platform_pool_size, query_count)) =
+                poll(&args.metrics_url, |text| {
+                    let guest_pool_size = labels_sum(
+                        text,
+                        "wamn_postgres_pool_size",
+                        &[&executor_instance, guest_lifecycle],
+                    );
+                    let platform_pool_size = labels_sum(
+                        text,
+                        "wamn_postgres_pool_size",
+                        &[&executor_instance, platform_lifecycle],
+                    );
+                    let pool_present = present_with_labels(
+                        text,
+                        "wamn_postgres_pool_size",
+                        &[&executor_instance, guest_lifecycle],
+                    ) && present_with_labels(
+                        text,
+                        "wamn_postgres_pool_size",
+                        &[&executor_instance, platform_lifecycle],
+                    );
+                    let query_count = labels_sum(
+                        text,
+                        "wamn_postgres_query_duration_ms_count",
+                        &[&executor_instance],
+                    );
+                    (
+                        pool_present && query_count > 0.0,
+                        (guest_pool_size, platform_pool_size, query_count),
+                    )
+                })
+                .await;
             check(
                 &mut pass,
-                "(5) postgres pool gauge present + query-latency count > 0",
+                "(5) guest/platform pool gauges present + query-latency count > 0",
                 pool_ok,
                 &format!(
-                    "{executor_instance}: wamn_postgres_pool_size={pool_size}, \
-                 query_count={query_count}"
+                    "{executor_instance}: guest_pool_size={guest_pool_size}, \
+                 platform_pool_size={platform_pool_size}, query_count={query_count}"
                 ),
             );
             anyhow::ensure!(
@@ -1198,7 +1220,8 @@ wamn_run_executions{instance=\"metric-process\",outcome=\"completed\",wamn_proje
 wamn_run_executions{instance=\"metric-process\",outcome=\"failed\",wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 1
 wamn_run_executions_created{outcome=\"completed\"} 1.72e9
 wamn_run_drive_duration_ms_count{instance=\"metric-process\",wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 9
-wamn_postgres_pool_size{instance=\"metric-process\",wamn_project=\"default\"} 1
+wamn_postgres_pool_size{instance=\"metric-process\",wamn_pool_lifecycle=\"guest\",wamn_project=\"default\"} 1
+wamn_postgres_pool_size{instance=\"metric-process\",wamn_pool_lifecycle=\"platform\",wamn_project=\"default\"} 1
 wamn_postgres_query_duration_ms_count{db_operation=\"query\",instance=\"metric-process\",wamn_project=\"default\"} 9
 wamn_postgres_query_duration_ms_count{db_operation=\"query\",instance=\"other-process\",wamn_project=\"default\"} 44182
 wamn_memory_high_water_bytes{component=\"metricbench-memory-limit\"} 33554432
@@ -1244,7 +1267,19 @@ wamn_run_queue_depth{wamn_project=\"f1\",wamn_tenant=\"f1-tenant\"} 3619
         .expect("executor series must carry an instance label");
         assert_eq!(instance, "instance=\"metric-process\"");
         assert_eq!(
-            labels_sum(text, "wamn_postgres_pool_size", &[&instance]),
+            labels_sum(
+                text,
+                "wamn_postgres_pool_size",
+                &[&instance, "wamn_pool_lifecycle=\"guest\""]
+            ),
+            1.0
+        );
+        assert_eq!(
+            labels_sum(
+                text,
+                "wamn_postgres_pool_size",
+                &[&instance, "wamn_pool_lifecycle=\"platform\""]
+            ),
             1.0
         );
         assert_eq!(

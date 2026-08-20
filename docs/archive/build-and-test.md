@@ -4966,7 +4966,7 @@ trap - EXIT
 This Rust-only debug gate proves that every runtime plugin shares one
 reconnecting PostgreSQL LISTEN connection across concurrent waits, preserves
 subscribe-before-poll and the mandatory final authoritative poll, and uses the
-same database credential as the configured max-16 pool.
+same database credential as the separately configured guest and platform pools.
 
 ```bash
 export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave9-11-18

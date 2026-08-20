@@ -563,7 +563,8 @@ async fn runner_plan_supply_maps_a_missing_release_to_unavailable_not_a_trap() {
 fn offline_postgres() -> WamnPostgres {
     WamnPostgres::new(WamnPostgresConfig {
         database_url: None,
-        pool_max_size: 1,
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
         wait_timeout_ms: 100,
         statement_timeout_ms: 100,
         row_limit: 10,
