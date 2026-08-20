@@ -88,19 +88,6 @@ pub(crate) mod tests {
         assert!(CATALOG_SCHEMA.contains("REFERENCES catalog.flow_artifacts"));
         assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.catalog_heads"));
         assert!(CATALOG_SCHEMA.contains("CREATE FUNCTION catalog.publication_boundary"));
-        for source in [
-            include_str!("../../../services/ctl/src/publish_catalog.rs"),
-            include_str!("../../../services/ctl/src/copy_project_env.rs"),
-        ] {
-            for stage in [
-                "after-artifacts",
-                "after-members",
-                "after-journal",
-                "before-head",
-            ] {
-                assert!(source.contains(stage), "production writer misses {stage}");
-            }
-        }
     }
 
     async fn write_release(

@@ -5,8 +5,6 @@ pub(crate) mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
-    const PUBLISHER: &str = include_str!("../../../services/ctl/src/publish_catalog.rs");
-    const COPIER: &str = include_str!("../../../services/ctl/src/copy_project_env.rs");
 
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct ExposureState {
@@ -121,7 +119,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn ddl_and_both_production_writers_share_the_exposure_boundary() {
+    fn ddl_pins_authoritative_exposure_schema_and_refusals() {
         for table in [
             "release_exposure_manifests",
             "release_sources",
@@ -146,20 +144,8 @@ pub(crate) mod tests {
                 "missing authoritative catalog.{view}"
             );
         }
-        for source in [PUBLISHER, COPIER] {
-            for boundary in [
-                "register_release_exposure_manifest_sql",
-                "insert_release_source_sql",
-                "insert_release_attachment_sql",
-                "apply_release_exposure_sql",
-                "after-members",
-            ] {
-                assert!(
-                    source.contains(boundary),
-                    "production writer misses {boundary}"
-                );
-            }
-        }
+        assert!(CATALOG_SCHEMA.contains("source_kind IN ('auth', 'caller-policy', 'schedule')"));
+        assert!(CATALOG_SCHEMA.contains("CONSTRAINT release_attachment_route_shape CHECK"));
         assert!(CATALOG_SCHEMA.contains("attachment-definition-not-current"));
         assert!(CATALOG_SCHEMA.contains("tombstoned-attachment-id"));
         assert!(

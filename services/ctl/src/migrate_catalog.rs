@@ -658,6 +658,172 @@ pub(crate) fn is_bare_ident(s: &str) -> bool {
 mod tests {
     use super::*;
 
+    async fn seed_release(
+        tx: &tokio_postgres::Transaction<'_>,
+        tenant: &str,
+        catalog_id: &str,
+        catalog_version: i32,
+        flow_id: &str,
+        definitions_prefix: Option<&str>,
+    ) {
+        let execution_bundle_bytes = br#"{}"#;
+        let execution_bundle_hash = wamn_catalog::execution_bundle_hash(execution_bundle_bytes);
+        let graph_json = format!(r#"{{"flow-id":"{flow_id}"}}"#);
+        let graph_hash = format!("{flow_id}-graph-hash");
+        let artifact_hash = format!("{flow_id}-artifact-hash");
+        tx.execute(
+            wamn_schema_control::sql::register_flow_artifact_sql(),
+            &[
+                &tenant,
+                &flow_id,
+                &1_i32,
+                &"0.1",
+                &graph_json,
+                &graph_hash,
+                &artifact_hash,
+            ],
+        )
+        .await
+        .unwrap();
+        tx.execute(
+            wamn_schema_control::sql::insert_execution_bundle_sql(),
+            &[
+                &tenant,
+                &execution_bundle_hash,
+                &execution_bundle_bytes.as_slice(),
+            ],
+        )
+        .await
+        .unwrap();
+        tx.execute(
+            wamn_schema_control::sql::register_release_manifest_sql(),
+            &[&tenant, &catalog_id, &catalog_version],
+        )
+        .await
+        .unwrap();
+        tx.execute(
+            wamn_schema_control::sql::insert_release_flow_sql(),
+            &[
+                &tenant,
+                &catalog_id,
+                &catalog_version,
+                &flow_id,
+                &1_i32,
+                &execution_bundle_hash,
+            ],
+        )
+        .await
+        .unwrap();
+        let exposure_manifest = format!(
+            r#"{{"fixture":"{}"}}"#,
+            definitions_prefix.unwrap_or("empty-target")
+        );
+        tx.execute(
+            wamn_schema_control::sql::register_release_exposure_manifest_sql(),
+            &[&tenant, &catalog_id, &catalog_version, &exposure_manifest],
+        )
+        .await
+        .unwrap();
+
+        let Some(id_prefix) = definitions_prefix else {
+            return;
+        };
+        let source_id = format!("{id_prefix}-source");
+        let source_definition = format!(r#"{{"fixture":"{id_prefix}","kind":"auth"}}"#);
+        let source_hash = format!("{id_prefix}-source-hash");
+        tx.execute(
+            wamn_schema_control::sql::insert_release_source_sql(),
+            &[
+                &tenant,
+                &catalog_id,
+                &catalog_version,
+                &source_id,
+                &"auth",
+                &source_definition,
+                &source_hash,
+            ],
+        )
+        .await
+        .unwrap();
+
+        let http_path = format!("/{id_prefix}/orders");
+        for (kind, route_host, route_path, route_template, route_method) in [
+            (
+                "http",
+                Some("api.example.test"),
+                Some(http_path.as_str()),
+                Some("/{tenant}/orders"),
+                Some("POST"),
+            ),
+            ("internal", None, None, None, None),
+        ] {
+            let attachment_id = format!("{id_prefix}-{kind}");
+            let definition = format!(r#"{{"fixture":"{id_prefix}","kind":"{kind}"}}"#);
+            let definition_hash = format!("{id_prefix}-{kind}-hash");
+            tx.execute(
+                wamn_schema_control::sql::insert_release_attachment_sql(),
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &catalog_version,
+                    &attachment_id,
+                    &kind,
+                    &flow_id,
+                    &source_id,
+                    &definition_hash,
+                    &definition,
+                    &route_host,
+                    &route_path,
+                    &route_template,
+                    &route_method,
+                ],
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn release_definition_bytes(
+        tx: &tokio_postgres::Transaction<'_>,
+        tenant: &str,
+        catalog_id: &str,
+        catalog_version: i32,
+    ) -> Vec<u8> {
+        let row = tx
+            .query_one(
+                "SELECT \
+                   jsonb_build_object( \
+                   'sources', COALESCE(( \
+                     SELECT jsonb_agg( \
+                       to_jsonb(source_row) - 'catalog_version' \
+                       ORDER BY source_row.source_id) \
+                     FROM ( \
+                       SELECT tenant_id, catalog_id, catalog_version, source_id, source_kind, \
+                              definition_json, source_hash \
+                       FROM catalog.release_sources \
+                       WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+                     ) source_row \
+                   ), '[]'::jsonb), \
+                   'attachments', COALESCE(( \
+                     SELECT jsonb_agg( \
+                       to_jsonb(attachment_row) - 'catalog_version' \
+                       ORDER BY attachment_row.attachment_id) \
+                     FROM ( \
+                       SELECT tenant_id, catalog_id, catalog_version, attachment_id, \
+                              attachment_kind, flow_id, source_id, definition_hash, \
+                              definition_json, route_host, route_path, route_template, \
+                              route_method \
+                       FROM catalog.release_attachments \
+                       WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+                     ) attachment_row \
+                   ), '[]'::jsonb))::text",
+                &[&tenant, &catalog_id, &catalog_version],
+            )
+            .await
+            .unwrap();
+        row.get::<_, String>(0).into_bytes()
+    }
+
     #[test]
     fn default_destructive_error_explains_reprovisioning() {
         let shared = anyhow::Error::new(MigrationError::Destructive(
@@ -671,8 +837,11 @@ mod tests {
         assert!(default.contains("drop column orders.note"));
     }
 
+    /// Proves row-shape equivalence only on conflict-free target coordinates.
+    /// The raw migration path deliberately retains native `23505` behavior for
+    /// occupied coordinates; conflict parity is deferred to `wamn-0h0g.11.49`.
     #[tokio::test]
-    async fn migration_carries_the_sealed_release_forward_before_head_advance() {
+    async fn migration_matches_shared_builders_on_conflict_free_targets() {
         let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
             return;
         };
@@ -689,83 +858,62 @@ mod tests {
             .unwrap();
         let suffix = std::process::id();
         let tenant = format!("migrate-release-{suffix}");
+        let decoy_tenant = format!("migrate-release-decoy-{suffix}");
         let catalog_id = format!("migrate-release-{suffix}");
+        let decoy_catalog_id = format!("migrate-release-catalog-decoy-{suffix}");
         client
             .execute(
                 "INSERT INTO catalog.catalogs \
                    (tenant_id, catalog_id, version, environment, schema_version, state, document) \
                  VALUES \
                    ($1, $2, 1, 'dev', '0.1', 'superseded', '{}'::jsonb), \
-                   ($1, $2, 2, 'dev', '0.1', 'applied', '{}'::jsonb)",
-                &[&tenant, &catalog_id],
-            )
-            .await
-            .unwrap();
-        client
-            .execute(
-                wamn_schema_control::sql::register_flow_artifact_sql(),
-                &[
-                    &tenant,
-                    &"flow",
-                    &1_i32,
-                    &"0.1",
-                    &r#"{"flow-id":"flow"}"#,
-                    &"graph",
-                    &"artifact",
-                ],
-            )
-            .await
-            .unwrap();
-        client.batch_execute("BEGIN").await.unwrap();
-        client
-            .execute(
-                wamn_schema_control::sql::register_release_manifest_sql(),
-                &[&tenant, &catalog_id, &1_i32],
+                   ($1, $2, 2, 'dev', '0.1', 'applied', '{}'::jsonb), \
+                   ($1, $2, 3, 'dev', '0.1', 'superseded', '{}'::jsonb), \
+                   ($3, $2, 1, 'dev', '0.1', 'superseded', '{}'::jsonb), \
+                   ($3, $2, 2, 'dev', '0.1', 'applied', '{}'::jsonb), \
+                   ($1, $4, 1, 'dev', '0.1', 'superseded', '{}'::jsonb), \
+                   ($1, $4, 2, 'dev', '0.1', 'applied', '{}'::jsonb)",
+                &[&tenant, &catalog_id, &decoy_tenant, &decoy_catalog_id],
             )
             .await
             .unwrap();
         let execution_bundle_bytes = br#"{}"#;
         let execution_bundle_hash = wamn_catalog::execution_bundle_hash(execution_bundle_bytes);
-        client
-            .execute(
-                wamn_schema_control::sql::insert_execution_bundle_sql(),
-                &[
-                    &tenant,
-                    &execution_bundle_hash,
-                    &execution_bundle_bytes.as_slice(),
-                ],
+        let seed = client.transaction().await.unwrap();
+        for (fixture_tenant, fixture_catalog, version, flow, definitions) in [
+            (&tenant, &catalog_id, 1, "main-flow", Some("main")),
+            (&tenant, &catalog_id, 3, "main-flow", Some("version-decoy")),
+            (
+                &decoy_tenant,
+                &catalog_id,
+                1,
+                "tenant-decoy-flow",
+                Some("tenant-decoy"),
+            ),
+            (&decoy_tenant, &catalog_id, 2, "tenant-decoy-flow", None),
+            (
+                &tenant,
+                &decoy_catalog_id,
+                1,
+                "catalog-decoy-flow",
+                Some("catalog-decoy"),
+            ),
+            (&tenant, &decoy_catalog_id, 2, "catalog-decoy-flow", None),
+        ] {
+            seed_release(
+                &seed,
+                fixture_tenant,
+                fixture_catalog,
+                version,
+                flow,
+                definitions,
             )
-            .await
-            .unwrap();
-        client
-            .execute(
-                wamn_schema_control::sql::insert_release_flow_sql(),
-                &[
-                    &tenant,
-                    &catalog_id,
-                    &1_i32,
-                    &"flow",
-                    &1_i32,
-                    &execution_bundle_hash,
-                ],
-            )
-            .await
-            .unwrap();
-        client
-            .execute(
-                wamn_schema_control::sql::register_release_exposure_manifest_sql(),
-                &[
-                    &tenant,
-                    &catalog_id,
-                    &1_i32,
-                    &r#"{"attachments":[],"sources":[]}"#,
-                ],
-            )
-            .await
-            .unwrap();
-        client.batch_execute("COMMIT").await.unwrap();
+            .await;
+        }
+        seed.commit().await.unwrap();
 
         let tx = client.transaction().await.unwrap();
+        let builder_bytes = release_definition_bytes(&tx, &tenant, &catalog_id, 1).await;
         carry_forward_release(
             &tx,
             &tenant,
@@ -777,6 +925,51 @@ mod tests {
         )
         .await
         .unwrap();
+        let migrated_bytes = release_definition_bytes(&tx, &tenant, &catalog_id, 2).await;
+        assert_eq!(migrated_bytes, builder_bytes);
+        let snapshot = String::from_utf8(builder_bytes).unwrap();
+        for fixed in [
+            "main-source-hash",
+            "main-http-hash",
+            "main-internal-hash",
+            r#""route_host": "api.example.test""#,
+            r#""route_host": null"#,
+        ] {
+            assert!(snapshot.contains(fixed), "snapshot misses {fixed}");
+        }
+
+        let isolated: bool = tx
+            .query_one(
+                "SELECT \
+                   (SELECT count(*) = 1 FROM catalog.release_sources \
+                    WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 2) \
+                   AND (SELECT count(*) = 2 FROM catalog.release_attachments \
+                    WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 2) \
+                   AND NOT EXISTS ( \
+                     SELECT 1 FROM catalog.release_sources \
+                     WHERE catalog_version = 2 AND ( \
+                       (tenant_id = $3 AND catalog_id = $2) \
+                       OR (tenant_id = $1 AND catalog_id = $4) \
+                       OR (tenant_id = $1 AND catalog_id = $2 \
+                           AND source_id = 'version-decoy-source') \
+                     ) \
+                   ) \
+                   AND NOT EXISTS ( \
+                     SELECT 1 FROM catalog.release_attachments \
+                     WHERE catalog_version = 2 AND ( \
+                       (tenant_id = $3 AND catalog_id = $2) \
+                       OR (tenant_id = $1 AND catalog_id = $4) \
+                       OR (tenant_id = $1 AND catalog_id = $2 \
+                           AND attachment_id LIKE 'version-decoy-%') \
+                     ) \
+                   )",
+                &[&tenant, &catalog_id, &decoy_tenant, &decoy_catalog_id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert!(isolated, "migration crossed tenant/catalog/version scope");
+
         tx.execute(
             wamn_schema_control::sql::advance_catalog_head_sql(),
             &[&tenant, &catalog_id, &"dev", &2_i32],
@@ -788,7 +981,7 @@ mod tests {
             .query_one(
                 "SELECT EXISTS (SELECT 1 FROM catalog.release_flows \
                  WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 2 \
-                   AND flow_id = 'flow' AND flow_version = 1 \
+                   AND flow_id = 'main-flow' AND flow_version = 1 \
                    AND execution_bundle_hash = $3) \
                  AND EXISTS (SELECT 1 FROM catalog.catalog_heads \
                  WHERE tenant_id = $1 AND catalog_id = $2 AND environment = 'dev' \

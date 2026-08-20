@@ -3494,30 +3494,44 @@ The `provision-dashboards` verb, `services/ctl/src/provision_dashboards.rs`, the
 
 ## CF-RELEASE — immutable catalog publication (`wamn-5wd1.46`)
 
-The release writer stores canonical `wamn-catalog` artifacts in
-`catalog.flow_artifacts`, immutable membership in `catalog.release_flows`, and
-serializes promotion through the stable `catalog.catalog_heads` row. The
-statement-level proof uses a disposable Postgres when `WAMN_MIGRATE_PG_URL` is
-set; its deterministic fault mutants always run.
+The release storage keeps canonical `wamn-catalog` artifacts in
+`catalog.flow_artifacts`, immutable release membership in
+`catalog.release_flows`, and serializes promotion through the stable
+`catalog.catalog_heads` row. Deterministic fault models always run.
+Statement-level rollback proofs run against a disposable PostgreSQL when
+`WAMN_MIGRATE_PG_URL` is set.
 
 ```bash
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-release-46 \
   cargo test --locked -p wamn-control-registry -p wamn-schema-control -p wamn-ctl
 
+WAMN_MIGRATE_PG_URL="$THROWAWAY_PG_URL" \
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-release-46 \
   cargo test --locked -p wamn-proof-integration --lib catalog_live::tests::
 ```
 
 ## CF-EXPOSURE — sources, attachments, and activation (`wamn-5wd1.47`)
 
-The exposure gate validates route/mapping/source/entry matching in the pure
-preflight model, then proves immutable definitions, single-hash activation,
-carry-forward, tombstones, disabled-definition recovery, and atomic publication
-through the production publish/copy boundaries.
+The exposure gate validates route, mapping, source, and entry matching in the
+pure preflight model and pins immutable definition, activation, tombstone, and
+authoritative-view storage. The live migration guard seeds source and attachment
+rows through the shared builders, carries them through the production
+`migrate_catalog` path at a fresh target coordinate, and compares every
+persisted conflict-free row field, including opaque hashes, canonical JSON,
+nullable route columns, and tenant/catalog/version scope. Primary-key conflict
+parity is deliberately excluded: raw migration retains native PostgreSQL
+`23505` behavior until `wamn-0h0g.11.49` converges both paths on
+insert-or-verify-identical typed refusals.
 
 ```bash
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
   cargo test --locked -p wamn-control-registry -p wamn-schema-control -p wamn-ctl
+
+WAMN_MIGRATE_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
+  cargo test --locked -p wamn-ctl --lib \
+    migrate_catalog::tests::migration_matches_shared_builders_on_conflict_free_targets \
+    -- --exact --nocapture
 
 CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
   cargo test --locked -p wamn-proof-integration --lib exposure_live::tests::
