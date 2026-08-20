@@ -5246,6 +5246,30 @@ without `--all-targets` or a warning allowance, using its required
 `RUSTFLAGS=-C panic=abort`, and remains covered by the shared strict wasm
 workspace leg.
 
+> **The blocking check does not currently reach any Clippy leg, and a green run
+> of check 16 has never happened.** `tools/repo-lint` is `set -euo pipefail` and
+> runs its legs in order, so the first failure aborts the rest. Leg 2 is the root
+> `cargo fmt --check`, and it exits 1 with 43 files carrying diffs (measured at
+> `53afb31a`), so legs 3-9 — every one of the six Clippy legs, including all four
+> `components/` legs — have never run. `repo_lint` the conformance test still
+> passes, because it pins the tool's argv and never executes it. Tracked as
+> `wamn-0h0g.12.157`; do not read the coverage paragraph above as evidence that
+> the coverage has ever been exercised.
+>
+> **Any ad-hoc tree-wide Clippy run must pass `--keep-going`.** Cargo stops
+> scheduling new units at the first error, so without it a workspace run reports
+> only the first failing unit and hides every error in any package scheduled
+> after it — which is how a "the tree has exactly one Clippy error" baseline was
+> once recorded when the true count was seven across three packages
+> (`wamn-0h0g.12.147`). The root workspace reached zero errors at `67b5986a`:
+>
+> ```bash
+> cargo clippy --workspace --all-targets --no-deps --keep-going -- -D warnings
+> ```
+>
+> `components/` is a separate workspace and still has no measured baseline,
+> because the legs that would produce one are the ones that never run.
+
 ```bash
 # Inspect the exact, CWD-independent argv without executing Cargo.
 tools/repo-lint dry-run
