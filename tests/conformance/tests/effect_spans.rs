@@ -92,8 +92,11 @@ const DESTRUCTOR: Surface =
     Surface::Local("resource destructor: the host reclaims what the guest let go");
 const ACCESSOR: Surface = Surface::Local("accessor over already-delivered host memory");
 
+/// The methods of one host trait, each classified as an effect or not.
+type MethodSurfaces = &'static [(&'static str, Surface)];
+
 /// Every `impl … for ActiveCtx` of the instrumented plugins, and every method.
-const CONTRACT: &[(&str, &str, &[(&str, Surface)])] = &[
+const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     (
         POSTGRES,
         "causation::Host",
@@ -208,10 +211,10 @@ impl<'ast> Visit<'ast> for Calls {
     fn visit_expr(&mut self, expr: &'ast Expr) {
         match expr {
             Expr::Call(call) => {
-                if let Expr::Path(path) = call.func.as_ref() {
-                    if let Some(last) = path.path.segments.last() {
-                        self.functions.insert(last.ident.to_string());
-                    }
+                if let Expr::Path(path) = call.func.as_ref()
+                    && let Some(last) = path.path.segments.last()
+                {
+                    self.functions.insert(last.ident.to_string());
                 }
             }
             Expr::MethodCall(call) => {
@@ -270,10 +273,10 @@ fn span_openers(file: &syn::File) -> BTreeSet<String> {
     // One pass is enough for the wrappers in the tree; a wrapper of a wrapper
     // would need another, and would be a smell worth failing on anyway.
     for item in &file.items {
-        if let Item::Fn(function) = item {
-            if opens_a_span(&calls_of(function.block.as_ref())) {
-                openers.insert(function.sig.ident.to_string());
-            }
+        if let Item::Fn(function) = item
+            && opens_a_span(&calls_of(function.block.as_ref()))
+        {
+            openers.insert(function.sig.ident.to_string());
         }
     }
     openers
@@ -281,7 +284,7 @@ fn span_openers(file: &syn::File) -> BTreeSet<String> {
 
 #[test]
 fn every_effect_surface_opens_the_shared_span() {
-    let mut expected: BTreeMap<&str, BTreeMap<&str, &[(&str, Surface)]>> = BTreeMap::new();
+    let mut expected: BTreeMap<&str, BTreeMap<&str, MethodSurfaces>> = BTreeMap::new();
     for &(file, host_trait, methods) in CONTRACT {
         assert!(
             expected
