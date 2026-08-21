@@ -27,10 +27,6 @@ impl NodeCtx for NoEffects {
     fn pg_execute(&mut self, _sql: &str, _params: &[PgValue]) -> Result<u64, PgCapError> {
         unreachable!("lifecycle prototype nodes have no capabilities")
     }
-
-    fn catalog_json(&mut self) -> Result<String, PgCapError> {
-        unreachable!("lifecycle prototype nodes have no capabilities")
-    }
 }
 
 struct EntryNode;

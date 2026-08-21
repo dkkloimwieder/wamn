@@ -786,6 +786,10 @@ fn real_workspaces_satisfy_package_architecture() {
         validate_graph(&packages, &manifest.graph_delta, &edges),
     );
     let accepted = &manifest.graph_delta.accepted_edges[0];
+    assert_eq!(
+        accepted.reason,
+        "Standard nodes reuse transport-neutral response row shaping; this is pure row-shaping reuse, not deployable-root coupling."
+    );
     assert!(
         edges.iter().any(|edge| {
             matches_edge(
@@ -796,7 +800,7 @@ fn real_workspaces_satisfy_package_architecture() {
                 edge,
             )
         }),
-        "the accepted standard-nodes planner edge must remain live and exactly classified"
+        "the accepted standard-nodes response-row-shaping edge must remain live and exactly classified"
     );
 }
 

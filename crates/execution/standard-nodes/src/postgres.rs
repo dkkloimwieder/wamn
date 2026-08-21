@@ -1,32 +1,22 @@
-//! The two Postgres nodes (D8, wamn-r13):
+//! The `postgres-query` standard node (D8, wamn-r13).
 //!
-//! - **`postgres`** — catalog-derived entity operations, the UNFLAGGED default.
-//!   Ops compile through the SAME audited surface the generated REST gateway
-//!   uses (`wamn_entity_access::Planner`, 4.1): identifiers are catalog-allowlisted +
-//!   quoted, values are ALWAYS `$n` params, `tenant_id` on create is injected
-//!   server-side, and the RLS floor does isolation underneath.
-//! - **`postgres-query`** — author-written SQL, values still bound as `$n`
+//! Author-written SQL keeps values bound as `$n`
 //!   params, behind the per-project `RawSql` capability (DEFAULT OFF; the
 //!   dispatch check refuses it before this node runs — enablement for real
 //!   projects is gated on the dedicated user-SQL role, wamn-1nd).
 //!
-//! Both classify `wamn:postgres` failures MECHANICALLY per the frozen 0.1 WIT
+//! It classifies `wamn:postgres` failures MECHANICALLY per the frozen 0.1 WIT
 //! annotation (`docs/archive/contracts/wamn-postgres.wit`): serialization-failure /
 //! connection-unavailable / statement-timeout → retryable; the rest terminal.
 
-use serde_json::{Map, Value, json};
-use wamn_entity_access::{
-    CompareOp, EntityAccessError, EntityOperation, EntityRequest, Filter, ListOptions, PlanKind,
-    Planner, Sort, SortDirection, UpdateMode, shape_rows,
-};
+use serde_json::{Value, json};
+use wamn_entity_access::shape_rows;
 use wamn_flow::node_contract::{
     Capability, Emission, ErrorDetail, Node, NodeCtx, NodeError, PgCapError, PgValue, RunContext,
 };
 use wamn_pg_core::SqlValue;
-use wamn_schema_model::Catalog;
 
 use crate::expr::{config_str, eval_to_value};
-use crate::template::expand;
 
 // ---------------------------------------------------------------------------
 // Shared classification + value mirrors
@@ -78,23 +68,6 @@ fn constraint_err(code: &str, constraint: String) -> NodeError {
     })
 }
 
-/// `wamn_pg_core::SqlValue` → SDK `PgValue` (1:1 WIT mirrors on both sides).
-pub(crate) fn api_to_pg(v: &SqlValue) -> PgValue {
-    match v {
-        SqlValue::Null => PgValue::Null,
-        SqlValue::Bool(b) => PgValue::Bool(*b),
-        SqlValue::Int32(n) => PgValue::Int32(*n),
-        SqlValue::Int64(n) => PgValue::Int64(*n),
-        SqlValue::Float64(f) => PgValue::Float64(*f),
-        SqlValue::Text(s) => PgValue::Text(s.clone()),
-        SqlValue::Bytes(b) => PgValue::Bytes(b.clone()),
-        SqlValue::Numeric(s) => PgValue::Numeric(s.clone()),
-        SqlValue::Timestamptz(s) => PgValue::Timestamptz(s.clone()),
-        SqlValue::Json(s) => PgValue::Json(s.clone()),
-        SqlValue::Uuid(s) => PgValue::Uuid(s.clone()),
-    }
-}
-
 /// SDK `PgValue` → `wamn_pg_core::SqlValue` (for response shaping).
 pub(crate) fn pg_to_api(v: &PgValue) -> SqlValue {
     match v {
@@ -110,277 +83,6 @@ pub(crate) fn pg_to_api(v: &PgValue) -> SqlValue {
         PgValue::Json(s) => SqlValue::Json(s.clone()),
         PgValue::Uuid(s) => SqlValue::Uuid(s.clone()),
     }
-}
-
-// ---------------------------------------------------------------------------
-// postgres — catalog-derived entity ops
-// ---------------------------------------------------------------------------
-
-/// Config:
-/// ```jsonc
-/// {
-///   "entity": "receipts",
-///   "op": "create" | "get" | "update" | "delete" | "list",
-///   "id": "receipt_id",             // get/update/delete: jmespath over the
-///                                   // input (default "id")
-///   "body": "@",                    // create/update: jmespath selecting the
-///                                   // field object (default the whole input;
-///                                   // managed id/tenant_id keys are stripped)
-///   "filters": {"status": "open"},  // list: field -> value ({{...}} templated,
-///                                   // PostgREST-ish "op." prefixes allowed)
-///   "sort": "-received_at",         // list
-///   "limit": 50, "offset": 0        // list
-/// }
-/// ```
-/// Payloads: create/get/update → the (returned) row object; delete →
-/// `{"deleted": true, "id": ...}`; list → the row array. A missing row is
-/// `Terminal("not-found")` — routable down the error edge.
-///
-/// # Parked for deletion — wamn-0h0g.26.8
-///
-/// `a1ecc789` deleted the only installer of `<app_schema>.wamn_catalog`, the
-/// snapshot [`NodeCtx::catalog_json`] reads, so on a freshly provisioned project
-/// this node's catalog resolution can no longer succeed. `wamn-0h0g.11.46`
-/// removed the relation from the ownership manifests and parked the guest read
-/// closed; this node, the `catalog_json` capability and the `"postgres"` entry
-/// in [`NODE_TYPES`](crate::NODE_TYPES) are deleted together by
-/// `wamn-0h0g.26.8`, sequenced with the flow-layer retirement rather than
-/// piecemeal.
-///
-/// It is deliberately not deleted yet: this is the **only** shipped node type
-/// whose config names an entity **by name**, so it is the sole producer of the
-/// name-keyed edge that impact analysis traces and that `impactproof` proves.
-/// That gate's disposition — retire or re-scope — is `wamn-0h0g.26.9`, and it
-/// is decided there, not defaulted by whoever deletes this struct.
-pub(crate) struct PostgresEntity;
-
-impl Node for PostgresEntity {
-    fn capabilities(&self) -> &'static [Capability] {
-        &[Capability::Postgres]
-    }
-
-    fn run(
-        &self,
-        ctx: &mut dyn NodeCtx,
-        run: &RunContext<'_>,
-        input: &Value,
-    ) -> Result<Emission, NodeError> {
-        let config = run.config;
-        let entity = config_str(config, "entity")?;
-        let op = config_str(config, "op")?;
-
-        let raw_catalog = ctx.catalog_json().map_err(classify_pg)?;
-        let catalog = Catalog::from_json(&raw_catalog).map_err(|e| {
-            NodeError::Terminal(ErrorDetail::coded(
-                "catalog-invalid",
-                format!("the project catalog snapshot did not parse: {e}"),
-            ))
-        })?;
-        let operation = match op {
-            "create" => EntityOperation::Create {
-                fields: body_from(config, input, run.context)?,
-            },
-            "get" => EntityOperation::Get {
-                id: id_from(config, input, run.context)?,
-                expand: Vec::new(),
-            },
-            "update" => EntityOperation::Update {
-                id: id_from(config, input, run.context)?,
-                fields: body_from(config, input, run.context)?,
-                mode: UpdateMode::Merge,
-            },
-            "delete" => EntityOperation::Delete {
-                id: id_from(config, input, run.context)?,
-            },
-            "list" => EntityOperation::List(list_options(config, input, run.context)?),
-            other => {
-                return Err(NodeError::Terminal(ErrorDetail::coded(
-                    "invalid-config",
-                    format!("unknown postgres op {other:?}"),
-                )));
-            }
-        };
-        let plan = Planner::new(&catalog)
-            .plan(&EntityRequest {
-                entity: entity.to_string(),
-                operation,
-            })
-            .map_err(classify_entity_access)?;
-
-        let params: Vec<PgValue> = plan.statement().params().iter().map(api_to_pg).collect();
-        let rows = ctx
-            .pg_query(plan.statement().sql(), &params)
-            .map_err(classify_pg)?;
-        let api_rows: Vec<Vec<SqlValue>> = rows
-            .rows
-            .iter()
-            .map(|r| r.iter().map(pg_to_api).collect())
-            .collect();
-        let shaped = shape_rows(plan.statement().columns(), &api_rows);
-
-        let payload = match plan.kind() {
-            PlanKind::List => Value::Array(shaped),
-            PlanKind::GetOne | PlanKind::CreateOne | PlanKind::UpdateOne => {
-                shaped.into_iter().next().ok_or_else(not_found)?
-            }
-            PlanKind::DeleteOne => {
-                let row = shaped.into_iter().next().ok_or_else(not_found)?;
-                let mut out = Map::new();
-                out.insert("deleted".into(), Value::Bool(true));
-                if let Some(id) = row.get("id") {
-                    out.insert("id".into(), id.clone());
-                }
-                Value::Object(out)
-            }
-            // PlanKind is #[non_exhaustive]; a future variant is terminal here.
-            _ => {
-                return Err(NodeError::Terminal(ErrorDetail::coded(
-                    "unsupported-plan",
-                    "unsupported plan kind",
-                )));
-            }
-        };
-        Ok(Emission::main(payload))
-    }
-}
-
-fn not_found() -> NodeError {
-    NodeError::Terminal(ErrorDetail::coded("not-found", "no such row"))
-}
-
-/// `wamn_entity_access` compile refusal → taxonomy: value/payload faults are the INPUT's
-/// (`invalid-input`, never retried, distinct in run history); everything else
-/// names a config/flow bug (`terminal`).
-pub(crate) fn classify_entity_access(e: EntityAccessError) -> NodeError {
-    let detail = ErrorDetail {
-        message: e.message(),
-        code: Some(e.code().to_string()),
-        data: None,
-    };
-    match e {
-        EntityAccessError::InvalidValue { .. } => NodeError::InvalidInput(detail),
-        _ => NodeError::Terminal(detail),
-    }
-}
-
-/// The row id for get/update/delete: config `"id"` is a jmespath over the
-/// input (default the input's `id` key). Must resolve to a string.
-fn id_from(config: &Value, input: &Value, context: &Value) -> Result<String, NodeError> {
-    let expr = config.get("id").and_then(Value::as_str).unwrap_or("id");
-    match eval_to_value(expr, input, context)? {
-        Value::String(s) if !s.is_empty() => Ok(s),
-        other => Err(NodeError::InvalidInput(ErrorDetail::coded(
-            "missing-id",
-            format!("id expression {expr:?} must yield a string id, got {other}"),
-        ))),
-    }
-}
-
-/// The field object for create/update: config `"body"` is a jmespath over the
-/// input (default `@`, the whole input). Managed `id`/`tenant_id` keys are
-/// stripped — the platform owns them (the 3.2 floor injects both).
-fn body_from(config: &Value, input: &Value, context: &Value) -> Result<Value, NodeError> {
-    let expr = config.get("body").and_then(Value::as_str).unwrap_or("@");
-    match eval_to_value(expr, input, context)? {
-        Value::Object(mut m) => {
-            m.remove("id");
-            m.remove("tenant_id");
-            Ok(Value::Object(m))
-        }
-        other => Err(NodeError::InvalidInput(ErrorDetail::coded(
-            "invalid-body",
-            format!("body expression {expr:?} must yield an object, got {other}"),
-        ))),
-    }
-}
-
-/// The list op's query pairs: templated filters + sort/limit/offset.
-fn list_options(config: &Value, input: &Value, context: &Value) -> Result<ListOptions, NodeError> {
-    let mut options = ListOptions::default();
-    if let Some(filters) = config.get("filters") {
-        let obj = filters.as_object().ok_or_else(|| {
-            NodeError::Terminal(ErrorDetail::coded(
-                "invalid-config",
-                "postgres list \"filters\" must be an object",
-            ))
-        })?;
-        for (field, v) in obj {
-            let raw = match v {
-                Value::String(s) => expand(s, input, context)?,
-                Value::Number(n) => n.to_string(),
-                Value::Bool(b) => b.to_string(),
-                other => {
-                    return Err(NodeError::Terminal(ErrorDetail::coded(
-                        "invalid-config",
-                        format!("filter {field:?} must be a scalar, got {other}"),
-                    )));
-                }
-            };
-            let (op, value) = raw
-                .split_once('.')
-                .filter(|(op, _)| {
-                    matches!(
-                        *op,
-                        "eq" | "neq" | "lt" | "lte" | "gt" | "gte" | "like" | "in"
-                    )
-                })
-                .unwrap_or(("eq", raw.as_str()));
-            options.filters.push(match op {
-                "like" => Filter::Like {
-                    field: field.clone(),
-                    pattern: value.to_string(),
-                },
-                "in" => Filter::In {
-                    field: field.clone(),
-                    values: value
-                        .split(',')
-                        .map(|part| part.trim().to_string())
-                        .collect(),
-                },
-                _ => Filter::Compare {
-                    field: field.clone(),
-                    op: match op {
-                        "neq" => CompareOp::NotEq,
-                        "lt" => CompareOp::Lt,
-                        "lte" => CompareOp::Lte,
-                        "gt" => CompareOp::Gt,
-                        "gte" => CompareOp::Gte,
-                        _ => CompareOp::Eq,
-                    },
-                    value: value.to_string(),
-                },
-            });
-        }
-    }
-    if let Some(sort) = config.get("sort").and_then(Value::as_str) {
-        options.sort.extend(sort.split(',').filter_map(|part| {
-            let part = part.trim();
-            if part.is_empty() {
-                return None;
-            }
-            let (field, direction) = part.strip_prefix('-').map_or(
-                (part.trim_start_matches('+'), SortDirection::Asc),
-                |field| (field, SortDirection::Desc),
-            );
-            Some(Sort {
-                field: field.to_string(),
-                direction,
-            })
-        }));
-    }
-    if let Some(limit) = config.get("limit").and_then(Value::as_u64) {
-        options.limit = Some(u32::try_from(limit).map_err(|_| {
-            NodeError::Terminal(ErrorDetail::coded(
-                "invalid-config",
-                "postgres list \"limit\" exceeds the supported range",
-            ))
-        })?);
-    }
-    options.offset = config
-        .get("offset")
-        .and_then(Value::as_u64)
-        .unwrap_or_default();
-    Ok(options)
 }
 
 // ---------------------------------------------------------------------------
@@ -533,56 +235,33 @@ mod tests {
         assert_eq!(d.data.unwrap()["constraint"], "receipts_nk");
     }
 
-    /// Entity-access refusals split by fault: values → invalid-input (the
-    /// caller's data), everything else → terminal (a flow/config bug).
+    /// Every SDK result-cell variant projects onto the retained row shaper.
     #[test]
-    fn api_errors_split_input_faults_from_config_bugs() {
-        let input_faults = [EntityAccessError::InvalidValue {
-            field: "quantity".into(),
-            message: "not an exact decimal".into(),
-        }];
-        for e in input_faults {
-            assert!(
-                matches!(
-                    classify_entity_access(e.clone()),
-                    NodeError::InvalidInput(_)
-                ),
-                "{e:?} must be invalid-input"
-            );
-        }
-        let config_bugs = [
-            EntityAccessError::UnknownEntity("nope".into()),
-            EntityAccessError::UnknownField {
-                entity: "receipts".into(),
-                field: "bogus".into(),
-            },
-        ];
-        for e in config_bugs {
-            assert!(
-                matches!(classify_entity_access(e.clone()), NodeError::Terminal(_)),
-                "{e:?} must be terminal"
-            );
-        }
-    }
-
-    /// The value mirrors are 1:1 in both directions.
-    #[test]
-    fn value_mirrors_round_trip() {
+    fn every_pg_value_projects_to_sql_value() {
         let all = [
-            SqlValue::Null,
-            SqlValue::Bool(true),
-            SqlValue::Int32(1),
-            SqlValue::Int64(2),
-            SqlValue::Float64(0.5),
-            SqlValue::Text("t".into()),
-            SqlValue::Bytes(vec![1]),
-            SqlValue::Numeric("12.50".into()),
-            SqlValue::Timestamptz("2026-07-12T00:00:00Z".into()),
-            SqlValue::Json("{}".into()),
-            SqlValue::Uuid("00000000-0000-0000-0000-000000000000".into()),
+            (PgValue::Null, SqlValue::Null),
+            (PgValue::Bool(true), SqlValue::Bool(true)),
+            (PgValue::Int32(1), SqlValue::Int32(1)),
+            (PgValue::Int64(2), SqlValue::Int64(2)),
+            (PgValue::Float64(0.5), SqlValue::Float64(0.5)),
+            (PgValue::Text("t".into()), SqlValue::Text("t".into())),
+            (PgValue::Bytes(vec![1]), SqlValue::Bytes(vec![1])),
+            (
+                PgValue::Numeric("12.50".into()),
+                SqlValue::Numeric("12.50".into()),
+            ),
+            (
+                PgValue::Timestamptz("2026-07-12T00:00:00Z".into()),
+                SqlValue::Timestamptz("2026-07-12T00:00:00Z".into()),
+            ),
+            (PgValue::Json("{}".into()), SqlValue::Json("{}".into())),
+            (
+                PgValue::Uuid("00000000-0000-0000-0000-000000000000".into()),
+                SqlValue::Uuid("00000000-0000-0000-0000-000000000000".into()),
+            ),
         ];
-        for v in all {
-            assert_eq!(pg_to_api(&api_to_pg(&v)), v);
+        for (wire, expected) in all {
+            assert_eq!(pg_to_api(&wire), expected);
         }
     }
 }

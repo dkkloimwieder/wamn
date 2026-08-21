@@ -1,7 +1,7 @@
 //! Standard node library gates (5.3): every node against a mock capability
 //! facade — behavior, config validation, the MECHANICAL taxonomy maps, the
-//! dispatch-time policy table, and the injection-safety of both Postgres
-//! nodes. No DB, no network, no cluster (the wamn-entity-access split).
+//! dispatch-time policy table, and the injection-safety of `postgres-query`.
+//! No DB, no network, no cluster.
 
 use std::collections::VecDeque;
 
@@ -27,7 +27,6 @@ struct Mock {
     http_calls: Vec<HttpRequest>,
     /// Scripted http results, popped per call.
     http_results: VecDeque<Result<HttpResponse, HttpCapError>>,
-    catalog: Option<String>,
     raw_sql: bool,
 }
 
@@ -43,9 +42,6 @@ impl NodeCtx for Mock {
     fn pg_execute(&mut self, sql: &str, params: &[PgValue]) -> Result<u64, PgCapError> {
         self.pg_calls.push((sql.to_string(), params.to_vec()));
         Ok(self.execute_result)
-    }
-    fn catalog_json(&mut self) -> Result<String, PgCapError> {
-        Ok(self.catalog.clone().expect("test provides a catalog"))
     }
     fn raw_sql_enabled(&self) -> bool {
         self.raw_sql
@@ -119,37 +115,14 @@ fn ok_http(
     })
 }
 
+const UUID_1: &str = "00000000-0000-0000-0000-000000000001";
+
 fn terminal_code(e: &NodeError) -> &str {
     match e {
         NodeError::Terminal(d) => d.code.as_deref().unwrap_or(""),
         other => panic!("expected Terminal, got {other:?}"),
     }
 }
-
-/// The test catalog: a suppliers entity with a required text field, an
-/// optional exact-decimal field, and a receipts entity referencing it.
-fn catalog_json() -> String {
-    json!({
-        "schema-version": "0.1",
-        "catalog-id": "nodes-test",
-        "version": 1,
-        "entities": [
-            {"id": "e-suppliers", "name": "suppliers", "fields": [
-                {"id": "f-name", "name": "name", "type": {"kind": "text"}},
-                {"id": "f-cost", "name": "standard_cost", "nullable": true,
-                 "type": {"kind": "numeric", "precision": 10, "scale": 2}}
-            ]},
-            {"id": "e-receipts", "name": "receipts", "fields": [
-                {"id": "f-rno", "name": "receipt_no", "type": {"kind": "text"}},
-                {"id": "f-sup", "name": "supplier_id",
-                 "type": {"kind": "reference", "entity": "e-suppliers"}}
-            ]}
-        ]
-    })
-    .to_string()
-}
-
-const UUID_1: &str = "00000000-0000-0000-0000-000000000001";
 
 // ---------------------------------------------------------------------------
 // transform / conditional (JMESPath)
@@ -628,181 +601,6 @@ fn http_request_rejects_legacy_url_config() {
 }
 
 // ---------------------------------------------------------------------------
-// postgres (catalog-derived entity ops)
-// ---------------------------------------------------------------------------
-
-fn one_row(cells: Vec<PgValue>) -> Result<PgRows, PgCapError> {
-    Ok(PgRows {
-        columns: vec![], // entity ops shape on the COMPILED projection
-        rows: vec![cells],
-    })
-}
-
-#[test]
-fn postgres_create_compiles_through_the_audited_surface() {
-    let mut mock = Mock {
-        catalog: Some(catalog_json()),
-        ..Mock::default()
-    };
-    mock.pg_results.push_back(one_row(vec![
-        PgValue::Uuid(UUID_1.into()),
-        PgValue::Text("acme".into()),
-        PgValue::Numeric("12.50".into()),
-    ]));
-    let config = json!({"entity": "suppliers", "op": "create"});
-    // The managed id key is STRIPPED, not rejected — a prior node's row output
-    // can feed a create directly.
-    let input = json!({"id": "stripped", "name": "acme", "standard_cost": "12.50"});
-    let em = go("postgres", &mut mock, &config, &input).unwrap();
-
-    let (sql, params) = &mock.pg_calls[0];
-    assert!(sql.starts_with("INSERT INTO \"suppliers\""), "sql: {sql}");
-    assert!(
-        sql.contains("current_setting('app.tenant', true)"),
-        "tenant is injected server-side: {sql}"
-    );
-    assert!(sql.contains("RETURNING"));
-    assert!(params.contains(&PgValue::Text("acme".into())));
-    assert!(
-        !params
-            .iter()
-            .any(|p| p == &PgValue::Text("stripped".into())),
-        "managed id never binds"
-    );
-    assert_eq!(em.payload["name"], "acme");
-    assert_eq!(
-        em.payload["standard_cost"], "12.50",
-        "exact decimal out as a string"
-    );
-}
-
-#[test]
-fn postgres_get_missing_row_is_not_found() {
-    let mut mock = Mock {
-        catalog: Some(catalog_json()),
-        ..Mock::default()
-    };
-    mock.pg_results.push_back(Ok(PgRows::default()));
-    let config = json!({"entity": "suppliers", "op": "get"});
-    let e = go("postgres", &mut mock, &config, &json!({"id": UUID_1})).unwrap_err();
-    assert_eq!(terminal_code(&e), "not-found");
-    let (sql, params) = &mock.pg_calls[0];
-    assert!(sql.contains("WHERE \"id\" = $1"), "sql: {sql}");
-    assert_eq!(params[0], PgValue::Uuid(UUID_1.into()));
-}
-
-/// The injection witness: a hostile templated filter value stays a `$n`
-/// param; the SQL text never contains it.
-#[test]
-fn postgres_list_filter_values_bind_never_splice() {
-    let mut mock = Mock {
-        catalog: Some(catalog_json()),
-        ..Mock::default()
-    };
-    mock.pg_results.push_back(Ok(PgRows::default()));
-    let config = json!({
-        "entity": "suppliers", "op": "list",
-        "filters": {"name": "{{evil}}"}, "limit": 10
-    });
-    let hostile = "x' OR '1'='1";
-    let em = go("postgres", &mut mock, &config, &json!({"evil": hostile})).unwrap();
-    assert_eq!(em.payload, json!([]));
-    let (sql, params) = &mock.pg_calls[0];
-    assert!(!sql.contains(hostile), "value never splices: {sql}");
-    assert!(sql.contains("\"name\" = $1"), "sql: {sql}");
-    assert_eq!(params[0], PgValue::Text(hostile.into()));
-}
-
-#[test]
-fn postgres_list_rejects_an_oversized_limit_before_querying() {
-    let mut mock = Mock {
-        catalog: Some(catalog_json()),
-        ..Mock::default()
-    };
-    let config = json!({
-        "entity": "suppliers",
-        "op": "list",
-        "limit": u64::from(u32::MAX) + 1,
-    });
-    let error = go("postgres", &mut mock, &config, &json!({})).unwrap_err();
-    assert_eq!(terminal_code(&error), "invalid-config");
-    assert!(mock.pg_calls.is_empty(), "nothing reached the database");
-}
-
-#[test]
-fn postgres_delete_reports_the_deleted_row() {
-    let mut mock = Mock {
-        catalog: Some(catalog_json()),
-        ..Mock::default()
-    };
-    mock.pg_results
-        .push_back(one_row(vec![PgValue::Uuid(UUID_1.into())]));
-    let config = json!({"entity": "suppliers", "op": "delete"});
-    let em = go("postgres", &mut mock, &config, &json!({"id": UUID_1})).unwrap();
-    assert_eq!(em.payload["deleted"], true);
-    assert_eq!(em.payload["id"], UUID_1);
-}
-
-#[test]
-fn postgres_config_and_input_faults_classify_apart() {
-    let mut mock = Mock {
-        catalog: Some(catalog_json()),
-        ..Mock::default()
-    };
-    // Unknown entity = a flow/config bug -> terminal.
-    let e = go(
-        "postgres",
-        &mut mock,
-        &json!({"entity": "bogus", "op": "list"}),
-        &json!({}),
-    )
-    .unwrap_err();
-    assert_eq!(terminal_code(&e), "unknown-entity");
-
-    // A JSON float where an exact decimal belongs = the INPUT's fault ->
-    // invalid-input (never retried, distinct in run history).
-    let e = go(
-        "postgres",
-        &mut mock,
-        &json!({"entity": "suppliers", "op": "create"}),
-        &json!({"name": "acme", "standard_cost": 12.5}),
-    )
-    .unwrap_err();
-    assert!(
-        matches!(&e, NodeError::InvalidInput(d) if d.code.as_deref() == Some("invalid-value")),
-        "float rejected as the input's fault: {e:?}"
-    );
-    assert!(mock.pg_calls.is_empty(), "nothing reached the database");
-}
-
-/// A transient pg failure surfaces as retryable THROUGH the node (the engine
-/// retries mechanically); a constraint violation is terminal and carries the
-/// constraint name for the error branch.
-#[test]
-fn postgres_failures_flow_through_the_taxonomy() {
-    let mut mock = Mock {
-        catalog: Some(catalog_json()),
-        ..Mock::default()
-    };
-    mock.pg_results
-        .push_back(Err(PgCapError::ConnectionUnavailable));
-    let config = json!({"entity": "suppliers", "op": "list"});
-    let e = go("postgres", &mut mock, &config, &json!({})).unwrap_err();
-    assert!(matches!(e, NodeError::Retryable(_)));
-
-    mock.pg_results.push_back(Err(PgCapError::UniqueViolation(
-        "suppliers_name_key".into(),
-    )));
-    let config = json!({"entity": "suppliers", "op": "create"});
-    let e = go("postgres", &mut mock, &config, &json!({"name": "acme"})).unwrap_err();
-    let NodeError::Terminal(d) = &e else {
-        panic!("unique violation must be terminal");
-    };
-    assert_eq!(d.code.as_deref(), Some("unique-violation"));
-    assert_eq!(d.data.as_ref().unwrap()["constraint"], "suppliers_name_key");
-}
-
-// ---------------------------------------------------------------------------
 // postgres-query (raw SQL, D8 flag)
 // ---------------------------------------------------------------------------
 
@@ -897,7 +695,7 @@ fn unknown_node_type_is_terminal() {
 
 #[test]
 fn removed_node_types_are_unknown_to_dispatch() {
-    for node_type in ["cron", "time-shift"] {
+    for node_type in ["cron", "time-shift", "postgres"] {
         let mut mock = Mock::default();
         let error = go(node_type, &mut mock, &json!({}), &json!({})).unwrap_err();
         assert_eq!(
@@ -944,7 +742,6 @@ fn retained_resolution_surface_uses_the_flow_model_interface() {
             "transform",
             "conditional",
             "http-request",
-            "postgres",
             "postgres-query",
             "respond",
         ]
@@ -956,7 +753,7 @@ fn retained_resolution_surface_uses_the_flow_model_interface() {
         !is_standard("custom"),
         "an unknown node is not standard-library"
     );
-    for removed in ["cron", "time-shift"] {
+    for removed in ["cron", "time-shift", "postgres"] {
         assert!(!is_standard(removed), "removed node {removed:?} survived");
         assert!(
             describe_interface(removed).is_none(),
@@ -1016,18 +813,15 @@ fn every_standard_node_has_one_reduced_interface() {
         }]
     );
 
-    for node_type in ["postgres", "postgres-query"] {
-        let postgres = describe_interface(node_type).unwrap();
-        assert_eq!(
-            postgres.connection_requirements,
-            [ConnectionRequirement {
-                requirement_type: "postgres".to_string(),
-                contract: "wamn:connection/postgres@0.1.0".to_string(),
-            }],
-            "{node_type} retains its exact portable Postgres interface requirement"
-        );
-        assert_eq!(postgres.effect_policy, EffectPolicy::Effectful);
-    }
+    let postgres = describe_interface("postgres-query").unwrap();
+    assert_eq!(
+        postgres.connection_requirements,
+        [ConnectionRequirement {
+            requirement_type: "postgres".to_string(),
+            contract: "wamn:connection/postgres@0.1.0".to_string(),
+        }]
+    );
+    assert_eq!(postgres.effect_policy, EffectPolicy::Effectful);
 }
 
 /// The dispatch-time capability policy table, pinned row by row.
@@ -1044,14 +838,10 @@ fn capability_table_rows_are_exact() {
         Some(&[Capability::HttpEgress][..])
     );
     assert_eq!(
-        required_capabilities("postgres"),
-        Some(&[Capability::Postgres][..])
-    );
-    assert_eq!(
         required_capabilities("postgres-query"),
         Some(&[Capability::Postgres, Capability::RawSql][..])
     );
-    for removed in ["cron", "time-shift"] {
+    for removed in ["cron", "time-shift", "postgres"] {
         assert_eq!(
             required_capabilities(removed),
             None,

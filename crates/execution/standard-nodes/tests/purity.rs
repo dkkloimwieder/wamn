@@ -28,7 +28,6 @@ const ALLOWED_DIRECT: &[&str] = &[
     "wamn-flow",
     "wamn-entity-access",
     "wamn-pg-core",
-    "wamn-schema-model",
     "serde_json",
     "jmespath",
 ];

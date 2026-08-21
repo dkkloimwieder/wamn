@@ -76,10 +76,6 @@
       "path": "crates/catalog/model",
       "role": "semantic"
     },
-    "standard-nodes-entity": {
-      "path": "crates/execution/standard-nodes/src/postgres.rs",
-      "role": "effect"
-    },
     "standard-nodes-raw-sql": {
       "path": "crates/execution/standard-nodes/src/postgres.rs",
       "role": "compatibility-writer",
@@ -1817,7 +1813,6 @@
         "entity-access",
         "schema-compiler",
         "flowrunner",
-        "standard-nodes-entity",
         "standard-nodes-raw-sql"
       ],
       "readers": [

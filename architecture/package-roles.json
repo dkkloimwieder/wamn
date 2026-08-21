@@ -7,7 +7,7 @@
         "to_manifest": "crates/data/entity-access/Cargo.toml",
         "dependency_kind": "normal",
         "target": "all",
-        "reason": "Standard nodes reuse the transport-neutral entity planner; this is pure planner reuse, not deployable-root coupling."
+        "reason": "Standard nodes reuse transport-neutral response row shaping; this is pure row-shaping reuse, not deployable-root coupling."
       }
     ],
     "transition_exceptions": []

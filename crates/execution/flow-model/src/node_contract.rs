@@ -304,8 +304,6 @@ pub trait NodeCtx {
 
     fn pg_execute(&mut self, sql: &str, params: &[PgValue]) -> Result<u64, PgCapError>;
 
-    fn catalog_json(&mut self) -> Result<String, PgCapError>;
-
     fn raw_sql_enabled(&self) -> bool {
         false
     }

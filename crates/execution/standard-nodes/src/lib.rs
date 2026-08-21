@@ -17,7 +17,6 @@
 //! | `transform`      | —                       | reshape the payload with a JMESPath expression |
 //! | `conditional`    | —                       | branch `true`/`false` on a JMESPath predicate |
 //! | `http-request`   | `HttpEgress`            | one outbound HTTP call, taxonomy-classified |
-//! | `postgres`       | `Postgres`              | catalog-derived entity ops via the audited 4.1 surface |
 //! | `postgres-query` | `Postgres` + `RawSql`   | author-written SQL, `$n`-bound — D8 flag, DEFAULT OFF |
 //! | `respond`        | —                       | webhook-response terminal (status via [`respond::status_for`]) |
 //!
@@ -54,14 +53,13 @@ use wamn_flow::node_contract::{
 };
 
 /// Every node type this library implements (drift-guarded by docs + tests).
-pub const NODE_TYPES: [&str; 9] = [
+pub const NODE_TYPES: [&str; 8] = [
     "request",
     "event",
     "fail",
     "transform",
     "conditional",
     "http-request",
-    "postgres",
     "postgres-query",
     "respond",
 ];
@@ -72,7 +70,6 @@ static FAIL: fail::Fail = fail::Fail;
 static TRANSFORM: transform::Transform = transform::Transform;
 static CONDITIONAL: conditional::Conditional = conditional::Conditional;
 static HTTP_REQUEST: http::HttpRequestNode = http::HttpRequestNode;
-static POSTGRES: postgres::PostgresEntity = postgres::PostgresEntity;
 static POSTGRES_QUERY: postgres::PostgresQuery = postgres::PostgresQuery;
 static RESPOND: respond::Respond = respond::Respond;
 
@@ -94,14 +91,13 @@ pub(crate) fn node(node_type: &str) -> Option<&'static dyn Node> {
         "transform" => Some(&TRANSFORM),
         "conditional" => Some(&CONDITIONAL),
         "http-request" => Some(&HTTP_REQUEST),
-        "postgres" => Some(&POSTGRES),
         "postgres-query" => Some(&POSTGRES_QUERY),
         "respond" => Some(&RESPOND),
         _ => None,
     }
 }
 
-static INTERFACES: LazyLock<[NodeInterface; 9]> = LazyLock::new(|| {
+static INTERFACES: LazyLock<[NodeInterface; 8]> = LazyLock::new(|| {
     [
         pure_interface(NODE_TYPES[0], &[MAIN_PORT]),
         pure_interface(NODE_TYPES[1], &[MAIN_PORT]),
@@ -109,9 +105,8 @@ static INTERFACES: LazyLock<[NodeInterface; 9]> = LazyLock::new(|| {
         pure_interface(NODE_TYPES[3], &[MAIN_PORT]),
         pure_interface(NODE_TYPES[4], &["false", "true"]),
         http_interface(NODE_TYPES[5]),
-        postgres_interface(NODE_TYPES[6], &[Capability::Postgres]),
-        postgres_interface(NODE_TYPES[7], &[Capability::Postgres, Capability::RawSql]),
-        pure_interface(NODE_TYPES[8], &[MAIN_PORT]),
+        postgres_interface(NODE_TYPES[6], &[Capability::Postgres, Capability::RawSql]),
+        pure_interface(NODE_TYPES[7], &[MAIN_PORT]),
     ]
 });
 

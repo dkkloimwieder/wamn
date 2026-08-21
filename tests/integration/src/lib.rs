@@ -19,7 +19,6 @@ mod dispatcher_process;
 pub mod exposure_live;
 pub mod flowbench;
 mod flowrunner_linker;
-pub mod impactproof;
 pub mod m1;
 pub mod matbench;
 pub mod materializer;

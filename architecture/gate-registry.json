@@ -180,8 +180,8 @@
       "status": "shipped",
       "plan_anchor": "**D24**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/impactproof-job.yaml"
+        "source_kind": "recipe",
+        "source": "H5-API-PUBLISH"
       }
     },
     {
@@ -233,28 +233,6 @@
       "latest_evidence": {
         "issue": "bd:wamn-0h0g.11.9",
         "git": "git:388c99b3f843e6c0c7b433225caa727cb9602be6",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/impactproof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D24"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
         "machine_evidence": "missing",
         "evidence_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"

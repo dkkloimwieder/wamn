@@ -4687,7 +4687,6 @@ dependencies = [
  "wamn-entity-access",
  "wamn-flow",
  "wamn-pg-core",
- "wamn-schema-model",
 ]
 
 [[package]]

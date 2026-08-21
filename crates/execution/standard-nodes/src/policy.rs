@@ -98,13 +98,6 @@ impl NodeCtx for GatedCtx<'_> {
         self.inner.pg_execute(sql, params)
     }
 
-    fn catalog_json(&mut self) -> Result<String, PgCapError> {
-        if !self.allows(Capability::Postgres) {
-            return Err(PgCapError::NotGranted);
-        }
-        self.inner.catalog_json()
-    }
-
     fn raw_sql_enabled(&self) -> bool {
         self.inner.raw_sql_enabled()
     }
@@ -139,10 +132,6 @@ mod tests {
             self.pg_hits += 1;
             Ok(0)
         }
-        fn catalog_json(&mut self) -> Result<String, PgCapError> {
-            self.pg_hits += 1;
-            Ok("{}".into())
-        }
         fn raw_sql_enabled(&self) -> bool {
             self.raw_flag
         }
@@ -166,7 +155,6 @@ mod tests {
             gated.pg_execute("SELECT 1", &[]),
             Err(PgCapError::NotGranted)
         );
-        assert_eq!(gated.catalog_json(), Err(PgCapError::NotGranted));
         assert_eq!(
             inner.http_hits + inner.pg_hits,
             0,
@@ -187,10 +175,9 @@ mod tests {
         };
         assert!(gated.http(&HttpRequest::default()).is_ok());
         assert!(gated.pg_query("SELECT 1", &[]).is_ok());
-        assert!(gated.catalog_json().is_ok());
         assert!(gated.raw_sql_enabled(), "flag is a passthrough, not a gate");
         assert_eq!(inner.http_hits, 1);
-        assert_eq!(inner.pg_hits, 2);
+        assert_eq!(inner.pg_hits, 1);
     }
 
     /// The grant check names the D8 flag when the missing capability is RawSql.

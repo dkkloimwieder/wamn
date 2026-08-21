@@ -906,7 +906,7 @@ fn fixtures() -> (
 #[test]
 fn canonical_registry_covers_every_live_gate_source() {
     let (root, registry, manifests, recipes, test_inventory, historical_plan) = fixtures();
-    assert_eq!(manifests.len(), 5, "the retained Job inventory changed");
+    assert_eq!(manifests.len(), 4, "the retained Job inventory changed");
     assert_eq!(recipes.len(), 25, "the documented recipe inventory changed");
     validate_registry(
         &registry,
@@ -917,6 +917,26 @@ fn canonical_registry_covers_every_live_gate_source() {
         &root,
     )
     .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn d24_is_retained_by_the_api_publish_recipe() {
+    let (_, registry, _, _, _, _) = fixtures();
+    let decision = registry
+        .decisions
+        .iter()
+        .find(|decision| decision.id == "D24")
+        .expect("D24 remains inventoried");
+    assert_eq!(decision.status, "shipped");
+    assert_eq!(decision.primary_source.source_kind, SourceKind::Recipe);
+    assert_eq!(decision.primary_source.source, "H5-API-PUBLISH");
+
+    let recipe = registry
+        .entries
+        .iter()
+        .find(|entry| entry.source == "H5-API-PUBLISH")
+        .expect("H5-API-PUBLISH remains registered");
+    assert!(recipe.decision_ids.iter().any(|id| id == "D24"));
 }
 
 #[test]

@@ -8,13 +8,9 @@ license.workspace = true
 [dependencies]
 # The canonical pure execution and publication contract for standard nodes.
 wamn-flow = { workspace = true }
-# The `postgres` entity-op node compiles ops through the SAME audited,
-# injection-safe surface the generated REST gateway uses (4.1) — catalog
-# allowlisting, $n params, server-side tenant injection. D8: entity ops are the
-# unflagged default; wamn-entity-access is pure and guest-safe.
+# Reuse the transport-neutral response row shaper for `postgres-query`.
 wamn-entity-access = { workspace = true }
 wamn-pg-core = { workspace = true }
-wamn-schema-model = { workspace = true }
 serde_json = { workspace = true }
 # Off-the-shelf expression engine for transform/conditional: JMESPath is a
 # frozen public SPEC (we maintain no language), JSON -> JSON, side-effect free,
