@@ -25,10 +25,7 @@
 //! `--flow` resolves standard-node interfaces, constructs canonical CF-DEF-ID
 //! artifacts, and publishes artifacts + release membership + head atomically.
 
-use std::path::PathBuf;
-
 use anyhow::Context as _;
-use clap::Args;
 
 // The canonical `wamn_run` → project-schema deploy-DDL rewrite and its
 // lowercase bare-schema type share one owner in the reconcile-run-plane
@@ -36,80 +33,6 @@ use clap::Args;
 use wamn_schema_control::{BareSchemaName, rewrite_schema};
 
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
-
-#[derive(Debug, Args)]
-pub struct PublishCatalogArgs {
-    /// Path to the catalog JSON to snapshot (the applied catalog for the project).
-    #[arg(long)]
-    pub catalog: PathBuf,
-
-    /// Superuser Postgres URL — bypasses RLS to write the snapshot and (with
-    /// `--provision`) create the schema/tables (env `WAMN_PG_ADMIN_URL`).
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub admin_database_url: Option<String>,
-
-    /// Tenant stored with the RLS-scoped snapshot.
-    #[arg(long)]
-    pub tenant: String,
-
-    /// Optional callable-flow POC project configuration. The accepted shape is
-    /// exactly `{"raw_sql_enabled": <boolean>}`; other environments omit this
-    /// fixture and retain the fail-closed default.
-    #[arg(long)]
-    pub project_config: Option<PathBuf>,
-
-    /// Schema the `wamn_catalog` table (and, with `--provision`, the entity
-    /// tables) live in.
-    #[arg(long, default_value = "public")]
-    pub schema: String,
-
-    /// Also create the schema + apply the 3.2 tenant floor for the catalog (the
-    /// entity tables) when they are absent. Additive: never drops or alters.
-    #[arg(long)]
-    pub provision: bool,
-
-    /// Also apply the run-state storage (runs/node_runs, `deploy/sql/run-state.sql`)
-    /// into the schema when its tables are absent. Additive: never drops or alters.
-    #[arg(long)]
-    pub runstate: bool,
-
-    /// Seed dataset JSON (wamn-schema-compiler, 3.6) compiled against the catalog and
-    /// applied under `--tenant` (deterministic ids; idempotent re-apply).
-    #[arg(long)]
-    pub seed_dataset: Option<PathBuf>,
-
-    /// Flow graph JSON (wamn-flow, 5.1) to resolve and publish as an immutable
-    /// member of this catalog release.
-    #[arg(long)]
-    pub flow: Vec<PathBuf>,
-
-    /// Sources and attachments JSON for this immutable catalog release.
-    #[arg(long)]
-    pub exposure: Option<PathBuf>,
-
-    /// Skip the post-publish REPLICA IDENTITY reconcile (EVT-RI-ORCH, l5i9.61).
-    /// By default publish reconciles RI for the catalog's data schema so an
-    /// entity that needs the old image is never left on DEFAULT; pass this to run
-    /// `reconcile-replica-identity` separately instead.
-    #[arg(long)]
-    pub skip_reconcile_replica_identity: bool,
-}
-
-/// Publish one catalog snapshot — CLOSED by the wamn-0h0g.8.18 cutover.
-///
-/// The authoring, draft, and report store this verb published against moved to
-/// the control database, so a project-database release would name a definition
-/// nothing reads. Every invocation refuses with
-/// [`crate::CONTROL_DEFINITION_PUBLISH_REFUSAL`] **before any filesystem read or
-/// admin connection**: the refusal sits after the pure schema-name validator
-/// (which already refused before any effect and keeps doing so) and before the
-/// first `std::fs::read_to_string`.
-pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
-    BareSchemaName::new(args.schema.clone())
-        .with_context(|| format!("invalid schema name {:?}", args.schema))?;
-
-    anyhow::bail!(crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
-}
 
 /// Install or additively upgrade the catalog persistence schema.
 pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::Result<()> {
@@ -841,78 +764,5 @@ mod tests {
 
         drop(client);
         connection_task.await.unwrap().unwrap();
-    }
-
-    #[tokio::test]
-    async fn invalid_schema_is_rejected_before_catalog_io_or_admin_connect() {
-        let missing =
-            std::env::temp_dir().join("invalid-schema-must-not-read-catalog-5wd1-29.json");
-        let error = run(PublishCatalogArgs {
-            catalog: missing,
-            admin_database_url: Some("postgresql://invalid.invalid/never".to_string()),
-            tenant: "t1".to_string(),
-            project_config: None,
-            schema: format!("s{}", "a".repeat(63)),
-            provision: true,
-            runstate: true,
-            seed_dataset: None,
-            flow: vec![],
-            exposure: None,
-            skip_reconcile_replica_identity: false,
-        })
-        .await
-        .expect_err("overlong schema must fail before any effect");
-        let message = format!("{error:#}");
-        assert!(
-            message.contains("identifier exceeds PostgreSQL's 63-byte limit"),
-            "{message}"
-        );
-        assert!(!message.contains("read catalog"), "{message}");
-        assert!(!message.contains("admin connect"), "{message}");
-    }
-
-    /// The wamn-0h0g.8.18 cutover: a fully valid invocation refuses, and refuses
-    /// before it opens a file or dials a server.
-    ///
-    /// Every path argument names a file that does not exist and the admin URL is
-    /// unroutable, so any I/O this verb performed would surface as its own
-    /// context literal — `read catalog`, `read project config`, `read seed
-    /// dataset`, or `admin connect` — instead of the refusal. An unroutable host
-    /// also means a connection attempt would stall rather than return promptly.
-    #[tokio::test]
-    async fn a_valid_publication_refuses_before_any_file_or_connection() {
-        let missing = |name: &str| std::env::temp_dir().join(name);
-        let error = run(PublishCatalogArgs {
-            catalog: missing("control-publish-closed-catalog-8-18.json"),
-            admin_database_url: Some("postgresql://invalid.invalid/never".to_string()),
-            tenant: "t1".to_string(),
-            project_config: Some(missing("control-publish-closed-config-8-18.json")),
-            schema: "wamn_app".to_string(),
-            provision: true,
-            runstate: true,
-            seed_dataset: Some(missing("control-publish-closed-seed-8-18.json")),
-            flow: vec![missing("control-publish-closed-flow-8-18.json")],
-            exposure: Some(missing("control-publish-closed-exposure-8-18.json")),
-            skip_reconcile_replica_identity: false,
-        })
-        .await
-        .expect_err("the closed definition-publish path must refuse");
-        let message = format!("{error:#}");
-        assert_eq!(message, crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
-        for io in [
-            "read catalog",
-            "read project config",
-            "read seed dataset",
-            "read flow",
-            "read exposure",
-            "admin connect",
-        ] {
-            assert!(!message.contains(io), "publish reached {io}: {message}");
-        }
-        // The refusal names the replacement path, not the superseded pair the
-        // pre-amendment ruling wrote down.
-        assert!(crate::CONTROL_DEFINITION_PUBLISH_REFUSAL.ends_with("wamn-0h0g.15.14"));
-        assert!(!crate::CONTROL_DEFINITION_PUBLISH_REFUSAL.contains("8.19"));
-        assert!(!crate::CONTROL_DEFINITION_PUBLISH_REFUSAL.contains("8.22"));
     }
 }
