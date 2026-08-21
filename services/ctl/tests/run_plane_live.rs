@@ -702,6 +702,15 @@ async fn effect_writer_cutover_live() {
     effect_writer_cutover_leg(&su).await;
 }
 
+#[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
+async fn partition_plane_cutover_live() {
+    let url = std::env::var("WAMN_CTL_PG_URL")
+        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let su = connect(&url).await;
+    partition_plane_cutover_leg(&su).await;
+}
+
 /// The dispatcher read principal's in-database surface (wamn-0h0g.12.123).
 ///
 /// The `SELECT` grants target relations in the run-plane schema, which does not
@@ -3135,6 +3144,13 @@ async fn partition_plane_cutover_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
     install_legacy_partition_plane(su).await;
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.environment_policies \
+           (tenant_id,expected_environment,durability_class) \
+         VALUES ('partition','dev','standard')"
+    ))
+    .await
+    .expect("seed the admitted environment policy");
     seed_run_pin_parents(su, "partition", "cat", 1, "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
