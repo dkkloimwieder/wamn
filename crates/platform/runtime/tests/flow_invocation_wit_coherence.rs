@@ -11,11 +11,103 @@ const PLUGIN: &str = include_str!("../src/plugins/wamn_flow_invocation.rs");
 const HOST: &str = include_str!("../../../../services/host/src/host.rs");
 const HOST_MANIFEST: &str = include_str!("../../../../services/host/Cargo.toml");
 
-fn code_lines(wit: &str) -> Vec<&str> {
-    wit.lines()
+fn without_wit_comments(wit: &str) -> String {
+    let mut code = String::with_capacity(wit.len());
+    let mut chars = wit.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match (ch, chars.peek().copied()) {
+            ('"', _) => {
+                code.push(ch);
+                let mut escaped = false;
+                for string_ch in chars.by_ref() {
+                    code.push(string_ch);
+                    if escaped {
+                        escaped = false;
+                    } else if string_ch == '\\' {
+                        escaped = true;
+                    } else if string_ch == '"' {
+                        break;
+                    }
+                }
+            }
+            ('/', Some('/')) => {
+                chars.next();
+                for comment_ch in chars.by_ref() {
+                    if comment_ch == '\n' {
+                        code.push('\n');
+                        break;
+                    }
+                }
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                // A WIT comment is whitespace. Keep one separator so removing a
+                // comment cannot fuse otherwise distinct tokens.
+                code.push(' ');
+                let mut depth = 1_u32;
+                while depth > 0 {
+                    let comment_ch = chars.next().expect("unterminated WIT block comment");
+                    match (comment_ch, chars.peek().copied()) {
+                        ('/', Some('*')) => {
+                            chars.next();
+                            depth = depth.checked_add(1).expect("WIT block comment nesting");
+                        }
+                        ('*', Some('/')) => {
+                            chars.next();
+                            depth -= 1;
+                        }
+                        ('\n', _) => code.push('\n'),
+                        _ => {}
+                    }
+                }
+            }
+            _ => code.push(ch),
+        }
+    }
+
+    code
+}
+
+fn code_lines(wit: &str) -> Vec<String> {
+    without_wit_comments(wit)
+        .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
         .collect()
+}
+
+#[test]
+fn plain_line_comments_are_not_wit_code() {
+    let source = "interface invocation {\n  // cancel: func();\n  begin: func(); // pending(\n}\n";
+
+    assert_eq!(
+        code_lines(source),
+        ["interface invocation {", "begin: func();", "}"]
+    );
+}
+
+#[test]
+fn multiline_and_nested_block_comments_are_not_wit_code() {
+    let source = "interface invocation {\n  /* outcome-expired\n     /* accepted( */\n     pending( */\n  begin: func();\n}\n";
+
+    assert_eq!(
+        code_lines(source),
+        ["interface invocation {", "begin: func();", "}"]
+    );
+}
+
+#[test]
+fn deleted_vocabulary_in_live_wit_code_is_preserved() {
+    let source = "interface invocation {\n  /* cancel: func(); */ cancel: func();\n}\n";
+    let code = without_wit_comments(source);
+
+    assert_eq!(code.matches("cancel:").count(), 1);
+    assert_eq!(
+        code_lines(source),
+        ["interface invocation {", "cancel: func();", "}"]
+    );
 }
 
 #[test]
@@ -60,11 +152,7 @@ fn every_vendored_contract_refuses_deleted_vocabulary() {
         ("host", HOST_COPY),
         ("HTTP", HTTP_COPY),
     ] {
-        let code = source
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("///"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let code = without_wit_comments(source);
         for deleted in [
             "cancel:",
             "cancelled(",
