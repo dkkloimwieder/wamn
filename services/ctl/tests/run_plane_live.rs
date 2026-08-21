@@ -693,6 +693,15 @@ async fn frame_identity_cutover_live() {
     frame_identity_cutover_leg(&su).await;
 }
 
+#[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
+async fn effect_writer_cutover_live() {
+    let url = std::env::var("WAMN_CTL_PG_URL")
+        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let su = connect(&url).await;
+    effect_writer_cutover_leg(&su).await;
+}
+
 /// The dispatcher read principal's in-database surface (wamn-0h0g.12.123).
 ///
 /// The `SELECT` grants target relations in the run-plane schema, which does not
@@ -2154,6 +2163,13 @@ async fn effect_writer_cutover_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply current run-state for writer cutover");
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.environment_policies \
+           (tenant_id,expected_environment,durability_class) \
+         VALUES ('t1','dev','standard')"
+    ))
+    .await
+    .expect("seed the admitted environment policy");
     seed_run_pin_parents(su, "t1", "writer-cat", 1, "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
