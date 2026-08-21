@@ -157,54 +157,75 @@ pub fn plan_bytes(root_artifact_hash: &str) -> (String, Vec<u8>) {
     (digest(&bytes), bytes)
 }
 
+pub fn run_state_stand_in_ddl() -> String {
+    format!(
+        "CREATE TABLE {SCHEMA}.runs ( \
+           tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
+           flow_version int NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
+           environment text NOT NULL, execution_bundle_hash text NOT NULL, \
+           attachment_id text, registration_id text, \
+           event_source_run_id text, event_root_run_id text, event_depth int, \
+           status text NOT NULL \
+             CHECK (status IN ('dispatched', 'running', 'completed', 'failed', \
+                               'infrastructure-failure', 'effect-uncertain')), \
+           trigger_source text, capture_mode text, \
+           durability_class text NOT NULL DEFAULT 'standard' \
+             CHECK (durability_class IN ('standard', 'durable')), \
+           release_version int, manifest_digest text, \
+           input_json jsonb NOT NULL DEFAULT '{{}}', result_json jsonb, state_json jsonb, \
+           invocation_context jsonb NOT NULL DEFAULT '{{}}', \
+           admission_context_version text, platform_revision text, idempotency_key text, \
+           caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \
+           caller_release_node_id text, caller_outcome_hash text, \
+           caller_released_at timestamptz, response_deadline_at timestamptz, \
+           run_deadline_at timestamptz, terminal_reason text, \
+           fail_kind text, fail_node text, fail_reason text, \
+           created_at timestamptz NOT NULL DEFAULT now(), \
+           updated_at timestamptz NOT NULL DEFAULT now(), \
+           CONSTRAINT runs_release_record_check CHECK ( \
+             (release_version IS NULL AND manifest_digest IS NULL) \
+             OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL \
+                 AND release_version > 0 \
+                 AND manifest_digest ~ '^sha256:[0-9a-f]{{64}}$')), \
+           PRIMARY KEY (tenant_id, run_id)); \
+         CREATE TABLE {SCHEMA}.node_runs ( \
+           tenant_id text NOT NULL, run_id text NOT NULL, local_node_id text NOT NULL, \
+           frame_id bigint NOT NULL DEFAULT 0, parent_frame_id bigint, call_site_id text, \
+           current_plan_hash text, occurrence int NOT NULL DEFAULT 0, \
+           seq bigint NOT NULL DEFAULT 0, \
+           status text NOT NULL DEFAULT 'started' \
+             CHECK (status IN ('started', 'success', 'error')), \
+           output_port text, output_json jsonb, input_json jsonb, error_kind text, \
+           error_detail jsonb, input_ref text, output_ref text, output_size bigint, \
+           payload_hash text, started_at timestamptz NOT NULL DEFAULT now(), \
+           ended_at timestamptz, \
+           PRIMARY KEY (tenant_id, run_id, local_node_id)); \
+         CREATE TABLE {SCHEMA}.effect_attempts ( \
+           tenant_id text NOT NULL, attempt_id uuid NOT NULL DEFAULT gen_random_uuid(), \
+           run_id text NOT NULL, root_plan_hash text NOT NULL, current_plan_hash text NOT NULL, \
+           frame_id bigint NOT NULL, parent_frame_id bigint, call_site_id text, \
+           local_node_id text NOT NULL, source_artifact_hash text NOT NULL, \
+           requirement_name text NOT NULL, occurrence int NOT NULL, seq int NOT NULL, \
+           generation_fact_kind text NOT NULL, connection_name text, \
+           connection_generation text, credential_generation text, \
+           verified_author_principal text, verified_publisher_principal text, \
+           attempt_started_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
+           attempt_deadline_at timestamptz NOT NULL, attempt_input_ref text NOT NULL, \
+           created_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
+           PRIMARY KEY (tenant_id, attempt_id), \
+           UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence));"
+    )
+}
+
 pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
+    let run_state_stand_in = run_state_stand_in_ddl();
     client
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              CREATE SCHEMA {SCHEMA}; \
              CREATE SCHEMA catalog; \
-             CREATE TABLE {SCHEMA}.runs ( \
-               tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-               flow_version int NOT NULL, status text NOT NULL, catalog_id text NOT NULL, \
-               catalog_version int NOT NULL, environment text NOT NULL, \
-               execution_bundle_hash text NOT NULL, input_json jsonb NOT NULL DEFAULT '{{}}', \
-               state_json jsonb, invocation_context jsonb NOT NULL DEFAULT '{{}}', \
-               trigger_source text, event_source_run_id text, event_root_run_id text, \
-               event_depth int, admission_context_version text, platform_revision text, \
-               capture_mode text, \
-               durability_class text NOT NULL DEFAULT 'standard' \
-                 CHECK (durability_class IN ('standard', 'durable')), \
-               release_version int, manifest_digest text, \
-               idempotency_key text, response_deadline_at timestamptz, \
-               run_deadline_at timestamptz, \
-               fail_kind text, fail_node text, fail_reason text, \
-               caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \
-               caller_release_node_id text, caller_outcome_hash text, \
-               caller_released_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now(), \
-               CONSTRAINT runs_release_record_check CHECK ( \
-                 (release_version IS NULL AND manifest_digest IS NULL) \
-                 OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL \
-                     AND release_version > 0 \
-                     AND manifest_digest ~ '^sha256:[0-9a-f]{{64}}$')), \
-               PRIMARY KEY (tenant_id, run_id)); \
-             CREATE TABLE {SCHEMA}.node_runs ( \
-               tenant_id text NOT NULL, run_id text NOT NULL, local_node_id text NOT NULL, \
-               PRIMARY KEY (tenant_id, run_id, local_node_id)); \
-             CREATE TABLE {SCHEMA}.effect_attempts ( \
-               tenant_id text NOT NULL, attempt_id uuid NOT NULL DEFAULT gen_random_uuid(), \
-               run_id text NOT NULL, root_plan_hash text NOT NULL, current_plan_hash text NOT NULL, \
-               frame_id bigint NOT NULL, parent_frame_id bigint, call_site_id text, \
-               local_node_id text NOT NULL, source_artifact_hash text NOT NULL, \
-               requirement_name text NOT NULL, occurrence int NOT NULL, seq int NOT NULL, \
-               generation_fact_kind text NOT NULL, connection_name text, \
-               connection_generation text, credential_generation text, \
-               verified_author_principal text, verified_publisher_principal text, \
-               attempt_started_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
-               attempt_deadline_at timestamptz NOT NULL, attempt_input_ref text NOT NULL, \
-               created_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
-               PRIMARY KEY (tenant_id, attempt_id), \
-               UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence)); \
+             {run_state_stand_in} \
              CREATE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable() \
                RETURNS trigger LANGUAGE plpgsql AS $guard$ \
                BEGIN \

@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use wamn_run_state::{
     EffectWriterErrorKind, ResetProjectionFence,
     queue::{park_sql, select_production_claim_sql},
+    schema_drift::{Need, assert_run_state_stand_in},
 };
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionClaimErrorKind, ProductionClaimResult, ProductionReapResult,
@@ -41,6 +42,29 @@ use common::{
     queue_attempts, quote_literal, ready_run, release_record, seed_exhausted_run, seed_run,
     teardown,
 };
+
+#[test]
+fn production_claim_run_state_stand_in_tracks_schema_of_record() {
+    let stand_in = common::run_state_stand_in_ddl();
+    let fixture_schema = format!("{SCHEMA}.");
+    assert_eq!(stand_in.matches(&fixture_schema).count(), 3);
+    let normalized = stand_in.replace(&fixture_schema, "wamn_run.");
+
+    assert_run_state_stand_in(
+        "production-claim",
+        &normalized,
+        &[
+            ("environment_policies", Need::AbsentByDesign),
+            ("runs", Need::Required),
+            ("invocation_admissions", Need::AbsentByDesign),
+            ("node_runs", Need::Required),
+            ("effect_attempts", Need::Required),
+            ("effect_attempt_dispatches", Need::AbsentByDesign),
+            ("effect_attempt_outcomes", Need::AbsentByDesign),
+            ("operator_run_actions", Need::AbsentByDesign),
+        ],
+    );
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires a disposable PostgreSQL 18 URL in WAMN_PRODUCTION_CLAIM_PG_URL"]
@@ -132,7 +156,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .await?;
     admin
         .execute(
-            &format!("INSERT INTO {SCHEMA}.node_runs VALUES ($1,'pre-effect','old-node')"),
+            &format!(
+                "INSERT INTO {SCHEMA}.node_runs \
+                   (tenant_id,run_id,local_node_id) VALUES ($1,'pre-effect','old-node')"
+            ),
             &[&TENANT],
         )
         .await?;
@@ -573,7 +600,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // every path and every class.
     admin
         .execute(
-            &format!("INSERT INTO {SCHEMA}.node_runs VALUES ($1,'release-record','a-node')"),
+            &format!(
+                "INSERT INTO {SCHEMA}.node_runs \
+                   (tenant_id,run_id,local_node_id) VALUES ($1,'release-record','a-node')"
+            ),
             &[&TENANT],
         )
         .await?;

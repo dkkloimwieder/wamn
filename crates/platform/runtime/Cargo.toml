@@ -46,7 +46,7 @@ wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
-wamn-run-state = { workspace = true, features = ["native"] }
+wamn-run-state = { workspace = true, features = ["native", "test-util"] }
 # wamn-0h0g.20.14: the live effect-authority proof bootstraps the two stable
 # effect-ledger ACL roles from the REAL provisioning builder rather than a copy,
 # so the proof cannot drift from the SQL production applies. Dev-only: the
