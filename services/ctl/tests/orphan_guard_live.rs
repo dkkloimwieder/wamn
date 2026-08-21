@@ -1,9 +1,11 @@
 //! Live-apply gate for the D24 registration-orphan guard (EVT-REG, wamn-rmxa).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a throwaway
-//! Postgres (recipe: docs/archive/build-and-test.md [EVT-REG/D24]); skipped cleanly when
-//! unset. Drives the REAL `wamn-ctl` verb `migrate_catalog::run` against the
-//! REAL storage SQL (deploy/sql/catalog-schema.sql), proving it REFUSES a
+//! Postgres (recipe: docs/archive/build-and-test.md [EVT-REG/D24]). The gate is
+//! ignored in ordinary sweeps and fails loudly when explicitly invoked without
+//! that configuration. It drives the REAL `wamn-ctl` verb
+//! `migrate_catalog::run` against the REAL storage SQL
+//! (deploy/sql/catalog-schema.sql), proving it REFUSES a
 //! catalog that would remove an entity still referenced by an event
 //! registration — naming every orphan across ALL tenants — while mutating
 //! nothing. Once the registrations are deleted, the default command reaches its
@@ -175,11 +177,10 @@ fn migrate_dry_run_args(
 /// SEQUENTIALLY under one test entry (parallel `#[tokio::test]`s would clobber
 /// each other's hermetic reset).
 #[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn orphan_guard_refuses_then_proceeds() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the D24 orphan-guard gate");
-        return;
-    };
+    let url = std::env::var("WAMN_CTL_PG_URL")
+        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let _serialized = SERIALIZE.lock().await;
     let su = connect(&url).await;
     migrate_scenario(&su, &url).await;
@@ -282,11 +283,12 @@ async fn applied_version(su: &Client) -> Option<i32> {
 /// gate's refusal. That is what makes this a sharp mutant kill instead of a test
 /// that passes on the wrong error.
 #[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 TCP database via WAMN_CTL_PG_URL"]
 async fn an_unreadable_registration_set_refuses_the_migration_by_name() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-0h0g.12.119 refusal gate");
-        return;
-    };
+    let url = std::env::var("WAMN_CTL_PG_URL")
+        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 TCP database");
+    let app_url = role_url(&url, RLS_ROLE)
+        .expect("WAMN_CTL_PG_URL must be a TCP URL with an explicit database name");
     let _serialized = SERIALIZE.lock().await;
     let su = connect(&url).await;
     reset(&su).await;
@@ -386,11 +388,6 @@ async fn an_unreadable_registration_set_refuses_the_migration_by_name() {
          the silent state this bead closes"
     );
 
-    let Some(app_url) = role_url(&url, RLS_ROLE) else {
-        eprintln!("WAMN_CTL_PG_URL is not a TCP url — skipping the RLS-filtered arm");
-        drop_rls_reader(&su).await;
-        return;
-    };
     // The REAL verb, driven as the non-bypassing identity, refuses the silence
     // instead of clearing the migration from it.
     //
@@ -432,11 +429,10 @@ async fn an_unreadable_registration_set_refuses_the_migration_by_name() {
 /// precise rather than blunt — a guard that refused every empty read would be
 /// just as wrong, and would break every unregistered project.
 #[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn a_provisioned_but_empty_registration_set_still_passes_the_guard() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-0h0g.12.119 precision control");
-        return;
-    };
+    let url = std::env::var("WAMN_CTL_PG_URL")
+        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let _serialized = SERIALIZE.lock().await;
     let su = connect(&url).await;
     reset(&su).await;

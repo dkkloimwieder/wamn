@@ -887,11 +887,10 @@ async fn generate_rows(
 }
 
 #[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn protected_relations_match_reconciled_postgres() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping protected-relation PostgreSQL gate");
-        return;
-    };
+    let url = std::env::var("WAMN_CTL_PG_URL")
+        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let repository = repository();
     let client = connect(&url).await;
     prepare_scratch_database(&client).await;
