@@ -21,8 +21,14 @@ interface invocation {
     trace: option<trace-context>,
   }
 
-  record admitted { run-id: string }
-  record rejection { status: u16, code: string }
+  record admitted {
+    run-id: string,
+  }
+
+  record rejection {
+    status: u16,
+    code: string,
+  }
   variant begin-result {
     admitted(admitted),
     rejected(rejection),
@@ -42,7 +48,10 @@ interface invocation {
     flow-version: u32,
   }
 
-  record failure { status: u16, error: flow-error }
+  record failure {
+    status: u16,
+    error: flow-error,
+  }
   variant invoke-result {
     responded(response),
     failed(failure),

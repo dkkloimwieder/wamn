@@ -11,6 +11,25 @@ const PLUGIN: &str = include_str!("../src/plugins/wamn_flow_invocation.rs");
 const HOST: &str = include_str!("../../../../services/host/src/host.rs");
 const HOST_MANIFEST: &str = include_str!("../../../../services/host/Cargo.toml");
 
+fn code_lines(wit: &str) -> Vec<&str> {
+    wit.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        .collect()
+}
+
+#[test]
+fn every_flow_invocation_copy_shares_the_contract_code() {
+    let contract = code_lines(CONTRACT);
+    for (name, copy) in [("runtime", HOST_COPY), ("HTTP", HTTP_COPY)] {
+        assert_eq!(
+            code_lines(copy),
+            contract,
+            "{name} flow-invocation WIT copy drifted from the canonical contract"
+        );
+    }
+}
+
 #[test]
 fn host_copy_preserves_the_frozen_interface_surface() {
     for anchor in [

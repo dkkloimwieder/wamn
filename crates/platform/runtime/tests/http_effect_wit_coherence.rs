@@ -3,15 +3,22 @@
 const FLOWRUNNER_PACKAGE: &str =
     include_str!("../../../../components/execution/flowrunner/wit/deps/wamn-runner/package.wit");
 const RUNTIME_PACKAGE: &str = include_str!("../wit/deps/wamn-runner/package.wit");
+const FLOWRUNNER_LOGGING_PACKAGE: &str =
+    include_str!("../../../../components/execution/flowrunner/wit/deps/wasi-logging/package.wit");
+const RUNTIME_LOGGING_PACKAGE: &str = include_str!("../wit/deps/wasi-logging/package.wit");
 
-fn http_effect_interface(package: &str) -> &str {
+fn interface_body<'a>(package: &'a str, header: &str) -> &'a str {
     let (_, interface) = package
-        .split_once("interface http-effect {")
-        .expect("wamn:runner package contains http-effect");
+        .split_once(header)
+        .unwrap_or_else(|| panic!("wamn:runner package contains {header:?}"));
     interface
         .split_once("\n}\n")
         .map(|(interface, _)| interface)
-        .expect("http-effect interface closes")
+        .unwrap_or_else(|| panic!("{header:?} closes"))
+}
+
+fn http_effect_interface(package: &str) -> &str {
+    interface_body(package, "interface http-effect {")
 }
 
 fn invocation_context(interface: &str) -> &str {
@@ -31,6 +38,34 @@ fn runner_packages_keep_the_frozen_package_identity() {
         assert!(!package.contains("run-frames"));
         assert!(!package.contains("run_frames"));
     }
+}
+
+#[test]
+fn plan_supply_interface_stays_identical_in_both_runner_copies() {
+    const HEADER: &str = "interface plan-supply {";
+    assert_eq!(
+        interface_body(FLOWRUNNER_PACKAGE, HEADER),
+        interface_body(RUNTIME_PACKAGE, HEADER),
+        "the two wamn:runner copies drifted in plan-supply"
+    );
+}
+
+#[test]
+fn causation_interface_stays_identical_in_both_runner_copies() {
+    const HEADER: &str = "interface causation {";
+    assert_eq!(
+        interface_body(FLOWRUNNER_PACKAGE, HEADER),
+        interface_body(RUNTIME_PACKAGE, HEADER),
+        "the two wamn:runner copies drifted in causation"
+    );
+}
+
+#[test]
+fn wasi_logging_package_stays_byte_identical_in_both_copies() {
+    assert_eq!(
+        FLOWRUNNER_LOGGING_PACKAGE, RUNTIME_LOGGING_PACKAGE,
+        "the runtime and flowrunner wasi:logging packages drifted"
+    );
 }
 
 #[test]
