@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use url::Url;
 
 const INVENTORY: &str = include_str!("../runtime-inventory.json");
 const ALLOWED_WASH_RUNTIME_FEATURES: [&str; 4] = ["oci", "wasi-config", "wasi-otel", "washlet"];
@@ -463,6 +464,75 @@ fn yaml_i32(source: &str, key: &str) -> Vec<i32> {
         .collect()
 }
 
+fn yaml_blocks<'a>(lines: &'a [&'a str], marker: &str) -> Vec<&'a [&'a str]> {
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == marker)
+        .map(|(index, line)| {
+            let block_indent = line.len() - line.trim_start().len();
+            let block_end = lines[index + 1..]
+                .iter()
+                .position(|line| {
+                    let trimmed = line.trim();
+                    !trimmed.is_empty()
+                        && !trimmed.starts_with('#')
+                        && line.len() - line.trim_start().len() <= block_indent
+                })
+                .map_or(lines.len(), |offset| index + 1 + offset);
+            &lines[index + 1..block_end]
+        })
+        .collect()
+}
+
+fn yaml_scalar(raw: &str) -> &str {
+    let value = raw.split_once(" #").map_or(raw, |(value, _)| value).trim();
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+fn validate_no_component_database_urls(path: &str, source: &str) -> Result<(), String> {
+    let lines: Vec<_> = source.lines().collect();
+    for local_resources in yaml_blocks(&lines, "localResources:") {
+        for environment in yaml_blocks(local_resources, "environment:") {
+            for line in environment {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                let Some((raw_key, raw_value)) = trimmed.split_once(':') else {
+                    continue;
+                };
+                let key = yaml_scalar(raw_key);
+                let value = yaml_scalar(raw_value);
+                if key == "DATABASE_URL" || key.ends_with("_PG_URL") {
+                    return Err(format!(
+                        "{path}: component localResources.environment key `{key}` may not carry a database URL"
+                    ));
+                }
+                if value.is_empty() {
+                    continue;
+                }
+                if let Ok(url) = Url::parse(value)
+                    && matches!(url.scheme(), "postgres" | "postgresql")
+                {
+                    return Err(format!(
+                        "{path}: component localResources.environment key `{key}` may not carry a {} URL",
+                        url.scheme()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_feature_policy(features: &BTreeSet<String>) -> Result<(), String> {
     if features.contains("host-component-plugins") {
         return Err(
@@ -487,25 +557,9 @@ fn validate_feature_policy(features: &BTreeSet<String>) -> Result<(), String> {
 
 fn validate_ip_name_lookup_defaults(path: &str, source: &str) -> Result<(), String> {
     let lines: Vec<_> = source.lines().collect();
-    let mut local_resources_blocks = 0;
+    let local_resources = yaml_blocks(&lines, "localResources:");
 
-    for (index, line) in lines
-        .iter()
-        .enumerate()
-        .filter(|(_, line)| line.trim() == "localResources:")
-    {
-        local_resources_blocks += 1;
-        let block_indent = line.len() - line.trim_start().len();
-        let block_end = lines[index + 1..]
-            .iter()
-            .position(|line| {
-                let trimmed = line.trim();
-                !trimmed.is_empty()
-                    && !trimmed.starts_with('#')
-                    && line.len() - line.trim_start().len() <= block_indent
-            })
-            .map_or(lines.len(), |offset| index + 1 + offset);
-        let block = &lines[index + 1..block_end];
+    for block in &local_resources {
         let child_indent = block
             .iter()
             .filter(|line| {
@@ -540,7 +594,7 @@ fn validate_ip_name_lookup_defaults(path: &str, source: &str) -> Result<(), Stri
         }
     }
 
-    if local_resources_blocks == 0 {
+    if local_resources.is_empty() {
         return Err(format!(
             "{path}: workload must expose localResources.allowedIpNameLookups with default []"
         ));
@@ -557,6 +611,7 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
     }
 
     validate_ip_name_lookup_defaults(path, source)?;
+    validate_no_component_database_urls(path, source)?;
 
     let has_components = source.lines().any(|line| line == "      components:");
     // maxInvocations has no effect when poolSize is absent or zero.
@@ -772,6 +827,101 @@ fn missing_misspelled_or_duplicate_ip_name_lookup_defaults_are_rejected() {
             "{name} mutation failed for an unexpected reason: {error}"
         );
     }
+}
+
+fn component_environment_fixture(entry: &str) -> String {
+    format!(
+        "      components:\n\
+         \x20       - name: mutant\n\
+         \x20         localResources:\n\
+         \x20           allowedIpNameLookups: []\n\
+         \x20           environment:\n\
+         \x20             config:\n\
+         \x20               {entry}\n"
+    )
+}
+
+#[test]
+fn component_environment_pg_url_suffix_mutation_is_rejected() {
+    let mutant = component_environment_fixture("WAMN_READER_PG_URL: not-a-url");
+    let error = validate_workload_policy(
+        "component-pg-url-key-mutant.yaml",
+        &mutant,
+        &WorkloadAbi::P2Components,
+    )
+    .expect_err("a component environment *_PG_URL key must fail closed");
+    assert!(
+        error.contains("key `WAMN_READER_PG_URL`"),
+        "the refusal must name the forbidden key: {error}"
+    );
+}
+
+#[test]
+fn component_environment_database_url_mutation_is_rejected() {
+    let mutant = component_environment_fixture("DATABASE_URL:");
+    let error = validate_workload_policy(
+        "component-database-url-key-mutant.yaml",
+        &mutant,
+        &WorkloadAbi::P2Components,
+    )
+    .expect_err("an empty component environment DATABASE_URL placeholder must fail closed");
+    assert!(
+        error.contains("key `DATABASE_URL`"),
+        "the refusal must name the forbidden key: {error}"
+    );
+}
+
+#[test]
+fn component_environment_postgres_url_value_mutation_is_rejected() {
+    for (name, url) in [
+        ("postgres", "postgres://guest:secret@database/wamn"),
+        (
+            "postgresql",
+            "postgresql://guest:secret@database/wamn?sslmode=require",
+        ),
+    ] {
+        let mutant = component_environment_fixture(&format!("WAMN_ENDPOINT: \"{url}\""));
+        let error = validate_workload_policy(
+            "component-postgres-url-value-mutant.yaml",
+            &mutant,
+            &WorkloadAbi::P2Components,
+        )
+        .expect_err("a postgres URL under a neutral component environment key must fail closed");
+        assert!(
+            error.contains(&format!("may not carry a {name} URL")),
+            "{name} value mutation failed for an unexpected reason: {error}"
+        );
+        assert!(
+            !error.contains("guest:secret"),
+            "the refusal must not echo credential material: {error}"
+        );
+    }
+}
+
+#[test]
+fn database_url_names_and_values_outside_component_environment_are_allowed() {
+    let control = "      env:\n\
+                   \x20       - name: DATABASE_URL\n\
+                   \x20         value: postgres://host:secret@database/wamn\n\
+                   \x20     components:\n\
+                   \x20       - name: control\n\
+                   \x20         localResources:\n\
+                   \x20           allowedIpNameLookups: []\n\
+                   \x20           environment:\n\
+                   \x20             config:\n\
+                   \x20               WAMN_MODE: safe\n\
+                   \x20               WAMN_OPTIONAL:\n\
+                   ---\n\
+                   apiVersion: v1\n\
+                   kind: Secret\n\
+                   stringData:\n\
+                   \x20 DATABASE_URL: postgresql://secret:secret@database/wamn\n";
+    validate_workload_policy(
+        "component-environment-boundary-control.yaml",
+        control,
+        &WorkloadAbi::P2Components,
+    )
+    .expect("host environment and arbitrary Secret fields are outside this guard");
 }
 
 #[test]
