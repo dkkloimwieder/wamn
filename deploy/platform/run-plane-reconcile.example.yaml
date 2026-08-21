@@ -23,11 +23,11 @@
 #
 # PER-PROJECT-ENV (the `.example` convention): the verb reconciles ONE schema
 # (`--schema` + a superuser URL to that project's DB), so run ONE Job per
-# project-env. Before applying, the operator MUST replace the four empty values
-# below: the system-registry admin URL and the exact org, env, and tenant. They
+# project-env. Before applying, the operator MUST replace the five selected values
+# below: the system-registry admin URL and the exact org, project, env, and tenant. They
 # deliberately have no demo defaults: the reconciler must never project policy
-# for a scope nobody selected. This example otherwise wires the runner demo
-# schema on the fixture pod's `wamn` database:
+# for a scope nobody selected. The database URL below must independently name
+# the exact registry-derived, instance-suffixed target:
 #
 #   kubectl -n wamn-system apply -f deploy/platform/run-plane-reconcile.example.yaml
 #   kubectl -n wamn-system logs -f job/run-plane-reconcile-runner-demo
@@ -62,6 +62,7 @@ spec:
               "reconcile-run-plane",
               "--schema", "wamn_runner_demo",
               "--org", "",
+              "--project", "",
               "--env", "",
               "--tenant", "",
             ]
@@ -74,8 +75,8 @@ spec:
             # Superuser URL — CREATE/ALTER/DROP need table ownership, so
             # `wamn_app` cannot run the reconcile. Sourced from the
             # `postgres-fixture-superuser` Secret (secretKeyRef, defined in
-            # deploy/platform/postgres.yaml), NOT inline plaintext; the demo
-            # project envs live in the fixture pod's `wamn` database. k8s
+            # deploy/platform/postgres.yaml), NOT inline plaintext; project
+            # envs live in their exact suffixed databases. k8s
             # expands $(VAR) in a later env value against the earlier
             # secretKeyRef vars, which must precede WAMN_PG_ADMIN_URL.
             - name: PGUSER
@@ -87,7 +88,9 @@ spec:
             - name: PGPORT
               valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
             - name: WAMN_PG_ADMIN_URL
-              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn
+              # REQUIRED: replace all four identity components with the exact
+              # registry-derived physical database target.
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/wamn-db-replace-org--replace-project--replace-env--00000000
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
             limits: { memory: "256Mi" }

@@ -48,13 +48,16 @@
 //! nor executes any plan action.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error as StdError;
 
 use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_control_provision::{DISPATCH_READER_ROLE, sql};
-use wamn_control_registry::DurabilityClass;
+use wamn_control_provision::{
+    DISPATCH_READER_ROLE, project_env_database_name, sql, validate_project_env,
+};
+use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{
     BareSchemaName, EffectWriterRoleObservation, RowPolicyObservation, RowSecurityObservation,
     RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
@@ -144,21 +147,25 @@ const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 10] = [
 
 #[derive(Debug, Args)]
 pub struct ReconcileRunPlaneArgs {
-    /// Administrative Postgres URL to the system registry. The reconciler
-    /// resolves the org-scoped env policy here; admission never connects to
-    /// this database. Env `WAMN_SYSTEM_ADMIN_URL`.
+    /// Administrative Postgres URL to the system registry. The reconciler reads
+    /// the project-env's stored instance suffix here before resolving policy;
+    /// admission never connects to this database. Env `WAMN_SYSTEM_ADMIN_URL`.
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: String,
 
-    /// Administrative Postgres URL to the project database. Observation and
-    /// apply require SUPERUSER or BYPASSRLS so forced-RLS legacy rows cannot
-    /// be skipped. Env `WAMN_PG_ADMIN_URL`.
+    /// Administrative Postgres URL to the exact registry-derived project
+    /// database. Observation and apply require SUPERUSER or BYPASSRLS so
+    /// forced-RLS legacy rows cannot be skipped. Env `WAMN_PG_ADMIN_URL`.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: String,
 
     /// Registry organization owning the environment policy.
     #[arg(long)]
     pub org: String,
+
+    /// Registry project owning the exact provisioned database target.
+    #[arg(long)]
+    pub project: String,
 
     /// Tenant whose project-local policy row is converged.
     #[arg(long)]
@@ -178,22 +185,163 @@ pub struct ReconcileRunPlaneArgs {
     pub dry_run: bool,
 }
 
+/// Stable class for a run-plane target-identity refusal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReconcileTargetErrorKind {
+    /// The trusted triple could not resolve to one recorded registry target.
+    RegistryTarget,
+    /// The connected database did not prove the registry-derived target identity.
+    DatabaseTarget,
+}
+
+/// Prefix shared by every typed run-plane target refusal.
+pub const RECONCILE_TARGET_REFUSAL_PREFIX: &str = "reconcile-run-plane target refusal";
+
+/// Contextual refusal raised before any run-plane or policy mutation.
+#[derive(Debug)]
+pub struct ReconcileTargetError {
+    kind: ReconcileTargetErrorKind,
+    context: String,
+    expected_database: Option<String>,
+    actual_database: Option<String>,
+    source: Option<anyhow::Error>,
+}
+
+impl ReconcileTargetError {
+    fn with_source(
+        kind: ReconcileTargetErrorKind,
+        context: impl Into<String>,
+        source: impl Into<anyhow::Error>,
+    ) -> Self {
+        Self {
+            kind,
+            context: format!("{RECONCILE_TARGET_REFUSAL_PREFIX}: {}", context.into()),
+            expected_database: None,
+            actual_database: None,
+            source: Some(source.into()),
+        }
+    }
+
+    fn mismatch(triple: &Triple, expected_database: String, actual_database: String) -> Self {
+        Self {
+            kind: ReconcileTargetErrorKind::DatabaseTarget,
+            context: format!(
+                "{RECONCILE_TARGET_REFUSAL_PREFIX}: database target mismatch for registry triple {triple}: expected {expected_database:?}, actual {actual_database:?}"
+            ),
+            expected_database: Some(expected_database),
+            actual_database: Some(actual_database),
+            source: None,
+        }
+    }
+
+    /// Return the stable refusal class.
+    pub const fn kind(&self) -> ReconcileTargetErrorKind {
+        self.kind
+    }
+
+    /// Whether the trusted triple failed to resolve in the registry.
+    pub const fn is_registry_target(&self) -> bool {
+        matches!(self.kind, ReconcileTargetErrorKind::RegistryTarget)
+    }
+
+    /// Whether the connected database failed the exact target check.
+    pub const fn is_database_target(&self) -> bool {
+        matches!(self.kind, ReconcileTargetErrorKind::DatabaseTarget)
+    }
+
+    /// The exact registry-derived database name, when target comparison ran.
+    pub fn expected_database(&self) -> Option<&str> {
+        self.expected_database.as_deref()
+    }
+
+    /// The exact database-reported name, when target comparison ran.
+    pub fn actual_database(&self) -> Option<&str> {
+        self.actual_database.as_deref()
+    }
+}
+
+impl std::fmt::Display for ReconcileTargetError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.context)
+    }
+}
+
+impl StdError for ReconcileTargetError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.source
+            .as_ref()
+            .map(|source| source.as_ref() as &(dyn StdError + 'static))
+    }
+}
+
 pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
     anyhow::ensure!(!args.tenant.is_empty(), "--tenant must not be empty");
     let schema = BareSchemaName::new(args.schema.clone())
         .with_context(|| format!("invalid --schema {:?}", args.schema))?;
-    let durability_class = resolve_durability_class(
-        &args.system_database_url,
-        &args.org,
-        &args.env,
-        !args.dry_run,
-    )
-    .await?;
+    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
+    validate_project_env(&args.org, &args.project, &args.env).map_err(|source| {
+        ReconcileTargetError::with_source(
+            ReconcileTargetErrorKind::RegistryTarget,
+            format!("registry target identity {triple} is invalid"),
+            source,
+        )
+    })?;
+    let instance =
+        crate::provision_project_env::read_project_env_instance(&args.system_database_url, &triple)
+            .await
+            .map_err(|source| {
+                ReconcileTargetError::with_source(
+                    ReconcileTargetErrorKind::RegistryTarget,
+                    format!("registry target {triple} has no usable recorded instance"),
+                    source,
+                )
+            })?;
+    let expected_database =
+        project_env_database_name(&args.org, &args.project, &args.env, &instance);
     let (client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
         .await
-        .context("admin connect")?;
+        .map_err(|source| {
+            ReconcileTargetError::with_source(
+                ReconcileTargetErrorKind::DatabaseTarget,
+                format!("database target for registry triple {triple} did not connect"),
+                source,
+            )
+        })?;
     let conn_task = tokio::spawn(conn);
+    let actual_database = client
+        .query_one("SELECT pg_catalog.current_database()::text", &[])
+        .await
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|source| {
+            ReconcileTargetError::with_source(
+                ReconcileTargetErrorKind::DatabaseTarget,
+                format!("database target for registry triple {triple} did not identify itself"),
+                source,
+            )
+        });
+    let actual_database = match actual_database {
+        Ok(actual_database) => actual_database,
+        Err(error) => {
+            drop(client);
+            let _ = conn_task.await;
+            return Err(error.into());
+        }
+    };
+    if actual_database != expected_database {
+        drop(client);
+        let _ = conn_task.await;
+        return Err(
+            ReconcileTargetError::mismatch(&triple, expected_database, actual_database).into(),
+        );
+    }
     let result = async {
+        let durability_class = resolve_durability_class(
+            &args.system_database_url,
+            &args.org,
+            &args.env,
+            !args.dry_run,
+        )
+        .await?;
         let plan = reconcile(&client, &schema, !args.dry_run).await?;
         let policy_changed = converge_environment_policy(
             &client,
@@ -204,12 +352,12 @@ pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
             !args.dry_run,
         )
         .await?;
-        Ok::<_, anyhow::Error>((plan, policy_changed))
+        Ok::<_, anyhow::Error>((plan, policy_changed, durability_class))
     }
     .await;
     drop(client);
     let _ = conn_task.await;
-    let (plan, policy_changed) = result?;
+    let (plan, policy_changed, durability_class) = result?;
 
     print_plan(&plan, args.dry_run);
     if policy_changed {

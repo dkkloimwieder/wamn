@@ -72,8 +72,13 @@
 
 use tokio_postgres::{Client, NoTls};
 
-use wamn_control_provision::{DISPATCH_READER_ROLE, sql as provision_sql};
-use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
+use wamn_control_provision::{
+    DISPATCH_READER_ROLE, project_env_database_name, sql as provision_sql,
+};
+use wamn_ctl::reconcile_run_plane::{
+    self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneArgs, ReconcileTargetError,
+    ReconcileTargetErrorKind,
+};
 use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
@@ -87,6 +92,10 @@ const SCHEMA: &str = "rp_live";
 const DISPATCH_READER_PASSWORD: &str = "dispatch-reader-run-plane-probe";
 const EMPTY_EXECUTION_BUNDLE_HASH: &str =
     "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const CLI_ORG: &str = "acme";
+const CLI_PROJECT: &str = "billing";
+const CLI_ENV: &str = "dev";
+const CLI_INSTANCE: &str = "k3m9x2p7";
 
 async fn seed_system_env_policy(su: &Client, durability_class: &str) {
     su.batch_execute(
@@ -102,6 +111,10 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
            backup_cadence text NOT NULL, wal_retention text NOT NULL, \
            hibernation text NOT NULL, durability_class text NOT NULL, \
            PRIMARY KEY (org, name)); \
+         CREATE TABLE registry.project_envs ( \
+           org text NOT NULL, project text NOT NULL, env text NOT NULL, \
+           secret_name text NOT NULL, secret_namespace text, \
+           instance_suffix text NOT NULL, PRIMARY KEY (org, project, env)); \
          RESET ROLE",
     )
     .await
@@ -115,6 +128,14 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
     )
     .await
     .expect("seed system env policy");
+    su.execute(
+        "INSERT INTO registry.project_envs \
+           (org,project,env,secret_name,instance_suffix) \
+         VALUES ($1,$2,$3,'wamn-db-acme--billing--dev',$4)",
+        &[&CLI_ORG, &CLI_PROJECT, &CLI_ENV, &CLI_INSTANCE],
+    )
+    .await
+    .expect("seed recorded project-env target");
 }
 
 async fn seed_pre_durability_system_env_policy(su: &Client) {
@@ -130,14 +151,137 @@ async fn seed_pre_durability_system_env_policy(su: &Client) {
            cpu text NOT NULL, memory text NOT NULL, image text NOT NULL, \
            backup_cadence text NOT NULL, wal_retention text NOT NULL, \
            hibernation text NOT NULL, PRIMARY KEY (org, name)); \
+         CREATE TABLE registry.project_envs ( \
+           org text NOT NULL, project text NOT NULL, env text NOT NULL, \
+           secret_name text NOT NULL, secret_namespace text, \
+           instance_suffix text NOT NULL, PRIMARY KEY (org, project, env)); \
          INSERT INTO registry.env_policies \
            (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
             backup_cadence,wal_retention,hibernation) \
          VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off'); \
+         INSERT INTO registry.project_envs \
+           (org,project,env,secret_name,instance_suffix) \
+         VALUES ('acme','billing','dev','wamn-db-acme--billing--dev','k3m9x2p7'); \
          RESET ROLE",
     )
     .await
     .expect("create pre-durability system env-policy fixture");
+}
+
+async fn seed_target_guard_registry(su: &Client) {
+    su.batch_execute(
+        "DROP SCHEMA IF EXISTS registry CASCADE; \
+         DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
+           THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$; \
+         CREATE SCHEMA registry AUTHORIZATION wamn_system; \
+         SET ROLE wamn_system; \
+         CREATE TABLE registry.project_envs ( \
+           org text NOT NULL, project text NOT NULL, env text NOT NULL, \
+           secret_name text NOT NULL, secret_namespace text, \
+           instance_suffix text NOT NULL, PRIMARY KEY (org, project, env)); \
+         INSERT INTO registry.project_envs \
+           (org,project,env,secret_name,instance_suffix) VALUES \
+           ('acme','billing','dev','wamn-db-acme--billing--dev','k3m9x2p7'), \
+           ('acme','ledger','dev','wamn-db-acme--ledger--dev','q80zdw41'), \
+           ('acme','billing','prod','wamn-db-acme--billing--prod','p7c4n2v8'); \
+         RESET ROLE; \
+         CREATE TABLE registry.env_policies ( \
+           org text NOT NULL, name text NOT NULL, recovery_domain jsonb NOT NULL, \
+           promotion_rank int NOT NULL, instances int NOT NULL, storage text NOT NULL, \
+           cpu text NOT NULL, memory text NOT NULL, image text NOT NULL, \
+           backup_cadence text NOT NULL, wal_retention text NOT NULL, \
+           hibernation text NOT NULL, PRIMARY KEY (org, name)); \
+         INSERT INTO registry.env_policies \
+           (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
+            backup_cadence,wal_retention,hibernation) VALUES \
+           ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off'), \
+           ('acme','prod','\"own\"',1,1,'1Gi','100m','128Mi','postgres','','','off')",
+    )
+    .await
+    .expect("seed target-identity registry fixture");
+}
+
+async fn target_guard_system_snapshot(su: &Client) -> String {
+    su.query_one(
+        "SELECT jsonb_build_object( \
+           'policy-columns', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array( \
+                       attribute.attname, \
+                       pg_catalog.format_type(attribute.atttypid, attribute.atttypmod), \
+                       attribute.attnotnull, \
+                       pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)) \
+                      ORDER BY attribute.attnum) \
+               FROM pg_catalog.pg_attribute AS attribute \
+               LEFT JOIN pg_catalog.pg_attrdef AS default_row \
+                 ON default_row.adrelid=attribute.attrelid \
+                AND default_row.adnum=attribute.attnum \
+              WHERE attribute.attrelid='registry.env_policies'::regclass \
+                AND attribute.attnum > 0 AND NOT attribute.attisdropped), '[]'::jsonb), \
+           'policy-owner', ( \
+             SELECT pg_catalog.pg_get_userbyid(relation.relowner) \
+               FROM pg_catalog.pg_class AS relation \
+              WHERE relation.oid='registry.env_policies'::regclass), \
+           'policies', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(org,name,recovery_domain,promotion_rank) \
+                              ORDER BY org,name) \
+               FROM registry.env_policies), '[]'::jsonb), \
+           'project-envs', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array( \
+                       org,project,env,secret_name,secret_namespace,instance_suffix) \
+                      ORDER BY org,project,env) \
+               FROM registry.project_envs), '[]'::jsonb), \
+           'roles', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array( \
+                       rolname,rolsuper,rolcreatedb,rolcreaterole,rolcanlogin,rolbypassrls) \
+                      ORDER BY rolname) \
+               FROM pg_catalog.pg_roles WHERE rolname LIKE 'wamn_%'), '[]'::jsonb), \
+           'memberships', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(member.rolname,granted.rolname) \
+                              ORDER BY member.rolname,granted.rolname) \
+               FROM pg_catalog.pg_auth_members AS membership \
+               JOIN pg_catalog.pg_roles AS member ON member.oid=membership.member \
+               JOIN pg_catalog.pg_roles AS granted ON granted.oid=membership.roleid \
+              WHERE member.rolname LIKE 'wamn_%' OR granted.rolname LIKE 'wamn_%'), \
+             '[]'::jsonb))::text",
+        &[],
+    )
+    .await
+    .expect("snapshot registry target and cluster roles")
+    .get(0)
+}
+
+async fn target_guard_database_snapshot(su: &Client) -> String {
+    su.query_one(
+        "SELECT jsonb_build_object( \
+           'database-acl', (SELECT datacl::text FROM pg_catalog.pg_database \
+                             WHERE datname=current_database()), \
+           'schemas', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(namespace.nspname, \
+                                                pg_catalog.pg_get_userbyid(namespace.nspowner)) \
+                              ORDER BY namespace.nspname) \
+               FROM pg_catalog.pg_namespace AS namespace \
+              WHERE namespace.nspname <> 'information_schema' \
+                AND namespace.nspname NOT LIKE 'pg_%'), '[]'::jsonb), \
+           'relations', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(namespace.nspname,relation.relname, \
+                                                relation.relkind,relation.relrowsecurity, \
+                                                relation.relforcerowsecurity) \
+                              ORDER BY namespace.nspname,relation.relname) \
+               FROM pg_catalog.pg_class AS relation \
+               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=relation.relnamespace \
+              WHERE namespace.nspname <> 'information_schema' \
+                AND namespace.nspname NOT LIKE 'pg_%'), '[]'::jsonb), \
+           'policies', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(schemaname,tablename,policyname,roles,cmd,qual,with_check) \
+                              ORDER BY schemaname,tablename,policyname) \
+               FROM pg_catalog.pg_policies \
+              WHERE schemaname <> 'information_schema' \
+                AND schemaname NOT LIKE 'pg_%'), '[]'::jsonb))::text",
+        &[],
+    )
+    .await
+    .expect("snapshot project database target")
+    .get(0)
 }
 
 fn schema() -> BareSchemaName {
@@ -150,6 +294,46 @@ async fn connect(url: &str) -> Client {
         let _ = conn.await;
     });
     client
+}
+
+fn database_url(base_url: &str, database: &str) -> String {
+    let mut url = url::Url::parse(base_url).expect("parse Postgres fixture URL");
+    url.set_path(&format!("/{database}"));
+    url.to_string()
+}
+
+async fn recreate_database(su: &Client, database: &str) {
+    su.batch_execute(&provision_sql::drop_database_named_sql(database))
+        .await
+        .expect("drop stale target database");
+    su.batch_execute(&provision_sql::create_database_named_sql(database))
+        .await
+        .expect("create target database");
+}
+
+async fn drop_database(su: &Client, database: &str) {
+    su.batch_execute(&provision_sql::drop_database_named_sql(database))
+        .await
+        .expect("drop target database");
+}
+
+fn target_guard_args(
+    system_url: &str,
+    target_url: &str,
+    project: &str,
+    environment: &str,
+    dry_run: bool,
+) -> ReconcileRunPlaneArgs {
+    ReconcileRunPlaneArgs {
+        system_database_url: system_url.to_string(),
+        admin_database_url: target_url.to_string(),
+        org: CLI_ORG.to_string(),
+        project: project.to_string(),
+        tenant: "t1".to_string(),
+        env: environment.to_string(),
+        schema: SCHEMA.to_string(),
+        dry_run,
+    }
 }
 
 async fn connect_as(url: &str, role: &str, password: &str) -> Client {
@@ -477,7 +661,13 @@ async fn run_plane_reconcile_live() {
     partition_plane_active_lease_refusal_leg(&su).await;
     partition_plane_unobservable_lease_refusal_leg(&su).await;
     partition_plane_dead_letter_refusal_leg(&su).await;
-    v1_era_drifted_leg(&su, &url).await;
+    let cli_database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
+    recreate_database(&su, &cli_database).await;
+    let cli_url = database_url(&url, &cli_database);
+    let cli_su = connect(&cli_url).await;
+    v1_era_drifted_leg(&cli_su, &su, &url, &cli_url).await;
+    drop(cli_su);
+    drop_database(&su, &cli_database).await;
     queue_missing_leg(&su).await;
     from_zero_leg(&su).await;
     child_run_cutover_leg(&su).await;
@@ -716,8 +906,289 @@ async fn registry_durability_schema_ensure_live() {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the registry durability migration gate");
         return;
     };
-    let su = connect(&url).await;
-    registry_durability_schema_ensure_leg(&su, &url).await;
+    let system_su = connect(&url).await;
+    let database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
+    recreate_database(&system_su, &database).await;
+    let target_url = database_url(&url, &database);
+    let target_su = connect(&target_url).await;
+    registry_durability_schema_ensure_leg(&target_su, &system_su, &url, &target_url).await;
+    drop(target_su);
+    drop_database(&system_su, &database).await;
+}
+
+/// The public CLI shell refuses every registry/database identity disagreement
+/// before either the system-policy carrier or either project database changes.
+#[tokio::test]
+async fn reconcile_target_identity_guard_live() {
+    let Some(system_url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the run-plane target-identity gate");
+        return;
+    };
+    let system_su = connect(&system_url).await;
+    let primary_database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
+    let sibling_project_database =
+        project_env_database_name(CLI_ORG, "ledger", CLI_ENV, "q80zdw41");
+    let sibling_environment_database =
+        project_env_database_name(CLI_ORG, CLI_PROJECT, "prod", "p7c4n2v8");
+    let unrelated_database = "wamn-run-plane-unrelated";
+    for database in [primary_database.as_str(), unrelated_database] {
+        recreate_database(&system_su, database).await;
+    }
+    seed_target_guard_registry(&system_su).await;
+
+    let primary_url = database_url(&system_url, &primary_database);
+    let unrelated_url = database_url(&system_url, unrelated_database);
+    let primary_su = connect(&primary_url).await;
+    let unrelated_su = connect(&unrelated_url).await;
+    unrelated_su
+        .batch_execute(&format!(
+            "CREATE SCHEMA target_spoof; \
+             CREATE FUNCTION target_spoof.current_database() RETURNS name \
+               LANGUAGE sql IMMUTABLE AS $$ SELECT '{primary_database}'::name $$"
+        ))
+        .await
+        .expect("install a search-path identity-spoof function");
+    let mut spoofed_unrelated_url =
+        url::Url::parse(&unrelated_url).expect("parse unrelated database URL");
+    spoofed_unrelated_url
+        .query_pairs_mut()
+        .append_pair("options", "-csearch_path=target_spoof,pg_catalog");
+    let spoofed_unrelated_url = spoofed_unrelated_url.to_string();
+    let system_before = target_guard_system_snapshot(&system_su).await;
+    let primary_before = target_guard_database_snapshot(&primary_su).await;
+    let unrelated_before = target_guard_database_snapshot(&unrelated_su).await;
+
+    let cases = [
+        (
+            "valid triple with unrelated URL",
+            CLI_PROJECT,
+            CLI_ENV,
+            unrelated_url.as_str(),
+            ReconcileTargetErrorKind::DatabaseTarget,
+            Some(primary_database.as_str()),
+            Some(unrelated_database),
+        ),
+        (
+            "search-path spoofed unrelated URL",
+            CLI_PROJECT,
+            CLI_ENV,
+            spoofed_unrelated_url.as_str(),
+            ReconcileTargetErrorKind::DatabaseTarget,
+            Some(primary_database.as_str()),
+            Some(unrelated_database),
+        ),
+        (
+            "registered sibling project with primary URL",
+            "ledger",
+            CLI_ENV,
+            primary_url.as_str(),
+            ReconcileTargetErrorKind::DatabaseTarget,
+            Some(sibling_project_database.as_str()),
+            Some(primary_database.as_str()),
+        ),
+        (
+            "registered sibling environment with primary URL",
+            CLI_PROJECT,
+            "prod",
+            primary_url.as_str(),
+            ReconcileTargetErrorKind::DatabaseTarget,
+            Some(sibling_environment_database.as_str()),
+            Some(primary_database.as_str()),
+        ),
+        (
+            "unrecorded triple",
+            "absent",
+            CLI_ENV,
+            primary_url.as_str(),
+            ReconcileTargetErrorKind::RegistryTarget,
+            None,
+            None,
+        ),
+    ];
+
+    for dry_run in [true, false] {
+        for &(label, project, environment, target_url, kind, expected, actual) in &cases {
+            let error = reconcile_run_plane::run(target_guard_args(
+                &system_url,
+                target_url,
+                project,
+                environment,
+                dry_run,
+            ))
+            .await
+            .unwrap_err();
+            let refusal = error
+                .downcast_ref::<ReconcileTargetError>()
+                .unwrap_or_else(|| {
+                    panic!("{label} returned an untyped refusal with dry_run={dry_run}: {error}")
+                });
+            assert_eq!(refusal.kind(), kind, "{label}, dry_run={dry_run}");
+            assert_eq!(
+                refusal.is_registry_target(),
+                kind == ReconcileTargetErrorKind::RegistryTarget,
+                "{label}, dry_run={dry_run}"
+            );
+            assert_eq!(
+                refusal.is_database_target(),
+                kind == ReconcileTargetErrorKind::DatabaseTarget,
+                "{label}, dry_run={dry_run}"
+            );
+            assert_eq!(
+                refusal.expected_database(),
+                expected,
+                "{label}, dry_run={dry_run}"
+            );
+            assert_eq!(
+                refusal.actual_database(),
+                actual,
+                "{label}, dry_run={dry_run}"
+            );
+            let message = refusal.to_string();
+            assert!(
+                message.starts_with(RECONCILE_TARGET_REFUSAL_PREFIX),
+                "{label} lost the stable target-refusal prefix: {message}"
+            );
+            assert!(
+                !message.contains(&system_url) && !message.contains(target_url),
+                "{label} leaked a database URL: {message}"
+            );
+            if kind == ReconcileTargetErrorKind::RegistryTarget {
+                assert!(
+                    std::error::Error::source(refusal).is_some(),
+                    "{label} discarded the registry lookup source"
+                );
+            }
+            assert_eq!(
+                target_guard_system_snapshot(&system_su).await,
+                system_before,
+                "{label} mutated the pre-carrier registry or cluster roles with dry_run={dry_run}"
+            );
+            assert_eq!(
+                target_guard_database_snapshot(&primary_su).await,
+                primary_before,
+                "{label} mutated the primary project database with dry_run={dry_run}"
+            );
+            assert_eq!(
+                target_guard_database_snapshot(&unrelated_su).await,
+                unrelated_before,
+                "{label} mutated the unrelated database with dry_run={dry_run}"
+            );
+        }
+    }
+
+    assert!(
+        primary_su
+            .query_one("SELECT to_regnamespace($1) IS NULL", &[&SCHEMA])
+            .await
+            .expect("probe refused primary schema")
+            .get::<_, bool>(0),
+        "wrong-target attempts created the run-plane schema"
+    );
+    system_su
+        .batch_execute("ALTER TABLE registry.env_policies OWNER TO wamn_system")
+        .await
+        .expect("make the policy fixture readable for the correct-target path");
+    reset(&primary_su).await;
+
+    let system_before_dry_run = target_guard_system_snapshot(&system_su).await;
+    let primary_before_dry_run = target_guard_database_snapshot(&primary_su).await;
+    reconcile_run_plane::run(target_guard_args(
+        &system_url,
+        &primary_url,
+        CLI_PROJECT,
+        CLI_ENV,
+        true,
+    ))
+    .await
+    .expect("correct target dry-run plans without writing");
+    assert_eq!(
+        target_guard_system_snapshot(&system_su).await,
+        system_before_dry_run,
+        "correct-target dry-run changed the system plane"
+    );
+    assert_eq!(
+        target_guard_database_snapshot(&primary_su).await,
+        primary_before_dry_run,
+        "correct-target dry-run changed the project plane"
+    );
+
+    reconcile_run_plane::run(target_guard_args(
+        &system_url,
+        &primary_url,
+        CLI_PROJECT,
+        CLI_ENV,
+        false,
+    ))
+    .await
+    .expect("correct target apply converges the run plane");
+    assert!(
+        primary_su
+            .query_one(
+                "SELECT to_regclass($1) IS NOT NULL",
+                &[&format!("{SCHEMA}.runs")],
+            )
+            .await
+            .expect("probe converged run plane")
+            .get::<_, bool>(0),
+        "correct target did not converge the run plane"
+    );
+    let projected_row = primary_su
+        .query_one(
+            &format!(
+                "SELECT expected_environment,durability_class \
+                   FROM {SCHEMA}.environment_policies WHERE tenant_id='t1'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read converged project-local policy");
+    let projected = (projected_row.get(0), projected_row.get(1));
+    assert_eq!(projected, (CLI_ENV.to_string(), "standard".to_string()));
+    let carrier_present: bool = system_su
+        .query_one(
+            "SELECT EXISTS (SELECT FROM information_schema.columns \
+              WHERE table_schema='registry' AND table_name='env_policies' \
+                AND column_name='durability_class')",
+            &[],
+        )
+        .await
+        .expect("probe converged system durability carrier")
+        .get(0);
+    assert!(
+        carrier_present,
+        "correct apply did not converge the policy carrier"
+    );
+
+    let system_converged = target_guard_system_snapshot(&system_su).await;
+    let primary_converged = target_guard_database_snapshot(&primary_su).await;
+    reconcile_run_plane::run(target_guard_args(
+        &system_url,
+        &primary_url,
+        CLI_PROJECT,
+        CLI_ENV,
+        false,
+    ))
+    .await
+    .expect("correct target replay remains converged");
+    assert_eq!(
+        target_guard_system_snapshot(&system_su).await,
+        system_converged
+    );
+    assert_eq!(
+        target_guard_database_snapshot(&primary_su).await,
+        primary_converged
+    );
+    assert_eq!(
+        target_guard_database_snapshot(&unrelated_su).await,
+        unrelated_before,
+        "correct-target convergence touched the unrelated database"
+    );
+
+    drop(primary_su);
+    drop(unrelated_su);
+    for database in [primary_database.as_str(), unrelated_database] {
+        drop_database(&system_su, database).await;
+    }
 }
 
 #[tokio::test]
@@ -2948,9 +3419,9 @@ async fn partition_plane_dead_letter_refusal_leg(su: &Client) {
 }
 
 /// Manifestations 1 + 4: the 2jkm.41-sweep drift set plus the outbox era.
-async fn v1_era_drifted_leg(su: &Client, url: &str) {
+async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, target_url: &str) {
     reset(su).await;
-    seed_system_env_policy(su, "durable").await;
+    seed_system_env_policy(system_su, "durable").await;
     let schema = schema();
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
@@ -3042,9 +3513,10 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
 
     // The REAL CLI path (arg validation + connect + apply + print).
     reconcile_run_plane::run(ReconcileRunPlaneArgs {
-        system_database_url: url.to_string(),
-        admin_database_url: url.to_string(),
+        system_database_url: system_url.to_string(),
+        admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
+        project: "billing".to_string(),
         tenant: "t1".to_string(),
         env: "dev".to_string(),
         schema: SCHEMA.to_string(),
@@ -3075,16 +3547,18 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
     .await
     .expect("admit a run under the projected durable policy");
 
-    su.batch_execute(
-        "UPDATE registry.env_policies SET durability_class='standard' \
+    system_su
+        .batch_execute(
+            "UPDATE registry.env_policies SET durability_class='standard' \
           WHERE org='acme' AND name='dev'",
-    )
-    .await
-    .expect("change the system env policy");
+        )
+        .await
+        .expect("change the system env policy");
     reconcile_run_plane::run(ReconcileRunPlaneArgs {
-        system_database_url: url.to_string(),
-        admin_database_url: url.to_string(),
+        system_database_url: system_url.to_string(),
+        admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
+        project: "billing".to_string(),
         tenant: "t1".to_string(),
         env: "dev".to_string(),
         schema: SCHEMA.to_string(),
@@ -3105,9 +3579,10 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
         .get(0);
     assert_eq!(after_dry_run, "durable", "dry-run mutated local policy");
     reconcile_run_plane::run(ReconcileRunPlaneArgs {
-        system_database_url: url.to_string(),
-        admin_database_url: url.to_string(),
+        system_database_url: system_url.to_string(),
+        admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
+        project: "billing".to_string(),
         tenant: "t1".to_string(),
         env: "dev".to_string(),
         schema: SCHEMA.to_string(),
@@ -3493,11 +3968,16 @@ async fn registry_env_policy_catalog_snapshot(su: &Client) -> String {
 /// Missing-column mutant for the shared system-registry schema ensure. The
 /// real reconcile consumer must upgrade before it reads, and a second run must
 /// leave the exact column + CHECK catalog unchanged.
-async fn registry_durability_schema_ensure_leg(su: &Client, url: &str) {
-    reset(su).await;
-    install_current_run_plane(su).await;
-    seed_pre_durability_system_env_policy(su).await;
-    let before: bool = su
+async fn registry_durability_schema_ensure_leg(
+    target_su: &Client,
+    system_su: &Client,
+    system_url: &str,
+    target_url: &str,
+) {
+    reset(target_su).await;
+    install_current_run_plane(target_su).await;
+    seed_pre_durability_system_env_policy(system_su).await;
+    let before: bool = system_su
         .query_one(
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
               WHERE table_schema='registry' AND table_name='env_policies' \
@@ -3510,36 +3990,38 @@ async fn registry_durability_schema_ensure_leg(su: &Client, url: &str) {
     assert!(!before, "missing-column mutant was not installed");
 
     let args = |dry_run| ReconcileRunPlaneArgs {
-        system_database_url: url.to_string(),
-        admin_database_url: url.to_string(),
+        system_database_url: system_url.to_string(),
+        admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
+        project: "billing".to_string(),
         tenant: "t1".to_string(),
         env: "dev".to_string(),
         schema: SCHEMA.to_string(),
         dry_run,
     };
-    let before_dry_run = registry_env_policy_catalog_snapshot(su).await;
+    let before_dry_run = registry_env_policy_catalog_snapshot(system_su).await;
     reconcile_run_plane::run(args(true))
         .await
         .expect("dry-run observes a pre-carrier registry without migrating it");
     assert_eq!(
-        registry_env_policy_catalog_snapshot(su).await,
+        registry_env_policy_catalog_snapshot(system_su).await,
         before_dry_run,
         "pre-carrier registry schema must remain byte-exact under dry-run"
     );
     assert!(
-        !su.query_one(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+        !system_su
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
               WHERE table_schema='registry' AND table_name='env_policies' \
                 AND column_name='durability_class')",
-            &[],
-        )
-        .await
-        .expect("probe carrier after dry-run")
-        .get::<_, bool>(0),
+                &[],
+            )
+            .await
+            .expect("probe carrier after dry-run")
+            .get::<_, bool>(0),
         "dry-run must not add the registry durability carrier"
     );
-    let projected_rows: i64 = su
+    let projected_rows: i64 = target_su
         .query_one(
             &format!("SELECT count(*) FROM {SCHEMA}.environment_policies"),
             &[],
@@ -3555,13 +4037,13 @@ async fn registry_durability_schema_ensure_leg(su: &Client, url: &str) {
     reconcile_run_plane::run(args(false))
         .await
         .expect("reconcile upgrades the system env-policy schema");
-    let first = registry_durability_schema_snapshot(su).await;
+    let first = registry_durability_schema_snapshot(system_su).await;
     assert!(first.contains("\"type\": \"text\""), "{first}");
     assert!(first.contains("\"not-null\": true"), "{first}");
     assert!(first.contains("'standard'::text"), "{first}");
     assert!(first.contains("'durable'::text"), "{first}");
 
-    let projected_row = su
+    let projected_row = target_su
         .query_one(
             &format!(
                 "SELECT expected_environment, durability_class \
@@ -3577,7 +4059,7 @@ async fn registry_durability_schema_ensure_leg(su: &Client, url: &str) {
     reconcile_run_plane::run(args(true))
         .await
         .expect("second registry schema ensure is idempotent");
-    assert_eq!(registry_durability_schema_snapshot(su).await, first);
+    assert_eq!(registry_durability_schema_snapshot(system_su).await, first);
 }
 
 /// Named mutants for the four independent ways an existing env-policy table
