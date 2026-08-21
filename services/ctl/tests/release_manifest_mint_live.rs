@@ -45,6 +45,10 @@ use wamn_ctl::publish_release::{
     MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest, mint_release_manifest,
 };
 
+mod mint_vector {
+    include!("../../../crates/catalog/model/tests/fixtures/release_manifest_mint_vector.rs");
+}
+
 const TENANT: &str = "manifest-mint-tenant";
 const CATALOG_ID: &str = "manifest-mint-catalog";
 const CATALOG_VERSION: i32 = 3;
@@ -533,6 +537,13 @@ async fn the_mint_projects_a_release_and_then_a_candidate_overlay_of_it() {
     let released = mint(&mut admin, &release_request)
         .await
         .expect("the release projects");
+    if std::env::var_os("WAMN_PRINT_RELEASE_MANIFEST_MINT_VECTOR").is_some() {
+        eprintln!(
+            "MINT_VECTOR_BYTES={}\nMINT_VECTOR_DIGEST={}",
+            String::from_utf8(released.canonical_bytes.clone()).expect("manifest bytes are UTF-8"),
+            released.digest.as_str()
+        );
+    }
     let document = &released.manifest;
     assert_eq!(document.format_version, SERVING_MANIFEST_FORMAT_VERSION);
     assert_eq!(
@@ -583,6 +594,17 @@ async fn the_mint_projects_a_release_and_then_a_candidate_overlay_of_it() {
     assert_eq!(attachment.auth_policy, serde_json::json!({"mode": "none"}));
 
     assert_eq!(document.registrations, supplied);
+
+    assert_eq!(
+        released.canonical_bytes.as_slice(),
+        mint_vector::CANONICAL_BYTES,
+        "the real mint no longer produces the reader's pinned identity vector"
+    );
+    assert_eq!(
+        released.digest.as_str(),
+        mint_vector::DIGEST,
+        "the real mint and reader no longer name the shared vector identically"
+    );
 
     // The bytes admit through the one reader entry point, and the digest they
     // derive is the one the mint handed back.

@@ -15,6 +15,10 @@ use wamn_catalog::{
     ServingRelease,
 };
 
+mod mint_vector {
+    include!("fixtures/release_manifest_mint_vector.rs");
+}
+
 const PLAN: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const ART: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const DEF: &str = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -117,12 +121,12 @@ fn sorted_keys(value: &Value) -> Vec<String> {
     keys
 }
 
-/// Drift guard: the exact RFC 8785 preimage bytes of the minimal manifest. Any
-/// silent change to the projection — a field entering or leaving it, a key
-/// spelling moving — fails here with a readable diff. Every already-published
-/// manifest digest moves with these bytes; a pod carrying pre-change bytes then
-/// derives a different name than the one its release was published under, and
-/// republishing the release is the migration story.
+/// Drift guard for the synthetic minimal serializer-shape fixture.
+///
+/// Any silent projection change — a field entering or leaving it, or a key
+/// spelling moving — fails with a readable diff. This hand-built fixture is not
+/// a mintable producer vector; the shared live-mint vector below exclusively
+/// owns producer-reader identity coupling.
 #[test]
 fn manifest_preimage_bytes_are_pinned() {
     assert_eq!(
@@ -142,36 +146,30 @@ fn manifest_preimage_bytes_are_pinned() {
     );
 }
 
-/// The golden vector, reader side: the derived digest of the pinned preimage.
+/// The golden vector, reader side: the real mint's canonical bytes and digest.
 ///
-/// This is the producer-coupling proof. The weld derives identity by calling
-/// [`ServingManifest::digest`], which is
-/// [`wamn_flow::canonical_json_sha256`] and nothing else — and since
-/// `wamn-0h0g.15.63` collapsed the workspace's second RFC 8785 implementation
-/// into that one, there is no other producer left to reach for. So a producer
-/// revision cannot silently fork reader-side identity: it would move this
-/// literal.
-///
-/// The mint (`wamn-0h0g.15.14`) owns the other side and must record exactly this
-/// digest for exactly this manifest. Until the mint exists there is nothing to
-/// compare against, so THIS is the vector it has to match; do not weaken it to a
-/// shape assertion.
+/// The mint-side live test consumes the same fixture and proves that the real
+/// producer emits it. This side admits those bytes through the only reader entry
+/// point and derives their name, preserving producer-coupled identity rather
+/// than pinning a hand-built manifest the producer cannot mint.
 #[test]
 fn the_golden_vector_digest_is_pinned() {
+    let (manifest, digest) = ServingManifest::from_canonical_bytes(mint_vector::CANONICAL_BYTES)
+        .expect("the real mint's vector is admitted by the reader");
     assert_eq!(
-        minimal().digest().as_str(),
-        "sha256:9eccdfb279fef3993b75e41b1f5ad622022d896db78ac5f74a954435daf3795e",
-        "the derived digest of the pinned preimage moved — either the projection \
-         changed (see manifest_preimage_bytes_are_pinned) or the canonicalizer did"
+        digest.as_str(),
+        mint_vector::DIGEST,
+        "the reader no longer names the real mint's canonical vector identically"
     );
+    assert_eq!(manifest.digest(), digest);
     // And the identity is a plain SHA-256 over those bytes with NO framing. This
     // crate's other hashing path deliberately frames its input with a domain
     // tag (`wamn.catalog.identity.v0.1`), so routing the manifest through it —
     // the exact silent fork the producer-coupling rider forbids — would break
     // here rather than quietly renaming every release.
-    let raw = <sha2::Sha256 as sha2::Digest>::digest(minimal().canonical_bytes());
+    let raw = <sha2::Sha256 as sha2::Digest>::digest(mint_vector::CANONICAL_BYTES);
     let hex: String = raw.iter().map(|byte| format!("{byte:02x}")).collect();
-    assert_eq!(minimal().digest().as_str(), format!("sha256:{hex}"));
+    assert_eq!(digest.as_str(), format!("sha256:{hex}"));
 }
 
 /// The digest is taken over the projection, not over the bytes it arrived in:
