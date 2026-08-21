@@ -25,6 +25,7 @@ const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const WITNESS_SCHEMA: &str = "audit_app";
 const WITNESS_ENTITY: &str = "audit_records";
 const AUTHOR_SQL_EXPOSURE: &str = "author SQL, RLS-bounded";
+const AUTHOR_SQL_ROLES: [&str; 2] = ["wamn_app", "wamn_control_author"];
 
 #[derive(Debug, Deserialize)]
 struct OwnershipManifest {
@@ -473,6 +474,10 @@ fn trigger_mode(value: &str) -> &'static str {
     }
 }
 
+fn is_author_sql_role(role: &str) -> bool {
+    AUTHOR_SQL_ROLES.contains(&role)
+}
+
 async fn generate_rows(
     client: &Client,
     declarations: Vec<DeclaredRelation>,
@@ -843,7 +848,7 @@ async fn generate_rows(
             let roles = roles_by_relation
                 .remove(&declaration.relation)
                 .expect("every relation has its physical owner role");
-            let author_reachable = if roles.iter().any(|role| role.role == "wamn_app") {
+            let author_reachable = if roles.iter().any(|role| is_author_sql_role(&role.role)) {
                 let base = bases
                     .get(&declaration.physical_relation)
                     .expect("author-exposed relation base");

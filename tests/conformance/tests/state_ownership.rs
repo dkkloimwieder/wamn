@@ -1589,6 +1589,71 @@ fn durability_policy_projection_ownership_is_explicit_and_bounded() {
 }
 
 #[test]
+fn control_authoring_state_ownership_is_explicit_and_bounded() {
+    let manifest = read_manifest(&repository());
+    let scenario_worker = &manifest.principals["scenario-worker"];
+    assert_eq!(scenario_worker.path, "services/scenario-worker");
+    assert_eq!(scenario_worker.role, "effect");
+
+    let control_store = manifest.objects.iter().filter(|object| {
+        object.ownership.plane == "control"
+            && object.ownership.schema_source == "deploy/sql/control-portable-store.sql"
+    });
+    let writes = control_store
+        .clone()
+        .filter(|object| {
+            object
+                .ownership
+                .writers
+                .iter()
+                .any(|writer| writer == "scenario-worker")
+        })
+        .map(|object| object.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        writes,
+        BTreeSet::from([
+            "catalog.authoring_command_audit",
+            "catalog.execution_bundles",
+            "catalog.flow_drafts",
+            "catalog.validated_flow_drafts",
+            "wamn_run.authoring_test_case_runs",
+            "wamn_run.authoring_test_reports",
+            "wamn_run.authoring_test_run_reservations",
+        ])
+    );
+
+    let reads = control_store
+        .filter(|object| {
+            object
+                .ownership
+                .readers
+                .iter()
+                .any(|reader| reader == "scenario-worker")
+        })
+        .map(|object| object.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        reads,
+        BTreeSet::from([
+            "catalog.authoring_command_audit",
+            "catalog.catalog_heads",
+            "catalog.connection_requirements",
+            "catalog.draft_safe_connection_grants",
+            "catalog.execution_bundles",
+            "catalog.flow_artifacts",
+            "catalog.flow_drafts",
+            "catalog.release_flows",
+            "catalog.release_manifests",
+            "catalog.validated_flow_drafts",
+            "wamn_run.authoring_test_case_runs",
+            "wamn_run.authoring_test_reports",
+            "wamn_run.authoring_test_run_reservations",
+        ])
+    );
+}
+
+#[test]
 fn host_owned_production_claim_authority_is_explicit_and_bounded() {
     let manifest = read_manifest(&repository());
     let principal = &manifest.principals["execution-host"];

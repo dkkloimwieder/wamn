@@ -6,6 +6,7 @@ use serde::Deserialize;
 const OWNERS_PATH: &str = "architecture/state-owners.json";
 const TABLE_PATH: &str = "architecture/protected-writes.json";
 const AUTHOR_SQL_EXPOSURE: &str = "author SQL, RLS-bounded";
+const AUTHOR_SQL_ROLES: [&str; 2] = ["wamn_app", "wamn_control_author"];
 const NODE_ERROR_CHECK: &str = "constraint:node_runs_error_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text]))";
 
 #[derive(Debug, Deserialize)]
@@ -139,6 +140,10 @@ fn is_ops_artifact(schema_source: &str, scopes: &BTreeMap<String, String>) -> bo
         == "production-control-database-ops"
 }
 
+fn is_author_sql_role(role: &str) -> bool {
+    AUTHOR_SQL_ROLES.contains(&role)
+}
+
 #[test]
 fn protected_relation_table_matches_declared_ownership() {
     let repository = repository();
@@ -270,7 +275,7 @@ fn protected_relation_table_matches_declared_ownership() {
             "{} has unknown author exposure",
             row.relation
         );
-        let author_role_present = row.roles.iter().any(|role| role.role == "wamn_app");
+        let author_role_present = row.roles.iter().any(|role| is_author_sql_role(&role.role));
         assert_eq!(
             author_writable, author_role_present,
             "{} author exposure does not match its grant row",
@@ -319,4 +324,43 @@ fn protected_relation_table_matches_declared_ownership() {
         ])
     );
     assert_eq!(actual_relations, declared.into_keys().collect());
+}
+
+#[test]
+fn control_author_sql_exposure_is_exact() {
+    let table: ProtectedRelationTable = read_json(&repository().join(TABLE_PATH));
+    let actual = table
+        .rows
+        .iter()
+        .filter(|row| {
+            row.roles
+                .iter()
+                .any(|role| role.role == "wamn_control_author")
+        })
+        .map(|row| {
+            assert_eq!(
+                row.scope, "production-control-database-portable-store",
+                "{} gives the control author mutation authority outside its database",
+                row.relation
+            );
+            assert_eq!(
+                row.author_reachable, AUTHOR_SQL_EXPOSURE,
+                "{} hides live control-author SQL authority",
+                row.relation
+            );
+            row.relation.as_str()
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        actual,
+        BTreeSet::from([
+            "catalog.authoring_command_audit",
+            "catalog.execution_bundles",
+            "catalog.flow_drafts",
+            "catalog.validated_flow_drafts",
+            "wamn_run.authoring_test_case_runs",
+            "wamn_run.authoring_test_reports",
+            "wamn_run.authoring_test_run_reservations",
+        ])
+    );
 }
