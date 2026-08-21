@@ -43,41 +43,6 @@ pub fn update_run_completed() -> Sql {
     Sql::new(update_run_completed_sql(), 2)
 }
 
-/// Idempotent run open (caller-minted run id): a fresh run records its trigger
-/// input; a duplicate open is a no-op. `$1` run_id, `$2` flow_id, `$3`
-/// flow_version, `$4` status,
-/// `$5` trigger_source (NULL for direct drivers), `$6` input_json (text the
-/// server parses into jsonb).
-pub fn insert_run_sql() -> String {
-    "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, trigger_source, input_json) \
-     VALUES (current_setting('app.tenant', true), $1, $2, $3, $4, $5, $6) \
-     ON CONFLICT (tenant_id, run_id) DO NOTHING"
-        .to_string()
-}
-
-/// The D15 write-ahead with a SERVER-minted run id: the audit row exists
-/// before any node runs, and the caller learns the id from `RETURNING`.
-/// `$1` flow_id, `$2` flow_version, `$3` status, `$4` trigger_source,
-/// `$5` input_json.
-pub fn insert_run_returning_id_sql() -> String {
-    "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, trigger_source, input_json) \
-     VALUES (current_setting('app.tenant', true), gen_random_uuid()::text, $1, $2, $3, $4, $5) \
-     RETURNING run_id"
-        .to_string()
-}
-
-/// Promote a dispatched run to running (the write-ahead consumed exactly
-/// once — the guard keeps a replayed promotion from resurrecting a terminal
-/// run). `$1` run_id.
-pub fn update_run_running_sql() -> String {
-    format!(
-        "UPDATE runs SET status = '{running}', updated_at = now() \
-         WHERE run_id = $1 AND status = '{dispatched}'",
-        running = RunStatus::Running.as_sql(),
-        dispatched = RunStatus::Dispatched.as_sql(),
-    )
-}
-
 /// Mark the run completed and record its result payload. Deliberately
 /// UNCONDITIONAL on the prior status: a genuine completion overrides a
 /// janitor's premature infrastructure-failure verdict (the fqg.2 reverse-race
@@ -87,25 +52,6 @@ pub fn update_run_completed_sql() -> String {
         "UPDATE runs SET status = '{completed}', result_json = $2, updated_at = now() \
          WHERE run_id = $1",
         completed = RunStatus::Completed.as_sql(),
-    )
-}
-
-/// Record the run's failure verdict. `$1` run_id, `$2` fail_kind, `$3`
-/// fail_node, `$4` fail_reason.
-///
-/// NOT GRANTED TO `wamn_app` — THIS BUILDER HAS NO CALLER (wamn-0h0g.12.40).
-/// It is the only writer of `fail_node` and `fail_reason`, so when the ratified
-/// `runs` UPDATE set was derived from the statements the application role
-/// actually executes, those two columns fell out of it. Wiring this statement
-/// up as `wamn_app` WILL fail with SQLSTATE 42501 until
-/// `deploy/sql/run-state.sql` and `RUNS_APP_UPDATE_COLUMNS` in
-/// `wamn_schema_control::run_plane` both name them. Adding a column to one
-/// without the other makes the reconcile plan diverge, so change them together.
-pub fn update_run_failed_sql() -> String {
-    format!(
-        "UPDATE runs SET status = '{failed}', fail_kind = $2, fail_node = $3, fail_reason = $4, \
-         updated_at = now() WHERE run_id = $1",
-        failed = RunStatus::Failed.as_sql(),
     )
 }
 
@@ -193,21 +139,6 @@ mod tests {
         assert_eq!(update_run_completed().arity(), 2);
     }
 
-    /// The builders stay in the house shape: unqualified tables, claim-scoped
-    /// tenant, `$n` values only (no interpolated data), model-tied literals.
-    #[test]
-    fn builders_are_claim_scoped_and_parameterized() {
-        for sql in [insert_run_sql(), insert_run_returning_id_sql()] {
-            assert!(sql.contains("current_setting('app.tenant', true)"), "{sql}");
-            assert!(
-                !sql.contains("wamn_run."),
-                "schema must be unqualified: {sql}"
-            );
-        }
-        assert!(insert_run_sql().contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
-        assert!(insert_run_returning_id_sql().contains("RETURNING run_id"));
-    }
-
     #[test]
     fn dispatch_read_projects_flow_and_input() {
         // The claim path (fqg.4) resolves the flow + input from the recorded
@@ -250,15 +181,12 @@ mod tests {
     }
 
     #[test]
-    fn status_literals_come_from_the_model() {
-        assert!(update_run_running_sql().contains("SET status = 'running'"));
-        assert!(update_run_running_sql().contains("AND status = 'dispatched'"));
+    fn status_literal_comes_from_the_model() {
         assert!(update_run_completed_sql().contains("SET status = 'completed'"));
         assert!(
             !update_run_completed_sql().contains("AND status"),
             "completion is deliberately unconditional (fqg.2 reverse-race)"
         );
-        assert!(update_run_failed_sql().contains("SET status = 'failed'"));
     }
 
     /// Every column the builders write exists in the canonical DDL — the
@@ -278,8 +206,6 @@ mod tests {
             "result_json",
             "state_json",
             "fail_kind",
-            "fail_node",
-            "fail_reason",
             "updated_at",
         ] {
             assert!(ddl.contains(col), "runs column {col} missing from DDL");

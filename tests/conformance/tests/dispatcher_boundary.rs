@@ -298,6 +298,34 @@ fn guest_safe_run_state_surface_has_no_raw_projection_mutation() {
 }
 
 #[test]
+fn retired_uncalled_run_builders_stay_deleted_while_park_remains() {
+    let run_state_sql = read(RUN_STATE_SQL_SOURCE);
+    for retired in [
+        "pub fn insert_run_sql(",
+        "pub fn insert_run_returning_id_sql(",
+        "pub fn update_run_running_sql(",
+        "pub fn update_run_failed_sql(",
+    ] {
+        assert!(
+            !run_state_sql.contains(retired),
+            "run-state SQL restored retired builder {retired:?}"
+        );
+    }
+    for retired_column in ["fail_node", "fail_reason"] {
+        assert!(
+            !run_state_sql.contains(retired_column),
+            "run-state SQL restored retired failure surface {retired_column:?}"
+        );
+    }
+
+    let queue_sql = read(RUN_STATE_QUEUE_SQL_SOURCE);
+    assert!(
+        queue_sql.contains("pub fn park_sql() -> String"),
+        "run-state queue must retain park_sql"
+    );
+}
+
+#[test]
 fn waker_alone_holds_scaling_authority_without_project_database_authority() {
     let dispatcher_deployment = read(DISPATCHER_DEPLOYMENT);
     let waker_deployment = read(WAKER_DEPLOYMENT);
