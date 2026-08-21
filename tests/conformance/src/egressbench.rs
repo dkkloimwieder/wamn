@@ -1099,6 +1099,43 @@ mod tests {
         );
     }
 
+    /// Drift protection for a linked-fork invariant, not a claim that wamn
+    /// currently installs a host-owned port table. The refusal must remain
+    /// after the explicit sentinel grant so listing a port cannot override host
+    /// ownership, and it must return directly rather than pass through the
+    /// count-mode softening used for ordinary egress policy.
+    #[test]
+    fn host_owned_port_refusal_stays_after_the_allowlist_and_before_success() {
+        let policy = fork_source("src/sockets/policy.rs");
+        let host_enable = policy
+            .find("if !self.host_loopback_enabled {")
+            .expect("sentinel resolution must require the host-level enable");
+        let listed_port = policy
+            .find("if !check_allowed_loopback(&self.host_loopback, addr, protocol) {")
+            .expect("sentinel resolution must require the workload's per-port grant");
+        let rewrite = policy
+            .find("let target = internal_names::rewrite_sentinel(addr);")
+            .expect("the sentinel must resolve to the machine's real loopback");
+        let host_owned = policy
+            .find("&& table.is_published(protocol, target)")
+            .expect("sentinel resolution must consult the host-owned port table");
+        let direct_refusal = policy
+            .find("return Err(DenyReason::HostOwnedPort);")
+            .expect("a host-owned port must refuse directly, even in Count mode");
+        let success = policy
+            .find("Ok((target, Plane::Host))")
+            .expect("the granted non-host-owned sentinel path must reach the host plane");
+
+        assert!(
+            host_enable < listed_port
+                && listed_port < rewrite
+                && rewrite < host_owned
+                && host_owned < direct_refusal
+                && direct_refusal < success,
+            "sentinel resolution must check host enable, per-port grant, host ownership, and only then succeed"
+        );
+    }
+
     /// A listed entry grants one port over one transport — not loopback.
     ///
     /// Without this, `allowedHostLoopbackPorts` could degrade into a boolean and
