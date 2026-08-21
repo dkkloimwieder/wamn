@@ -45,10 +45,16 @@ fn edge(from: &str, to: &str) -> WiringEdge {
 
 /// An edge leaving `from` on a named port, with no ordinal.
 fn edge_on(from: &str, port: &str, to: &str) -> WiringEdge {
+    edge_to(from, port, to, "input")
+}
+
+/// An edge selecting one named source output and target input.
+fn edge_to(from: &str, from_port: &str, to: &str, to_port: &str) -> WiringEdge {
     WiringEdge {
         from: from.to_string(),
-        from_port: port.to_string(),
+        from_port: from_port.to_string(),
         to: to.to_string(),
+        to_port: to_port.to_string(),
         ordinal: None,
     }
 }
@@ -178,6 +184,30 @@ fn linear_walk_completes_in_order() {
     assert_eq!(t.invoked[0].payload, json!({ "seen": [] })); // the entry gets the delivery payload
     assert_eq!(t.invoked[1].payload, json!({ "at": "a" })); // b sees a's output
     assert_eq!(t.invoked[2].payload, json!({ "at": "b" })); // c sees b's output
+}
+
+#[test]
+fn destination_input_port_reaches_each_invocation_and_survives_retry() {
+    let w = wiring(
+        "source",
+        vec![node("source", "emit"), node("target", "consume")],
+        vec![edge_to("source", "record", "target", "batch")],
+    );
+    let target_attempt = Cell::new(0);
+    let trace = run(&w, "r1", json!({}), |call| {
+        if call.node == "source" {
+            return NodeOutcome::ok_on(json!({"records": []}), "record");
+        }
+        if target_attempt.replace(target_attempt.get() + 1) == 0 {
+            NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("again")))
+        } else {
+            NodeOutcome::ok(json!({}))
+        }
+    });
+
+    assert_eq!(trace.invoked[0].input_port, None);
+    assert_eq!(trace.invoked[1].input_port.as_deref(), Some("batch"));
+    assert_eq!(trace.invoked[2].input_port.as_deref(), Some("batch"));
 }
 
 #[test]

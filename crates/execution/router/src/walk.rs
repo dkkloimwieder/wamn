@@ -96,6 +96,9 @@ pub struct Failure {
 #[derive(Debug, Clone, PartialEq)]
 struct Token {
     node: String,
+    /// `None` only for the wiring entry; routed tokens carry the edge's resolved
+    /// target operation input.
+    input_port: Option<String>,
     payload: Value,
 }
 
@@ -103,6 +106,7 @@ struct Token {
 #[derive(Debug, Clone, PartialEq)]
 struct Active {
     node: String,
+    input_port: Option<String>,
     payload: Value,
     /// 0 on first execution, incremented per retry.
     attempt: u32,
@@ -202,6 +206,9 @@ pub enum Step {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeCall {
     pub node: String,
+    /// The target operation input selected by the incoming edge. `None` only
+    /// for the wiring entry, which has no incoming edge.
+    pub input_port: Option<String>,
     /// The component to acquire a pooled instance of.
     pub component: String,
     /// The operation to invoke on that component.
@@ -314,6 +321,7 @@ impl Wiring {
         let mut frontier = VecDeque::new();
         frontier.push_back(Token {
             node: self.entry().to_string(),
+            input_port: None,
             payload: delivery.payload,
         });
         Walk {
@@ -347,6 +355,7 @@ impl Wiring {
                 Some(tok) => {
                     walk.current = Some(Active {
                         node: tok.node,
+                        input_port: tok.input_port,
                         payload: tok.payload,
                         attempt: 0,
                         retry_until_ms: 0,
@@ -417,6 +426,7 @@ impl Wiring {
         let occurrence = walk.visits.get(&a.node).copied().unwrap_or(0);
         NodeCall {
             node: a.node.clone(),
+            input_port: a.input_port.clone(),
             component: node.component.clone(),
             operation: node.operation.clone(),
             config: node.config.clone(),
@@ -577,6 +587,7 @@ impl Wiring {
         for edge in self.successors(node, port) {
             walk.frontier.push_back(Token {
                 node: edge.to.clone(),
+                input_port: Some(edge.to_port.clone()),
                 payload: payload.clone(),
             });
         }

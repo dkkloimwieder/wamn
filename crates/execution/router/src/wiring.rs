@@ -35,12 +35,15 @@ pub struct WiringNode {
     pub terminal: Option<Terminal>,
 }
 
-/// One directed edge, leaving `from` on `from_port` and arriving at `to`.
+/// One directed edge, leaving `from` on `from_port` and arriving at `to`'s
+/// resolved `to_port`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WiringEdge {
     pub from: String,
     pub from_port: String,
     pub to: String,
+    /// The target operation input selected by this edge.
+    pub to_port: String,
     /// Fan-out order within the `(from, from_port)` group. Absent sorts as 0.
     pub ordinal: Option<u32>,
 }

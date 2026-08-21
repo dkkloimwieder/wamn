@@ -28,6 +28,7 @@ fn edge(from: &str, port: &str, to: &str) -> WiringEdge {
         from: from.to_string(),
         from_port: port.to_string(),
         to: to.to_string(),
+        to_port: "input".to_string(),
         ordinal: None,
     }
 }

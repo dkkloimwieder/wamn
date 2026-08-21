@@ -11,6 +11,7 @@ pub mod plan_artifact;
 pub mod plugins;
 pub mod release_manifest;
 pub mod wiring_doorbell;
+pub mod wiring_lowering;
 
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
