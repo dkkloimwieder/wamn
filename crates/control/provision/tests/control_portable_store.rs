@@ -321,6 +321,13 @@ fn control_author_authority_is_the_exact_ratified_class() {
     // author-accessed relation — exactly the granted relations — carries a
     // RESTRICTIVE policy resolving through `session_user`, so rewriting
     // `app.tenant` can only narrow a session, never widen it.
+    let tenant_policies = stripped
+        .split("DO $policies$")
+        .nth(1)
+        .expect("the tenant policy block exists")
+        .split("$policies$;")
+        .next()
+        .expect("the tenant policy block closes");
     let author_policies = stripped
         .split("DO $author_policies$")
         .nth(1)
@@ -328,6 +335,22 @@ fn control_author_authority_is_the_exact_ratified_class() {
         .split("$author_policies$;")
         .next()
         .expect("the author policy block closes");
+    for (name, policy_block) in [("tenant", tenant_policies), ("author", author_policies)] {
+        let drop = policy_block
+            .find("DROP POLICY IF EXISTS %I ON %s")
+            .unwrap_or_else(|| panic!("the {name} policy replay does not replace drift"));
+        let create = policy_block
+            .find("CREATE POLICY %I ON %s")
+            .unwrap_or_else(|| panic!("the {name} policy replay does not create its policy"));
+        assert!(
+            drop < create,
+            "the {name} policy is not replaced atomically"
+        );
+        assert!(
+            !policy_block.contains("pg_policy"),
+            "the {name} policy replay reimplemented catalog equivalence"
+        );
+    }
     assert!(author_policies.contains("AS RESTRICTIVE TO wamn_control_author"));
     assert!(author_policies.contains("USING (tenant_id = wamn_authority.session_author_tenant())"));
     assert!(
@@ -788,10 +811,59 @@ fn control_author_two_tenant_authority_holds_on_postgres() {
     );
     install.push_str(&ddl());
     install.push('\n');
-    // The artifact is its own reconciliation path: applying it twice must leave
-    // the same authority, not a widened one.
+    // Named replay mutants: same-name policy objects with wrong command,
+    // permissiveness, roles, USING, and WITH CHECK facts. The second apply must
+    // replace both, not confuse name equality with policy equality.
+    install.push_str(
+        r#"
+DROP POLICY flow_drafts_tenant ON catalog.flow_drafts;
+CREATE POLICY flow_drafts_tenant ON catalog.flow_drafts
+  AS RESTRICTIVE FOR SELECT TO wamn_portable_probe USING (false);
+DROP POLICY flow_drafts_author_tenant ON catalog.flow_drafts;
+CREATE POLICY flow_drafts_author_tenant ON catalog.flow_drafts
+  AS PERMISSIVE FOR SELECT TO PUBLIC USING (true);
+"#,
+    );
     install.push_str(&ddl());
-    install.push('\n');
+    install.push_str(
+        r#"
+DO $policy_replay$ BEGIN
+  ASSERT COALESCE((
+    SELECT p.polcmd = '*'
+       AND p.polpermissive
+       AND ARRAY(
+             SELECT CASE role_oid WHEN 0 THEN 'PUBLIC'::text
+                    ELSE pg_get_userbyid(role_oid)::text END
+               FROM unnest(p.polroles) role_oid ORDER BY 1
+           ) = ARRAY['PUBLIC']::text[]
+       AND pg_get_expr(p.polqual, p.polrelid, true) =
+           'tenant_id = NULLIF(current_setting(''app.tenant''::text, true), ''''::text)'
+       AND pg_get_expr(p.polwithcheck, p.polrelid, true) =
+           'tenant_id = NULLIF(current_setting(''app.tenant''::text, true), ''''::text)'
+      FROM pg_policy p
+     WHERE p.polrelid = 'catalog.flow_drafts'::regclass
+       AND p.polname = 'flow_drafts_tenant'
+  ), false), 'same-name tenant policy drift survived replay';
+
+  ASSERT COALESCE((
+    SELECT p.polcmd = '*'
+       AND NOT p.polpermissive
+       AND ARRAY(
+             SELECT CASE role_oid WHEN 0 THEN 'PUBLIC'::text
+                    ELSE pg_get_userbyid(role_oid)::text END
+               FROM unnest(p.polroles) role_oid ORDER BY 1
+           ) = ARRAY['wamn_control_author']::text[]
+       AND pg_get_expr(p.polqual, p.polrelid, true) =
+           'tenant_id = wamn_authority.session_author_tenant()'
+       AND pg_get_expr(p.polwithcheck, p.polrelid, true) =
+           'tenant_id = wamn_authority.session_author_tenant()'
+      FROM pg_policy p
+     WHERE p.polrelid = 'catalog.flow_drafts'::regclass
+       AND p.polname = 'flow_drafts_author_tenant'
+  ), false), 'same-name author policy drift survived replay';
+END $policy_replay$;
+"#,
+    );
     install.push_str(&format!(
         r#"
 INSERT INTO wamn_authority.author_login_tenants

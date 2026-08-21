@@ -549,6 +549,7 @@ REVOKE ALL ON FUNCTION catalog.register_deployment_attestation(
 DO $policies$
 DECLARE
     relation_name text;
+    policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.catalogs', 'catalog.flow_artifacts',
@@ -565,18 +566,17 @@ BEGIN
     LOOP
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', relation_name);
-        IF NOT EXISTS (
-            SELECT 1
-            FROM pg_policy
-            WHERE polrelid = relation_name::regclass
-              AND polname = replace(split_part(relation_name, '.', 2), '.', '_') || '_tenant'
-        ) THEN
-            EXECUTE format(
-                'CREATE POLICY %I ON %s USING (tenant_id = NULLIF(current_setting(''app.tenant'', true), '''')) WITH CHECK (tenant_id = NULLIF(current_setting(''app.tenant'', true), ''''))',
-                split_part(relation_name, '.', 2) || '_tenant',
-                relation_name
-            );
-        END IF;
+        policy_name := split_part(relation_name, '.', 2) || '_tenant';
+        EXECUTE format(
+            'DROP POLICY IF EXISTS %I ON %s',
+            policy_name,
+            relation_name
+        );
+        EXECUTE format(
+            'CREATE POLICY %I ON %s USING (tenant_id = NULLIF(current_setting(''app.tenant'', true), '''')) WITH CHECK (tenant_id = NULLIF(current_setting(''app.tenant'', true), ''''))',
+            policy_name,
+            relation_name
+        );
     END LOOP;
 END
 $policies$;
@@ -1017,18 +1017,16 @@ BEGIN
     ]
     LOOP
         policy_name := split_part(relation_name, '.', 2) || '_author_tenant';
-        IF NOT EXISTS (
-            SELECT 1
-            FROM pg_policy
-            WHERE polrelid = relation_name::regclass
-              AND polname = policy_name
-        ) THEN
-            EXECUTE format(
-                'CREATE POLICY %I ON %s AS RESTRICTIVE TO wamn_control_author USING (tenant_id = wamn_authority.session_author_tenant()) WITH CHECK (tenant_id = wamn_authority.session_author_tenant())',
-                policy_name,
-                relation_name
-            );
-        END IF;
+        EXECUTE format(
+            'DROP POLICY IF EXISTS %I ON %s',
+            policy_name,
+            relation_name
+        );
+        EXECUTE format(
+            'CREATE POLICY %I ON %s AS RESTRICTIVE TO wamn_control_author USING (tenant_id = wamn_authority.session_author_tenant()) WITH CHECK (tenant_id = wamn_authority.session_author_tenant())',
+            policy_name,
+            relation_name
+        );
     END LOOP;
 END
 $author_policies$;
