@@ -126,7 +126,12 @@ pub async fn run(args: RestoreProjectEnvArgs) -> anyhow::Result<()> {
     let dump_dir_str = dump_dir.to_string_lossy().to_string();
 
     if args.in_place {
-        restore_in_place(&args, &triple, admin_url, &dump_dir_str).await
+        let system_url = args.system_database_url.as_deref().context(
+            "--in-place requires --system-database-url to resolve the stored instance suffix",
+        )?;
+        let instance =
+            crate::provision_project_env::read_project_env_instance(system_url, &triple).await?;
+        restore_in_place(&args, &triple, &instance, admin_url, &dump_dir_str).await
     } else {
         restore_into_scratch(&args, &triple, admin_url, &dump_dir_str).await
     }
@@ -296,6 +301,7 @@ fn in_place_confirmed(confirm: bool) -> bool {
 async fn restore_in_place(
     args: &RestoreProjectEnvArgs,
     triple: &Triple,
+    instance: &str,
     admin_url: &str,
     dump_dir: &str,
 ) -> anyhow::Result<()> {
@@ -303,7 +309,8 @@ async fn restore_in_place(
         in_place_confirmed(args.confirm),
         "--in-place drops and replaces the LIVE {triple} database — re-run with --confirm to proceed"
     );
-    let db_name = project_env_database_name(&args.org, &args.project, triple.env.as_str());
+    let db_name =
+        project_env_database_name(&args.org, &args.project, triple.env.as_str(), instance);
     let conninfo = swap_db(admin_url, &db_name);
     run_pg_restore(&conninfo, dump_dir, true)?;
     println!("restored {triple} in place over the live database {db_name:?} (--clean)");

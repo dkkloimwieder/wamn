@@ -105,14 +105,13 @@ pub struct ProvisionProjectEnvArgs {
     pub env: Option<String>,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the org's
-    /// placement (pick the target cluster) and record the project + project-env.
-    /// Env `WAMN_SYSTEM_ADMIN_URL`. Omit (and pass `--cluster`) to render only.
+    /// placement, read-or-mint the stored instance suffix, and record the project
+    /// + project-env. Env `WAMN_SYSTEM_ADMIN_URL`.
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
     /// Override the target CNPG `Cluster` name. When omitted, it is read from the
-    /// org's placement in the registry. Required if `--system-database-url` is not
-    /// given (render-only mode).
+    /// org's placement in the registry.
     #[arg(long)]
     pub cluster: Option<String>,
 
@@ -411,11 +410,24 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     let triple = Triple::new(org, project, env);
 
     // Validate the project id + the assembled `wamn-<org>--<project>--<env>`
-    // namespace and `wamn-db-<org>--<project>--<env>` database name lengths
+    // namespace and `wamn-db-<org>--<project>--<env>--<instance>` database lengths
     // before any effect. This is the one point that mints an environment's
     // names, so a triple that breaches a bound is refused here — never shortened.
     validate_project_env(org, project, env)
         .map_err(|e| anyhow::anyhow!("project-env names: {e}"))?;
+
+    let system_url = args.system_database_url.as_deref().context(
+        "--system-database-url is required to read or mint the project-env instance suffix",
+    )?;
+    let secret_name = project_env_secret_name(org, project, env);
+    let instance = record_project_env(
+        system_url,
+        &triple,
+        &secret_name,
+        args.secret_namespace.as_deref(),
+        &mint_instance_suffix()?,
+    )
+    .await?;
 
     // Pick the target cluster: an explicit `--cluster` wins (render-only / manual);
     // otherwise derive it from the org's placement + the env policy (`cluster_of`).
@@ -429,7 +441,7 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         }
     };
 
-    let db_name = project_env_database_name(org, project, env);
+    let db_name = project_env_database_name(org, project, env, &instance);
     let app_host = args
         .app_host
         .clone()
@@ -450,7 +462,7 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     let app_url = compose_url(APP_ROLE, app_password, &app_host, args.app_port, &db_name);
 
     // Render the artifacts the runbook applies.
-    let db_cr = render_project_env_database(&triple, &cluster, args.connection_limit);
+    let db_cr = render_project_env_database(&triple, &instance, &cluster, args.connection_limit);
     let role_sql = role_sql(app_password, dispatch_reader_password);
     let privilege_sql = privilege_sql(&db_name);
     let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace, &app_url);
@@ -474,43 +486,24 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         db_secret_path.display()
     );
 
-    // Record the project + project-env in the registry (idempotent), when a system
-    // DB URL is given. The Secret reference is what a triple resolves to.
-    match &args.system_database_url {
-        Some(url) => {
-            let secret_name = project_env_secret_name(org, project, env);
-            // The instance suffix is minted here and recorded read-or-mint: a
-            // re-provision of an existing environment keeps the stored one, so
-            // the derived names stay pointed at the resources that already exist.
-            let instance = record_project_env(
-                url,
-                &triple,
-                &secret_name,
-                args.secret_namespace.as_deref(),
-                &mint_instance_suffix()?,
-            )
-            .await?;
-            println!(
-                "recorded project {:?} + project-env {} in the registry (wamn_system)",
-                project, triple
-            );
-            println!(
-                "environment namespace {:?} (instance suffix {instance:?})",
-                project_env_namespace(org, project, env, &instance)
-            );
+    println!(
+        "recorded project {:?} + project-env {} in the registry (wamn_system)",
+        project, triple
+    );
+    println!(
+        "environment namespace {:?} (instance suffix {instance:?})",
+        project_env_namespace(org, project, env, &instance)
+    );
 
-            if issues_pat {
-                issue_pat_secrets(
-                    url,
-                    &triple,
-                    &args.namespace,
-                    args.emit_management_author_pat_secret.as_deref(),
-                    args.emit_route_caller_pat_secret.as_deref(),
-                )
-                .await?;
-            }
-        }
-        None => println!("(no --system-database-url: rendered artifacts only; not recorded)"),
+    if issues_pat {
+        issue_pat_secrets(
+            system_url,
+            &triple,
+            &args.namespace,
+            args.emit_management_author_pat_secret.as_deref(),
+            args.emit_route_caller_pat_secret.as_deref(),
+        )
+        .await?;
     }
 
     Ok(())
@@ -642,7 +635,12 @@ async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs) -> anyhow::Res
         .expect("clap parser invariant: --env is required unless --revoke-pat-prefix is present");
     validate_project_env(org, project, environment)
         .map_err(|error| anyhow::anyhow!("project-env names: {error}"))?;
-    let database = project_env_database_name(org, project, environment);
+    let system_url = args.system_database_url.as_deref().context(
+        "effect-writer generation actions require --system-database-url to resolve the stored instance suffix",
+    )?;
+    let triple = Triple::new(org, project, environment);
+    let instance = read_project_env_instance(system_url, &triple).await?;
+    let database = project_env_database_name(org, project, environment, &instance);
     let admin_url = args
         .target_admin_database_url
         .as_deref()
@@ -1965,6 +1963,40 @@ async fn do_resolve_cluster(
     Ok(cluster_of(&org_obj, &policy).name)
 }
 
+/// Read one project-env's stored instance suffix from the registry.
+pub(crate) async fn read_project_env_instance(
+    system_url: &str,
+    triple: &Triple,
+) -> anyhow::Result<String> {
+    let (client, conn) = tokio_postgres::connect(system_url, NoTls)
+        .await
+        .context("system db connect")?;
+    let conn_task = tokio::spawn(conn);
+    let result = async {
+        client
+            .batch_execute("SET ROLE wamn_system")
+            .await
+            .context("SET ROLE wamn_system")?;
+        let env = triple.env.as_str();
+        let row = client
+            .query_opt(
+                &wamn_control_registry::sql::select_project_env_sql(),
+                &[&triple.org, &triple.project, &env],
+            )
+            .await
+            .context("read registry.project_envs row")?
+            .with_context(|| format!("project-env {triple} is not recorded"))?;
+        let stored: String = row.get("instance_suffix");
+        validate_instance_suffix(&stored)
+            .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
+        Ok(stored)
+    }
+    .await;
+    drop(client);
+    let _ = conn_task.await;
+    result
+}
+
 /// Record the project and the provisioned project-env in the registry (idempotent).
 /// Connects as superuser and `SET ROLE wamn_system` (the registry owner — the
 /// wamn-q3n.3 apply pattern), then runs the pure `wamn-control-registry` builders.
@@ -2611,10 +2643,11 @@ mod tests {
     #[test]
     fn provisioning_summary_contains_no_database_credentials() {
         let triple = Triple::new("acme", "billing", "dev");
-        let summary = provision_summary(&triple, "wamn-db-acme--billing--dev", "acme-dev");
+        let summary =
+            provision_summary(&triple, "wamn-db-acme--billing--dev--k3m9x2p7", "acme-dev");
         assert_eq!(
             summary,
-            "project-env acme/billing/dev: database \"wamn-db-acme--billing--dev\" on cluster \"acme-dev\" (owner wamn_db_owner)"
+            "project-env acme/billing/dev: database \"wamn-db-acme--billing--dev--k3m9x2p7\" on cluster \"acme-dev\" (owner wamn_db_owner)"
         );
         assert!(!summary.contains("postgres://"));
         assert!(!summary.contains("password"));

@@ -10,7 +10,7 @@
 //!   database-level isolation (no cross-database queries), least privilege
 //!   (`wamn_app` is `NOSUPERUSER NOCREATEDB`), and the emitted `Secret` layout.
 //! * **orgpair** — a **dedicated** org with two project-envs (`prod` + `dev`) as
-//!   two per-project-env databases (`wamn-db-<org>--<project>--<env>`, provisioned
+//!   two per-project-env databases (`wamn-db-<org>--<project>--<env>--<instance>`, provisioned
 //!   via the REAL wamn-q3n.7 role/create/grant builders as a plain-SQL stand-in for
 //!   the CNPG `Database` CRD, which needs the operator). Proves per-database
 //!   routing / isolation / least-priv / the per-project-env Secret layout, records
@@ -399,6 +399,7 @@ async fn seed_witnesses(admin_url: &str, project: &str, marker: i32) -> anyhow::
 /// routing marker its per-project-env database carries.
 struct EnvSpec {
     env: &'static str,
+    instance: &'static str,
     marker: i32,
 }
 
@@ -414,10 +415,12 @@ async fn orgpair_mode(admin_url: &str) -> anyhow::Result<()> {
         &[
             EnvSpec {
                 env: "prod",
+                instance: "k3m9x2p7",
                 marker: 201,
             },
             EnvSpec {
                 env: "dev",
+                instance: "q80zdw41",
                 marker: 202,
             },
         ],
@@ -437,6 +440,7 @@ async fn t3_mode(admin_url: &str) -> anyhow::Result<()> {
         "demo",
         &[EnvSpec {
             env: "dev",
+            instance: "0z9a8b7c",
             marker: 301,
         }],
         "gate-t3:provision-project-env",
@@ -478,7 +482,7 @@ async fn tier_scenario(
     for spec in envs {
         wamn_control_provision::validate_project_env(&org.id, project, spec.env)
             .map_err(|e| anyhow::anyhow!("project-env name: {e}"))?;
-        let db = project_env_database_name(&org.id, project, spec.env);
+        let db = project_env_database_name(&org.id, project, spec.env, spec.instance);
         provision_env_scaffold(admin_url, &db).await?;
         seed_env_witness(admin_url, &db, project, spec.env, spec.marker).await?;
         let url = app_url_for(admin_url, &db)?;
@@ -497,7 +501,7 @@ async fn tier_scenario(
     // 2a. Routing witness: each resolved URL reaches its own project-env database.
     let mut conns: Vec<(&'static str, Client, Conn)> = Vec::new();
     for spec in envs {
-        let db = project_env_database_name(&org.id, project, spec.env);
+        let db = project_env_database_name(&org.id, project, spec.env, spec.instance);
         let cfg = provider
             .resolve(&db)?
             .with_context(|| format!("resolve {db}"))?;
@@ -551,10 +555,11 @@ async fn tier_scenario(
     // 2d. Credential layout: the per-project-env Secret carries the db name, URL,
     //     and the identity triple (labels).
     let triple0 = Triple::new(&org.id, project, envs[0].env);
-    let db0 = project_env_database_name(&org.id, project, envs[0].env);
+    let db0 = project_env_database_name(&org.id, project, envs[0].env, envs[0].instance);
     let url0 = app_url_for(admin_url, &db0)?;
     let sec = render_project_env_secret_manifest(&triple0, "wamn-system", &url0);
-    let ok_name = sec["metadata"]["name"] == db0;
+    let ok_name = sec["metadata"]["name"]
+        == wamn_control_provision::project_env_secret_name(&org.id, project, envs[0].env);
     let ok_url = sec["stringData"]["url"] == url0;
     let ok_labels = sec["metadata"]["labels"]["wamn.org"] == org.id.as_str()
         && sec["metadata"]["labels"]["wamn.env"] == envs[0].env;
@@ -607,13 +612,13 @@ async fn tier_scenario(
         .await
         .context("upsert project")?;
     for spec in envs {
-        let db = project_env_database_name(&org.id, project, spec.env);
+        let db = project_env_database_name(&org.id, project, spec.env, spec.instance);
         let env_s = spec.env;
         let ns: Option<&str> = None;
         admin
             .execute(
                 reg_sql::upsert_project_env_sql(),
-                &[&org_id, &project, &env_s, &db, &ns],
+                &[&org_id, &project, &env_s, &db, &ns, &spec.instance],
             )
             .await
             .context("upsert project_env")?;
@@ -775,7 +780,7 @@ async fn drop_env_dbs(
 ) -> anyhow::Result<()> {
     let (client, task) = connect(admin_url).await.context("admin connect")?;
     for spec in envs {
-        let db = project_env_database_name(&org.id, project, spec.env);
+        let db = project_env_database_name(&org.id, project, spec.env, spec.instance);
         client
             .batch_execute(&sql::drop_database_named_sql(&db))
             .await
@@ -923,7 +928,8 @@ async fn setup_registry(admin_url: &str) -> anyhow::Result<()> {
                CREATE ROLE wamn_system LOGIN PASSWORD 'wamn_system' NOSUPERUSER; \
              END IF; END $$; \
              DROP SCHEMA IF EXISTS registry CASCADE; \
-             DROP SCHEMA IF EXISTS provisioning CASCADE;",
+             DROP SCHEMA IF EXISTS provisioning CASCADE; \
+             DROP SCHEMA IF EXISTS identity CASCADE;",
         )
         .await
         .context("prepare wamn_system role + drop prior registry schemas")?;
@@ -941,7 +947,9 @@ async fn teardown_registry(admin_url: &str) -> anyhow::Result<()> {
     let (client, task) = connect(admin_url).await.context("registry admin connect")?;
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS registry CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE;",
+            "DROP SCHEMA IF EXISTS registry CASCADE; \
+             DROP SCHEMA IF EXISTS provisioning CASCADE; \
+             DROP SCHEMA IF EXISTS identity CASCADE;",
         )
         .await
         .context("drop ephemeral registry schemas")?;
@@ -1027,5 +1035,91 @@ mod tests {
         legacy(&admin_url)
             .await
             .expect("legacy provisionbench flow succeeds");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL 18 URL in WAMN_PG_ADMIN_URL"]
+    async fn project_env_replay_uses_the_stored_instance_suffix() {
+        let admin_url = std::env::var("WAMN_PG_ADMIN_URL")
+            .expect("WAMN_PG_ADMIN_URL must name a disposable PostgreSQL 18 instance");
+        setup_registry(&admin_url)
+            .await
+            .expect("set up registry schema");
+        let (admin, task) = connect(&admin_url).await.expect("connect registry admin");
+        let (org, policies) = Template::trials().stamp("suffix-replay", "wamn-pg");
+        let org_id = org.id.as_str();
+        let placement = org.placement.kind_str();
+        let pool = org.placement.pool();
+        admin
+            .execute(reg_sql::upsert_org_sql(), &[&org_id, &placement, &pool])
+            .await
+            .expect("insert replay org");
+        let policy = policies
+            .iter()
+            .find(|row| row.policy.name.as_str() == "dev")
+            .expect("trials template has dev");
+        let policy_name = policy.policy.name.as_str();
+        let recovery = serde_json::to_string(&policy.policy.recovery_domain)
+            .expect("serialize recovery domain");
+        admin
+            .execute(
+                reg_sql::stamp_env_policy_sql(),
+                &[
+                    &policy.org,
+                    &policy_name,
+                    &recovery,
+                    &policy.policy.promotion_rank,
+                    &policy.policy.instances,
+                    &policy.policy.storage,
+                    &policy.policy.cpu,
+                    &policy.policy.memory,
+                    &policy.policy.image,
+                    &policy.policy.backup_cadence,
+                    &policy.policy.wal_retention,
+                    &policy.policy.hibernation,
+                    &policy.policy.durability_class.as_sql(),
+                ],
+            )
+            .await
+            .expect("insert replay env policy");
+        let project = "app";
+        admin
+            .execute(reg_sql::upsert_project_sql(), &[&org_id, &project])
+            .await
+            .expect("insert replay project");
+        let env = "dev";
+        let secret = "wamn-db-suffix-replay--app--dev";
+        let namespace: Option<&str> = None;
+        let stored = "k3m9x2p7";
+        let offered = "q80zdw41";
+        let first: String = admin
+            .query_one(
+                reg_sql::upsert_project_env_sql(),
+                &[&org_id, &project, &env, &secret, &namespace, &stored],
+            )
+            .await
+            .expect("mint project-env instance")
+            .get(0);
+        let replay: String = admin
+            .query_one(
+                reg_sql::upsert_project_env_sql(),
+                &[&org_id, &project, &env, &secret, &namespace, &offered],
+            )
+            .await
+            .expect("replay project-env instance")
+            .get(0);
+        assert_eq!(first, stored);
+        assert_eq!(replay, stored, "replay replaced the stored suffix");
+        assert_ne!(replay, offered, "replay trusted the fresh offered suffix");
+        assert_ne!(
+            project_env_database_name(org_id, project, env, &replay),
+            project_env_database_name(org_id, project, env, offered),
+            "the proof must distinguish the stored and offered physical names"
+        );
+        drop(admin);
+        let _ = task.await;
+        teardown_registry(&admin_url)
+            .await
+            .expect("tear down registry schema");
     }
 }

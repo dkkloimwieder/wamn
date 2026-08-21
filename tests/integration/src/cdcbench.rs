@@ -157,6 +157,7 @@ const DB: &str = "wamn_ccdc";
 const ORG: &str = "ccdc";
 const PROJECT: &str = "app";
 const ENV: &str = "dev";
+const INSTANCE: &str = "k3m9x2p7";
 const TENANT: &str = "ccdc-tenant";
 const CDC_PW: &str = "wamn_cdc_pw";
 const CATALOG_ID: &str = "poc-material-receiving";
@@ -389,7 +390,7 @@ fn unix_ms() -> i64 {
 /// floor for the poc-receiving catalog, replication role + publication +
 /// entity map + grants. NO slot — each axis creates it at its own moment.
 async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV);
+    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, ENV);
 
     // Hermetic preamble (leftovers mask): slot, database, role.
@@ -461,6 +462,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
             &ENV,
             &"wamn-db-ccdc--app--dev",
             &None::<&str>,
+            &INSTANCE,
         ],
     )
     .await
@@ -536,7 +538,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
 /// are dead after a switchover): slot, database (WITH FORCE — takes any idle
 /// slot with it), role, stream. Zero residue — the §11 never-leave-a-slot rule.
 async fn teardown(admin_url: &str, nats_url: &str) {
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV);
+    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     if let Ok(admin) = connect(admin_url).await {
         // Slot drop must run on the slot's database; DROP DATABASE WITH FORCE
         // is the backstop that takes an idle slot down with the DB.
@@ -558,7 +560,7 @@ async fn teardown(admin_url: &str, nats_url: &str) {
 
 /// Launch the REAL reader executable — the same process boundary deployment runs.
 fn spawn_reader(admin_url: &str, nats_url: &str) -> anyhow::Result<ReaderProcess> {
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV);
+    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     ReaderProcess::spawn(ReaderArgs {
         org: ORG.into(),
         project: PROJECT.into(),
@@ -598,7 +600,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
         "\n## drain (C-CDC axis 1) — reader catch-up after a bulk import; \
          spill counters = the logical_decoding_work_mem evidence (wamn-mu4h)"
     );
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV);
+    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, ENV);
     let (_admin, db) = provision(&args.admin_database_url).await?;
     let app = connect_app(&args.admin_database_url).await?;
@@ -846,7 +848,7 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
          {} writers",
         args.lag_step_secs, args.lag_writers
     );
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV);
+    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, ENV);
     let (_admin, db) = provision(&args.admin_database_url).await?;
     let nats = async_nats::connect(&args.nats_url)
@@ -1298,7 +1300,7 @@ async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result
          primary restart INSIDE the {}s window",
         args.secs
     );
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV);
+    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, ENV);
     let (_admin, db) = provision(&args.admin_database_url).await?;
     let nats = async_nats::connect(&args.nats_url)

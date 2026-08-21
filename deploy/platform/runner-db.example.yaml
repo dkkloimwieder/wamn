@@ -5,8 +5,9 @@
 #
 # `url` is the project's app (wamn_app, NOSUPERUSER) connection string — the same
 # credential the dispatcher's projects.json entry carries for this project. The
-# runner claims from run_queue under the tenant + schema passed as runner.yaml
-# args (demo-tenant / wamn_runner_demo here); point them all at one project.
+# `database` key is that URL's exact stored-instance database scope. The runner
+# claims from run_queue under the tenant + schema passed as runner.yaml args
+# (demo-tenant / wamn_runner_demo here); point them all at one project.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -14,4 +15,5 @@ metadata:
   namespace: wamn-system
 type: Opaque
 stringData:
-  url: "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn?sslmode=disable"
+  url: "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn-db-demo--demo--dev--00000000?sslmode=disable"
+  database: "wamn-db-demo--demo--dev--00000000"

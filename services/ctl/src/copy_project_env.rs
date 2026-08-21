@@ -216,15 +216,16 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
         .as_deref()
         .context("copy needs --src-admin-url (a superuser URL to the SOURCE cluster)")?;
     let dst_admin = args.dst_admin_url.as_deref().unwrap_or(src_admin);
-    if (args.cutover || args.confirm_with_backup) && args.system_database_url.is_none() {
-        bail!(
-            "this copy requires --system-database-url: destructive reconciliation records its \
-             attestation and cutover records its durable pipeline in the T1 registry"
-        );
-    }
-
-    let src_db = project_env_database_name(&src.org, &src.project, src.env.as_str());
-    let dst_db = project_env_database_name(&dst.org, &dst.project, dst.env.as_str());
+    let system_url = args
+        .system_database_url
+        .as_deref()
+        .context("copy requires --system-database-url to resolve both stored instance suffixes")?;
+    let src_instance =
+        crate::provision_project_env::read_project_env_instance(system_url, &src).await?;
+    let dst_instance =
+        crate::provision_project_env::read_project_env_instance(system_url, &dst).await?;
+    let src_db = project_env_database_name(&src.org, &src.project, src.env.as_str(), &src_instance);
+    let dst_db = project_env_database_name(&dst.org, &dst.project, dst.env.as_str(), &dst_instance);
     let saga_id = args.saga_id.clone().unwrap_or_else(|| {
         format!(
             "copy-{src_db}-to-{dst_db}-{}",
@@ -232,21 +233,13 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
         )
     });
 
-    let recorder = match &args.system_database_url {
-        Some(url) => {
-            let r = SagaRecorder::connect(url, &saga_id)
-                .await
-                .context("system db connect (saga recording)")?;
-            r.create(&format!("{src} -> {dst}"), steps.len() as i32)
-                .await?;
-            println!("recording saga {saga_id:?} ({} steps)", steps.len());
-            Some(r)
-        }
-        None => {
-            println!("(no --system-database-url: steps run unrecorded — clone only)");
-            None
-        }
-    };
+    let r = SagaRecorder::connect(system_url, &saga_id)
+        .await
+        .context("system db connect (saga recording)")?;
+    r.create(&format!("{src} -> {dst}"), steps.len() as i32)
+        .await?;
+    println!("recording saga {saga_id:?} ({} steps)", steps.len());
+    let recorder = Some(r);
 
     let mut ctx = ExecCtx {
         args: &args,

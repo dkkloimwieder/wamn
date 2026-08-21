@@ -189,7 +189,11 @@ spec:
             - { name: WAMN_ORG, value: "demo" }
             - { name: WAMN_PROJECT, value: "demo" }
             - { name: WAMN_ENVIRONMENT, value: "dev" }
-            - { name: WAMN_DATABASE, value: "wamn-db-demo--demo--dev" }
+            - name: WAMN_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-runner-db
+                  key: database
             # [5.9] The vault reads the mounted credentials file; missing file
             # (optional Secret absent) = empty vault, warned at startup.
             - name: WAMN_CREDENTIALS_FILE

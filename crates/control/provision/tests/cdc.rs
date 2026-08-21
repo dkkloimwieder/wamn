@@ -16,6 +16,8 @@ use std::process::{Command, Stdio};
 
 use wamn_control_provision::{cdc_object_name, project_env_database_name, sql};
 
+const INSTANCE: &str = "k3m9x2p7";
+
 /// Swap the database path segment of a libpq URL (the test controls the URL —
 /// no query string).
 fn swap_db(url: &str, db: &str) -> String {
@@ -60,8 +62,8 @@ fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
     };
 
     let (org, project, env) = ("acme", "billing", "dev");
-    let db = project_env_database_name(org, project, env);
-    let cdc = cdc_object_name(org, project, env);
+    let db = project_env_database_name(org, project, env, INSTANCE);
+    let cdc = cdc_object_name(org, project, env, INSTANCE);
     let schema = "app";
 
     // Maintenance DB: fresh database + the cluster-global replication role.
@@ -170,8 +172,8 @@ fn cdc_role_reads_only_the_entity_map_and_still_decodes_tenant_tables() {
     };
 
     let (org, project, env) = ("acme", "narrowing", "dev");
-    let db = project_env_database_name(org, project, env);
-    let cdc = cdc_object_name(org, project, env);
+    let db = project_env_database_name(org, project, env, INSTANCE);
+    let cdc = cdc_object_name(org, project, env, INSTANCE);
     let schema = "app";
 
     run_ok(

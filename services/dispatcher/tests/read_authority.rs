@@ -166,7 +166,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         );
         return;
     };
-    let database = project_env_database_name("acme", "dispatch", "dev");
+    let database = project_env_database_name("acme", "dispatch", "dev", "k3m9x2p7");
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
     // HERMETIC: drop the database AND the reader role first. A leftover healthy

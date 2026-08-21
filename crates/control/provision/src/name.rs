@@ -76,7 +76,7 @@ pub const MAX_DB_NAME_LEN: usize = 63;
 /// Prefix for the per-project-env Kubernetes **namespace**:
 /// `wamn-<org>--<project>--<env>--<instance>` (wamn-0h0g.15.3). Under the
 /// platform-reserved `wamn` prefix like every other minted name, and carrying the
-/// same `--` separated triple as `wamn-db-<org>--<project>--<env>`.
+/// same `--` separated triple as the database's identity stem.
 pub const NAMESPACE_PREFIX: &str = "wamn-";
 
 /// Max length (bytes) of the per-project-env namespace: the DNS-1123 **label**
@@ -119,7 +119,7 @@ pub const CDC_SECRET_PREFIX: &str = "wamn-cdc-";
 
 /// Prefix for the per-project-env CDC **Postgres objects** — the publication,
 /// the failover replication slot, and the replication role share one name:
-/// `wamn_cdc_<org>__<project>__<env>` with slug hyphens mapped to `_`.
+/// `wamn_cdc_<org>__<project>__<env>__<instance>` with slug hyphens mapped to `_`.
 /// Underscored because a replication **slot** name admits only `[a-z0-9_]`
 /// (slots are not identifiers and cannot be quoted); the publication and role
 /// reuse it so the whole CDC surface carries one name.
@@ -199,7 +199,8 @@ pub fn secret_name(project: &str) -> String {
     format!("{DB_PREFIX}{project}")
 }
 
-/// The per-project-env database name: `wamn-db-<org>--<project>--<env>`
+/// The per-project-env database name:
+/// `wamn-db-<org>--<project>--<env>--<instance>`
 /// (wamn-q3n.7).
 ///
 /// The **org** is encoded — unlike the 2.3 [`database_name`] — because the shared
@@ -209,16 +210,22 @@ pub fn secret_name(project: &str) -> String {
 /// there. `--` separates the identity components (the `Triple::host_label`
 /// convention). Validate the assembled length with [`validate_project_env`]
 /// before use; quote it in DDL (it contains hyphens) via [`crate::sql`].
-pub fn project_env_database_name(org: &str, project: &str, env: &str) -> String {
+pub fn project_env_database_name(org: &str, project: &str, env: &str, instance: &str) -> String {
+    format!(
+        "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
+        project_env_database_stem(org, project, env)
+    )
+}
+
+fn project_env_database_stem(org: &str, project: &str, env: &str) -> String {
     format!("{DB_PREFIX}{org}--{project}--{env}")
 }
 
-/// The per-project-env credential Secret name — identical to the database name
-/// (`wamn-db-<org>--<project>--<env>`), the single lookup key the future
-/// `K8sSecretProvider` (5x0.1) reads and the registry records as the project-env's
-/// `SecretRef`.
+/// The per-project-env credential Secret name:
+/// `wamn-db-<org>--<project>--<env>`. It stays triple-only because its namespace
+/// carries the instance identity; its URL names the suffixed Postgres database.
 pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
-    project_env_database_name(org, project, env)
+    project_env_database_stem(org, project, env)
 }
 
 /// The per-project-env Kubernetes namespace:
@@ -281,7 +288,7 @@ pub fn project_env_effect_writer_secret_name(org: &str, project: &str, env: &str
 }
 
 /// Validate that a `(org, project, env)` yields safe provisioned names: **all
-/// three** identity components are slugs, the assembled database / Secret name
+/// three** identity components are slugs, the assembled suffixed database name
 /// fits [`MAX_DB_NAME_LEN`] — a legal Postgres identifier and a legal DNS-1123
 /// label for the CNPG `Database` resource — and the namespace's identity stem
 /// fits [`MAX_NAMESPACE_STEM_LEN`], the budget left once the instance suffix
@@ -293,14 +300,11 @@ pub fn project_env_effect_writer_secret_name(org: &str, project: &str, env: &str
 /// the database one — the two are not related by a fixed offset, and the
 /// namespace-per-environment mapping must not rest on a coincidence.
 ///
-/// ORDER IS LOAD-BEARING, and it is the LOOSER bound that goes first: check the
-/// tighter one first and the other branch is dead code, so its bound is never
-/// enforced in its own right (wamn-0h0g.15.72). The instance suffix INVERTED
-/// which bound is looser — it spends 10 of the namespace's 63 bytes, leaving the
-/// triple 53 there against 51 in the database name — so the database name is now
-/// checked FIRST and the namespace second. Both branches stay reachable: a triple
-/// of 52 or more combined bytes trips the database bound, one of 45 to 51 trips
-/// the namespace bound.
+/// The database check runs first because its `wamn-db-` prefix is three bytes
+/// longer than the namespace's `wamn-` prefix: after both spend the separator
+/// plus eight-byte suffix, the database leaves 41 component bytes and the
+/// namespace leaves 44. The namespace check remains explicit so each
+/// physical-name formula owns its bound.
 ///
 /// Every component is slug-checked (wamn-R27): the org and env — not only the
 /// project — separate on `--`/`__` into the derived database and CDC object
@@ -325,10 +329,11 @@ pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), P
             reason,
         });
     }
-    let name = project_env_database_name(org, project, env);
-    if name.len() > MAX_DB_NAME_LEN {
+    let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
+    let database = project_env_database_name(org, project, env, &probe);
+    if database.len() > MAX_DB_NAME_LEN {
         return Err(ProvisionError::NameTooLong {
-            name,
+            name: database,
             max: MAX_DB_NAME_LEN,
         });
     }
@@ -353,14 +358,18 @@ pub fn project_env_cdc_secret_name(org: &str, project: &str, env: &str) -> Strin
 
 /// The shared name of the per-project-env CDC Postgres objects — publication,
 /// failover replication slot, and replication role:
-/// `wamn_cdc_<org>__<project>__<env>`, slug hyphens mapped to `_` and `__` as
-/// the separator (a slot name admits only `[a-z0-9_]`). Since slugs cannot
+/// `wamn_cdc_<org>__<project>__<env>__<instance>`, slug hyphens mapped to `_`
+/// and `__` as the separator (a slot name admits only `[a-z0-9_]`). Since slugs cannot
 /// contain `_`, the mapping keeps distinct triples distinct except for the same
 /// consecutive-hyphen ambiguity the `--` database-name separator already
 /// carries; identity always travels in the registration row / Secret labels,
 /// never parsed back out of a name. Validate the assembled length with
 /// [`validate_project_env_cdc`] before use.
-pub fn cdc_object_name(org: &str, project: &str, env: &str) -> String {
+pub fn cdc_object_name(org: &str, project: &str, env: &str, instance: &str) -> String {
+    format!("{}__{instance}", cdc_object_name_stem(org, project, env))
+}
+
+fn cdc_object_name_stem(org: &str, project: &str, env: &str) -> String {
     let flat = |s: &str| s.replace('-', "_");
     format!(
         "{CDC_OBJECT_PREFIX}{}__{}__{}",
@@ -381,21 +390,19 @@ pub fn event_stream_name(org: &str, env: &str) -> String {
 
 /// Validate that a `(org, project, env)` yields safe CDC names: the base
 /// project-env validation ([`validate_project_env`]) plus the assembled
-/// `wamn_cdc_…` object name — one byte per component longer than the database
-/// name — fitting Postgres's 63-byte limit (a slot/publication/role name; the
+/// `wamn_cdc_…` object name — one prefix byte longer than the database name —
+/// fitting Postgres's 63-byte limit (a slot/publication/role name; the
 /// like-sized `wamn-cdc-…` Secret name is comfortably within the K8s bound).
 ///
-/// The extra bound is currently SUBSUMED: it admits a 50-byte triple where the
-/// base validation's namespace stem admits only 44, so the base always refuses
-/// first. It stays because it bounds a name the base does not, and it binds again
-/// the moment the CDC objects carry the instance suffix — they are cluster-global
-/// Postgres names, so they need it as much as the namespace does.
+/// The extra bound is reachable: a triple can put the suffixed database exactly
+/// at 63 bytes while the suffixed CDC object reaches 64.
 pub fn validate_project_env_cdc(org: &str, project: &str, env: &str) -> Result<(), ProvisionError> {
     validate_project_env(org, project, env)?;
-    let name = cdc_object_name(org, project, env);
-    if name.len() > MAX_DB_NAME_LEN {
+    let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
+    let cdc = cdc_object_name(org, project, env, &probe);
+    if cdc.len() > MAX_DB_NAME_LEN {
         return Err(ProvisionError::NameTooLong {
-            name,
+            name: cdc,
             max: MAX_DB_NAME_LEN,
         });
     }
@@ -436,6 +443,8 @@ mod tests {
     use wamn_run_state::{
         CredentialGeneration, effect_writer_generation_role, effect_writer_scope_hash,
     };
+
+    const INSTANCE: &str = "k3m9x2p7";
 
     #[test]
     fn valid_project_ids_pass() {
@@ -556,28 +565,32 @@ mod tests {
         // The org is encoded (unlike the 2.3 project-only name) so identically
         // named projects across orgs never collide on the shared T3 pool.
         assert_eq!(
-            project_env_database_name("acme", "billing", "dev"),
-            "wamn-db-acme--billing--dev"
+            project_env_database_name("acme", "billing", "dev", INSTANCE),
+            "wamn-db-acme--billing--dev--k3m9x2p7"
         );
         assert_eq!(
-            project_env_database_name("acme", "billing", "prod"),
-            "wamn-db-acme--billing--prod"
+            project_env_database_name("acme", "billing", "prod", INSTANCE),
+            "wamn-db-acme--billing--prod--k3m9x2p7"
         );
         // canary and prod are distinct names (they co-reside on <org>-prod, so the
         // env MUST be in the name to keep them apart).
         assert_ne!(
-            project_env_database_name("acme", "billing", "canary"),
-            project_env_database_name("acme", "billing", "prod")
+            project_env_database_name("acme", "billing", "canary", INSTANCE),
+            project_env_database_name("acme", "billing", "prod", INSTANCE)
         );
         // Two orgs, same project+env → different db names (the pool collision fix).
         assert_ne!(
-            project_env_database_name("org-a", "demo", "dev"),
-            project_env_database_name("org-b", "demo", "dev")
+            project_env_database_name("org-a", "demo", "dev", INSTANCE),
+            project_env_database_name("org-b", "demo", "dev", INSTANCE)
         );
-        // Secret name == database name (one lookup key).
+        // The namespace-scoped Secret keeps the stable triple-only lookup key.
+        assert_ne!(
+            project_env_secret_name("acme", "billing", "dev"),
+            project_env_database_name("acme", "billing", "dev", INSTANCE)
+        );
         assert_eq!(
             project_env_secret_name("acme", "billing", "dev"),
-            project_env_database_name("acme", "billing", "dev")
+            "wamn-db-acme--billing--dev"
         );
     }
 
@@ -613,9 +626,8 @@ mod tests {
         let long_proj = "p".repeat(40);
         let err = validate_project_env(&long_org, &long_proj, "canary").unwrap_err();
         assert!(matches!(err, ProvisionError::NameTooLong { max: 63, .. }));
-        // 44 combined bytes — the longest triple the namespace stem admits once
-        // the instance suffix has taken its 10 bytes of the DNS-1123 label.
-        assert!(validate_project_env(&"o".repeat(20), &"p".repeat(20), "prod").is_ok());
+        // 41 combined bytes — the longest triple the suffixed database admits.
+        assert!(validate_project_env(&"o".repeat(20), &"p".repeat(17), "prod").is_ok());
     }
 
     #[test]
@@ -645,13 +657,12 @@ mod tests {
     #[test]
     fn the_environment_namespace_is_a_valid_dns_1123_label() {
         // A Kubernetes namespace name is a DNS-1123 LABEL: at most 63 bytes,
-        // `[a-z0-9-]`, starting and ending alphanumeric. Take the LONGEST triple
-        // the validator admits (44 combined bytes) so the assembled label sits
-        // exactly on the cap.
-        let org = "o".repeat(40);
+        // `[a-z0-9-]`, starting and ending alphanumeric. The database's suffixed
+        // 63-byte bound is tighter; take its longest admitted triple.
+        let org = "o".repeat(37);
         assert!(validate_project_env(&org, "pp", "de").is_ok());
         let namespace = project_env_namespace(&org, "pp", "de", "0z9a8b7c");
-        assert_eq!(namespace.len(), MAX_NAMESPACE_LEN);
+        assert!(namespace.len() <= MAX_NAMESPACE_LEN);
         assert!(
             namespace
                 .bytes()
@@ -669,8 +680,9 @@ mod tests {
 
     #[test]
     fn instance_suffix_discipline_is_the_dns_label_tail() {
+        let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
         assert!(validate_instance_suffix("k3m9x2p7").is_ok());
-        assert!(validate_instance_suffix("00000000").is_ok());
+        assert!(validate_instance_suffix(&probe).is_ok());
         for bad in [
             "",
             "k3m9x2p",
@@ -708,72 +720,63 @@ mod tests {
     }
 
     #[test]
-    fn the_namespace_bound_accounts_for_the_instance_suffix() {
-        // The refusal formula must budget for the suffix, not just the triple.
-        // org(40) + project(2) + env(3) = 45 combined bytes: the stem is 54 bytes
-        // and would fit the 63-byte label on its own, but the namespace it
-        // actually names is 64. Drop INSTANCE_SUFFIX_LEN from
-        // MAX_NAMESPACE_STEM_LEN and this triple is wrongly admitted.
-        let org = "o".repeat(40);
-        let stem = project_env_namespace_stem(&org, "pp", "dev");
-        assert_eq!(stem.len(), 54);
-        assert!(stem.len() <= MAX_NAMESPACE_LEN, "fits WITHOUT the suffix");
-        assert_eq!(
-            project_env_namespace(&org, "pp", "dev", "k3m9x2p7").len(),
-            MAX_NAMESPACE_LEN + 1,
-            "and does NOT fit WITH it"
-        );
-        match validate_project_env(&org, "pp", "dev") {
-            Err(ProvisionError::NameTooLong { name, max }) => {
-                assert_eq!(name, stem);
-                assert_eq!(max, MAX_NAMESPACE_STEM_LEN);
-            }
-            other => panic!("the suffixed namespace bound must refuse this triple, got {other:?}"),
-        }
-        // One byte shorter and the assembled namespace sits exactly on the cap.
+    fn both_global_name_bounds_account_for_the_instance_suffix() {
+        // The database sits exactly on 63 bytes with 41 component bytes.
+        let org = "o".repeat(37);
+        let database = project_env_database_name(&org, "pp", "de", INSTANCE);
+        assert_eq!(database.len(), MAX_DB_NAME_LEN);
         assert!(validate_project_env(&org, "pp", "de").is_ok());
+
+        // One more component byte is refused only because the separator and
+        // eight-byte instance suffix consume ten bytes of the identifier budget.
+        let over_database = "o".repeat(38);
+        assert!(project_env_database_stem(&over_database, "pp", "de").len() <= MAX_DB_NAME_LEN);
         assert_eq!(
-            project_env_namespace(&org, "pp", "de", "k3m9x2p7").len(),
+            project_env_database_name(&over_database, "pp", "de", INSTANCE).len(),
+            MAX_DB_NAME_LEN + 1
+        );
+        match validate_project_env(&over_database, "pp", "de") {
+            Err(ProvisionError::NameTooLong { name, max }) => {
+                let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
+                assert_eq!(
+                    name,
+                    project_env_database_name(&over_database, "pp", "de", &probe)
+                );
+                assert_eq!(max, MAX_DB_NAME_LEN);
+            }
+            other => panic!("suffixed database candidate was not refused: {other:?}"),
+        }
+
+        // The namespace formula independently budgets the same ten bytes.
+        let org = "o".repeat(40);
+        let stem = project_env_namespace_stem(&org, "pp", "de");
+        assert_eq!(stem.len(), MAX_NAMESPACE_STEM_LEN);
+        assert_eq!(
+            project_env_namespace(&org, "pp", "de", INSTANCE).len(),
             MAX_NAMESPACE_LEN
         );
     }
 
     #[test]
-    fn both_assembled_name_bounds_stay_reachable() {
-        // wamn-0h0g.15.72's property, preserved through the suffix: the LOOSER
-        // bound is checked FIRST, so neither branch is dead code. The suffix
-        // inverted which is looser — the namespace stem leaves the triple 53
-        // bytes, the database name 51 — so the database check now runs first.
-        let org = "o".repeat(40);
-
-        // 52 combined bytes: the database name is 64 and refuses. Under a
-        // namespace-first order this would report the stem instead.
-        let over_db = "p".repeat(9);
-        match validate_project_env(&org, &over_db, "dev") {
-            Err(ProvisionError::NameTooLong { name, max }) => {
-                assert_eq!(name, project_env_database_name(&org, &over_db, "dev"));
-                assert_eq!(max, MAX_DB_NAME_LEN);
-            }
-            other => panic!("the database bound must refuse a 52-byte triple, got {other:?}"),
-        }
-
-        // 51 combined bytes: the database name is exactly 63 and PASSES, so only
-        // the namespace can refuse — the branch that goes dead if the order is
-        // chosen wrongly.
-        let over_namespace = "p".repeat(8);
+    fn cdc_object_bound_accounts_for_the_instance_suffix() {
+        // At the database limit the one-byte-longer CDC prefix crosses 63 only
+        // after its `__` separator plus eight-byte suffix are included.
+        let org = "o".repeat(37);
         assert_eq!(
-            project_env_database_name(&org, &over_namespace, "dev").len(),
+            project_env_database_name(&org, "pp", "de", INSTANCE).len(),
             MAX_DB_NAME_LEN
         );
-        match validate_project_env(&org, &over_namespace, "dev") {
+        assert_eq!(
+            cdc_object_name(&org, "pp", "de", INSTANCE).len(),
+            MAX_DB_NAME_LEN + 1
+        );
+        match validate_project_env_cdc(&org, "pp", "de") {
             Err(ProvisionError::NameTooLong { name, max }) => {
-                assert_eq!(
-                    name,
-                    project_env_namespace_stem(&org, &over_namespace, "dev")
-                );
-                assert_eq!(max, MAX_NAMESPACE_STEM_LEN);
+                let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
+                assert_eq!(name, cdc_object_name(&org, "pp", "de", &probe));
+                assert_eq!(max, MAX_DB_NAME_LEN);
             }
-            other => panic!("the namespace bound must refuse a 51-byte triple, got {other:?}"),
+            other => panic!("suffixed CDC candidate was not refused: {other:?}"),
         }
     }
 
@@ -784,13 +787,13 @@ mod tests {
         // derivations still alias — that is why the VALIDATOR is the fix: both
         // triples are now rejected before they can be provisioned.
         assert_eq!(
-            project_env_database_name("a", "x--p", "dev"),
-            project_env_database_name("a--x", "p", "dev"),
+            project_env_database_name("a", "x--p", "dev", INSTANCE),
+            project_env_database_name("a--x", "p", "dev", INSTANCE),
             "the derivations still alias — rejection is what closes the collision"
         );
         assert_eq!(
-            cdc_object_name("a", "x--p", "dev"),
-            cdc_object_name("a--x", "p", "dev")
+            cdc_object_name("a", "x--p", "dev", INSTANCE),
+            cdc_object_name("a--x", "p", "dev", INSTANCE)
         );
         // Project carries the `--`: rejected via validate_project_id.
         assert!(matches!(
@@ -845,11 +848,11 @@ mod tests {
                     }
                     valid += 1;
                     let triple = (org, project, env);
-                    let db = project_env_database_name(org, project, env);
+                    let db = project_env_database_name(org, project, env, INSTANCE);
                     if let Some(prev) = by_db.insert(db.clone(), triple) {
                         assert_eq!(prev, triple, "database name {db:?} collides two triples");
                     }
-                    let cdc = cdc_object_name(org, project, env);
+                    let cdc = cdc_object_name(org, project, env, INSTANCE);
                     if let Some(prev) = by_cdc.insert(cdc.clone(), triple) {
                         assert_eq!(prev, triple, "cdc object name {cdc:?} collides two triples");
                     }
@@ -910,18 +913,18 @@ mod tests {
         // …while the Postgres objects (slot charset `[a-z0-9_]`) are underscored,
         // slug hyphens mapped to `_`, `__` as the separator.
         assert_eq!(
-            cdc_object_name("acme", "billing", "dev"),
-            "wamn_cdc_acme__billing__dev"
+            cdc_object_name("acme", "billing", "dev", INSTANCE),
+            "wamn_cdc_acme__billing__dev__k3m9x2p7"
         );
         assert_eq!(
-            cdc_object_name("org-a", "demo", "dev"),
-            "wamn_cdc_org_a__demo__dev"
+            cdc_object_name("org-a", "demo", "dev", INSTANCE),
+            "wamn_cdc_org_a__demo__dev__k3m9x2p7"
         );
         // A hyphen inside a slug maps to a SINGLE `_`, the separator is DOUBLE —
         // ("org-a","demo") and ("org","a-demo") stay distinct.
         assert_ne!(
-            cdc_object_name("org-a", "demo", "dev"),
-            cdc_object_name("org", "a-demo", "dev")
+            cdc_object_name("org-a", "demo", "dev", INSTANCE),
+            cdc_object_name("org", "a-demo", "dev", INSTANCE)
         );
         // The stream name follows the D19 v3 contract.
         assert_eq!(event_stream_name("acme", "prod"), "EVT_acme_prod");
@@ -936,27 +939,9 @@ mod tests {
             validate_project_env_cdc("acme", "Bad", "dev"),
             Err(ProvisionError::InvalidProjectId { .. })
         ));
-        // The CDC object name is one byte per component longer than the db name
-        // ("wamn_cdc_" = 9 vs "wamn-db-" = 8), so it bounds a 50-byte triple
-        // where the db name bounds a 51-byte one. Since the namespace stem
-        // refuses anything over 44 (wamn-0h0g.13.57), the base validation always
-        // fires first and this extra branch is SUBSUMED — it binds again once the
-        // CDC objects carry the instance suffix too. Pin what is true: a triple
-        // whose db name sits exactly on the limit is still refused…
-        let org = "o".repeat(25);
-        let project = "p".repeat(22);
-        assert_eq!(
-            project_env_database_name(&org, &project, "prod").len(),
-            MAX_DB_NAME_LEN
-        );
-        assert!(matches!(
-            validate_project_env_cdc(&org, &project, "prod"),
-            Err(ProvisionError::NameTooLong { .. })
-        ));
-        // …and every triple the base validation admits has a legal CDC name.
-        let org_ok = "o".repeat(40);
+        let org_ok = "o".repeat(36);
         assert!(validate_project_env_cdc(&org_ok, "pp", "de").is_ok());
-        assert!(cdc_object_name(&org_ok, "pp", "de").len() <= MAX_DB_NAME_LEN);
+        assert!(cdc_object_name(&org_ok, "pp", "de", INSTANCE).len() <= MAX_DB_NAME_LEN);
     }
 
     #[test]
@@ -975,10 +960,10 @@ mod tests {
 
     #[test]
     fn effect_writer_scope_identity_and_names_are_frozen() {
-        let database = project_env_database_name("acme", "billing", "dev");
+        let database = project_env_database_name("acme", "billing", "dev", INSTANCE);
         assert_eq!(
             effect_writer_scope_hash("acme", "billing", "dev", &database),
-            "1bf626624be49afafc549ec9c5561e146d0f6c33"
+            "3c92a981fa554e60b309efa67f5b35e8ba687221"
         );
         let a = effect_writer_generation_role(
             "acme",
@@ -996,11 +981,11 @@ mod tests {
         );
         assert_eq!(
             a,
-            "wamn_effect_writer_1bf626624be49afafc549ec9c5561e146d0f6c33_a"
+            "wamn_effect_writer_3c92a981fa554e60b309efa67f5b35e8ba687221_a"
         );
         assert_eq!(
             b,
-            "wamn_effect_writer_1bf626624be49afafc549ec9c5561e146d0f6c33_b"
+            "wamn_effect_writer_3c92a981fa554e60b309efa67f5b35e8ba687221_b"
         );
         assert_eq!(a.len(), 61);
         assert_eq!(b.len(), 61);

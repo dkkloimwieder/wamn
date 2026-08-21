@@ -106,7 +106,7 @@ pub fn set_database_owner_sql(database: &str) -> String {
 /// `CREATE DATABASE` inside a transaction block).
 ///
 /// Pass a name from [`project_env_database_name`](crate::project_env_database_name)
-/// (`wamn-db-<org>--<project>--<env>`). In production the CNPG `Database` CRD
+/// (`wamn-db-<org>--<project>--<env>--<instance>`). In production the CNPG `Database` CRD
 /// creates the per-project-env database; this is the plain-SQL equivalent the
 /// substrate-agnostic gate uses off-cluster (wamn-q3n.8).
 pub fn create_database_named_sql(database: &str) -> String {
@@ -720,7 +720,7 @@ pub fn upsert_control_author_tenant_mapping_sql() -> &'static str {
 // the app data schema, and a failover-enabled logical replication slot. The
 // publication and the slot are DATABASE-BOUND — apply their SQL connected to
 // the project-env database; the role is cluster-global. Pass the shared
-// `cdc_object_name` (`wamn_cdc_<org>__<project>__<env>`) as the role /
+// `cdc_object_name` (`wamn_cdc_<org>__<project>__<env>__<instance>`) as the role /
 // publication / slot name.
 
 /// Idempotently bootstrap a per-project-env **replication** role: `REPLICATION

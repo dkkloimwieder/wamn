@@ -45,6 +45,7 @@ const DB: &str = "wamn_reader_live";
 const ORG: &str = "rl0";
 const PROJECT: &str = "app";
 const ENV: &str = "dev";
+const INSTANCE: &str = "k3m9x2p7";
 const CDC_PW: &str = "wamn_cdc_pw";
 
 /// Swap the database path segment of a libpq URL (the test controls the URL —
@@ -268,7 +269,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         return;
     };
 
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV); // wamn_cdc_rl0__app__dev
+    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, ENV); // EVT_rl0_dev
 
     // --- hermetic preamble (the M2 lesson: leftovers mask mutations) --------
@@ -356,6 +357,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
             &ENV,
             &"wamn-db-rl0--app--dev",
             &None::<&str>,
+            &INSTANCE,
         ],
     )
     .await

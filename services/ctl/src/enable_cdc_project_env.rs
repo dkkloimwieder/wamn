@@ -24,7 +24,7 @@
 //! unprovisioned env is rejected.
 //!
 //! One shared name serves the publication, the slot, and the role
-//! (`wamn_cdc_<org>__<project>__<env>` — underscored, a slot name admits only
+//! (`wamn_cdc_<org>__<project>__<env>__<instance>` — underscored, a slot admits only
 //! `[a-z0-9_]`); the Secret keeps the hyphenated convention
 //! (`wamn-cdc-<org>--<project>--<env>`). The replication credential is its own
 //! R8b tier — distinct from the `wamn_app` query credential and the dispatch
@@ -66,14 +66,13 @@ pub struct EnableCdcProjectEnvArgs {
     pub schema: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): derive the
-    /// target cluster + record the `registry.event_readers` registration. Env
-    /// `WAMN_SYSTEM_ADMIN_URL`. Omit (and pass `--cluster`) to render only.
+    /// target cluster, resolve the stored project-env instance suffix, and record
+    /// the `registry.event_readers` registration. Env `WAMN_SYSTEM_ADMIN_URL`.
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
     /// Override the target CNPG `Cluster` name. When omitted, it is derived from
-    /// the org's placement in the registry. Required if `--system-database-url`
-    /// is not given (render-only mode).
+    /// the org's placement in the registry.
     #[arg(long)]
     pub cluster: Option<String>,
 
@@ -148,8 +147,15 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         );
     }
 
-    // Pick the target cluster: an explicit `--cluster` wins (render-only /
-    // manual); otherwise derive it from the org's placement (`cluster_of`).
+    let system_url = args
+        .system_database_url
+        .as_deref()
+        .context("--system-database-url is required to resolve the stored instance suffix")?;
+    let instance =
+        crate::provision_project_env::read_project_env_instance(system_url, &triple).await?;
+
+    // Pick the target cluster: an explicit `--cluster` wins; otherwise derive it
+    // from the org's placement (`cluster_of`).
     let cluster = match &args.cluster {
         Some(c) => c.clone(),
         None => {
@@ -160,8 +166,8 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         }
     };
 
-    let db_name = project_env_database_name(&args.org, &args.project, &args.env);
-    let cdc_name = cdc_object_name(&args.org, &args.project, &args.env);
+    let db_name = project_env_database_name(&args.org, &args.project, &args.env, &instance);
+    let cdc_name = cdc_object_name(&args.org, &args.project, &args.env, &instance);
     let secret_name = project_env_cdc_secret_name(&args.org, &args.project, &args.env);
     let stream = args
         .stream
@@ -182,7 +188,8 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
     // Render the artifacts the runbook applies.
     let role_sql = sql::ensure_replication_role_sql(&cdc_name, &args.replication_password);
     let cdc_sql = cdc_sql_bundle(&args.schema, &cdc_name, &db_name);
-    let secret_doc = render_project_env_cdc_secret_manifest(&triple, &args.namespace, &cdc_url);
+    let secret_doc =
+        render_project_env_cdc_secret_manifest(&triple, &instance, &args.namespace, &cdc_url);
 
     println!(
         "cdc for project-env {triple}: publication/slot/role {cdc_name:?} over schema {:?} \
@@ -206,25 +213,16 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         &secret_doc,
     )?;
 
-    // Record the reader registration (idempotent), when a system DB URL is
-    // given. The project-env FK enforces the overlay ordering.
-    match &args.system_database_url {
-        Some(url) => {
-            record_event_reader(
-                url,
-                &triple,
-                &cdc_name,
-                &stream,
-                &secret_name,
-                args.secret_namespace.as_deref(),
-            )
-            .await?;
-            println!(
-                "recorded event-reader registration for {triple} in the registry (wamn_system)"
-            );
-        }
-        None => println!("(no --system-database-url: rendered artifacts only; not recorded)"),
-    }
+    record_event_reader(
+        system_url,
+        &triple,
+        &cdc_name,
+        &stream,
+        &secret_name,
+        args.secret_namespace.as_deref(),
+    )
+    .await?;
+    println!("recorded event-reader registration for {triple} in the registry (wamn_system)");
 
     Ok(())
 }

@@ -68,8 +68,8 @@ fn project_env_databases_are_owned_by_the_title_role_and_template1_is_closed() {
 
     // TWO project-env databases: a single one makes every cross-database sweep
     // below vacuous (a loop over one row proves nothing about the cluster).
-    let first = project_env_database_name("acme", "ownership", "dev");
-    let second = project_env_database_name("acme", "ownership", "prod");
+    let first = project_env_database_name("acme", "ownership", "dev", "k3m9x2p7");
+    let second = project_env_database_name("acme", "ownership", "prod", "q80zdw41");
 
     // Clean slate — a leftover healthy role would satisfy the idempotent guard
     // and mask a mutated builder (the M2 gate-blind-spot lesson).

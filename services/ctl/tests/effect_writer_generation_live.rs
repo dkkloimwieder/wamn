@@ -23,7 +23,9 @@ use wamn_run_state::RUN_PROJECTION_WRITER_ROLE;
 const ORG: &str = "pg18proof";
 const PROJECT: &str = "ledger";
 const ENVIRONMENT: &str = "dev";
+const INSTANCE: &str = "k3m9x2p7";
 const LEDGER_SCHEMA: &str = "wamn_runner_demo";
+const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -69,11 +71,15 @@ fn action_args(
     retire: Option<CredentialGeneration>,
     abort: Option<CredentialGeneration>,
 ) -> ProvisionProjectEnvArgs {
+    let mut system_url = Url::parse(target_admin_url).expect("parse target admin URL");
+    system_url.set_path("/postgres");
+    system_url.set_query(None);
+    system_url.set_fragment(None);
     ProvisionProjectEnvArgs {
         org: Some(ORG.to_string()),
         project: Some(PROJECT.to_string()),
         env: Some(ENVIRONMENT.to_string()),
-        system_database_url: None,
+        system_database_url: Some(system_url.into()),
         cluster: None,
         connection_limit: None,
         // The effect-writer generation actions never reach the role batch that
@@ -233,7 +239,46 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         "credential proof requires PostgreSQL 18"
     );
 
-    let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT);
+    catalog
+        .batch_execute(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
+               CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                 NOREPLICATION NOBYPASSRLS; \
+             END IF; END $$; \
+             DROP SCHEMA IF EXISTS registry CASCADE; \
+             DROP SCHEMA IF EXISTS provisioning CASCADE; \
+             DROP SCHEMA IF EXISTS identity CASCADE;",
+        )
+        .await
+        .expect("reset registry schemas");
+    catalog
+        .batch_execute(SYSTEM_SCHEMA_SQL)
+        .await
+        .expect("install registry schema");
+    catalog
+        .batch_execute(&format!(
+            "ALTER TABLE registry.project_envs OWNER TO wamn_system; \
+             INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+             VALUES ('{ORG}', 'pooled', 'pool') \
+             ON CONFLICT (id) DO NOTHING; \
+             INSERT INTO registry.env_policies \
+               (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image, \
+                backup_cadence, wal_retention, hibernation) \
+             VALUES ('{ORG}', '{ENVIRONMENT}', '{{\"kind\":\"own\"}}', 1, 1, '1Gi', '250m', \
+                     '256Mi', 'postgres:18', '', '', 'off') \
+             ON CONFLICT (org, name) DO NOTHING; \
+             INSERT INTO registry.projects (org, id) VALUES ('{ORG}', '{PROJECT}') \
+             ON CONFLICT (org, id) DO NOTHING; \
+             INSERT INTO registry.project_envs \
+               (org, project, env, secret_name, instance_suffix) \
+             VALUES ('{ORG}', '{PROJECT}', '{ENVIRONMENT}', \
+                     'wamn-db-{ORG}--{PROJECT}--{ENVIRONMENT}', '{INSTANCE}') \
+             ON CONFLICT (org, project, env) DO UPDATE SET instance_suffix = EXCLUDED.instance_suffix;"
+        ))
+        .await
+        .expect("install stored project-env instance");
+
+    let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
     let role_a = effect_writer_generation_role(
         ORG,
         PROJECT,
@@ -634,6 +679,14 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         .batch_execute(&format!("DROP ROLE \"{role_a}\"; DROP ROLE \"{role_b}\";"))
         .await
         .expect("clean scoped lifecycle roles while retaining stable ACL roles");
+    catalog
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS registry CASCADE; \
+             DROP SCHEMA IF EXISTS provisioning CASCADE; \
+             DROP SCHEMA IF EXISTS identity CASCADE;",
+        )
+        .await
+        .expect("drop registry fixture schemas");
     let _ = std::fs::remove_file(secret_a);
     let _ = std::fs::remove_file(secret_b);
 }

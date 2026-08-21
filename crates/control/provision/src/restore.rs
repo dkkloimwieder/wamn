@@ -113,7 +113,7 @@ mod tests {
         // The scratch name never collides with the live `wamn-db-…` database.
         assert_ne!(
             restore_scratch_db_name(&t()),
-            crate::project_env_database_name("acme", "billing", "dev")
+            crate::project_env_database_name("acme", "billing", "dev", "k3m9x2p7")
         );
         // The prod and dev envs of one project get distinct scratch names.
         let prod = Triple::new("acme", "billing", "prod");

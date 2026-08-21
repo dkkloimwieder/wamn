@@ -176,6 +176,7 @@ pub fn render_effect_writer_secret_manifest(
 /// `replication=database`, when it opens the walsender session — l5i9.10).
 pub fn render_project_env_cdc_secret_manifest(
     triple: &Triple,
+    instance: &str,
     namespace: &str,
     url: &str,
 ) -> Value {
@@ -199,7 +200,12 @@ pub fn render_project_env_cdc_secret_manifest(
             "org": triple.org,
             "project": triple.project,
             "env": triple.env.as_str(),
-            "role": cdc_object_name(&triple.org, &triple.project, triple.env.as_str()),
+            "role": cdc_object_name(
+                &triple.org,
+                &triple.project,
+                triple.env.as_str(),
+                instance,
+            ),
         },
     })
 }
@@ -304,7 +310,7 @@ mod tests {
         let t = Triple::new("acme", "billing", "dev");
         let url =
             "postgres://wamn_cdc_acme__billing__dev:pw@acme-dev-rw:5432/wamn-db-acme--billing--dev";
-        let s = render_project_env_cdc_secret_manifest(&t, "wamn-system", url);
+        let s = render_project_env_cdc_secret_manifest(&t, "k3m9x2p7", "wamn-system", url);
         assert_eq!(s["kind"], "Secret");
         // The CDC Secret name is the wamn-cdc-… sibling — NEVER the wamn-db-…
         // query Secret (a distinct R8b credential tier, one lookup key each).
@@ -321,7 +327,10 @@ mod tests {
         assert_eq!(s["metadata"]["labels"]["wamn.env"], "dev");
         assert_eq!(s["stringData"]["url"], url);
         // The role recorded is the underscored replication role, not wamn_app.
-        assert_eq!(s["stringData"]["role"], "wamn_cdc_acme__billing__dev");
+        assert_eq!(
+            s["stringData"]["role"],
+            "wamn_cdc_acme__billing__dev__k3m9x2p7"
+        );
     }
 
     #[test]
