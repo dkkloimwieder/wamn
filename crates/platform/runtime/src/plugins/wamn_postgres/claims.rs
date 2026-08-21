@@ -5,8 +5,8 @@
 //! surface the injection review (R2/R16/R16b/cjv.2/l5i9.12.2) reasons about.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use anyhow::Context as _;
 use deadpool_postgres::{Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime, Timeouts};
@@ -14,6 +14,7 @@ use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
 
 use wamn_event_wire::Causation;
+use wamn_run_state::DURABLE_CLASS_SQL_PREDICATE;
 
 use wamn_catalog::ManifestDigest;
 use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
@@ -158,6 +159,9 @@ pub struct ConnectionEffectSnapshot {
     /// carries is that the CTE found the exact plan bytes `node_permitted` reads
     /// the presented node out of.
     pub resolution_matches: bool,
+    /// Effective attempt-evidence gate. `standard` runs project `true` without
+    /// consulting the ledger; `durable` runs project whether the exact immutable
+    /// attempt exists.
     pub attempt_matches: bool,
     pub requirement_json: Option<serde_json::Value>,
     pub node_permitted: bool,
@@ -235,14 +239,32 @@ SELECT r.tenant_id, r.flow_id, r.manifest_digest \
 /// (host-injected and write-once, written before any guest code ran —
 /// wamn-0h0g.15.11), so the host-side check answers the same question the deleted
 /// EXISTS did, against the same threat model.
-const CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
+///
+/// Attempt evidence is a `durable`-only enforcement point. Its correlated
+/// `EXISTS` stays inside the class `CASE` instead of riding an unconditional
+/// join, so PostgreSQL does not evaluate the ledger branch for `standard` runs.
+static CONNECTION_EFFECT_SNAPSHOT_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "\
 WITH authorized_plan AS MATERIALIZED ( \
     SELECT bundle.tenant_id, bundle.execution_bundle_hash, bundle.exact_bytes \
       FROM catalog.execution_bundles AS bundle \
      WHERE bundle.execution_bundle_hash = $3 \
 ) \
 SELECT r.status, r.execution_bundle_hash = $2, \
-       plan.execution_bundle_hash IS NOT NULL, attempt.attempt_id IS NOT NULL, \
+       plan.execution_bundle_hash IS NOT NULL, \
+       CASE WHEN r.{durable} THEN EXISTS ( \
+           SELECT 1 FROM effect_attempts AS attempt \
+            WHERE attempt.tenant_id = r.tenant_id \
+              AND attempt.run_id = r.run_id \
+              AND attempt.root_plan_hash = $2 \
+              AND attempt.current_plan_hash = $3 \
+              AND attempt.frame_id = $4 \
+              AND attempt.local_node_id = $5 \
+              AND attempt.occurrence = $6 \
+              AND attempt.source_artifact_hash = $7 \
+              AND attempt.requirement_name = $8 \
+       ) ELSE true END, \
        requirement.requirement_json::text, \
        COALESCE(plan_node.match_count = 1 AND plan_node.permitted, false), \
        binding.binding_status = 'active', binding.validation_status = 'valid', \
@@ -252,26 +274,16 @@ SELECT r.status, r.execution_bundle_hash = $2, \
        generation.credential_set_handle, \
        CASE \
            WHEN r.trigger_source = 'scenario-draft' \
-            AND r.invocation_context #>> '{source,producer}' = 'draft-scenario' \
+            AND r.invocation_context #>> '{{source,producer}}' = 'draft-scenario' \
            THEN grant_row.generation IS NOT NULL AND grant_row.revoked_at IS NULL \
            WHEN r.trigger_source IS DISTINCT FROM 'scenario-draft' \
-            AND r.invocation_context #>> '{source,producer}' IS DISTINCT FROM 'draft-scenario' \
+            AND r.invocation_context #>> '{{source,producer}}' IS DISTINCT FROM 'draft-scenario' \
            THEN true \
            ELSE false \
        END, \
        r.flow_id \
   FROM runs AS r \
   LEFT JOIN authorized_plan AS plan ON plan.tenant_id = r.tenant_id \
-  LEFT JOIN effect_attempts AS attempt \
-    ON attempt.tenant_id = r.tenant_id \
-   AND attempt.run_id = r.run_id \
-   AND attempt.root_plan_hash = $2 \
-   AND attempt.current_plan_hash = $3 \
-   AND attempt.frame_id = $4 \
-   AND attempt.local_node_id = $5 \
-   AND attempt.occurrence = $6 \
-   AND attempt.source_artifact_hash = $7 \
-   AND attempt.requirement_name = $8 \
   LEFT JOIN catalog.connection_requirements AS requirement \
     ON requirement.tenant_id = r.tenant_id \
    AND requirement.artifact_hash = $7 \
@@ -280,12 +292,12 @@ SELECT r.status, r.execution_bundle_hash = $2, \
       SELECT count(*) AS match_count, \
              COALESCE(bool_and( \
                  node.value ->> 'effect-policy' = 'effectful' \
-                 AND node.value #>> '{source-connection-requirement,name}' = $8 \
+                 AND node.value #>> '{{source-connection-requirement,name}}' = $8 \
                  AND node.value -> 'source-connection-requirement' -> 'descriptor' \
                      = requirement.requirement_json \
              ), false) AS permitted \
         FROM jsonb_array_elements( \
-            convert_from(plan.exact_bytes, 'UTF8')::jsonb #> '{body,nodes}' \
+            convert_from(plan.exact_bytes, 'UTF8')::jsonb #> '{{body,nodes}}' \
         ) AS node(value) \
        WHERE node.value ->> 'local-node-id' = $5 \
   ) AS plan_node ON true \
@@ -309,7 +321,10 @@ SELECT r.status, r.execution_bundle_hash = $2, \
    AND grant_row.environment = generation.environment \
    AND grant_row.instance_id = generation.instance_id \
    AND grant_row.generation = generation.generation \
- WHERE r.run_id = $1";
+ WHERE r.run_id = $1",
+        durable = DURABLE_CLASS_SQL_PREDICATE,
+    )
+});
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
@@ -1361,7 +1376,7 @@ impl WamnPostgres {
                 &lookup.requirement_name,
             ];
             let row = conn
-                .query_opt(CONNECTION_EFFECT_SNAPSHOT_SQL, &params)
+                .query_opt(CONNECTION_EFFECT_SNAPSHOT_SQL.as_str(), &params)
                 .await
                 .context("query HTTP effect authorization snapshot")?;
             let Some(row) = row else {
@@ -1976,7 +1991,7 @@ mod tests {
             "node.value #>> '{source-connection-requirement,name}' = $8",
             "node.value -> 'source-connection-requirement' -> 'descriptor'",
             "= requirement.requirement_json",
-            "LEFT JOIN effect_attempts AS attempt",
+            "SELECT 1 FROM effect_attempts AS attempt",
             "attempt.run_id = r.run_id",
             "attempt.root_plan_hash = $2",
             "attempt.current_plan_hash = $3",
@@ -1993,6 +2008,29 @@ mod tests {
         }
         assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("SELECT count(*) AS match_count"));
         assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("plan_node.match_count = 1"));
+    }
+
+    #[test]
+    fn effect_authority_requires_attempt_evidence_only_for_the_durable_class() {
+        let class_gate = format!(
+            "CASE WHEN r.{DURABLE_CLASS_SQL_PREDICATE} \
+             THEN EXISTS ("
+        );
+        assert!(
+            CONNECTION_EFFECT_SNAPSHOT_SQL.contains(&class_gate),
+            "the HTTP effect snapshot must use the run-state class predicate verbatim"
+        );
+        assert_eq!(
+            CONNECTION_EFFECT_SNAPSHOT_SQL
+                .matches(DURABLE_CLASS_SQL_PREDICATE)
+                .count(),
+            1,
+            "one carrier read decides whether exact attempt evidence is required"
+        );
+        assert!(
+            !CONNECTION_EFFECT_SNAPSHOT_SQL.contains("JOIN effect_attempts"),
+            "Standard must not pay an unconditional ledger lookup"
+        );
     }
 
     #[test]
@@ -3032,7 +3070,8 @@ mod tests {
         const RUN_STATE_SQL: &str = include_str!("../../../../../../deploy/sql/run-state.sql");
         const TENANT: &str = "effect-live";
         const COMPONENT: &str = "effect-live-runner";
-        const RUN_ID: &str = "effect-live-run";
+        const STANDARD_RUN_ID: &str = "effect-live-standard";
+        const DURABLE_RUN_ID: &str = "effect-live-durable";
         const LOCAL_NODE_ID: &str = "send-notice";
         const REQUIREMENT_NAME: &str = "manager";
         const FRAME_ID: i64 = 7;
@@ -3348,37 +3387,17 @@ mod tests {
         seed.execute(
             "INSERT INTO wamn_run.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                environment,execution_bundle_hash,status,trigger_source,invocation_context) \
-             VALUES ($1,$2,'root-flow',1,'effect-catalog',1,'prod',$3, \
-                     'running','manual','{\"source\":{\"producer\":\"manual\"}}'::jsonb)",
-            &[&TENANT, &RUN_ID, &root_plan_hash],
+                environment,execution_bundle_hash,status,trigger_source,invocation_context, \
+                durability_class) \
+             VALUES \
+               ($1,$2,'root-flow',1,'effect-catalog',1,'prod',$4, \
+                'running','manual','{\"source\":{\"producer\":\"manual\"}}'::jsonb,'standard'), \
+               ($1,$3,'root-flow',1,'effect-catalog',1,'prod',$4, \
+                'running','manual','{\"source\":{\"producer\":\"manual\"}}'::jsonb,'durable')",
+            &[&TENANT, &STANDARD_RUN_ID, &DURABLE_RUN_ID, &root_plan_hash],
         )
         .await
-        .expect("seed root-pinned running run");
-        seed.execute(
-            "INSERT INTO wamn_run.effect_attempts \
-               (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,parent_frame_id, \
-                call_site_id,local_node_id,source_artifact_hash,requirement_name,occurrence, \
-                seq,generation_fact_kind,connection_name,connection_generation, \
-                credential_generation,attempt_started_at,attempt_deadline_at,attempt_input_ref) \
-             VALUES ($1,$2,$3,$4,$5,3,'call-callee',$6,$7,$8,$9,0,'attested', \
-                     'manager-prod','1','effect-live-credential', \
-                     clock_timestamp(),clock_timestamp() + interval '1 minute', \
-                     'sha256:effect-live-input')",
-            &[
-                &TENANT,
-                &RUN_ID,
-                &root_plan_hash,
-                &current_plan_hash,
-                &FRAME_ID,
-                &LOCAL_NODE_ID,
-                &callee_artifact_hash,
-                &REQUIREMENT_NAME,
-                &OCCURRENCE,
-            ],
-        )
-        .await
-        .expect("superuser seed exact immutable attempt attestation");
+        .expect("seed standard and durable root-pinned running runs");
         seed.commit()
             .await
             .expect("commit effect authority fixture");
@@ -3418,8 +3437,8 @@ mod tests {
         postgres
             .set_schema(COMPONENT, "wamn_run")
             .expect("set production run-state search path");
-        let exact_lookup = ConnectionEffectLookup {
-            run_id: RUN_ID,
+        let standard_lookup = ConnectionEffectLookup {
+            run_id: STANDARD_RUN_ID,
             root_plan_hash: &root_plan_hash,
             current_plan_hash: &current_plan_hash,
             frame_id: FRAME_ID,
@@ -3428,6 +3447,67 @@ mod tests {
             source_artifact_hash: &callee_artifact_hash,
             requirement_name: REQUIREMENT_NAME,
         };
+        let standard = postgres
+            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, TENANT, &standard_lookup)
+            .await
+            .expect("load standard authority snapshot without effect evidence")
+            .expect("standard run is visible under tenant RLS");
+        assert_eq!(standard.run_status, "running");
+        assert!(standard.root_plan_matches);
+        assert!(standard.attempt_matches);
+        assert!(standard.resolution_matches);
+        assert!(standard.node_permitted);
+        assert_eq!(standard.requirement_json.as_ref(), Some(&descriptor));
+        assert!(standard.binding_active);
+        assert!(standard.binding_valid);
+        assert_eq!(standard.instance_id.as_deref(), Some("manager-prod"));
+        assert!(standard.instance_enabled);
+        assert_eq!(standard.active_generation, Some(1));
+        assert_eq!(standard.generation, Some(1));
+        assert!(standard.draft_generation_granted);
+
+        let exact_lookup = ConnectionEffectLookup {
+            run_id: DURABLE_RUN_ID,
+            ..standard_lookup
+        };
+        let missing_durable_attempt = postgres
+            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, TENANT, &exact_lookup)
+            .await
+            .expect("load durable authority snapshot without effect evidence")
+            .expect("durable run is visible under tenant RLS");
+        assert!(missing_durable_attempt.resolution_matches);
+        assert!(missing_durable_attempt.node_permitted);
+        assert!(
+            !missing_durable_attempt.attempt_matches,
+            "durable trusted HTTP stays behind exact immutable attempt evidence"
+        );
+
+        admin
+            .execute(
+                "INSERT INTO wamn_run.effect_attempts \
+                   (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,parent_frame_id, \
+                    call_site_id,local_node_id,source_artifact_hash,requirement_name,occurrence, \
+                    seq,generation_fact_kind,connection_name,connection_generation, \
+                    credential_generation,attempt_started_at,attempt_deadline_at,attempt_input_ref) \
+                 VALUES ($1,$2,$3,$4,$5,3,'call-callee',$6,$7,$8,$9,0,'attested', \
+                         'manager-prod','1','effect-live-credential', \
+                         clock_timestamp(),clock_timestamp() + interval '1 minute', \
+                         'sha256:effect-live-input')",
+                &[
+                    &TENANT,
+                    &DURABLE_RUN_ID,
+                    &root_plan_hash,
+                    &current_plan_hash,
+                    &FRAME_ID,
+                    &LOCAL_NODE_ID,
+                    &callee_artifact_hash,
+                    &REQUIREMENT_NAME,
+                    &OCCURRENCE,
+                ],
+            )
+            .await
+            .expect("seed exact immutable attempt for the durable run");
+
         let exact = postgres
             .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, TENANT, &exact_lookup)
             .await
@@ -3476,7 +3556,7 @@ mod tests {
                 TENANT,
                 &ConnectionEffectLookup {
                     current_plan_hash: &unknown_plan_hash,
-                    ..exact_lookup
+                    ..standard_lookup
                 },
             )
             .await
@@ -3485,7 +3565,10 @@ mod tests {
         assert!(wrong_current.root_plan_matches);
         assert!(!wrong_current.resolution_matches);
         assert!(!wrong_current.node_permitted);
-        assert!(!wrong_current.attempt_matches);
+        assert!(
+            wrong_current.attempt_matches,
+            "standard reaches the plan confinement even without attempt evidence"
+        );
 
         let unknown_source_hash = digest(b"effect-live-unknown-source-artifact");
         let wrong_source = postgres
@@ -3495,7 +3578,7 @@ mod tests {
                 TENANT,
                 &ConnectionEffectLookup {
                     source_artifact_hash: &unknown_source_hash,
-                    ..exact_lookup
+                    ..standard_lookup
                 },
             )
             .await
@@ -3504,12 +3587,15 @@ mod tests {
         // `resolution_matches` does not bind the source artifact, and by owner
         // ruling (wamn-0h0g.15.66) this statement will not make it: `authorized_plan`
         // only asks that a bundle with hash $3 exist in the tenant. This lookup is
-        // refused by the exact attempt and the absent requirement below, and the
-        // run-to-plan binding is refused outside this statement entirely, by
+        // refused by the absent requirement below, and the run-to-plan binding
+        // is refused outside this statement entirely, by
         // `authorize_plan_closure` against the release manifest. Asserting the true
         // value here records what the SQL proves, not a hole.
         assert!(wrong_source.resolution_matches);
-        assert!(!wrong_source.attempt_matches);
+        assert!(
+            wrong_source.attempt_matches,
+            "standard reaches source/requirement confinement without attempt evidence"
+        );
         assert!(!wrong_source.node_permitted);
         assert!(wrong_source.requirement_json.is_none());
 
@@ -3520,14 +3606,17 @@ mod tests {
                 TENANT,
                 &ConnectionEffectLookup {
                     requirement_name: "other-manager",
-                    ..exact_lookup
+                    ..standard_lookup
                 },
             )
             .await
             .expect("load wrong-requirement snapshot")
             .expect("run remains visible for wrong requirement");
         assert!(wrong_requirement.resolution_matches);
-        assert!(!wrong_requirement.attempt_matches);
+        assert!(
+            wrong_requirement.attempt_matches,
+            "standard reaches declared-requirement confinement without attempt evidence"
+        );
         assert!(!wrong_requirement.node_permitted);
         assert!(wrong_requirement.requirement_json.is_none());
 

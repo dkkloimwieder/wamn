@@ -806,6 +806,100 @@ mod tests {
         assert!(authorize_snapshot(&snapshot()).is_ok());
     }
 
+    /// The live SQL proof in `wamn_postgres::claims` establishes that a
+    /// `standard` run with no effect-attempt row reaches this point with
+    /// `attempt_matches = true`. That class bypass is only the crash-ledger
+    /// shelf: every connection confinement below remains mandatory.
+    #[tokio::test]
+    async fn standard_without_attempt_evidence_still_reaches_connection_confinement() {
+        #[derive(Debug)]
+        struct RefusingDns;
+
+        impl crate::connection_authority::DnsResolver for RefusingDns {
+            fn resolve(
+                &self,
+                _host: &str,
+                _port: u16,
+            ) -> impl std::future::Future<Output = Result<Vec<SocketAddr>, AuthorityError>> + Send
+            {
+                std::future::ready(Err(AuthorityError::dns_resolution_failed(
+                    "DNS must not be reached by these refusals",
+                )))
+            }
+        }
+
+        let standard = snapshot();
+        assert!(
+            authorize_plan_closure(Some(&release()), &standard, &hash('b')).is_ok(),
+            "control: the Standard run presents a release-reachable plan"
+        );
+        assert!(
+            authorize_snapshot(&standard).is_ok(),
+            "control: the effective Standard snapshot passes the attempt gate"
+        );
+
+        for injected_address in [
+            "https://evil.example/steal",
+            "http://169.254.169.254/latest/meta-data",
+            "//evil.example/steal",
+        ] {
+            assert!(
+                normalize_portable_http_target(injected_address).is_err(),
+                "Standard must not turn {injected_address:?} into a relative target"
+            );
+        }
+
+        let authority = parse_http_connection_authority(
+            "https://erp.example/api/",
+            TlsPolicy::VerifyAuthority,
+            None,
+        )
+        .expect("canonical connection authority");
+        let escape = normalize_portable_http_target("/../outside")
+            .expect("portable spelling reaches the base-path guard");
+        let base_path_error = resolve_http_request(
+            &authority,
+            &escape,
+            &["https://erp.example".parse().expect("allowed host")],
+            &ExternallyEnforcedNetworkPolicy,
+            &RefusingDns,
+        )
+        .await
+        .expect_err("the connection base path confines Standard requests");
+        assert!(
+            matches!(
+                base_path_error.kind(),
+                crate::connection_authority::AuthorityErrorKind::InvalidRequestTarget
+                    | crate::connection_authority::AuthorityErrorKind::BasePathEscape
+            ),
+            "unexpected base-path refusal: {base_path_error:?}"
+        );
+
+        let ordinary = normalize_portable_http_target("/orders").expect("portable target");
+        let address_error = resolve_http_request(
+            &authority,
+            &ordinary,
+            &["https://other.example"
+                .parse()
+                .expect("denied host fixture")],
+            &ExternallyEnforcedNetworkPolicy,
+            &RefusingDns,
+        )
+        .await
+        .expect_err("the platform address ceiling confines Standard requests");
+        assert_eq!(
+            address_error.kind(),
+            crate::connection_authority::AuthorityErrorKind::PlatformHostDenied
+        );
+
+        let declared = RunnerEgressPolicy::default();
+        declared.set_declared("runner", &["https://other.example".into()]);
+        assert!(matches!(
+            require_declared_egress("runner", &declared, authority.canonical_base_url()),
+            Err(EffectError::AuthorityDenied)
+        ));
+    }
+
     #[test]
     fn mismatched_source_or_revoked_draft_generation_is_denied_before_network_data() {
         let mut mismatched_source = snapshot();
@@ -908,16 +1002,32 @@ mod tests {
         let binding = source
             .find("authorize_plan_closure(")
             .expect("send checks the run-to-plan binding");
+        let target = source
+            .find("normalize_portable_http_target(&request.path_and_query)")
+            .expect("send normalizes the relative target");
         let snapshot_gate = source
             .find("authorize_snapshot(&snapshot)?;")
             .expect("send checks the database-side facts");
+        let declared = source
+            .find("require_declared_egress(component_id, &self.egress")
+            .expect("send applies the declared-authority narrowing");
+        let address = source
+            .find("let decision = resolve_http_request(")
+            .expect("send applies the address and base-path authority decision");
         let credential = source
             .find("let secret = self")
             .expect("send resolves the credential");
         let wire = source
             .find("execute(decision, request, credential_headers)")
             .expect("send reaches the wire");
-        assert!(binding < snapshot_gate && snapshot_gate < credential && credential < wire);
+        assert!(
+            target < binding
+                && binding < snapshot_gate
+                && snapshot_gate < declared
+                && declared < address
+                && address < credential
+                && credential < wire
+        );
     }
 
     /// Until .4.9 installs the immutable attempt reader/writer together, the
