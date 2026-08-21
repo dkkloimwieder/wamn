@@ -1530,6 +1530,65 @@ fn catalog_execution_bundles_state_ownership_is_ratified() {
 }
 
 #[test]
+fn durability_policy_projection_ownership_is_explicit_and_bounded() {
+    let manifest = read_manifest(&repository());
+    let object = manifest
+        .objects
+        .iter()
+        .find(|object| object.id == "wamn_run.environment_policies")
+        .expect("the project-local durability policy projection is registered");
+
+    assert_eq!(object.ownership.plane, "project");
+    assert_eq!(object.ownership.semantic_owner, "registry-store");
+    assert_eq!(object.ownership.migration_owners, ["schema-control"]);
+    assert_eq!(object.ownership.schema_source, "deploy/sql/run-state.sql");
+    assert_eq!(object.ownership.writers, ["ctl-reconcile-run-plane"]);
+    assert_eq!(
+        object.ownership.readers,
+        ["ctl-reconcile-run-plane", "run-state"]
+    );
+    assert_eq!(
+        object.ownership.compatibility_horizon,
+        "platform-schema-major"
+    );
+    assert_eq!(
+        object.ownership.drift_gate,
+        "SR13:generate-and-structurally-compare"
+    );
+
+    let registry_policy = manifest
+        .objects
+        .iter()
+        .find(|object| object.id == "registry.env_policies")
+        .expect("the registry durability policy source is registered");
+    assert_eq!(
+        registry_policy.ownership.writers,
+        ["registry-store", "ctl-env-policies"]
+    );
+    assert_eq!(
+        registry_policy.ownership.readers,
+        ["registry-store", "ctl-env-policies"]
+    );
+
+    let env_policy = &manifest.principals["ctl-env-policies"];
+    assert_eq!(env_policy.path, "services/ctl/src/env_policies.rs");
+    assert_eq!(env_policy.role, "migration");
+    let reconciler = &manifest.principals["ctl-reconcile-run-plane"];
+    assert_eq!(reconciler.path, "services/ctl/src/reconcile_run_plane.rs");
+    assert_eq!(reconciler.role, "effect");
+    assert!(
+        manifest
+            .scan_policy
+            .unqualified_contexts
+            .iter()
+            .any(|context| {
+                context.path_prefix == "services/ctl/src/reconcile_run_plane.rs"
+                    && context.default_schema == "wamn_run"
+            })
+    );
+}
+
+#[test]
 fn host_owned_production_claim_authority_is_explicit_and_bounded() {
     let manifest = read_manifest(&repository());
     let principal = &manifest.principals["execution-host"];

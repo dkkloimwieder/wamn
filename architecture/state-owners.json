@@ -103,6 +103,14 @@
       "path": "services/ctl/src/migrate_catalog.rs",
       "role": "effect"
     },
+    "ctl-env-policies": {
+      "path": "services/ctl/src/env_policies.rs",
+      "role": "migration"
+    },
+    "ctl-reconcile-run-plane": {
+      "path": "services/ctl/src/reconcile_run_plane.rs",
+      "role": "effect"
+    },
     "ctl-terminalize": {
       "path": "services/ctl/src/terminalize_effect_uncertain.rs",
       "role": "effect"
@@ -255,6 +263,10 @@
         "default_schema": "wamn_run"
       },
       {
+        "path_prefix": "services/ctl/src/reconcile_run_plane.rs",
+        "default_schema": "wamn_run"
+      },
+      {
         "path_prefix": "components/execution/flowrunner/src",
         "default_schema": "wamn_run"
       }
@@ -346,10 +358,12 @@
       ],
       "schema_source": "deploy/sql/system-schema.sql",
       "writers": [
-        "registry-store"
+        "registry-store",
+        "ctl-env-policies"
       ],
       "readers": [
-        "registry-store"
+        "registry-store",
+        "ctl-env-policies"
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1590,6 +1604,24 @@
         "scenario-worker"
       ],
       "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.environment_policies",
+      "plane": "project",
+      "semantic_owner": "registry-store",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "ctl-reconcile-run-plane"
+      ],
+      "readers": [
+        "ctl-reconcile-run-plane",
+        "run-state"
+      ],
+      "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
