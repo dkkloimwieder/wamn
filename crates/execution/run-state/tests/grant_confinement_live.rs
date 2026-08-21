@@ -81,6 +81,7 @@ const RUN_COLUMNS: &[&str] = &[
     "status",
     "trigger_source",
     "capture_mode",
+    "durability_class",
     "release_version",
     "manifest_digest",
     "input_json",
@@ -278,6 +279,73 @@ fn assert_public_holds_nothing(relation: &str) -> String {
                 AND acl.grantee = 0), 'PUBLIC holds a column grant on {relation}'; \
          END $probe$;"
     )
+}
+
+#[test]
+#[ignore = "requires WAMN_RUN_STORE_PG_URL and a throwaway PostgreSQL database"]
+fn environment_policy_is_read_only_to_admission_roles() {
+    let _serialize = INSTALL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let url = url();
+    install(&url);
+
+    success(
+        &url,
+        &format!(
+            "{} {} \
+             DO $probe$ BEGIN \
+               ASSERT pg_catalog.has_table_privilege( \
+                 'wamn_scenario_author','wamn_run.environment_policies','SELECT'); \
+               ASSERT NOT EXISTS (SELECT FROM unnest(ARRAY['INSERT','UPDATE','DELETE']) p \
+                 WHERE pg_catalog.has_table_privilege( \
+                   'wamn_scenario_author','wamn_run.environment_policies',p)); \
+               ASSERT NOT EXISTS (SELECT FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) p \
+                 WHERE pg_catalog.has_table_privilege( \
+                   'wamn_effect_writer','wamn_run.environment_policies',p)); \
+               ASSERT NOT EXISTS (SELECT FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) p \
+                 WHERE pg_catalog.has_table_privilege( \
+                   'wamn_run_projection_writer','wamn_run.environment_policies',p)); \
+             END $probe$;",
+            assert_table_privileges("wamn_run.environment_policies", &["SELECT"]),
+            assert_public_holds_nothing("wamn_run.environment_policies"),
+        ),
+    );
+
+    success(
+        &url,
+        "INSERT INTO wamn_run.environment_policies \
+           (tenant_id,expected_environment,durability_class) \
+         VALUES ('t1','dev','durable'), ('t2','dev','standard');",
+    );
+    let visible = success(
+        &url,
+        &format!(
+            "{} SELECT tenant_id || '|' || expected_environment || '|' || durability_class \
+               FROM environment_policies; ROLLBACK;",
+            app_preamble()
+        ),
+    );
+    assert_eq!(
+        visible.trim(),
+        "t1|dev|durable",
+        "tenant RLS must hide another tenant's projected policy"
+    );
+
+    let refused = success(
+        &url,
+        &format!(
+            "{} DO $probe$ BEGIN \
+               BEGIN \
+                 INSERT INTO environment_policies \
+                   (tenant_id,expected_environment,durability_class) \
+                 VALUES ('t1','prod','durable'); \
+                 RAISE EXCEPTION 'probe-not-refused'; \
+               EXCEPTION WHEN insufficient_privilege THEN NULL; \
+               END; \
+             END $probe$; ROLLBACK; SELECT 'refused';",
+            app_preamble()
+        ),
+    );
+    assert!(refused.contains("refused"));
 }
 
 // ---------------------------------------------------------------------------

@@ -164,6 +164,9 @@ CREATE TABLE registry.env_policies (
     backup_cadence  text  NOT NULL DEFAULT '',
     wal_retention   text  NOT NULL DEFAULT '',
     hibernation     text  NOT NULL DEFAULT 'off',
+    durability_class text NOT NULL DEFAULT 'standard'
+        CONSTRAINT env_policies_durability_class_check
+        CHECK (durability_class IN ('standard', 'durable')),
     PRIMARY KEY (org, name),
     -- cjv.20 charset backstop: `name` IS the env slug (check_env mirror) — a
     -- lowercase slug ≤ 40 bytes; no reserved rule (an env may be any slug).

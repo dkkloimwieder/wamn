@@ -48,7 +48,7 @@ use tokio_postgres::NoTls;
 
 use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
 
-use crate::env_policies::read_env_policies;
+use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policies};
 
 /// The named org preset `provision-org` stamps (the `Tier` successor —
 /// [`wamn_control_registry::Template`]).
@@ -238,9 +238,11 @@ async fn record_org(
     stamped: &[OrgEnvPolicy],
 ) -> anyhow::Result<()> {
     client
-        .batch_execute("SET ROLE wamn_system; BEGIN")
+        .batch_execute("SET ROLE wamn_system")
         .await
-        .context("SET ROLE wamn_system + BEGIN")?;
+        .context("SET ROLE wamn_system")?;
+    ensure_env_policy_durability_schema(client).await?;
+    client.batch_execute("BEGIN").await.context("BEGIN")?;
     let result = record_org_rows(client, org, stamped).await;
     match result {
         Ok(()) => client.batch_execute("COMMIT").await.context("COMMIT")?,
@@ -287,6 +289,7 @@ async fn record_org_rows(
                     &p.backup_cadence,
                     &p.wal_retention,
                     &p.hibernation,
+                    &p.durability_class.as_sql(),
                 ],
             )
             .await

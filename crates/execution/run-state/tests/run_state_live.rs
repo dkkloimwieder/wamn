@@ -155,7 +155,10 @@ fn run_state_live() {
     // transition after terminal state returns its typed refusal.
     success(
         &url,
-        "INSERT INTO wamn_run.runs \
+        "INSERT INTO wamn_run.environment_policies \
+           (tenant_id,expected_environment,durability_class) \
+         VALUES ('t1','prod','standard'); \
+         INSERT INTO wamn_run.runs \
            (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
             execution_bundle_hash, attachment_id, status) \
          VALUES ('t1', 'release-1', 'f', 1, 'cat', 1, 'prod', \
@@ -444,10 +447,17 @@ fn run_state_live() {
             'dispatched','standard'), \
            ('t1','record-unpaired','f',1,'cat',1,'prod', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'running','standard'), \
+            'running','standard'); \
+         UPDATE wamn_run.environment_policies SET durability_class='durable' \
+          WHERE tenant_id='t1'; \
+         INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status,durability_class) VALUES \
            ('t1','record-effect','f',1,'cat',1,'prod', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
             'dispatched','durable'); \
+         UPDATE wamn_run.environment_policies SET durability_class='standard' \
+          WHERE tenant_id='t1'; \
          INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES \
            ('t1','record-claim'),('t1','record-effect');",
     );
@@ -666,18 +676,17 @@ fn run_state_live() {
          END $$;",
     );
 
-    // The ruled literal set and the fail-open default, against the INSTALLED
-    // DDL rather than the file: `standard` is what an admission that names no
-    // class takes, and nothing outside the pair is storable. The unruled literal
-    // is tried on an INSERT deliberately — a BEFORE UPDATE trigger runs ahead of
-    // constraint checking, so an UPDATE would prove the trigger again, not the
-    // CHECK.
+    // The ruled literal set against the INSTALLED DDL: the converged standard
+    // policy selected the cheap tier, and nothing outside the pair is storable.
+    // The pin trigger normally overwrites every supplied class; the
+    // superuser-only replica session disables it for this one transaction so
+    // this remains a narrow proof of the independent stored-row CHECK.
     success(
         &url,
-        "DO $$ BEGIN \
+        "BEGIN; SET LOCAL session_replication_role = replica; DO $$ BEGIN \
            ASSERT (SELECT durability_class FROM wamn_run.runs \
                     WHERE run_id='record-claim') = 'standard', \
-                  'the absent-policy default is not the cheap tier'; \
+                  'the standard policy did not select the cheap tier'; \
            BEGIN \
              INSERT INTO wamn_run.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
@@ -688,7 +697,7 @@ fn run_state_live() {
              ASSERT false, 'the class CHECK admitted an unruled literal'; \
            EXCEPTION WHEN check_violation THEN NULL; \
            END; \
-         END $$;",
+         END $$; ROLLBACK;",
     );
 
     // Half a record never reaches the guard — its record arms do not fire while

@@ -179,7 +179,14 @@ fn the_class_gate_carries_one_sql_literal_at_every_gated_statement() {
 
     // The class rides both host-decoded projections.
     assert!(candidate.contains("r.durability_class"));
-    assert!(select_exhausted_production_sql().contains("selected_run.durability_class"));
+    let exhausted = select_exhausted_production_sql();
+    assert!(exhausted.contains("selected_run.durability_class"));
+    for claim in [&candidate, &exhausted] {
+        assert!(
+            !claim.contains("environment_policies") && !claim.contains("registry."),
+            "claim reads the frozen run carrier only: {claim}"
+        );
+    }
 }
 
 #[test]

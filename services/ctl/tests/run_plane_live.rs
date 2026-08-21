@@ -86,6 +86,58 @@ const DISPATCH_READER_PASSWORD: &str = "dispatch-reader-run-plane-probe";
 const EMPTY_EXECUTION_BUNDLE_HASH: &str =
     "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
+async fn seed_system_env_policy(su: &Client, durability_class: &str) {
+    su.batch_execute(
+        "DROP SCHEMA IF EXISTS registry CASCADE; \
+         DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
+           THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$; \
+         CREATE SCHEMA registry AUTHORIZATION wamn_system; \
+         SET ROLE wamn_system; \
+         CREATE TABLE registry.env_policies ( \
+           org text NOT NULL, name text NOT NULL, recovery_domain jsonb NOT NULL, \
+           promotion_rank int NOT NULL, instances int NOT NULL, storage text NOT NULL, \
+           cpu text NOT NULL, memory text NOT NULL, image text NOT NULL, \
+           backup_cadence text NOT NULL, wal_retention text NOT NULL, \
+           hibernation text NOT NULL, durability_class text NOT NULL, \
+           PRIMARY KEY (org, name)); \
+         RESET ROLE",
+    )
+    .await
+    .expect("create system env-policy fixture");
+    su.execute(
+        "INSERT INTO registry.env_policies \
+           (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
+            backup_cadence,wal_retention,hibernation,durability_class) \
+         VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off',$1)",
+        &[&durability_class],
+    )
+    .await
+    .expect("seed system env policy");
+}
+
+async fn seed_pre_durability_system_env_policy(su: &Client) {
+    su.batch_execute(
+        "DROP SCHEMA IF EXISTS registry CASCADE; \
+         DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
+           THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$; \
+         CREATE SCHEMA registry AUTHORIZATION wamn_system; \
+         SET ROLE wamn_system; \
+         CREATE TABLE registry.env_policies ( \
+           org text NOT NULL, name text NOT NULL, recovery_domain jsonb NOT NULL, \
+           promotion_rank int NOT NULL, instances int NOT NULL, storage text NOT NULL, \
+           cpu text NOT NULL, memory text NOT NULL, image text NOT NULL, \
+           backup_cadence text NOT NULL, wal_retention text NOT NULL, \
+           hibernation text NOT NULL, PRIMARY KEY (org, name)); \
+         INSERT INTO registry.env_policies \
+           (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
+            backup_cadence,wal_retention,hibernation) \
+         VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off'); \
+         RESET ROLE",
+    )
+    .await
+    .expect("create pre-durability system env-policy fixture");
+}
+
 fn schema() -> BareSchemaName {
     BareSchemaName::new(SCHEMA).expect("live-test schema is valid")
 }
@@ -433,6 +485,7 @@ async fn run_plane_reconcile_live() {
     capture_mode_additive_leg(&su, &url).await;
     invocation_admission_retention_leg(&su).await;
     stored_suite_cutover_leg(&su).await;
+    environment_policy_row_security_leg(&su, &url).await;
     current_noop_leg(&su).await;
     authoring_storage_authority_leg(&su, &url).await;
     catalog_head_share_lock_leg(&su, &url).await;
@@ -645,6 +698,26 @@ async fn dispatch_reader_read_surface_live() {
     };
     let su = connect(&url).await;
     dispatch_reader_read_surface_leg(&su, &url).await;
+}
+
+#[tokio::test]
+async fn environment_policy_row_security_live() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the environment-policy RLS gate");
+        return;
+    };
+    let su = connect(&url).await;
+    environment_policy_row_security_leg(&su, &url).await;
+}
+
+#[tokio::test]
+async fn registry_durability_schema_ensure_live() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the registry durability migration gate");
+        return;
+    };
+    let su = connect(&url).await;
+    registry_durability_schema_ensure_leg(&su, &url).await;
 }
 
 #[tokio::test]
@@ -2877,6 +2950,7 @@ async fn partition_plane_dead_letter_refusal_leg(su: &Client) {
 /// Manifestations 1 + 4: the 2jkm.41-sweep drift set plus the outbox era.
 async fn v1_era_drifted_leg(su: &Client, url: &str) {
     reset(su).await;
+    seed_system_env_policy(su, "durable").await;
     let schema = schema();
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
@@ -2968,12 +3042,109 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
 
     // The REAL CLI path (arg validation + connect + apply + print).
     reconcile_run_plane::run(ReconcileRunPlaneArgs {
+        system_database_url: url.to_string(),
         admin_database_url: url.to_string(),
+        org: "acme".to_string(),
+        tenant: "t1".to_string(),
+        env: "dev".to_string(),
         schema: SCHEMA.to_string(),
         dry_run: false,
     })
     .await
     .expect("reconcile-run-plane applies");
+
+    let projected: String = su
+        .query_one(
+            &format!(
+                "SELECT durability_class FROM {SCHEMA}.environment_policies \
+                 WHERE tenant_id='t1'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read projected durable policy")
+        .get(0);
+    assert_eq!(projected, "durable");
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+            environment,execution_bundle_hash) \
+         VALUES ('t1','r-policy-durable','f',1,'cat',1,'dev', \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}')"
+    ))
+    .await
+    .expect("admit a run under the projected durable policy");
+
+    su.batch_execute(
+        "UPDATE registry.env_policies SET durability_class='standard' \
+          WHERE org='acme' AND name='dev'",
+    )
+    .await
+    .expect("change the system env policy");
+    reconcile_run_plane::run(ReconcileRunPlaneArgs {
+        system_database_url: url.to_string(),
+        admin_database_url: url.to_string(),
+        org: "acme".to_string(),
+        tenant: "t1".to_string(),
+        env: "dev".to_string(),
+        schema: SCHEMA.to_string(),
+        dry_run: true,
+    })
+    .await
+    .expect("dry-run observes changed environment policy");
+    let after_dry_run: String = su
+        .query_one(
+            &format!(
+                "SELECT durability_class FROM {SCHEMA}.environment_policies \
+                 WHERE tenant_id='t1'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read policy after dry-run")
+        .get(0);
+    assert_eq!(after_dry_run, "durable", "dry-run mutated local policy");
+    reconcile_run_plane::run(ReconcileRunPlaneArgs {
+        system_database_url: url.to_string(),
+        admin_database_url: url.to_string(),
+        org: "acme".to_string(),
+        tenant: "t1".to_string(),
+        env: "dev".to_string(),
+        schema: SCHEMA.to_string(),
+        dry_run: false,
+    })
+    .await
+    .expect("reconcile changed environment policy");
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+            environment,execution_bundle_hash) \
+         VALUES ('t1','r-policy-standard','f',1,'cat',1,'dev', \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}')"
+    ))
+    .await
+    .expect("admit a run under the changed standard policy");
+    let classes: Vec<(String, String)> = su
+        .query(
+            &format!(
+                "SELECT run_id,durability_class FROM {SCHEMA}.runs \
+                 WHERE run_id IN ('r-policy-durable','r-policy-standard') ORDER BY run_id"
+            ),
+            &[],
+        )
+        .await
+        .expect("read frozen run classes")
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+    assert_eq!(
+        classes,
+        [
+            ("r-policy-durable".to_string(), "durable".to_string()),
+            ("r-policy-standard".to_string(), "standard".to_string()),
+        ],
+        "policy changes affect future admissions without rewriting existing runs"
+    );
 
     // Retained column drift closed, partition residue removed, and defaults
     // landed on the pre-existing row.
@@ -3250,6 +3421,252 @@ async fn from_zero_leg(su: &Client) {
         .expect("drop back to superuser");
 }
 
+async fn visible_environment_policy_rows(url: &str, tenant: &str) -> i64 {
+    let app = connect_as(url, "wamn_app", "wamn_app").await;
+    app.query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])
+        .await
+        .expect("set app tenant for environment-policy probe");
+    app.query_one(
+        &format!("SELECT count(*) FROM {SCHEMA}.environment_policies"),
+        &[],
+    )
+    .await
+    .expect("read visible environment policies")
+    .get(0)
+}
+
+async fn registry_durability_schema_snapshot(su: &Client) -> String {
+    su.query_one(
+        "SELECT jsonb_build_object( \
+           'type', pg_catalog.format_type(attribute.atttypid, attribute.atttypmod), \
+           'not-null', attribute.attnotnull, \
+           'default', pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid), \
+           'check', (SELECT pg_catalog.pg_get_constraintdef(constraint_row.oid, true) \
+                       FROM pg_catalog.pg_constraint AS constraint_row \
+                      WHERE constraint_row.conrelid = 'registry.env_policies'::regclass \
+                        AND constraint_row.conname = 'env_policies_durability_class_check'))::text \
+         FROM pg_catalog.pg_attribute AS attribute \
+         LEFT JOIN pg_catalog.pg_attrdef AS default_row \
+           ON default_row.adrelid = attribute.attrelid \
+          AND default_row.adnum = attribute.attnum \
+        WHERE attribute.attrelid = 'registry.env_policies'::regclass \
+          AND attribute.attname = 'durability_class'",
+        &[],
+    )
+    .await
+    .expect("snapshot registry durability schema")
+    .get(0)
+}
+
+async fn registry_env_policy_catalog_snapshot(su: &Client) -> String {
+    su.query_one(
+        "SELECT jsonb_build_object( \
+           'columns', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array( \
+                       attribute.attname, \
+                       pg_catalog.format_type(attribute.atttypid, attribute.atttypmod), \
+                       attribute.attnotnull, \
+                       pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)) \
+                       ORDER BY attribute.attnum) \
+               FROM pg_catalog.pg_attribute AS attribute \
+               LEFT JOIN pg_catalog.pg_attrdef AS default_row \
+                 ON default_row.adrelid = attribute.attrelid \
+                AND default_row.adnum = attribute.attnum \
+              WHERE attribute.attrelid = 'registry.env_policies'::regclass \
+                AND attribute.attnum > 0 AND NOT attribute.attisdropped), \
+             '[]'::jsonb), \
+           'constraints', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array( \
+                       constraint_row.conname, constraint_row.contype, \
+                       pg_catalog.pg_get_constraintdef(constraint_row.oid, true)) \
+                       ORDER BY constraint_row.conname) \
+               FROM pg_catalog.pg_constraint AS constraint_row \
+              WHERE constraint_row.conrelid = 'registry.env_policies'::regclass), \
+             '[]'::jsonb))::text",
+        &[],
+    )
+    .await
+    .expect("snapshot registry env-policy catalog")
+    .get(0)
+}
+
+/// Missing-column mutant for the shared system-registry schema ensure. The
+/// real reconcile consumer must upgrade before it reads, and a second run must
+/// leave the exact column + CHECK catalog unchanged.
+async fn registry_durability_schema_ensure_leg(su: &Client, url: &str) {
+    reset(su).await;
+    install_current_run_plane(su).await;
+    seed_pre_durability_system_env_policy(su).await;
+    let before: bool = su
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+              WHERE table_schema='registry' AND table_name='env_policies' \
+                AND column_name='durability_class')",
+            &[],
+        )
+        .await
+        .expect("probe missing durability column")
+        .get(0);
+    assert!(!before, "missing-column mutant was not installed");
+
+    let args = |dry_run| ReconcileRunPlaneArgs {
+        system_database_url: url.to_string(),
+        admin_database_url: url.to_string(),
+        org: "acme".to_string(),
+        tenant: "t1".to_string(),
+        env: "dev".to_string(),
+        schema: SCHEMA.to_string(),
+        dry_run,
+    };
+    let before_dry_run = registry_env_policy_catalog_snapshot(su).await;
+    reconcile_run_plane::run(args(true))
+        .await
+        .expect("dry-run observes a pre-carrier registry without migrating it");
+    assert_eq!(
+        registry_env_policy_catalog_snapshot(su).await,
+        before_dry_run,
+        "pre-carrier registry schema must remain byte-exact under dry-run"
+    );
+    assert!(
+        !su.query_one(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+              WHERE table_schema='registry' AND table_name='env_policies' \
+                AND column_name='durability_class')",
+            &[],
+        )
+        .await
+        .expect("probe carrier after dry-run")
+        .get::<_, bool>(0),
+        "dry-run must not add the registry durability carrier"
+    );
+    let projected_rows: i64 = su
+        .query_one(
+            &format!("SELECT count(*) FROM {SCHEMA}.environment_policies"),
+            &[],
+        )
+        .await
+        .expect("count local policy rows after dry-run")
+        .get(0);
+    assert_eq!(
+        projected_rows, 0,
+        "dry-run must not project the legacy standard policy into the run plane"
+    );
+
+    reconcile_run_plane::run(args(false))
+        .await
+        .expect("reconcile upgrades the system env-policy schema");
+    let first = registry_durability_schema_snapshot(su).await;
+    assert!(first.contains("\"type\": \"text\""), "{first}");
+    assert!(first.contains("\"not-null\": true"), "{first}");
+    assert!(first.contains("'standard'::text"), "{first}");
+    assert!(first.contains("'durable'::text"), "{first}");
+
+    let projected_row = su
+        .query_one(
+            &format!(
+                "SELECT expected_environment, durability_class \
+                   FROM {SCHEMA}.environment_policies WHERE tenant_id='t1'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read policy projected from the upgraded registry");
+    let projected = (projected_row.get(0), projected_row.get(1));
+    assert_eq!(projected, ("dev".to_string(), "standard".to_string()));
+
+    reconcile_run_plane::run(args(true))
+        .await
+        .expect("second registry schema ensure is idempotent");
+    assert_eq!(registry_durability_schema_snapshot(su).await, first);
+}
+
+/// Named mutants for the four independent ways an existing env-policy table
+/// can lose tenant confinement. Each repair is followed by a fresh observation
+/// proving the catalog converged, not merely that the SQL happened to run.
+async fn environment_policy_row_security_leg(su: &Client, url: &str) {
+    reset(su).await;
+    install_current_run_plane(su).await;
+    let schema = schema();
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.environment_policies \
+           (tenant_id, expected_environment, durability_class) \
+         VALUES ('t1', 'dev', 'durable')"
+    ))
+    .await
+    .expect("seed projected environment policy");
+
+    let mutants = [
+        (
+            "disabled RLS",
+            format!("ALTER TABLE {SCHEMA}.environment_policies DISABLE ROW LEVEL SECURITY"),
+        ),
+        (
+            "unforced RLS",
+            format!("ALTER TABLE {SCHEMA}.environment_policies NO FORCE ROW LEVEL SECURITY"),
+        ),
+        (
+            "missing tenant policy",
+            format!(
+                "DROP POLICY environment_policies_tenant \
+                   ON {SCHEMA}.environment_policies"
+            ),
+        ),
+        (
+            "widened tenant policy",
+            format!(
+                "DROP POLICY environment_policies_tenant \
+                   ON {SCHEMA}.environment_policies; \
+                 CREATE POLICY environment_policies_tenant \
+                   ON {SCHEMA}.environment_policies AS PERMISSIVE \
+                   FOR ALL TO wamn_app USING (true) WITH CHECK (true); \
+                 CREATE POLICY environment_policies_extra \
+                   ON {SCHEMA}.environment_policies FOR SELECT USING (true)"
+            ),
+        ),
+    ];
+
+    for (mutant, mutation) in mutants {
+        su.batch_execute(&mutation)
+            .await
+            .unwrap_or_else(|error| panic!("install {mutant} mutant: {error}"));
+        if mutant == "disabled RLS" {
+            assert_eq!(
+                visible_environment_policy_rows(url, "t2").await,
+                1,
+                "the disabled-RLS mutant must expose the foreign tenant row"
+            );
+        }
+
+        let dry = reconcile_run_plane::reconcile(su, &schema, false)
+            .await
+            .unwrap_or_else(|error| panic!("observe {mutant} mutant: {error}"));
+        assert_eq!(dry.actions.len(), 1, "{mutant}: {:#?}", dry.actions);
+        assert_eq!(dry.actions[0].kind, RunPlaneActionKind::RepairRowSecurity);
+        assert_eq!(dry.actions[0].target, "environment_policies.row-security");
+
+        let applied = reconcile_run_plane::reconcile(su, &schema, true)
+            .await
+            .unwrap_or_else(|error| panic!("repair {mutant} mutant: {error}"));
+        assert_eq!(applied.actions, dry.actions, "{mutant} plan changed");
+        if mutant == "disabled RLS" {
+            assert_eq!(
+                visible_environment_policy_rows(url, "t2").await,
+                0,
+                "the repaired policy must hide the foreign tenant row"
+            );
+        }
+
+        let again = reconcile_run_plane::reconcile(su, &schema, false)
+            .await
+            .unwrap_or_else(|error| panic!("re-observe repaired {mutant} mutant: {error}"));
+        assert!(
+            again.is_noop(),
+            "{mutant} repair did not converge: {:#?}",
+            again.actions
+        );
+    }
+}
+
 /// The idempotence contract: a schema AT the schema of record plans nothing —
 /// dry-run and apply mode alike.
 async fn current_noop_leg(su: &Client) {
@@ -3278,8 +3695,8 @@ async fn current_noop_leg(su: &Client) {
     );
     assert_eq!(
         dry.at_target.len(),
-        11,
-        "all eleven run-plane tables at target"
+        12,
+        "all twelve run-plane tables at target"
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)

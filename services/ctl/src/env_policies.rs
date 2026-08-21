@@ -10,12 +10,56 @@
 
 use anyhow::Context as _;
 use tokio_postgres::Row;
-use wamn_control_registry::{Env, EnvPolicy, RecoveryDomain};
+use wamn_control_registry::{DurabilityClass, Env, EnvPolicy, RecoveryDomain};
+
+/// Add the env-policy durability selector to a pre-carrier system schema and
+/// converge its persisted literal set. Callers SET ROLE to the registry owner
+/// before invoking this shared migration.
+pub(crate) async fn ensure_env_policy_durability_schema(
+    client: &tokio_postgres::Client,
+) -> anyhow::Result<()> {
+    client
+        .batch_execute(ensure_env_policy_durability_schema_sql())
+        .await
+        .context("ensure registry env-policy durability schema")
+}
+
+fn ensure_env_policy_durability_schema_sql() -> &'static str {
+    "ALTER TABLE registry.env_policies \
+       ADD COLUMN IF NOT EXISTS durability_class text DEFAULT 'standard'; \
+     ALTER TABLE registry.env_policies \
+       ALTER COLUMN durability_class SET DEFAULT 'standard'; \
+     UPDATE registry.env_policies SET durability_class = 'standard' \
+      WHERE durability_class IS NULL; \
+     ALTER TABLE registry.env_policies \
+       ALTER COLUMN durability_class SET NOT NULL; \
+     DO $env_policy_durability$ BEGIN \
+       IF EXISTS ( \
+            SELECT 1 FROM pg_catalog.pg_constraint AS constraint_row \
+             WHERE constraint_row.conrelid = 'registry.env_policies'::regclass \
+               AND constraint_row.conname = 'env_policies_durability_class_check' \
+               AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) \
+                   <> 'CHECK (durability_class = ANY (ARRAY[''standard''::text, ''durable''::text]))') \
+       THEN \
+         ALTER TABLE registry.env_policies \
+           DROP CONSTRAINT env_policies_durability_class_check; \
+       END IF; \
+       IF NOT EXISTS ( \
+            SELECT 1 FROM pg_catalog.pg_constraint AS constraint_row \
+             WHERE constraint_row.conrelid = 'registry.env_policies'::regclass \
+               AND constraint_row.conname = 'env_policies_durability_class_check') \
+       THEN \
+         ALTER TABLE registry.env_policies \
+           ADD CONSTRAINT env_policies_durability_class_check \
+           CHECK (durability_class IN ('standard', 'durable')); \
+       END IF; \
+     END $env_policy_durability$"
+}
 
 /// Map one `select_env_policies_sql` / `select_env_policy_sql` row into an
 /// [`EnvPolicy`]. Column order: `name, recovery_domain::text, promotion_rank,
 /// instances, storage, cpu, memory, image, backup_cadence, wal_retention,
-/// hibernation`.
+/// hibernation, durability_class`.
 fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
     let recovery_text: String = row.get(1);
     let recovery_domain: RecoveryDomain =
@@ -32,6 +76,8 @@ fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
         backup_cadence: row.get(8),
         wal_retention: row.get(9),
         hibernation: row.get(10),
+        durability_class: DurabilityClass::from_sql(row.get::<_, &str>(11))
+            .context("invalid env-policy durability_class")?,
     })
 }
 
@@ -66,4 +112,62 @@ pub(crate) async fn read_env_policy(
         .await
         .context("select env_policy")?;
     rows.first().map(env_policy_from_row).transpose()
+}
+
+/// Observe one policy's durability class without changing a pre-carrier
+/// registry. Older rows project as `standard`, exactly matching the additive
+/// migration's backfill; callers that apply still run the schema ensure first.
+pub(crate) async fn observe_env_policy_durability_class(
+    client: &tokio_postgres::Client,
+    org: &str,
+    name: &str,
+) -> anyhow::Result<Option<DurabilityClass>> {
+    let carrier_present: bool = client
+        .query_one(
+            "SELECT EXISTS ( \
+               SELECT 1 FROM pg_catalog.pg_attribute AS attribute \
+                WHERE attribute.attrelid = \
+                        pg_catalog.to_regclass('registry.env_policies') \
+                  AND attribute.attname = 'durability_class' \
+                  AND attribute.attnum > 0 \
+                  AND NOT attribute.attisdropped)",
+            &[],
+        )
+        .await
+        .context("observe registry env-policy durability carrier")?
+        .get(0);
+    let sql = if carrier_present {
+        "SELECT durability_class FROM registry.env_policies \
+          WHERE org = $1 AND name = $2"
+    } else {
+        "SELECT 'standard'::text FROM registry.env_policies \
+          WHERE org = $1 AND name = $2"
+    };
+    client
+        .query_opt(sql, &[&org, &name])
+        .await
+        .context("observe env-policy durability class")?
+        .map(|row| {
+            DurabilityClass::from_sql(row.get::<_, &str>(0))
+                .context("invalid env-policy durability_class")
+        })
+        .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durability_schema_ensure_is_additive_exact_and_idempotent_sql() {
+        let sql = ensure_env_policy_durability_schema_sql();
+        assert!(sql.contains("ADD COLUMN IF NOT EXISTS durability_class"));
+        assert!(sql.contains("ALTER COLUMN durability_class SET NOT NULL"));
+        assert!(sql.contains("ALTER COLUMN durability_class SET DEFAULT 'standard'"));
+        assert!(sql.contains("pg_get_constraintdef"));
+        assert!(sql.contains(
+            "CHECK (durability_class = ANY (ARRAY[''standard''::text, ''durable''::text]))"
+        ));
+        assert!(sql.contains("DROP CONSTRAINT env_policies_durability_class_check"));
+    }
 }

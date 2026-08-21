@@ -40,6 +40,37 @@ GRANT USAGE ON SCHEMA wamn_run TO wamn_scenario_author;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_effect_writer;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_run_projection_writer;
 
+-- Producer roles cannot name `runs.durability_class` in their INSERT grants.
+-- This invoker-rights trigger therefore performs the only admission-time
+-- selection, from the project-local projection below.
+CREATE FUNCTION wamn_run.pin_run_durability_class()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    projected_environment text;
+    projected_class text;
+BEGIN
+    SELECT policy.expected_environment, policy.durability_class
+      INTO projected_environment, projected_class
+      FROM wamn_run.environment_policies AS policy
+     WHERE policy.tenant_id = NEW.tenant_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'environment-policy-not-converged';
+    END IF;
+    IF NEW.environment IS DISTINCT FROM projected_environment THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'environment-policy-environment-mismatch';
+    END IF;
+    NEW.durability_class := projected_class;
+    RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.pin_run_durability_class() FROM PUBLIC;
+
 -- Final admission must share-lock the stable catalog head, but the application
 -- role must never gain UPDATE privilege on that control-plane row. This narrow
 -- SECURITY DEFINER bridge takes only the row-share lock and returns the applied
@@ -197,6 +228,32 @@ BEGIN
 END
 $$;
 
+-- The system env policy is projected into each project database by
+-- `reconcile-run-plane`. Admission reads only this local relation and freezes
+-- the selected class onto the run row; changing this row affects future runs
+-- only. Each physical project-env database has one expected environment; a
+-- missing or mismatched projection refuses admission rather than inventing a
+-- policy decision.
+CREATE TABLE wamn_run.environment_policies (
+    tenant_id            text NOT NULL CHECK (tenant_id <> ''),
+    expected_environment text NOT NULL CHECK (expected_environment <> ''),
+    durability_class    text NOT NULL
+        CONSTRAINT environment_policies_durability_class_check
+        CHECK (durability_class IN ('standard', 'durable')),
+    PRIMARY KEY (tenant_id)
+);
+ALTER TABLE wamn_run.environment_policies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.environment_policies FORCE ROW LEVEL SECURITY;
+CREATE POLICY environment_policies_tenant
+ON wamn_run.environment_policies
+FOR SELECT
+USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+REVOKE ALL PRIVILEGES ON TABLE wamn_run.environment_policies
+    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer,
+         wamn_run_projection_writer;
+GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
+GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_scenario_author;
+
 -- ---------------------------------------------------------------------------
 -- runs: one row per flow execution. `input_json` is the admitted trigger
 -- payload; `result_json` is the last node's output on
@@ -350,6 +407,10 @@ CREATE POLICY runs_tenant ON wamn_run.runs
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 
+CREATE TRIGGER runs_pin_durability_class
+BEFORE INSERT ON wamn_run.runs
+FOR EACH ROW EXECUTE FUNCTION wamn_run.pin_run_durability_class();
+
 CREATE TRIGGER runs_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
 ON wamn_run.runs
@@ -376,10 +437,10 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 -- statements (queue/sql.rs, transitions.rs). Columns whose only writer is the
 -- management admission (`capture_mode`), the project-admin operator verb, or an
 -- uncalled builder (`fail_node`, `fail_reason` — only `update_run_failed_sql`,
--- which nothing invokes) are DELIBERATELY ABSENT, as is `durability_class`,
--- which today has NO writer at all: nothing admits a `durable` run yet, so the
--- carrier exists solely to be read by the claim path and every production run
--- takes the database default. A column added to this table does NOT join
+-- which nothing invokes) are DELIBERATELY ABSENT, as is `durability_class`.
+-- Its only admission-time writer is `runs_pin_durability_class`, which resolves
+-- the project-local system-policy projection; no producer statement may name
+-- it. A column added to this table does NOT join
 -- either set by default; see `repair_run_capture_privilege_sql`.
 --
 -- The UPDATE set is also what keeps `FOR UPDATE`/`FOR KEY SHARE` on `runs`

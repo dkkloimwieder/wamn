@@ -83,7 +83,7 @@ use wamn_platform_identity::{
 };
 use wamn_run_state::RUN_PROJECTION_WRITER_ROLE;
 
-use crate::env_policies::read_env_policy;
+use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policy};
 
 #[derive(Debug, Args)]
 pub struct ProvisionProjectEnvArgs {
@@ -1929,6 +1929,7 @@ async fn do_resolve_cluster(
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("SET ROLE wamn_system")?;
+    ensure_env_policy_durability_schema(client).await?;
     let row = client
         .query_opt(
             wamn_control_registry::sql::select_org_placement_sql(),

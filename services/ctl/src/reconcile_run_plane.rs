@@ -54,10 +54,12 @@ use clap::Args;
 use tokio_postgres::NoTls;
 
 use wamn_control_provision::{DISPATCH_READER_ROLE, sql};
+use wamn_control_registry::DurabilityClass;
 use wamn_schema_control::{
-    BareSchemaName, EffectWriterRoleObservation, RunPlaneAction, RunPlaneActionKind,
-    RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql,
-    count_release_flow_rows_sql, count_retired_authored_ordering_rows_sql, count_run_rows_sql,
+    BareSchemaName, EffectWriterRoleObservation, RowPolicyObservation, RowSecurityObservation,
+    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
+    ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_release_flow_rows_sql,
+    count_retired_authored_ordering_rows_sql, count_run_rows_sql,
     count_stale_registration_keys_sql, plan_run_plane, select_app_scenario_author_membership_sql,
     select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
@@ -67,6 +69,7 @@ use wamn_schema_control::{
     select_effect_ledger_effective_privileges_sql, select_effect_ledger_table_privileges_sql,
     select_effect_writer_role_sql, select_effect_writer_run_column_privileges_sql,
     select_effect_writer_run_table_privileges_sql, select_effect_writer_schema_privileges_sql,
+    select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
     select_node_runs_column_privileges_sql, select_node_runs_effective_column_privileges_sql,
     select_node_runs_effective_privileges_sql, select_node_runs_table_privileges_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
@@ -141,11 +144,29 @@ const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 10] = [
 
 #[derive(Debug, Args)]
 pub struct ReconcileRunPlaneArgs {
+    /// Administrative Postgres URL to the system registry. The reconciler
+    /// resolves the org-scoped env policy here; admission never connects to
+    /// this database. Env `WAMN_SYSTEM_ADMIN_URL`.
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    pub system_database_url: String,
+
     /// Administrative Postgres URL to the project database. Observation and
     /// apply require SUPERUSER or BYPASSRLS so forced-RLS legacy rows cannot
     /// be skipped. Env `WAMN_PG_ADMIN_URL`.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: String,
+
+    /// Registry organization owning the environment policy.
+    #[arg(long)]
+    pub org: String,
+
+    /// Tenant whose project-local policy row is converged.
+    #[arg(long)]
+    pub tenant: String,
+
+    /// Environment policy name in the owning organization's registry set.
+    #[arg(long)]
+    pub env: String,
 
     /// The project-env schema the run-plane tables live in (e.g.
     /// `wamn_runner_demo`, `poc_f1`).
@@ -158,19 +179,161 @@ pub struct ReconcileRunPlaneArgs {
 }
 
 pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(!args.tenant.is_empty(), "--tenant must not be empty");
     let schema = BareSchemaName::new(args.schema.clone())
         .with_context(|| format!("invalid --schema {:?}", args.schema))?;
+    let durability_class = resolve_durability_class(
+        &args.system_database_url,
+        &args.org,
+        &args.env,
+        !args.dry_run,
+    )
+    .await?;
     let (client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
         .await
         .context("admin connect")?;
     let conn_task = tokio::spawn(conn);
-    let result = reconcile(&client, &schema, !args.dry_run).await;
+    let result = async {
+        let plan = reconcile(&client, &schema, !args.dry_run).await?;
+        let policy_changed = converge_environment_policy(
+            &client,
+            &schema,
+            &args.tenant,
+            &args.env,
+            durability_class,
+            !args.dry_run,
+        )
+        .await?;
+        Ok::<_, anyhow::Error>((plan, policy_changed))
+    }
+    .await;
     drop(client);
     let _ = conn_task.await;
-    let plan = result?;
+    let (plan, policy_changed) = result?;
 
     print_plan(&plan, args.dry_run);
+    if policy_changed {
+        let mode = if args.dry_run {
+            "would converge"
+        } else {
+            "converged"
+        };
+        println!(
+            "  {mode} environment policy tenant={:?} environment={:?} durability_class={}",
+            args.tenant,
+            args.env,
+            durability_class.as_sql(),
+        );
+    }
     Ok(())
+}
+
+async fn resolve_durability_class(
+    system_database_url: &str,
+    org: &str,
+    env: &str,
+    apply: bool,
+) -> anyhow::Result<DurabilityClass> {
+    let (client, conn) = tokio_postgres::connect(system_database_url, NoTls)
+        .await
+        .context("system registry connect")?;
+    let conn_task = tokio::spawn(conn);
+    let result = async {
+        client
+            .batch_execute("SET ROLE wamn_system")
+            .await
+            .context("SET ROLE wamn_system")?;
+        let durability_class = if apply {
+            crate::env_policies::ensure_env_policy_durability_schema(&client).await?;
+            crate::env_policies::read_env_policy(&client, org, env)
+                .await?
+                .map(|policy| policy.durability_class)
+        } else {
+            crate::env_policies::observe_env_policy_durability_class(&client, org, env).await?
+        }
+        .with_context(|| {
+            format!(
+                "env {env:?} names none of org {org:?}'s env policies; refusing to project an invented durability class"
+            )
+        })?;
+        Ok::<_, anyhow::Error>(durability_class)
+    }
+    .await;
+    drop(client);
+    let _ = conn_task.await;
+    result
+}
+
+/// Converge the system policy's resolved class into the project-local relation.
+/// The lookup and write are absent from admission and claim paths. `apply=false`
+/// observes only, including the from-zero case where the relation is not yet
+/// present, and returns whether a write would be required.
+pub async fn converge_environment_policy(
+    client: &tokio_postgres::Client,
+    schema: &BareSchemaName,
+    tenant: &str,
+    environment: &str,
+    durability_class: DurabilityClass,
+    apply: bool,
+) -> anyhow::Result<bool> {
+    anyhow::ensure!(!tenant.is_empty(), "tenant must not be empty");
+    anyhow::ensure!(!environment.is_empty(), "environment must not be empty");
+    let table_present: bool = client
+        .query_one(
+            "SELECT pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) IS NOT NULL",
+            &[&schema.as_str()],
+        )
+        .await
+        .context("observe project-local environment policy relation")?
+        .get(0);
+    let current = if table_present {
+        client
+            .query_opt(
+                &format!(
+                    "SELECT expected_environment, durability_class \
+                       FROM {}.environment_policies WHERE tenant_id = $1",
+                    schema.quoted()
+                ),
+                &[&tenant],
+            )
+            .await
+            .context("observe project-local environment policy")?
+            .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+    } else {
+        None
+    };
+    let wanted = durability_class.as_sql();
+    let changed = current
+        .as_ref()
+        .is_none_or(|(current_environment, current_class)| {
+            current_environment != environment || current_class != wanted
+        });
+    if apply && changed {
+        anyhow::ensure!(
+            table_present,
+            "run-plane reconciliation did not create the environment policy relation"
+        );
+        client
+            .execute(
+                &format!(
+                    "INSERT INTO {}.environment_policies \
+                       (tenant_id, expected_environment, durability_class) \
+                     VALUES ($1, $2, $3) \
+                     ON CONFLICT (tenant_id) DO UPDATE SET \
+                       expected_environment = EXCLUDED.expected_environment, \
+                       durability_class = EXCLUDED.durability_class \
+                     WHERE environment_policies.expected_environment \
+                               IS DISTINCT FROM EXCLUDED.expected_environment \
+                        OR environment_policies.durability_class \
+                               IS DISTINCT FROM EXCLUDED.durability_class",
+                    schema.quoted()
+                ),
+                &[&tenant, &environment, &wanted],
+            )
+            .await
+            .context("converge project-local environment policy")?;
+    }
+    Ok(changed)
 }
 
 /// The reusable core: observe the schema, plan, and — when `apply` — ensure the
@@ -590,6 +753,40 @@ async fn observe(
         obs.column_types
             .insert((table.clone(), column.clone()), row.get(4));
         obs.tables.entry(table).or_default().insert(column);
+    }
+    if let Some(row) = client
+        .query_opt(
+            select_environment_policy_row_security_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read environment-policy row-security flags")?
+    {
+        let mut row_security = RowSecurityObservation {
+            enabled: row.get(0),
+            forced: row.get(1),
+            ..Default::default()
+        };
+        for row in client
+            .query(
+                select_environment_policy_policies_sql(),
+                &[&schema.as_str()],
+            )
+            .await
+            .context("read environment-policy row-security policies")?
+        {
+            row_security.policies.insert(
+                row.get(0),
+                RowPolicyObservation {
+                    command: row.get(1),
+                    permissive: row.get(2),
+                    roles: row.get::<_, Vec<String>>(3).into_iter().collect(),
+                    using_expression: row.get(4),
+                    check_expression: row.get(5),
+                },
+            );
+        }
+        obs.environment_policy_row_security = Some(row_security);
     }
     let effect_ledgers: Vec<&str> = [
         "effect_attempts",

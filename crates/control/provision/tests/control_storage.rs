@@ -100,6 +100,7 @@ fn system_schema_sql_mirrors_the_model() {
         "backup_cadence",
         "wal_retention",
         "hibernation",
+        "durability_class",
     ] {
         assert!(sql.contains(col), "env_policies missing column {col}");
     }
@@ -326,6 +327,7 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
         "backup_cadence",
         "wal_retention",
         "hibernation",
+        "durability_class",
     ] {
         assert!(sql.contains(col), "env_policies table missing {col}");
         assert!(stamp.contains(col), "stamp builder missing {col}");
@@ -638,7 +640,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     // assert the customization SURVIVES (insert-if-absent — a DO UPDATE mutant
     // would clobber it back to template values and fail here).
     script.push_str(&format!(
-        "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text) AS {stamp};\n",
+        "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text,text) AS {stamp};\n",
         stamp = wamn_control_registry::sql::stamp_env_policy_sql(),
     ));
     script.push_str(&stamp_statements("demo", &Template::trials()));
@@ -661,17 +663,20 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     // stamped. env 'dev' resolves demo's own policy row (the composite FK holds).
     script.push_str(&format!(
         "PREPARE upp (text,text) AS {up_project};\n\
-         PREPARE upe (text,text,text,text,text) AS {up_env};\n\
+         PREPARE upe (text,text,text,text,text,text) AS {up_env};\n\
          EXECUTE upp('demo','app');\n\
          EXECUTE upp('demo','app');\n\
-         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev-OLD', NULL);\n\
-         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev', NULL);\n\
+         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev-OLD', NULL, 'k3m9x2p7');\n\
+         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev', NULL, 'r4n8c6v2');\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.projects WHERE org='demo' AND id='app')=1,\n\
              'upsert_project_sql is idempotent — one project row after two upserts';\n\
            ASSERT (SELECT secret_name FROM registry.project_envs\n\
                      WHERE org='demo' AND project='app' AND env='dev')='wamn-db-demo--app--dev',\n\
              'the second project-env upsert refreshed the Secret reference (ON CONFLICT DO UPDATE)';\n\
+           ASSERT (SELECT instance_suffix FROM registry.project_envs\n\
+                     WHERE org='demo' AND project='app' AND env='dev')='k3m9x2p7',\n\
+             'the second project-env upsert preserved the originally minted instance suffix';\n\
          END $$;\n\
          DEALLOCATE upp; DEALLOCATE upe;\n",
         up_project = wamn_control_registry::sql::upsert_project_sql(),
@@ -775,7 +780,7 @@ fn stamp_statements(org: &str, template: &Template) -> String {
         let recovery = serde_json::to_string(&p.recovery_domain).expect("recovery json");
         s.push_str(&format!(
             "EXECUTE stamp('{org}','{name}','{recovery}',{rank},{inst},\
-             '{storage}','{cpu}','{memory}','{image}','{backup}','{wal}','{hib}');\n",
+             '{storage}','{cpu}','{memory}','{image}','{backup}','{wal}','{hib}','{durability}');\n",
             name = p.name,
             rank = p.promotion_rank,
             inst = p.instances,
@@ -786,6 +791,7 @@ fn stamp_statements(org: &str, template: &Template) -> String {
             backup = p.backup_cadence,
             wal = p.wal_retention,
             hib = p.hibernation,
+            durability = p.durability_class.as_sql(),
         ));
     }
     s
@@ -803,6 +809,16 @@ INSERT INTO registry.env_policies
     (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
   VALUES ('acme','dev','"own"'::jsonb,10,1,'2Gi','200m','256Mi','ghcr.io/cloudnative-pg/postgresql:18'),
          ('acme','prod','"own"'::jsonb,30,3,'2Gi','200m','256Mi','ghcr.io/cloudnative-pg/postgresql:18');
+DO $$ BEGIN
+  ASSERT (SELECT durability_class FROM registry.env_policies
+           WHERE org='acme' AND name='dev')='standard',
+    'an omitted durability class takes the standard floor';
+  BEGIN
+    UPDATE registry.env_policies SET durability_class='premium'
+      WHERE org='acme' AND name='dev';
+    ASSERT false, 'an unknown durability class must be rejected';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+END $$;
 INSERT INTO registry.projects (org, id) VALUES ('acme','billing'),('try','demo');
 INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix)
   VALUES ('acme','billing','prod','wamn-db-acme-prod','k3m9x2p7'),

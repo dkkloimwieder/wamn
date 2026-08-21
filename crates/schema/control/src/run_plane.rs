@@ -83,6 +83,8 @@ const RUNS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX runs_execution_bundl
 const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
 const RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX release_flows_execution_bundle ON catalog.release_flows USING btree (tenant_id, execution_bundle_hash)";
 const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, durability_class, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
+const ENVIRONMENT_POLICY_TENANT_QUAL: &str =
+    "tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)";
 
 #[derive(Clone, Copy)]
 enum CheckOrigin {
@@ -103,6 +105,24 @@ struct CheckSpec {
 /// The throwaway-PG gate applies the deploy SQL and pins that this catalog is a
 /// byte-for-byte projection of the schema of record.
 const CHECK_SPECS: &[CheckSpec] = &[
+    CheckSpec {
+        table: "environment_policies",
+        name: "environment_policies_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "environment_policies",
+        name: "environment_policies_expected_environment_check",
+        definition: "CHECK (expected_environment <> ''::text)",
+        origin: CheckOrigin::Inline("expected_environment"),
+    },
+    CheckSpec {
+        table: "environment_policies",
+        name: "environment_policies_durability_class_check",
+        definition: "CHECK (durability_class = ANY (ARRAY['standard'::text, 'durable'::text]))",
+        origin: CheckOrigin::Inline("durability_class"),
+    },
     CheckSpec {
         table: "runs",
         name: "runs_tenant_id_check",
@@ -669,6 +689,8 @@ const CHECK_SPECS: &[CheckSpec] = &[
 
 const LOCK_CATALOG_HEAD_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(p_tenant_id text, p_catalog_id text, p_environment text)\n RETURNS integer\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'catalog'\nAS $function$\nDECLARE\n    applied_version int;\nBEGIN\n    SELECT head.applied_catalog_version INTO applied_version\n    FROM catalog.catalog_heads AS head\n    WHERE p_tenant_id = NULLIF(current_setting('app.tenant', true), '')\n      AND head.tenant_id = p_tenant_id\n      AND head.catalog_id = p_catalog_id\n      AND head.environment = p_environment\n    FOR SHARE OF head;\n    RETURN applied_version;\nEND\n$function$\n";
 
+const PIN_RUN_DURABILITY_CLASS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.pin_run_durability_class()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    projected_environment text;\n    projected_class text;\nBEGIN\n    SELECT policy.expected_environment, policy.durability_class\n      INTO projected_environment, projected_class\n      FROM wamn_run.environment_policies AS policy\n     WHERE policy.tenant_id = NEW.tenant_id;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'environment-policy-not-converged';\n    END IF;\n    IF NEW.environment IS DISTINCT FROM projected_environment THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'environment-policy-environment-mismatch';\n    END IF;\n    NEW.durability_class := projected_class;\n    RETURN NEW;\nEND\n$function$\n";
+
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
 const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode\n       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id\n                             AND OLD.durability_class = 'durable') THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
@@ -678,6 +700,7 @@ const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTIO
 const REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_operator_run_action_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'operator-run-action-immutable';\nEND\n$function$\n";
 
 const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()";
+const RUNS_PIN_DURABILITY_CLASS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_pin_durability_class BEFORE INSERT ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.pin_run_durability_class()";
 
 const LOCK_CATALOG_HEAD_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(
     p_tenant_id text,
@@ -706,6 +729,34 @@ REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head(text, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text) TO wamn_app;
 GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text)
     TO wamn_scenario_author;"#;
+
+const PIN_RUN_DURABILITY_CLASS_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.pin_run_durability_class()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    projected_environment text;
+    projected_class text;
+BEGIN
+    SELECT policy.expected_environment, policy.durability_class
+      INTO projected_environment, projected_class
+      FROM wamn_run.environment_policies AS policy
+     WHERE policy.tenant_id = NEW.tenant_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'environment-policy-not-converged';
+    END IF;
+    IF NEW.environment IS DISTINCT FROM projected_environment THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'environment-policy-environment-mismatch';
+    END IF;
+    NEW.durability_class := projected_class;
+    RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.pin_run_durability_class() FROM PUBLIC;"#;
 
 const GUARD_EVENT_LINEAGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()
 RETURNS trigger
@@ -787,6 +838,9 @@ const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_
     BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth \
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
     wamn_run.guard_event_lineage_immutable();";
+const RUNS_PIN_DURABILITY_CLASS_TRIGGER_SQL: &str = "CREATE TRIGGER \
+    runs_pin_durability_class BEFORE INSERT ON wamn_run.runs FOR EACH ROW \
+    EXECUTE FUNCTION wamn_run.pin_run_durability_class();";
 
 /// The ONE encoding of the admission-pin trigger's `CREATE` (wamn-0h0g.20.9).
 ///
@@ -856,6 +910,11 @@ fn authoring_test_helper_definition(name: &str) -> String {
 fn helper_specs() -> Vec<HelperSpec> {
     vec![
         borrowed_helper_spec(
+            "pin_run_durability_class",
+            PIN_RUN_DURABILITY_CLASS_DEF,
+            PIN_RUN_DURABILITY_CLASS_SQL,
+        ),
+        borrowed_helper_spec(
             "lock_catalog_head",
             LOCK_CATALOG_HEAD_DEF,
             LOCK_CATALOG_HEAD_SQL,
@@ -911,6 +970,12 @@ struct TriggerSpec {
 
 fn trigger_specs() -> Vec<TriggerSpec> {
     let mut specs = vec![
+        TriggerSpec {
+            table: "runs".to_string(),
+            name: "runs_pin_durability_class".to_string(),
+            definition: RUNS_PIN_DURABILITY_CLASS_TRIGGER_DEF.to_string(),
+            sql: RUNS_PIN_DURABILITY_CLASS_TRIGGER_SQL.to_string(),
+        },
         TriggerSpec {
             table: "runs".to_string(),
             name: "runs_event_lineage_immutable".to_string(),
@@ -1872,6 +1937,12 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     // admission-owned while the remaining run columns retain app writes.
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::RunPlane,
+        table: "environment_policies",
+        app: &["SELECT"],
+        author: &["SELECT"],
+    },
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::RunPlane,
         table: "runs",
         app: &["SELECT", "DELETE"],
         author: &["SELECT"],
@@ -2550,6 +2621,42 @@ impl fmt::Display for BareSchemaName {
     }
 }
 
+/// One live PostgreSQL row-security policy, normalized from `pg_policy`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowPolicyObservation {
+    pub command: String,
+    pub permissive: bool,
+    pub roles: BTreeSet<String>,
+    pub using_expression: Option<String>,
+    pub check_expression: Option<String>,
+}
+
+/// The complete row-security apparatus on one observed relation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RowSecurityObservation {
+    pub enabled: bool,
+    pub forced: bool,
+    /// Every policy keyed by its PostgreSQL policy name.
+    pub policies: BTreeMap<String, RowPolicyObservation>,
+}
+
+fn environment_policy_row_security_at_record() -> RowSecurityObservation {
+    RowSecurityObservation {
+        enabled: true,
+        forced: true,
+        policies: BTreeMap::from([(
+            "environment_policies_tenant".to_string(),
+            RowPolicyObservation {
+                command: "select".to_string(),
+                permissive: true,
+                roles: BTreeSet::from(["PUBLIC".to_string()]),
+                using_expression: Some(ENVIRONMENT_POLICY_TENANT_QUAL.to_string()),
+                check_expression: None,
+            },
+        )]),
+    }
+}
+
 /// What the driver observed live, scoped to ONE project-env schema (plus the
 /// per-database `catalog` metadata schema). Everything here is a read — the
 /// pure planner turns it into the action list.
@@ -2647,6 +2754,9 @@ pub struct RunPlaneObservation {
     /// Includes entity/floor tables (ignored by the planner) and retired
     /// outbox/stored-suite tables (planned for teardown).
     pub tables: BTreeMap<String, BTreeSet<String>>,
+    /// ENABLE/FORCE flags and every policy on the projected env-policy table.
+    /// `None` means the relation itself is absent.
+    pub environment_policy_row_security: Option<RowSecurityObservation>,
     /// Live columns that still carry NOT NULL authority.
     pub non_nullable_columns: BTreeSet<(String, String)>,
     /// PostgreSQL-formatted live column types, keyed by `(table, column)`.
@@ -2737,6 +2847,8 @@ pub enum RunPlaneActionKind {
     RepairConstraint,
     /// Drop/re-add a missing or drifted named record foreign key.
     RepairForeignKey,
+    /// Enable + force RLS and replace the projected env-policy policy set.
+    RepairRowSecurity,
     /// Remove a CHECK on a record table that is absent from the schema of record.
     DropExtraConstraint,
     /// Create or replace a missing/drifted run-state helper function.
@@ -4362,11 +4474,34 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         if !present {
             continue;
         }
+        let is_environment_policy = matches!(spec.schema, AuthoringTableSchema::RunPlane)
+            && spec.table == "environment_policies";
+        let direct_grantees: &[&str] = if is_environment_policy {
+            &[
+                "PUBLIC",
+                "wamn_app",
+                SCENARIO_AUTHOR_ROLE,
+                EFFECT_WRITER_ROLE,
+                RUN_PROJECTION_WRITER_ROLE,
+            ]
+        } else {
+            &["PUBLIC", "wamn_app", SCENARIO_AUTHOR_ROLE]
+        };
+        let effective_grantees: &[&str] = if is_environment_policy {
+            &[
+                "wamn_app",
+                SCENARIO_AUTHOR_ROLE,
+                EFFECT_WRITER_ROLE,
+                RUN_PROJECTION_WRITER_ROLE,
+            ]
+        } else {
+            &["wamn_app", SCENARIO_AUTHOR_ROLE]
+        };
         let expected_for = |grantee: &str| -> BTreeSet<String> {
             let privileges = match grantee {
                 "wamn_app" => spec.app,
                 SCENARIO_AUTHOR_ROLE => spec.author,
-                "PUBLIC" => &[],
+                "PUBLIC" | EFFECT_WRITER_ROLE | RUN_PROJECTION_WRITER_ROLE => &[],
                 _ => unreachable!("closed authoring grantee set"),
             };
             privileges
@@ -4374,57 +4509,49 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 .map(|value| (*value).to_string())
                 .collect()
         };
-        let direct_drifted = ["PUBLIC", "wamn_app", SCENARIO_AUTHOR_ROLE]
-            .into_iter()
-            .any(|grantee| {
-                obs.authoring_table_privileges
-                    .get(&(
-                        schema_name.to_string(),
-                        spec.table.to_string(),
-                        grantee.to_string(),
-                    ))
-                    .cloned()
-                    .unwrap_or_default()
-                    != expected_for(grantee)
-            });
-        let effective_drifted = ["wamn_app", SCENARIO_AUTHOR_ROLE]
-            .into_iter()
-            .any(|grantee| {
-                obs.authoring_effective_table_privileges
-                    .get(&(
-                        schema_name.to_string(),
-                        spec.table.to_string(),
-                        grantee.to_string(),
-                    ))
-                    .cloned()
-                    .unwrap_or_default()
-                    != expected_for(grantee)
-            });
-        let effective_column_drifted =
-            ["wamn_app", SCENARIO_AUTHOR_ROLE]
+        let direct_drifted = direct_grantees.iter().copied().any(|grantee| {
+            obs.authoring_table_privileges
+                .get(&(
+                    schema_name.to_string(),
+                    spec.table.to_string(),
+                    grantee.to_string(),
+                ))
+                .cloned()
+                .unwrap_or_default()
+                != expected_for(grantee)
+        });
+        let effective_drifted = effective_grantees.iter().copied().any(|grantee| {
+            obs.authoring_effective_table_privileges
+                .get(&(
+                    schema_name.to_string(),
+                    spec.table.to_string(),
+                    grantee.to_string(),
+                ))
+                .cloned()
+                .unwrap_or_default()
+                != expected_for(grantee)
+        });
+        let effective_column_drifted = effective_grantees.iter().copied().any(|grantee| {
+            let expected_columns: BTreeSet<String> = expected_for(grantee)
                 .into_iter()
-                .any(|grantee| {
-                    let expected_columns: BTreeSet<String> = expected_for(grantee)
-                        .into_iter()
-                        .filter(|privilege| {
-                            ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
-                                .contains(&privilege.as_str())
-                        })
-                        .collect();
-                    obs.authoring_effective_column_privileges
-                        .get(&(
-                            schema_name.to_string(),
-                            spec.table.to_string(),
-                            grantee.to_string(),
-                        ))
-                        .cloned()
-                        .unwrap_or_default()
-                        != expected_columns
-                });
+                .filter(|privilege| {
+                    ["SELECT", "INSERT", "UPDATE", "REFERENCES"].contains(&privilege.as_str())
+                })
+                .collect();
+            obs.authoring_effective_column_privileges
+                .get(&(
+                    schema_name.to_string(),
+                    spec.table.to_string(),
+                    grantee.to_string(),
+                ))
+                .cloned()
+                .unwrap_or_default()
+                != expected_columns
+        });
         let boundary_owned = obs
             .authoring_table_owners
             .get(&(schema_name.to_string(), spec.table.to_string()))
-            .is_some_and(|owner| owner == "wamn_app" || owner == SCENARIO_AUTHOR_ROLE);
+            .is_some_and(|owner| effective_grantees.contains(&owner.as_str()));
         if !direct_drifted && !effective_drifted && !effective_column_drifted && !boundary_owned {
             continue;
         }
@@ -4432,11 +4559,11 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         let qualified = format!("{}.{}", quote_ident(schema_name), quote_ident(spec.table));
         let mut sql = String::new();
         if direct_drifted {
-            sql = format!(
-                "REVOKE ALL PRIVILEGES ON TABLE {qualified} FROM PUBLIC; \
-                 REVOKE ALL PRIVILEGES ON TABLE {qualified} FROM wamn_app; \
-                 REVOKE ALL PRIVILEGES ON TABLE {qualified} FROM {SCENARIO_AUTHOR_ROLE}"
-            );
+            sql = direct_grantees
+                .iter()
+                .map(|grantee| format!("REVOKE ALL PRIVILEGES ON TABLE {qualified} FROM {grantee}"))
+                .collect::<Vec<_>>()
+                .join("; ");
             for (grantee, privileges) in
                 [("wamn_app", spec.app), (SCENARIO_AUTHOR_ROLE, spec.author)]
             {
@@ -4453,7 +4580,13 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         // instead of claiming convergence while either boundary role retains
         // authority outside its spec.
         let mut forbidden_checks = Vec::new();
-        for (grantee, expected) in [("wamn_app", spec.app), (SCENARIO_AUTHOR_ROLE, spec.author)] {
+        for grantee in effective_grantees.iter().copied() {
+            let expected = match grantee {
+                "wamn_app" => spec.app,
+                SCENARIO_AUTHOR_ROLE => spec.author,
+                EFFECT_WRITER_ROLE | RUN_PROJECTION_WRITER_ROLE => &[],
+                _ => unreachable!("closed effective grantee set"),
+            };
             for privilege in TABLE_PRIVILEGE_TYPES {
                 if !expected.contains(&privilege) {
                     forbidden_checks.push(format!(
@@ -4476,7 +4609,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                FROM pg_catalog.pg_class AS relation \
                JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
               WHERE relation.oid = pg_catalog.to_regclass('{qualified}')) \
-             IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}')"
+             IN ({})",
+            effective_grantees
+                .iter()
+                .map(|grantee| format!("'{grantee}'"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         if !sql.is_empty() {
             sql.push_str("; ");
@@ -4665,6 +4803,20 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 }
             }
         }
+    }
+
+    // A missing table's record section carries its complete RLS apparatus.
+    // Existing tables are compared at the PostgreSQL catalog grain: both
+    // relation flags and the sole tenant SELECT policy must match exactly.
+    if obs.tables.contains_key("environment_policies")
+        && obs.environment_policy_row_security.as_ref()
+            != Some(&environment_policy_row_security_at_record())
+    {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairRowSecurity,
+            target: "environment_policies.row-security".to_string(),
+            sql: repair_environment_policy_row_security_sql(schema),
+        });
     }
 
     // Required columns are added before the exact writer read boundary names
@@ -5070,6 +5222,25 @@ fn quote_ident(s: &str) -> String {
     wamn_schema_compiler::sql::quote_ident(s)
 }
 
+fn repair_environment_policy_row_security_sql(schema: &BareSchemaName) -> String {
+    let qualified = format!("{}.environment_policies", schema.quoted());
+    format!(
+        "ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY; \
+         ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY; \
+         DO $environment_policy_rows$ DECLARE policy_name text; BEGIN \
+           FOR policy_name IN \
+             SELECT policy.polname FROM pg_catalog.pg_policy AS policy \
+              WHERE policy.polrelid = pg_catalog.to_regclass('{qualified}') \
+           LOOP \
+             EXECUTE pg_catalog.format( \
+               'DROP POLICY %I ON {qualified}', policy_name); \
+           END LOOP; \
+         END $environment_policy_rows$; \
+         CREATE POLICY environment_policies_tenant ON {qualified} \
+           FOR SELECT USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))"
+    )
+}
+
 fn record_table_names() -> BTreeSet<String> {
     RUN_PLANE_FILES
         .iter()
@@ -5427,7 +5598,8 @@ pub fn select_app_scenario_author_membership_sql() -> &'static str {
 pub fn select_authoring_table_privileges_sql() -> &'static str {
     "SELECT table_schema, table_name, grantee, privilege_type \
        FROM information_schema.table_privileges \
-      WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author') \
+      WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author', \
+                        'wamn_effect_writer', 'wamn_run_projection_writer') \
         AND ((table_schema = 'catalog' AND table_name IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
@@ -5436,7 +5608,7 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (table_schema = $1 AND table_name IN \
-              ('runs', 'authoring_test_run_reservations', \
+              ('environment_policies', 'runs', 'authoring_test_run_reservations', \
                'authoring_test_case_runs', 'authoring_test_reports'))) \
       ORDER BY table_schema, table_name, grantee, privilege_type"
 }
@@ -5455,7 +5627,8 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
        JOIN pg_catalog.pg_class AS relation ON relation.relkind = 'r' \
        JOIN pg_catalog.pg_namespace AS namespace \
          ON namespace.oid = relation.relnamespace \
-      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
+      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
+                              'wamn_effect_writer', 'wamn_run_projection_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
@@ -5464,7 +5637,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'authoring_test_run_reservations', \
+              ('environment_policies', 'runs', 'authoring_test_run_reservations', \
                'authoring_test_case_runs', 'authoring_test_reports'))) \
         AND pg_catalog.has_table_privilege( \
               actor.oid, relation.oid, privilege.name) \
@@ -5483,7 +5656,8 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
        JOIN pg_catalog.pg_class AS relation ON relation.relkind = 'r' \
        JOIN pg_catalog.pg_namespace AS namespace \
          ON namespace.oid = relation.relnamespace \
-      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
+      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
+                              'wamn_effect_writer', 'wamn_run_projection_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
@@ -5492,7 +5666,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'authoring_test_run_reservations', \
+              ('environment_policies', 'runs', 'authoring_test_run_reservations', \
                'authoring_test_case_runs', 'authoring_test_reports'))) \
         AND pg_catalog.has_any_column_privilege( \
               actor.oid, relation.oid, privilege.name) \
@@ -5517,7 +5691,7 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'authoring_test_run_reservations', \
+              ('environment_policies', 'runs', 'authoring_test_run_reservations', \
                'authoring_test_case_runs', 'authoring_test_reports'))) \
       ORDER BY namespace.nspname, relation.relname"
 }
@@ -5654,6 +5828,39 @@ pub fn select_schema_columns_sql() -> &'static str {
      ORDER BY c.relname, a.attnum"
 }
 
+/// ENABLE/FORCE flags on the projected environment-policy relation.
+pub fn select_environment_policy_row_security_sql() -> &'static str {
+    "SELECT relation.relrowsecurity, relation.relforcerowsecurity \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace \
+         ON namespace.oid = relation.relnamespace \
+      WHERE namespace.nspname = $1 \
+        AND relation.relname = 'environment_policies' \
+        AND relation.relkind = 'r'"
+}
+
+/// Every policy on the projected environment-policy relation, including the
+/// fields whose widening can change the visible tenant set.
+pub fn select_environment_policy_policies_sql() -> &'static str {
+    "SELECT policy.polname, \
+            CASE policy.polcmd WHEN 'r' THEN 'select' WHEN 'a' THEN 'insert' \
+              WHEN 'w' THEN 'update' WHEN 'd' THEN 'delete' ELSE 'all' END, \
+            policy.polpermissive, \
+            ARRAY(SELECT CASE role_oid WHEN 0 THEN 'PUBLIC' \
+                              ELSE pg_catalog.pg_get_userbyid(role_oid) END \
+                    FROM unnest(policy.polroles) AS role_oid ORDER BY 1), \
+            pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, true), \
+            pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, true) \
+       FROM pg_catalog.pg_policy AS policy \
+       JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid \
+       JOIN pg_catalog.pg_namespace AS namespace \
+         ON namespace.oid = relation.relnamespace \
+      WHERE namespace.nspname = $1 \
+        AND relation.relname = 'environment_policies' \
+        AND relation.relkind = 'r' \
+      ORDER BY policy.polname"
+}
+
 /// Count rows in the selected run table before planning the empty-only pin
 /// cutover. The cutover repeats this check while holding both table locks.
 pub fn count_run_rows_sql(schema: &BareSchemaName) -> String {
@@ -5723,7 +5930,8 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
      FROM pg_proc p \
      JOIN pg_namespace n ON n.oid = p.pronamespace \
      WHERE n.nspname = $1 \
-       AND p.proname IN ('lock_catalog_head', 'guard_event_lineage_immutable', \
+       AND p.proname IN ('lock_catalog_head', 'pin_run_durability_class', \
+                         'guard_event_lineage_immutable', \
                          'reject_immutable_effect_fact_change', \
                          'reject_immutable_operator_run_action_change', \
                          'reject_immutable_authoring_test_orchestration_change', \
@@ -6129,6 +6337,7 @@ CREATE INDEX event_registrations_by_entity
             }),
             effect_writer_schema_privileges: (true, false),
             run_projection_schema_privileges: (true, false),
+            environment_policy_row_security: Some(environment_policy_row_security_at_record()),
             ..Default::default()
         };
         obs.scenario_author_schema_usage
@@ -6573,6 +6782,7 @@ CREATE INDEX event_registrations_by_entity
         assert_eq!(
             record_tables(RUN_STATE_SQL, "wamn_run"),
             [
+                "environment_policies",
                 "runs",
                 "invocation_admissions",
                 "node_runs",
@@ -6961,8 +7171,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            11,
-            "all eleven retained run-plane tables are at target"
+            12,
+            "all twelve retained run-plane tables are at target"
         );
     }
 
@@ -7825,6 +8035,137 @@ CREATE INDEX event_registrations_by_entity
                 assert!(repair.sql.contains("relation.relowner"));
             }
         }
+    }
+
+    fn environment_policy_row_security_repair(obs: &RunPlaneObservation) -> RunPlaneAction {
+        let plan = plan_run_plane(&schema("demo"), obs);
+        plan.actions
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::RepairRowSecurity)
+            .expect("environment-policy row-security drift must be repaired")
+    }
+
+    #[test]
+    fn exact_environment_policy_row_security_plans_no_repair() {
+        let plan = plan_run_plane(&schema("demo"), &observation_at_record());
+        assert!(
+            plan.actions
+                .iter()
+                .all(|action| action.kind != RunPlaneActionKind::RepairRowSecurity)
+        );
+    }
+
+    #[test]
+    fn disabled_environment_policy_rls_mutant_plans_repair() {
+        let mut obs = observation_at_record();
+        obs.environment_policy_row_security
+            .as_mut()
+            .expect("record relation")
+            .enabled = false;
+
+        let repair = environment_policy_row_security_repair(&obs);
+        assert!(repair.sql.contains("ENABLE ROW LEVEL SECURITY"));
+    }
+
+    #[test]
+    fn unforced_environment_policy_rls_mutant_plans_repair() {
+        let mut obs = observation_at_record();
+        obs.environment_policy_row_security
+            .as_mut()
+            .expect("record relation")
+            .forced = false;
+
+        let repair = environment_policy_row_security_repair(&obs);
+        assert!(repair.sql.contains("FORCE ROW LEVEL SECURITY"));
+    }
+
+    #[test]
+    fn missing_environment_policy_tenant_policy_mutant_plans_repair() {
+        let mut obs = observation_at_record();
+        obs.environment_policy_row_security
+            .as_mut()
+            .expect("record relation")
+            .policies
+            .clear();
+
+        let repair = environment_policy_row_security_repair(&obs);
+        assert!(
+            repair
+                .sql
+                .contains("CREATE POLICY environment_policies_tenant")
+        );
+    }
+
+    #[test]
+    fn widened_environment_policy_tenant_policy_mutant_plans_exact_replacement() {
+        let mut obs = observation_at_record();
+        let row_security = obs
+            .environment_policy_row_security
+            .as_mut()
+            .expect("record relation");
+        let policy = row_security
+            .policies
+            .get_mut("environment_policies_tenant")
+            .expect("record policy");
+        policy.command = "all".to_string();
+        policy.roles.insert("wamn_app".to_string());
+        policy.using_expression = Some("true".to_string());
+        policy.check_expression = Some("true".to_string());
+        row_security.policies.insert(
+            "environment_policies_extra".to_string(),
+            RowPolicyObservation {
+                command: "select".to_string(),
+                permissive: true,
+                roles: BTreeSet::from(["PUBLIC".to_string()]),
+                using_expression: Some("true".to_string()),
+                check_expression: None,
+            },
+        );
+
+        let repair = environment_policy_row_security_repair(&obs);
+        assert!(repair.sql.contains("SELECT policy.polname"));
+        assert!(repair.sql.contains("DROP POLICY %I"));
+        assert!(repair.sql.contains("FOR SELECT USING"));
+        assert!(!repair.sql.contains("WITH CHECK"));
+    }
+
+    #[test]
+    fn environment_policy_writer_grants_are_revoked_and_refused_effectively() {
+        let mut obs = observation_at_record();
+        let key = (
+            "demo".to_string(),
+            "environment_policies".to_string(),
+            EFFECT_WRITER_ROLE.to_string(),
+        );
+        obs.authoring_table_privileges
+            .insert(key.clone(), BTreeSet::from(["UPDATE".to_string()]));
+        obs.authoring_effective_table_privileges
+            .insert(key.clone(), BTreeSet::from(["UPDATE".to_string()]));
+        obs.authoring_effective_column_privileges
+            .insert(key, BTreeSet::from(["UPDATE".to_string()]));
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let repair = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
+                    && action.target == "demo.environment_policies"
+            })
+            .expect("policy writer drift must be repaired");
+        assert!(repair.sql.contains(
+            "REVOKE ALL PRIVILEGES ON TABLE \"demo\".\"environment_policies\" FROM wamn_effect_writer"
+        ));
+        assert!(
+            repair
+                .sql
+                .contains("'wamn_effect_writer', '\"demo\".\"environment_policies\"', 'UPDATE'")
+        );
+        assert!(
+            repair
+                .sql
+                .contains("authoring-effective-privilege-out-of-bounds")
+        );
     }
 
     #[test]
@@ -9002,6 +9343,7 @@ CREATE INDEX event_registrations_by_entity
         assert_eq!(
             creates,
             [
+                "environment_policies",
                 "runs",
                 "invocation_admissions",
                 "node_runs",
@@ -9510,8 +9852,16 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            7
+            8
         );
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairHelperFunction
+                && action.target == "pin_run_durability_class"
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target == "runs.runs_pin_durability_class"
+        }));
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
                 && action.target == "runs.runs_event_lineage_immutable"
@@ -9529,7 +9879,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
                 .count(),
-            19
+            20
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
@@ -9985,6 +10335,28 @@ CREATE INDEX event_registrations_by_entity
         // clear — the .12.40 shape again, one relkind over.
         assert!(table_privileges.contains("relation.relkind IN ('r', 'p', 'v', 'm', 'f')"));
         assert!(!table_privileges.contains("'S'"));
+    }
+
+    /// Named mutant guard: omitting any one field lets a disabled/unforced RLS
+    /// flag or a missing/widened policy falsely observe as converged.
+    #[test]
+    fn environment_policy_row_security_observation_reads_the_exact_contract() {
+        let flags = select_environment_policy_row_security_sql();
+        assert!(flags.contains("relrowsecurity"));
+        assert!(flags.contains("relforcerowsecurity"));
+
+        let policies = select_environment_policy_policies_sql();
+        for field in [
+            "polname",
+            "polcmd",
+            "polpermissive",
+            "polroles",
+            "polqual",
+            "polwithcheck",
+        ] {
+            assert!(policies.contains(field), "missing policy field {field}");
+        }
+        assert!(policies.contains("ORDER BY policy.polname"));
     }
 
     /// Observation SQL pins (the shell binds these verbatim; the live gate

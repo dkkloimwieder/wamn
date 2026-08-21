@@ -40,6 +40,39 @@ pub type OrgId = String;
 /// A project id — a lowercase slug, unique within its org.
 pub type ProjectId = String;
 
+/// The durability floor selected by one environment policy.
+///
+/// `standard` is deliberately the default: a missing field in an older registry
+/// document must never enroll an environment in the premium crash floor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DurabilityClass {
+    /// At-least-once execution without claim-time effect classification.
+    #[default]
+    Standard,
+    /// The premium crash floor with claim-time effect classification.
+    Durable,
+}
+
+impl DurabilityClass {
+    /// Parse the exact persisted registry literal.
+    pub fn from_sql(value: &str) -> Option<Self> {
+        match value {
+            "standard" => Some(Self::Standard),
+            "durable" => Some(Self::Durable),
+            _ => None,
+        }
+    }
+
+    /// Return the exact persisted registry literal.
+    pub const fn as_sql(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Durable => "durable",
+        }
+    }
+}
+
 /// A validated environment slug — the D18 generic env model. `env` is **data,
 /// not a closed type**: the default set is `dev` / `prod` (rows in
 /// [`EnvPolicy`]), with `canary` and any others addable as policies. A slug both
@@ -158,6 +191,10 @@ pub struct EnvPolicy {
     /// so the off-hours scheduler may hibernate it) or `off` (never).
     #[serde(default)]
     pub hibernation: String,
+    /// Execution durability bought for future admissions in this environment.
+    /// Existing run rows retain the class they were admitted under.
+    #[serde(default)]
+    pub durability_class: DurabilityClass,
 }
 
 impl EnvPolicy {
@@ -197,6 +234,7 @@ impl EnvPolicy {
             backup_cadence: String::new(),
             wal_retention: String::new(),
             hibernation: "eligible".into(),
+            durability_class: DurabilityClass::Standard,
         }
     }
 
@@ -215,6 +253,7 @@ impl EnvPolicy {
             backup_cadence: "0 0 */6 * * *".into(),
             wal_retention: "14d".into(),
             hibernation: "off".into(),
+            durability_class: DurabilityClass::Standard,
         }
     }
 
@@ -508,8 +547,8 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClusterRef, Env, EnvPolicy, Org, OrgEnvPolicy, RecoveryDomain, Registry, SCHEMA_VERSION,
-        cluster_of,
+        ClusterRef, DurabilityClass, Env, EnvPolicy, Org, OrgEnvPolicy, RecoveryDomain, Registry,
+        SCHEMA_VERSION, cluster_of,
     };
 
     /// `cluster_of` reproduces the shipped naming for a dedicated org: `prod`(own)
@@ -601,6 +640,28 @@ mod tests {
             serde_json::to_string(&RecoveryDomain::SharedWith(Env::new("prod"))).unwrap(),
             "{\"shared-with\":\"prod\"}"
         );
+    }
+
+    #[test]
+    fn durability_class_literals_are_exact_and_old_rows_default_standard() {
+        assert_eq!(
+            DurabilityClass::from_sql("standard"),
+            Some(DurabilityClass::Standard)
+        );
+        assert_eq!(
+            DurabilityClass::from_sql("durable"),
+            Some(DurabilityClass::Durable)
+        );
+        assert_eq!(DurabilityClass::from_sql("premium"), None);
+        assert_eq!(DurabilityClass::Durable.as_sql(), "durable");
+
+        let mut old_policy = serde_json::to_value(EnvPolicy::dev()).expect("serialize policy");
+        old_policy
+            .as_object_mut()
+            .expect("policy is an object")
+            .remove("durability-class");
+        let decoded: EnvPolicy = serde_json::from_value(old_policy).expect("decode old policy");
+        assert_eq!(decoded.durability_class, DurabilityClass::Standard);
     }
 
     /// A registry round-trips through JSON, and `env` serializes as a bare slug,

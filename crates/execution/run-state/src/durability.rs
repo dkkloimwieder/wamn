@@ -12,10 +12,9 @@
 //! [`DurabilityClass::Durable`] is the premium tier that re-enables the landed
 //! crash floor at path 3's claim.
 //!
-//! Absent or unreadable policy resolves to `Standard`. That direction is
-//! deliberate and ruled: **fail open to the cheap tier, never to durable**, so a
-//! lost policy read can only under-charge, never silently enroll a run in
-//! machinery its tenant did not buy.
+//! A missing project-local policy row or an environment mismatch refuses
+//! admission. Once convergence supplies the row, its exact class is frozen on
+//! the run; the producer cannot select either tier itself.
 
 use std::fmt;
 
@@ -104,10 +103,9 @@ mod tests {
     }
 
     #[test]
-    fn the_absent_policy_default_is_the_cheap_tier() {
-        // wamn-0h0g.20.1 froze this direction: fail open to `standard`, never to
-        // `durable`. A default that flipped would enroll every run that lost its
-        // policy read into machinery nobody bought.
+    fn legacy_literal_parsing_defaults_to_the_cheap_tier() {
+        // Persisted pre-carrier inputs still default to `standard`; admission
+        // itself now refuses a missing local policy row before this type is read.
         assert_eq!(DurabilityClass::default(), DurabilityClass::Standard);
         assert_eq!(
             DurabilityClass::from_sql_or_default("nonsense"),

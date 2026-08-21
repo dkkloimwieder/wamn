@@ -248,6 +248,14 @@ fn admission_live() {
     let admit = recipe.admit().to_string();
     let prepared = prepare(&admit);
 
+    success(
+        &url,
+        "INSERT INTO wamn_run.environment_policies \
+           (tenant_id,expected_environment,durability_class) \
+         VALUES ('t1','dev','standard'), \
+                ('t2','dev','standard');",
+    );
+
     // Both producer variants use the same statement and enter the ordinary
     // unleased queue. Event admission additionally carries its stream position.
     for (execution, expected) in [
@@ -294,6 +302,109 @@ fn admission_live() {
              END $$;",
             registration_digest
         ),
+    );
+
+    // Admission reads the project-local policy projection and freezes it on
+    // each run. A policy change affects only later admissions; neither the
+    // canonical statement nor its caller carries the class as a parameter.
+    success(
+        &url,
+        "UPDATE wamn_run.environment_policies SET durability_class='durable' \
+          WHERE tenant_id='t1';",
+    );
+
+    // Named COALESCE/mismatch mutants: a direct guest insert cannot obtain the
+    // cheap tier by omitting convergence, and cannot name another environment
+    // in this one-environment physical database.
+    success(
+        &url,
+        "BEGIN; SET LOCAL ROLE wamn_app; SET LOCAL app.tenant = 't1'; \
+         DO $policy_refusals$ DECLARE refusal text; BEGIN \
+           BEGIN \
+             INSERT INTO wamn_run.runs \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                environment,execution_bundle_hash) \
+             VALUES ('t1','policy-environment-mismatch','flow-http',1,'c1',1, \
+                     'alternate', \
+                     'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
+             ASSERT false, 'alternate environment admission succeeded'; \
+           EXCEPTION WHEN SQLSTATE '55000' THEN \
+             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
+             ASSERT refusal = 'environment-policy-environment-mismatch', refusal; \
+           END; \
+           PERFORM set_config('app.tenant', 'unprojected', true); \
+           BEGIN \
+             INSERT INTO wamn_run.runs \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                environment,execution_bundle_hash) \
+             VALUES ('unprojected','policy-not-converged','flow-http',1,'c1',1, \
+                     'dev', \
+                     'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
+             ASSERT false, 'unprojected tenant admission succeeded'; \
+           EXCEPTION WHEN SQLSTATE '55000' THEN \
+             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
+             ASSERT refusal = 'environment-policy-not-converged', refusal; \
+           END; \
+         END $policy_refusals$; COMMIT;",
+    );
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+            environment,execution_bundle_hash) \
+         VALUES ('t1','policy-scope-probe','flow-http',1,'c1',1,'dev', \
+                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT durability_class FROM wamn_run.runs \
+                    WHERE tenant_id='t1' AND run_id='policy-scope-probe')='durable', \
+                  'the trigger did not use the tenant-qualified policy key'; \
+         END $$; \
+         DELETE FROM wamn_run.runs \
+          WHERE tenant_id='t1' AND run_id='policy-scope-probe';",
+    );
+    let durable = success(
+        &url,
+        &format!(
+            "{} {} {}; COMMIT;",
+            app_preamble(),
+            prepared,
+            execute_http(
+                "http-policy-durable",
+                "key-policy-durable",
+                "fp-policy-durable"
+            )
+        ),
+    );
+    assert_eq!(durable.trim(), "admitted|http-policy-durable");
+    success(
+        &url,
+        "UPDATE wamn_run.environment_policies SET durability_class='standard' \
+          WHERE tenant_id='t1';",
+    );
+    let standard = success(
+        &url,
+        &format!(
+            "{} {} {}; COMMIT;",
+            app_preamble(),
+            prepared,
+            execute_http(
+                "http-policy-standard",
+                "key-policy-standard",
+                "fp-policy-standard"
+            )
+        ),
+    );
+    assert_eq!(standard.trim(), "admitted|http-policy-standard");
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT durability_class FROM wamn_run.runs \
+                    WHERE run_id='http-policy-durable') = 'durable', \
+                  'the durable policy was not frozen at admission'; \
+           ASSERT (SELECT durability_class FROM wamn_run.runs \
+                    WHERE run_id='http-policy-standard') = 'standard', \
+                  'the changed policy did not govern the later admission'; \
+         END $$;",
     );
 
     // Pure call-free routes may omit the key. NULL is deliberately not a
@@ -821,6 +932,7 @@ fn admission_live() {
            TO wamn_management_admitter; \
          GRANT SELECT ON catalog.catalog_heads, catalog.release_flows, \
            catalog.flow_artifacts, catalog.execution_bundles TO wamn_management_admitter; \
+         GRANT SELECT ON wamn_run.environment_policies TO wamn_management_admitter; \
          GRANT SELECT (tenant_id, run_id, idempotency_key, trigger_source, capture_mode, \
            flow_id, flow_version, catalog_id, catalog_version, environment, \
            execution_bundle_hash, input_json) ON wamn_run.runs TO wamn_management_admitter; \
