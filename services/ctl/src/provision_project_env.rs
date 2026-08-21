@@ -632,15 +632,14 @@ async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs) -> anyhow::Res
     let org = args
         .org
         .as_deref()
-        .context("--org is required for an effect-writer generation action")?;
-    let project = args
-        .project
-        .as_deref()
-        .context("--project is required for an effect-writer generation action")?;
+        .expect("clap parser invariant: --org is required unless --revoke-pat-prefix is present");
+    let project = args.project.as_deref().expect(
+        "clap parser invariant: --project is required unless --revoke-pat-prefix is present",
+    );
     let environment = args
         .env
         .as_deref()
-        .context("--env is required for an effect-writer generation action")?;
+        .expect("clap parser invariant: --env is required unless --revoke-pat-prefix is present");
     validate_project_env(org, project, environment)
         .map_err(|error| anyhow::anyhow!("project-env names: {error}"))?;
     let database = project_env_database_name(org, project, environment);
@@ -2140,6 +2139,71 @@ mod tests {
             identity_accesses.matches(".expect(").count(),
             3,
             "all three parser-required identity fields must be consumed infallibly"
+        );
+        for flag in ["--org", "--project", "--env"] {
+            assert!(
+                identity_accesses.contains(&format!(
+                    "clap parser invariant: {flag} is required unless --revoke-pat-prefix is present"
+                )),
+                "{flag} does not name its parser invariant"
+            );
+        }
+    }
+
+    /// Every effect-writer action is a non-revoke invocation, so the same Clap
+    /// contract makes its identity accesses infallible in all three action modes.
+    #[test]
+    fn clap_guards_the_effect_writer_identity_accesses_in_every_action_mode() {
+        for action in [
+            "--prepare-effect-writer-generation",
+            "--retire-effect-writer-generation",
+            "--abort-effect-writer-generation",
+        ] {
+            for omitted in ["--org", "--project", "--env"] {
+                let mut argv = vec![
+                    "test",
+                    "--org",
+                    "acme",
+                    "--project",
+                    "billing",
+                    "--env",
+                    "dev",
+                    "--target-admin-database-url",
+                    "postgresql://postgres@localhost/wamn-db-acme--billing--dev",
+                    action,
+                    "a",
+                ];
+                let at = argv
+                    .iter()
+                    .position(|arg| *arg == omitted)
+                    .expect("the omitted flag is in the complete action invocation");
+                argv.drain(at..=at + 1);
+
+                let error = TestCli::try_parse_from(argv)
+                    .expect_err("an effect-writer action accepted a missing identity member");
+                assert_eq!(
+                    error.kind(),
+                    clap::error::ErrorKind::MissingRequiredArgument,
+                    "{action} missing {omitted} failed for the wrong reason: {error}"
+                );
+            }
+        }
+
+        let implementation = include_str!("provision_project_env.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        let identity_accesses = implementation
+            .split("async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs)")
+            .nth(1)
+            .expect("the effect-writer action exists")
+            .split("validate_project_env")
+            .next()
+            .expect("the identity accesses precede validation");
+        assert_eq!(
+            identity_accesses.matches(".expect(").count(),
+            3,
+            "all three action identity fields must be consumed infallibly"
         );
         for flag in ["--org", "--project", "--env"] {
             assert!(
