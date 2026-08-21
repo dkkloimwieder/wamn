@@ -72,16 +72,18 @@ fn run_state_live() {
     // dev-dependencies was rejected: it weakens a conformance guard to make one test
     // prettier.
     //
-    // THE DRIFT CONTRACT. The `wamn_effect_writer` and `wamn_run_projection_writer`
-    // blocks below mirror `ensure_effect_writer_acl_role_sql` in
-    // crates/control/provision/src/sql.rs attribute-for-attribute: NOLOGIN NOSUPERUSER
-    // NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS. ANY CHANGE TO THAT
+    // THE DRIFT CONTRACT. The `wamn_scenario_author` block below mirrors
+    // `ensure_scenario_author_role_sql` in crates/schema/control/src/run_plane.rs, while
+    // the `wamn_effect_writer` and `wamn_run_projection_writer` blocks mirror
+    // `ensure_effect_writer_acl_role_sql` in crates/control/provision/src/sql.rs. All
+    // three carry the production attributes exactly: NOLOGIN NOSUPERUSER NOCREATEDB
+    // NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS. ANY CHANGE TO EITHER
     // PRODUCTION ATTRIBUTE SET UPDATES THIS BLOCK IN THE SAME COMMIT. The mirrored
-    // surface is the attribute list and nothing else: the role NAMES are already shared,
-    // since `EFFECT_WRITER_ROLE` and `RUN_PROJECTION_WRITER_ROLE` are this crate's own
-    // constants (src/effect_writer_credential.rs) and the production builder imports them
-    // FROM here. The `pg_roles` assertion after this bootstrap is what holds the mirror
-    // to its word.
+    // surface is the attribute list and nothing else: the writer role NAMES are already
+    // shared, since `EFFECT_WRITER_ROLE` and `RUN_PROJECTION_WRITER_ROLE` are this
+    // crate's own constants (src/effect_writer_credential.rs) and the production builder
+    // imports them FROM here. The `pg_roles` assertion after this bootstrap is what holds
+    // the mirror to its word.
     //
     // REOPEN TRIGGER: a SECOND consumer needing this attribute set. Minting a shared
     // cross-workspace home crate for one reader was rejected as infrastructure built for
@@ -126,23 +128,27 @@ fn run_state_live() {
         ),
     );
 
-    // The mirror above is create-only — unlike `wamn_app` it has no `ELSE ALTER` arm —
-    // and roles are CLUSTER-WIDE, so a `wamn_effect_writer` left behind by an earlier
-    // database is silently kept with whatever attributes it already carries. This is the
-    // leg that makes the drift contract checkable rather than aspirational: it reds both
-    // when the block above stops matching the production attribute set and when the
-    // cluster this suite was pointed at is not the throwaway it is documented to be.
+    // The three mirrored role blocks above are create-only — unlike `wamn_app` they have
+    // no `ELSE ALTER` arms — and roles are CLUSTER-WIDE, so a role left behind by an
+    // earlier database is silently kept with whatever attributes it already carries.
+    // This is the leg that makes the drift contract checkable rather than aspirational:
+    // it reds both when a block above stops matching the production attribute set and
+    // when the cluster this suite was pointed at is not the throwaway it is documented
+    // to be.
     success(
         &url,
         "DO $$ DECLARE mirrored text; BEGIN \
            SELECT string_agg(rolname, ',' ORDER BY rolname) INTO mirrored FROM pg_roles \
-            WHERE rolname IN ('wamn_effect_writer','wamn_run_projection_writer') \
+            WHERE rolname IN \
+              ('wamn_effect_writer','wamn_run_projection_writer','wamn_scenario_author') \
               AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin \
               AND NOT rolinherit AND NOT rolcreatedb AND NOT rolcreaterole \
               AND NOT rolreplication; \
-           ASSERT mirrored = 'wamn_effect_writer,wamn_run_projection_writer', \
-                  'the writer roles must carry exactly the attributes \
-                   ensure_effect_writer_acl_role_sql mints (NOLOGIN NOSUPERUSER \
+           ASSERT mirrored = \
+                    'wamn_effect_writer,wamn_run_projection_writer,wamn_scenario_author', \
+                  'the mirrored roles must carry exactly the attributes \
+                   ensure_scenario_author_role_sql and ensure_effect_writer_acl_role_sql mint \
+                   (NOLOGIN NOSUPERUSER \
                    NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS); \
                    conforming roles were: ' || coalesce(mirrored, '<none>'); \
          END $$;",
