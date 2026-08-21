@@ -9,6 +9,7 @@ use anyhow::{Context as _, ensure};
 use async_nats::header::NATS_MESSAGE_ID;
 use clap::Args;
 use futures_util::StreamExt as _;
+use pg_walstream::{BaseBackupOptions, PgReplicationConnection};
 use tokio_postgres::{Client, NoTls};
 
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
@@ -41,6 +42,12 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 
 const BROKER_DUP_WINDOW_SECS: u64 = 1;
 const SIDECAR_POSTGRES_MAJOR: i64 = 18;
+// Match the reader's generous graceful-shutdown window while remaining well
+// inside the Pod's 180-second termination grace period for a bounded retry.
+const CDC_BACKEND_TERMINATION_TIMEOUT_MS: i64 = 15_000;
+// Long enough to expose fire-and-forget termination, while automatic resume
+// keeps even a failed cleanup probe independently bounded.
+const CDC_WITNESS_RESUME_DELAY_SECS: u64 = 1;
 const ARTIFACT_HASH: &str =
     "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
@@ -327,9 +334,10 @@ fn prepare_report_dir(resources: &GateResources, state: &mut GateState) -> anyho
     Ok(())
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct GateState {
     reader: Option<ReaderProcess>,
+    cleanup_session_witness: Option<PgReplicationConnection>,
     ledger: SetupLedger,
 }
 
@@ -584,6 +592,22 @@ async fn provision_databases(
         ))
         .await
         .context("mark disposable system database owner")?;
+
+    // Production converges this cluster-wide floor before granting each
+    // workload identity its exact database. The sibling database must start
+    // behind the floor, while the positive M1 path still needs wamn_app on the
+    // project database. M-CONNECT-FLOOR: deleting the floor makes the sibling
+    // logical-replication connection succeed and the named proof below fail.
+    project_admin
+        .batch_execute(provision_sql::revoke_public_connect_floor_sql())
+        .await
+        .context("converge production PUBLIC CONNECT floor")?;
+    project_admin
+        .batch_execute(&provision_sql::grant_connect_on_database_sql(
+            &resources.project_database,
+        ))
+        .await
+        .context("grant wamn_app CONNECT on the exact project database")?;
     disposable_args(args, resources)
 }
 
@@ -613,18 +637,8 @@ fn require_loopback_url(url: &str, label: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn expected_sidecar_hba(resources: &GateResources) -> serde_json::Value {
+fn expected_sidecar_hba() -> serde_json::Value {
     serde_json::json!([
-        {
-            "type": "host", "database": [resources.project_database],
-            "user": [resources.cdc_name], "address": "127.0.0.1",
-            "netmask": "255.255.255.255", "auth": "scram-sha-256", "error": null
-        },
-        {
-            "type": "host", "database": ["all"], "user": [resources.cdc_name],
-            "address": "127.0.0.1", "netmask": "255.255.255.255",
-            "auth": "reject", "error": null
-        },
         {
             "type": "local", "database": ["all"], "user": ["postgres"],
             "address": null, "netmask": null, "auth": "trust", "error": null
@@ -641,36 +655,21 @@ fn expected_sidecar_hba(resources: &GateResources) -> serde_json::Value {
         },
         {
             "type": "host", "database": ["all"], "user": ["all"],
-            "address": "127.0.0.1", "netmask": "255.255.255.255",
-            "auth": "reject", "error": null
-        },
-        {
-            "type": "host", "database": ["all"], "user": ["all"],
-            "address": "0.0.0.0", "netmask": "0.0.0.0",
-            "auth": "reject", "error": null
-        },
-        {
-            "type": "host", "database": ["all"], "user": ["all"],
-            "address": "::", "netmask": "::", "auth": "reject", "error": null
+            "address": "all", "netmask": null,
+            "auth": "scram-sha-256", "error": null
         }
     ])
 }
 
-fn require_exact_sidecar_hba(
-    observed: &serde_json::Value,
-    resources: &GateResources,
-) -> anyhow::Result<()> {
+fn require_exact_sidecar_hba(observed: &serde_json::Value) -> anyhow::Result<()> {
     ensure!(
-        observed == &expected_sidecar_hba(resources),
-        "isolated HBA must be exactly the normalized UID-derived CDC allow/reject pair followed by the fixed loopback administration rules"
+        observed == &expected_sidecar_hba(),
+        "isolated HBA must be exactly the loopback fixture exceptions followed by the production host all all all scram-sha-256 rule, with no physical-replication admission"
     );
     Ok(())
 }
 
-async fn preflight_isolated_postgres(
-    args: &CausationE2eArgs,
-    resources: &GateResources,
-) -> anyhow::Result<Client> {
+async fn preflight_isolated_postgres(args: &CausationE2eArgs) -> anyhow::Result<Client> {
     require_loopback_url(&args.database_url, "application URL")?;
     require_loopback_url(&args.admin_database_url, "project admin URL")?;
     require_loopback_url(&args.system_database_url, "system admin URL")?;
@@ -713,7 +712,7 @@ async fn preflight_isolated_postgres(
         .get(0);
     let hba: serde_json::Value =
         serde_json::from_str(&hba).context("parse normalized sidecar HBA")?;
-    require_exact_sidecar_hba(&hba, resources)?;
+    require_exact_sidecar_hba(&hba)?;
     Ok(admin)
 }
 
@@ -834,6 +833,7 @@ async fn setup_registry(system: &mut Client, resources: &GateResources) -> anyho
                 &resources.env,
                 &resources.project_database,
                 &Option::<&str>::None,
+                &&resources.suffix[..8], // M-PROJECT-ENV-SUFFIX: omission is a 6-vs-5 prepare error.
             ],
         )
         .await?;
@@ -1059,6 +1059,203 @@ fn reader_args(args: &CausationE2eArgs, resources: &GateResources) -> anyhow::Re
         nats_url: args.nats_url.clone(),
         stream_replicas: 1,
     })
+}
+
+fn replication_url(plain_url: &str, mode: &str) -> String {
+    debug_assert!(!plain_url.contains('?'));
+    format!("{plain_url}?sslmode=disable&replication={mode}")
+}
+
+fn require_replication_startup_refusal(
+    error: &pg_walstream::ReplicationError,
+    sqlstate: &str,
+    literal: &str,
+    label: &str,
+) -> anyhow::Result<()> {
+    let rendered = error.to_string();
+    ensure!(
+        rendered.contains(&format!("SQLSTATE {sqlstate}")),
+        "{label} returned the wrong SQLSTATE: {rendered}"
+    );
+    ensure!(
+        rendered.contains(literal),
+        "{label} returned the wrong refusal literal: {rendered}"
+    );
+    Ok(())
+}
+
+/// Prove the deployed CDC transport boundary before the production reader uses it.
+fn prove_replication_protocol_confinement(
+    args: &CausationE2eArgs,
+    resources: &GateResources,
+) -> anyhow::Result<PgReplicationConnection> {
+    let own_plain = role_url(&args.admin_database_url, resources)?;
+    let own_logical_url = replication_url(&own_plain, "database");
+
+    // Positive control: the repository's production HBA rule admits a logical
+    // walsender session to the database on which the role has explicit CONNECT.
+    // The later reader run proves the same route remains usable for actual CDC.
+    let mut own = PgReplicationConnection::connect(&own_logical_url)
+        .context("open own-database logical replication connection")?;
+    let identified = own
+        .identify_system()
+        .context("identify own-database logical replication system")?;
+    ensure!(
+        identified.ntuples() == 1
+            && identified.get_value(0, 3).as_deref() == Some(resources.project_database.as_str()),
+        "own logical replication identified the wrong database"
+    );
+    let physical_url = replication_url(&own_plain, "true");
+
+    // M-PHYSICAL-HBA-START: adding a physical-replication HBA admission lets
+    // this connection cross the boundary and fails the gate before the command
+    // outcome can be mistaken for the HBA refusal.
+    let start_result = match PgReplicationConnection::connect(&physical_url) {
+        Err(error) => require_replication_startup_refusal(
+            &error,
+            "28000",
+            "no pg_hba.conf entry for replication connection",
+            "physical START_REPLICATION",
+        ),
+        Ok(mut physical) => {
+            let command_accepted = physical.start_physical_replication(None, 0, None).is_ok();
+            Err(anyhow::anyhow!(
+                "physical START_REPLICATION crossed the production HBA boundary (command accepted: {command_accepted})"
+            ))
+        }
+    };
+
+    // M-PHYSICAL-HBA-BASE-BACKUP is a separate connection attempt because HBA
+    // rejects before either replication command exists. Under a broadened HBA,
+    // TARGET blackhole prevents the mutant probe from writing backup material.
+    let backup_result = match PgReplicationConnection::connect(&physical_url) {
+        Err(error) => require_replication_startup_refusal(
+            &error,
+            "28000",
+            "no pg_hba.conf entry for replication connection",
+            "BASE_BACKUP",
+        ),
+        Ok(mut physical) => {
+            let command_accepted = physical
+                .base_backup(&BaseBackupOptions {
+                    target: Some("blackhole".into()),
+                    checkpoint: Some("fast".into()),
+                    manifest: Some("no".into()),
+                    ..Default::default()
+                })
+                .is_ok();
+            Err(anyhow::anyhow!(
+                "BASE_BACKUP crossed the production HBA boundary (command accepted: {command_accepted})"
+            ))
+        }
+    };
+    match (start_result, backup_result) {
+        (Ok(()), Ok(())) => {}
+        (Err(start), Ok(())) => return Err(start),
+        (Ok(()), Err(backup)) => return Err(backup),
+        (Err(start), Err(backup)) => {
+            anyhow::bail!("{start:#}; BASE_BACKUP also failed: {backup:#}")
+        }
+    }
+
+    // The production HBA deliberately admits logical startup cluster-wide;
+    // database CONNECT is the second, load-bearing boundary. M-CONNECT-FLOOR
+    // removes the floor and makes this sibling connection succeed.
+    let sibling_plain = swap_database(&own_plain, &resources.system_database)?;
+    let sibling_url = replication_url(&sibling_plain, "database");
+    let sibling_error = match PgReplicationConnection::connect(&sibling_url) {
+        Err(error) => error,
+        Ok(mut sibling) => {
+            let command_accepted = sibling.identify_system().is_ok();
+            anyhow::bail!(
+                "sibling logical replication crossed the database CONNECT floor (IDENTIFY_SYSTEM accepted: {command_accepted})"
+            );
+        }
+    };
+    let sibling_literal = format!(
+        "permission denied for database \"{}\"",
+        resources.system_database
+    );
+    require_replication_startup_refusal(
+        &sibling_error,
+        "42501",
+        &sibling_literal,
+        "sibling logical replication",
+    )?;
+    ensure!(
+        sibling_error
+            .to_string()
+            .contains("User does not have CONNECT privilege"),
+        "sibling logical replication did not name the CONNECT floor: {sibling_error}"
+    );
+    // Retain the admitted logical session through cleanup so bounded backend
+    // termination is a live proof, not a vacuous source-shape assertion.
+    Ok(own)
+}
+
+/// Prove the CDC credential cannot use its ordinary SQL session for tenant DML.
+async fn prove_cdc_dml_confinement(
+    args: &CausationE2eArgs,
+    resources: &GateResources,
+) -> anyhow::Result<()> {
+    let relation = format!("{}.{}", resources.schema, resources.table);
+    let admin = connect(&args.admin_database_url).await?;
+    let privileges = admin
+        .query_one(
+            "SELECT has_table_privilege($1, $2, 'INSERT'), \
+                    has_table_privilege($1, $2, 'UPDATE'), \
+                    has_table_privilege($1, $2, 'DELETE')",
+            &[&resources.cdc_name, &relation],
+        )
+        .await
+        .context("read effective CDC DML privileges")?;
+    ensure!(
+        !privileges.get::<_, bool>(0)
+            && !privileges.get::<_, bool>(1)
+            && !privileges.get::<_, bool>(2),
+        "CDC role gained INSERT, UPDATE, or DELETE on the tenant relation"
+    );
+
+    // M-CDC-DML-GRANT: an INSERT grant flips both the effective inventory and
+    // this actual boundary attempt; UPDATE/DELETE-only mutants fail inventory.
+    let sql_url = format!(
+        "{}?sslmode=disable",
+        role_url(&args.admin_database_url, resources)?
+    );
+    let (client, connection) = tokio_postgres::connect(&sql_url, NoTls)
+        .await
+        .context("open CDC ordinary SQL connection")?;
+    let connection_task = tokio::spawn(connection);
+    let insert_sql = format!(
+        "INSERT INTO {}.{} (tenant_id,id,payload) VALUES ($1,$2,$3)",
+        resources.schema, resources.table
+    );
+    let probe_id = format!("cdc-dml-probe-{}", resources.suffix);
+    let error = client
+        .execute(&insert_sql, &[&resources.tenant, &probe_id, &"must-refuse"])
+        .await
+        .expect_err("CDC ordinary SQL must refuse tenant INSERT");
+    let database_error = error
+        .as_db_error()
+        .context("CDC tenant INSERT refusal was not a PostgreSQL database error")?;
+    ensure!(
+        database_error.code().code() == "42501",
+        "CDC tenant INSERT returned SQLSTATE {}, expected 42501",
+        database_error.code().code()
+    );
+    let expected_literal = format!("permission denied for table {}", resources.table);
+    ensure!(
+        database_error.message() == expected_literal,
+        "CDC tenant INSERT returned literal {:?}, expected {:?}",
+        database_error.message(),
+        expected_literal
+    );
+    drop(client);
+    connection_task
+        .await
+        .context("join CDC ordinary SQL connection task")?
+        .context("close CDC ordinary SQL connection")?;
+    Ok(())
 }
 
 async fn setup_stream(
@@ -1706,6 +1903,79 @@ fn durable_setup_owned(resources: &GateResources) -> anyhow::Result<bool> {
     Ok(true)
 }
 
+async fn cleanup_session_witness_pid(
+    project_admin: &Client,
+    resources: &GateResources,
+) -> anyhow::Result<i32> {
+    let rows = project_admin
+        .query(
+            "SELECT pid FROM pg_stat_activity \
+             WHERE usename=$1 AND datname=$2 AND backend_type='walsender' \
+             AND state='idle' AND pid <> pg_backend_pid() ORDER BY pid",
+            &[&resources.cdc_name, &resources.project_database],
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "locate exact cleanup witness for slot {}",
+                resources.cdc_name
+            )
+        })?;
+    let pids = rows
+        .iter()
+        .map(|row| row.get::<_, i32>(0))
+        .collect::<Vec<_>>();
+    ensure!(
+        pids.len() == 1,
+        "cleanup witness cardinality mismatch: pid(s)={pids:?} slot={}",
+        resources.cdc_name
+    );
+    Ok(pids[0])
+}
+
+async fn pause_cleanup_session_witness(
+    project_admin: &Client,
+    resources: &GateResources,
+    pid: i32,
+) -> anyhow::Result<()> {
+    // This isolated sidecar-only control stops the live witness and arranges
+    // its own resume. A one-argument pg_terminate_backend call then returns
+    // before the PID disappears; the bounded two-argument call waits for it.
+    let pause_sql = format!(
+        "COPY (SELECT '') TO PROGRAM '(sleep {}; kill -CONT {pid} 2>/dev/null || true) \
+         </dev/null >/dev/null 2>&1 & kill -STOP {pid}'",
+        CDC_WITNESS_RESUME_DELAY_SECS
+    );
+    project_admin
+        .batch_execute(&pause_sql)
+        .await
+        .with_context(|| {
+            format!(
+                "pause exact cleanup witness: pid={pid} slot={}",
+                resources.cdc_name
+            )
+        })?;
+    Ok(())
+}
+
+async fn resume_cleanup_session_witness(
+    project_admin: &Client,
+    resources: &GateResources,
+    pid: i32,
+) -> anyhow::Result<()> {
+    let resume_sql = format!("COPY (SELECT '') TO PROGRAM 'kill -CONT {pid} 2>/dev/null || true'");
+    project_admin
+        .batch_execute(&resume_sql)
+        .await
+        .with_context(|| {
+            format!(
+                "resume exact cleanup witness: pid={pid} slot={}",
+                resources.cdc_name
+            )
+        })?;
+    Ok(())
+}
+
 async fn cleanup(
     args: &CausationE2eArgs,
     resources: &GateResources,
@@ -1713,6 +1983,7 @@ async fn cleanup(
     phase: &str,
 ) -> anyhow::Result<()> {
     let mut errors = Vec::new();
+    let mut cdc_sessions_quiesced = false;
     let durable_owner = match durable_setup_owned(resources) {
         Ok(owned) => owned,
         Err(error) => {
@@ -1735,7 +2006,7 @@ async fn cleanup(
         Ok(project_admin) => {
             match postgres_owner(&project_admin, "pg_roles", "pg_authid", &resources.cdc_name).await
             {
-                Ok(None) => {}
+                Ok(None) => cdc_sessions_quiesced = true,
                 Ok(Some(owner)) => match require_owner(
                     "role",
                     &resources.cdc_name,
@@ -1744,70 +2015,189 @@ async fn cleanup(
                     state.ledger.cdc_role,
                 ) {
                     Ok(()) => {
-                        if let Err(error) = project_admin
+                        let role_disabled = match project_admin
                             .batch_execute(&format!("ALTER ROLE {} NOLOGIN", resources.cdc_name))
                             .await
                         {
-                            errors.push(format!("disable CDC role before cleanup: {error:#}"));
-                        }
-                        match project_admin
-                            .query_one(
-                                "SELECT count(*) FILTER (WHERE datname IS DISTINCT FROM $2), count(*) \
-                                 FROM pg_stat_activity WHERE usename=$1 AND pid <> pg_backend_pid()",
-                                &[&resources.cdc_name, &resources.project_database],
-                            )
-                            .await
-                        {
-                            Ok(row) => {
-                                let off_scratch: i64 = row.get(0);
-                                let total: i64 = row.get(1);
-                                if off_scratch != 0 {
+                            Ok(()) => true,
+                            Err(error) => {
+                                errors.push(format!("disable CDC role before cleanup: {error:#}"));
+                                false
+                            }
+                        };
+                        if role_disabled {
+                            match project_admin
+                                .query_one(
+                                    "SELECT count(*) FILTER (WHERE datname IS DISTINCT FROM $2), count(*) \
+                                     FROM pg_stat_activity WHERE usename=$1 AND pid <> pg_backend_pid()",
+                                    &[&resources.cdc_name, &resources.project_database],
+                                )
+                                .await
+                            {
+                                Ok(row) => {
+                                    let off_scratch: i64 = row.get(0);
+                                    let total: i64 = row.get(1);
+                                    if off_scratch != 0 {
+                                        errors.push(format!(
+                                            "exact CDC role had {off_scratch} off-scratch session(s)"
+                                        ));
+                                    }
+                                    if total < off_scratch {
+                                        errors
+                                            .push("exact CDC session counts were inconsistent".into());
+                                    }
+                                }
+                                Err(error) => {
+                                    errors.push(format!("inspect exact CDC sessions: {error:#}"));
+                                }
+                            }
+
+                            let mut termination_complete = true;
+                            let delayed_witness_pid = if state.cleanup_session_witness.is_some() {
+                                match cleanup_session_witness_pid(&project_admin, resources).await {
+                                    Ok(pid) => {
+                                        if let Err(error) = pause_cleanup_session_witness(
+                                            &project_admin,
+                                            resources,
+                                            pid,
+                                        )
+                                        .await
+                                        {
+                                            termination_complete = false;
+                                            errors.push(format!(
+                                                "prepare bounded termination witness: {error:#}"
+                                            ));
+                                        }
+                                        Some(pid)
+                                    }
+                                    Err(error) => {
+                                        termination_complete = false;
+                                        errors.push(format!(
+                                            "prepare bounded termination witness: {error:#}"
+                                        ));
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            };
+                            let mut attempted_pids = Vec::new();
+                            match project_admin
+                                .query(
+                                    "SELECT pid FROM pg_stat_activity \
+                                     WHERE usename=$1 AND pid <> pg_backend_pid() ORDER BY pid",
+                                    &[&resources.cdc_name],
+                                )
+                                .await
+                            {
+                                Ok(rows) => {
+                                    for row in rows {
+                                        let pid = row.get::<_, i32>(0);
+                                        attempted_pids.push(pid);
+                                        match project_admin
+                                            .query_one(
+                                                "SELECT pg_terminate_backend($1, $2)",
+                                                &[&pid, &CDC_BACKEND_TERMINATION_TIMEOUT_MS],
+                                            )
+                                            .await
+                                        {
+                                            Ok(row) if row.get::<_, bool>(0) => {}
+                                            Ok(_) => {
+                                                match project_admin
+                                                    .query_one(
+                                                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                                                         WHERE pid=$1 AND usename=$2)",
+                                                        &[&pid, &resources.cdc_name],
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(row) if !row.get::<_, bool>(0) => {}
+                                                    Ok(_) => {
+                                                        termination_complete = false;
+                                                        errors.push(format!(
+                                                            "exact CDC backend remained after bounded termination: pid={pid} slot={} timeout_ms={}",
+                                                            resources.cdc_name,
+                                                            CDC_BACKEND_TERMINATION_TIMEOUT_MS
+                                                        ));
+                                                    }
+                                                    Err(error) => {
+                                                        termination_complete = false;
+                                                        errors.push(format!(
+                                                            "verify false CDC termination result: pid={pid} slot={}: {error:#}",
+                                                            resources.cdc_name
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => {
+                                                termination_complete = false;
+                                                errors.push(format!(
+                                                    "terminate exact CDC backend: pid={pid} slot={}: {error:#}",
+                                                    resources.cdc_name
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    termination_complete = false;
                                     errors.push(format!(
-                                        "exact CDC role had {off_scratch} off-scratch session(s)"
+                                        "enumerate exact CDC backends for slot {}: {error:#}",
+                                        resources.cdc_name
                                     ));
                                 }
-                                if total < off_scratch {
-                                    errors.push("exact CDC session counts were inconsistent".into());
+                            }
+
+                            if let Some(pid) = delayed_witness_pid
+                                && !attempted_pids.contains(&pid)
+                            {
+                                termination_complete = false;
+                                errors.push(format!(
+                                    "exact cleanup witness was not terminated: pid={pid} slot={}",
+                                    resources.cdc_name
+                                ));
+                            }
+
+                            match project_admin
+                                .query(
+                                    "SELECT pid FROM pg_stat_activity \
+                                     WHERE usename=$1 AND pid <> pg_backend_pid() ORDER BY pid",
+                                    &[&resources.cdc_name],
+                                )
+                                .await
+                            {
+                                Ok(rows) if rows.is_empty() => {}
+                                Ok(rows) => {
+                                    termination_complete = false;
+                                    let remaining_pids = rows
+                                        .iter()
+                                        .map(|row| row.get::<_, i32>(0))
+                                        .collect::<Vec<_>>();
+                                    errors.push(format!(
+                                        "exact CDC sessions remained after bounded termination: pid(s)={remaining_pids:?} slot={}",
+                                        resources.cdc_name
+                                    ));
+                                }
+                                Err(error) => {
+                                    termination_complete = false;
+                                    errors.push(format!(
+                                        "verify exact CDC backend termination: pid(s)={attempted_pids:?} slot={}: {error:#}",
+                                        resources.cdc_name
+                                    ));
                                 }
                             }
-                            Err(error) => {
-                                errors.push(format!("inspect exact CDC sessions: {error:#}"));
+
+                            if let Some(pid) = delayed_witness_pid
+                                && let Err(error) =
+                                    resume_cleanup_session_witness(&project_admin, resources, pid)
+                                        .await
+                            {
+                                termination_complete = false;
+                                errors.push(format!(
+                                    "unconditionally resume bounded termination witness: {error:#}"
+                                ));
                             }
-                        }
-                        match project_admin
-                            .query(
-                                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-                             WHERE usename=$1 AND pid <> pg_backend_pid()",
-                                &[&resources.cdc_name],
-                            )
-                            .await
-                        {
-                            Ok(rows) => {
-                                if rows.iter().any(|row| !row.get::<_, bool>(0)) {
-                                    errors.push(
-                                        "one or more exact CDC sessions refused termination".into(),
-                                    );
-                                }
-                            }
-                            Err(error) => errors
-                                .push(format!("terminate all exact CDC role sessions: {error:#}")),
-                        }
-                        match project_admin
-                            .query_one(
-                                "SELECT count(*) FROM pg_stat_activity \
-                                 WHERE usename=$1 AND pid <> pg_backend_pid()",
-                                &[&resources.cdc_name],
-                            )
-                            .await
-                        {
-                            Ok(row) if row.get::<_, i64>(0) == 0 => {}
-                            Ok(row) => errors.push(format!(
-                                "{} exact CDC role session(s) remained after termination",
-                                row.get::<_, i64>(0)
-                            )),
-                            Err(error) => errors.push(format!(
-                                "verify zero exact CDC sessions after termination: {error:#}"
-                            )),
+                            cdc_sessions_quiesced = termination_complete;
                         }
                     }
                     Err(error) => errors.push(error.to_string()),
@@ -1817,6 +2207,9 @@ async fn cleanup(
         }
         Err(error) => errors.push(format!("connect project admin before cleanup: {error:#}")),
     }
+    // Keep the client side of the live witness until the bounded termination
+    // result and immediate residue check have both been observed.
+    drop(state.cleanup_session_witness.take());
 
     match async_nats::connect(&args.nats_url).await {
         Ok(nats) => {
@@ -1926,7 +2319,7 @@ async fn cleanup(
             {
                 errors.push(format!("disable CDC role: {error:#}"));
             }
-            if database_owned {
+            if database_owned && cdc_sessions_quiesced {
                 let scratch_url =
                     swap_database(&args.admin_database_url, &resources.project_database);
                 match scratch_url {
@@ -1990,6 +2383,7 @@ async fn cleanup(
                 }
             }
             if role_owned
+                && cdc_sessions_quiesced
                 && let Err(error) = project_admin
                     .batch_execute(&format!("DROP ROLE {}", resources.cdc_name))
                     .await
@@ -2341,6 +2735,8 @@ async fn run_forward(
         ))
         .await
         .context("enable exact CDC role immediately before reader spawn")?;
+    state.cleanup_session_witness = Some(prove_replication_protocol_confinement(args, resources)?);
+    prove_cdc_dml_confinement(args, resources).await?;
     state.reader = Some(ReaderProcess::spawn_with_dup_window(
         reader_args(args, resources)?,
         BROKER_DUP_WINDOW_SECS,
@@ -2457,7 +2853,7 @@ pub async fn run(args: CausationE2eArgs) -> anyhow::Result<()> {
     let resources = GateResources::from_args(&args)?;
     resources.log_record();
     let mut state = GateState::default();
-    let mut isolated_admin = preflight_isolated_postgres(&args, &resources).await?;
+    let mut isolated_admin = preflight_isolated_postgres(&args).await?;
     cleanup(&args, &resources, &mut state, "preclean").await?;
     setup_isolated_roles(&mut isolated_admin, &resources).await?;
     prepare_report_dir(&resources, &mut state)?;
@@ -2478,7 +2874,7 @@ pub async fn run(args: CausationE2eArgs) -> anyhow::Result<()> {
 pub async fn cleanup_only(args: CausationE2eArgs) -> anyhow::Result<()> {
     let resources = GateResources::from_args(&args)?;
     resources.log_record();
-    let _isolated_admin = preflight_isolated_postgres(&args, &resources).await?;
+    let _isolated_admin = preflight_isolated_postgres(&args).await?;
     cleanup(&args, &resources, &mut GateState::default(), "external").await
 }
 
@@ -2679,14 +3075,14 @@ mod tests {
         assert!(sidecar.contains("FROM --platform=linux/amd64 postgres:18.6-trixie@sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a"));
         assert!(sidecar.contains("wamn.dev/upstream-child=\"sha256:cd78ca58eb75f929698e117a589488ccb2bd45107247fe02400b50ff6c418324\""));
         assert!(job.contains("listen_addresses=127.0.0.1"));
-        assert!(job.contains("project_database=\"m1p_${suffix}\""));
-        assert!(job.contains("cdc_role=\"m1cdc_${suffix}\""));
-        assert!(job.contains("host ${project_database} ${cdc_role} 127.0.0.1/32 scram-sha-256"));
-        assert!(job.contains("host all ${cdc_role} 127.0.0.1/32 reject"));
-        let cdc_allow = job.find("host ${project_database} ${cdc_role}").unwrap();
-        let cdc_reject = job.find("host all ${cdc_role}").unwrap();
+        assert!(job.contains("host all all all scram-sha-256"));
+        assert!(!job.contains("host replication"));
+        assert!(!job.contains("host ${project_database} ${cdc_role}"));
+        assert!(!job.contains("host all ${cdc_role}"));
         let admin_allow = job.find("local all postgres trust").unwrap();
-        assert!(cdc_allow < cdc_reject && cdc_reject < admin_allow);
+        let app_allow = job.find("host all wamn_app 127.0.0.1/32 trust").unwrap();
+        let production = job.find("host all all all scram-sha-256").unwrap();
+        assert!(admin_allow < app_allow && app_allow < production);
         assert!(job.contains("postgres://wamn_app@127.0.0.1:5432/postgres"));
         assert!(job.contains("value: sha256:POST_BUILD_MAIN_IMAGE_ID"));
         assert!(job.contains("M1_MAIN_IMAGE_ID=%s"));
@@ -2709,29 +3105,26 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_hba_rejects_any_extra_or_preceding_cdc_rule() {
-        let resources = resources();
-        let exact = expected_sidecar_hba(&resources);
-        require_exact_sidecar_hba(&exact, &resources).unwrap();
+    fn sidecar_hba_rejects_physical_admission_and_rule_reordering() {
+        let exact = expected_sidecar_hba();
+        require_exact_sidecar_hba(&exact).unwrap();
 
-        let mut broad_first = exact.as_array().unwrap().clone();
-        broad_first.insert(
-            0,
+        // M-PHYSICAL-HBA: manifest broadening cannot pass the normalized HBA
+        // guard; the live START/BACKUP probes also kill coupled broadening.
+        let mut physical_admission = exact.as_array().unwrap().clone();
+        physical_admission.insert(
+            3,
             serde_json::json!({
-                "type": "host", "database": ["all"], "user": ["all"],
-                "address": "127.0.0.1", "netmask": "255.255.255.255",
-                "auth": "trust", "error": null
+                "type": "host", "database": ["replication"], "user": ["all"],
+                "address": "all", "netmask": null,
+                "auth": "scram-sha-256", "error": null
             }),
         );
-        assert!(
-            require_exact_sidecar_hba(&serde_json::Value::Array(broad_first), &resources).is_err()
-        );
+        assert!(require_exact_sidecar_hba(&serde_json::Value::Array(physical_admission)).is_err());
 
         let mut reordered = exact.as_array().unwrap().clone();
-        reordered.swap(0, 1);
-        assert!(
-            require_exact_sidecar_hba(&serde_json::Value::Array(reordered), &resources).is_err()
-        );
+        reordered.swap(2, 3);
+        assert!(require_exact_sidecar_hba(&serde_json::Value::Array(reordered)).is_err());
     }
 
     #[test]
@@ -2847,31 +3240,66 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_source_pins_fail_closed_order_and_continuation() {
+    fn cleanup_source_pins_fail_closed_order_continuation_and_bounded_wait() {
         let source = include_str!("causation_e2e.rs");
-        let disable = source
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production implementation precedes its tests");
+        let bounded_terminate = ["SELECT pg_", "terminate_backend($1, $2)"].concat();
+        let asynchronous_terminate = ["SELECT pg_", "terminate_backend($1)"].concat();
+        let disable = implementation
             .find("ALTER ROLE {} NOLOGIN")
             .expect("cleanup disables role");
-        let terminate = source
-            .find("WHERE usename=$1 AND pid <> pg_backend_pid()")
-            .expect("cleanup terminates exact-role sessions");
-        let drop_role = source
+        let pause = implementation
+            .rfind("pause_cleanup_session_witness(")
+            .expect("cleanup pauses its exact live witness");
+        let terminate = implementation
+            .find(&bounded_terminate)
+            .expect("cleanup synchronously terminates exact-role sessions");
+        let residue = implementation
+            .find("exact CDC sessions remained after bounded termination")
+            .expect("cleanup checks for termination residue");
+        let resume = implementation
+            .rfind("resume_cleanup_session_witness(")
+            .expect("cleanup unconditionally resumes its witness");
+        let teardown_gate = implementation
+            .find("if database_owned && cdc_sessions_quiesced")
+            .expect("cleanup gates exact project teardown on session quiescence");
+        let drop_role = implementation
             .find("DROP ROLE {}")
             .expect("cleanup drops exact role");
-        let verify = source
+        let verify = implementation
             .find("verify_clean(args, resources, phase)")
             .expect("cleanup always verifies residue");
-        let remove_authority = source
+        let remove_authority = implementation
             .find("remove_dir_all(&resources.report_dir)")
             .expect("cleanup removes durable authority last");
         assert!(
-            disable < terminate
-                && terminate < drop_role
+            disable < pause
+                && pause < terminate
+                && terminate < residue
+                && residue < resume
+                && resume < teardown_gate
+                && teardown_gate < drop_role
                 && drop_role < remove_authority
                 && remove_authority < verify
         );
-        assert!(source.contains("if errors.is_empty()"));
-        assert!(source.contains("if let Err(error) = project_admin"));
+        assert_eq!(CDC_BACKEND_TERMINATION_TIMEOUT_MS, 15_000);
+        assert_eq!(CDC_WITNESS_RESUME_DELAY_SECS, 1);
+        assert_eq!(implementation.matches(&bounded_terminate).count(), 1);
+        assert!(!implementation.contains(&asynchronous_terminate));
+        assert!(implementation.contains("cleanup_session_witness = Some"));
+        assert!(implementation.contains("drop(state.cleanup_session_witness.take())"));
+        assert!(implementation.contains("backend_type='walsender'"));
+        assert!(implementation.contains("state='idle'"));
+        assert!(implementation.contains("WHERE pid=$1 AND usename=$2"));
+        assert!(implementation.contains("kill -STOP {pid}"));
+        assert!(implementation.contains("(sleep {}; kill -CONT {pid} 2>/dev/null || true)"));
+        assert!(implementation.contains("kill -CONT {pid} 2>/dev/null || true"));
+        assert!(implementation.contains("role_owned\n                && cdc_sessions_quiesced"));
+        assert!(implementation.contains("if errors.is_empty()"));
+        assert!(implementation.contains("if let Err(error) = project_admin"));
         for forbidden in [
             ["DROP", "SCHEMA"].join(" "),
             ["DROP", "OWNED"].join(" "),
@@ -2879,28 +3307,39 @@ mod tests {
             ["CAS", "CADE"].join(""),
         ] {
             assert!(
-                !source.contains(&forbidden),
+                !implementation.contains(&forbidden),
                 "broad cleanup token: {forbidden}"
             );
         }
-        assert!(source.contains("phase={phase}"));
-        assert!(source.contains("cdc-role-login"));
-        assert!(source.contains("cdc-role-sessions"));
-        let role_create = source.find("let role_transaction").unwrap();
-        let role_comment = source[role_create..].find("COMMENT ON ROLE").unwrap() + role_create;
-        let role_commit = source[role_comment..]
+        assert!(implementation.contains("phase={phase}"));
+        assert!(implementation.contains("cdc-role-login"));
+        assert!(implementation.contains("cdc-role-sessions"));
+        let role_create = implementation.find("let role_transaction").unwrap();
+        let role_comment = implementation[role_create..]
+            .find("COMMENT ON ROLE")
+            .unwrap()
+            + role_create;
+        let role_commit = implementation[role_comment..]
             .find("role_transaction.commit")
             .unwrap()
             + role_comment;
-        let role_ledger = source[role_commit..]
+        let role_ledger = implementation[role_commit..]
             .find("ledger.cdc_role = true")
             .unwrap()
             + role_commit;
         assert!(
             role_create < role_comment && role_comment < role_commit && role_commit < role_ledger
         );
-        assert!(source.contains("one or more exact CDC sessions refused termination"));
-        assert!(source.contains("remained after termination"));
+        assert!(implementation.contains(
+            "exact CDC backend remained after bounded termination: pid={pid} slot={} timeout_ms={}"
+        ));
+        assert!(
+            implementation
+                .contains("verify false CDC termination result: pid={pid} slot={}: {error:#}")
+        );
+        assert!(implementation.contains(
+            "exact CDC sessions remained after bounded termination: pid(s)={remaining_pids:?} slot={}"
+        ));
     }
 
     #[test]

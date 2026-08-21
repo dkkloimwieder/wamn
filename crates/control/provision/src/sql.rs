@@ -718,11 +718,14 @@ pub fn upsert_control_author_tenant_mapping_sql() -> &'static str {
 /// LOGIN`, otherwise least-privilege (`NOSUPERUSER NOCREATEDB NOCREATEROLE
 /// NOINHERIT NOBYPASSRLS` — `NOINHERIT` matches every other role this crate
 /// mints; the role holds no memberships, so it is exactness, not a live
-/// change). One role per project-env (a leaked credential's blast radius
-/// is one registration) — but note `REPLICATION` itself is CLUSTER-WIDE in
-/// Postgres: any replication role can read any database's WAL on that cluster,
-/// so on a shared pool the input-side isolation rests on handing each reader
-/// only its own slot/publication/credentials (documented in the runbook).
+/// change). One role per project-env names the intended capture scope; it does
+/// not limit a leaked credential to one registration. `REPLICATION` itself is
+/// CLUSTER-WIDE in Postgres: any replication role can read any database's WAL
+/// on that cluster. The accepted T3 boundary is compound: production HBA has
+/// no physical-replication entry; PUBLIC CONNECT is revoked and this role gets
+/// CONNECT only on its own database; ordinary DML remains denied; and each
+/// reader is configured with its own slot and publication. The M1 gate proves
+/// those production-shaped legs.
 pub fn ensure_replication_role_sql(role: &str, password: &str) -> String {
     format!(
         "DO $$ BEGIN \

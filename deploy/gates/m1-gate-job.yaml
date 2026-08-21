@@ -93,29 +93,14 @@ spec:
           command: ["/bin/bash", "-ceu"]
           args:
             - |
-              case "$WAMN_GATE_JOB_UID" in
-                ????????-????-????-????-????????????) ;;
-                *) echo "invalid M1 Job UID" >&2; exit 64 ;;
-              esac
-              suffix=${WAMN_GATE_JOB_UID//-/}
-              case "$suffix" in
-                *[!0-9a-f]*|'') echo "non-hex M1 Job UID" >&2; exit 64 ;;
-              esac
-              [ "${#suffix}" -eq 32 ] || { echo "invalid M1 suffix length" >&2; exit 64; }
-              project_database="m1p_${suffix}"
-              cdc_role="m1cdc_${suffix}"
               if [ ! -s "$PGDATA/PG_VERSION" ]; then
                 initdb --username=postgres --auth-local=trust --auth-host=reject
               fi
               cat >"$PGDATA/pg_hba.conf" <<EOF
-              host ${project_database} ${cdc_role} 127.0.0.1/32 scram-sha-256
-              host all ${cdc_role} 127.0.0.1/32 reject
               local all postgres trust
               host all postgres 127.0.0.1/32 trust
               host all wamn_app 127.0.0.1/32 trust
-              host all all 127.0.0.1/32 reject
-              host all all 0.0.0.0/0 reject
-              host all all ::0/0 reject
+              host all all all scram-sha-256
               EOF
               chmod 600 "$PGDATA/pg_hba.conf"
               exec postgres \
@@ -125,10 +110,6 @@ spec:
                 -c max_wal_senders=4 \
                 -c password_encryption=scram-sha-256
           env:
-            - name: WAMN_GATE_JOB_UID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           volumeMounts:
