@@ -22,6 +22,8 @@ const OPS_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/ops-schema.sql");
 const CONTROL_PORTABLE_STORE_SQL: &str =
     include_str!("../../../deploy/sql/control-portable-store.sql");
 const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
+const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
+    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
 const WITNESS_SCHEMA: &str = "audit_app";
 const WITNESS_ENTITY: &str = "audit_records";
 const AUTHOR_SQL_EXPOSURE: &str = "author SQL, RLS-bounded";
@@ -214,8 +216,9 @@ async fn connect(url: &str) -> Client {
 
 async fn prepare_scratch_database(client: &Client) {
     client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS audit_app CASCADE; \
+        .batch_execute(&format!(
+            "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+             DROP SCHEMA IF EXISTS audit_app CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
@@ -261,13 +264,13 @@ async fn prepare_scratch_database(client: &Client) {
              END $$; \
              REVOKE wamn_scenario_author FROM wamn_app; \
              DO $$ BEGIN \
-               EXECUTE format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); \
+               EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); \
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_effect_writer', current_database()); \
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_run_projection_writer', current_database()); \
                EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_app', current_database()); \
                EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); \
-             END $$;",
-        )
+             END $$;"
+        ))
         .await
         .expect("prepare disposable database roles");
 }

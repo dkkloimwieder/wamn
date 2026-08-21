@@ -8,6 +8,8 @@ use wamn_ctl::{reconcile_run_plane, terminalize_effect_uncertain};
 use wamn_run_state::operator_action::{OperatorActionBasis, OperatorTerminalizeResult};
 use wamn_schema_control::BareSchemaName;
 
+const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
+    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
 const SCHEMA: &str = "operator_live";
 const HASH: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -24,7 +26,8 @@ async fn connect(url: &str) -> Client {
 async fn reset_and_install(client: &Client) -> BareSchemaName {
     client
         .batch_execute(&format!(
-            "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
+            "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+             DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $roles$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
@@ -41,7 +44,7 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
                    NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
              END $roles$; \
              DO $database$ BEGIN \
-               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC, wamn_effect_writer', \
+               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_effect_writer', \
                               current_database()); \
                EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_app', current_database()); \
              END $database$;"
@@ -54,7 +57,10 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
         .expect("install current run plane");
     client
         .batch_execute(&format!(
-            "INSERT INTO catalog.catalogs \
+            "INSERT INTO {SCHEMA}.environment_policies \
+               (tenant_id,expected_environment,durability_class) \
+             VALUES ('t1','dev','standard'); \
+             INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'dev','0.1','applied'); \
              INSERT INTO catalog.execution_bundles \
@@ -114,7 +120,7 @@ async fn seed_started_node(client: &Client, run: &str, node: &str, occurrence: i
                 "INSERT INTO {SCHEMA}.node_runs \
                    (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq, \
                     status,input_json,output_json,output_size,payload_hash) \
-                 VALUES ('t1',$1,0,'{HASH}',$2,$3,$3,'started', \
+                 VALUES ('t1',$1,0,'{HASH}',$2,$3::int,$3::bigint,'started', \
                          '{{\"in\":1}}','{{\"out\":2}}',9,'sha256:payload')"
             ),
             &[&run, &node, &occurrence],

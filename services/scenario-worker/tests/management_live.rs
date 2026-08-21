@@ -43,6 +43,9 @@ use wamn_scenario_worker::authoring::{
 };
 use wamn_scenario_worker::management::{CommandScope, authorize, save_flow_draft};
 
+const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
+    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
+
 const TENANT: &str = "management-live-tenant";
 /// Fixed by the control store (wamn-0h0g.8.18): both the identity registry this
 /// gate authenticates against and the authoring store it writes to live in the
@@ -428,7 +431,8 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
     let role = author_role(admin_url);
     admin
         .batch_execute(&format!(
-            "DROP SCHEMA IF EXISTS {SOURCE_SCHEMA} CASCADE; \
+            "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+             DROP SCHEMA IF EXISTS {SOURCE_SCHEMA} CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS identity CASCADE; \

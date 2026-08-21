@@ -8,6 +8,9 @@ use std::process::{Command, Stdio};
 
 use serde_json::json;
 
+const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
+    include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
+
 fn ddl() -> String {
     std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -154,6 +157,115 @@ fn portable_store_record_is_exact_and_storage_only() {
     assert!(!sql.contains("ab4c8a54366eab426d72c31c81531e929a4b615d051f300be7c993c628699f78"));
     assert!(!sql.contains("06bf7790877f52c2094511dc368d605f7de4b112383fc6b857d8886844160c85"));
     assert!(!sql.contains("7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed"));
+}
+
+#[test]
+fn current_database_connect_posture_is_single_scoped_and_used_by_every_measured_gate() {
+    let executable = without_comments(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
+    let public_revoke = ["REVOKE CONNECT ON DATABASE %I ", "FROM PUBLIC"].concat();
+    let asset_path = [
+        "test-support/fixtures/sql/",
+        "current-database-public-connect.sql",
+    ]
+    .concat();
+    assert!(
+        executable
+            .trim_start()
+            .starts_with("DO $current_database_public_connect$")
+    );
+    assert!(
+        executable
+            .trim_end()
+            .ends_with("$current_database_public_connect$;")
+    );
+    assert_eq!(executable.matches(public_revoke.as_str()).count(), 1);
+    assert!(executable.contains("pg_catalog.current_database()"));
+    assert!(executable.contains("ASSERT NOT EXISTS"));
+    assert!(executable.contains("acl.grantee = 0"));
+    assert!(executable.contains("acl.privilege_type = 'CONNECT'"));
+    for cluster_wide in [
+        "WHERE datallowconn",
+        "FOR database_name IN",
+        "revoke_public_connect_floor_sql",
+    ] {
+        assert!(
+            !executable.contains(cluster_wide),
+            "the current-database posture reached the cluster through {cluster_wide}"
+        );
+    }
+
+    for (path, source) in [
+        (
+            "crates/control/provision/tests/control_portable_store.rs",
+            include_str!("control_portable_store.rs"),
+        ),
+        (
+            "services/scenario-worker/tests/management_live.rs",
+            include_str!("../../../../services/scenario-worker/tests/management_live.rs"),
+        ),
+        (
+            "services/scenario-worker/tests/authoring_loop_live.rs",
+            include_str!("../../../../services/scenario-worker/tests/authoring_loop_live.rs"),
+        ),
+        (
+            "services/ctl/src/publish_release.rs",
+            include_str!("../../../../services/ctl/src/publish_release.rs"),
+        ),
+        (
+            "services/ctl/tests/release_manifest_mint_live.rs",
+            include_str!("../../../../services/ctl/tests/release_manifest_mint_live.rs"),
+        ),
+        (
+            "services/ctl/tests/protected_relations_live.rs",
+            include_str!("../../../../services/ctl/tests/protected_relations_live.rs"),
+        ),
+        (
+            "services/ctl/tests/run_plane_live.rs",
+            include_str!("../../../../services/ctl/tests/run_plane_live.rs"),
+        ),
+        (
+            "services/ctl/tests/terminalize_effect_uncertain_live.rs",
+            include_str!("../../../../services/ctl/tests/terminalize_effect_uncertain_live.rs"),
+        ),
+    ] {
+        assert_eq!(
+            source.matches(asset_path.as_str()).count(),
+            1,
+            "{path} does not include the shared posture exactly once"
+        );
+        assert!(
+            source
+                .matches("CURRENT_DATABASE_PUBLIC_CONNECT_SQL")
+                .count()
+                >= 2,
+            "{path} includes the posture but never applies it"
+        );
+        assert!(
+            !source.contains(public_revoke.as_str()),
+            "{path} retained a private copy of the shared posture"
+        );
+    }
+
+    let release_gate = include_str!("../../../../services/ctl/tests/release_manifest_mint_live.rs")
+        .split("async fn establish_control_connect_posture")
+        .nth(1)
+        .expect("the contaminated-cluster gate owns the posture transaction")
+        .split("async fn provision_control_store")
+        .next()
+        .expect("the posture transaction has an end");
+    let begin = release_gate
+        .find("\"BEGIN;")
+        .expect("the deliberate contamination starts an explicit transaction");
+    let posture = release_gate
+        .find("{CURRENT_DATABASE_PUBLIC_CONNECT_SQL}")
+        .expect("the shared posture runs inside the contamination transaction");
+    let commit = release_gate
+        .find("COMMIT;")
+        .expect("the contamination transaction commits the converged posture");
+    assert!(
+        begin < posture && posture < commit,
+        "the contamination and posture split into observably separate transactions"
+    );
 }
 
 /// The artifact text with comment lines removed, so a statement scan cannot be
@@ -489,6 +601,70 @@ fn psql_ok(url: &str, stage: &str, script: &str) {
 }
 
 #[test]
+#[ignore = "requires disposable PostgreSQL 18 URL in WAMN_CONTROL_PORTABLE_PG_URL"]
+fn current_database_connect_posture_kills_remove_and_sibling_scope_mutants_on_postgres() {
+    let url = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL")
+        .expect("WAMN_CONTROL_PORTABLE_PG_URL names a disposable PostgreSQL 18 database");
+    let sibling = format!("wamn_1143_sibling_{}", std::process::id());
+    psql_ok(
+        &url,
+        "create the sibling-scope witness",
+        &format!(
+            "DROP DATABASE IF EXISTS {sibling} WITH (FORCE); \
+             CREATE DATABASE {sibling}; \
+             GRANT CONNECT ON DATABASE {sibling} TO PUBLIC;"
+        ),
+    );
+
+    let proof = psql(
+        &url,
+        &format!(
+            "BEGIN; \
+             DO $contaminate$ BEGIN \
+               EXECUTE pg_catalog.format( \
+                 'GRANT CONNECT ON DATABASE %I TO PUBLIC', \
+                 pg_catalog.current_database()); \
+             END $contaminate$; \
+             {CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+             {CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+             DO $scope$ BEGIN \
+               ASSERT NOT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_database AS database \
+                 CROSS JOIN LATERAL pg_catalog.aclexplode( \
+                   COALESCE(database.datacl, \
+                            pg_catalog.acldefault('d', database.datdba))) AS acl \
+                 WHERE database.datname = pg_catalog.current_database() \
+                   AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT'), \
+                 'removing the posture left PUBLIC CONNECT on the current database'; \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_database AS database \
+                 CROSS JOIN LATERAL pg_catalog.aclexplode( \
+                   COALESCE(database.datacl, \
+                            pg_catalog.acldefault('d', database.datdba))) AS acl \
+                 WHERE database.datname = '{sibling}' \
+                   AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT'), \
+                 'the current-database posture revoked the sibling database'; \
+             END $scope$; \
+             COMMIT;"
+        ),
+    );
+    let cleanup = psql(
+        &url,
+        &format!("DROP DATABASE IF EXISTS {sibling} WITH (FORCE);"),
+    );
+    assert!(
+        cleanup.status.success(),
+        "clean up sibling-scope witness failed:\n{}",
+        String::from_utf8_lossy(&cleanup.stderr)
+    );
+    assert!(
+        proof.status.success(),
+        "current-database PUBLIC CONNECT proof failed:\n{}",
+        String::from_utf8_lossy(&proof.stderr)
+    );
+}
+
+#[test]
 fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
     let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
         eprintln!(
@@ -507,7 +683,8 @@ fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
     let map_hex = hex_from_bytes(&map_bytes);
     let bundle_hex = hex_from_bytes(b"plan");
 
-    let mut script = String::from(
+    let mut script = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
+    script.push_str(
         "CREATE EXTENSION IF NOT EXISTS pgcrypto;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
          DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
@@ -774,7 +951,8 @@ fn control_author_two_tenant_authority_holds_on_postgres() {
     const PASSWORD: &str = "control-author-live-proof";
 
     let bundle_hex = hex_from_bytes(b"plan");
-    let mut install = String::from(
+    let mut install = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
+    install.push_str(
         "DROP SCHEMA IF EXISTS catalog CASCADE;\n\
          DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
          DROP SCHEMA IF EXISTS wamn_authority CASCADE;\n\

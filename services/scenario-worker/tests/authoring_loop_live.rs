@@ -21,6 +21,9 @@ use wamn_scenario_worker::authoring::{
     ValidateFlowDraft,
 };
 
+const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
+    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
+
 const TENANT: &str = "authoring-loop-tenant";
 /// Fixed by the control store: residency, not a renamed schema, distinguishes it.
 const SOURCE_SCHEMA: &str = "wamn_run";
@@ -114,7 +117,8 @@ async fn reset_and_provision(
 ) -> anyhow::Result<String> {
     admin
         .batch_execute(&format!(
-            "DROP SCHEMA IF EXISTS catalog CASCADE; \
+            "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS registry CASCADE; \

@@ -45,6 +45,16 @@ use wamn_ctl::publish_release::{
     MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest, mint_release_manifest,
 };
 
+const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
+    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
+const PUBLIC_CONNECT_ON_CURRENT_DATABASE_SQL: &str = "SELECT EXISTS ( \
+    SELECT FROM pg_catalog.pg_database AS database \
+    CROSS JOIN LATERAL pg_catalog.aclexplode( \
+      COALESCE(database.datacl, \
+               pg_catalog.acldefault('d', database.datdba))) AS acl \
+    WHERE database.datname = pg_catalog.current_database() \
+      AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT')";
+
 mod mint_vector {
     include!("../../../crates/catalog/model/tests/fixtures/release_manifest_mint_vector.rs");
 }
@@ -228,20 +238,35 @@ async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
 /// this repository grants that role database `CONNECT` directly, so no probe
 /// could kill it.
 ///
-/// It is ONE statement, and it has to stay one. Restoring PUBLIC's `CONNECT` and
-/// taking it away again in separate statements would commit a window in which
-/// this database does grant `CONNECT` to PUBLIC — and a sibling gate samples that
-/// exact fact CLUSTER-WIDE
+/// The shared posture asset is ONE statement, and the deliberate contamination
+/// plus that statement run in one explicit transaction. Otherwise restoring
+/// PUBLIC's `CONNECT` would commit a window in which this database grants it —
+/// and a sibling gate samples that exact fact CLUSTER-WIDE
 /// (`effect_writer_generation_live` asserts `sql::public_connect_databases_sql()`
-/// comes back empty). Inside one implicit transaction the grant is never visible
-/// to another session and only the revoke commits, so fixing one cross-gate
-/// coupling does not open another. The assertions therefore run in SQL, where
-/// they can see the uncommitted grant, rather than as Rust round trips that
-/// cannot.
-async fn establish_control_connect_posture(admin: &Client) {
+/// comes back empty). The admin session holds the contaminating transaction open
+/// while the second session samples the committed catalog, then applies the
+/// posture before commit and samples again. No scheduler timing is involved.
+async fn assert_committed_public_connect_absent(sampler: &Client, stage: &str) {
+    let public_connect: bool = sampler
+        .query_one(PUBLIC_CONNECT_ON_CURRENT_DATABASE_SQL, &[])
+        .await
+        .unwrap_or_else(|error| panic!("{stage}: sample the committed CONNECT posture: {error}"))
+        .get(0);
+    assert!(
+        !public_connect,
+        "{stage}: the deliberate PUBLIC CONNECT contamination became visible"
+    );
+}
+
+async fn establish_control_connect_posture(admin: &Client, sampler: &Client) {
+    admin
+        .batch_execute(CURRENT_DATABASE_PUBLIC_CONNECT_SQL)
+        .await
+        .expect("establish a clean CONNECT floor before the split-window probe");
     admin
         .batch_execute(
-            "DO $posture$ BEGIN \
+            "BEGIN; \
+             DO $contamination$ BEGIN \
                PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles \
                               WHERE rolname = 'wamn_scenario_author') THEN \
@@ -255,22 +280,23 @@ async fn establish_control_connect_posture(admin: &Client) {
                         WHERE rolname = 'wamn_scenario_author'), \
                  'the project author must be admitted onto this database before the \
                   posture is converged, or this preamble proves nothing'; \
-               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database()); \
-               ASSERT NOT (SELECT pg_catalog.has_database_privilege( \
-                                    oid, pg_catalog.current_database(), 'CONNECT') \
-                             FROM pg_catalog.pg_roles \
-                            WHERE rolname = 'wamn_scenario_author'), \
-                 'the project author still reaches this control database, so the \
-                  bootstrap author-boundary guard is about to refuse — the posture, \
-                  not the guard, is what has to change'; \
-             END $posture$;",
+             END $contamination$;",
         )
         .await
-        .expect("converge production's CONNECT posture on the control database");
+        .expect("hold the deliberate PUBLIC CONNECT contamination uncommitted");
+    assert_committed_public_connect_absent(sampler, "while contamination is uncommitted").await;
+    admin
+        .batch_execute(&format!(
+            "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+             COMMIT;"
+        ))
+        .await
+        .expect("commit only the converged current-database CONNECT posture");
+    assert_committed_public_connect_absent(sampler, "after posture commit").await;
 }
 
-async fn provision_control_store(admin: &Client) {
-    establish_control_connect_posture(admin).await;
+async fn provision_control_store(admin: &Client, sampler: &Client) {
+    establish_control_connect_posture(admin, sampler).await;
     admin
         .batch_execute(
             "DROP SCHEMA IF EXISTS catalog CASCADE; \
@@ -493,16 +519,13 @@ async fn mint(
 }
 
 #[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 URL in WAMN_RELEASE_MANIFEST_MINT_PG_URL"]
 async fn the_mint_projects_a_release_and_then_a_candidate_overlay_of_it() {
-    let Ok(url) = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL") else {
-        eprintln!(
-            "skipping the_mint_projects_a_release_and_then_a_candidate_overlay_of_it \
-             (set WAMN_RELEASE_MANIFEST_MINT_PG_URL)"
-        );
-        return;
-    };
+    let url = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL")
+        .expect("WAMN_RELEASE_MANIFEST_MINT_PG_URL names a disposable PostgreSQL 18 database");
     let (mut admin, admin_task) = connect(&url).await;
-    provision_control_store(&admin).await;
+    let (sampler, sampler_task) = connect(&url).await;
+    provision_control_store(&admin, &sampler).await;
     seed_release_base(&admin).await;
 
     let (root_hash, root_bytes) = plan_bytes(&plan(ROOT_ARTIFACT, &[CALLEE_FLOW]));
@@ -701,6 +724,8 @@ async fn the_mint_projects_a_release_and_then_a_candidate_overlay_of_it() {
         "{unknown_draft}"
     );
 
+    drop(sampler);
+    let _ = sampler_task.await;
     drop(admin);
     let _ = admin_task.await;
 }

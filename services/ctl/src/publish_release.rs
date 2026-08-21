@@ -1193,6 +1193,9 @@ mod tests {
 
     use super::*;
 
+    const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
+        include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
+
     const TENANT: &str = "publish-step-a-tenant";
     const CATALOG_ID: &str = "publish-step-a-catalog";
     const CATALOG_VERSION: i32 = 1;
@@ -1650,8 +1653,9 @@ mod tests {
 
     async fn provision_control_store(admin: &Client) {
         admin
-            .batch_execute(
-                "DROP SCHEMA IF EXISTS catalog CASCADE; \
+            .batch_execute(&format!(
+                "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+                 DROP SCHEMA IF EXISTS catalog CASCADE; \
                  DROP SCHEMA IF EXISTS wamn_run CASCADE; \
                  DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
                  DROP SCHEMA IF EXISTS registry CASCADE; \
@@ -1662,8 +1666,8 @@ mod tests {
                    CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                      NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; END $$; \
                  DO $$ BEGIN EXECUTE format( \
-                   'GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;",
-            )
+                   'GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;"
+            ))
             .await
             .expect("reset the control schemas");
         admin
@@ -1886,19 +1890,16 @@ mod tests {
         let evidence = admin
             .query_one(
                 "SELECT evidence.tested_resolution_map_bytes, \
-                        evidence.tested_resolution_map_hash, report.resolution_map::text \
+                        evidence.tested_resolution_map_hash \
                    FROM catalog.release_flow_test_evidence AS evidence \
-                   JOIN wamn_run.authoring_test_reports AS report \
-                     ON report.tenant_id = evidence.tenant_id \
-                    AND report.report_id = evidence.report_id \
                   WHERE evidence.tenant_id = $1",
                 &[&TENANT],
             )
             .await
             .expect("read the minted evidence");
-        // The report really does hold `'{}'`, so an evidence map sourced from it
-        // would be `'{}'` too. This is the assertion that fails before the fix.
-        assert_eq!(evidence.get::<_, String>(2), "{}");
+        // wamn-0h0g.15.186: the report-level map was retired by .15.170. The
+        // evidence row's exact producer-derived bytes are the remaining proof
+        // that step A never substitutes an artificial empty map.
         assert_ne!(evidence.get::<_, Vec<u8>>(0), b"{}".to_vec());
         assert_eq!(evidence.get::<_, Vec<u8>>(0), expected_bytes);
         assert_eq!(

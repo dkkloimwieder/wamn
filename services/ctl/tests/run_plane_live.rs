@@ -80,6 +80,8 @@ const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/authoring-tests.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
+    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
 
 const SCHEMA: &str = "rp_live";
 const DISPATCH_READER_PASSWORD: &str = "dispatch-reader-run-plane-probe";
@@ -205,7 +207,8 @@ async fn seed_run_pin_parents(
 /// created-or-hardened because other legs dial them.
 async fn reset(su: &Client) {
     su.batch_execute(&format!(
-        "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
+        "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+         DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
          DROP SCHEMA IF EXISTS catalog CASCADE; \
          DO $reader$ BEGIN \
            IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}') THEN \
@@ -241,9 +244,6 @@ async fn reset(su: &Client) {
          END $$; \
          REVOKE wamn_scenario_author FROM wamn_app; \
          DO $$ BEGIN \
-           EXECUTE format( \
-             'REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database() \
-           ); \
            EXECUTE format( \
              'GRANT CONNECT ON DATABASE %I TO wamn_app', current_database() \
            ); \
