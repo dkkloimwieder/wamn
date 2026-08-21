@@ -37,7 +37,7 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::saga as provision_saga;
 use wamn_control_provision::{
-    APP_ROLE, compose_url, database_name, project_env_database_name,
+    APP_ROLE, DB_OWNER_ROLE, compose_url, database_name, project_env_database_name,
     render_project_env_secret_manifest, secret, sql,
 };
 use wamn_control_registry::sql as reg_sql;
@@ -136,22 +136,41 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
     // the shared cluster otherwise — these are gate-owned project databases.
     drop_projects(admin_url).await?;
 
-    // 1. Provision both projects through the production path; capture the
-    //    emitted app-role URLs.
+    // 1. Recreate the legacy defect on project A: the owner-neutral named
+    //    builder leaves an existing database on the administrative login.
+    //    Project B stays absent so the production path also exercises the
+    //    fresh CREATE ... OWNER clause.
+    create_admin_owned_legacy_database(admin_url, PROJECT_A).await?;
+
+    // 2. Provision both projects through the production path; capture the
+    //    emitted app-role URLs. A must converge; B must arrive correctly owned.
     let url_a = provision_project(admin_url, PROJECT_A)
         .await
         .context("provision project a")?;
     let url_b = provision_project(admin_url, PROJECT_B)
         .await
         .context("provision project b")?;
+    assert_legacy_database_authority(admin_url).await?;
 
-    // 2. Seed each database with a distinct marker (routing witness) and a
+    // Recreate the other unsafe predecessor: a login role owns project A.
+    // Re-provisioning must move ownership BEFORE refreshing CONNECT; reversing
+    // those statements destroys the login role's self-merged ACL entry.
+    drift_legacy_database_to_app_owner(admin_url, PROJECT_A).await?;
+    let replay_url_a = provision_project(admin_url, PROJECT_A)
+        .await
+        .context("re-provision app-owned project a")?;
+    if replay_url_a != url_a {
+        bail!("re-provision changed project a's emitted credential URL");
+    }
+    assert_legacy_database_authority(admin_url).await?;
+
+    // 3. Seed each database with a distinct marker (routing witness) and a
     //    project-private table (isolation witness). provision-project delivers
     //    an EMPTY database, so this is gate scaffolding done as superuser.
     seed_witnesses(admin_url, PROJECT_A, MARKER_A).await?;
     seed_witnesses(admin_url, PROJECT_B, MARKER_B).await?;
 
-    // 3. Resolve through the plugin's StaticCredentialProvider, fed by the SAME
+    // 4. Resolve through the plugin's StaticCredentialProvider, fed by the SAME
     //    projects-file JSON provision-project emits (the from_env parse path).
     let mut obj = serde_json::Map::new();
     obj.insert(PROJECT_A.into(), secret::projects_file_entry(&url_a));
@@ -169,7 +188,7 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
         .resolve(PROJECT_B)?
         .with_context(|| format!("resolve {PROJECT_B}"))?;
 
-    // 4a. Routing witness: each resolved URL reaches its own project's database.
+    // 5a. Routing witness: each resolved URL reaches its own project's database.
     let (client_a, task_a) = connect(&cfg_a.database_url).await.context("connect a")?;
     let (client_b, task_b) = connect(&cfg_b.database_url).await.context("connect b")?;
     let marker_a = query_marker(&client_a).await.context("marker a")?;
@@ -181,13 +200,13 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
     }
     println!("  routing: project a -> marker {marker_a}, project b -> marker {marker_b}");
 
-    // 4b. Database-level isolation: a's connection cannot see b's private table
+    // 5b. Database-level isolation: a's connection cannot see b's private table
     //     (and vice versa) — a different database, no cross-database queries.
     assert_invisible(&client_a, "only_in_b").await?;
     assert_invisible(&client_b, "only_in_a").await?;
     println!("  isolation: each project's connection cannot see the other's tables");
 
-    // 4c. Least privilege: the resolved connection is the NOSUPERUSER/NOCREATEDB
+    // 5c. Least privilege: the resolved connection is the NOSUPERUSER/NOCREATEDB
     //     runtime role (read from the app connection itself).
     let (is_super, can_createdb) = role_attrs(&client_a).await?;
     if is_super || can_createdb {
@@ -200,7 +219,7 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
     let _ = task_a.await;
     let _ = task_b.await;
 
-    // 5. Credential layout: the emitted Secret carries the name + URL 5x0.1 reads.
+    // 6. Credential layout: the emitted Secret carries the name + URL 5x0.1 reads.
     let sec = secret::render_secret_manifest(PROJECT_A, "wamn-system", &url_a);
     let ok_name = sec["metadata"]["name"] == format!("wamn-db-{PROJECT_A}");
     let ok_url = sec["stringData"]["url"] == url_a;
@@ -236,6 +255,102 @@ async fn provision_project(admin_url: &str, project: &str) -> anyhow::Result<Str
         .find_map(|line| line.strip_prefix("app url: "))
         .map(str::to_owned)
         .context("wamn-ctl provision-project did not report its app URL")
+}
+
+/// Seed the old `provision-project` result: a database owned by its
+/// administrative login rather than the stable title role.
+async fn create_admin_owned_legacy_database(admin_url: &str, project: &str) -> anyhow::Result<()> {
+    let db = database_name(project);
+    // CREATE DATABASE must be the only statement in its autocommit batch.
+    admin_batch(
+        admin_url,
+        &sql::create_database_named_sql(&db),
+        "seed legacy superuser-owned database",
+    )
+    .await?;
+    admin_batch(
+        admin_url,
+        &format!(
+            "DO $$ BEGIN \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_database AS database \
+                 JOIN pg_roles AS owner ON owner.oid = database.datdba \
+                 WHERE database.datname = '{db}' \
+                   AND owner.rolsuper AND owner.rolname <> '{DB_OWNER_ROLE}'), \
+                 'legacy seed must begin superuser-owned'; \
+             END $$;"
+        ),
+        "assert legacy superuser-owned database",
+    )
+    .await
+}
+
+/// Drift a provisioned database onto the guest-reachable login role so replay
+/// proves that ownership convergence precedes the CONNECT grant.
+async fn drift_legacy_database_to_app_owner(admin_url: &str, project: &str) -> anyhow::Result<()> {
+    let db = database_name(project);
+    admin_batch(
+        admin_url,
+        &format!(
+            "ALTER DATABASE \"{db}\" OWNER TO \"{APP_ROLE}\"; \
+             DO $$ BEGIN \
+               ASSERT (SELECT pg_get_userbyid(datdba) FROM pg_database \
+                        WHERE datname = '{db}') = '{APP_ROLE}', \
+                 'login-owner drift must take before replay'; \
+             END $$;"
+        ),
+        "drift legacy database onto login owner",
+    )
+    .await
+}
+
+/// Assert both legacy databases have the title-role/CONNECT boundary, and the
+/// title holder remains a credential-free NOLOGIN role.
+async fn assert_legacy_database_authority(admin_url: &str) -> anyhow::Result<()> {
+    let first = database_name(PROJECT_A);
+    let second = database_name(PROJECT_B);
+    admin_batch(
+        admin_url,
+        &format!(
+            "DO $$ DECLARE database text; BEGIN \
+               FOREACH database IN ARRAY ARRAY['{first}', '{second}'] LOOP \
+                 ASSERT (SELECT pg_get_userbyid(datdba) FROM pg_database \
+                         WHERE datname = database) = '{DB_OWNER_ROLE}', \
+                   database || ' is not owned by the title role'; \
+                 ASSERT has_database_privilege('{APP_ROLE}', database, 'CONNECT'), \
+                   database || ' denies app CONNECT'; \
+                 ASSERT NOT has_database_privilege('{APP_ROLE}', database, 'CREATE') \
+                        AND NOT has_database_privilege('{APP_ROLE}', database, 'TEMPORARY'), \
+                   database || ' grants ownership-implied app authority'; \
+               END LOOP; \
+               ASSERT (SELECT NOT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
+                              AND NOT rolcreaterole AND NOT rolinherit \
+                              AND NOT rolreplication AND NOT rolbypassrls \
+                              AND rolpassword IS NULL \
+                         FROM pg_authid WHERE rolname = '{DB_OWNER_ROLE}'), \
+                 '{DB_OWNER_ROLE} must be a credential-free NOLOGIN title role'; \
+               ASSERT NOT EXISTS ( \
+                 SELECT FROM pg_auth_members AS membership \
+                 JOIN pg_roles AS role ON role.oid = membership.roleid \
+                                         OR role.oid = membership.member \
+                 WHERE role.rolname = '{DB_OWNER_ROLE}'), \
+                 '{DB_OWNER_ROLE} must have zero memberships'; \
+             END $$;"
+        ),
+        "assert legacy database authority",
+    )
+    .await
+}
+
+async fn admin_batch(admin_url: &str, sql: &str, context: &str) -> anyhow::Result<()> {
+    let (client, task) = connect(admin_url).await.context("admin connect")?;
+    client
+        .batch_execute(sql)
+        .await
+        .with_context(|| context.to_string())?;
+    drop(client);
+    let _ = task.await;
+    Ok(())
 }
 
 /// Drop both gate project databases (pure builder), if present. Autocommit.
@@ -897,4 +1012,20 @@ fn swap_db(url: &str, db: &str) -> anyhow::Result<String> {
         out.push_str(q);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL 18 URL in WAMN_PG_ADMIN_URL"]
+    async fn legacy_converges_database_authority_on_postgres() {
+        let admin_url = std::env::var("WAMN_PG_ADMIN_URL")
+            .expect("WAMN_PG_ADMIN_URL must name a disposable PostgreSQL 18 instance");
+
+        legacy(&admin_url)
+            .await
+            .expect("legacy provisionbench flow succeeds");
+    }
 }

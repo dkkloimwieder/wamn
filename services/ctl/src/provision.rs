@@ -8,17 +8,19 @@
 //! and roles — the runtime `wamn_app` role is `NOSUPERUSER NOCREATEDB`), runs
 //! the pure [`wamn_control_provision`] builders, and produces:
 //!
-//! * a per-project database `wamn-db-<project>`, empty and RLS-ready — the input
-//!   2.4 (system schema) consumes;
+//! * a per-project database `wamn-db-<project>`, owned by the stable NOLOGIN
+//!   `wamn_db_owner` title role, empty and RLS-ready — the input 2.4 (system
+//!   schema) consumes;
 //! * the shared, least-privilege `wamn_app` role (idempotently ensured), granted
 //!   `CONNECT` on the project database with `PUBLIC` revoked;
 //! * the app-role connection URL, optionally as a `WAMN_PG_PROJECTS_FILE` entry
 //!   (`--emit-projects-file`) and/or a Kubernetes `Secret` manifest
 //!   (`--emit-secret`, JSON — `kubectl apply -f` accepts it).
 //!
-//! Everything is **additive** and idempotent (create-if-absent; the shared-
-//! cluster guardrail): re-running against an already-provisioned project
-//! refreshes the grants and re-emits the credential, never dropping anything.
+//! Re-runs are idempotent at the intended boundary (create-if-absent; the
+//! shared-cluster guardrail): an already-provisioned project converges title
+//! ownership, refreshes the grants and re-emits the credential, never dropping
+//! an object.
 //! Backups / WAL archiving / PITR are deferred to a fast-follow bead; per-project
 //! **distinct** roles are an 8.2 hardening (see docs/archive/platform/provisioning.md).
 
@@ -126,10 +128,11 @@ pub async fn run(args: ProvisionProjectArgs) -> anyhow::Result<()> {
 }
 
 /// The reusable provisioning core (also driven by the `provisionbench` gate):
-/// validate the project id, connect as superuser, ensure the shared role, create
-/// the database when absent, confine `CONNECT` to `wamn_app`, and return the
-/// composed app-role connection URL. Idempotent + additive (the shared-cluster
-/// guardrail): never drops or alters an existing object.
+/// validate the project id, connect as superuser, ensure the shared app and
+/// title roles, create the database when absent, converge its title owner,
+/// confine `CONNECT` to `wamn_app`, and return the composed app-role connection
+/// URL. Re-runs are idempotent at the intended boundary (the shared-cluster
+/// guardrail) and never drop an existing object.
 ///
 /// `app_host`/`app_port` default to the admin URL's host/port (the app role
 /// reaches the same cluster the superuser provisioned it on).
@@ -159,7 +162,8 @@ pub async fn provision_project(
     Ok(compose_url(APP_ROLE, app_password, &host, port, &db))
 }
 
-/// Ensure the role, create the database when absent, confine CONNECT.
+/// Ensure the roles, create the database when absent, converge its owner, then
+/// confine CONNECT.
 async fn do_provision(
     client: &tokio_postgres::Client,
     project: &str,
@@ -172,6 +176,10 @@ async fn do_provision(
         .batch_execute(&sql::ensure_app_role_sql(app_password))
         .await
         .context("ensure wamn_app role")?;
+    client
+        .batch_execute(sql::ensure_db_owner_role_sql())
+        .await
+        .context("ensure wamn_db_owner role")?;
 
     // 2. The project database, when absent. CREATE DATABASE is autocommit and
     //    cannot run in a transaction block — a single-statement batch is fine.
@@ -181,7 +189,7 @@ async fn do_provision(
         .context("probe database")?
         .get(0);
     if exists {
-        println!("database {db:?} already present; refreshing grants");
+        println!("database {db:?} already present; converging ownership and grants");
     } else {
         client
             .batch_execute(&sql::create_database_sql(project))
@@ -190,7 +198,15 @@ async fn do_provision(
         println!("created database {db:?}");
     }
 
-    // 3. Confine CONNECT to wamn_app (revoke PUBLIC). Idempotent.
+    // 3. Converge legacy databases before granting CONNECT. The order is
+    //    load-bearing when a login role is the outgoing owner: changing owner
+    //    after its self-grant destroys the CONNECT ACL entry.
+    client
+        .batch_execute(&sql::set_database_owner_sql(&db))
+        .await
+        .context("converge database owner")?;
+
+    // 4. Confine CONNECT to wamn_app (revoke PUBLIC). Idempotent.
     client
         .batch_execute(&sql::grant_connect_sql(project))
         .await

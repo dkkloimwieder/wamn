@@ -5,16 +5,17 @@
 //! (no DB dependency in the crate), the wamn-schema-compiler / wamn-schema-compiler / wamn-schema-compiler pattern.
 //!
 //! It drives the **real** builders and asserts their effects on the live
-//! cluster: the least-privilege role exists, the project database is created,
-//! and CONNECT is confined to `wamn_app` with `PUBLIC` revoked (the isolation
-//! backstop — dropping either half of `grant_connect_sql` fails an assertion).
+//! cluster: the least-privilege app role and NOLOGIN title role exist, the
+//! project database is created under the title role, and CONNECT is confined to
+//! `wamn_app` with `PUBLIC` revoked (the isolation backstop — dropping either
+//! half of `grant_connect_sql` fails an assertion).
 //! End-to-end routing / resolution / cross-database isolation is the
 //! `provisionbench` gate's job (it needs two live app-role connections).
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
-use wamn_control_provision::sql;
+use wamn_control_provision::{DB_OWNER_ROLE, sql};
 
 #[test]
 fn provisioning_builders_apply_on_postgres() {
@@ -35,6 +36,8 @@ fn provisioning_builders_apply_on_postgres() {
     // The real builders under test.
     script.push_str(&sql::ensure_app_role_sql("wamn_app"));
     script.push('\n');
+    script.push_str(sql::ensure_db_owner_role_sql());
+    script.push('\n');
     script.push_str(&sql::create_database_sql(project));
     script.push_str(";\n");
     script.push_str(&sql::grant_connect_sql(project));
@@ -46,8 +49,16 @@ fn provisioning_builders_apply_on_postgres() {
            IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '{db}') THEN \
              RAISE EXCEPTION 'project database {db} was not created'; \
            END IF; \
+           IF (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '{db}') \
+                <> '{DB_OWNER_ROLE}' THEN \
+             RAISE EXCEPTION 'project database {db} is not owned by {DB_OWNER_ROLE}'; \
+           END IF; \
            IF NOT has_database_privilege('wamn_app', '{db}', 'CONNECT') THEN \
              RAISE EXCEPTION 'wamn_app lacks CONNECT on {db} (GRANT missing)'; \
+           END IF; \
+           IF has_database_privilege('wamn_app', '{db}', 'CREATE') \
+              OR has_database_privilege('wamn_app', '{db}', 'TEMPORARY') THEN \
+             RAISE EXCEPTION 'wamn_app inherited database-owner authority on {db}'; \
            END IF; \
            IF EXISTS ( \
              SELECT 1 FROM pg_database d, aclexplode(d.datacl) a \
@@ -68,6 +79,21 @@ fn provisioning_builders_apply_on_postgres() {
            END IF; \
          END $$;\n",
     );
+    // The title role owns the database and nothing authenticates as it.
+    script.push_str(&format!(
+        "DO $$ DECLARE r pg_roles%ROWTYPE; BEGIN \
+           SELECT * INTO r FROM pg_roles WHERE rolname = '{DB_OWNER_ROLE}'; \
+           IF r IS NULL THEN RAISE EXCEPTION '{DB_OWNER_ROLE} role missing'; END IF; \
+           IF r.rolcanlogin OR r.rolsuper OR r.rolcreatedb OR r.rolcreaterole \
+              OR r.rolinherit OR r.rolreplication OR r.rolbypassrls THEN \
+             RAISE EXCEPTION '{DB_OWNER_ROLE} is not a NOLOGIN title-only role'; \
+           END IF; \
+           IF (SELECT rolpassword IS NOT NULL FROM pg_authid \
+                WHERE rolname = '{DB_OWNER_ROLE}') THEN \
+             RAISE EXCEPTION '{DB_OWNER_ROLE} unexpectedly has a password'; \
+           END IF; \
+         END $$;\n"
+    ));
     // Teardown (self-contained; never touches shared databases).
     script.push_str(&sql::drop_database_sql(project));
     script.push_str(";\n");

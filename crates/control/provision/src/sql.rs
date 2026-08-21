@@ -113,10 +113,19 @@ pub fn create_database_named_sql(database: &str) -> String {
     format!("CREATE DATABASE {}", quote_ident(database))
 }
 
-/// `CREATE DATABASE "wamn-db-<project>"`. Must run as its own autocommit
-/// statement (Postgres forbids `CREATE DATABASE` inside a transaction block).
+/// `CREATE DATABASE "wamn-db-<project>" OWNER "wamn_db_owner"`. Must run as its
+/// own autocommit statement (Postgres forbids `CREATE DATABASE` inside a
+/// transaction block).
+///
+/// Unlike [`create_database_named_sql`], this legacy `provision-project`
+/// wrapper assigns the stable NOLOGIN title role directly. The named helper
+/// remains owner-neutral because its callers model substrate-created databases.
 pub fn create_database_sql(project: &str) -> String {
-    create_database_named_sql(&database_name(project))
+    format!(
+        "{} OWNER {}",
+        create_database_named_sql(&database_name(project)),
+        quote_ident(DB_OWNER_ROLE),
+    )
 }
 
 /// `DROP DATABASE IF EXISTS "<database>" WITH (FORCE)`, naming the database
@@ -899,7 +908,7 @@ mod tests {
     fn database_ddl_quotes_the_hyphenated_name() {
         assert_eq!(
             create_database_sql("acme-corp"),
-            "CREATE DATABASE \"wamn-db-acme-corp\""
+            "CREATE DATABASE \"wamn-db-acme-corp\" OWNER \"wamn_db_owner\""
         );
         assert_eq!(
             drop_database_sql("acme-corp"),
@@ -918,11 +927,17 @@ mod tests {
             drop_database_named_sql("wamn-db-acme--billing--dev"),
             "DROP DATABASE IF EXISTS \"wamn-db-acme--billing--dev\" WITH (FORCE)"
         );
-        // The 2.3 project-taking wrappers delegate to the named builders.
+        // The 2.3 create wrapper adds its stable title owner; the named helper
+        // stays owner-neutral for substrate scaffolding.
         assert_eq!(
             create_database_sql("acme"),
-            create_database_named_sql("wamn-db-acme")
+            "CREATE DATABASE \"wamn-db-acme\" OWNER \"wamn_db_owner\""
         );
+        assert_eq!(
+            create_database_named_sql("wamn-db-acme"),
+            "CREATE DATABASE \"wamn-db-acme\""
+        );
+        // The drop wrapper remains a direct delegation.
         assert_eq!(
             drop_database_sql("acme"),
             drop_database_named_sql("wamn-db-acme")
