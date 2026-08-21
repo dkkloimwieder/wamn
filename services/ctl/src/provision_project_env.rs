@@ -400,15 +400,14 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     let org = args
         .org
         .as_deref()
-        .context("--org is required for provisioning")?;
-    let project = args
-        .project
-        .as_deref()
-        .context("--project is required for provisioning")?;
+        .expect("clap parser invariant: --org is required unless --revoke-pat-prefix is present");
+    let project = args.project.as_deref().expect(
+        "clap parser invariant: --project is required unless --revoke-pat-prefix is present",
+    );
     let env = args
         .env
         .as_deref()
-        .context("--env is required for provisioning")?;
+        .expect("clap parser invariant: --env is required unless --revoke-pat-prefix is present");
     let triple = Triple::new(org, project, env);
 
     // Validate the project id + the assembled `wamn-<org>--<project>--<env>`
@@ -2086,6 +2085,70 @@ mod tests {
         ];
         argv.extend_from_slice(extra);
         TestCli::try_parse_from(argv).map(|cli| cli.args)
+    }
+
+    /// The non-revoke path may treat the identity triple as an infallible parser
+    /// invariant: Clap rejects every provisioning invocation missing one member,
+    /// and [`run`] returns before the infallible accesses in the sole exempt mode.
+    #[test]
+    fn clap_guards_the_three_infallible_provisioning_identity_accesses() {
+        for omitted in ["--org", "--project", "--env"] {
+            let mut argv = vec![
+                "test",
+                "--org",
+                "acme",
+                "--project",
+                "billing",
+                "--env",
+                "dev",
+                "--cluster",
+                "acme-dev",
+                "--app-password",
+                "app-probe",
+                "--dispatch-reader-password",
+                "reader-probe",
+                "--emit-secret",
+                "/tmp/db.json",
+            ];
+            let at = argv
+                .iter()
+                .position(|arg| *arg == omitted)
+                .expect("the omitted flag is in the complete invocation");
+            argv.drain(at..=at + 1);
+
+            let error = TestCli::try_parse_from(argv)
+                .expect_err("provisioning accepted a missing identity member");
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "missing {omitted} failed for the wrong reason: {error}"
+            );
+        }
+
+        let implementation = include_str!("provision_project_env.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        let identity_accesses = implementation
+            .split("let org = args")
+            .nth(1)
+            .expect("the provisioning verb consumes --org")
+            .split("let triple = Triple::new")
+            .next()
+            .expect("the identity accesses precede triple construction");
+        assert_eq!(
+            identity_accesses.matches(".expect(").count(),
+            3,
+            "all three parser-required identity fields must be consumed infallibly"
+        );
+        for flag in ["--org", "--project", "--env"] {
+            assert!(
+                identity_accesses.contains(&format!(
+                    "clap parser invariant: {flag} is required unless --revoke-pat-prefix is present"
+                )),
+                "{flag} does not name its parser invariant"
+            );
+        }
     }
 
     /// The mint is the whole non-reuse mechanism (wamn-0h0g.13.57): every draw
