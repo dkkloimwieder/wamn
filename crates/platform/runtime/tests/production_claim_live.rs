@@ -447,6 +447,32 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &[&TENANT, &EMPTY_HASH],
         )
         .await?;
+    // The fixture's release-pin guard shares the class gate: even with an
+    // attributed attempt, this `standard` run may clear a claim-time pair.
+    admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs \
+                    SET release_version=$2, manifest_digest=$3 \
+                  WHERE tenant_id=$1 AND run_id='standard-ledger'"
+            ),
+            &[&TENANT, &POD_RELEASE_VERSION, &POD_MANIFEST_DIGEST],
+        )
+        .await?;
+    assert_eq!(
+        admin
+            .execute(
+                &format!(
+                    "UPDATE {SCHEMA}.runs \
+                        SET release_version=NULL, manifest_digest=NULL \
+                      WHERE tenant_id=$1 AND run_id='standard-ledger'"
+                ),
+                &[&TENANT],
+            )
+            .await
+            .context("clear a standard run's release pair despite attributed effect evidence")?,
+        1
+    );
     assert_eq!(
         plugin.claim_next_production(COMPONENT, 30_000).await?,
         ProductionClaimResult::Empty,

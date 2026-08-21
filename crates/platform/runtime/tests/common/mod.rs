@@ -222,7 +222,8 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
                      IF NEW.status NOT IN ('dispatched', 'running') \
                         OR EXISTS (SELECT 1 FROM {SCHEMA}.effect_attempts AS effect \
                                     WHERE effect.tenant_id = OLD.tenant_id \
-                                      AND effect.run_id = OLD.run_id) THEN \
+                                      AND effect.run_id = OLD.run_id \
+                                      AND OLD.durability_class = 'durable') THEN \
                        RAISE EXCEPTION USING ERRCODE = '55000', \
                          MESSAGE = 'run-release-record-immutable'; \
                      END IF; \
