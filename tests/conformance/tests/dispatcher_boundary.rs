@@ -305,6 +305,9 @@ fn retired_uncalled_run_builders_stay_deleted_while_park_remains() {
         "pub fn insert_run_returning_id_sql(",
         "pub fn update_run_running_sql(",
         "pub fn update_run_failed_sql(",
+        "pub fn update_run_completed(",
+        "pub fn update_run_completed_sql(",
+        "pub fn select_run_dispatch_sql(",
     ] {
         assert!(
             !run_state_sql.contains(retired),

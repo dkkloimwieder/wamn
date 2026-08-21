@@ -14,16 +14,14 @@
 //! This module is guest-compilable by construction: `String` builders only,
 //! no DB driver, no clock, no tokio in the dependency closure.
 
-use wamn_pg_core::Sql;
-
 use crate::status::RunStatus;
 
 /// Build the execution-only input projection for a run-row alias.
 ///
 /// Event lineage is durable in trusted columns, never in author-visible
 /// `input_json`. At single-shot execution time the runner still needs the lineage object its
-/// frozen guest contract consumes, so both dispatch selectors use this exact
-/// expression. The right-hand `jsonb` object replaces any same-named author
+/// frozen guest contract consumes, so the production-claim selector uses this
+/// exact expression. The right-hand `jsonb` object replaces any same-named author
 /// field; non-event rows retain their persisted input unchanged.
 pub(crate) fn execution_input_sql(run_alias: &str) -> String {
     format!(
@@ -35,45 +33,6 @@ pub(crate) fn execution_input_sql(run_alias: &str) -> String {
                          'root', {run_alias}.event_root_run_id, \
                          'depth', {run_alias}.event_depth)) \
               ELSE {run_alias}.input_json END"
-    )
-}
-
-/// [`update_run_completed_sql`] carried with its param arity (`$1..$2`).
-pub fn update_run_completed() -> Sql {
-    Sql::new(update_run_completed_sql(), 2)
-}
-
-/// Mark the run completed and record its result payload. Deliberately
-/// UNCONDITIONAL on the prior status: a genuine completion overrides a
-/// janitor's premature infrastructure-failure verdict (the fqg.2 reverse-race
-/// guard). `$1` run_id, `$2` result_json.
-pub fn update_run_completed_sql() -> String {
-    format!(
-        "UPDATE runs SET status = '{completed}', result_json = $2, updated_at = now() \
-         WHERE run_id = $1",
-        completed = RunStatus::Completed.as_sql(),
-    )
-}
-
-/// Read an already host-claimed run's dispatch inputs — the flow it runs, the **persisted**
-/// `flow_version` the run started under, and the trigger input a dispatcher
-/// persisted — so the single-shot guest drives the
-/// *recorded* flow at the *recorded* version, not a hard-coded fixture id and not
-/// whatever version is active NOW (wamn-cox: execution pins the run's own
-/// version, so a flow edited after admission cannot change its graph). `$1`
-/// run_id; RLS scopes the tenant (like the other read builders).
-/// Event runs receive an execution-only `causation` object synthesized from
-/// trusted `event_root_run_id` / `event_depth` columns. This does not update
-/// `input_json`, and the trusted object replaces any same-named input field.
-/// Capture policy is read from the immutable admission row; no node-level or
-/// authored fallback may replace it. A per-run `traceparent` (wamn-fl3) is the
-/// natural next column added to this projection.
-pub fn select_run_dispatch_sql() -> String {
-    format!(
-        "SELECT r.flow_id, r.flow_version, ({execution_input})::text AS input_json, \
-                r.capture_mode \
-           FROM runs AS r WHERE r.run_id = $1",
-        execution_input = execution_input_sql("r"),
     )
 }
 
@@ -106,67 +65,6 @@ pub fn prune_terminal_runs_sql() -> String {
 mod tests {
     use super::*;
 
-    /// The highest `$n` placeholder in a builder's text — its true param count.
-    fn max_placeholder(sql: &str) -> u16 {
-        let bytes = sql.as_bytes();
-        let mut max = 0u16;
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'$' {
-                let mut j = i + 1;
-                let mut n = 0u16;
-                while j < bytes.len() && bytes[j].is_ascii_digit() {
-                    n = n * 10 + u16::from(bytes[j] - b'0');
-                    j += 1;
-                }
-                if j > i + 1 {
-                    max = max.max(n);
-                }
-                i = j;
-            } else {
-                i += 1;
-            }
-        }
-        max
-    }
-
-    /// The remaining composed run-level builder pins its declared arity beside
-    /// the SQL text.
-    #[test]
-    fn composed_builder_arities_match_their_placeholders() {
-        let stmt = update_run_completed();
-        assert_eq!(stmt.arity(), max_placeholder(stmt.text()));
-        assert_eq!(update_run_completed().arity(), 2);
-    }
-
-    #[test]
-    fn dispatch_read_projects_flow_and_input() {
-        // The claim path (fqg.4) resolves the flow + input from the recorded
-        // run, not a fixture constant; the persisted `flow_version` (second
-        // column, wamn-cox) pins execution to the version admitted for the run;
-        // fl3 extends this exact projection with `traceparent`.
-        let sql = select_run_dispatch_sql();
-        assert!(sql.contains("SELECT r.flow_id, r.flow_version"), "{sql}");
-        assert!(sql.contains("r.capture_mode"), "{sql}");
-        assert!(sql.contains("FROM runs AS r WHERE r.run_id = $1"), "{sql}");
-        for trusted in [
-            "r.input_json || jsonb_build_object(",
-            "'run', r.run_id",
-            "'root', r.event_root_run_id",
-            "'depth', r.event_depth",
-        ] {
-            assert!(
-                sql.contains(trusted),
-                "missing trusted projection {trusted}: {sql}"
-            );
-        }
-        assert!(sql.contains("ELSE r.input_json END"), "{sql}");
-        assert!(
-            !sql.contains("wamn_run."),
-            "schema must be unqualified: {sql}"
-        );
-    }
-
     #[test]
     fn execution_input_is_transient_and_trusted_columns_replace_input_causation() {
         let expression = execution_input_sql("run_row");
@@ -178,15 +76,6 @@ mod tests {
         assert!(expression.contains("'depth', run_row.event_depth"));
         assert!(expression.ends_with("ELSE run_row.input_json END"));
         assert!(!expression.contains("UPDATE"));
-    }
-
-    #[test]
-    fn status_literal_comes_from_the_model() {
-        assert!(update_run_completed_sql().contains("SET status = 'completed'"));
-        assert!(
-            !update_run_completed_sql().contains("AND status"),
-            "completion is deliberately unconditional (fqg.2 reverse-race)"
-        );
     }
 
     /// Every column the builders write exists in the canonical DDL — the
