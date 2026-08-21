@@ -1,8 +1,10 @@
 //! Shared Wasmtime engine configuration for host and bench.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use wash_runtime::engine::{Engine, WasmProposal};
+use wash_runtime::sockets::policy::SocketPolicy;
 use wash_runtime::wasmtime::{Config, PoolingAllocationConfig};
 
 /// Platform memory ceiling (S1 acceptance: 256 MiB, enforced): the pooling
@@ -48,6 +50,14 @@ pub fn advertise_memory_ceiling() {
 /// deadline (`wamn.epoch-deadline-ticks` config / WAMN_EPOCH_DEADLINE_TICKS
 /// env).
 pub fn build_engine(proposals: &[WasmProposal]) -> anyhow::Result<Engine> {
+    build_engine_with_socket_policy(proposals, SocketPolicy::default())
+}
+
+/// Build the platform engine with an explicit host-level socket policy.
+pub fn build_engine_with_socket_policy(
+    proposals: &[WasmProposal],
+    socket_policy: SocketPolicy,
+) -> anyhow::Result<Engine> {
     let mut pooling = PoolingAllocationConfig::default();
     pooling.max_memory_size(MEMORY_CAP_BYTES);
     pooling.total_memories(POOL_SLOTS);
@@ -61,7 +71,8 @@ pub fn build_engine(proposals: &[WasmProposal]) -> anyhow::Result<Engine> {
     // with_config sets the *base*; pooling and proposals layer on top.
     let mut builder = Engine::builder()
         .with_config(base)
-        .with_pooling_config(pooling);
+        .with_pooling_config(pooling)
+        .with_socket_policy(Arc::new(socket_policy));
     for proposal in proposals {
         builder = builder.with_wasm_proposal(*proposal);
     }

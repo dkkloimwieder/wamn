@@ -70,6 +70,8 @@ use wash_runtime::wasmtime::component::Component as WasmtimeComponent;
 
 use wamn_component_policy::denied_imports;
 use wamn_runtime::engine::build_engine;
+#[cfg(test)]
+use wamn_runtime::engine::build_engine_with_socket_policy;
 
 #[derive(Args)]
 pub struct EgressBenchArgs {
@@ -552,6 +554,39 @@ mod tests {
             egress_mode: mode,
             ..SocketPolicy::for_kind(GuestKind::Component)
         }
+    }
+
+    /// The test-only socket-policy seam must feed the same builder that carries
+    /// the production engine's pooling, epoch, and proposal configuration.
+    #[test]
+    fn explicit_socket_policy_reaches_the_production_engine_builder() {
+        let socket_policy = SocketPolicy {
+            host_loopback_enabled: true,
+            egress_mode: EgressMode::Enforce,
+            ..SocketPolicy::default()
+        };
+        assert!(socket_policy.host_loopback_enabled);
+        assert!(matches!(socket_policy.egress_mode, EgressMode::Enforce));
+
+        build_engine_with_socket_policy(&[], socket_policy)
+            .expect("the production engine accepts the explicit socket policy");
+
+        let engine_source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../crates/platform/runtime/src/engine.rs"
+        ));
+        assert_eq!(
+            engine_source.matches("Engine::builder()").count(),
+            1,
+            "the explicit policy must not create a second engine-builder path"
+        );
+        assert_eq!(
+            engine_source
+                .matches(".with_socket_policy(Arc::new(socket_policy))")
+                .count(),
+            1,
+            "the explicit policy must reach the canonical production EngineBuilder"
+        );
     }
 
     fn deny_reason(decision: &AddrDecision) -> Option<DenyReason> {
@@ -1213,9 +1248,9 @@ mod tests {
     /// sentinel and passes it through the environment. If that address ever
     /// stopped being recognised as the sentinel, every `host-loopback-*` arm
     /// would quietly become an ordinary virtual-loopback connect — permitted, and
-    /// proving nothing. `SocketPolicy::default()` on purpose: that is the
-    /// host-level policy wamn's engine installs, since nothing here calls
-    /// `EngineBuilder::with_socket_policy`.
+    /// proving nothing. `SocketPolicy::default()` on purpose: production
+    /// `build_engine` installs that policy, and no production caller selects
+    /// another one.
     #[test]
     fn the_sentinel_target_handed_to_sockprobe_reaches_the_gated_branch() {
         for port in [HOST_LOOPBACK_LISTED_PORT, HOST_LOOPBACK_UNLISTED_PORT] {
