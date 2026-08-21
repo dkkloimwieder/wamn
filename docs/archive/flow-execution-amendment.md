@@ -1,3 +1,6 @@
+> **Archived 2026-08-21.** Superseded as current design by
+> `docs/exe-model.md`; retained for decision provenance only.
+
 # Charter amendment — the execution plan and the call model
 
 Amends: `docs/scope-reduction-mvp.md` (cut 4: flow calls, the

@@ -1,11 +1,11 @@
 # wamn
 
-A wasmCloud-based managed low-code platform: a data/schema layer, a flow engine,
+A wasmCloud-based managed low-code platform: a data/schema layer, wiring execution,
 and a four-tier Postgres control plane, all hosted on a customized wasmCloud
-runtime. **`docs/` is the design source of truth** — start with
-`docs/exe-model.md` (the controlling execution model) and `docs/PLAN/PLAN.md`
-(the active ordering and decision map); `docs/archive/platform-plan.md` holds
-the D-number decision table as the archive of record.
+runtime. **`docs/exe-model.md` is the single WIP design authority.**
+`docs/PLAN/PLAN.md` is its non-normative ordering and ambiguity map; Beads and
+git own status. Everything under `docs/archive/` is provenance or an
+operational ledger, never competing design authority.
 
 `services/host` is the production washlet host. Production queue execution and
 deterministic scenario execution are separate artifacts which share
@@ -94,9 +94,9 @@ deploy/                 deployment, gate, schema, and bootstrap assets
   mvp/                  bootstrap scripts; outside SR8 lifecycle tiers
                         (pre-tier provisioning; runs before any tier exists)
 
-docs/                   design source of truth (exe-model.md authority,
-                        PLAN/PLAN.md ordering map, archive/platform-plan.md
-                        decision table, WIT contracts, per-subsystem specs)
+docs/                   exe-model.md: single WIP design authority
+                        PLAN/PLAN.md: ordering and ambiguity map
+                        archive/: provenance and operational ledgers
 
 Cargo.toml              root workspace; pins the wash-runtime fork rev
 Dockerfile              shared build plus one final stage per deployable artifact
@@ -177,9 +177,8 @@ kubectl -n wamn-system logs -f job/<subsystem>
 
 ## More
 
-- `docs/exe-model.md` — the controlling execution-model authority.
-- `docs/PLAN/PLAN.md` — the active ordering and decision map.
+- `docs/exe-model.md` — the single WIP design authority.
+- `docs/PLAN/PLAN.md` — the non-normative ordering and ambiguity map.
 - `docs/archive/platform-plan.md` — the D-number decision archive of record.
-- `docs/` — design source of truth (per-subsystem specs, WIT contracts).
 - `docs/archive/build-and-test.md` — every subsystem's build + gate commands.
 - `CLAUDE.md` / `AGENTS.md` — instructions for AI coding agents (identical).

@@ -1,3 +1,6 @@
+> **Archived 2026-08-21.** Superseded as current design by
+> `docs/exe-model.md`; retained for decision provenance only.
+
 # Charter amendment — plane residency: gate artifacts on the control plane; project databases hold runtime projections and references (owner-ratified revision 2)
 
 Amends: `docs/scope-reduction-mvp.md` (cut 5 ownership/publication/

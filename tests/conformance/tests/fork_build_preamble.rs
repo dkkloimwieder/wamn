@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const ACTIVE_PLAN: &str = "docs/archive/PLAN/PLAN.md";
+const HISTORICAL_PLAN: &str = "docs/archive/PLAN/PLAN.md";
 const BUILD_AND_TEST_DOC: &str = "docs/archive/build-and-test.md";
 const CARGO_LOCK: &str = "Cargo.lock";
 const FORK_LEDGER: &str = "docs/archive/platform/wash-runtime-fork.md";
@@ -19,7 +19,7 @@ inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`."#;
 const EXPECTED_MANIFEST_LEDGER_COMMENT: &str = "# Upstream v2.7.0 plus the policies recorded in\n\
 # docs/archive/platform/wash-runtime-fork.md. The ledger is authoritative.";
-const EXPECTED_PLAN_REVISION: &str = "daba6029";
+const EXPECTED_HISTORICAL_PLAN_REVISION: &str = "daba6029";
 const EXPECTED_REVISION: &str = "daba602901507338e99f277e07a8e923c61dc557";
 const EXPECTED_UPSTREAM_BASE: &str = "9561cb59759fa15b0a64bdb0b318255309aeddcd";
 /// The carried policies in ledger order. `wamn/2.7.0` was carried by MERGE
@@ -320,17 +320,17 @@ fn upstream_delta_and_dependency_invariants_are_exact() {
 }
 
 #[test]
-fn active_plan_points_to_the_current_fork_delta() {
+fn historical_plan_records_the_v2_7_0_fork_delta() {
     let root = repository_root();
-    let plan = read_repository_file(&root, ACTIVE_PLAN);
+    let plan = read_repository_file(&root, HISTORICAL_PLAN);
 
     assert!(
         plan.contains("**The v2.7.0 upgrade is complete.**")
             && plan.contains("pinned at `wamn/2.7.0`, rev")
-            && plan.contains(&format!("`{EXPECTED_PLAN_REVISION}`"))
+            && plan.contains(&format!("`{EXPECTED_HISTORICAL_PLAN_REVISION}`"))
             && plan.contains("`docs/archive/PLAN/WASMCLOUD-UPGRADE-2.6.1.md`")
             && plan.contains("`docs/archive/PLAN/WASMCLOUD-UPGRADE-2.6.0.md`"),
-        "active roadmap must record the current fork pin and the retained upgrade records"
+        "historical roadmap must record the v2.7.0 fork pin and retained upgrade records"
     );
     // The two syncs differ in KIND, and the roadmap has to keep them apart: the
     // v2.6.1 retarget absorbed renames at unchanged dependencies, while v2.7.0
@@ -340,6 +340,6 @@ fn active_plan_points_to_the_current_fork_delta() {
         plan.contains("**policy re-port**, not a dependency bump")
             && plan.contains("78-commit base bump")
             && plan.contains("moved dependencies"),
-        "active roadmap must distinguish the v2.6.1 policy re-port from the v2.7.0 base bump"
+        "historical roadmap must distinguish the v2.6.1 policy re-port from the v2.7.0 base bump"
     );
 }

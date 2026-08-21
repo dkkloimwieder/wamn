@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const PACKAGE_ROLES: &str = "architecture/package-roles.json";
-const SCOPE_REDUCTION: &str = "docs/scope-reduction-mvp.md";
+const EXECUTION_MODEL: &str = "docs/exe-model.md";
 const OUTCOME_PREFIX: &str = "//! MVP outcome: ";
 
 const CRASH_FLOOR: &str = "crash floor · M0 execution · flow composition";
@@ -274,17 +274,17 @@ fn workspace(module: &str) -> &'static str {
     }
 }
 
-fn f1_outcomes(scope_reduction: &str) -> BTreeSet<&str> {
-    let ledger = scope_reduction
-        .split_once("### F.1 Retained roots → named outcome")
-        .expect("scope reduction must retain the F.1 ledger")
+fn retained_outcomes(execution_model: &str) -> BTreeSet<&str> {
+    let ledger = execution_model
+        .split_once("### Retained roots")
+        .expect("execution model must retain the outcome ledger")
         .1
-        .split_once("### F.2 Deletion inventory")
-        .expect("F.1 must end at the F.2 ledger")
+        .split_once("## Owned tradeoffs")
+        .expect("retained roots must end at owned tradeoffs")
         .0;
     ledger
         .lines()
-        .filter_map(|line| line.split('|').nth(2))
+        .filter_map(|line| line.split('|').nth(1))
         .map(str::trim)
         .filter(|cell| !cell.is_empty() && *cell != "Outcome" && !cell.starts_with("---"))
         .collect()
@@ -320,16 +320,16 @@ fn retained_root_map_exactly_covers_the_package_inventory() {
 }
 
 #[test]
-fn every_retained_root_names_its_exact_f1_outcome() {
+fn every_retained_root_names_its_exact_wip_outcome() {
     let root = repository_root();
-    let scope_reduction = read(&root, SCOPE_REDUCTION);
-    let ledger_outcomes = f1_outcomes(&scope_reduction);
+    let execution_model = read(&root, EXECUTION_MODEL);
+    let ledger_outcomes = retained_outcomes(&execution_model);
     let mut modules = BTreeSet::new();
 
     for &(package, module, outcome) in RETAINED_ROOTS {
         assert!(
             ledger_outcomes.contains(outcome),
-            "{package} names an outcome absent from F.1: {outcome:?}"
+            "{package} names an outcome absent from the execution model: {outcome:?}"
         );
         assert!(modules.insert(module), "duplicate module root");
 

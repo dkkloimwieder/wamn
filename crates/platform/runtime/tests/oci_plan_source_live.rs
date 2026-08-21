@@ -261,7 +261,7 @@ async fn request_target(stream: &mut TcpStream) -> Option<String> {
 /// A body that does not hash to the descriptor it arrived under is refused, and
 /// refused as an INTEGRITY fault rather than a retryable transport one.
 ///
-/// This is the property `docs/deployment-simplification-spec.md:90` calls "plan
+/// This is the transitional property `docs/archive/deployment-simplification-spec.md` calls "plan
 /// bytes fetch by digest, verify at transfer", and it is the one live disposition
 /// nothing else can reach: a stub source proves what the supply path does with
 /// bytes it is handed, and a real registry cannot be persuaded to hand over bad

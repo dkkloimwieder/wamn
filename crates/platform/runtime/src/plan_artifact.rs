@@ -1,6 +1,6 @@
 //! Digest-addressed OCI supply of exact execution-plan bytes.
 //!
-//! `docs/deployment-simplification-spec.md` makes plan bytes content-addressed
+//! The archived `docs/archive/deployment-simplification-spec.md` made plan bytes content-addressed
 //! OCI artifacts: a serving pod reads the plan digests it needs out of its
 //! release manifest ([`crate::release_manifest`]) and pulls exactly those, by
 //! digest, verifying at transfer. This module is that pull, and nothing else —

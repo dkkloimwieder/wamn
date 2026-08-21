@@ -1,5 +1,5 @@
 //! The mounted release-serving manifest — the one document every pod resolves
-//! against (`docs/deployment-simplification-spec.md` lines 31-39 and 61-70).
+//! against the release closure in `docs/exe-model.md`.
 //!
 //! # This is not `catalog.release_manifests`
 //!

@@ -1,3 +1,6 @@
+> **Archived 2026-08-21.** Superseded as current design by
+> `docs/exe-model.md`; retained for decision provenance only.
+
 # Deployment simplification — follow wasmCloud v2: operator-managed hosts, OCI artifacts, GitOps convergence
 
 Status: RATIFIED (owner 2026-08-16, decision `wamn-0h0g.13.43` —

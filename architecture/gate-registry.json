@@ -1,6 +1,6 @@
 {
   "schema_version": "0.1",
-  "authority": "MVP gate-manifest disposition derives from docs/scope-reduction-mvp.md Appendix D. Retained D-number and recipe metadata is historical registry compatibility only. Commands, artifact inputs, and dependencies derive from the referenced Job manifests and recipe-test directives and are intentionally absent.",
+  "authority": "Gate governance derives from docs/exe-model.md §Proof and delivery. This registry records landed gate dispositions; retained D-number and recipe metadata is historical compatibility only. Commands, artifact inputs, and dependencies derive from referenced Job manifests and recipe-test directives and are intentionally absent.",
   "registry_owner": "bd:wamn-2jdm.2",
   "machine_evidence_policy": "Kubernetes Job verdicts use tools/kubernetes-gate-run and the strict wamn-kubernetes-gate-verdict/v0.1 consumer contract; verdict records require fresh Job UIDs, post-start Job/Pod evidence, bounded completion, exit codes, image IDs, logs, and explicit expected-negative side-effect snapshots. Aggregate scheduling remains pending bd:wamn-2jdm.8; artifact provenance remains owned by bd:wamn-2jkm.98 and bd:wamn-4tob.6.25.",
   "decisions": [

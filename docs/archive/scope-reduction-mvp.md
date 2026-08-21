@@ -1,3 +1,6 @@
+> **Archived 2026-08-21.** Superseded as current design by
+> `docs/exe-model.md`; retained for decision provenance only.
+
 # wamn — scope reduction to MVP (rev 9)
 
 verified-against: `e5de4356d9c827f86264270b34957194b8d9669e` · 2026-08-09

@@ -1,11 +1,9 @@
-//! Guards the one-attempt, single-dispatch effect contract.
+//! Guards the shelved one-attempt, single-dispatch effect contract.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const ACTIVE_PLAN: &str = "docs/archive/PLAN/PLAN.md";
-const FLOW_SPEC: &str = "docs/archive/execution/FLOW-SPEC.md";
-const MVP_CHARTER: &str = "docs/scope-reduction-mvp.md";
+const EXECUTION_MODEL: &str = "docs/exe-model.md";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -35,79 +33,33 @@ fn section<'a>(document: &'a str, start: &str, end: &str) -> &'a str {
 }
 
 #[test]
-fn one_attempt_and_single_dispatch_are_folded_back() {
-    let plan = read_document(ACTIVE_PLAN);
-    let effect_posture = normalize(section(
-        &plan,
-        "### v1 effect posture — one attempt, one dispatch",
-        "**Checkpoint recovery must not foreclose fan-out.**",
+fn premium_shelf_keeps_one_attempt_and_single_dispatch() {
+    let model = read_document(EXECUTION_MODEL);
+    let shelf = normalize(section(
+        &model,
+        "### Premium durable shelf contract",
+        "## Data, identity and generated APIs",
     ));
 
     for required in [
-        "a pure occurrence writes no effect-ledger row",
-        "one immutable write-ahead attempt, at most one immutable dispatch fact",
-        "different facts refuse",
-        "first successful insert the sole wire-I/O permit",
-        "`wamn-0h0g.4.9` lands the inaccessible ledger primitive, private run-state API, and database proofs without a production caller.",
+        "A pure occurrence writes no effect-ledger row.",
+        "one immutable write-ahead attempt and at most one immutable dispatch fact",
+        "exact retries are no-ops and different facts refuse",
+        "The first successful dispatch insert is the sole wire-I/O permit.",
         "A sent attempt without a recorded outcome is `effect-uncertain`; it never sends again.",
-        "There is no success assertion, continuation, bulk selection, successor attempt, or silent re-execution.",
+        "Admission idempotency selects the existing run and never licenses effect redispatch.",
+        "There is no success assertion, continuation, bulk selection, successor attempt or silent re-execution.",
     ] {
         assert!(
-            effect_posture.contains(required),
-            "effect posture lost required text: {required:?}"
-        );
-    }
-
-    let charter = read_document(MVP_CHARTER);
-    let execution_cut = normalize(section(
-        &charter,
-        "### 4 · Execution: crash floor, single path, flow calls",
-        "### 5 · Publish gate",
-    ));
-
-    for required in [
-        "pure → no effect attempt",
-        "effectful → one immutable write-ahead attempt identity · at most one dispatch record",
-        "`wamn-0h0g.4.9` lands the inaccessible run-state primitive and its database proofs; it claims no production dispatch activation.",
-        "A sent attempt without a recorded outcome is `effect-uncertain`; neither reclaim nor an admission retry sends it again.",
-        "Inbound admission idempotency selects the existing run; it never licenses effect redispatch.",
-    ] {
-        assert!(
-            execution_cut.contains(required),
-            "MVP execution cut lost required text: {required:?}"
-        );
-    }
-
-    let flow_spec = read_document(FLOW_SPEC);
-    let attempt_protocol = normalize(section(
-        &flow_spec,
-        "### 10.3 Node-attempt protocol",
-        "### 10.4 Inline lease ownership",
-    ));
-
-    for required in [
-        "Pure occurrences skip all four protocol operations.",
-        "the first successful dispatch insert for that exact occurrence",
-        "Attempt and outcome retries are exact-idempotent",
-        "any difference refuses",
-        "A sent attempt without a recorded outcome is **`effect-uncertain`** and never sends again.",
-    ] {
-        assert!(
-            attempt_protocol.contains(required),
-            "FLOW-SPEC attempt protocol lost required text: {required:?}"
+            shelf.contains(required),
+            "premium durable shelf lost required text: {required:?}"
         );
     }
 }
 
 #[test]
 fn retired_effect_retry_taxonomy_stays_deleted() {
-    let documents = format!(
-        "{}\n{}\n{}",
-        read_document(ACTIVE_PLAN),
-        read_document(FLOW_SPEC),
-        read_document(MVP_CHARTER),
-    )
-    .to_ascii_lowercase();
+    let model = read_document(EXECUTION_MODEL).to_ascii_lowercase();
 
     for retired in [
         "stable-key-dedup-v1",
@@ -132,7 +84,7 @@ fn retired_effect_retry_taxonomy_stays_deleted() {
         "attempt-key",
     ] {
         assert!(
-            !documents.contains(retired),
+            !model.contains(retired),
             "retired effect-retry vocabulary returned: {retired:?}"
         );
     }

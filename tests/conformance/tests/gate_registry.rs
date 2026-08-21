@@ -14,10 +14,10 @@ use std::process::Command;
 const REGISTRY_PATH: &str = "architecture/gate-registry.json";
 const GATE_DIRECTORY: &str = "deploy/gates";
 const BUILD_AND_TEST_DOC: &str = "docs/archive/build-and-test.md";
-const LIVE_GATE_AUTHORITY_DOCUMENT: &str = "docs/scope-reduction-mvp.md";
-const LIVE_GATE_AUTHORITY_ANCHOR: &str = "## D · Gate-manifest disposition";
+const LIVE_GATE_AUTHORITY_DOCUMENT: &str = "docs/exe-model.md";
+const LIVE_GATE_AUTHORITY_ANCHOR: &str = "## Proof and delivery";
 const HISTORICAL_PLAN_DOCUMENT: &str = "docs/archive/PLAN/PLAN.md";
-const EXPECTED_GATE_AUTHORITY: &str = "MVP gate-manifest disposition derives from docs/scope-reduction-mvp.md Appendix D. Retained D-number and recipe metadata is historical registry compatibility only. Commands, artifact inputs, and dependencies derive from the referenced Job manifests and recipe-test directives and are intentionally absent.";
+const EXPECTED_GATE_AUTHORITY: &str = "Gate governance derives from docs/exe-model.md §Proof and delivery. This registry records landed gate dispositions; retained D-number and recipe metadata is historical compatibility only. Commands, artifact inputs, and dependencies derive from referenced Job manifests and recipe-test directives and are intentionally absent.";
 const EVIDENCE_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 const SCHEDULING_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 

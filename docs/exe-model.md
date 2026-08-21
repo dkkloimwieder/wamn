@@ -1,282 +1,153 @@
-# Execution model revision — component palette, user wiring, pooled execution (DRAFT for review, rev 4)
+# Execution model — scope-reduction WIP
 
-Status: DRAFT · owner-directed 2026-08-16 · rev 4 adds the
-developer data-access ruling (sqlx), the generative-API pattern,
-and the WASI P3 grounding (the pinned wamn/2.7.0 runtime carries
-`wasmtime-wasi p3`, `component-model-async`, and the pooling
-allocator — verified at the tag) ·
-amends the charter's execution model, authoring surface, and parts
-of the deployment amendment · tracker `wamn-0h0g`.
+Status: **WIP and sole current design authority** (owner-directed 2026-08-21).
+Tracker: `wamn-0h0g`. [PLAN](PLAN/PLAN.md) is the non-normative ordering and
+ambiguity map; completion lives in Beads and git. Documents under `docs/archive/`
+are not design authority; explicitly named operational ledgers remain maintained.
+This document wins every design conflict.
 
-## Rulings proposed
+## Product decisions
 
-**R1 — audience split.** Developers author **components** — typed
-WIT operations with declared ports, parameters, effect posture, and
-connection requirements — published into a per-catalog **library**
-(OCI, digest-pinned, import-audited). Non-technical users wire
-library components into flows dynamically, in production, through
-the studio. Users own composition; developers own logic. This is
-wasmCloud's own division of labor: the component with its WIT
-interface is the unit of development and distribution; composition
-is typed linking, not shared code.
+1. **Components and wirings.** Developers publish digest-pinned, import-audited
+   components with typed ports (JSON Schema), parameters, effects and connection
+   requirements. Users compose them as versioned wirings. Developers own logic;
+   users own composition.
+2. **Durability.** The default is at-least-once delivery, producer idempotency and
+   OTel as the record. The classifier/effect-ledger crash floor remains shelved
+   behind a future premium-durability class gate.
+3. **Deployment.** Platform artifacts use OCI, GitOps and operator-managed hosts.
+   Wirings are gated tenant rows activated by pointer flip, not CRDs or per-edit
+   artifacts.
 
-**R2 — durability default.** At-least-once delivery + producer
-idempotency + OTel as the record. The crash floor (classifier,
-effect ledger, effect-uncertain, operator terminalize) **shelves as
-the future premium durable tier** — landed code behind a class
-gate, not deleted. R2 depends on R1: "document idempotency" is a
-contract available to component developers, not to the wiring
-audience.
+## Runtime target
 
-**R3 — two-tier deployment.** Platform artifacts (components,
-runtime, charts) ride the ratified OCI + GitOps + rollout model.
-**Wirings are data**: versioned, gated, hot-activated by pointer
-flip. Upstream precedent: wasmCloud links components at runtime via
-configurable link definitions — wiring-as-hot-data is the native
-shape, relocated from lattice state into our gated tenant store.
-Divergence annotated: wirings are tenant rows, not CRDs — etcd and
-rollout cadence are wrong for per-user minutes-scale churn.
+- Retire the flow language, expression configs, standard nodes as built-ins, the
+  flowrunner guest, execution plans/compiler, frames/call-flow, per-node durable
+  facts and capture.
+- Rehost the proven frontier walk, port routing and error-edge semantics in one
+  host-native router shared by HTTP and queued execution. A delivery resolves an
+  active wiring, acquires a component instance per node, invokes its operation,
+  routes outputs and ends in `respond`, `emit` or discard under a hop limit.
+- Key wiring resolution by `(tenant, catalog, environment)`; the tenant identity
+  is mandatory even when environment names match.
+- Use per-component-digest pools across wirings. The Wasmtime pooling allocator
+  is already enabled, but the repository's instance pool is still unwired and
+  its 512-slot limit is hard-coded. Fresh instances remain the rule; memory reuse
+  waits for explicit affinity/windowed-state semantics. Pool sizing becomes a
+  measured deployment value.
+- Keep WAC composition only as a demand-gated fusion optimization for measured
+  hot, pure pipelines; the default preserves shared pools and router-edge taps.
 
-## Execution mechanics (how a flow runs)
+One `wamn-execution-host` driver serves HTTP and queued execution through the
+uniform `wamn:node` seam and existing digest-keyed pool; services depend inward
+on execution-host, runtime, catalog and router. `to_port` is enforced whenever a
+target has multiple inputs and may be omitted only for a single-input target.
 
-**What precisely retires, survives, and moves.** *Retires:* the
-node language and expression configs, standard-nodes as language
-builtins (they return as ordinary palette components), the
-flowrunner as a monolithic guest, execution plans + the
-deterministic compiler, frames/call-flow, per-node durable facts,
-capture. *Survives rehosted:* the flow-engine's **graph walk** —
-frontier ordering, port routing, error-edge semantics — moves into
-the host-side **router** largely as-is (it was always the smallest
-part of the engine; the language around it was the bulk).
-*Survives unchanged:* the queue, plugins and effect authority
-(binding → active generation), the gate, ingress begin/wait.
-"Retire the interpreter" in rev 2 was wrong wording: the *language*
-retires; the *walk* is rehosted native.
+## Ingress and durability
 
-**The router.** A host-native module (in the executor/host process,
-~1–2k lines, mostly relocated engine code). Per delivery: resolve
-the wiring (active version from the env-hot store, cached by
-version) → walk the graph in frontier order → per node, acquire a
-**pooled instance of that node's component** and invoke the
-operation over the existing typed WIT seam → route outputs by port
-→ terminal `respond`/`emit`/discard. Budgets become a **hop limit**
-per delivery (the dispatch-budget shape, no frames to bound).
-Effects execute *inside* developer components against bound
-connection generations through the landed plugins — the authority
-chain is unchanged minus the ledger writes.
+1. **Hot HTTP:** attachment → router → response, with no run or queue row.
+   Per-route in-flight bounds refuse excess work with 429.
+2. **Streams:** per-registration durable pull consumers deliver one event or an
+   ordered batch; ack follows completion, retry is bounded, and poison input goes
+   to a capped per-registration DLQ.
+3. **Automations:** admission atomically writes run and queue rows under a producer
+   key; claim/lease hands work to the router; expiry redelivers. `begin`/`wait`
+   and same-key/same-outcome remain.
 
-**Pooling, restored in full.** The upstream pooled allocator
-(#5398) is adopted platform-wide: pre-initialized modules yield
-**fresh instances at microsecond cost**; instance *reuse* (linear
-memory persisting across inputs) stays off until windowed state
-ships with explicit affinity — the fork's `g2br.16` kill-switch
-narrows from per-host to per-capability, mechanism kept. Pools are
-keyed **per component digest, shared across every wiring and tenant
-flow using that component** — fifty wirings using `csv-parse` share
-one warm pool; this cross-wiring amortization is the decisive
-argument for the router over compile-time composition (below), and
-it is where wasmCloud's demonstrated 10⁴–10⁵ concurrent-invocation
-density is earned. Per-host pool sizing is a chart value; audit B's
-fresh-instance conformance test re-runs under the allocator. The
-pinned runtime carries the substrate verified at the tag:
-`wasmtime-wasi` **p3**, `component-model-async`, the pooling
-allocator, and gc — the spec's execution model is configuration of
-the pinned fork, not a future dependency.
+`emit` carries an author-supplied dedup id; automation admission deduplicates it.
+The queue does not survive verbatim: classifier/effect-attempt predicates must be
+class-gated out of the default tier, including the trusted HTTP-effect check.
+An explicit system env-policy class converges into a project-local admission row;
+admission freezes it in `runs.durability_class`, and claims read only that carrier.
 
-**Alternative recorded — compile the wiring (WAC).** wasmCloud's
-native composition tool can link a wiring's components into one
-composite component per wiring version: zero host crossings on
-internal edges, typed at compose time. Rejected as the default:
-per-wiring composites **fragment the instance pools** (defeating
-cross-wiring warmth), mint an artifact per wiring edit (churning
-the hot path R3 exists to keep light), and bury the per-edge tap
-points the studio live-view needs. Recorded as the demand-gated
-**fusion optimization** for proven-hot pure pipelines — the router
-chooses per-edge invocation now, composition later where profiling
-names the need. Per-edge host-crossing cost is the wit-boundary
-cost already accepted as noise against any effect; for pure
-segments it is the price of shared pools and taps.
+### Premium durable shelf contract
 
-## Ingress paths (three, exhaustively)
+- A pure occurrence writes no effect-ledger row.
+- An effectful occurrence has one immutable write-ahead attempt and at most one
+  immutable dispatch fact; exact retries are no-ops and different facts refuse.
+- The first successful dispatch insert is the sole wire-I/O permit.
+- A sent attempt without a recorded outcome is `effect-uncertain`; it never sends
+  again. Admission idempotency selects the existing run and never licenses effect
+  redispatch.
+- There is no success assertion, continuation, bulk selection, successor attempt
+  or silent re-execution.
 
-**1 · Hot HTTP routes.** The landed routing plugin resolves the
-attachment → router runs the wiring inline on pooled instances →
-`respond`. No run row, no queue row, no Postgres in the path.
-Concurrency = pooled instances; backpressure = bounded in-flight
-per route (chart value) then 429.
+## Data, identity and generated APIs
 
-**2 · Streams.** Per-registration **durable pull consumers** on the
-env's JetStream stream (landed materializer machinery, S-branch):
-pull with `{max_batch, max_wait}` — registrations declare
-`input: event | batch`; a batch delivers as one router run with the
-ordered array. **Ack-after-completion**; failure nacks for
-redelivery under the consumer's retry budget; poison dead-letters
-to a capped per-registration DLQ subject (operator surface).
-At-least-once in-stream, by contract. MQTT and device protocols
-enter via NATS's native bridging — no new ingress tier. The
-manifest registration-identity gate (`.15.95`) is unchanged: the
-host checks identity ∈ active manifest before the router sees the
-event.
+- `wamn:postgres` remains the credential-hiding database boundary. sqlx uses a
+  custom runtime-checked `Database` over that transport; upstream `query_as!`
+  supports only built-in drivers, so MVP makes no offline-cache or compile-time
+  query-shape claim and does not widen WIT to imitate Postgres internals.
+- Runtime database identities are per project-environment and tenant. PostgreSQL
+  `current_user`, backed by opaque bounded role names, is the RLS input; caller-
+  settable tenant GUCs retire. `wamn_app` becomes a NOLOGIN ACL role inherited by
+  rotating login generations with no `SET ROLE` escape.
+- Credential selection is host-owned and keyed by `(project, AuthorityClass)`.
+  The closed classes are guest SQL, executor platform, callable HTTP and event
+  materializer. HTTP and event admission are DB-enforced per-kind operations;
+  producer kind is never trusted as a parameter.
+- Generated APIs emit ordinary gated artifacts. `generate crud` produces wirings,
+  route attachments and cases around one generic `entity` component. Nothing
+  generated is gate-exempt or reflection-served.
+- Existing compiled RLS policies use role/user claims that the production claim
+  path does not inject. That correctness defect must close before generated APIs
+  or raw developer SQL become reachable.
 
-**3 · Triggered automations.** Queue-backed (the ~700-line SQL
-queue survives verbatim): admission writes the run+queue row under
-the producer-idempotency key; a worker claims (SKIP LOCKED, lease)
-and hands to the router; completion deletes; crash ⇒ lease expiry ⇒
-redelivery — at-least-once, no classifier. `begin/wait` and
-same-key-same-outcome survive for synchronous callers.
+Per-tenant roles imply pools per credential. Connection multiplication is the
+pooler trigger, not an alternative identity model.
 
-## The boundary (where durability is bought)
+## Release, promotion and observability
 
-`emit` publishes a derived event with an author-supplied dedup id;
-Class-D admission (path 3) dedups on it via the landed
-producer-idempotency machinery — at-least-once in-stream becomes
-exactly-once-admitted at the boundary. Telemetry-rate ingest never
-meets Postgres: NATS → pooled instances → boundary emit. The
-premium durable tier, when sold, slots in at path 3's claim
-(classifier + ledger re-enabled per class) with zero changes to
-paths 1–2.
+- A release closes over catalog version, component/interface digests, bindings
+  and wirings. Promotion applies additive schema, pulls missing digests, verifies
+  target bindings, re-gates wirings and flips pointers. Failure is resumable; no
+  deployment saga is introduced.
+- Registration identity is immutable release content. Hot operational state uses
+  pointer-flipped activation; it does not mutate a manifest digest.
+- OTel carries trace context, one span per component invocation/effect, and
+  per-wiring/registration throughput, error, ack-lag and DLQ metrics. The studio
+  live view is a bounded, redacted router-edge stream, not durable node history.
+- Platform artifacts retain the operator/OCI/GitOps path. Flow-language artifacts
+  and plan-shaped publication surfaces retire with their subjects.
 
-## Developer surface — data access and generated APIs
+## Proof and delivery
 
-**sqlx is the de-facto standard for Postgres access in components
-(ruling).** Developers write `sqlx::query_as!(...)` — compile-time
-checked against the **dev environment's applied catalog** (`cargo
-sqlx prepare`; the offline query cache commits with the component).
-The build records the catalog version the queries were prepared
-against; the release closure's `catalog ≥` rule then binds a
-compile-time fact, and struct/schema drift is a dev-time gate
-failure, never a prod surprise. Upstream precedent: sqlx runs
-in-component today (wasmCloud ships it as a CI fixture; Tokio
-`current_thread` on the WASI socket stack), and P3's native async
-is its intended substrate.
+- All package, WIT, wire and schema versions remain `0.1` through MVP.
+- The gate registry is exhaustive for living gates. Every entry resolves to a
+  live manifest or recipe; retired surfaces keep no corpse coverage. Commands,
+  artifacts and dependencies derive from those sources, not duplicated registry
+  fields. D-number metadata is historical provenance only.
+- A live gate that did not execute is not green. Environment-gated proofs expose
+  skips, independently report every leg and use disposable state where roles or
+  cluster-wide authority are involved.
+- No merge to `mvp` occurs until the entire `wamn-0h0g` scope-reduction program is
+  resolved and the final RC is green on the resulting tip.
 
-**Annotated divergence — the import seam, not raw sockets.** The
-native path gives guests `wasi:sockets` + allowed-hosts and lets
-sqlx speak wire protocol directly. We instead ship a thin **sqlx
-driver backend over `wamn:postgres`** (~200 lines; sqlx's
-multi-backend traits exist for exactly this), now implementable as
-a true async WIT surface under `component-model-async`. Why we
-diverge: host-injected **credential generations** (authors never
-see connection strings), RLS session context set by trusted code,
-a span per effect, and per-attempt authority — the authority model
-is the product; network-policy-grade control is not it. Raw-socket
-sqlx is recorded as the rejected-native alternative. Connection
-requirements ride the component model's own **`implements`**
-naming (on by default in the pinned runtime, #5435): a declared
-store alias (`appdb`) resolved per workload against the host
-plugin registry — upstream's vocabulary for our binding grain, and
-their stated constraint (bindings static, names known ahead of
-time) *is* our admin-bound-connections model.
+### Retained roots
 
-**Generated APIs — one pattern, three grammars (ruling).**
-Authoring automation **emits ordinary gated artifacts**; nothing
-generated is gate-exempt or reflection-served. The flagship:
-`generate crud` walks the applied catalog and emits, per relation,
-five wirings (`http-entry → entity.<op> → respond`), their route
-attachments, and auto-written cases (create→get roundtrip,
-list-filter, update, delete→404) — arriving gate-green by
-construction. The **`entity` component** (standard library,
-platform-authored) is the wirer's generic data node: relation and
-filter spec as declared parameters, RLS enforcing row/tenant scope
-via the landed policy compilation. One generic component means one
-warm pool shared across every CRUD route and wiring — generation
-is document-emission, instant, closure-light; schema evolution is
-re-run → re-gate → flip. Per-relation typed codegen (real WIT
-records per table) is the demand-gated alternative — types at the
-cost of N regenerating components and pool fragmentation; same
-trade shape as WAC fusion, same resolution. The three grammars,
-stated once: **components consume the catalog through sqlx over
-the import (compile-time checked); wirings consume components
-through typed ports (gate-time checked); external consumers hit
-generated routes (runtime, RLS-scoped)** — one schema, three
-access grammars, each bound at its own time. Customization is
-graceful: generated wirings are ordinary wirings — insert a
-palette node ahead of `entity.create`, or swap one route to a
-hand-authored controller; regeneration is emit-if-absent.
+Transitional packages remain only while they serve one of these named outcomes;
+retirement beads remove the package and its marker together.
 
-## Observability
+| Outcome |
+|---|
+| crash floor · M0 execution · flow composition |
+| M0 authenticated admission via the warm run-worker |
+| event spine (causation depth = loop guard) |
+| wake-from-zero |
+| publish gate |
+| provisioning · publish · additive schema · tenant isolation (T1 minting) |
+| management auth |
+| the Postgres standard node (`standard-nodes/src/postgres.rs`) |
+| egress confinement (import allowlist, mutation-proofed) |
+| M0 node set |
+| proof floor |
 
-OTel end-to-end: traceparent from ingress, one span per component
-invocation and per effect, per-wiring/registration metrics
-(throughput, error, ack lag, DLQ depth). The studio **live view**
-taps at router edges — ephemeral payload previews on a bounded
-subject, possible precisely because the router owns every edge
-(the composition alternative would bury them). No durable node
-facts, no `get-run` for the default tier.
+## Owned tradeoffs
 
-## Promotion and the release closure
-
-The release is the deployable closure; promotion is four rules.
-**Schema:** the release names the catalog version it was gated
-against; target's applied version must be ≥ it, else
-`migrate-catalog` (additive-or-refuse) first — one integer
-comparison; component-vs-schema correctness is the **gate's**
-jurisdiction (cases run against the real applied catalog at
-authoring and at promote-time re-gate), never a packaging
-precondition. **Components:** the release lists `(component,
-interface-version)` + digests; target library must cover at
-compatible WIT interfaces, else deploy pulls the digests first.
-Late binding holds within an interface version. **Integrations:**
-requirements bound in target; generations never travel.
-**Wirings:** re-gated at target against target palette + bindings
-(dev green proves logic and shape, not prod endpoints — stated in
-the promote UX), then pointer-flipped; the promote verb records one
-provenance fact (wiring hash, source env, both gate report ids,
-principal, timestamp). Deploy order: migration → components →
-wirings → flips; each step idempotent; mid-way failure leaves
-additive schema and inactive wirings — resumable, no saga.
-**Two speeds, deliberate:** rewiring within the deployed closure is
-the seconds-fast flip; the packaged path runs only when the closure
-grows — developer-cadence by nature (Node-RED's palette-install vs
-live-wiring split).
-
-## Compare and contrast with the current implementation
-
-| Concern | Today (landed) | This spec |
-|---|---|---|
-| Unit of authoring | Flow doc: 9-node language + expressions + in-draft tests | Developer components (WIT ops) + user wirings; same in-draft test contract |
-| Graph execution | flowrunner guest interprets plan; frames, budgets | Host router walks wiring (engine's walk rehosted); hop limit; pooled per-component instances |
-| Instantiation | Per-run instance, pooling off | Pooled allocator platform-wide; per-digest pools shared across wirings; reuse deferred |
-| Hot path | Every trigger: run row + queue + claim + ledger | Routes/streams: zero Postgres; automations: queue only |
-| Durability | Crash floor per effect | At-least-once + idempotency + DLQ; floor shelved as premium tier at path 3 |
-| Streaming | None (run-per-event) | JetStream pull consumers, batch input, ack-after-process, DLQ, MQTT via NATS bridge |
-| Observability | node facts, capture, get-run | OTel spans/metrics + router-edge live view |
-| User-artifact deploy | draft→plan→OCI→CM→rollout | Gated wiring rows, pointer flip; platform tier unchanged |
-| Dev→prod | Per-flow pipeline | Release closure: catalog ≥, digests pulled, bindings verified, re-gate + flip, provenance fact |
-| wasmCloud usage | Sandbox + epoch; pooling off; composition deleted | Components, OCI, typed links, pooled allocator as designed; WAC recorded as fusion option |
-
-## What retires / shelves / survives (vs the measured 61.7k)
-
-Retires (~11k + test mass): flow-model, standard-nodes-as-builtins,
-flowrunner guest, plans + compiler, frames, capture, node facts.
-Rehosts (~1–2k of flow-engine's walk → the router). Shelves
-(~4.2k behind the durable-tier gate): classifier, effect ledger +
-writer generations, effect-uncertain, terminalize. Survives: the
-tenancy/Postgres half, connections/authority, gate + evidence +
-command ledger, queue, ingress, event spine, deploy/operator,
-inventory. `deploy-simplification` redirects: manifest/weld/OCI/
-gate/tenancy waves stand; flow-language waves stop.
-
-## Tradeoffs, owned
-
-Supply chain returns as the load-bearing floor (author executables:
-import audit, digest pinning, eventually signing). At-least-once
-means duplicate component effects under redelivery — idempotency by
-authorship + boundary dedup, the SQS/Sidekiq contract, appropriate
-to the developer audience (R2 ⇐ R1). Per-edge host crossings on
-pure hot pipelines — the price of shared pools and live-view taps;
-WAC fusion is the recorded escape. End-user debugging shifts to
-traces + live view — weaker than durable node facts, accepted.
-Two execution contracts once the durable tier sells. Type-compat
-validation is shape-safety, not semantics — the seconds-fast gate
-carries semantic safety, making its latency a product requirement.
-Hot wiring is the one deliberate walk-back against the deployment
-amendment — bounded by the gate, types, versioning, and instant
-rollback. Subflows (wiring-embeds-wiring) are named-trigger future
-work; initial wirings are flat. Instance reuse with affinity and
-windowed aggregation name **P3 streaming maturity** (native
-streams/futures for long-lived components) as their enabling
-condition alongside client demand. The 2.8 fork sync carries a
-**trace-seam shrink audit**: upstream 2.3+ ships cross-host trace
-propagation and configurable OTel exporters — `g2br.4` drops or
-thins where subsumed.
+- Component supply-chain checks return as a load-bearing boundary.
+- At-least-once permits duplicate effects; authors provide idempotency and the
+  platform deduplicates only at named admission boundaries.
+- Per-edge host crossings buy shared pools and observability; WAC is the escape.
+- The default tier trades durable node history for traces and a bounded live view.
+- Hot wiring is accepted only with typed shape checks, semantic gates, versioned
+  activation and instant rollback.

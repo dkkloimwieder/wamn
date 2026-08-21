@@ -39,18 +39,14 @@
 #   kubectl -n wamn-system rollout status deploy/registry --timeout=120s
 #   # then re-push every artifact (the push flow above) — the claim starts empty
 ---
-# [15.45] WHY durable storage and not the re-push reconciler: ruling 2 keeps
-# catalog.execution_bundles the authoritative append-only bytes home and the OCI
-# copy an idempotently re-derivable projection
-# (docs/deployment-simplification-spec.md:352), so a reconciler that republishes
-# missing blobs remains the better eventual answer — it also survives losing the
-# volume, which this does not. It needs a service to live in; a claim does not.
+# [15.45] Transitional only: this PVC prevents restart loss while the current
+# registry carries re-derivable OCI projections. docs/exe-model.md retires the
+# plan-shaped publication surface; this claim does not retain it or replace a
+# future reconciler.
 #
 # What this removes is exactly one failure: restart-loses-everything. It does NOT
-# make the registry available (one replica, one ReadWriteOnce volume — a node
-# drain or reschedule is still a full outage of the pull path, the availability
-# trade the spec accepts at line 142), and it does not make the bytes recoverable
-# if the volume itself is lost.
+# make the registry available (one replica, one ReadWriteOnce volume), and it
+# does not make the bytes recoverable if the volume itself is lost.
 #
 # No storageClassName: the cluster default binds. That matches the repo's only
 # other PVC consumers, neither of which names a class
