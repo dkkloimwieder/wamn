@@ -89,10 +89,11 @@ impl OutcomeConnector for PostgresOutcomeConnector {
     }
 }
 
-struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+/// Aborts its task when explicitly cancelled or when its sole owner is dropped.
+pub(crate) struct AbortOnDrop<T>(pub(crate) tokio::task::JoinHandle<T>);
 
 impl<T> AbortOnDrop<T> {
-    fn abort(&self) {
+    pub(crate) fn abort(&self) {
         self.0.abort();
     }
 }
@@ -1064,6 +1065,22 @@ mod tests {
         }
     }
 
+    struct AbortWitness(Arc<AtomicBool>);
+
+    impl Drop for AbortWitness {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn pending_abort_owner(started: Arc<AtomicBool>, aborted: Arc<AtomicBool>) -> AbortOnDrop<()> {
+        AbortOnDrop(tokio::spawn(async move {
+            let _witness = AbortWitness(aborted);
+            started.store(true, Ordering::SeqCst);
+            std::future::pending::<()>().await;
+        }))
+    }
+
     #[async_trait]
     impl OutcomeConnector for CountingConnector {
         async fn listen(
@@ -1100,6 +1117,40 @@ mod tests {
         })
         .await
         .expect("condition did not become true");
+    }
+
+    #[test]
+    fn abort_on_drop_has_one_crate_owner() {
+        let flow_invocation = include_str!("flow_invocation.rs");
+        let wiring_doorbell = include_str!("wiring_doorbell.rs");
+        let definition = ["struct ", "AbortOnDrop", "<T>"].concat();
+
+        assert_eq!(flow_invocation.matches(&definition).count(), 1);
+        assert_eq!(wiring_doorbell.matches(&definition).count(), 0);
+    }
+
+    #[tokio::test]
+    async fn dropping_abort_on_drop_aborts_the_task() {
+        let started = Arc::new(AtomicBool::new(false));
+        let aborted = Arc::new(AtomicBool::new(false));
+        let owner = pending_abort_owner(Arc::clone(&started), Arc::clone(&aborted));
+        eventually(|| started.load(Ordering::SeqCst)).await;
+
+        drop(owner);
+
+        eventually(|| aborted.load(Ordering::SeqCst)).await;
+    }
+
+    #[tokio::test]
+    async fn explicit_abort_aborts_the_task() {
+        let started = Arc::new(AtomicBool::new(false));
+        let aborted = Arc::new(AtomicBool::new(false));
+        let owner = pending_abort_owner(Arc::clone(&started), Arc::clone(&aborted));
+        eventually(|| started.load(Ordering::SeqCst)).await;
+
+        owner.abort();
+
+        eventually(|| aborted.load(Ordering::SeqCst)).await;
     }
 
     #[async_trait]

@@ -50,6 +50,8 @@ use tokio_postgres::{AsyncMessage, NoTls};
 use wamn_catalog::{WIRING_ACTIVATION_CHANNEL, WiringActivationNotice};
 use wamn_router::WiringCache;
 
+use crate::flow_invocation::AbortOnDrop;
+
 /// How long a failed doorbell connection waits before reconnecting. Matches the
 /// outcome listener's delay: the same transport with the same failure mode.
 const DOORBELL_RECONNECT_DELAY: Duration = Duration::from_millis(250);
@@ -238,20 +240,6 @@ impl DoorbellConnector for PostgresDoorbellConnector {
 /// emitter owns so the two can never drift apart.
 fn listen_statement() -> String {
     format!("LISTEN {WIRING_ACTIVATION_CHANNEL}")
-}
-
-struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
-
-impl<T> AbortOnDrop<T> {
-    fn abort(&self) {
-        self.0.abort();
-    }
-}
-
-impl<T> Drop for AbortOnDrop<T> {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 
 /// A running doorbell subscription. Reconnects on failure, and stops when
