@@ -376,9 +376,12 @@ fn every_typed_rejection_is_adapted_without_a_run() {
         (404, "attachment-disabled"),
         (409, "idempotency-key-reused"),
         (413, "payload-too-large"),
-        (503, "admission-retry"),
+        (409, "admission-retry"),
         (409, "idempotency-scope-changed"),
     ] {
+        if code == "admission-retry" {
+            assert_eq!(status, 409, "admission-retry is a conflict refusal");
+        }
         let mut backend = FakeBackend::new(route());
         backend.begin = BeginResult::Rejected(Rejection {
             status,
