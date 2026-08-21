@@ -313,11 +313,22 @@ fn wiring_activation_live() {
     let refused = refusal(
         &url,
         &format!(
-            "SET app.tenant = 't1';\n{prepared}\
+            "\\set VERBOSITY verbose\n\
+             SET app.tenant = 't1';\n{prepared}\
              EXECUTE flip('shop','prod','orders-create','{c}',true);\n",
             prepared = prepared(),
             c = hash('c'),
         ),
+    );
+    let refused_sqlstate = refused.lines().find_map(|line| {
+        line.strip_prefix("ERROR:  ")
+            .and_then(|detail| detail.split_once(':'))
+            .map(|(sqlstate, _message)| sqlstate)
+    });
+    assert_eq!(
+        refused_sqlstate,
+        Some("23503"),
+        "the ungated definition must use the foreign-key refusal class: {refused}"
     );
     assert!(
         refused.contains("wiring-definition-not-current"),
