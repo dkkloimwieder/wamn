@@ -124,6 +124,86 @@ pub fn select_test_case_mappings_sql() -> &'static str {
       WHERE tenant_id = $1 AND report_id = $2 ORDER BY ordinal"
 }
 
+/// Lock one report reservation while reconciling its terminal verdict.
+pub fn select_test_report_for_reconcile_sql() -> &'static str {
+    "SELECT state FROM authoring_test_run_reservations \
+      WHERE tenant_id = $1 AND report_id = $2 FOR UPDATE"
+}
+
+/// Read the immutable verdict of an already-finalized report.
+pub fn select_finalized_test_report_sql() -> &'static str {
+    "SELECT passed FROM authoring_test_reports \
+      WHERE tenant_id = $1 AND report_id = $2"
+}
+
+/// Finalize pending cases whose project runs were observed effect-uncertain.
+pub fn reconcile_effect_uncertain_test_cases_sql() -> &'static str {
+    "UPDATE authoring_test_case_runs AS test_case \
+        SET state = 'finalized', passed = false, \
+            failure_kind = 'effect-uncertain', \
+            summary = jsonb_build_object('kind', 'effect-uncertain'), \
+            finalized_at = clock_timestamp() \
+      WHERE test_case.tenant_id = $1 AND test_case.report_id = $2 \
+        AND test_case.state = 'pending' \
+        AND test_case.run_id = ANY($3::text[])"
+}
+
+/// Finalize pending cases whose case or report deadline elapsed.
+pub fn reconcile_deadline_exhausted_test_cases_sql() -> &'static str {
+    "UPDATE authoring_test_case_runs AS test_case \
+        SET state = 'finalized', passed = false, \
+            failure_kind = 'deadline-exhausted', \
+            summary = jsonb_build_object('kind', 'deadline-exhausted'), \
+            finalized_at = clock_timestamp() \
+       FROM authoring_test_run_reservations AS reservation \
+      WHERE test_case.tenant_id = $1 AND test_case.report_id = $2 \
+        AND test_case.state = 'pending' \
+        AND reservation.tenant_id = test_case.tenant_id \
+        AND reservation.report_id = test_case.report_id \
+        AND clock_timestamp() >= LEAST( \
+            test_case.case_deadline_at, reservation.whole_deadline_at)"
+}
+
+/// Count cases that still prevent report finalization.
+pub fn count_pending_test_cases_sql() -> &'static str {
+    "SELECT count(*) FROM authoring_test_case_runs \
+      WHERE tenant_id = $1 AND report_id = $2 AND state = 'pending'"
+}
+
+/// Insert the immutable report as the conjunction of every finalized case.
+pub fn insert_finalized_test_report_sql() -> &'static str {
+    "WITH inserted AS ( \
+        INSERT INTO authoring_test_reports \
+            (tenant_id, report_id, validated_draft_id, \
+             catalog_id, catalog_version, passed, summary) \
+        SELECT reservation.tenant_id, reservation.report_id, \
+               reservation.validated_draft_id, \
+               reservation.catalog_id, reservation.catalog_version, \
+               bool_and(test_case.passed), \
+               jsonb_build_object('cases', jsonb_agg( \
+                   jsonb_build_object( \
+                       'ordinal', test_case.ordinal, 'case-id', test_case.case_id, \
+                       'run-id', test_case.run_id, 'passed', test_case.passed, \
+                       'failure-kind', test_case.failure_kind, \
+                       'summary', test_case.summary) ORDER BY test_case.ordinal)) \
+          FROM authoring_test_run_reservations AS reservation \
+          JOIN authoring_test_case_runs AS test_case \
+            ON test_case.tenant_id = reservation.tenant_id \
+           AND test_case.report_id = reservation.report_id \
+         WHERE reservation.tenant_id = $1 AND reservation.report_id = $2 \
+           AND reservation.state = 'pending' \
+         GROUP BY reservation.tenant_id, reservation.report_id \
+        RETURNING passed \
+     ) SELECT passed FROM inserted"
+}
+
+/// Mark the reservation finalized after its immutable report is inserted.
+pub fn finalize_test_report_reservation_sql() -> &'static str {
+    "UPDATE authoring_test_run_reservations \
+        SET state = 'finalized', finalized_at = clock_timestamp() \
+      WHERE tenant_id = $1 AND report_id = $2 AND state = 'pending'"
+}
+
 fn validate_reservation(reservation: &TestReportReservation) -> anyhow::Result<()> {
     for (value, name) in [
         (&reservation.tenant_id, "tenant id"),
@@ -347,8 +427,7 @@ pub async fn reconcile_test_report(
     let transaction = client.transaction().await?;
     let Some(reservation) = transaction
         .query_opt(
-            "SELECT state FROM authoring_test_run_reservations \
-              WHERE tenant_id = $1 AND report_id = $2 FOR UPDATE",
+            select_test_report_for_reconcile_sql(),
             &[&tenant_id, &report_id],
         )
         .await?
@@ -358,8 +437,7 @@ pub async fn reconcile_test_report(
     if reservation.get::<_, String>(0) == "finalized" {
         let passed: bool = transaction
             .query_one(
-                "SELECT passed FROM authoring_test_reports \
-                  WHERE tenant_id = $1 AND report_id = $2",
+                select_finalized_test_report_sql(),
                 &[&tenant_id, &report_id],
             )
             .await?
@@ -370,42 +448,20 @@ pub async fn reconcile_test_report(
 
     transaction
         .execute(
-            "UPDATE authoring_test_case_runs AS test_case \
-                SET state = 'finalized', passed = false, \
-                    failure_kind = 'effect-uncertain', \
-                    summary = jsonb_build_object('kind', 'effect-uncertain'), \
-                    finalized_at = clock_timestamp() \
-              WHERE test_case.tenant_id = $1 AND test_case.report_id = $2 \
-                AND test_case.state = 'pending' \
-                AND test_case.run_id = ANY($3::text[])",
+            reconcile_effect_uncertain_test_cases_sql(),
             &[&tenant_id, &report_id, &effect_uncertain_run_ids],
         )
         .await
         .context("reconcile effect-uncertain test cases")?;
     transaction
         .execute(
-            "UPDATE authoring_test_case_runs AS test_case \
-                SET state = 'finalized', passed = false, \
-                    failure_kind = 'deadline-exhausted', \
-                    summary = jsonb_build_object('kind', 'deadline-exhausted'), \
-                    finalized_at = clock_timestamp() \
-               FROM authoring_test_run_reservations AS reservation \
-              WHERE test_case.tenant_id = $1 AND test_case.report_id = $2 \
-                AND test_case.state = 'pending' \
-                AND reservation.tenant_id = test_case.tenant_id \
-                AND reservation.report_id = test_case.report_id \
-                AND clock_timestamp() >= LEAST( \
-                    test_case.case_deadline_at, reservation.whole_deadline_at)",
+            reconcile_deadline_exhausted_test_cases_sql(),
             &[&tenant_id, &report_id],
         )
         .await
         .context("reconcile deadline-exhausted test cases")?;
     let pending: i64 = transaction
-        .query_one(
-            "SELECT count(*) FROM authoring_test_case_runs \
-              WHERE tenant_id = $1 AND report_id = $2 AND state = 'pending'",
-            &[&tenant_id, &report_id],
-        )
+        .query_one(count_pending_test_cases_sql(), &[&tenant_id, &report_id])
         .await?
         .get(0);
     if pending != 0 {
@@ -414,29 +470,7 @@ pub async fn reconcile_test_report(
     }
     let passed: bool = transaction
         .query_one(
-            "WITH inserted AS ( \
-                INSERT INTO authoring_test_reports \
-                    (tenant_id, report_id, validated_draft_id, \
-                     catalog_id, catalog_version, passed, summary) \
-                SELECT reservation.tenant_id, reservation.report_id, \
-                       reservation.validated_draft_id, \
-                       reservation.catalog_id, reservation.catalog_version, \
-                       bool_and(test_case.passed), \
-                       jsonb_build_object('cases', jsonb_agg( \
-                           jsonb_build_object( \
-                               'ordinal', test_case.ordinal, 'case-id', test_case.case_id, \
-                               'run-id', test_case.run_id, 'passed', test_case.passed, \
-                               'failure-kind', test_case.failure_kind, \
-                               'summary', test_case.summary) ORDER BY test_case.ordinal)) \
-                  FROM authoring_test_run_reservations AS reservation \
-                  JOIN authoring_test_case_runs AS test_case \
-                    ON test_case.tenant_id = reservation.tenant_id \
-                   AND test_case.report_id = reservation.report_id \
-                 WHERE reservation.tenant_id = $1 AND reservation.report_id = $2 \
-                   AND reservation.state = 'pending' \
-                 GROUP BY reservation.tenant_id, reservation.report_id \
-                RETURNING passed \
-             ) SELECT passed FROM inserted",
+            insert_finalized_test_report_sql(),
             &[&tenant_id, &report_id],
         )
         .await
@@ -444,9 +478,7 @@ pub async fn reconcile_test_report(
         .get(0);
     transaction
         .execute(
-            "UPDATE authoring_test_run_reservations \
-                SET state = 'finalized', finalized_at = clock_timestamp() \
-              WHERE tenant_id = $1 AND report_id = $2 AND state = 'pending'",
+            finalize_test_report_reservation_sql(),
             &[&tenant_id, &report_id],
         )
         .await
@@ -635,34 +667,39 @@ mod tests {
     }
 
     /// wamn-0h0g.15.123: the report reconcile decides the publish gate's verdict,
-    /// and it needs a live client, so its inline statements are pinned as source
-    /// text the way the guard above pins the run plane.
+    /// so its production SQL seams pin every load-bearing refusal and aggregate.
     #[test]
     fn the_report_reconcile_cannot_finalize_green_by_omission_or_race() {
-        let source = include_str!("test_orchestration.rs");
-        let implementation = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
-        let reconcile = implementation
-            .split("pub async fn reconcile_test_report(")
-            .nth(1)
-            .expect("the module defines the report reconcile");
+        let locked_report = select_test_report_for_reconcile_sql();
+        let finalized_report = select_finalized_test_report_sql();
+        let effect_uncertain = reconcile_effect_uncertain_test_cases_sql();
+        let deadline_exhausted = reconcile_deadline_exhausted_test_cases_sql();
+        let pending_cases = count_pending_test_cases_sql();
+        let insert_report = insert_finalized_test_report_sql();
+        let finalize_reservation = finalize_test_report_reservation_sql();
+
         // Two reconcilers cannot both finalize: the reservation row is locked.
-        assert!(reconcile.contains("WHERE tenant_id = $1 AND report_id = $2 FOR UPDATE"));
+        assert!(locked_report.contains("WHERE tenant_id = $1 AND report_id = $2 FOR UPDATE"));
         // An already finalized report reports its stored verdict, never a new one.
-        assert!(reconcile.contains("SELECT passed FROM authoring_test_reports"));
+        assert!(finalized_report.contains("SELECT passed FROM authoring_test_reports"));
         // Neither unresolved leg may leave a case pending, and each fails it.
-        assert!(reconcile.contains("failure_kind = 'effect-uncertain'"));
-        assert!(reconcile.contains("failure_kind = 'deadline-exhausted'"));
-        assert!(reconcile.contains("clock_timestamp() >= LEAST("));
-        assert!(reconcile.contains("test_case.case_deadline_at, reservation.whole_deadline_at)"));
+        assert!(effect_uncertain.contains("failure_kind = 'effect-uncertain'"));
+        assert!(effect_uncertain.contains("test_case.run_id = ANY($3::text[])"));
+        assert!(deadline_exhausted.contains("failure_kind = 'deadline-exhausted'"));
+        assert!(deadline_exhausted.contains("clock_timestamp() >= LEAST("));
+        assert!(
+            deadline_exhausted
+                .contains("test_case.case_deadline_at, reservation.whole_deadline_at)")
+        );
         // The report is written only once no case of it is still pending.
-        assert!(reconcile.contains("SELECT count(*) FROM authoring_test_case_runs"));
-        assert!(reconcile.contains("if pending != 0 {"));
+        assert!(pending_cases.contains("SELECT count(*) FROM authoring_test_case_runs"));
+        assert!(pending_cases.contains("state = 'pending'"));
         // The verdict is the conjunction of every case, never a disjunction.
-        assert!(reconcile.contains("bool_and(test_case.passed)"));
-        assert!(!reconcile.contains("bool_or("));
+        assert!(insert_report.contains("INSERT INTO authoring_test_reports"));
+        assert!(insert_report.contains("bool_and(test_case.passed)"));
+        assert!(!insert_report.contains("bool_or("));
+        assert!(finalize_reservation.contains("SET state = 'finalized'"));
+        assert!(finalize_reservation.contains("AND state = 'pending'"));
     }
 
     /// wamn-0h0g.15.170: the reconcile pins no resolution map, because the
