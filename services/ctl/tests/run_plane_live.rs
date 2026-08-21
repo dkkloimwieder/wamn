@@ -684,6 +684,15 @@ async fn run_plane_reconcile_live() {
     dispatch_reader_read_surface_leg(&su, &url).await;
 }
 
+#[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
+async fn frame_identity_cutover_live() {
+    let url = std::env::var("WAMN_CTL_PG_URL")
+        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let su = connect(&url).await;
+    frame_identity_cutover_leg(&su).await;
+}
+
 /// The dispatcher read principal's in-database surface (wamn-0h0g.12.123).
 ///
 /// The `SELECT` grants target relations in the run-plane schema, which does not
@@ -1824,6 +1833,13 @@ async fn frame_identity_cutover_leg(su: &Client) {
         su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
             .await
             .expect("apply current run-state for populated frame drift refusal");
+        su.batch_execute(&format!(
+            "INSERT INTO {SCHEMA}.environment_policies \
+               (tenant_id,expected_environment,durability_class) \
+             VALUES ('t1','dev','standard')"
+        ))
+        .await
+        .expect("seed the admitted environment policy");
         seed_run_pin_parents(su, "t1", "frame-cat", 1, "dev").await;
         su.batch_execute(&format!(
             "INSERT INTO {SCHEMA}.runs \
@@ -2027,6 +2043,13 @@ async fn frame_identity_cutover_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
         .await
         .expect("apply current run-state");
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.environment_policies \
+           (tenant_id,expected_environment,durability_class) \
+         VALUES ('t1','dev','standard')"
+    ))
+    .await
+    .expect("seed the admitted environment policy");
     su.batch_execute(&format!("DROP TABLE {SCHEMA}.effect_attempts CASCADE;"))
         .await
         .expect("remove effect peer");
