@@ -29,7 +29,7 @@ readonly WAMN_CARGO="${CARGO:-cargo}"
 
 readonly -a WAMN_AUTHORING=(
   test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
-  -p wamn-authoring-model --test contract --test request_collection
+  -p wamn-authoring-model --test contract
 )
 readonly -a WAMN_FLOW_INVOCATION=(
   test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline

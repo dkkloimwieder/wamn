@@ -118,8 +118,6 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
             "wamn-authoring-model".into(),
             "--test".into(),
             "contract".into(),
-            "--test".into(),
-            "request_collection".into(),
         ],
         vec![
             root.clone(),

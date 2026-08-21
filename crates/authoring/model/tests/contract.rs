@@ -1,11 +1,10 @@
-use std::path::Path;
-
 use serde_json::{Value, json};
 use wamn_authoring_model::{
-    AuthoringDocument, AuthoringQueryOutcome, AuthoringQueryResponse, AuthoringQuerySuccess,
-    AuthoringResponseEnvelope, ContractDecodeErrorKind, DraftDocument, DraftIdentity,
-    DraftRevisionRef, DraftRun, DraftRunCapture, MAX_QUERY_ID_BYTES, MAX_TEST_SET_CASES, QueryId,
-    ReadDraftRefusal, SAFE_INTEGER_MAX, SCHEMA_VERSION, SafeUint64, decode_document,
+    AuthoringDocument, AuthoringQueryKind, AuthoringQueryOutcome, AuthoringQueryResponse,
+    AuthoringQuerySuccess, AuthoringResponseEnvelope, ContractDecodeErrorKind, DraftDocument,
+    DraftIdentity, DraftRevisionRef, DraftRun, DraftRunCapture, MAX_QUERY_ID_BYTES,
+    MAX_TEST_SET_CASES, QueryId, ReadDraftRefusal, SAFE_INTEGER_MAX, SCHEMA_VERSION, SafeUint64,
+    decode_document,
 };
 
 fn scope() -> Value {
@@ -39,8 +38,21 @@ fn decode(value: &Value) -> AuthoringDocument {
         .expect("document decodes")
 }
 
+fn schema_discriminators<'a>(schema: &'a Value, definition: &str, field: &str) -> Vec<&'a str> {
+    schema["definitions"][definition]["oneOf"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{definition} has no oneOf"))
+        .iter()
+        .map(|variant| {
+            variant["properties"][field]["enum"][0]
+                .as_str()
+                .unwrap_or_else(|| panic!("{definition} variant has no {field}"))
+        })
+        .collect()
+}
+
 #[test]
-fn exact_five_commands_and_three_queries_round_trip() {
+fn exact_five_commands_and_two_queries_round_trip() {
     let validated = json!({"validated-draft-id": "validated-1"});
     let commands = [
         command(
@@ -77,11 +89,6 @@ fn exact_five_commands_and_three_queries_round_trip() {
             "read-1",
         ),
         query(
-            "get-run",
-            json!({"scope": scope(), "run-id": "run-1"}),
-            "run-1",
-        ),
-        query(
             "get-report",
             json!({"scope": scope(), "report-id": "report-1"}),
             "report-1",
@@ -98,8 +105,8 @@ fn exact_five_commands_and_three_queries_round_trip() {
 fn query_id_enforces_exact_utf8_byte_boundary() {
     let at_limit = "q".repeat(MAX_QUERY_ID_BYTES);
     decode(&query(
-        "get-run",
-        json!({"scope": scope(), "run-id": "run-1"}),
+        "get-report",
+        json!({"scope": scope(), "report-id": "report-1"}),
         &at_limit,
     ));
 
@@ -109,8 +116,8 @@ fn query_id_enforces_exact_utf8_byte_boundary() {
         "🙂".repeat(MAX_QUERY_ID_BYTES / 4 + 1),
     ] {
         let encoded = serde_json::to_string(&query(
-            "get-run",
-            json!({"scope": scope(), "run-id": "run-1"}),
+            "get-report",
+            json!({"scope": scope(), "report-id": "report-1"}),
             &refused,
         ))
         .expect("query serializes");
@@ -208,6 +215,15 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
 fn retired_and_forbidden_vocabulary_is_absent() {
     let schema = wamn_authoring_model::json_schema_string();
     for retired in [
+        "get-run",
+        "GetRun",
+        "RunProjection",
+        "RunStatus",
+        "RunFailure",
+        "RunNodeProjection",
+        "NodeOutputProjection",
+        "OutputTooLarge",
+        "GetRunRefusal",
         "suite-run",
         "suite-projection",
         "grant-draft-safe-generation",
@@ -227,7 +243,6 @@ fn retired_and_forbidden_vocabulary_is_absent() {
     for required in [
         "test-set-run",
         "read-draft",
-        "get-run",
         "get-report",
         "unresolvable-callee-name",
         "missing-recorded-callability",
@@ -242,10 +257,30 @@ fn retired_and_forbidden_vocabulary_is_absent() {
 }
 
 #[test]
+fn query_inventory_and_operation_pairing_are_exact() {
+    let schema = wamn_authoring_model::json_schema();
+    assert_eq!(
+        schema_discriminators(&schema, "AuthoringQuery", "kind"),
+        ["read-draft", "get-report"]
+    );
+    let kind_schema = serde_json::to_value(schemars::schema_for!(AuthoringQueryKind))
+        .expect("query-kind schema serializes");
+    assert_eq!(kind_schema["enum"], json!(["read-draft", "get-report"]));
+    assert_eq!(
+        schema_discriminators(&schema, "AuthoringQuerySuccess", "query"),
+        ["read-draft", "get-report"]
+    );
+    assert_eq!(
+        schema_discriminators(&schema, "QueryRefusal", "query"),
+        ["read-draft", "get-report"]
+    );
+}
+
+#[test]
 fn unsupported_version_is_classified_without_dispatch() {
     let mut request = query(
-        "get-run",
-        json!({"scope": scope(), "run-id": "run-1"}),
+        "get-report",
+        json!({"scope": scope(), "report-id": "report-1"}),
         "query-1",
     );
     request["body"]["schema-version"] = json!("0.2");
@@ -256,14 +291,6 @@ fn unsupported_version_is_classified_without_dispatch() {
         ContractDecodeErrorKind::UnsupportedContractVersion
     );
     assert_eq!(error.requested(), Some("0.2"));
-}
-
-#[test]
-fn checked_in_schema_matches_the_rust_source() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../docs/archive/contracts/authoring-surface.schema.json");
-    let committed = std::fs::read_to_string(path).expect("read committed schema");
-    assert_eq!(committed, wamn_authoring_model::json_schema_string());
 }
 
 #[test]

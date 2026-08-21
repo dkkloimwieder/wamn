@@ -269,10 +269,6 @@ fn unmounted_queries() -> Vec<(&'static str, String)> {
             }),
         ),
         (
-            "get-run",
-            serde_json::json!({"scope": scope.clone(), "run-id": "run-unmounted"}),
-        ),
-        (
             "get-report",
             serde_json::json!({"scope": scope, "report-id": "report-unmounted"}),
         ),
@@ -290,6 +286,24 @@ fn unmounted_queries() -> Vec<(&'static str, String)> {
         (kind, document.to_string())
     })
     .collect()
+}
+
+fn legacy_get_run_query() -> String {
+    serde_json::json!({
+        "document": "request",
+        "body": {
+            "schema-version": "0.1",
+            "query-id": "retired-get-run",
+            "query": {
+                "kind": "get-run",
+                "input": {
+                    "scope": {"project-id": PROJECT, "environment": "dev"},
+                    "run-id": "run-retired",
+                },
+            },
+        },
+    })
+    .to_string()
 }
 
 /// Create one disposable working-tree checkout. There is no repository in it:
@@ -748,7 +762,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
 
     // ---- the unmounted kinds are an absent route, not a product refusal -----
     // The operation-integration owner mounts the remaining four commands and
-    // three queries. This contract cut keeps each one absent.
+    // two queries. This contract cut keeps each one absent.
     // tree and mounted none of them: each either has no backend or has one whose
     // trusted inputs no in-process producer supplies. Two properties have to
     // hold while that is true.
@@ -759,6 +773,25 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     let unmounted = unmounted_commands();
     let unmounted_queries = unmounted_queries();
     let durable_before_unmounted = authoring_durable_counts(&admin).await;
+
+    // `get-run` is no longer part of the Rust contract. Even an admitted author
+    // receives the empty transport-level decode refusal, before route dispatch
+    // can answer `501` or write any durable authoring state.
+    let retired = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &legacy_get_run_query(),
+    )
+    .await;
+    assert_eq!(retired.status, 400, "retired get-run reached dispatch");
+    assert!(retired.body.is_empty(), "decode refusal carried a document");
+    assert_eq!(
+        authoring_durable_counts(&admin).await,
+        durable_before_unmounted,
+        "retired get-run wrote durable authoring state"
+    );
+
     for (name, token) in &refusals {
         for (kind, document) in unmounted.iter().chain(&unmounted_queries) {
             let response = post("/authoring", token.as_deref(), &[], document).await;

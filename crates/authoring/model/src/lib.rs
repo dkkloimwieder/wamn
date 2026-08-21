@@ -302,7 +302,7 @@ pub enum AuthoringCommandKind {
     Publish,
 }
 
-/// Complete three-query authoring inventory.
+/// Complete two-query authoring inventory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -312,7 +312,6 @@ pub enum AuthoringCommandKind {
 )]
 pub enum AuthoringQuery {
     ReadDraft(ReadDraft),
-    GetRun(GetRun),
     GetReport(GetReport),
 }
 
@@ -321,7 +320,6 @@ pub enum AuthoringQuery {
 #[serde(rename_all = "kebab-case")]
 pub enum AuthoringQueryKind {
     ReadDraft,
-    GetRun,
     GetReport,
 }
 
@@ -393,7 +391,6 @@ pub enum AuthoringQueryOutcome {
 )]
 pub enum AuthoringQuerySuccess {
     ReadDraft(DraftDocument),
-    GetRun(RunProjection),
     GetReport(ReportProjection),
 }
 
@@ -407,7 +404,6 @@ pub enum AuthoringQuerySuccess {
 )]
 pub enum QueryRefusal {
     ReadDraft(ReadDraftRefusal),
-    GetRun(GetRunRefusal),
     GetReport(GetReportRefusal),
 }
 
@@ -509,14 +505,6 @@ pub struct ReadDraft {
     pub draft: DraftRevisionRef,
 }
 
-/// Read one author-visible run projection.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct GetRun {
-    pub scope: AuthoringScope,
-    pub run_id: String,
-}
-
 /// Read one pending or finalized immutable report projection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -586,68 +574,6 @@ pub struct PublishedFlowIdentity {
 pub struct DraftDocument {
     pub draft: DraftIdentity,
     pub definition: String,
-}
-
-/// Bounded author-facing run projection.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct RunProjection {
-    pub run_id: String,
-    pub status: RunStatus,
-    pub failure: Option<RunFailure>,
-    pub nodes: Vec<RunNodeProjection>,
-}
-
-/// Public terminal and nonterminal run states.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum RunStatus {
-    Queued,
-    Dispatched,
-    Running,
-    Succeeded,
-    Failed,
-    EffectUncertain,
-}
-
-/// Typed author-facing run failure.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum RunFailure {
-    InvalidInput,
-    RetryExhausted,
-    DeadlineExhausted,
-    EffectUncertain,
-    Terminal,
-}
-
-/// One named node's durable author projection.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct RunNodeProjection {
-    pub node_id: String,
-    pub status: String,
-    pub failure_kind: Option<String>,
-    pub output: Option<NodeOutputProjection>,
-}
-
-/// Stored output or typed oversized-output metadata.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum NodeOutputProjection {
-    Output(Value),
-    OutputTooLarge(OutputTooLarge),
-}
-
-/// Durable metadata for a captured output omitted at the write ceiling.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct OutputTooLarge {
-    #[schemars(schema_with = "output_too_large_kind_schema")]
-    pub kind: String,
-    pub size: SafeUint64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hash: Option<String>,
 }
 
 /// Pending or immutable finalized test report.
@@ -860,27 +786,6 @@ pub enum ReadDraftRefusal {
     },
 }
 
-/// Refusals owned by `get-run`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum GetRunRefusal {
-    AuthorizationDenied,
-    #[schemars(rename_all = "kebab-case")]
-    UnsupportedContractVersion {
-        requested: String,
-        supported: String,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    RunNotFound {
-        run_id: String,
-    },
-}
-
 /// Refusals owned by `get-report`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
@@ -1015,7 +920,7 @@ pub fn json_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(AuthoringDocument)).expect("schema serializes")
 }
 
-/// Canonical pretty JSON bytes for the checked-in schema contract.
+/// Canonical pretty JSON bytes for the authoring contract.
 pub fn json_schema_string() -> String {
     let mut schema = serde_json::to_string_pretty(&json_schema()).expect("schema serializes");
     schema.push('\n');
@@ -1028,17 +933,6 @@ fn schema_version_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::
         ..Default::default()
     };
     schema.enum_values = Some(vec![Value::String(SCHEMA_VERSION.to_owned())]);
-    schemars::schema::Schema::Object(schema)
-}
-
-fn output_too_large_kind_schema(
-    _: &mut schemars::r#gen::SchemaGenerator,
-) -> schemars::schema::Schema {
-    let mut schema = schemars::schema::SchemaObject {
-        instance_type: Some(schemars::schema::InstanceType::String.into()),
-        ..Default::default()
-    };
-    schema.enum_values = Some(vec![Value::String("output-too-large".to_owned())]);
     schemars::schema::Schema::Object(schema)
 }
 

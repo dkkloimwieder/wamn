@@ -776,7 +776,6 @@ impl UnmountedAuthoringQueryAdapter {
 const fn query_kind(query: &AuthoringQuery) -> &'static str {
     match query {
         AuthoringQuery::ReadDraft(_) => "read-draft",
-        AuthoringQuery::GetRun(_) => "get-run",
         AuthoringQuery::GetReport(_) => "get-report",
     }
 }
@@ -888,7 +887,7 @@ fn empty(status: StatusCode) -> Response<Full<Bytes>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_authoring_model::{AuthoringCommandKind, AuthoringScope, GetRun, QueryId};
+    use wamn_authoring_model::{AuthoringCommandKind, AuthoringScope, GetReport, QueryId};
 
     /// The slice of this module between two top-level items, for the structural
     /// guards below.
@@ -1163,14 +1162,15 @@ mod tests {
         let request = AuthoringQueryRequest {
             schema_version: SCHEMA_VERSION.to_owned(),
             query_id: QueryId::try_from("query-1".to_owned()).unwrap(),
-            query: AuthoringQuery::GetRun(GetRun {
+            query: AuthoringQuery::GetReport(GetReport {
                 scope: AuthoringScope {
                     project_id: "project-a".to_owned(),
                     environment: "dev".to_owned(),
                 },
-                run_id: "run-1".to_owned(),
+                report_id: "report-1".to_owned(),
             }),
         };
+        assert_eq!(query_kind(&request.query), "get-report");
         let response = UnmountedAuthoringQueryAdapter
             .dispatch_unmounted(&request)
             .await
