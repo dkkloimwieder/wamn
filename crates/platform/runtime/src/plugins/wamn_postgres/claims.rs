@@ -597,9 +597,8 @@ impl WamnPostgres {
         }
     }
 
-    /// Build from the environment: the default project from
-    /// `DATABASE_URL`/`WAMN_PG_URL`, plus any explicit projects listed in the
-    /// JSON at `WAMN_PG_PROJECTS_FILE` (mounted like a Secret/ConfigMap).
+    /// Build from the environment: the default project from `WAMN_PG_URL`, plus
+    /// explicit projects listed in `WAMN_PG_PROJECTS_FILE` JSON.
     pub fn from_env() -> anyhow::Result<Self> {
         let cfg = WamnPostgresConfig::from_env();
         let default = cfg

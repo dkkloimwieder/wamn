@@ -55,7 +55,7 @@ pub struct FlowBenchArgs {
     #[arg(long, default_value = "/bench/flowrunner.wasm")]
     pub flowrunner: PathBuf,
 
-    /// Postgres connection URL (overrides DATABASE_URL / WAMN_PG_URL). Not
+    /// Postgres connection URL (overrides WAMN_PG_URL). Not
     /// needed for `--mode dispatch`, which never touches the database.
     #[arg(long)]
     pub database_url: Option<String>,
@@ -269,7 +269,7 @@ pub async fn run(args: FlowBenchArgs) -> anyhow::Result<()> {
     }
     cfg.guest_pool_max_size = args.pool_max;
     if db_needed && cfg.database_url.is_none() {
-        bail!("no database url: pass --database-url or set DATABASE_URL / WAMN_PG_URL");
+        bail!("no database url: pass --database-url or set WAMN_PG_URL");
     }
     // The resolved URL (args OR env) — the host-side fixture seeding (SR2) opens
     // its own connection with it, so it must accept the env form the in-cluster

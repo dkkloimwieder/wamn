@@ -67,8 +67,7 @@ pub struct MatBenchArgs {
     #[arg(long, default_value = "/bench/materializer.wasm")]
     pub component: PathBuf,
 
-    /// wamn_app pool URL for the plugin (falls back to WAMN_PG_URL /
-    /// DATABASE_URL).
+    /// wamn_app pool URL for the plugin (falls back to WAMN_PG_URL).
     #[arg(long)]
     pub database_url: Option<String>,
 
@@ -612,7 +611,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         cfg.database_url = Some(url.clone());
     }
     if cfg.database_url.is_none() {
-        bail!("no database url: pass --database-url or set DATABASE_URL / WAMN_PG_URL");
+        bail!("no database url: pass --database-url or set WAMN_PG_URL");
     }
     let pg = Arc::new(WamnPostgres::new(cfg)?);
     pg.set_tenant(BENCH_ID, TENANT)?;
