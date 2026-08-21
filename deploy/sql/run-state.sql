@@ -228,12 +228,12 @@ BEGIN
 END
 $$;
 
--- The system env policy is projected into each project database by
--- `reconcile-run-plane`. Admission reads only this local relation and freezes
--- the selected class onto the run row; changing this row affects future runs
--- only. Each physical project-env database has one expected environment; a
--- missing or mismatched projection refuses admission rather than inventing a
--- policy decision.
+-- Owner ruling wamn-0h0g.20.7 (2026-08-21): the system env policy is projected
+-- by `reconcile-run-plane`; admission reads only this local relation and freezes
+-- the selected class onto the run row, so policy changes affect future runs only.
+-- A project database is constant for (org, project, env), so expected_environment
+-- is verified, never selected as a second key. One tenant has one row; a missing
+-- or mismatched projection refuses admission rather than inventing a decision.
 CREATE TABLE wamn_run.environment_policies (
     tenant_id            text NOT NULL CHECK (tenant_id <> ''),
     expected_environment text NOT NULL CHECK (expected_environment <> ''),

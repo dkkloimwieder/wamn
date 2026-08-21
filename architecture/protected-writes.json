@@ -154,6 +154,7 @@
       ],
       "author-reachable": "no",
       "guards": [
+        "constraint:env_policies_durability_class_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (durability_class = ANY (ARRAY['standard'::text, 'durable'::text]))",
         "constraint:env_policies_name_charset_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (name ~ '^[a-z0-9]+(-[a-z0-9]+)*$'::text AND char_length(name) <= 40)",
         "constraint:env_policies_org_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (org) REFERENCES registry.orgs(id) ON DELETE CASCADE",
         "constraint:env_policies_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (org, name)",
@@ -272,10 +273,12 @@
       ],
       "author-reachable": "no",
       "guards": [
+        "constraint:project_envs_instance_suffix_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (instance_suffix ~ '^[a-z0-9]{8}$'::text)",
         "constraint:project_envs_org_env_fkey;kind=foreign-key;deferrable=true;deferred=false;validated=true;definition=FOREIGN KEY (org, env) REFERENCES registry.env_policies(org, name) DEFERRABLE",
         "constraint:project_envs_org_project_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (org, project) REFERENCES registry.projects(org, id) ON DELETE CASCADE",
         "constraint:project_envs_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (org, project, env)",
-        "row-security:enabled=false;forced=false"
+        "row-security:enabled=false;forced=false",
+        "trigger:project_envs_retire_instance;mode=origin;function=registry.retire_project_env();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER project_envs_retire_instance BEFORE DELETE ON registry.project_envs FOR EACH ROW EXECUTE FUNCTION registry.retire_project_env()"
       ]
     },
     {
@@ -305,6 +308,33 @@
         "constraint:projects_id_charset_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'::text AND char_length(id) <= 40 AND id <> 'wamn'::text AND id !~~ 'wamn-%'::text)",
         "constraint:projects_org_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (org) REFERENCES registry.orgs(id) ON DELETE CASCADE",
         "constraint:projects_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (org, id)",
+        "row-security:enabled=false;forced=false"
+      ]
+    },
+    {
+      "scope": "production-control-database",
+      "relation": "registry.retired_project_envs",
+      "ops": false,
+      "installer": "registry-store",
+      "owner": "registry-store",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "wamn_system",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:retired_project_envs_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (org, project, env, instance_suffix)",
         "row-security:enabled=false;forced=false"
       ]
     },
@@ -439,6 +469,13 @@
       ],
       "roles": [
         {
+          "role": "wamn_control_author",
+          "basis": "grant",
+          "operations": [
+            "insert"
+          ]
+        },
+        {
           "role": "wamn_system",
           "basis": "owner",
           "operations": [
@@ -449,7 +486,7 @@
           ]
         }
       ],
-      "author-reachable": "no",
+      "author-reachable": "author SQL, RLS-bounded",
       "guards": [
         "constraint:authoring_command_audit_audit_id_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, audit_id)",
         "constraint:authoring_command_audit_command_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_id <> ''::text)",
@@ -467,6 +504,7 @@
         "constraint:authoring_command_audit_request_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_command_audit_target_ref_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (target_ref <> ''::text)",
         "constraint:authoring_command_audit_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:authoring_command_audit_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:authoring_command_audit_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:authoring_command_audit_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER authoring_command_audit_immutable BEFORE DELETE OR UPDATE ON catalog.authoring_command_audit FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
@@ -498,6 +536,7 @@
         "constraint:catalog_heads_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, environment)",
         "constraint:catalog_heads_tenant_id_catalog_id_applied_catalog_version_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, applied_catalog_version) REFERENCES catalog.catalogs(tenant_id, catalog_id, version)",
         "constraint:catalog_heads_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:catalog_heads_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:catalog_heads_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true"
       ]
@@ -562,6 +601,7 @@
         "constraint:connection_requirements_requirement_json_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(requirement_json) = 'object'::text)",
         "constraint:connection_requirements_requirement_name_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (requirement_name <> ''::text)",
         "constraint:connection_requirements_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:connection_requirements_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:connection_requirements_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:connection_requirements_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER connection_requirements_immutable BEFORE DELETE OR UPDATE ON catalog.connection_requirements FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
@@ -594,7 +634,6 @@
         "constraint:deployment_attestations_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_version > 0)",
         "constraint:deployment_attestations_coordinate;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, catalog_id, catalog_version, org_id, project_id, environment)",
         "constraint:deployment_attestations_deployed_manifest_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (deployed_manifest_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
-        "constraint:deployment_attestations_deployed_resolution_map_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(deployed_resolution_map) = 'object'::text)",
         "constraint:deployment_attestations_environment_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (environment <> ''::text)",
         "constraint:deployment_attestations_org_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (org_id <> ''::text)",
         "constraint:deployment_attestations_project_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (project_id <> ''::text)",
@@ -635,6 +674,7 @@
         "constraint:draft_safe_connection_grants_reason_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (reason <> ''::text)",
         "constraint:draft_safe_connection_grants_revocation_time;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (revoked_at IS NULL OR revoked_at >= granted_at)",
         "constraint:draft_safe_connection_grants_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:draft_safe_connection_grants_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:draft_safe_connection_grants_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true"
       ]
@@ -650,6 +690,13 @@
       ],
       "roles": [
         {
+          "role": "wamn_control_author",
+          "basis": "grant",
+          "operations": [
+            "insert"
+          ]
+        },
+        {
           "role": "wamn_system",
           "basis": "owner",
           "operations": [
@@ -660,7 +707,7 @@
           ]
         }
       ],
-      "author-reachable": "no",
+      "author-reachable": "author SQL, RLS-bounded",
       "guards": [
         "constraint:execution_bundles_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (byte_length = octet_length(exact_bytes))",
         "constraint:execution_bundles_exact_hash;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (execution_bundle_hash = ('sha256:'::text || encode(sha256(exact_bytes), 'hex'::text)))",
@@ -668,6 +715,7 @@
         "constraint:execution_bundles_format_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (format_version = '0.1'::text)",
         "constraint:execution_bundles_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, execution_bundle_hash)",
         "constraint:execution_bundles_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:execution_bundles_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:execution_bundles_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:execution_bundles_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER execution_bundles_immutable BEFORE DELETE OR UPDATE ON catalog.execution_bundles FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
@@ -700,6 +748,7 @@
         "constraint:flow_artifacts_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, flow_id, flow_version)",
         "constraint:flow_artifacts_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:flow_artifacts_verified_author_principal_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''::text)",
+        "policy:flow_artifacts_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:flow_artifacts_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:flow_artifacts_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER flow_artifacts_immutable BEFORE DELETE OR UPDATE ON catalog.flow_artifacts FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
@@ -716,6 +765,14 @@
       ],
       "roles": [
         {
+          "role": "wamn_control_author",
+          "basis": "grant",
+          "operations": [
+            "insert",
+            "update"
+          ]
+        },
+        {
           "role": "wamn_system",
           "basis": "owner",
           "operations": [
@@ -726,7 +783,7 @@
           ]
         }
       ],
-      "author-reachable": "no",
+      "author-reachable": "author SQL, RLS-bounded",
       "guards": [
         "constraint:flow_drafts_content_present;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (definition IS NOT NULL OR graph_json IS NOT NULL)",
         "constraint:flow_drafts_draft_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (draft_id <> ''::text)",
@@ -735,6 +792,7 @@
         "constraint:flow_drafts_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, draft_id)",
         "constraint:flow_drafts_revision_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (revision > 0)",
         "constraint:flow_drafts_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:flow_drafts_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:flow_drafts_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:flow_drafts_controlled_update;mode=origin;function=catalog.guard_flow_draft_update();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER flow_drafts_controlled_update BEFORE UPDATE ON catalog.flow_drafts FOR EACH ROW EXECUTE FUNCTION catalog.guard_flow_draft_update()",
@@ -845,7 +903,6 @@
         "constraint:release_flow_test_evidence_tenant_id_execution_bundle_hash_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, execution_bundle_hash) REFERENCES catalog.execution_bundles(tenant_id, execution_bundle_hash)",
         "constraint:release_flow_test_evidence_tenant_id_report_id_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, report_id) REFERENCES wamn_run.authoring_test_reports(tenant_id, report_id)",
         "constraint:release_flow_test_evidence_tenant_id_validated_draft_id_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, validated_draft_id) REFERENCES catalog.validated_flow_drafts(tenant_id, validated_draft_hash)",
-        "constraint:release_flow_test_evidence_test_set_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (test_set_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:release_flow_test_evidence_tested_resolution_map_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tested_resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:release_flow_test_evidence_validated_draft_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (validated_draft_id <> ''::text)",
         "policy:release_flow_test_evidence_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
@@ -882,6 +939,7 @@
         "constraint:release_flows_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:release_flows_tenant_id_execution_bundle_hash_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, execution_bundle_hash) REFERENCES catalog.execution_bundles(tenant_id, execution_bundle_hash)",
         "constraint:release_flows_tenant_id_flow_id_flow_version_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, flow_id, flow_version) REFERENCES catalog.flow_artifacts(tenant_id, flow_id, flow_version)",
+        "policy:release_flows_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:release_flows_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:release_flows_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER release_flows_immutable BEFORE DELETE OR UPDATE ON catalog.release_flows FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
@@ -910,11 +968,11 @@
       ],
       "author-reachable": "no",
       "guards": [
-        "constraint:release_manifests_members_json_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(members_json) = 'array'::text)",
         "constraint:release_manifests_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, catalog_version)",
         "constraint:release_manifests_tenant_id_catalog_id_catalog_version_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.catalogs(tenant_id, catalog_id, version)",
         "constraint:release_manifests_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:release_manifests_verified_publisher_principal_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)",
+        "policy:release_manifests_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:release_manifests_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:release_manifests_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER release_manifests_immutable BEFORE DELETE OR UPDATE ON catalog.release_manifests FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
@@ -964,6 +1022,13 @@
       ],
       "roles": [
         {
+          "role": "wamn_control_author",
+          "basis": "grant",
+          "operations": [
+            "insert"
+          ]
+        },
+        {
           "role": "wamn_system",
           "basis": "owner",
           "operations": [
@@ -974,7 +1039,7 @@
           ]
         }
       ],
-      "author-reachable": "no",
+      "author-reachable": "author SQL, RLS-bounded",
       "guards": [
         "constraint:validated_flow_drafts_binding_base_artifact_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (binding_base_artifact_hash <> ''::text)",
         "constraint:validated_flow_drafts_catalog_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text)",
@@ -995,6 +1060,7 @@
         "constraint:validated_flow_drafts_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:validated_flow_drafts_tenant_id_execution_bundle_hash_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, execution_bundle_hash) REFERENCES catalog.execution_bundles(tenant_id, execution_bundle_hash)",
         "constraint:validated_flow_drafts_validated_draft_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (validated_draft_hash <> ''::text)",
+        "policy:validated_flow_drafts_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:validated_flow_drafts_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:validated_flow_drafts_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER validated_flow_drafts_immutable BEFORE DELETE OR UPDATE ON catalog.validated_flow_drafts FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
@@ -1002,10 +1068,10 @@
     },
     {
       "scope": "production-control-database-portable-store",
-      "relation": "wamn_run.authoring_test_case_runs",
+      "relation": "wamn_authority.author_login_tenants",
       "ops": false,
       "installer": "control-portable-store-installer",
-      "owner": "scenario-worker",
+      "owner": "provision-store",
       "mechanisms": [
         "direct-dml"
       ],
@@ -1023,19 +1089,55 @@
       ],
       "author-reachable": "no",
       "guards": [
+        "constraint:author_login_tenants_environment_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (environment <> ''::text)",
+        "constraint:author_login_tenants_login_identity_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (login_identity <> ''::text)",
+        "constraint:author_login_tenants_org_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (org_id <> ''::text)",
+        "constraint:author_login_tenants_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (login_identity)",
+        "constraint:author_login_tenants_project_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (project_id <> ''::text)",
+        "constraint:author_login_tenants_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "row-security:enabled=false;forced=false"
+      ]
+    },
+    {
+      "scope": "production-control-database-portable-store",
+      "relation": "wamn_run.authoring_test_case_runs",
+      "ops": false,
+      "installer": "control-portable-store-installer",
+      "owner": "scenario-worker",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "wamn_control_author",
+          "basis": "grant",
+          "operations": [
+            "insert",
+            "update"
+          ]
+        },
+        {
+          "role": "wamn_system",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "author SQL, RLS-bounded",
+      "guards": [
         "constraint:authoring_test_case_runs_case_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (case_id <> ''::text)",
         "constraint:authoring_test_case_runs_catalog_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text)",
         "constraint:authoring_test_case_runs_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_version > 0)",
-        "constraint:authoring_test_case_runs_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map IS NULL OR resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
-        "constraint:authoring_test_case_runs_check2;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (case_deadline_at > created_at)",
-        "constraint:authoring_test_case_runs_check3;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = 'pending'::text AND passed IS NULL AND failure_kind IS NULL AND summary IS NULL AND finalized_at IS NULL OR state = 'finalized'::text AND passed IS NOT NULL AND summary IS NOT NULL AND finalized_at IS NOT NULL AND finalized_at >= created_at AND (passed AND failure_kind IS NULL OR NOT passed AND failure_kind IS NOT NULL))",
-        "constraint:authoring_test_case_runs_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL))",
-        "constraint:authoring_test_case_runs_failure_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (failure_kind = ANY (ARRAY['assertion-failed'::text, 'deadline-exhausted'::text, 'effect-uncertain'::text, 'resolution-map-mismatch'::text]))",
+        "constraint:authoring_test_case_runs_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = 'pending'::text AND passed IS NULL AND failure_kind IS NULL AND summary IS NULL AND finalized_at IS NULL OR state = 'finalized'::text AND passed IS NOT NULL AND summary IS NOT NULL AND finalized_at IS NOT NULL AND finalized_at >= created_at AND (passed AND failure_kind IS NULL OR NOT passed AND failure_kind IS NOT NULL))",
+        "constraint:authoring_test_case_runs_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (case_deadline_at > created_at)",
+        "constraint:authoring_test_case_runs_failure_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (failure_kind = ANY (ARRAY['assertion-failed'::text, 'deadline-exhausted'::text, 'effect-uncertain'::text]))",
         "constraint:authoring_test_case_runs_ordinal_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (ordinal >= 0 AND ordinal <= 255)",
         "constraint:authoring_test_case_runs_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, report_id, ordinal)",
         "constraint:authoring_test_case_runs_report_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (report_id <> ''::text)",
-        "constraint:authoring_test_case_runs_resolution_map_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'::text)",
-        "constraint:authoring_test_case_runs_resolution_map_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_test_case_runs_run_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (run_id <> ''::text)",
         "constraint:authoring_test_case_runs_state_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = ANY (ARRAY['pending'::text, 'finalized'::text]))",
         "constraint:authoring_test_case_runs_summary_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (summary IS NULL OR jsonb_typeof(summary) = 'object'::text)",
@@ -1044,6 +1146,7 @@
         "constraint:authoring_test_case_runs_tenant_id_report_id_catalog_id_ca_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id) REFERENCES wamn_run.authoring_test_run_reservations(tenant_id, report_id, catalog_id, catalog_version, validated_draft_id)",
         "constraint:authoring_test_case_runs_tenant_id_run_id_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, run_id)",
         "constraint:authoring_test_case_runs_validated_draft_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (validated_draft_id <> ''::text)",
+        "policy:authoring_test_case_runs_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:authoring_test_case_runs_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true"
       ]
@@ -1059,6 +1162,13 @@
       ],
       "roles": [
         {
+          "role": "wamn_control_author",
+          "basis": "grant",
+          "operations": [
+            "insert"
+          ]
+        },
+        {
           "role": "wamn_system",
           "basis": "owner",
           "operations": [
@@ -1069,20 +1179,17 @@
           ]
         }
       ],
-      "author-reachable": "no",
+      "author-reachable": "author SQL, RLS-bounded",
       "guards": [
         "constraint:authoring_test_reports_catalog_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text)",
         "constraint:authoring_test_reports_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_version > 0)",
-        "constraint:authoring_test_reports_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
         "constraint:authoring_test_reports_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, report_id)",
         "constraint:authoring_test_reports_report_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (report_id <> ''::text)",
-        "constraint:authoring_test_reports_resolution_map_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(resolution_map) = 'object'::text)",
-        "constraint:authoring_test_reports_resolution_map_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_test_reports_summary_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(summary) = 'object'::text)",
         "constraint:authoring_test_reports_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:authoring_test_reports_tenant_id_report_id_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, report_id) REFERENCES wamn_run.authoring_test_run_reservations(tenant_id, report_id)",
-        "constraint:authoring_test_reports_tenant_id_test_set_hash_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)",
         "constraint:authoring_test_reports_validated_draft_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (validated_draft_id <> ''::text)",
+        "policy:authoring_test_reports_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:authoring_test_reports_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:authoring_test_reports_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER authoring_test_reports_immutable BEFORE DELETE OR UPDATE ON wamn_run.authoring_test_reports FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
@@ -1099,6 +1206,14 @@
       ],
       "roles": [
         {
+          "role": "wamn_control_author",
+          "basis": "grant",
+          "operations": [
+            "insert",
+            "update"
+          ]
+        },
+        {
           "role": "wamn_system",
           "basis": "owner",
           "operations": [
@@ -1109,25 +1224,21 @@
           ]
         }
       ],
-      "author-reachable": "no",
+      "author-reachable": "author SQL, RLS-bounded",
       "guards": [
         "constraint:authoring_test_run_reservatio_tenant_id_report_id_catalog_i_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id)",
         "constraint:authoring_test_run_reservations_case_count_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (case_count >= 1 AND case_count <= 256)",
         "constraint:authoring_test_run_reservations_catalog_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text)",
         "constraint:authoring_test_run_reservations_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_version > 0)",
-        "constraint:authoring_test_run_reservations_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map IS NULL OR resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
-        "constraint:authoring_test_run_reservations_check2;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (whole_deadline_at > created_at)",
-        "constraint:authoring_test_run_reservations_check3;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = 'pending'::text AND finalized_at IS NULL OR state = 'finalized'::text AND finalized_at IS NOT NULL AND finalized_at >= created_at)",
-        "constraint:authoring_test_run_reservations_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL))",
+        "constraint:authoring_test_run_reservations_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = 'pending'::text AND finalized_at IS NULL OR state = 'finalized'::text AND finalized_at IS NOT NULL AND finalized_at >= created_at)",
+        "constraint:authoring_test_run_reservations_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (whole_deadline_at > created_at)",
         "constraint:authoring_test_run_reservations_command_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_test_run_reservations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, report_id)",
         "constraint:authoring_test_run_reservations_report_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (report_id <> ''::text)",
-        "constraint:authoring_test_run_reservations_resolution_map_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'::text)",
-        "constraint:authoring_test_run_reservations_resolution_map_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_test_run_reservations_state_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = ANY (ARRAY['pending'::text, 'finalized'::text]))",
         "constraint:authoring_test_run_reservations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "constraint:authoring_test_run_reservations_tenant_id_test_set_hash_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)",
         "constraint:authoring_test_run_reservations_validated_draft_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (validated_draft_id <> ''::text)",
+        "policy:authoring_test_run_reservations_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:authoring_test_run_reservations_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true"
       ]
@@ -1167,34 +1278,6 @@
         "constraint:<catalog_entity_name>_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (id)",
         "constraint:<catalog_entity_name>_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:<catalog_entity_name>_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
-        "row-security:enabled=true;forced=true"
-      ]
-    },
-    {
-      "scope": "production-project-database",
-      "relation": "<app_schema>.wamn_catalog",
-      "ops": false,
-      "installer": "ctl-publish",
-      "owner": "schema-model",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "no",
-      "guards": [
-        "constraint:wamn_catalog_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (id)",
-        "policy:wamn_catalog_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = current_setting('app.tenant'::text, true);check=tenant_id = current_setting('app.tenant'::text, true)",
         "row-security:enabled=true;forced=true"
       ]
     },
@@ -1245,18 +1328,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:api_keys_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, id)",
         "constraint:api_keys_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
@@ -1290,9 +1364,7 @@
           "role": "wamn_app",
           "basis": "grant",
           "operations": [
-            "delete",
-            "insert",
-            "update"
+            "insert"
           ]
         }
       ],
@@ -1362,18 +1434,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:permissions_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, role_name, permission)",
         "constraint:permissions_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
@@ -1401,18 +1464,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:roles_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, name)",
         "constraint:roles_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
@@ -1441,18 +1495,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:user_roles_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, user_id, role_name)",
         "constraint:user_roles_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
@@ -1481,18 +1526,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:users_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, id)",
         "constraint:users_status_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (status = ANY (ARRAY['active'::text, 'disabled'::text, 'invited'::text]))",
@@ -1690,18 +1726,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:catalogs_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, version)",
         "constraint:catalogs_state_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = ANY (ARRAY['draft'::text, 'staged'::text, 'applied'::text, 'superseded'::text]))",
@@ -1924,18 +1951,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:constraints_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (kind = ANY (ARRAY['unique'::text, 'check'::text]))",
         "constraint:constraints_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, catalog_version, entity_id, constraint_name)",
@@ -2002,18 +2020,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:entities_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, catalog_version, entity_id)",
         "constraint:entities_tenant_id_catalog_id_catalog_version_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.catalogs(tenant_id, catalog_id, version) ON DELETE CASCADE",
@@ -2047,9 +2056,7 @@
           "role": "wamn_app",
           "basis": "grant",
           "operations": [
-            "delete",
-            "insert",
-            "update"
+            "update(tenant_id)"
           ]
         }
       ],
@@ -2122,18 +2129,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:fields_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, catalog_version, entity_id, field_id)",
         "constraint:fields_tenant_id_catalog_id_catalog_version_entity_id_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version, entity_id) REFERENCES catalog.entities(tenant_id, catalog_id, catalog_version, entity_id) ON DELETE CASCADE",
@@ -2240,18 +2238,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:indexes_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, catalog_version, entity_id, index_name)",
         "constraint:indexes_tenant_id_catalog_id_catalog_version_entity_id_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version, entity_id) REFERENCES catalog.entities(tenant_id, catalog_id, catalog_version, entity_id) ON DELETE CASCADE",
@@ -2280,18 +2269,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:relations_cardinality_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (cardinality = ANY (ARRAY['one-to-many'::text, 'many-to-many'::text, 'hierarchical'::text]))",
         "constraint:relations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, catalog_version, relation_id)",
@@ -2403,8 +2383,7 @@
         "policy:release_flows_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
         "trigger:release_flows_delete_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER release_flows_delete_immutable BEFORE DELETE ON catalog.release_flows FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()",
-        "trigger:release_flows_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER release_flows_immutable BEFORE UPDATE ON catalog.release_flows FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()",
-        "trigger:release_flows_match_manifest;mode=origin;function=catalog.validate_release_members();function-owner=postgres;security-definer=false;config=;definition=CREATE CONSTRAINT TRIGGER release_flows_match_manifest AFTER INSERT ON catalog.release_flows DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION catalog.validate_release_members()"
+        "trigger:release_flows_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER release_flows_immutable BEFORE UPDATE ON catalog.release_flows FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
       ]
     },
     {
@@ -2430,14 +2409,12 @@
       ],
       "author-reachable": "no",
       "guards": [
-        "constraint:release_manifests_members_json_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(members_json) = 'array'::text)",
         "constraint:release_manifests_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, catalog_version)",
         "constraint:release_manifests_tenant_id_catalog_id_catalog_version_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.catalogs(tenant_id, catalog_id, version)",
         "constraint:release_manifests_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:release_manifests_verified_publisher_principal_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)",
         "policy:release_manifests_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:release_manifest_members_complete;mode=origin;function=catalog.validate_release_members();function-owner=postgres;security-definer=false;config=;definition=CREATE CONSTRAINT TRIGGER release_manifest_members_complete AFTER INSERT ON catalog.release_manifests DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION catalog.validate_release_members()",
         "trigger:release_manifests_delete_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER release_manifests_delete_immutable BEFORE DELETE ON catalog.release_manifests FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()",
         "trigger:release_manifests_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER release_manifests_immutable BEFORE UPDATE ON catalog.release_manifests FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
       ]
@@ -2495,18 +2472,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:rls_policies_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, policy_id)",
         "constraint:rls_policies_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
@@ -2533,16 +2501,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "insert"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:schema_migrations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, environment, to_version)",
         "constraint:schema_migrations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
@@ -2569,18 +2530,9 @@
             "truncate",
             "update"
           ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:seed_datasets_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, dataset_id)",
         "constraint:seed_datasets_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
@@ -2644,6 +2596,135 @@
     },
     {
       "scope": "production-project-database",
+      "relation": "catalog.wiring_activation",
+      "ops": false,
+      "installer": "schema-control",
+      "owner": "catalog-model",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:wiring_activation_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, environment, wiring_id)",
+        "constraint:wiring_activation_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:wiring_activation_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
+        "row-security:enabled=true;forced=true",
+        "trigger:wiring_activation_doorbell;mode=origin;function=catalog.notify_wiring_activation();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER wiring_activation_doorbell AFTER INSERT OR UPDATE ON catalog.wiring_activation FOR EACH ROW EXECUTE FUNCTION catalog.notify_wiring_activation()",
+        "trigger:wiring_activation_valid;mode=origin;function=catalog.validate_wiring_activation();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER wiring_activation_valid BEFORE INSERT OR UPDATE ON catalog.wiring_activation FOR EACH ROW EXECUTE FUNCTION catalog.validate_wiring_activation()"
+      ]
+    },
+    {
+      "scope": "production-project-database",
+      "relation": "catalog.wiring_activation_events",
+      "ops": false,
+      "installer": "schema-control",
+      "owner": "catalog-model",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:wiring_activation_events_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (event_seq)",
+        "constraint:wiring_activation_events_promote_provenance;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((source_environment IS NULL) = (source_gate_report_id IS NULL) AND (source_environment IS NULL OR source_environment <> ''::text) AND (source_gate_report_id IS NULL OR source_gate_report_id <> ''::text))",
+        "constraint:wiring_activation_events_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:wiring_activation_events_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
+        "row-security:enabled=true;forced=true",
+        "trigger:wiring_activation_events_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER wiring_activation_events_immutable BEFORE DELETE OR UPDATE ON catalog.wiring_activation_events FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
+      ]
+    },
+    {
+      "scope": "production-project-database",
+      "relation": "catalog.wiring_tombstones",
+      "ops": false,
+      "installer": "schema-control",
+      "owner": "catalog-model",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:wiring_tombstones_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, environment, wiring_id)",
+        "constraint:wiring_tombstones_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:wiring_tombstones_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
+        "row-security:enabled=true;forced=true"
+      ]
+    },
+    {
+      "scope": "production-project-database",
+      "relation": "catalog.wirings",
+      "ops": false,
+      "installer": "schema-control",
+      "owner": "catalog-model",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:wirings_gate_report_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (gate_report_id <> ''::text)",
+        "constraint:wirings_gated_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (gated_catalog_version > 0)",
+        "constraint:wirings_graph_json_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(graph_json) = 'object'::text)",
+        "constraint:wirings_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, wiring_id, version)",
+        "constraint:wirings_tenant_id_catalog_id_gated_catalog_version_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, gated_catalog_version) REFERENCES catalog.catalogs(tenant_id, catalog_id, version)",
+        "constraint:wirings_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "constraint:wirings_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (version > 0)",
+        "constraint:wirings_wiring_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        "constraint:wirings_wiring_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (wiring_id <> ''::text)",
+        "policy:wirings_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
+        "row-security:enabled=true;forced=true",
+        "trigger:wirings_delete_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER wirings_delete_immutable BEFORE DELETE ON catalog.wirings FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()",
+        "trigger:wirings_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER wirings_immutable BEFORE UPDATE ON catalog.wirings FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
+      ]
+    },
+    {
+      "scope": "production-project-database",
       "relation": "wamn_run.authoring_test_case_runs",
       "ops": false,
       "installer": "schema-control",
@@ -2677,16 +2758,12 @@
         "constraint:authoring_test_case_runs_case_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (case_id <> ''::text)",
         "constraint:authoring_test_case_runs_catalog_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text)",
         "constraint:authoring_test_case_runs_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_version > 0)",
-        "constraint:authoring_test_case_runs_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map IS NULL OR resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
-        "constraint:authoring_test_case_runs_check2;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (case_deadline_at > created_at)",
-        "constraint:authoring_test_case_runs_check3;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = 'pending'::text AND passed IS NULL AND failure_kind IS NULL AND summary IS NULL AND finalized_at IS NULL OR state = 'finalized'::text AND passed IS NOT NULL AND summary IS NOT NULL AND finalized_at IS NOT NULL AND finalized_at >= created_at AND (passed AND failure_kind IS NULL OR NOT passed AND failure_kind IS NOT NULL))",
-        "constraint:authoring_test_case_runs_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL))",
-        "constraint:authoring_test_case_runs_failure_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (failure_kind = ANY (ARRAY['assertion-failed'::text, 'deadline-exhausted'::text, 'effect-uncertain'::text, 'resolution-map-mismatch'::text]))",
+        "constraint:authoring_test_case_runs_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = 'pending'::text AND passed IS NULL AND failure_kind IS NULL AND summary IS NULL AND finalized_at IS NULL OR state = 'finalized'::text AND passed IS NOT NULL AND summary IS NOT NULL AND finalized_at IS NOT NULL AND finalized_at >= created_at AND (passed AND failure_kind IS NULL OR NOT passed AND failure_kind IS NOT NULL))",
+        "constraint:authoring_test_case_runs_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (case_deadline_at > created_at)",
+        "constraint:authoring_test_case_runs_failure_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (failure_kind = ANY (ARRAY['assertion-failed'::text, 'deadline-exhausted'::text, 'effect-uncertain'::text]))",
         "constraint:authoring_test_case_runs_ordinal_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (ordinal >= 0 AND ordinal <= 255)",
         "constraint:authoring_test_case_runs_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, report_id, ordinal)",
         "constraint:authoring_test_case_runs_report_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (report_id <> ''::text)",
-        "constraint:authoring_test_case_runs_resolution_map_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'::text)",
-        "constraint:authoring_test_case_runs_resolution_map_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_test_case_runs_run_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (run_id <> ''::text)",
         "constraint:authoring_test_case_runs_state_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = ANY (ARRAY['pending'::text, 'finalized'::text]))",
         "constraint:authoring_test_case_runs_summary_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (summary IS NULL OR jsonb_typeof(summary) = 'object'::text)",
@@ -2732,14 +2809,10 @@
       "author-reachable": "no",
       "guards": [
         "constraint:authoring_test_report_reservation_fk;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, report_id) REFERENCES wamn_run.authoring_test_run_reservations(tenant_id, report_id)",
-        "constraint:authoring_test_report_test_set_fk;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)",
         "constraint:authoring_test_reports_catalog_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text)",
         "constraint:authoring_test_reports_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_version > 0)",
-        "constraint:authoring_test_reports_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
         "constraint:authoring_test_reports_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, report_id)",
         "constraint:authoring_test_reports_report_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (report_id <> ''::text)",
-        "constraint:authoring_test_reports_resolution_map_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(resolution_map) = 'object'::text)",
-        "constraint:authoring_test_reports_resolution_map_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_test_reports_summary_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(summary) = 'object'::text)",
         "constraint:authoring_test_reports_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:authoring_test_reports_validated_draft_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (validated_draft_id <> ''::text)",
@@ -2781,20 +2854,15 @@
       ],
       "author-reachable": "no",
       "guards": [
-        "constraint:authoring_test_reservation_test_set_fk;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)",
         "constraint:authoring_test_run_reservatio_tenant_id_report_id_catalog_i_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id)",
         "constraint:authoring_test_run_reservations_case_count_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (case_count >= 1 AND case_count <= 256)",
         "constraint:authoring_test_run_reservations_catalog_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text)",
         "constraint:authoring_test_run_reservations_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_version > 0)",
-        "constraint:authoring_test_run_reservations_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map IS NULL OR resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
-        "constraint:authoring_test_run_reservations_check2;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (whole_deadline_at > created_at)",
-        "constraint:authoring_test_run_reservations_check3;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = 'pending'::text AND finalized_at IS NULL OR state = 'finalized'::text AND finalized_at IS NOT NULL AND finalized_at >= created_at)",
-        "constraint:authoring_test_run_reservations_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL))",
+        "constraint:authoring_test_run_reservations_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = 'pending'::text AND finalized_at IS NULL OR state = 'finalized'::text AND finalized_at IS NOT NULL AND finalized_at >= created_at)",
+        "constraint:authoring_test_run_reservations_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (whole_deadline_at > created_at)",
         "constraint:authoring_test_run_reservations_command_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_test_run_reservations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, report_id)",
         "constraint:authoring_test_run_reservations_report_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (report_id <> ''::text)",
-        "constraint:authoring_test_run_reservations_resolution_map_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'::text)",
-        "constraint:authoring_test_run_reservations_resolution_map_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_test_run_reservations_state_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (state = ANY (ARRAY['pending'::text, 'finalized'::text]))",
         "constraint:authoring_test_run_reservations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:authoring_test_run_reservations_validated_draft_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (validated_draft_id <> ''::text)",
@@ -2948,6 +3016,37 @@
     },
     {
       "scope": "production-project-database",
+      "relation": "wamn_run.environment_policies",
+      "ops": false,
+      "installer": "schema-control",
+      "owner": "registry-store",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:environment_policies_durability_class_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (durability_class = ANY (ARRAY['standard'::text, 'durable'::text]))",
+        "constraint:environment_policies_expected_environment_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (expected_environment <> ''::text)",
+        "constraint:environment_policies_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id)",
+        "constraint:environment_policies_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:environment_policies_tenant;command=select;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=-",
+        "row-security:enabled=true;forced=true"
+      ]
+    },
+    {
+      "scope": "production-project-database",
       "relation": "wamn_run.invocation_admissions",
       "ops": false,
       "installer": "run-state",
@@ -2971,9 +3070,8 @@
           "role": "wamn_app",
           "basis": "grant",
           "operations": [
-            "delete",
             "insert",
-            "update"
+            "update(tenant_id)"
           ]
         }
       ],
@@ -3142,23 +3240,13 @@
             "delete",
             "insert(admission_context_version)",
             "insert(attachment_id)",
-            "insert(caller_http_status)",
-            "insert(caller_outcome_hash)",
-            "insert(caller_outcome_json)",
-            "insert(caller_outcome_kind)",
-            "insert(caller_release_node_id)",
-            "insert(caller_released_at)",
             "insert(catalog_id)",
             "insert(catalog_version)",
-            "insert(created_at)",
             "insert(environment)",
             "insert(event_depth)",
             "insert(event_root_run_id)",
             "insert(event_source_run_id)",
             "insert(execution_bundle_hash)",
-            "insert(fail_kind)",
-            "insert(fail_node)",
-            "insert(fail_reason)",
             "insert(flow_id)",
             "insert(flow_version)",
             "insert(idempotency_key)",
@@ -3167,50 +3255,24 @@
             "insert(platform_revision)",
             "insert(registration_id)",
             "insert(response_deadline_at)",
-            "insert(result_json)",
             "insert(run_deadline_at)",
             "insert(run_id)",
-            "insert(state_json)",
             "insert(status)",
             "insert(tenant_id)",
-            "insert(terminal_reason)",
             "insert(trigger_source)",
-            "insert(updated_at)",
-            "update(admission_context_version)",
-            "update(attachment_id)",
             "update(caller_http_status)",
             "update(caller_outcome_hash)",
             "update(caller_outcome_json)",
             "update(caller_outcome_kind)",
             "update(caller_release_node_id)",
             "update(caller_released_at)",
-            "update(catalog_id)",
-            "update(catalog_version)",
-            "update(created_at)",
-            "update(environment)",
-            "update(event_depth)",
-            "update(event_root_run_id)",
-            "update(event_source_run_id)",
-            "update(execution_bundle_hash)",
             "update(fail_kind)",
-            "update(fail_node)",
-            "update(fail_reason)",
-            "update(flow_id)",
-            "update(flow_version)",
-            "update(idempotency_key)",
-            "update(input_json)",
-            "update(invocation_context)",
-            "update(platform_revision)",
-            "update(registration_id)",
-            "update(response_deadline_at)",
+            "update(manifest_digest)",
+            "update(release_version)",
             "update(result_json)",
-            "update(run_deadline_at)",
-            "update(run_id)",
             "update(state_json)",
             "update(status)",
-            "update(tenant_id)",
             "update(terminal_reason)",
-            "update(trigger_source)",
             "update(updated_at)"
           ]
         }
@@ -3229,18 +3291,21 @@
         "constraint:runs_check8;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (caller_outcome_kind <> 'responded'::text OR caller_release_node_id IS NOT NULL)",
         "constraint:runs_check9;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL OR response_deadline_at <= run_deadline_at)",
         "constraint:runs_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text AND catalog_version > 0 AND environment <> ''::text AND execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        "constraint:runs_durability_class_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (durability_class = ANY (ARRAY['standard'::text, 'durable'::text]))",
         "constraint:runs_event_depth_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (event_depth >= 0 AND event_depth <= 16)",
         "constraint:runs_execution_bundle_fk;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, execution_bundle_hash) REFERENCES catalog.execution_bundles(tenant_id, execution_bundle_hash)",
         "constraint:runs_fail_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))",
         "constraint:runs_invocation_context_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(invocation_context) = 'object'::text AND octet_length(invocation_context::text) <= 16384)",
         "constraint:runs_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, run_id)",
         "constraint:runs_release_fk;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.release_manifests(tenant_id, catalog_id, catalog_version)",
+        "constraint:runs_release_record_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (release_version IS NULL AND manifest_digest IS NULL OR release_version IS NOT NULL AND manifest_digest IS NOT NULL AND release_version > 0 AND manifest_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:runs_status_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
         "constraint:runs_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:runs_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:runs_admission_pins_immutable;mode=origin;function=wamn_run.guard_run_admission_pins_immutable();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()",
+        "trigger:runs_admission_pins_immutable;mode=origin;function=wamn_run.guard_run_admission_pins_immutable();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, durability_class, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()",
         "trigger:runs_event_lineage_immutable;mode=origin;function=wamn_run.guard_event_lineage_immutable();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()",
+        "trigger:runs_pin_durability_class;mode=origin;function=wamn_run.pin_run_durability_class();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER runs_pin_durability_class BEFORE INSERT ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.pin_run_durability_class()",
         "unique-index:runs_idempotency;valid=true;ready=true;definition=CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs USING btree (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL"
       ]
     }
