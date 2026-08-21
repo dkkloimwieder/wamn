@@ -459,6 +459,98 @@ pub async fn reconcile_test_report(
 mod tests {
     use super::*;
 
+    fn sql_without_comments(sql: &str) -> String {
+        let mut code = String::with_capacity(sql.len());
+        let mut characters = sql.chars().peekable();
+        let mut block_comment_depth = 0_usize;
+        let mut quote = None;
+
+        while let Some(character) = characters.next() {
+            if block_comment_depth != 0 {
+                if character == '/' && characters.peek() == Some(&'*') {
+                    characters.next();
+                    block_comment_depth += 1;
+                } else if character == '*' && characters.peek() == Some(&'/') {
+                    characters.next();
+                    block_comment_depth -= 1;
+                } else if character == '\n' {
+                    code.push(character);
+                }
+                continue;
+            }
+            if let Some(delimiter) = quote {
+                if delimiter == '"' {
+                    code.push(character);
+                }
+                if character == delimiter {
+                    if characters.peek().copied() == Some(delimiter) {
+                        let escaped = characters.next().expect("peeked quote remains available");
+                        if delimiter == '"' {
+                            code.push(escaped);
+                        }
+                    } else {
+                        quote = None;
+                    }
+                }
+                continue;
+            }
+
+            if character == '-' && characters.peek() == Some(&'-') {
+                characters.next();
+                for comment_character in characters.by_ref() {
+                    if comment_character == '\n' {
+                        code.push(comment_character);
+                        break;
+                    }
+                }
+            } else if character == '/' && characters.peek() == Some(&'*') {
+                characters.next();
+                block_comment_depth = 1;
+                code.push(' ');
+            } else {
+                if matches!(character, '\'' | '"') {
+                    quote = Some(character);
+                }
+                code.push(if character == '\'' { ' ' } else { character });
+            }
+        }
+        code
+    }
+
+    fn sql_declares_or_references_retired_test_sets(sql: &str) -> bool {
+        const RELATION_CONTEXT: [&str; 9] = [
+            "TABLE",
+            "FROM",
+            "JOIN",
+            "INTO",
+            "UPDATE",
+            "REFERENCES",
+            "TRUNCATE",
+            "ON",
+            "USING",
+        ];
+
+        let code = sql_without_comments(sql);
+        let tokens = code
+            .split(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '_' | '.'))
+            })
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>();
+
+        tokens.iter().enumerate().any(|(index, token)| {
+            (token.eq_ignore_ascii_case("authoring_test_sets")
+                || token.eq_ignore_ascii_case("wamn_run.authoring_test_sets"))
+                && tokens[index.saturating_sub(4)..index]
+                    .iter()
+                    .any(|context| {
+                        RELATION_CONTEXT
+                            .iter()
+                            .any(|keyword| context.eq_ignore_ascii_case(keyword))
+                    })
+        })
+    }
+
     fn reservation() -> TestReportReservation {
         TestReportReservation {
             tenant_id: "tenant-a".into(),
@@ -620,7 +712,29 @@ mod tests {
         // The project run plane is absent here, which is exactly why the
         // effect-uncertain leg takes observed identities as a parameter.
         assert!(!ddl.contains("CREATE TABLE IF NOT EXISTS wamn_run.runs"));
-        assert!(!ddl.contains("authoring_test_sets"));
+        // The set store retired when the validated draft began covering its
+        // cases directly. Inspect executable relation positions rather than
+        // prose so a comment may still explain why that relation stays absent.
+        assert!(!sql_declares_or_references_retired_test_sets(ddl));
+
+        for comment_only in [
+            "-- retired: do not CREATE TABLE wamn_run.authoring_test_sets again",
+            "/* retired: /* CREATE TABLE wamn_run.authoring_test_sets */ REFERENCES authoring_test_sets */",
+        ] {
+            assert!(!sql_declares_or_references_retired_test_sets(comment_only));
+        }
+        assert!(!sql_declares_or_references_retired_test_sets(
+            "SELECT 'FROM authoring_test_sets is retired'"
+        ));
+        assert!(sql_declares_or_references_retired_test_sets(
+            "CREATE TABLE wamn_run.authoring_test_sets (tenant_id text)"
+        ));
+        assert!(sql_declares_or_references_retired_test_sets(
+            "FOREIGN KEY (test_set_id) REFERENCES authoring_test_sets (id)"
+        ));
+        assert!(sql_declares_or_references_retired_test_sets(
+            "select * from wamn_run.authoring_test_sets"
+        ));
     }
 
     #[test]
