@@ -1579,6 +1579,8 @@ mod tests {
             run_id: "ready".into(),
             payload: "{\"input\":true}".into(),
             lease_generation: 9,
+            wiring_id: "orders".into(),
+            wiring_version: 1,
         };
         assert_eq!(
             claim_guest_input(&ready),

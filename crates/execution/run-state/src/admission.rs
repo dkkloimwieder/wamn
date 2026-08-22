@@ -140,6 +140,7 @@ pub enum AdmissionResult {
     HeadNotFound,
     HeadDrift,
     InactiveDefinition,
+    InactiveWiring,
     DefinitionDrift,
     MissingRootPlan,
     RegistrationNotFound,
@@ -162,6 +163,7 @@ impl AdmissionResult {
             "head-not-found" => Some(Self::HeadNotFound),
             "head-drift" => Some(Self::HeadDrift),
             "inactive-definition" => Some(Self::InactiveDefinition),
+            "inactive-wiring" => Some(Self::InactiveWiring),
             "definition-drift" => Some(Self::DefinitionDrift),
             "missing-root-plan" => Some(Self::MissingRootPlan),
             "registration-not-found" => Some(Self::RegistrationNotFound),
@@ -324,6 +326,7 @@ fn lock_catalog_head_sql() -> String {
 /// 22. immediate source run id (event)
 /// 23. causal root run id (event)
 /// 24. causal depth (event)
+/// 25. trusted wiring id
 ///
 /// HTTP identity is reserved in the deferred-FK ledger before the run insert.
 /// The named unique constraint chooses the concurrent winner without allowing a
@@ -349,8 +352,7 @@ fn lock_catalog_head_sql() -> String {
 ///   and a position-keyed run can never claim each other's identity.
 ///
 /// The key is derived from the presented event body rather than taken as a
-/// parameter because the parameter numbers are already fixed by the guests
-/// binding this statement positionally, and because the id is the AUTHOR's fact:
+/// parameter because the id is the AUTHOR's fact:
 /// the emitting component derives it from the identities in its `node-context`,
 /// exactly as an HTTP caller supplies a client key.
 ///
@@ -390,7 +392,7 @@ WITH input AS ( \
            $18::text AS registration_id, $19::bigint AS event_seq, \
            $20::text::jsonb AS registration_document, $21::text AS registration_hash, \
            $22::text AS event_source_run_id, $23::text AS event_root_run_id, \
-           $24::int AS event_depth, \
+           $24::int AS event_depth, $25::text AS wiring_id, \
            CASE WHEN $1::text = 'event' THEN 'evt:' || $18::text || ':' \
              || COALESCE('dedup:' || NULLIF(CASE \
                   WHEN jsonb_typeof($10::text::jsonb) = 'object' \
@@ -402,6 +404,27 @@ locked_head AS MATERIALIZED ( \
       FROM catalog.catalog_heads AS h, input AS i \
      WHERE h.tenant_id = i.tenant_id AND h.catalog_id = i.catalog_id \
        AND h.environment = i.environment \
+), \
+active_wiring AS MATERIALIZED ( \
+    SELECT activation.wiring_id, wiring.version AS wiring_version \
+      FROM catalog.wiring_activation AS activation \
+      JOIN catalog.wirings AS wiring \
+        ON wiring.tenant_id = activation.tenant_id \
+       AND wiring.catalog_id = activation.catalog_id \
+       AND wiring.wiring_id = activation.wiring_id \
+       AND wiring.wiring_hash = activation.confirmed_definition_hash \
+      CROSS JOIN input AS i \
+     WHERE activation.tenant_id = i.tenant_id \
+       AND activation.catalog_id = i.catalog_id \
+       AND activation.environment = i.environment \
+       AND activation.wiring_id = i.wiring_id \
+       AND activation.enabled \
+       AND NOT EXISTS ( \
+           SELECT 1 FROM catalog.wiring_tombstones AS dead \
+            WHERE dead.tenant_id = activation.tenant_id \
+              AND dead.catalog_id = activation.catalog_id \
+              AND dead.environment = activation.environment \
+              AND dead.wiring_id = activation.wiring_id) \
 ), \
 active_definition AS MATERIALIZED ( \
     SELECT a.attachment_id, a.attachment_kind, a.definition_hash, \
@@ -478,7 +501,8 @@ classified AS ( \
         OR i.flow_version <= 0 OR i.run_id IS NULL OR i.run_id = '' \
         OR i.input_json IS NULL OR i.invocation_context IS NULL \
         OR jsonb_typeof(i.invocation_context) IS DISTINCT FROM 'object' \
-        OR i.platform_revision IS NULL OR i.platform_revision = '' THEN 'invalid-input' \
+        OR i.platform_revision IS NULL OR i.platform_revision = '' \
+        OR i.wiring_id IS NULL OR i.wiring_id = '' THEN 'invalid-input' \
       WHEN i.response_deadline_at IS NOT NULL AND i.run_deadline_at IS NOT NULL \
         AND i.response_deadline_at > i.run_deadline_at THEN 'invalid-input' \
       WHEN i.producer = 'http' AND (i.attachment_id IS NULL \
@@ -504,6 +528,7 @@ classified AS ( \
         THEN 'invalid-input' \
       WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
       WHEN h.applied_catalog_version <> i.expected_catalog_version THEN 'head-drift' \
+      WHEN aw.wiring_id IS NULL THEN 'inactive-wiring' \
       WHEN rf.flow_id IS NULL THEN 'definition-drift' \
       WHEN rp.execution_bundle_hash IS NULL THEN 'missing-root-plan' \
       WHEN i.producer = 'http' AND d.attachment_id IS NULL THEN 'inactive-definition' \
@@ -540,6 +565,8 @@ classified AS ( \
          OR xr.catalog_version IS DISTINCT FROM i.expected_catalog_version \
          OR xr.environment IS DISTINCT FROM i.environment \
          OR xr.execution_bundle_hash IS DISTINCT FROM rp.execution_bundle_hash \
+         OR xr.wiring_id IS DISTINCT FROM aw.wiring_id \
+         OR xr.wiring_version IS DISTINCT FROM aw.wiring_version \
          OR xr.attachment_id IS DISTINCT FROM i.attachment_id \
          OR xr.registration_id IS DISTINCT FROM i.registration_id \
          OR (COALESCE(i.event_depth, 0) <> 0 \
@@ -552,10 +579,11 @@ classified AS ( \
       WHEN i.producer = 'http' AND eh.run_id IS NOT NULL THEN 'duplicate' \
       WHEN xr.run_id IS NOT NULL THEN 'duplicate' \
       ELSE 'ready' END AS result_code, \
-      i.*, rp.artifact_hash, rp.execution_bundle_hash, \
+      i.*, aw.wiring_version, rp.artifact_hash, rp.execution_bundle_hash, \
       eh.run_id AS admitted_run_id, xr.run_id AS existing_run_id \
     FROM input AS i \
     LEFT JOIN locked_head AS h ON true \
+    LEFT JOIN active_wiring AS aw ON true \
     LEFT JOIN active_definition AS d ON true \
     LEFT JOIN live_registration AS er ON true \
     LEFT JOIN source_lineage AS sl ON true \
@@ -581,13 +609,13 @@ created_http AS ( \
 created_run AS ( \
     INSERT INTO wamn_run.runs \
       (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
-       execution_bundle_hash, attachment_id, registration_id, status, trigger_source, input_json, \
+       execution_bundle_hash, wiring_id, wiring_version, attachment_id, registration_id, status, trigger_source, input_json, \
        event_source_run_id, event_root_run_id, event_depth, \
        invocation_context, admission_context_version, platform_revision, idempotency_key, \
        response_deadline_at, run_deadline_at) \
     SELECT c.tenant_id, c.run_id, c.flow_id, c.flow_version, c.catalog_id, \
            c.expected_catalog_version, c.environment, \
-           c.execution_bundle_hash, \
+           c.execution_bundle_hash, c.wiring_id, c.wiring_version, \
            CASE WHEN c.producer = 'http' THEN c.attachment_id END, \
            CASE WHEN c.producer = 'event' THEN c.registration_id END, \
            'dispatched', c.producer, c.input_json, \
@@ -653,6 +681,7 @@ SELECT CASE \
 /// 12. authoring command id (draft-run)
 /// 13. report id (test case)
 /// 14. case ordinal (test case)
+/// 15. trusted wiring id
 ///
 /// The producer key, `trigger_source`, and `capture_mode` are DERIVED from
 /// parameter 1 rather than presented, so no caller can admit a draft-only
@@ -704,7 +733,8 @@ WITH input AS ( \
            $6::int AS flow_version, $7::text AS run_id, \
            $8::text::jsonb AS input_json, $9::text::jsonb AS invocation_context, \
            $10::text AS platform_revision, $11::timestamptz AS run_deadline_at, \
-           $12::text AS command_id, $13::text AS report_id, $14::int AS case_ordinal \
+           $12::text AS command_id, $13::text AS report_id, $14::int AS case_ordinal, \
+           $15::text AS wiring_id \
 ), \
 keyed AS ( \
     SELECT i.*, \
@@ -727,6 +757,27 @@ locked_head AS MATERIALIZED ( \
       FROM catalog.catalog_heads AS h, keyed AS k \
      WHERE h.tenant_id = k.tenant_id AND h.catalog_id = k.catalog_id \
        AND h.environment = k.environment \
+), \
+active_wiring AS MATERIALIZED ( \
+    SELECT activation.wiring_id, wiring.version AS wiring_version \
+      FROM catalog.wiring_activation AS activation \
+      JOIN catalog.wirings AS wiring \
+        ON wiring.tenant_id = activation.tenant_id \
+       AND wiring.catalog_id = activation.catalog_id \
+       AND wiring.wiring_id = activation.wiring_id \
+       AND wiring.wiring_hash = activation.confirmed_definition_hash \
+      CROSS JOIN keyed AS k \
+     WHERE activation.tenant_id = k.tenant_id \
+       AND activation.catalog_id = k.catalog_id \
+       AND activation.environment = k.environment \
+       AND activation.wiring_id = k.wiring_id \
+       AND activation.enabled \
+       AND NOT EXISTS ( \
+           SELECT 1 FROM catalog.wiring_tombstones AS dead \
+            WHERE dead.tenant_id = activation.tenant_id \
+              AND dead.catalog_id = activation.catalog_id \
+              AND dead.environment = activation.environment \
+              AND dead.wiring_id = activation.wiring_id) \
 ), \
 release_flow AS MATERIALIZED ( \
     SELECT f.tenant_id, f.flow_id, f.flow_version, f.execution_bundle_hash, \
@@ -755,7 +806,7 @@ keyed_run AS MATERIALIZED ( \
 existing_run AS MATERIALIZED ( \
     SELECT r.run_id, r.idempotency_key, r.trigger_source, r.capture_mode, \
            r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, \
-           r.environment, r.execution_bundle_hash, r.input_json \
+           r.environment, r.execution_bundle_hash, r.wiring_id, r.wiring_version, r.input_json \
       FROM wamn_run.runs AS r, keyed AS k \
      WHERE r.tenant_id = k.tenant_id AND r.run_id = k.run_id \
 ), \
@@ -770,7 +821,8 @@ classified AS ( \
         OR k.input_json IS NULL OR k.invocation_context IS NULL \
         OR jsonb_typeof(k.invocation_context) IS DISTINCT FROM 'object' \
         OR k.platform_revision IS NULL OR k.platform_revision = '' \
-        OR k.run_deadline_at IS NULL THEN 'invalid-input' \
+        OR k.run_deadline_at IS NULL OR k.wiring_id IS NULL \
+        OR k.wiring_id = '' THEN 'invalid-input' \
       WHEN k.producer = 'draft-run' AND (k.command_id IS NULL OR k.command_id = '' \
         OR k.report_id IS NOT NULL OR k.case_ordinal IS NOT NULL) \
         THEN 'invalid-input' \
@@ -789,6 +841,8 @@ classified AS ( \
          OR xr.catalog_id IS DISTINCT FROM k.catalog_id \
          OR xr.catalog_version IS DISTINCT FROM k.expected_catalog_version \
          OR xr.environment IS DISTINCT FROM k.environment \
+         OR xr.wiring_id IS DISTINCT FROM aw.wiring_id \
+         OR xr.wiring_version IS DISTINCT FROM aw.wiring_version \
          OR (plan.execution_bundle_hash IS NOT NULL \
            AND h.applied_catalog_version = k.expected_catalog_version \
            AND xr.execution_bundle_hash IS DISTINCT FROM plan.execution_bundle_hash) \
@@ -797,13 +851,15 @@ classified AS ( \
       WHEN xr.run_id IS NOT NULL THEN 'duplicate' \
       WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
       WHEN h.applied_catalog_version <> k.expected_catalog_version THEN 'head-drift' \
+      WHEN aw.wiring_id IS NULL THEN 'inactive-wiring' \
       WHEN rf.flow_id IS NULL THEN 'definition-drift' \
       WHEN plan.execution_bundle_hash IS NULL THEN 'missing-root-plan' \
       ELSE 'ready' END AS result_code, \
-      k.*, plan.artifact_hash, plan.execution_bundle_hash, \
+      k.*, aw.wiring_version, plan.artifact_hash, plan.execution_bundle_hash, \
       COALESCE(xr.run_id, kr.run_id) AS existing_run_id \
     FROM keyed AS k \
     LEFT JOIN locked_head AS h ON true \
+    LEFT JOIN active_wiring AS aw ON true \
     LEFT JOIN release_flow AS rf ON true \
     LEFT JOIN root_plan AS plan ON true \
     LEFT JOIN keyed_run AS kr ON true \
@@ -812,12 +868,13 @@ classified AS ( \
 created_run AS ( \
     INSERT INTO wamn_run.runs \
       (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
-       execution_bundle_hash, status, trigger_source, capture_mode, input_json, \
+       execution_bundle_hash, wiring_id, wiring_version, status, trigger_source, capture_mode, input_json, \
        invocation_context, admission_context_version, platform_revision, idempotency_key, \
        run_deadline_at) \
     SELECT c.tenant_id, c.run_id, c.flow_id, c.flow_version, c.catalog_id, \
            c.expected_catalog_version, c.environment, \
-           c.execution_bundle_hash, 'dispatched', c.trigger_source, c.capture_mode, \
+           c.execution_bundle_hash, c.wiring_id, c.wiring_version, \
+           'dispatched', c.trigger_source, c.capture_mode, \
            c.input_json, \
            jsonb_build_object( \
              'version', '0.1', \
@@ -882,8 +939,8 @@ mod tests {
         let sql = admission_sql().admit;
 
         assert!(!sql.contains("admission_expires_at"));
-        assert!(sql.contains("$24"));
-        assert!(!sql.contains("$25"));
+        assert!(sql.contains("$25::text AS wiring_id"));
+        assert!(!sql.contains("$26"));
         assert!(!sql.contains("executor_id"));
         assert!(!sql.contains("lease_ttl_ms"));
         assert!(sql.contains("OR i.client_key_digest = ''"));
@@ -973,7 +1030,7 @@ mod tests {
     #[test]
     fn callable_admission_forces_capture_off_without_new_input() {
         let sql = admission_sql().admit().to_string();
-        assert!(!sql.contains("$25"));
+        assert!(sql.contains("$25::text AS wiring_id"));
         assert!(!sql.contains("event_source_run_id, event_root_run_id, event_depth, capture_mode"));
         assert!(
             sql.contains(
@@ -996,11 +1053,11 @@ mod tests {
         // rather than to a degenerate key: an empty id is NOT an id.
         assert!(sql.contains("jsonb_typeof($10::text::jsonb) = 'object'"));
         assert!(sql.contains("END, ''), $19::bigint::text) END AS event_idempotency_key"));
-        // The parameter count is UNCHANGED. Every guest binds this statement
-        // positionally, so the key is derived from the presented body, exactly
-        // as `capture_mode` and `trigger_source` are derived from the producer.
+        // The event key remains derived from the presented body. Wiring is the
+        // one new trusted admission operand and does not participate in it.
         assert!(sql.contains("$24"));
-        assert!(!sql.contains("$25"));
+        assert!(sql.contains("$25::text AS wiring_id"));
+        assert!(!sql.contains("$26"));
     }
 
     #[test]
@@ -1079,7 +1136,7 @@ mod tests {
         assert!(sql.contains("f.execution_bundle_hash"));
         assert!(sql.contains("JOIN catalog.execution_bundles AS bundle"));
         assert!(sql.contains("bundle.execution_bundle_hash = rf.execution_bundle_hash"));
-        assert!(sql.contains("execution_bundle_hash, attachment_id"));
+        assert!(sql.contains("execution_bundle_hash, wiring_id, wiring_version, attachment_id"));
         assert!(sql.contains("xr.execution_bundle_hash IS DISTINCT FROM rp.execution_bundle_hash"));
         assert!(sql.contains("THEN 'missing-root-plan'"));
     }
@@ -1145,8 +1202,9 @@ mod tests {
             "catalog.active_attachments must remain the enablement filter"
         );
 
-        // Enablement enters through that relation, never as admission input.
-        assert!(!sql.contains("enabled"));
+        // Attachment enablement enters through that relation, never as an
+        // admission input. The separate trusted wiring pointer is also live.
+        assert!(!sql.contains("::bool AS enabled"));
         assert_eq!(
             AdmissionResult::from_parts("inactive-definition", None),
             Some(AdmissionResult::InactiveDefinition)
@@ -1257,10 +1315,11 @@ mod tests {
             "WHEN 'test-case' THEN '{}'::text",
             CaptureMode::Off.as_str()
         )));
-        // Capture is derived, never bound: the parameter list stops at the
-        // producer coordinate.
+        // Capture remains derived. The only operand after the producer
+        // coordinate is the separately ratified trusted wiring id.
         assert!(sql.contains("$14::int AS case_ordinal"));
-        assert!(!sql.contains("$15"));
+        assert!(sql.contains("$15::text AS wiring_id"));
+        assert!(!sql.contains("$16"));
         assert!(sql.contains("END AS capture_mode"));
         assert!(!sql.contains("::text AS capture_mode"));
         // The DDL pairs a full-capture run with exactly this trigger literal.
@@ -1317,7 +1376,9 @@ mod tests {
         let sql = management_admission_sql().admit;
 
         assert!(sql.contains("INSERT INTO wamn_run.runs"));
-        assert!(sql.contains("status, trigger_source, capture_mode, input_json"));
+        assert!(sql.contains(
+            "wiring_id, wiring_version, status, trigger_source, capture_mode, input_json"
+        ));
         assert!(sql.contains("'dispatched', c.trigger_source, c.capture_mode"));
         assert!(sql.contains("INSERT INTO wamn_run.run_queue"));
         assert!(sql.contains("(tenant_id, run_id, available_at, stream_seq)"));
@@ -1462,9 +1523,9 @@ mod tests {
         // must never name it in its run insert.
         assert!(callable.contains("registration_id, status, trigger_source, input_json"));
         assert!(!callable.contains("trigger_source, capture_mode"));
-        // The guests binding this statement positionally fix its parameter count.
-        assert!(callable.contains("$24"));
-        assert!(!callable.contains("$25"));
+        // The one new positional operand is the trusted wiring id.
+        assert!(callable.contains("$25::text AS wiring_id"));
+        assert!(!callable.contains("$26"));
     }
 
     #[test]

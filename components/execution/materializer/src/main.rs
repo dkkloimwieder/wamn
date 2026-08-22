@@ -441,6 +441,9 @@ fn fire_txn(cfg: &Config, serving: &Serving, plan: &FirePlan) -> Result<bool, St
                 text(&plan.source_run_id),
                 text(&plan.causation.root),
                 int32(i32::try_from(plan.causation.depth).expect("causation depth is bounded")),
+                // The ratified 25th operand is intentionally absent: Serving
+                // does not yet carry the registration-owned trusted wiring id,
+                // and this boundary must not infer it.
             ],
         )
         .map_err(|e| pg_name(&e))?;

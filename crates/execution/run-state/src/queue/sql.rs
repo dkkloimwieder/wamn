@@ -43,7 +43,8 @@ pub fn enqueue_evt_sql() -> String {
 ///
 /// The projection is exactly what the host composer decodes: the run id, prior
 /// lease evidence, the status it validates, the authoritative input it hands
-/// the guest, and the durability class it gates the rest of the turn on. The
+/// the guest, the durability class it gates the rest of the turn on, and the
+/// immutable wiring pair admission froze. The
 /// release identity a claim records is NOT read here — it comes from the
 /// claiming pod, and the lease grant writes it.
 pub fn select_production_claim_sql() -> String {
@@ -74,7 +75,7 @@ pub fn select_production_claim_sql() -> String {
          ) \
          SELECT candidate.run_id, candidate.had_prior_lease, r.status, \
                 ({execution_input})::text AS input_json, \
-                r.durability_class \
+                r.durability_class, r.wiring_id, r.wiring_version \
            FROM candidate \
            JOIN runs AS r \
              ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",

@@ -20,6 +20,8 @@ use super::{ReleaseIdentity, WamnPostgres};
 pub enum ProductionClaimErrorKind {
     /// Required host-injected identity was absent.
     Identity,
+    /// The admitted run has no complete, valid frozen wiring identity.
+    WiringIdentity,
     /// PostgreSQL checkout, transaction, query, or commit failed.
     Storage,
     /// Stored data or a typed database result violated the claim contract.
@@ -80,6 +82,8 @@ pub enum ProductionClaimResult {
         run_id: String,
         payload: String,
         lease_generation: i64,
+        wiring_id: String,
+        wiring_version: i32,
     },
     /// Claim-time classification removed the row without execution.
     Terminalized {
@@ -127,6 +131,8 @@ struct SelectedClaim {
     /// locked. Everything the crash floor does in this transaction is gated on
     /// it (wamn-0h0g.20.2).
     durability_class: DurabilityClass,
+    wiring_id: String,
+    wiring_version: i32,
 }
 
 #[derive(Debug)]
@@ -481,6 +487,8 @@ async fn claim_in_transaction(
         run_id: selected.run_id,
         payload: selected.payload,
         lease_generation,
+        wiring_id: selected.wiring_id,
+        wiring_version: selected.wiring_version,
     }))
 }
 
@@ -701,13 +709,44 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     // the strength of data it could not parse, and it must not fail the queue
     // either.
     let class_text: String = row_value(row, 4, "durability class")?;
+    let wiring_id: Option<String> = row_value(row, 5, "wiring id")?;
+    let wiring_version: Option<i32> = row_value(row, 6, "wiring version")?;
+    let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
         status,
         payload: row_value(row, 3, "authoritative input")?,
         durability_class: DurabilityClass::from_sql_or_default(&class_text),
+        wiring_id,
+        wiring_version,
     })
+}
+
+fn decode_wiring_identity(
+    wiring_id: Option<String>,
+    wiring_version: Option<i32>,
+) -> Result<(String, i32), ProductionClaimError> {
+    let (wiring_id, wiring_version) = match (wiring_id, wiring_version) {
+        (Some(wiring_id), Some(wiring_version)) if !wiring_id.is_empty() && wiring_version > 0 => {
+            (wiring_id, wiring_version)
+        }
+        (None, None) => {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::WiringIdentity,
+                "decode production candidate",
+                "run-wiring-identity-missing",
+            ));
+        }
+        _ => {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::WiringIdentity,
+                "decode production candidate",
+                "run-wiring-identity-corrupt",
+            ));
+        }
+    };
+    Ok((wiring_id, wiring_version))
 }
 
 fn row_value<T>(row: &Row, index: usize, field: &'static str) -> Result<T, ProductionClaimError>
@@ -743,6 +782,24 @@ fn storage(operation: &'static str, error: tokio_postgres::Error) -> ProductionC
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_and_corrupt_wiring_identity_are_dedicated_stable_refusals() {
+        let missing = decode_wiring_identity(None, None).unwrap_err();
+        assert_eq!(missing.kind(), ProductionClaimErrorKind::WiringIdentity);
+        assert!(missing.to_string().contains("run-wiring-identity-missing"));
+
+        for corrupt in [
+            decode_wiring_identity(Some("orders".into()), None),
+            decode_wiring_identity(None, Some(1)),
+            decode_wiring_identity(Some(String::new()), Some(1)),
+            decode_wiring_identity(Some("orders".into()), Some(0)),
+        ] {
+            let error = corrupt.unwrap_err();
+            assert_eq!(error.kind(), ProductionClaimErrorKind::WiringIdentity);
+            assert!(error.to_string().contains("run-wiring-identity-corrupt"));
+        }
+    }
 
     #[test]
     fn production_claim_and_reaper_use_only_the_platform_pool() {

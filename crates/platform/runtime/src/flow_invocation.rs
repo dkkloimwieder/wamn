@@ -709,6 +709,9 @@ impl InvocationBackend for PostgresInvocationBackend {
                     &none_text,
                     &none_text,
                     &none_i32,
+                    // The ratified 25th operand is intentionally absent:
+                    // InvocationTarget does not yet carry the attachment-owned
+                    // trusted wiring id, and this boundary must not infer it.
                 ],
             )
             .await
@@ -922,6 +925,7 @@ fn recovered_begin(recovery: InvocationRecovery) -> Option<BeginResult> {
 fn admission_refusal(result: AdmissionResult) -> BeginResult {
     let (status, code) = match result {
         AdmissionResult::InactiveDefinition => (404, "attachment-disabled"),
+        AdmissionResult::InactiveWiring => (409, "inactive-wiring"),
         AdmissionResult::IdempotencyKeyReused => (409, "idempotency-key-reused"),
         AdmissionResult::IdempotencyScopeChanged => (409, "idempotency-scope-changed"),
         AdmissionResult::Duplicate { run_id: None }

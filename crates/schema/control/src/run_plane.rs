@@ -71,6 +71,7 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql")
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
 const RUNS_EXECUTION_PINS_CHECK_DEF: &str = "CHECK (catalog_id <> ''::text AND catalog_version > 0 AND environment <> ''::text AND execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'::text)";
+const RUNS_WIRING_IDENTITY_CHECK_DEF: &str = "CHECK (wiring_id IS NULL AND wiring_version IS NULL OR wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0)";
 const RELEASE_FLOWS_BUNDLE_CHECK_DEF: &str =
     "CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'::text)";
 const RUNS_RELEASE_FK_DEF: &str = "FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.release_manifests(tenant_id, catalog_id, catalog_version)";
@@ -80,7 +81,7 @@ const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs
 const RUNS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX runs_execution_bundle ON wamn_run.runs USING btree (tenant_id, execution_bundle_hash)";
 const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
 const RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX release_flows_execution_bundle ON catalog.release_flows USING btree (tenant_id, execution_bundle_hash)";
-const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, durability_class, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
+const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, durability_class, wiring_id, wiring_version, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 const ENVIRONMENT_POLICY_TENANT_QUAL: &str =
     "tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)";
 
@@ -243,6 +244,12 @@ const CHECK_SPECS: &[CheckSpec] = &[
         // (wamn-0h0g.15.126). This literal is the `pg_get_constraintdef(oid,
         // true)` pretty rendering, derived on PostgreSQL 18, not hand-written.
         definition: "CHECK (release_version IS NULL AND manifest_digest IS NULL OR release_version IS NOT NULL AND manifest_digest IS NOT NULL AND release_version > 0 AND manifest_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_wiring_identity_check",
+        definition: RUNS_WIRING_IDENTITY_CHECK_DEF,
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -477,6 +484,8 @@ const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard
 
 const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode\n       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id\n                             AND OLD.durability_class = 'durable') THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
+const GUARD_RUN_ADMISSION_PINS_V2_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode\n       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class\n       OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id\n       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id\n                             AND OLD.durability_class = 'durable') THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
+
 const GUARD_TERMINAL_RUN_DELETE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_terminal_run_delete()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-delete-nonterminal';\n    END IF;\n    RETURN OLD;\nEND\n$function$\n";
 
 const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-fact-immutable';\nEND\n$function$\n";
@@ -567,7 +576,9 @@ BEGIN
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash
        OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
-       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class THEN
+       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class
+       OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
+       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -654,7 +665,7 @@ const RUNS_TERMINAL_DELETE_ONLY_TRIGGER_SQL: &str = "CREATE TRIGGER \
 /// repairing what the cutover had just clobbered.
 const RUNS_ADMISSION_PINS_TRIGGER_SQL: &str = "CREATE TRIGGER runs_admission_pins_immutable \
     BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, \
-    capture_mode, durability_class, release_version, manifest_digest \
+    capture_mode, durability_class, wiring_id, wiring_version, release_version, manifest_digest \
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
     wamn_run.guard_run_admission_pins_immutable();";
 
@@ -677,6 +688,10 @@ fn borrowed_helper_spec(
 }
 
 fn helper_specs() -> Vec<HelperSpec> {
+    debug_assert_ne!(
+        GUARD_RUN_ADMISSION_PINS_DEF,
+        GUARD_RUN_ADMISSION_PINS_V2_DEF
+    );
     vec![
         borrowed_helper_spec(
             "pin_run_durability_class",
@@ -695,7 +710,7 @@ fn helper_specs() -> Vec<HelperSpec> {
         ),
         borrowed_helper_spec(
             "guard_run_admission_pins_immutable",
-            GUARD_RUN_ADMISSION_PINS_DEF,
+            GUARD_RUN_ADMISSION_PINS_V2_DEF,
             GUARD_RUN_ADMISSION_PINS_SQL,
         ),
         borrowed_helper_spec(
@@ -2605,6 +2620,48 @@ fn release_flow_execution_pin_contract_complete(obs: &RunPlaneObservation) -> bo
             .is_some_and(|definition| definition == RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF)
 }
 
+fn run_wiring_identity_contract_complete(obs: &RunPlaneObservation) -> bool {
+    let Some(columns) = obs.tables.get("runs") else {
+        return false;
+    };
+    [("wiring_id", "text"), ("wiring_version", "integer")]
+        .into_iter()
+        .all(|(column, expected_type)| {
+            let key = ("runs".to_string(), column.to_string());
+            columns.contains(column)
+                && !obs.non_nullable_columns.contains(&key)
+                && obs
+                    .column_types
+                    .get(&key)
+                    .is_some_and(|actual| actual == expected_type)
+        })
+        && obs
+            .checks
+            .get(&("runs".to_string(), "runs_wiring_identity_check".to_string()))
+            .is_some_and(|definition| definition == RUNS_WIRING_IDENTITY_CHECK_DEF)
+}
+
+fn wiring_identity_cutover_sql(schema: &BareSchemaName) -> String {
+    let target = schema.quoted();
+    format!(
+        r#"LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE;
+ALTER TABLE {target}.runs
+    ADD COLUMN IF NOT EXISTS wiring_id text,
+    ADD COLUMN IF NOT EXISTS wiring_version integer,
+    ALTER COLUMN wiring_id TYPE text USING wiring_id::text,
+    ALTER COLUMN wiring_version TYPE integer USING wiring_version::integer,
+    ALTER COLUMN wiring_id DROP NOT NULL,
+    ALTER COLUMN wiring_version DROP NOT NULL,
+    DROP CONSTRAINT IF EXISTS runs_wiring_identity_check,
+    ADD CONSTRAINT runs_wiring_identity_check CHECK (
+      (wiring_id IS NULL AND wiring_version IS NULL)
+      OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
+          AND wiring_id <> '' AND wiring_version > 0)
+    );
+GRANT INSERT (wiring_id, wiring_version) ON {target}.runs TO wamn_app;"#
+    )
+}
+
 fn partial_execution_pin_refusal_sql(
     schema: &BareSchemaName,
     has_runs: bool,
@@ -2695,6 +2752,8 @@ ALTER TABLE {target}.runs
     ADD COLUMN IF NOT EXISTS execution_bundle_hash text,
     ADD COLUMN IF NOT EXISTS release_version int,
     ADD COLUMN IF NOT EXISTS manifest_digest text,
+    ADD COLUMN IF NOT EXISTS wiring_id text,
+    ADD COLUMN IF NOT EXISTS wiring_version integer,
     ADD COLUMN IF NOT EXISTS {capture_mode_column},
     ADD COLUMN IF NOT EXISTS {durability_class_column};
 ALTER TABLE {target}.runs
@@ -2708,11 +2767,16 @@ ALTER TABLE {target}.runs
     ALTER COLUMN execution_bundle_hash SET NOT NULL,
     DROP CONSTRAINT IF EXISTS runs_check,
     DROP CONSTRAINT IF EXISTS runs_environment_check,
+    DROP CONSTRAINT IF EXISTS runs_wiring_identity_check,
     DROP CONSTRAINT IF EXISTS runs_release_fk,
     DROP CONSTRAINT IF EXISTS runs_execution_bundle_fk,
     ADD CONSTRAINT runs_check CHECK (
         catalog_id <> '' AND catalog_version > 0 AND environment <> ''
         AND execution_bundle_hash ~ '^sha256:[0-9a-f]{{64}}$'),
+    ADD CONSTRAINT runs_wiring_identity_check CHECK (
+        (wiring_id IS NULL AND wiring_version IS NULL)
+        OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
+            AND wiring_id <> '' AND wiring_version > 0)),
     ADD CONSTRAINT runs_release_fk
         FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
@@ -2725,7 +2789,7 @@ ALTER TABLE {target}.runs
 -- the legacy migration path, exactly what run-state.sql closes for fresh
 -- installs — and the pin trigger below is BEFORE UPDATE, so it never gated the
 -- INSERT half at all.
-GRANT INSERT (execution_bundle_hash),
+GRANT INSERT (execution_bundle_hash, wiring_id, wiring_version),
       UPDATE (release_version, manifest_digest)
     ON {target}.runs TO wamn_app;
 DROP INDEX IF EXISTS {target}.runs_release;
@@ -2769,6 +2833,8 @@ const RUNS_APP_INSERT_COLUMNS: &[&str] = &[
     "status",
     "tenant_id",
     "trigger_source",
+    "wiring_id",
+    "wiring_version",
 ];
 
 /// The exact `runs` columns `wamn_app` may UPDATE (wamn-0h0g.12.40).
@@ -3056,6 +3122,7 @@ $retire_run_projection_authority$;"#,
     let execution_pin_cutover_needed = (has_runs
         && !run_execution_pin_contract_complete(schema, obs))
         || (has_release_flows && !release_flow_execution_pin_contract_complete(obs));
+    let wiring_identity_cutover_needed = has_runs && !run_wiring_identity_contract_complete(obs);
 
     if (has_runs || has_release_flows)
         && execution_pin_cutover_needed
@@ -3662,6 +3729,14 @@ $retire_run_projection_authority$;"#,
         });
     }
 
+    if wiring_identity_cutover_needed && !execution_pin_cutover_needed {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::AddColumn,
+            target: "runs.wiring-identity".to_string(),
+            sql: wiring_identity_cutover_sql(schema),
+        });
+    }
+
     if execution_pin_cutover_needed {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::ExecutionPinCutover,
@@ -3875,6 +3950,12 @@ $retire_run_projection_authority$;"#,
                 if table == "runs" && col == "execution_bundle_hash" {
                     continue;
                 }
+                if wiring_identity_cutover_needed
+                    && table == "runs"
+                    && matches!(col.as_str(), "wiring_id" | "wiring_version")
+                {
+                    continue;
+                }
                 // The pin cutover installs the claim-time record columns itself,
                 // because the trigger it recreates names them. Skipping here is
                 // what keeps that from colliding with a plain ADD COLUMN. The
@@ -4071,6 +4152,12 @@ $retire_run_projection_authority$;"#,
         .collect();
     for spec in CHECK_SPECS {
         if spec.table == "runs" && spec.name == "runs_check" {
+            continue;
+        }
+        if wiring_identity_cutover_needed
+            && spec.table == "runs"
+            && spec.name == "runs_wiring_identity_check"
+        {
             continue;
         }
         if frame_cutover_targets.includes_table(spec.table)

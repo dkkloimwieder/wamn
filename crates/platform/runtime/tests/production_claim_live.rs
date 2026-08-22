@@ -166,6 +166,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             run_id,
             payload,
             lease_generation,
+            ..
         } => (run_id, payload, lease_generation),
         other => panic!("expected pre-effect retry to execute, got {other:?}"),
     };

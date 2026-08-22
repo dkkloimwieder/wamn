@@ -198,7 +198,9 @@ BEGIN
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash
        OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
-       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class THEN
+       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class
+       OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
+       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -317,6 +319,11 @@ CREATE TABLE wamn_run.runs (
     durability_class text NOT NULL DEFAULT 'standard'
         CONSTRAINT runs_durability_class_check
         CHECK (durability_class IN ('standard', 'durable')),
+    -- Immutable execution identity selected from the trusted active-wiring
+    -- pointer by the admission transaction. Legacy rows remain NULL until the
+    -- post-drain cutover; admission never backfills them.
+    wiring_id       text,
+    wiring_version  int,
     -- The claim-time release record. A run is NOT version-pinned at admission:
     -- it executes under the release its CLAIMING pod carries, and the worker
     -- writes that pod's own release identity here when it takes the lease,
@@ -392,6 +399,11 @@ CREATE TABLE wamn_run.runs (
           AND release_version > 0
           AND manifest_digest ~ '^sha256:[0-9a-f]{64}$')
     ),
+    CONSTRAINT runs_wiring_identity_check CHECK (
+      (wiring_id IS NULL AND wiring_version IS NULL)
+      OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
+          AND wiring_id <> '' AND wiring_version > 0)
+    ),
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk
         FOREIGN KEY (tenant_id, catalog_id, catalog_version)
@@ -434,7 +446,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,
-                 durability_class, release_version, manifest_digest
+                 durability_class, wiring_id, wiring_version, release_version, manifest_digest
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only
@@ -471,7 +483,7 @@ REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs FROM PUBLIC, wamn_effect_writer;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
 GRANT INSERT (
     tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
-    environment, execution_bundle_hash, attachment_id, registration_id,
+    environment, execution_bundle_hash, wiring_id, wiring_version, attachment_id, registration_id,
     event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
     input_json, invocation_context,
     admission_context_version, platform_revision, idempotency_key,
