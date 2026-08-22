@@ -346,13 +346,24 @@ async fn connect_as(url: &str, role: &str, password: &str) -> Client {
     client
 }
 
-async fn seed_run_pin_parents(
+async fn seed_run_admission_facts(
     su: &Client,
     tenant_id: &str,
     catalog_id: &str,
     catalog_version: i32,
     environment: &str,
+    durability_class: &str,
 ) {
+    su.execute(
+        &format!(
+            "INSERT INTO {SCHEMA}.environment_policies \
+               (tenant_id,expected_environment,durability_class) \
+             VALUES ($1,$2,$3)"
+        ),
+        &[&tenant_id, &environment, &durability_class],
+    )
+    .await
+    .expect("seed the project-local environment policy");
     su.execute(
         "INSERT INTO catalog.catalogs \
            (tenant_id,catalog_id,version,environment,schema_version,state) \
@@ -1241,6 +1252,8 @@ async fn regress_execution_pin_contract(su: &Client) {
     su.batch_execute(&format!(
         "DROP TRIGGER runs_admission_pins_immutable ON {SCHEMA}.runs; \
          DROP FUNCTION {SCHEMA}.guard_run_admission_pins_immutable(); \
+         DROP TRIGGER runs_pin_durability_class ON {SCHEMA}.runs; \
+         DROP FUNCTION {SCHEMA}.pin_run_durability_class(); \
          DROP INDEX {SCHEMA}.runs_release; \
          DROP INDEX {SCHEMA}.runs_execution_bundle; \
          ALTER TABLE {SCHEMA}.runs \
@@ -1323,6 +1336,7 @@ async fn execution_pin_cutover_leg(su: &Client) {
         "runs_release",
         "runs_execution_bundle",
         "runs_admission_pins_immutable",
+        "runs_pin_durability_class",
     ] {
         let present: bool = su
             .query_one(
@@ -1337,6 +1351,25 @@ async fn execution_pin_cutover_leg(su: &Client) {
             .get(0);
         assert!(present, "missing execution-pin object {object}");
     }
+    let durability_pin_function: bool = su
+        .query_one(
+            "SELECT to_regprocedure($1) IS NOT NULL",
+            &[&format!("{SCHEMA}.pin_run_durability_class()")],
+        )
+        .await
+        .expect("observe restored durability-pin function")
+        .get(0);
+    assert!(
+        durability_pin_function,
+        "missing durability-pin projection function"
+    );
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.environment_policies \
+           (tenant_id,expected_environment,durability_class) \
+         VALUES ('pin','dev','standard')"
+    ))
+    .await
+    .expect("seed the execution-pin environment policy");
     su.batch_execute(&format!(
         "INSERT INTO catalog.catalogs \
            (tenant_id,catalog_id,version,environment,schema_version) \
@@ -1411,6 +1444,24 @@ async fn execution_pin_cutover_leg(su: &Client) {
     );
     assert!(!catalog_column_exists(su, "release_flows", "execution_bundle_hash").await);
     assert!(!column_exists(su, "runs", "execution_bundle_hash").await);
+    let durability_pin_objects = su
+        .query_one(
+            "SELECT \
+               EXISTS (SELECT 1 FROM pg_trigger \
+                        WHERE tgname='runs_pin_durability_class' AND NOT tgisinternal), \
+               to_regprocedure($1) IS NOT NULL",
+            &[&format!("{SCHEMA}.pin_run_durability_class()")],
+        )
+        .await
+        .expect("observe rolled-back durability-pin objects");
+    assert_eq!(
+        (
+            durability_pin_objects.get::<_, bool>(0),
+            durability_pin_objects.get::<_, bool>(1),
+        ),
+        (false, false),
+        "populated legacy refusal rolls back durability-pin restoration"
+    );
     let version_type: String = su
         .query_one(
             "SELECT data_type FROM information_schema.columns \
@@ -1860,14 +1911,7 @@ async fn frame_identity_cutover_leg(su: &Client) {
         su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
             .await
             .expect("apply current run-state for populated frame drift refusal");
-        su.batch_execute(&format!(
-            "INSERT INTO {SCHEMA}.environment_policies \
-               (tenant_id,expected_environment,durability_class) \
-             VALUES ('t1','dev','standard')"
-        ))
-        .await
-        .expect("seed the admitted environment policy");
-        seed_run_pin_parents(su, "t1", "frame-cat", 1, "dev").await;
+        seed_run_admission_facts(su, "t1", "frame-cat", 1, "dev", "standard").await;
         su.batch_execute(&format!(
             "INSERT INTO {SCHEMA}.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
@@ -2070,17 +2114,10 @@ async fn frame_identity_cutover_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
         .await
         .expect("apply current run-state");
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.environment_policies \
-           (tenant_id,expected_environment,durability_class) \
-         VALUES ('t1','dev','standard')"
-    ))
-    .await
-    .expect("seed the admitted environment policy");
     su.batch_execute(&format!("DROP TABLE {SCHEMA}.effect_attempts CASCADE;"))
         .await
         .expect("remove effect peer");
-    seed_run_pin_parents(su, "t1", "frame-cat", 1, "dev").await;
+    seed_run_admission_facts(su, "t1", "frame-cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
@@ -2181,14 +2218,7 @@ async fn effect_writer_cutover_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply current run-state for writer cutover");
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.environment_policies \
-           (tenant_id,expected_environment,durability_class) \
-         VALUES ('t1','dev','standard')"
-    ))
-    .await
-    .expect("seed the admitted environment policy");
-    seed_run_pin_parents(su, "t1", "writer-cat", 1, "dev").await;
+    seed_run_admission_facts(su, "t1", "writer-cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
@@ -2815,7 +2845,7 @@ async fn child_run_cutover_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
     install_legacy_child_run_state(su).await;
-    seed_run_pin_parents(su, "child-cutover", "cat", 1, "dev").await;
+    seed_run_admission_facts(su, "child-cutover", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
@@ -2969,7 +2999,7 @@ async fn child_run_cutover_leg(su: &Client) {
 async fn rerun_lineage_cutover_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
-    seed_run_pin_parents(su, "rerun-cutover", "cat", 1, "dev").await;
+    seed_run_admission_facts(su, "rerun-cutover", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "ALTER TABLE {SCHEMA}.runs \
            ADD COLUMN replay_of text, ADD COLUMN root_run_id text; \
@@ -3153,14 +3183,7 @@ async fn partition_plane_cutover_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
     install_legacy_partition_plane(su).await;
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.environment_policies \
-           (tenant_id,expected_environment,durability_class) \
-         VALUES ('partition','dev','standard')"
-    ))
-    .await
-    .expect("seed the admitted environment policy");
-    seed_run_pin_parents(su, "partition", "cat", 1, "dev").await;
+    seed_run_admission_facts(su, "partition", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
@@ -3273,14 +3296,7 @@ async fn partition_plane_active_lease_refusal_leg(su: &Client) {
             .expect("install later authority-repair sentinel");
         match lease_source {
             "run_queue" => {
-                su.batch_execute(&format!(
-                    "INSERT INTO {SCHEMA}.environment_policies \
-                       (tenant_id,expected_environment,durability_class) \
-                     VALUES ('leased','dev','standard')"
-                ))
-                .await
-                .expect("seed the admitted environment policy");
-                seed_run_pin_parents(su, "leased", "cat", 1, "dev").await;
+                seed_run_admission_facts(su, "leased", "cat", 1, "dev", "standard").await;
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.runs \
                        (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
@@ -3354,7 +3370,7 @@ async fn partition_plane_unobservable_lease_refusal_leg(su: &Client) {
         install_legacy_partition_plane(su).await;
         let expected_message = match lease_source {
             "run_queue" => {
-                seed_run_pin_parents(su, "ambiguous", "cat", 1, "dev").await;
+                seed_run_admission_facts(su, "ambiguous", "cat", 1, "dev", "standard").await;
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.runs \
                        (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
@@ -3419,7 +3435,7 @@ async fn partition_plane_dead_letter_refusal_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
     install_legacy_partition_plane(su).await;
-    seed_run_pin_parents(su, "dead-letter", "cat", 1, "dev").await;
+    seed_run_admission_facts(su, "dead-letter", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
@@ -3544,7 +3560,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     ))
     .await
     .expect("build the v1-era queue + outbox era");
-    seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
+    seed_run_admission_facts(su, "t1", "cat", 1, "dev", "durable").await;
     su.execute(
         "INSERT INTO catalog.event_registrations \
            (tenant_id, catalog_id, registration_id, flow_id, entity_id, registration) \
@@ -3581,6 +3597,24 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     assert!(partial.actions.iter().any(|action| {
         action.kind == RunPlaneActionKind::RecreateIndex && action.target == "run_queue_claimable"
     }));
+
+    su.batch_execute(&format!(
+        "DELETE FROM {SCHEMA}.environment_policies WHERE tenant_id='t1'"
+    ))
+    .await
+    .expect("remove the temporary pre-projection policy");
+    let temporary_policy_rows: i64 = su
+        .query_one(
+            &format!("SELECT count(*) FROM {SCHEMA}.environment_policies WHERE tenant_id='t1'"),
+            &[],
+        )
+        .await
+        .expect("verify the temporary pre-projection policy is absent")
+        .get(0);
+    assert_eq!(
+        temporary_policy_rows, 0,
+        "real CLI projection starts without a local policy row"
+    );
 
     // The REAL CLI path (arg validation + connect + apply + print).
     reconcile_run_plane::run(ReconcileRunPlaneArgs {
@@ -3812,7 +3846,7 @@ async fn queue_missing_leg(su: &Client) {
     assert!(!table_exists(su, SCHEMA, "partition_owner").await);
     assert!(!table_exists(su, SCHEMA, "run_dead_letters").await);
     // The FK to runs resolves: a run then its queue row insert cleanly.
-    seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
+    seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
@@ -3935,7 +3969,7 @@ async fn from_zero_leg(su: &Client) {
     }
 
     // Functional smoke as the runtime role: the sections' grants + RLS hold.
-    seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
+    seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "SET ROLE wamn_app; \
          SELECT set_config('app.tenant', 't1', false); \
@@ -4277,7 +4311,7 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
-    seed_run_pin_parents(su, "t1", "capture", 1, "dev").await;
+    seed_run_admission_facts(su, "t1", "capture", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
@@ -6038,7 +6072,7 @@ async fn persisted_literal_check_drift_leg(su: &Client) {
     .await
     .expect("regress persisted literal CHECKs");
     // A run whose runaway verdict we will try to record.
-    seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
+    seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
