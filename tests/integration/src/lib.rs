@@ -9,7 +9,6 @@ use wamn_run_state::schema_drift;
 
 pub mod capturebench;
 pub mod catalog_live;
-mod catalog_pin;
 pub mod causation_e2e;
 mod cdc_reader_process;
 pub mod cdcbench;
