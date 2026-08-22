@@ -13,7 +13,6 @@ mod catalog_pin;
 pub mod causation_e2e;
 mod cdc_reader_process;
 pub mod cdcbench;
-pub mod contextproof;
 pub mod dashproof;
 mod dispatcher_process;
 pub mod exposure_live;

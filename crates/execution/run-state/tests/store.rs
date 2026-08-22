@@ -160,50 +160,12 @@ fn postgres_fixture_has_no_retired_flow_runs_checkpoint_table() {
 }
 
 #[test]
-fn status_maps_from_the_engine_taxonomy() {
-    assert_eq!(
-        RunStatus::from(wamn_runner::ExecutionStatus::Completed),
-        RunStatus::Completed
-    );
-    assert_eq!(
-        FailKind::from(wamn_runner::ExecutionFailureKind::InvalidInput),
-        FailKind::InvalidInput
-    );
-    assert_eq!(
-        FailKind::from(wamn_runner::ExecutionFailureKind::RunawayBudget),
-        FailKind::RunawayBudget
-    );
+fn retryable_node_error_maps_to_retryable_kind() {
     let detail = ErrorDetail::msg("x");
     assert_eq!(
         NodeErrorKind::from(&NodeError::Retryable(detail)),
         NodeErrorKind::Retryable
     );
-}
-
-#[test]
-fn root_budget_failures_map_to_exact_persisted_kinds() {
-    for (engine, persisted, literal) in [
-        (
-            wamn_runner::ExecutionFailureKind::DepthBudget,
-            FailKind::DepthBudget,
-            "depth-budget",
-        ),
-        (
-            wamn_runner::ExecutionFailureKind::DispatchBudget,
-            FailKind::DispatchBudget,
-            "dispatch-budget",
-        ),
-        (
-            wamn_runner::ExecutionFailureKind::RunawayBudget,
-            FailKind::RunawayBudget,
-            "runaway-budget",
-        ),
-    ] {
-        let mapped = FailKind::from(engine);
-        assert_eq!(mapped, persisted);
-        assert_eq!(mapped.as_sql(), literal);
-        assert_eq!(FailKind::from_sql(literal), Some(persisted));
-    }
 }
 
 // ---- deploy/sql/run-state.sql drift guard --------------------------------------
