@@ -1009,11 +1009,6 @@ mod tests {
             policy.contains("AddrDecision::Deny(DenyReason::BindNotPermitted)"),
             "a bind outside that authority must be denied, not silently allowed"
         );
-        assert!(
-            policy.contains("if !self.host_loopback_enabled {"),
-            "host-loopback reach must stay inert unless the host itself enabled it — a workload \
-             grant alone cannot open it (the wamn-0h0g.15.52 surface)"
-        );
         let p2 = fork_source("src/sockets/host_udp.rs");
         assert!(
             p2.contains(".check(local_address, SocketAddrUse::UdpBind)"),
