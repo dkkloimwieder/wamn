@@ -10,7 +10,8 @@
 const ENTITY_ID: &str = "evt_disp";
 const TABLE: &str = "dispositions";
 const CATALOG_ID: &str = "ricat";
-const FLOW_ID: &str = "disp-del";
+const FLOW_FIXTURE_ID: &str = "disp-del";
+const REGISTRATION_FLOW_ID: &str = "disp-del";
 const REG_ID: &str = "r-del";
 
 const CATALOG_JSON: &str = r#"{
@@ -32,7 +33,7 @@ fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
 /// Frozen legacy flow-graph fixture retained as a schema drift guard.
 fn flow_json() -> String {
     serde_json::json!({
-        "schema-version": "0.1", "flow-id": FLOW_ID, "version": 1,
+        "schema-version": "0.1", "flow-id": FLOW_FIXTURE_ID, "version": 1,
         "nodes": [{"id": "event", "type": "event"}],
     })
     .to_string()
@@ -44,7 +45,7 @@ fn registration_json() -> String {
         "schema-version": "0.1",
         "registration-id": REG_ID,
         "catalog-id": CATALOG_ID,
-        "flow-id": FLOW_ID,
+        "flow-id": REGISTRATION_FLOW_ID,
         "entity": ENTITY_ID,
         "ops": ["delete"],
         "condition": null,
@@ -56,37 +57,62 @@ fn registration_json() -> String {
 mod tests {
     use super::*;
 
-    /// The registration and legacy flow-graph fixtures retain their frozen types.
+    /// The registration, catalog, and legacy flow fixtures retain one coherent subscription.
     #[test]
     fn registration_and_legacy_flow_fixtures_match_their_frozen_types() {
         let reg = wamn_event_reg::EventRegistration::from_json(&registration_json())
             .expect("delete registration is a frozen EventRegistration");
-        assert!(
-            reg.ops
-                .iter()
-                .any(|op| format!("{op:?}").to_lowercase().contains("delete")),
-            "the historical registration fixture must remain delete-subscribed"
+        let cat = catalog().expect("catalog fixture parses");
+        let flow = wamn_flow::Flow::from_json(&flow_json()).expect("legacy flow fixture parses");
+
+        assert_eq!(
+            reg.catalog_id, cat.catalog_id,
+            "the registration must target the retained catalog fixture"
+        );
+        assert_eq!(
+            reg.flow_id, flow.flow_id,
+            "the registration must target the retained flow fixture"
+        );
+        assert_eq!(
+            reg.ops.as_slice(),
+            &[wamn_event_wire::Op::Delete],
+            "the historical registration must carry exactly one delete operation"
         );
 
-        let flow = wamn_flow::Flow::from_json(&flow_json()).expect("legacy flow fixture parses");
         flow.validate(&Default::default())
             .expect("legacy flow fixture validates");
+        let entry_nodes = flow
+            .nodes
+            .iter()
+            .filter(|node| node.entry_kind().is_some())
+            .collect::<Vec<_>>();
         assert_eq!(
-            flow.entry_node().map(|node| node.node_type.as_str()),
-            Some("event")
+            entry_nodes.len(),
+            1,
+            "the historical flow fixture must carry exactly one entry node"
+        );
+        assert_eq!(
+            entry_nodes[0].entry_kind(),
+            Some(wamn_flow::EntryKind::Event),
+            "the historical flow fixture's sole entry must remain event-shaped"
         );
     }
 
-    /// The catalog fixture retains the historical entity-to-table mapping.
+    /// The registration entity resolves to the catalog's sole historical table mapping.
     #[test]
     fn catalog_fixture_contains_the_historical_target_mapping() {
+        let reg = wamn_event_reg::EventRegistration::from_json(&registration_json())
+            .expect("delete registration is a frozen EventRegistration");
         let cat = catalog().expect("catalog fixture parses");
         assert_eq!(cat.catalog_id, CATALOG_ID);
-        assert!(
-            cat.entities
-                .iter()
-                .any(|entity| entity.id == ENTITY_ID && entity.name == TABLE),
-            "catalog fixture must carry evt_disp -> dispositions"
+        let [entity] = cat.entities.as_slice() else {
+            panic!("the historical catalog fixture must carry exactly one entity")
+        };
+        assert_eq!(
+            reg.entity, entity.id,
+            "the registration entity must resolve to the catalog's sole entity"
         );
+        assert_eq!(entity.id, ENTITY_ID);
+        assert_eq!(entity.name, TABLE);
     }
 }
