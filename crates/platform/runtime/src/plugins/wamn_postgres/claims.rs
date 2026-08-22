@@ -5,19 +5,17 @@
 //! surface the injection review (R2/R16/R16b/cjv.2/l5i9.12.2) reasons about.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock};
 
 use anyhow::Context as _;
 use deadpool_postgres::{Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime, Timeouts};
 use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
 
-use wamn_event_wire::Causation;
-use wamn_run_state::DURABLE_CLASS_SQL_PREDICATE;
-
 use wamn_catalog::ManifestDigest;
 use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
+use wamn_event_wire::Causation;
 
 use super::pool::{
     CheckoutProbe, CredentialProvider, PoolLifecycle, ProjectConfig, ProjectPool,
@@ -136,33 +134,22 @@ pub struct SessionClaims {
 /// Host-only identity used to load one HTTP effect authorization snapshot.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionEffectLookup<'a> {
-    pub run_id: &'a str,
-    pub root_plan_hash: &'a str,
-    pub current_plan_hash: &'a str,
-    pub frame_id: i64,
-    pub local_node_id: &'a str,
-    pub occurrence: i32,
-    pub source_artifact_hash: &'a str,
-    pub requirement_name: &'a str,
+    pub catalog_id: &'a str,
+    pub catalog_version: i32,
+    pub environment: &'a str,
+    pub wiring_id: &'a str,
+    pub wiring_version: i32,
+    pub node_id: &'a str,
+    pub component_digest: &'a str,
+    pub store_alias: &'a str,
 }
 
 /// One transactionally consistent set of admitted HTTP effect facts.
 #[derive(Debug, Clone)]
 pub struct ConnectionEffectSnapshot {
-    pub run_status: String,
-    pub root_plan_matches: bool,
-    /// An execution bundle with the guest-declared `current_plan_hash` exists in
-    /// the run's tenant — and nothing more. It has not bound that plan to the RUN
-    /// since wamn-0h0g.15.10 deleted `run_flow_resolutions`, and by owner ruling
-    /// it never will again: that binding is enforced host-side against the release
-    /// manifest (`authorize_plan_closure`, wamn-0h0g.15.66). What this flag still
-    /// carries is that the CTE found the exact plan bytes `node_permitted` reads
-    /// the presented node out of.
-    pub resolution_matches: bool,
-    /// Effective attempt-evidence gate. `standard` runs project `true` without
-    /// consulting the ledger; `durable` runs project whether the exact immutable
-    /// attempt exists.
-    pub attempt_matches: bool,
+    pub wiring_hash: String,
+    pub component: Option<String>,
+    pub interface_version: Option<String>,
     pub requirement_json: Option<serde_json::Value>,
     pub node_permitted: bool,
     pub binding_active: bool,
@@ -176,103 +163,65 @@ pub struct ConnectionEffectSnapshot {
     pub definition: Option<serde_json::Value>,
     pub definition_hash: Option<String>,
     pub credential_handle: Option<String>,
-    /// True for release runs; draft runs require an exact current unrevoked
-    /// generation grant at this immediate pre-network snapshot.
-    pub draft_generation_granted: bool,
-    /// The run's ROOT flow (`runs.flow_id`) — server-written at admission, never
-    /// guest-supplied. It is the entry point the host-side plan-closure check
-    /// walks the release manifest's call-edge adjacency from (wamn-0h0g.15.66);
-    /// it is carried on this snapshot rather than read separately so the run's
-    /// root travels in the same read-only transaction as its status.
-    pub root_flow_id: String,
 }
 
-/// `authorized_plan` DOES NOT BIND THE PLAN TO THE RUN, and by owner ruling
-/// (wamn-0h0g.15.66) it never will again. Its only run-scoped predicate was an
-/// EXISTS over `run_flow_resolutions`, deleted with that table
-/// (wamn-0h0g.15.10), and the fact that predicate read now lives in the pod's
-/// mounted release manifest — a file, which no SQL predicate can join against.
-/// The CTE therefore admits ANY execution bundle whose hash is `$3` within the
-/// run's tenant (narrowed by the outer `plan.tenant_id = r.tenant_id` join), and
-/// exists only to hand `plan_node` the exact plan bytes to read the presented
-/// node out of.
+/// Resolve one host-attested wiring node and its component-grain connection.
 ///
-/// THE BINDING IS ENFORCED HOST-SIDE, and this statement's job is to supply its
-/// input: `authorized_plan` returns the run's root flow as `r.flow_id`, and
-/// `authorize_plan_closure`
-/// (`crates/platform/runtime/src/plugins/connection_http.rs`) refuses unless `$3`
-/// is the plan hash of a flow the release manifest reaches from that root. The
-/// ruling chose that over restoring a run-scoped table (which would be
-/// `run_flow_resolutions` reborn) and over projecting release shape back into
-/// Postgres. A guest can forge neither the manifest (content-addressed, verified
-/// at load — wamn-0h0g.15.100) nor the run's recorded manifest digest
-/// (host-injected and write-once, written before any guest code ran —
-/// wamn-0h0g.15.11), so the host-side check answers the same question the deleted
-/// EXISTS did, against the same threat model.
-///
-/// Attempt evidence is a `durable`-only enforcement point. Its correlated
-/// `EXISTS` stays inside the class `CASE` instead of riding an unconditional
-/// join, so PostgreSQL does not evaluate the ledger branch for `standard` runs.
-static CONNECTION_EFFECT_SNAPSHOT_SQL: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "\
-WITH authorized_plan AS MATERIALIZED ( \
-    SELECT bundle.tenant_id, bundle.execution_bundle_hash, bundle.exact_bytes \
-      FROM catalog.execution_bundles AS bundle \
-     WHERE bundle.execution_bundle_hash = $3 \
+/// No run, plan, frame, or effect-ledger row participates. The selected wiring
+/// version is immutable and stays valid for the lifetime of the delivery even
+/// if the environment's hot pointer flips concurrently. The mounted release is
+/// checked separately by `ConnectionHttp`, because its canonical bytes are not
+/// a database relation and must not be projected back into Postgres.
+static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
+WITH selected_wiring AS MATERIALIZED ( \
+    SELECT wiring.wiring_hash, wiring.graph_json \
+      FROM catalog.wirings AS wiring \
+     WHERE wiring.tenant_id = $1 \
+       AND wiring.catalog_id = $2 \
+       AND wiring.gated_catalog_version = $3 \
+       AND wiring.wiring_id = $5 \
+       AND wiring.version = $6 \
+       AND wiring.graph_json ->> 'wiring-id' = $5 \
+       AND wiring.graph_json ->> 'version' = $6::text \
 ) \
-SELECT r.status, r.execution_bundle_hash = $2, \
-       plan.execution_bundle_hash IS NOT NULL, \
-       CASE WHEN r.{durable} THEN EXISTS ( \
-           SELECT 1 FROM effect_attempts AS attempt \
-            WHERE attempt.tenant_id = r.tenant_id \
-              AND attempt.run_id = r.run_id \
-              AND attempt.root_plan_hash = $2 \
-              AND attempt.current_plan_hash = $3 \
-              AND attempt.frame_id = $4 \
-              AND attempt.local_node_id = $5 \
-              AND attempt.occurrence = $6 \
-              AND attempt.source_artifact_hash = $7 \
-              AND attempt.requirement_name = $8 \
-       ) ELSE true END, \
+SELECT wiring.wiring_hash, component.component, component.interface_version, \
        requirement.requirement_json::text, \
-       COALESCE(plan_node.match_count = 1 AND plan_node.permitted, false), \
+       COALESCE( \
+           node.value IS NOT NULL \
+           AND node.value ->> 'component' = component.component \
+           AND node.value ->> 'interface-version' = component.interface_version \
+           AND node.value ->> 'operation' = component.operation, \
+           false \
+       ), \
        binding.binding_status = 'active', binding.validation_status = 'valid', \
        instance.instance_id, instance.requirement_type, instance.contract, \
        instance.lifecycle_status = 'enabled', instance.active_generation, \
        generation.generation, generation.definition_json::text, generation.definition_hash, \
-       generation.credential_set_handle, \
-       CASE WHEN r.trigger_source IS DISTINCT FROM 'scenario-draft' \
-            AND r.invocation_context #>> '{{source,producer}}' IS DISTINCT FROM 'draft-scenario' \
-           THEN true \
-           ELSE false \
-       END, \
-       r.flow_id \
-  FROM runs AS r \
-  LEFT JOIN authorized_plan AS plan ON plan.tenant_id = r.tenant_id \
-  LEFT JOIN catalog.connection_requirements AS requirement \
-    ON requirement.tenant_id = r.tenant_id \
-   AND requirement.artifact_hash = $7 \
-   AND requirement.requirement_name = $8 \
+       generation.credential_set_handle \
+  FROM selected_wiring AS wiring \
+  LEFT JOIN catalog.component_library AS component \
+    ON component.tenant_id = $1 \
+   AND component.catalog_id = $2 \
+   AND component.catalog_version = $3 \
+   AND component.component_digest = $8 \
   LEFT JOIN LATERAL ( \
-      SELECT count(*) AS match_count, \
-             COALESCE(bool_and( \
-                 node.value ->> 'effect-policy' = 'effectful' \
-                 AND node.value #>> '{{source-connection-requirement,name}}' = $8 \
-                 AND node.value -> 'source-connection-requirement' -> 'descriptor' \
-                     = requirement.requirement_json \
-             ), false) AS permitted \
-        FROM jsonb_array_elements( \
-            convert_from(plan.exact_bytes, 'UTF8')::jsonb #> '{{body,nodes}}' \
-        ) AS node(value) \
-       WHERE node.value ->> 'local-node-id' = $5 \
-  ) AS plan_node ON true \
+      SELECT wiring.graph_json #> ARRAY['nodes', $7] AS value \
+  ) AS node ON true \
+  LEFT JOIN catalog.connection_requirements AS requirement \
+    ON requirement.tenant_id = $1 \
+   AND requirement.artifact_hash IS NULL \
+   AND requirement.requirement_name IS NULL \
+   AND requirement.component_digest = $8 \
+   AND requirement.store_alias = $9 \
   LEFT JOIN catalog.connection_bindings AS binding \
-    ON binding.tenant_id = r.tenant_id AND binding.catalog_id = r.catalog_id \
-   AND binding.catalog_version = r.catalog_version \
-   AND binding.artifact_hash = $7 \
-   AND binding.requirement_name = $8 \
-   AND binding.environment = r.environment \
+    ON binding.tenant_id = $1 \
+   AND binding.catalog_id = $2 \
+   AND binding.catalog_version = $3 \
+   AND binding.artifact_hash IS NULL \
+   AND binding.requirement_name IS NULL \
+   AND binding.component_digest = $8 \
+   AND binding.store_alias = $9 \
+   AND binding.environment = $4 \
   LEFT JOIN catalog.connection_instances AS instance \
     ON instance.tenant_id = binding.tenant_id \
    AND instance.environment = binding.environment \
@@ -281,11 +230,7 @@ SELECT r.status, r.execution_bundle_hash = $2, \
     ON generation.tenant_id = instance.tenant_id \
    AND generation.environment = instance.environment \
    AND generation.instance_id = instance.instance_id \
-   AND generation.generation = instance.active_generation \
- WHERE r.run_id = $1",
-        durable = DURABLE_CLASS_SQL_PREDICATE,
-    )
-});
+   AND generation.generation = instance.active_generation";
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
@@ -1259,7 +1204,7 @@ impl WamnPostgres {
     }
 
     /// Load every host-derived HTTP authorization input in one read-only
-    /// transaction under the component's injected tenant and run-state schema.
+    /// transaction under the component's injected tenant.
     ///
     /// # Why the caller's tenant is checked against the registry (wamn-0h0g.17.7)
     ///
@@ -1325,18 +1270,19 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
         let result: anyhow::Result<Option<ConnectionEffectSnapshot>> = async {
-            let params: [&(dyn ToSql + Sync); 8] = [
-                &lookup.run_id,
-                &lookup.root_plan_hash,
-                &lookup.current_plan_hash,
-                &lookup.frame_id,
-                &lookup.local_node_id,
-                &lookup.occurrence,
-                &lookup.source_artifact_hash,
-                &lookup.requirement_name,
+            let params: [&(dyn ToSql + Sync); 9] = [
+                &tenant,
+                &lookup.catalog_id,
+                &lookup.catalog_version,
+                &lookup.environment,
+                &lookup.wiring_id,
+                &lookup.wiring_version,
+                &lookup.node_id,
+                &lookup.component_digest,
+                &lookup.store_alias,
             ];
             let row = conn
-                .query_opt(CONNECTION_EFFECT_SNAPSHOT_SQL.as_str(), &params)
+                .query_opt(CONNECTION_EFFECT_SNAPSHOT_SQL, &params)
                 .await
                 .context("query HTTP effect authorization snapshot")?;
             let Some(row) = row else {
@@ -1352,25 +1298,22 @@ impl WamnPostgres {
                     .transpose()
             };
             let snapshot = ConnectionEffectSnapshot {
-                run_status: row.try_get(0)?,
-                root_plan_matches: row.try_get::<_, Option<bool>>(1)?.unwrap_or(false),
-                resolution_matches: row.try_get::<_, Option<bool>>(2)?.unwrap_or(false),
-                attempt_matches: row.try_get::<_, Option<bool>>(3)?.unwrap_or(false),
-                requirement_json: json(4)?,
-                node_permitted: row.try_get::<_, Option<bool>>(5)?.unwrap_or(false),
-                binding_active: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
-                binding_valid: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
-                instance_id: row.try_get(8)?,
-                requirement_type: row.try_get(9)?,
-                contract: row.try_get(10)?,
-                instance_enabled: row.try_get::<_, Option<bool>>(11)?.unwrap_or(false),
-                active_generation: row.try_get(12)?,
-                generation: row.try_get(13)?,
-                definition: json(14)?,
-                definition_hash: row.try_get(15)?,
-                credential_handle: row.try_get(16)?,
-                draft_generation_granted: row.try_get::<_, Option<bool>>(17)?.unwrap_or(false),
-                root_flow_id: row.try_get(18)?,
+                wiring_hash: row.try_get(0)?,
+                component: row.try_get(1)?,
+                interface_version: row.try_get(2)?,
+                requirement_json: json(3)?,
+                node_permitted: row.try_get::<_, Option<bool>>(4)?.unwrap_or(false),
+                binding_active: row.try_get::<_, Option<bool>>(5)?.unwrap_or(false),
+                binding_valid: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
+                instance_id: row.try_get(7)?,
+                requirement_type: row.try_get(8)?,
+                contract: row.try_get(9)?,
+                instance_enabled: row.try_get::<_, Option<bool>>(10)?.unwrap_or(false),
+                active_generation: row.try_get(11)?,
+                generation: row.try_get(12)?,
+                definition: json(13)?,
+                definition_hash: row.try_get(14)?,
+                credential_handle: row.try_get(15)?,
             };
             Ok(Some(snapshot))
         }
@@ -1852,126 +1795,21 @@ mod tests {
     }
 
     #[test]
-    fn effect_authority_uses_the_exact_attempt_and_current_plan() {
-        // Deliberately carries no run-scoped predicate on $3: the release manifest
-        // is a file, so that binding is host-side (wamn-0h0g.15.66). What this
-        // statement owes that check is the run's root flow, asserted below.
+    fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
         for required in [
-            "FROM runs AS r",
-            "r.flow_id",
-            "FROM catalog.execution_bundles AS bundle",
-            "bundle.execution_bundle_hash = $3",
-            "convert_from(plan.exact_bytes, 'UTF8')::jsonb #> '{body,nodes}'",
-            "node.value ->> 'local-node-id' = $5",
-            "node.value ->> 'effect-policy' = 'effectful'",
-            "node.value #>> '{source-connection-requirement,name}' = $8",
-            "node.value -> 'source-connection-requirement' -> 'descriptor'",
-            "= requirement.requirement_json",
-            "SELECT 1 FROM effect_attempts AS attempt",
-            "attempt.run_id = r.run_id",
-            "attempt.root_plan_hash = $2",
-            "attempt.current_plan_hash = $3",
-            "attempt.frame_id = $4",
-            "attempt.local_node_id = $5",
-            "attempt.occurrence = $6",
-            "attempt.source_artifact_hash = $7",
-            "attempt.requirement_name = $8",
-        ] {
-            assert!(
-                CONNECTION_EFFECT_SNAPSHOT_SQL.contains(required),
-                "effect authority snapshot omits {required:?}"
-            );
-        }
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("SELECT count(*) AS match_count"));
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("plan_node.match_count = 1"));
-    }
-
-    #[test]
-    fn effect_authority_requires_attempt_evidence_only_for_the_durable_class() {
-        let class_gate = format!(
-            "CASE WHEN r.{DURABLE_CLASS_SQL_PREDICATE} \
-             THEN EXISTS ("
-        );
-        assert!(
-            CONNECTION_EFFECT_SNAPSHOT_SQL.contains(&class_gate),
-            "the HTTP effect snapshot must use the run-state class predicate verbatim"
-        );
-        assert_eq!(
-            CONNECTION_EFFECT_SNAPSHOT_SQL
-                .matches(DURABLE_CLASS_SQL_PREDICATE)
-                .count(),
-            1,
-            "one carrier read decides whether exact attempt evidence is required"
-        );
-        assert!(
-            !CONNECTION_EFFECT_SNAPSHOT_SQL.contains("JOIN effect_attempts"),
-            "Standard must not pay an unconditional ledger lookup"
-        );
-    }
-
-    #[test]
-    fn effect_authority_keeps_root_and_callee_plan_hashes_independent() {
-        assert!(
-            CONNECTION_EFFECT_SNAPSHOT_SQL.contains("r.execution_bundle_hash = $2"),
-            "the root plan must bind independently from the active frame"
-        );
-        assert!(
-            CONNECTION_EFFECT_SNAPSHOT_SQL.contains("bundle.execution_bundle_hash = $3"),
-            "the current callee plan must select its own exact bytes"
-        );
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("attempt.root_plan_hash = $2"));
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("attempt.current_plan_hash = $3"));
-        assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$2 = $3"));
-        assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$3 = $2"));
-    }
-
-    /// The run-to-plan binding moved out of SQL (wamn-0h0g.15.66, owner ruling
-    /// option C), so this statement's remaining obligation to it is to project the
-    /// run's ROOT flow — and to project it LAST, because
-    /// [`WamnPostgres::connection_effect_snapshot`] decodes it positionally. A
-    /// column inserted ahead of it would silently rebind that index, which is the
-    /// failure this pins rather than a spelling.
-    #[test]
-    fn effect_authority_projects_the_run_root_flow_last_for_the_host_side_binding() {
-        assert!(
-            CONNECTION_EFFECT_SNAPSHOT_SQL.contains("END, r.flow_id FROM runs AS r"),
-            "the run's root flow must be the final projected column"
-        );
-        assert_eq!(
-            CONNECTION_EFFECT_SNAPSHOT_SQL.matches("r.flow_id").count(),
-            1
-        );
-    }
-
-    #[test]
-    fn effect_authority_has_no_root_graph_or_mutable_run_fallback() {
-        let sql = CONNECTION_EFFECT_SNAPSHOT_SQL.to_ascii_lowercase();
-        for retired in [
-            "graph_json",
-            "flow_artifacts",
-            "validated_flow_drafts",
-            "node_runs",
-            "recursive",
-            "parent_frame_id",
-            "call_site_id",
-        ] {
-            assert!(!sql.contains(retired), "effect authority retains {retired}");
-        }
-        for write in [" insert ", " update ", " delete "] {
-            assert!(!sql.contains(write), "effect authority performs {write:?}");
-        }
-    }
-
-    #[test]
-    fn effect_authority_resolves_the_current_binding_and_rejects_draft_markers() {
-        for required in [
-            "requirement.artifact_hash = $7",
-            "requirement.requirement_name = $8",
-            "binding.catalog_id = r.catalog_id",
-            "binding.catalog_version = r.catalog_version",
-            "binding.artifact_hash = $7",
-            "binding.requirement_name = $8",
-            "binding.environment = r.environment",
+            "FROM catalog.wirings AS wiring",
+            "wiring.gated_catalog_version = $3",
+            "wiring.wiring_id = $5",
+            "wiring.version = $6",
+            "wiring.graph_json ->> 'wiring-id' = $5",
+            "component.component_digest = $8",
+            "wiring.graph_json #> ARRAY['nodes', $7]",
+            "requirement.artifact_hash IS NULL",
+            "requirement.requirement_name IS NULL",
+            "requirement.component_digest = $8",
+            "requirement.store_alias = $9",
+            "binding.catalog_version = $3",
+            "binding.environment = $4",
             "generation.generation = instance.active_generation",
         ] {
             assert!(
@@ -1979,11 +1817,28 @@ mod tests {
                 "effect authority snapshot omits {required:?}"
             );
         }
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(
-            "CASE WHEN r.trigger_source IS DISTINCT FROM 'scenario-draft' AND \
-             r.invocation_context #>> '{source,producer}' IS DISTINCT FROM 'draft-scenario' \
-             THEN true ELSE false END"
-        ));
+    }
+
+    #[test]
+    fn effect_authority_has_no_run_plan_frame_or_legacy_requirement_fallback() {
+        let sql = CONNECTION_EFFECT_SNAPSHOT_SQL.to_ascii_lowercase();
+        for retired in [
+            "wamn_run.",
+            " from runs ",
+            "effect_attempts",
+            "execution_bundles",
+            "plan_hash",
+            "frame_id",
+            "flow_id",
+            "validated_flow_drafts",
+            "artifact_hash =",
+            "requirement_name =",
+        ] {
+            assert!(!sql.contains(retired), "effect authority retains {retired}");
+        }
+        for write in [" insert ", " update ", " delete "] {
+            assert!(!sql.contains(write), "effect authority performs {write:?}");
+        }
     }
 
     // R16 — the validators stay as the identity-format contract (demoted from the
@@ -2587,14 +2442,14 @@ mod tests {
         .expect("the acquiring tenant binds");
 
         let lookup = ConnectionEffectLookup {
-            run_id: "run",
-            root_plan_hash: "root",
-            current_plan_hash: "current",
-            frame_id: 1,
-            local_node_id: "node",
-            occurrence: 0,
-            source_artifact_hash: "artifact",
-            requirement_name: "manager",
+            catalog_id: "catalog",
+            catalog_version: 1,
+            environment: "dev",
+            wiring_id: "wiring",
+            wiring_version: 1,
+            node_id: "node",
+            component_digest: "digest",
+            store_alias: "manager",
         };
 
         // A stale ConnectionHttp still carrying the tenant its store was BUILT
@@ -2655,14 +2510,14 @@ mod tests {
         );
 
         let lookup = ConnectionEffectLookup {
-            run_id: "run",
-            root_plan_hash: "root",
-            current_plan_hash: "current",
-            frame_id: 1,
-            local_node_id: "node",
-            occurrence: 0,
-            source_artifact_hash: "artifact",
-            requirement_name: "manager",
+            catalog_id: "catalog",
+            catalog_version: 1,
+            environment: "dev",
+            wiring_id: "wiring",
+            wiring_version: 1,
+            node_id: "node",
+            component_digest: "digest",
+            store_alias: "manager",
         };
 
         let unbound = pg
@@ -2931,583 +2786,6 @@ mod tests {
             platform_again_row.get::<_, Option<String>>(1).as_deref(),
             Some("platform")
         );
-    }
-
-    /// Full PostgreSQL proof for current-frame HTTP authority. The configured
-    /// database is disposable: this test resets the canonical catalog and run
-    /// schemas before applying both schema-of-record files.
-    #[tokio::test]
-    #[ignore = "requires WAMN_CONNECTION_EFFECT_PG_URL for a disposable PostgreSQL 18 superuser database"]
-    async fn live_effect_authority_uses_callee_plan_and_exact_attempt() {
-        use sha2::{Digest as _, Sha256};
-
-        const CATALOG_SQL: &str = include_str!("../../../../../../deploy/sql/catalog-schema.sql");
-        const RUN_STATE_SQL: &str = include_str!("../../../../../../deploy/sql/run-state.sql");
-        const TENANT: &str = "effect-live";
-        const COMPONENT: &str = "effect-live-runner";
-        const STANDARD_RUN_ID: &str = "effect-live-standard";
-        const DURABLE_RUN_ID: &str = "effect-live-durable";
-        const LOCAL_NODE_ID: &str = "send-notice";
-        const REQUIREMENT_NAME: &str = "manager";
-        const FRAME_ID: i64 = 7;
-        const OCCURRENCE: i32 = 2;
-
-        let Some(admin_url) = std::env::var("WAMN_CONNECTION_EFFECT_PG_URL").ok() else {
-            eprintln!(
-                "WAMN_CONNECTION_EFFECT_PG_URL unset — skipping the ignored PostgreSQL 18 \
-                 current-frame HTTP authority proof"
-            );
-            return;
-        };
-        let mut admin = connect_raw(&admin_url).await;
-        let server = admin
-            .query_one(
-                "SELECT current_setting('server_version_num')::int, \
-                        (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)",
-                &[],
-            )
-            .await
-            .expect("inspect disposable PostgreSQL server");
-        let server_version: i32 = server.get(0);
-        let is_superuser: bool = server.get(1);
-        assert!(
-            (180_000..190_000).contains(&server_version),
-            "effect authority live proof requires PostgreSQL 18"
-        );
-        assert!(
-            is_superuser,
-            "WAMN_CONNECTION_EFFECT_PG_URL must name a disposable superuser database"
-        );
-
-        // wamn-0h0g.20.14: the two effect-ledger ACL roles come from the REAL
-        // provisioning builder, so this proof cannot drift from the roles
-        // production mints. `wamn_app` and `wamn_scenario_author` stay
-        // hand-rolled: the builder covers only the two writer roles.
-        let effect_writer_roles = wamn_control_provision::sql::ensure_effect_writer_acl_role_sql();
-        admin
-            .batch_execute(&format!(
-                "DO $$ BEGIN \
-                   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                     CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' \
-                       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-                   END IF; \
-                   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                     CREATE ROLE wamn_scenario_author NOLOGIN \
-                       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-                   END IF; \
-                 END $$; \
-                 {effect_writer_roles} \
-                 ALTER ROLE wamn_app WITH LOGIN PASSWORD 'wamn_app' \
-                   NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-                 ALTER ROLE wamn_scenario_author WITH NOLOGIN \
-                   NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-                 DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-                 DROP SCHEMA IF EXISTS catalog CASCADE;",
-            ))
-            .await
-            .expect("reset disposable effect authority schemas and roles");
-        admin
-            .batch_execute(CATALOG_SQL)
-            .await
-            .expect("apply full catalog schema of record");
-        admin
-            .batch_execute(RUN_STATE_SQL)
-            .await
-            .expect("apply full run-state schema of record");
-
-        let digest = |bytes: &[u8]| format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
-        let root_artifact_hash = digest(b"effect-live-root-artifact");
-        let callee_artifact_hash = digest(b"effect-live-callee-artifact");
-        let descriptor =
-            serde_json::to_value(wamn_flow::node_contract::ConnectionTypeDescriptor::http_v1())
-                .expect("serialize canonical HTTP descriptor");
-        let flowrunner_revision = digest(b"effect-live-flowrunner");
-        let effect_provider_revision = digest(b"effect-live-effect-provider");
-        let callable_input_hash = wamn_flow::canonical_json_sha256(&serde_json::Value::Bool(true));
-        let root_plan_bytes = serde_json::to_vec(&serde_json::json!({
-            "header": {
-                "format-version": "0.1",
-                "plan-compiler-revision": "0.1",
-                "runtime-revision": {
-                    "flowrunner-component-digest": flowrunner_revision.clone(),
-                    "effect-provider-revision": effect_provider_revision.clone(),
-                    "host-effect-contract-version": "0.1"
-                },
-                "root-artifact-hash": root_artifact_hash.clone()
-            },
-            "body": {
-                "entry-instruction": "root-entry",
-                "nodes": [{
-                    "local-node-id": "root-entry",
-                    "source-node-id": "root-entry",
-                    "type": "event",
-                    "config": {},
-                    "effect-policy": "pure"
-                }],
-                "edges": [],
-                "root-terminal-behavior": {"kind": "frontier-exhaustion"},
-                "entry-input-schema-guard": true,
-                "callable-contract": null,
-                "source-map": [{
-                    "local-node-id": "root-entry",
-                    "source-node-id": "root-entry"
-                }]
-            }
-        }))
-        .expect("encode root execution plan bytes");
-        let callee_plan_bytes = serde_json::to_vec(&serde_json::json!({
-            "header": {
-                "format-version": "0.1",
-                "plan-compiler-revision": "0.1",
-                "runtime-revision": {
-                    "flowrunner-component-digest": flowrunner_revision,
-                    "effect-provider-revision": effect_provider_revision,
-                    "host-effect-contract-version": "0.1"
-                },
-                "root-artifact-hash": callee_artifact_hash.clone()
-            },
-            "body": {
-                "entry-instruction": "callee-entry",
-                "nodes": [
-                    {
-                        "local-node-id": "callee-entry",
-                        "source-node-id": "callee-entry",
-                        "type": "request",
-                        "config": {"input-schema": true},
-                        "effect-policy": "pure"
-                    },
-                    {
-                        "local-node-id": LOCAL_NODE_ID,
-                        "source-node-id": LOCAL_NODE_ID,
-                        "type": "http-call",
-                        "config": {},
-                        "effect-policy": "effectful",
-                        "source-connection-requirement": {
-                            "name": REQUIREMENT_NAME,
-                            "descriptor": descriptor.clone()
-                        }
-                    },
-                    {
-                        "local-node-id": "callee-respond",
-                        "source-node-id": "callee-respond",
-                        "type": "respond",
-                        "config": {"status": 200},
-                        "effect-policy": "pure"
-                    }
-                ],
-                "edges": [
-                    {
-                        "source": "callee-entry",
-                        "source-port": "main",
-                        "destination": LOCAL_NODE_ID,
-                        "fan-out-ordinal": 0
-                    },
-                    {
-                        "source": LOCAL_NODE_ID,
-                        "source-port": "main",
-                        "destination": "callee-respond",
-                        "fan-out-ordinal": 0
-                    }
-                ],
-                "root-terminal-behavior": {
-                    "kind": "respond",
-                    "responders": ["callee-respond"]
-                },
-                "entry-input-schema-guard": true,
-                "callable-contract": {
-                    "version": "0.1",
-                    "input-schema-hash": callable_input_hash,
-                    "return-contract": "untyped-json-body",
-                    "effect-ceiling": "effectful"
-                },
-                "source-map": [
-                    {
-                        "local-node-id": "callee-entry",
-                        "source-node-id": "callee-entry"
-                    },
-                    {
-                        "local-node-id": LOCAL_NODE_ID,
-                        "source-node-id": LOCAL_NODE_ID
-                    },
-                    {
-                        "local-node-id": "callee-respond",
-                        "source-node-id": "callee-respond"
-                    }
-                ]
-            }
-        }))
-        .expect("encode callee execution plan bytes");
-        let root_plan_hash = digest(&root_plan_bytes);
-        let current_plan_hash = digest(&callee_plan_bytes);
-        assert_ne!(
-            root_plan_hash, current_plan_hash,
-            "the proof must execute inside a distinct callee plan"
-        );
-        let root_plan_length =
-            i32::try_from(root_plan_bytes.len()).expect("root plan fits PostgreSQL int");
-        let callee_plan_length =
-            i32::try_from(callee_plan_bytes.len()).expect("callee plan fits PostgreSQL int");
-        let root_plan_slice = root_plan_bytes.as_slice();
-        let callee_plan_slice = callee_plan_bytes.as_slice();
-        let descriptor_json =
-            serde_json::to_string(&descriptor).expect("encode connection requirement");
-
-        let seed = admin
-            .transaction()
-            .await
-            .expect("begin effect authority seed transaction");
-        seed.execute(
-            "INSERT INTO catalog.catalogs \
-               (tenant_id,catalog_id,version,environment,schema_version,state) \
-             VALUES ($1,'effect-catalog',1,'prod','0.1','applied')",
-            &[&TENANT],
-        )
-        .await
-        .expect("seed release catalog");
-        seed.execute(
-            "INSERT INTO catalog.flow_artifacts \
-               (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash) \
-             VALUES \
-               ($1,'root-flow',1,'0.1','{}'::jsonb,'root-graph',$2), \
-               ($1,'callee-flow',1,'0.1','{}'::jsonb,'callee-graph',$3)",
-            &[&TENANT, &root_artifact_hash, &callee_artifact_hash],
-        )
-        .await
-        .expect("seed distinct source artifacts");
-        seed.execute(
-            "INSERT INTO catalog.execution_bundles \
-               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-             VALUES ($1,$2,'0.1',$3,$4), ($1,$5,'0.1',$6,$7)",
-            &[
-                &TENANT,
-                &root_plan_hash,
-                &root_plan_slice,
-                &root_plan_length,
-                &current_plan_hash,
-                &callee_plan_slice,
-                &callee_plan_length,
-            ],
-        )
-        .await
-        .expect("seed distinct exact execution bundles");
-        seed.execute(
-            "INSERT INTO catalog.release_manifests \
-               (tenant_id,catalog_id,catalog_version) \
-             VALUES ($1,'effect-catalog',1)",
-            &[&TENANT],
-        )
-        .await
-        .expect("seed release manifest");
-        seed.execute(
-            "INSERT INTO catalog.release_flows \
-               (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) \
-             VALUES \
-               ($1,'effect-catalog',1,'root-flow',1,$2), \
-               ($1,'effect-catalog',1,'callee-flow',1,$3)",
-            &[&TENANT, &root_plan_hash, &current_plan_hash],
-        )
-        .await
-        .expect("seed release flow membership");
-        seed.execute(
-            "INSERT INTO catalog.connection_requirements \
-               (tenant_id,artifact_hash,requirement_name,requirement_json,requirement_hash) \
-             VALUES ($1,$2,$3,$4::text::jsonb,'effect-live-requirement')",
-            &[
-                &TENANT,
-                &callee_artifact_hash,
-                &REQUIREMENT_NAME,
-                &descriptor_json,
-            ],
-        )
-        .await
-        .expect("seed callee source requirement");
-        seed.execute(
-            "INSERT INTO catalog.connection_instances \
-               (tenant_id,environment,instance_id,requirement_type,contract) \
-             VALUES ($1,'prod','manager-prod','http','wamn:connection/http@0.1.0')",
-            &[&TENANT],
-        )
-        .await
-        .expect("seed connection instance");
-        seed.execute(
-            "INSERT INTO catalog.connection_generations \
-               (tenant_id,environment,instance_id,generation,definition_json,definition_hash,credential_set_handle) \
-             VALUES ($1,'prod','manager-prod',1, \
-                     '{\"primary-authority\":\"https://manager.example\",\"tls-verification\":\"verify-authority\"}'::jsonb, \
-                     'effect-live-definition','effect-live-credential')",
-            &[&TENANT],
-        )
-        .await
-        .expect("seed active connection generation");
-        seed.execute(
-            "UPDATE catalog.connection_instances \
-                SET active_generation = 1, revision = revision + 1, \
-                    updated_at = updated_at + interval '1 second' \
-              WHERE tenant_id = $1 AND environment = 'prod' \
-                AND instance_id = 'manager-prod'",
-            &[&TENANT],
-        )
-        .await
-        .expect("activate connection generation");
-        seed.execute(
-            "INSERT INTO catalog.connection_bindings \
-               (tenant_id,catalog_id,catalog_version,artifact_hash,requirement_name, \
-                environment,instance_id,binding_status,validation_status,validation_hash) \
-             VALUES ($1,'effect-catalog',1,$2,$3,'prod','manager-prod', \
-                     'active','valid','effect-live-binding')",
-            &[&TENANT, &callee_artifact_hash, &REQUIREMENT_NAME],
-        )
-        .await
-        .expect("seed release-bound connection binding");
-        seed.execute(
-            "INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                environment,execution_bundle_hash,status,trigger_source,invocation_context, \
-                durability_class) \
-             VALUES \
-               ($1,$2,'root-flow',1,'effect-catalog',1,'prod',$4, \
-                'running','manual','{\"source\":{\"producer\":\"manual\"}}'::jsonb,'standard'), \
-               ($1,$3,'root-flow',1,'effect-catalog',1,'prod',$4, \
-                'running','manual','{\"source\":{\"producer\":\"manual\"}}'::jsonb,'durable')",
-            &[&TENANT, &STANDARD_RUN_ID, &DURABLE_RUN_ID, &root_plan_hash],
-        )
-        .await
-        .expect("seed standard and durable root-pinned running runs");
-        seed.commit()
-            .await
-            .expect("commit effect authority fixture");
-
-        let privileges_before = admin
-            .query_one(
-                "SELECT has_table_privilege('wamn_app','wamn_run.effect_attempts','SELECT'), \
-                        has_table_privilege('wamn_app','wamn_run.effect_attempts','INSERT'), \
-                        has_function_privilege( \
-                          'wamn_app','wamn_run.reject_immutable_effect_fact_change()','EXECUTE')",
-                &[],
-            )
-            .await
-            .expect("inspect immutable attempt privileges");
-        assert!(privileges_before.get::<_, bool>(0));
-        assert!(!privileges_before.get::<_, bool>(1));
-        assert!(!privileges_before.get::<_, bool>(2));
-
-        let app_url = database_url_for_role(&admin_url, "wamn_app", "wamn_app");
-        let postgres = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(app_url),
-            guest_pool_max_size: 1,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 2_000,
-            statement_timeout_ms: 5_000,
-            row_limit: 1_000,
-        })
-        .expect("construct production PostgreSQL plugin");
-        // wamn-0h0g.17.7: the registry is the authority on this component's
-        // tenant, so this binds the AGREEING case the production path always
-        // has — `ExecutionHost::instantiate` feeds the same tenant to the claim
-        // registry and to `ConnectionHttp`. The disagreeing case is refused; see
-        // `effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim`.
-        postgres
-            .set_tenant(COMPONENT, TENANT)
-            .expect("bind the production effect tenant claim");
-        postgres
-            .set_schema(COMPONENT, "wamn_run")
-            .expect("set production run-state search path");
-        let standard_lookup = ConnectionEffectLookup {
-            run_id: STANDARD_RUN_ID,
-            root_plan_hash: &root_plan_hash,
-            current_plan_hash: &current_plan_hash,
-            frame_id: FRAME_ID,
-            local_node_id: LOCAL_NODE_ID,
-            occurrence: OCCURRENCE,
-            source_artifact_hash: &callee_artifact_hash,
-            requirement_name: REQUIREMENT_NAME,
-        };
-        let standard = postgres
-            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, TENANT, &standard_lookup)
-            .await
-            .expect("load standard authority snapshot without effect evidence")
-            .expect("standard run is visible under tenant RLS");
-        assert_eq!(standard.run_status, "running");
-        assert!(standard.root_plan_matches);
-        assert!(standard.attempt_matches);
-        assert!(standard.resolution_matches);
-        assert!(standard.node_permitted);
-        assert_eq!(standard.requirement_json.as_ref(), Some(&descriptor));
-        assert!(standard.binding_active);
-        assert!(standard.binding_valid);
-        assert_eq!(standard.instance_id.as_deref(), Some("manager-prod"));
-        assert!(standard.instance_enabled);
-        assert_eq!(standard.active_generation, Some(1));
-        assert_eq!(standard.generation, Some(1));
-        assert!(standard.draft_generation_granted);
-
-        let exact_lookup = ConnectionEffectLookup {
-            run_id: DURABLE_RUN_ID,
-            ..standard_lookup
-        };
-        let missing_durable_attempt = postgres
-            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, TENANT, &exact_lookup)
-            .await
-            .expect("load durable authority snapshot without effect evidence")
-            .expect("durable run is visible under tenant RLS");
-        assert!(missing_durable_attempt.resolution_matches);
-        assert!(missing_durable_attempt.node_permitted);
-        assert!(
-            !missing_durable_attempt.attempt_matches,
-            "durable trusted HTTP stays behind exact immutable attempt evidence"
-        );
-
-        admin
-            .execute(
-                "INSERT INTO wamn_run.effect_attempts \
-                   (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,parent_frame_id, \
-                    call_site_id,local_node_id,source_artifact_hash,requirement_name,occurrence, \
-                    seq,generation_fact_kind,connection_name,connection_generation, \
-                    credential_generation,attempt_started_at,attempt_deadline_at,attempt_input_ref) \
-                 VALUES ($1,$2,$3,$4,$5,3,'call-callee',$6,$7,$8,$9,0,'attested', \
-                         'manager-prod','1','effect-live-credential', \
-                         clock_timestamp(),clock_timestamp() + interval '1 minute', \
-                         'sha256:effect-live-input')",
-                &[
-                    &TENANT,
-                    &DURABLE_RUN_ID,
-                    &root_plan_hash,
-                    &current_plan_hash,
-                    &FRAME_ID,
-                    &LOCAL_NODE_ID,
-                    &callee_artifact_hash,
-                    &REQUIREMENT_NAME,
-                    &OCCURRENCE,
-                ],
-            )
-            .await
-            .expect("seed exact immutable attempt for the durable run");
-
-        let exact = postgres
-            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, TENANT, &exact_lookup)
-            .await
-            .expect("load exact production authority snapshot")
-            .expect("root run is visible under tenant RLS");
-        assert_eq!(exact.run_status, "running");
-        assert!(exact.root_plan_matches);
-        assert!(exact.resolution_matches);
-        assert!(exact.attempt_matches);
-        assert!(exact.node_permitted);
-        assert_eq!(exact.requirement_json.as_ref(), Some(&descriptor));
-        assert!(exact.binding_active);
-        assert!(exact.binding_valid);
-        assert_eq!(exact.instance_id.as_deref(), Some("manager-prod"));
-        assert!(exact.instance_enabled);
-        assert_eq!(exact.active_generation, Some(1));
-        assert_eq!(exact.generation, Some(1));
-        assert!(exact.draft_generation_granted);
-        // The host-side plan-closure check's only input from this statement
-        // (wamn-0h0g.15.66). It is the run's ROOT flow, not the executing frame's.
-        assert_eq!(exact.root_flow_id, "root-flow");
-
-        let wrong_occurrence = postgres
-            .connection_effect_snapshot(
-                COMPONENT,
-                DEFAULT_PROJECT,
-                TENANT,
-                &ConnectionEffectLookup {
-                    occurrence: OCCURRENCE + 1,
-                    ..exact_lookup
-                },
-            )
-            .await
-            .expect("load wrong-occurrence snapshot")
-            .expect("run remains visible for wrong occurrence");
-        assert!(wrong_occurrence.root_plan_matches);
-        assert!(wrong_occurrence.resolution_matches);
-        assert!(wrong_occurrence.node_permitted);
-        assert!(!wrong_occurrence.attempt_matches);
-
-        let unknown_plan_hash = digest(b"effect-live-unknown-current-plan");
-        let wrong_current = postgres
-            .connection_effect_snapshot(
-                COMPONENT,
-                DEFAULT_PROJECT,
-                TENANT,
-                &ConnectionEffectLookup {
-                    current_plan_hash: &unknown_plan_hash,
-                    ..standard_lookup
-                },
-            )
-            .await
-            .expect("load wrong-current-plan snapshot")
-            .expect("run remains visible for wrong current plan");
-        assert!(wrong_current.root_plan_matches);
-        assert!(!wrong_current.resolution_matches);
-        assert!(!wrong_current.node_permitted);
-        assert!(
-            wrong_current.attempt_matches,
-            "standard reaches the plan confinement even without attempt evidence"
-        );
-
-        let unknown_source_hash = digest(b"effect-live-unknown-source-artifact");
-        let wrong_source = postgres
-            .connection_effect_snapshot(
-                COMPONENT,
-                DEFAULT_PROJECT,
-                TENANT,
-                &ConnectionEffectLookup {
-                    source_artifact_hash: &unknown_source_hash,
-                    ..standard_lookup
-                },
-            )
-            .await
-            .expect("load wrong-source snapshot")
-            .expect("run remains visible for wrong source artifact");
-        // `resolution_matches` does not bind the source artifact, and by owner
-        // ruling (wamn-0h0g.15.66) this statement will not make it: `authorized_plan`
-        // only asks that a bundle with hash $3 exist in the tenant. This lookup is
-        // refused by the absent requirement below, and the run-to-plan binding
-        // is refused outside this statement entirely, by
-        // `authorize_plan_closure` against the release manifest. Asserting the true
-        // value here records what the SQL proves, not a hole.
-        assert!(wrong_source.resolution_matches);
-        assert!(
-            wrong_source.attempt_matches,
-            "standard reaches source/requirement confinement without attempt evidence"
-        );
-        assert!(!wrong_source.node_permitted);
-        assert!(wrong_source.requirement_json.is_none());
-
-        let wrong_requirement = postgres
-            .connection_effect_snapshot(
-                COMPONENT,
-                DEFAULT_PROJECT,
-                TENANT,
-                &ConnectionEffectLookup {
-                    requirement_name: "other-manager",
-                    ..standard_lookup
-                },
-            )
-            .await
-            .expect("load wrong-requirement snapshot")
-            .expect("run remains visible for wrong requirement");
-        assert!(wrong_requirement.resolution_matches);
-        assert!(
-            wrong_requirement.attempt_matches,
-            "standard reaches declared-requirement confinement without attempt evidence"
-        );
-        assert!(!wrong_requirement.node_permitted);
-        assert!(wrong_requirement.requirement_json.is_none());
-
-        let privileges_after = admin
-            .query_one(
-                "SELECT has_table_privilege('wamn_app','wamn_run.effect_attempts','SELECT'), \
-                        has_table_privilege('wamn_app','wamn_run.effect_attempts','INSERT'), \
-                        has_function_privilege( \
-                          'wamn_app','wamn_run.reject_immutable_effect_fact_change()','EXECUTE')",
-                &[],
-            )
-            .await
-            .expect("recheck immutable attempt privileges");
-        assert!(privileges_after.get::<_, bool>(0));
-        assert!(!privileges_after.get::<_, bool>(1));
-        assert!(!privileges_after.get::<_, bool>(2));
     }
 
     // R18-neg (wamn-2jkm.65) — the fail-CLOSED branch, exercised against a REAL

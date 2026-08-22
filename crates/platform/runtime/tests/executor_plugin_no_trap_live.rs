@@ -664,7 +664,6 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
     let effect = Arc::new(ConnectionHttp::new(
         postgres,
         Arc::new(WamnCredentials::empty()),
-        Arc::new(RunnerEgressPolicy::default()),
         "acme",
         "receiving",
         allowed_hosts,

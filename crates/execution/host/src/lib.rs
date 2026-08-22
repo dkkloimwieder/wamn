@@ -881,7 +881,6 @@ impl ExecutionHost {
         let connection_http = Arc::new(ConnectionHttp::new(
             plugin.clone(),
             vault.clone(),
-            egress_policy.clone(),
             tenant,
             project,
             connection_allowed_hosts,
