@@ -1,0 +1,5 @@
+package wamn:transform@0.1.0;
+
+world transform {
+  export wamn:node/handler@0.1.0;
+}

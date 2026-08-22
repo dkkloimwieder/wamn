@@ -1,0 +1,15 @@
+[package]
+name = "transform"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dlmalloc = { workspace = true }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+wit-bindgen = { workspace = true }
+
+[features]
+std = []
+
+[lib]
+crate-type = ["cdylib"]

@@ -142,11 +142,12 @@ mod tests {
     /// [`node_abi_source_and_included_copy_agree`] fails if only one of them does.
     const NODE_ABI_SOURCE: &str = "crates/execution/router/wit/package.wit";
 
-    /// Every vendored copy of the node ABI, repo-root-relative. Empty today: the
-    /// package is bound by nothing, so a copy has no reason to exist yet. The
-    /// walk below cross-checks this list against disk BOTH ways, so the first
-    /// consumer to vendor a copy must register it here or fail.
-    const EXPECTED_NODE_ABI_COPIES: [&str; 0] = [];
+    /// Every vendored copy of the node ABI, repo-root-relative. The walk below
+    /// cross-checks this list against disk BOTH ways.
+    const EXPECTED_NODE_ABI_COPIES: [&str; 2] = [
+        "components/library/http-request/wit/deps/wamn-node/package.wit",
+        "components/library/transform/wit/deps/wamn-node/package.wit",
+    ];
 
     /// Tiers holding executable, bindable WIT. `docs/` is deliberately excluded:
     /// `docs/archive/contracts/wamn-node.wit` is the FROZEN 0.1.0 archive this

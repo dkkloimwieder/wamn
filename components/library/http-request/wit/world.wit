@@ -1,0 +1,6 @@
+package wamn:http-request@0.1.0;
+
+world http-request {
+  import wamn:connection/http@0.1.0;
+  export wamn:node/handler@0.1.0;
+}

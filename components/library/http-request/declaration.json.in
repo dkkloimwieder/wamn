@@ -1,0 +1,44 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "catalog-id": "__CATALOG_ID__",
+    "catalog-version": __CATALOG_VERSION__
+  },
+  "component": "http-request",
+  "interface-version": "0.1.0",
+  "operation": "run",
+  "input-ports": [
+    { "name": "input", "schema": {} }
+  ],
+  "output-ports": [
+    { "name": "main", "schema": {} }
+  ],
+  "parameters": [
+    {
+      "name": "requirement",
+      "schema": { "type": "string", "minLength": 1 },
+      "required": true
+    },
+    {
+      "name": "method",
+      "schema": {
+        "type": "string",
+        "enum": ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
+      },
+      "required": true
+    },
+    {
+      "name": "path-and-query",
+      "schema": { "type": "string", "pattern": "^/" },
+      "required": true
+    },
+    {
+      "name": "headers",
+      "schema": {
+        "type": "object",
+        "additionalProperties": { "type": "string" }
+      },
+      "required": false
+    }
+  ]
+}

@@ -11,8 +11,9 @@ mod host_bindings {
     });
 }
 
-const EXPECTED_COPIES: [&str; 2] = [
+const EXPECTED_COPIES: [&str; 3] = [
     "components/fixtures/connection-http-standard/wit/deps/wamn-connection/package.wit",
+    "components/library/http-request/wit/deps/wamn-connection/package.wit",
     "crates/platform/runtime/wit/deps/wamn-connection/package.wit",
 ];
 

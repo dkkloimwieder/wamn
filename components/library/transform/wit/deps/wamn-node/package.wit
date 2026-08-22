@@ -1,0 +1,167 @@
+package wamn:node@0.1.0;
+
+/// The typed operation seam the host router invokes once per graph node.
+///
+/// STATUS: LIVE 0.1.0 (wamn-0h0g.16.2; versioned by wamn-0h0g.16.10). This
+/// package SUPERSEDES the archived `wamn:node@0.1.0`
+/// (`docs/archive/contracts/wamn-node.wit`) WHOLESALE — it replaces that
+/// contract rather than evolving it, against the execution model of
+/// `docs/exe-model.md` rev 4. The two shapes differ: this revision drops the
+/// payload store, the run/flow/attempt identity, and the durable run context,
+/// and replaces `run-context` with `node-context`.
+///
+/// Wholesale supersession is why the archived package's own compatibility clause
+/// ("0.1.x admits only additive or clarifying changes; any breaking change waits
+/// for 0.2") is not violated here. That clause governs the EVOLUTION of a live
+/// package, and the archived one is not live: it was deleted, nothing in the tree
+/// binds it, and its name is banned outright by the two ingress guards in
+/// `crates/execution/flow-invocation/tests/wit_coherence.rs`. There is no
+/// deployed 0.1.0 consumer for a version bump to protect. So the MVP
+/// version-identity rule governs instead — every first-party `wamn:*` WIT
+/// package sits at @0.1.0 for the MVP identity window
+/// (`tests/conformance/src/version_identity.rs`) — and no exception is carved
+/// for this package. A reader diffing the archive against this file finds the
+/// supersession recorded here, not a silent redefinition.
+///
+/// SETTLED LOCATION. This package lives with the router crate that invokes it
+/// and owns it. Consumers vendor it the usual way, at
+/// `<consumer>/wit/deps/wamn-node/package.wit`, and every such copy is
+/// registered in the repo-level drift guard before it is bound.
+///
+/// What the router does with a node is the entire justification for this
+/// surface, and nothing here serves any other reader: resolve the wiring's
+/// active version, walk the graph in frontier order, acquire a pooled instance
+/// keyed by the node's component digest, call `run`, route the emission by port,
+/// and classify a `node-error` into retry, throttle, error edge, dead-letter, or
+/// non-failure cancellation.
+/// Catalog admission maps each logical operation in one scoped catalog version
+/// to one distinguishable digest before this boundary; the digest selects the
+/// component, while every component exports this same static `handler.run`.
+interface types {
+  /// JSON-encoded string. A string, not a structured value, so every guest
+  /// language reaches it through its own stock codec; the router never inspects
+  /// it. A batched stream delivery (`docs/exe-model.md`, ingress path 2) arrives
+  /// as one JSON array in a single invocation, so batching needs no arm here.
+  type json = string;
+
+  /// Everything the router knows that a node invocation may need.
+  ///
+  /// Deliberately carries no secrets and no run history. Credential generations
+  /// are host-injected at the effect plugins, so an author never sees a
+  /// connection string, and there is no durable per-node fact to thread through.
+  ///
+  /// The invocation identities are the idempotency basis. Delivery is
+  /// at-least-once (`docs/exe-model.md` R2), so a component's own effect
+  /// idempotency is authored rather than platform-provided, and the author
+  /// derives a dedup key from this record — the same key `emit` presents at the
+  /// boundary for producer dedup.
+  record node-context {
+    /// The wiring this delivery is running. With `wiring-version` it scopes an
+    /// authored dedup key to the graph revision that asked for the effect, so a
+    /// pointer flip to a corrected wiring is not suppressed by the superseded
+    /// one's key.
+    wiring-id: string,
+    /// The active wiring version the router resolved for this delivery. Wirings
+    /// are versioned, gated data hot-activated by pointer flip; a delivery runs
+    /// against exactly one version, resolved once at its start.
+    wiring-version: u32,
+    /// This node's instance id within the wiring graph. Two instances of the
+    /// same component in one wiring are distinct effects and must not share a
+    /// dedup key.
+    node-id: string,
+    /// The delivery being walked: stable across redeliveries of the same
+    /// ingress event (queue lease expiry, JetStream nack), distinct per event.
+    /// `(delivery-id, node-id, occurrence)` is therefore the stable, unique
+    /// basis for one node visit's external effect under at-least-once
+    /// redelivery.
+    delivery-id: string,
+    /// The target input selected by the incoming wiring edge. The wiring entry
+    /// has no incoming edge and therefore no target input.
+    input-port: option<string>,
+    /// Which visit of this node in this delivery is running. Merge and loop
+    /// visits increment it; retries of one visit retain it.
+    occurrence: u32,
+    /// W3C trace context. OTel is the record in this model — the router opens
+    /// one span per component invocation and there are no durable node facts to
+    /// fall back on — so a node making outbound calls MUST propagate this when
+    /// present, or the trace is the only evidence and it breaks at the node.
+    traceparent: option<string>,
+    tracestate: option<string>,
+    /// Remaining budget for this invocation in milliseconds. The host enforces a
+    /// hard deadline regardless (epoch interruption); this lets a well-behaved
+    /// node bound its own client timeouts and stop cooperatively — it is what
+    /// makes `node-error.cancelled` reachable without a cancellation import.
+    deadline-ms: option<u64>,
+    /// This node's declared parameters as a JSON document, template-expanded by
+    /// the router. The generic standard-library components are configured
+    /// entirely through it — the `entity` component receives its relation and
+    /// filter spec here rather than through a per-relation generated type.
+    config: json,
+  }
+
+  /// A failure as the error edge and the invocation span report it.
+  record error-detail {
+    message: string,
+    /// Machine-readable code for error-edge routing and studio display, e.g.
+    /// "ECONNREFUSED", "HTTP_429". Distinct from `message`, which is prose.
+    code: option<string>,
+  }
+
+  record rate-limit-detail {
+    detail: error-detail,
+    /// Source-authoritative delay, e.g. from a `Retry-After` header. This is the
+    /// only thing that distinguishes `rate-limited` from `retryable`: absent, the
+    /// router falls back to its own backoff and the two cases coincide.
+    retry-after-ms: option<u64>,
+  }
+
+  /// How a node invocation failed or stopped without emission, in the terms the
+  /// router acts on — never by matching strings. Each case selects a different
+  /// router action or the explicit non-failure cancellation disposition.
+  variant node-error {
+    /// Transient. The router retries within the delivery's budget, or lets the
+    /// delivery redeliver (queue lease expiry, JetStream nack).
+    retryable(error-detail),
+    /// The upstream system signalled throttling. Retryable like the above, but
+    /// the router honours the source's own delay instead of its backoff curve.
+    rate-limited(rate-limit-detail),
+    /// Permanent for this input. The router stops retrying and routes down the
+    /// wiring's error edge.
+    terminal(error-detail),
+    /// The input violated this node's declared contract. Never retried and never
+    /// merely error-edged: shape safety is the gate's jurisdiction, so reaching
+    /// this at runtime means the payload is poison — it dead-letters (stream
+    /// path) rather than being redelivered forever against the same bad input.
+    invalid-input(error-detail),
+    /// The node stopped cooperatively, typically on its own `deadline-ms`, and
+    /// did not complete. The router ends the walk as cancelled without an
+    /// error edge, failure, or terminal verdict.
+    cancelled,
+  }
+
+  /// What a successful invocation produced: the payload and the output port
+  /// selecting which edges the router routes it down.
+  record emission {
+    payload: json,
+    /// Absent means the default "main" port. Branch nodes emit named ports; the
+    /// reserved "error" port is never emitted here, because errors travel as
+    /// `node-error` and the router routes them.
+    port: option<string>,
+  }
+}
+
+/// The single required export. A node is a pure function of (ctx, input, granted
+/// host imports); that purity is what makes a pooled instance safely reusable
+/// across every wiring and tenant sharing the component's digest.
+interface handler {
+  use types.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+/// The only world: a node over inline JSON that imports nothing. Effect
+/// authority is granted per workload against bound connection generations, so it
+/// is composed onto a guest at build time rather than enumerated here.
+world node {
+  export handler;
+}

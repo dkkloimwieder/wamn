@@ -1,0 +1,23 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "catalog-id": "__CATALOG_ID__",
+    "catalog-version": __CATALOG_VERSION__
+  },
+  "component": "transform",
+  "interface-version": "0.1.0",
+  "operation": "run",
+  "input-ports": [
+    { "name": "input", "schema": {} }
+  ],
+  "output-ports": [
+    { "name": "main", "schema": {} }
+  ],
+  "parameters": [
+    {
+      "name": "pointer",
+      "schema": { "type": "string", "pattern": "^(|/.*)$" },
+      "required": true
+    }
+  ]
+}
