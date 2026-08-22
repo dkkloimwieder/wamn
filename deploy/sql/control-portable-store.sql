@@ -241,13 +241,49 @@ CREATE TABLE IF NOT EXISTS catalog.release_attachments (
 
 CREATE TABLE IF NOT EXISTS catalog.connection_requirements (
     tenant_id        text NOT NULL CHECK (tenant_id <> ''),
-    artifact_hash    text NOT NULL CHECK (artifact_hash <> ''),
-    requirement_name text NOT NULL CHECK (requirement_name <> ''),
+    artifact_hash    text CHECK (artifact_hash <> ''),
+    requirement_name text CHECK (requirement_name <> ''),
+    component_digest text CHECK (component_digest <> ''),
+    store_alias      text CHECK (store_alias <> ''),
     requirement_json jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
     requirement_hash text NOT NULL CHECK (requirement_hash <> ''),
     created_at        timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, artifact_hash, requirement_name)
+    CONSTRAINT connection_requirements_complete_grain CHECK (
+        (artifact_hash IS NOT NULL AND requirement_name IS NOT NULL
+         AND component_digest IS NULL AND store_alias IS NULL)
+        OR
+        (artifact_hash IS NULL AND requirement_name IS NULL
+         AND component_digest IS NOT NULL AND store_alias IS NOT NULL)
+    )
 );
+-- Existing rows retain their legacy coordinates. No component provenance is
+-- synthesized from an artifact hash during this additive transition.
+ALTER TABLE catalog.connection_requirements
+    DROP CONSTRAINT IF EXISTS connection_requirements_pkey,
+    ADD COLUMN IF NOT EXISTS component_digest text,
+    ADD COLUMN IF NOT EXISTS store_alias text,
+    ALTER COLUMN artifact_hash DROP NOT NULL,
+    ALTER COLUMN requirement_name DROP NOT NULL,
+    DROP CONSTRAINT IF EXISTS connection_requirements_complete_grain,
+    ADD CONSTRAINT connection_requirements_complete_grain CHECK (
+        (artifact_hash IS NOT NULL AND requirement_name IS NOT NULL
+         AND component_digest IS NULL AND store_alias IS NULL)
+        OR
+        (artifact_hash IS NULL AND requirement_name IS NULL
+         AND component_digest IS NOT NULL AND store_alias IS NOT NULL)
+    ),
+    DROP CONSTRAINT IF EXISTS connection_requirements_component_digest_check,
+    ADD CONSTRAINT connection_requirements_component_digest_check
+        CHECK (component_digest IS NULL OR component_digest <> ''),
+    DROP CONSTRAINT IF EXISTS connection_requirements_store_alias_check,
+    ADD CONSTRAINT connection_requirements_store_alias_check
+        CHECK (store_alias IS NULL OR store_alias <> '');
+CREATE UNIQUE INDEX IF NOT EXISTS connection_requirements_legacy_key
+    ON catalog.connection_requirements (tenant_id, artifact_hash, requirement_name)
+    WHERE artifact_hash IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS connection_requirements_component_key
+    ON catalog.connection_requirements (tenant_id, component_digest, store_alias)
+    WHERE component_digest IS NOT NULL;
 
 -- The referenced connection generation is project-local after the plane split.
 -- Its coordinates remain plain identity here; a cross-database FK is forbidden.
@@ -889,7 +925,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '6666b100885d0c8c9e94a6c1cdaceb1997ad884db6e2d654b38806ebf6aaaf9a'
+       '553b3164f9618b2a83d125dd04a99b886efb65a3e808ea102e2c65905802c2ad'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';

@@ -22,10 +22,15 @@
 //! - **contract** — [`json_schema`] generates the language-neutral JSON Schema
 //!   published at `docs/archive/contracts/catalog-model.schema.json` (drift-guarded by a test).
 
+mod connection;
 mod diff;
 mod types;
 mod validate;
 
+pub use connection::{
+    CONNECTION_DESCRIPTOR_VERSION, ConnectionAuthorityModel, ConnectionField, ConnectionFieldOwner,
+    ConnectionFieldOwnership, ConnectionTypeDescriptor, CredentialInjection,
+};
 pub use diff::{CatalogDiff, EntityChange, FieldChange, diff};
 pub use types::{
     Cardinality, Catalog, Constraint, Entity, EntityId, Field, FieldId, FieldType, Index, Relation,

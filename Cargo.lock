@@ -4343,6 +4343,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "wamn-schema-model",
 ]
 
 [[package]]

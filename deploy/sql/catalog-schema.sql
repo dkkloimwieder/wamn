@@ -1000,17 +1000,34 @@ WHERE attachment_kind = 'cron';
 GRANT SELECT ON catalog.cron_attachments TO wamn_app;
 
 -- BEGIN CONNECTION STORAGE MIGRATION (wamn-ko5r.6)
--- Portable requirements are artifact-owned. Every other record in this block
--- is environment-owned and therefore absent from artifact and bundle bytes.
+-- Portable requirements retain their truthful minting grain. Legacy flow rows
+-- keep (artifact_hash, requirement_name); component rows use
+-- (component_digest, store_alias). No migration reinterprets an artifact hash
+-- as a component digest. Every other record in this block is environment-owned
+-- and therefore absent from artifact or component bytes.
 CREATE TABLE catalog.connection_requirements (
     tenant_id        text NOT NULL CHECK (tenant_id <> ''),
-    artifact_hash    text NOT NULL CHECK (artifact_hash <> ''),
-    requirement_name text NOT NULL CHECK (requirement_name <> ''),
+    artifact_hash    text CHECK (artifact_hash <> ''),
+    requirement_name text CHECK (requirement_name <> ''),
+    component_digest text CHECK (component_digest <> ''),
+    store_alias      text CHECK (store_alias <> ''),
     requirement_json jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
     requirement_hash text NOT NULL CHECK (requirement_hash <> ''),
     created_at        timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, artifact_hash, requirement_name)
+    CONSTRAINT connection_requirements_complete_grain CHECK (
+        (artifact_hash IS NOT NULL AND requirement_name IS NOT NULL
+         AND component_digest IS NULL AND store_alias IS NULL)
+        OR
+        (artifact_hash IS NULL AND requirement_name IS NULL
+         AND component_digest IS NOT NULL AND store_alias IS NOT NULL)
+    )
 );
+CREATE UNIQUE INDEX connection_requirements_legacy_key
+    ON catalog.connection_requirements (tenant_id, artifact_hash, requirement_name)
+    WHERE artifact_hash IS NOT NULL;
+CREATE UNIQUE INDEX connection_requirements_component_key
+    ON catalog.connection_requirements (tenant_id, component_digest, store_alias)
+    WHERE component_digest IS NOT NULL;
 ALTER TABLE catalog.connection_requirements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_requirements FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_requirements_tenant ON catalog.connection_requirements
@@ -1021,27 +1038,6 @@ GRANT SELECT ON catalog.connection_requirements TO wamn_scenario_author;
 CREATE TRIGGER connection_requirements_immutable
 BEFORE UPDATE OR DELETE ON catalog.connection_requirements
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
-
-CREATE FUNCTION catalog.require_connection_artifact()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM catalog.flow_artifacts artifact
-        WHERE artifact.tenant_id = NEW.tenant_id
-          AND artifact.artifact_hash = NEW.artifact_hash
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '23503',
-            MESSAGE = 'connection-requirement-artifact-missing';
-    END IF;
-    RETURN NEW;
-END
-$$;
-CREATE TRIGGER connection_requirements_require_artifact
-BEFORE INSERT ON catalog.connection_requirements
-FOR EACH ROW EXECUTE FUNCTION catalog.require_connection_artifact();
 
 CREATE TABLE catalog.connection_instances (
     tenant_id         text NOT NULL CHECK (tenant_id <> ''),
@@ -1130,8 +1126,10 @@ CREATE TABLE catalog.connection_bindings (
     tenant_id        text NOT NULL CHECK (tenant_id <> ''),
     catalog_id       text NOT NULL CHECK (catalog_id <> ''),
     catalog_version  int NOT NULL CHECK (catalog_version > 0),
-    artifact_hash    text NOT NULL CHECK (artifact_hash <> ''),
-    requirement_name text NOT NULL CHECK (requirement_name <> ''),
+    artifact_hash    text CHECK (artifact_hash <> ''),
+    requirement_name text CHECK (requirement_name <> ''),
+    component_digest text CHECK (component_digest <> ''),
+    store_alias      text CHECK (store_alias <> ''),
     environment      text NOT NULL CHECK (environment <> ''),
     instance_id      text NOT NULL CHECK (instance_id <> ''),
     binding_status   text NOT NULL DEFAULT 'active'
@@ -1140,15 +1138,26 @@ CREATE TABLE catalog.connection_bindings (
         CHECK (validation_status IN ('valid', 'invalid')),
     validation_hash  text NOT NULL CHECK (validation_hash <> ''),
     created_at       timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, catalog_id, catalog_version, artifact_hash, requirement_name),
+    CONSTRAINT connection_bindings_complete_grain CHECK (
+        (artifact_hash IS NOT NULL AND requirement_name IS NOT NULL
+         AND component_digest IS NULL AND store_alias IS NULL)
+        OR
+        (artifact_hash IS NULL AND requirement_name IS NULL
+         AND component_digest IS NOT NULL AND store_alias IS NOT NULL)
+    ),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
-    FOREIGN KEY (tenant_id, artifact_hash, requirement_name)
-        REFERENCES catalog.connection_requirements
-            (tenant_id, artifact_hash, requirement_name),
     FOREIGN KEY (tenant_id, environment, instance_id)
         REFERENCES catalog.connection_instances (tenant_id, environment, instance_id)
 );
+CREATE UNIQUE INDEX connection_bindings_legacy_key
+    ON catalog.connection_bindings (
+        tenant_id, catalog_id, catalog_version, artifact_hash, requirement_name
+    ) WHERE artifact_hash IS NOT NULL;
+CREATE UNIQUE INDEX connection_bindings_component_key
+    ON catalog.connection_bindings (
+        tenant_id, catalog_id, catalog_version, component_digest, store_alias
+    ) WHERE component_digest IS NOT NULL;
 ALTER TABLE catalog.connection_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_bindings FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_bindings_tenant ON catalog.connection_bindings
@@ -1159,40 +1168,6 @@ GRANT SELECT ON catalog.connection_bindings TO wamn_scenario_author;
 CREATE TRIGGER connection_bindings_immutable
 BEFORE UPDATE OR DELETE ON catalog.connection_bindings
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
-
-CREATE FUNCTION catalog.require_binding_release_environment()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM catalog.catalogs release
-        WHERE release.tenant_id = NEW.tenant_id
-          AND release.catalog_id = NEW.catalog_id
-          AND release.version = NEW.catalog_version
-          AND release.environment = NEW.environment
-    ) OR NOT EXISTS (
-        SELECT 1
-        FROM catalog.release_flows member
-        JOIN catalog.flow_artifacts artifact
-          ON artifact.tenant_id = member.tenant_id
-         AND artifact.flow_id = member.flow_id
-         AND artifact.flow_version = member.flow_version
-        WHERE member.tenant_id = NEW.tenant_id
-          AND member.catalog_id = NEW.catalog_id
-          AND member.catalog_version = NEW.catalog_version
-          AND artifact.artifact_hash = NEW.artifact_hash
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '23514',
-            MESSAGE = 'connection-binding-environment-mismatch';
-    END IF;
-    RETURN NEW;
-END
-$$;
-CREATE TRIGGER connection_bindings_match_release_environment
-BEFORE INSERT ON catalog.connection_bindings
-FOR EACH ROW EXECUTE FUNCTION catalog.require_binding_release_environment();
 
 CREATE TABLE catalog.connection_generation_retention (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
@@ -1268,6 +1243,176 @@ CREATE TRIGGER connection_generations_delete_retained
 BEFORE DELETE ON catalog.connection_generations
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_referenced_connection_generation_delete();
 -- END CONNECTION STORAGE MIGRATION (wamn-ko5r.6)
+
+-- BEGIN CONNECTION COMPONENT GRAIN MIGRATION (wamn-0h0g.21.4)
+-- Existing artifact rows remain legacy facts. The migration adds nullable
+-- component coordinates and deliberately performs no backfill: artifact hashes
+-- name flow artifacts, not component bytes.
+LOCK TABLE catalog.connection_requirements, catalog.connection_bindings
+    IN ACCESS EXCLUSIVE MODE;
+DO $drop_legacy_connection_requirement_fk$
+DECLARE
+    constraint_name text;
+BEGIN
+    FOR constraint_name IN
+        SELECT con.conname
+        FROM pg_constraint con
+        WHERE con.conrelid = 'catalog.connection_bindings'::regclass
+          AND con.confrelid = 'catalog.connection_requirements'::regclass
+          AND con.contype = 'f'
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE catalog.connection_bindings DROP CONSTRAINT %I',
+            constraint_name
+        );
+    END LOOP;
+END
+$drop_legacy_connection_requirement_fk$;
+
+ALTER TABLE catalog.connection_bindings
+    DROP CONSTRAINT IF EXISTS connection_bindings_pkey,
+    ADD COLUMN IF NOT EXISTS component_digest text,
+    ADD COLUMN IF NOT EXISTS store_alias text,
+    ALTER COLUMN artifact_hash DROP NOT NULL,
+    ALTER COLUMN requirement_name DROP NOT NULL,
+    DROP CONSTRAINT IF EXISTS connection_bindings_complete_grain,
+    ADD CONSTRAINT connection_bindings_complete_grain CHECK (
+        (artifact_hash IS NOT NULL AND requirement_name IS NOT NULL
+         AND component_digest IS NULL AND store_alias IS NULL)
+        OR
+        (artifact_hash IS NULL AND requirement_name IS NULL
+         AND component_digest IS NOT NULL AND store_alias IS NOT NULL)
+    ),
+    DROP CONSTRAINT IF EXISTS connection_bindings_component_digest_check,
+    ADD CONSTRAINT connection_bindings_component_digest_check
+        CHECK (component_digest IS NULL OR component_digest <> ''),
+    DROP CONSTRAINT IF EXISTS connection_bindings_store_alias_check,
+    ADD CONSTRAINT connection_bindings_store_alias_check
+        CHECK (store_alias IS NULL OR store_alias <> '');
+
+ALTER TABLE catalog.connection_requirements
+    DROP CONSTRAINT IF EXISTS connection_requirements_pkey,
+    ADD COLUMN IF NOT EXISTS component_digest text,
+    ADD COLUMN IF NOT EXISTS store_alias text,
+    ALTER COLUMN artifact_hash DROP NOT NULL,
+    ALTER COLUMN requirement_name DROP NOT NULL,
+    DROP CONSTRAINT IF EXISTS connection_requirements_complete_grain,
+    ADD CONSTRAINT connection_requirements_complete_grain CHECK (
+        (artifact_hash IS NOT NULL AND requirement_name IS NOT NULL
+         AND component_digest IS NULL AND store_alias IS NULL)
+        OR
+        (artifact_hash IS NULL AND requirement_name IS NULL
+         AND component_digest IS NOT NULL AND store_alias IS NOT NULL)
+    ),
+    DROP CONSTRAINT IF EXISTS connection_requirements_component_digest_check,
+    ADD CONSTRAINT connection_requirements_component_digest_check
+        CHECK (component_digest IS NULL OR component_digest <> ''),
+    DROP CONSTRAINT IF EXISTS connection_requirements_store_alias_check,
+    ADD CONSTRAINT connection_requirements_store_alias_check
+        CHECK (store_alias IS NULL OR store_alias <> '');
+
+CREATE UNIQUE INDEX IF NOT EXISTS connection_requirements_legacy_key
+    ON catalog.connection_requirements (tenant_id, artifact_hash, requirement_name)
+    WHERE artifact_hash IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS connection_requirements_component_key
+    ON catalog.connection_requirements (tenant_id, component_digest, store_alias)
+    WHERE component_digest IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS connection_bindings_legacy_key
+    ON catalog.connection_bindings (
+        tenant_id, catalog_id, catalog_version, artifact_hash, requirement_name
+    ) WHERE artifact_hash IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS connection_bindings_component_key
+    ON catalog.connection_bindings (
+        tenant_id, catalog_id, catalog_version, component_digest, store_alias
+    ) WHERE component_digest IS NOT NULL;
+
+DROP TRIGGER IF EXISTS connection_requirements_require_artifact
+    ON catalog.connection_requirements;
+DROP FUNCTION IF EXISTS catalog.require_connection_artifact();
+
+CREATE OR REPLACE FUNCTION catalog.require_connection_binding_requirement()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Let the table CHECK own malformed partial or mixed coordinates.
+    IF NEW.artifact_hash IS NOT NULL AND NEW.requirement_name IS NOT NULL
+       AND NEW.component_digest IS NULL AND NEW.store_alias IS NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM catalog.connection_requirements requirement
+            WHERE requirement.tenant_id = NEW.tenant_id
+              AND requirement.artifact_hash = NEW.artifact_hash
+              AND requirement.requirement_name = NEW.requirement_name
+              AND requirement.component_digest IS NULL
+              AND requirement.store_alias IS NULL
+        ) THEN
+            RAISE EXCEPTION USING
+                ERRCODE = '23503',
+                MESSAGE = 'connection-binding-requirement-missing';
+        END IF;
+    ELSIF NEW.artifact_hash IS NULL AND NEW.requirement_name IS NULL
+          AND NEW.component_digest IS NOT NULL AND NEW.store_alias IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM catalog.connection_requirements requirement
+            WHERE requirement.tenant_id = NEW.tenant_id
+              AND requirement.artifact_hash IS NULL
+              AND requirement.requirement_name IS NULL
+              AND requirement.component_digest = NEW.component_digest
+              AND requirement.store_alias = NEW.store_alias
+        ) THEN
+            RAISE EXCEPTION USING
+                ERRCODE = '23503',
+                MESSAGE = 'connection-binding-requirement-missing';
+        END IF;
+    END IF;
+    RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS connection_bindings_require_requirement
+    ON catalog.connection_bindings;
+CREATE TRIGGER connection_bindings_require_requirement
+BEFORE INSERT ON catalog.connection_bindings
+FOR EACH ROW EXECUTE FUNCTION catalog.require_connection_binding_requirement();
+
+CREATE OR REPLACE FUNCTION catalog.require_binding_release_environment()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM catalog.catalogs release
+        WHERE release.tenant_id = NEW.tenant_id
+          AND release.catalog_id = NEW.catalog_id
+          AND release.version = NEW.catalog_version
+          AND release.environment = NEW.environment
+    ) OR (
+        NEW.artifact_hash IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1
+            FROM catalog.release_flows member
+            JOIN catalog.flow_artifacts artifact
+              ON artifact.tenant_id = member.tenant_id
+             AND artifact.flow_id = member.flow_id
+             AND artifact.flow_version = member.flow_version
+            WHERE member.tenant_id = NEW.tenant_id
+              AND member.catalog_id = NEW.catalog_id
+              AND member.catalog_version = NEW.catalog_version
+              AND artifact.artifact_hash = NEW.artifact_hash
+        )
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23514',
+            MESSAGE = 'connection-binding-environment-mismatch';
+    END IF;
+    RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS connection_bindings_match_release_environment
+    ON catalog.connection_bindings;
+CREATE TRIGGER connection_bindings_match_release_environment
+BEFORE INSERT ON catalog.connection_bindings
+FOR EACH ROW EXECUTE FUNCTION catalog.require_binding_release_environment();
+-- END CONNECTION COMPONENT GRAIN MIGRATION (wamn-0h0g.21.4)
 
 
 -- ---------------------------------------------------------------------------

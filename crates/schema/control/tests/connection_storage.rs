@@ -1,15 +1,31 @@
-use wamn_flow::node_contract::ConnectionTypeDescriptor;
 use wamn_schema_control::connections::{
-    ArtifactConnectionRequirement, ConnectionGenerationDefinition, ConnectionInstanceStatus,
-    GenerationRetentionKind, insert_connection_binding_sql, insert_connection_generation_sql,
-    insert_connection_instance_sql, insert_connection_requirement_sql,
-    insert_generation_retention_sql,
+    ArtifactConnectionRequirement, ComponentConnectionRequirement, ConnectionGenerationDefinition,
+    ConnectionInstanceStatus, GenerationRetentionKind, insert_component_connection_binding_sql,
+    insert_component_connection_requirement_sql, insert_connection_binding_sql,
+    insert_connection_generation_sql, insert_connection_instance_sql,
+    insert_connection_requirement_sql, insert_generation_retention_sql,
 };
+use wamn_schema_model::ConnectionTypeDescriptor;
 
 const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
 fn artifact_requirement() -> ArtifactConnectionRequirement {
     ArtifactConnectionRequirement::new("artifact-a", "erp", ConnectionTypeDescriptor::http_v1())
+}
+
+fn component_requirement() -> ComponentConnectionRequirement {
+    ComponentConnectionRequirement::new(
+        "sha256:component-a",
+        "erp",
+        ConnectionTypeDescriptor::http_v1(),
+    )
+}
+
+#[test]
+fn legacy_flow_path_reexports_the_schema_model_descriptor() {
+    let descriptor: wamn_flow::node_contract::ConnectionTypeDescriptor =
+        ConnectionTypeDescriptor::http_v1();
+    assert_eq!(descriptor, ConnectionTypeDescriptor::http_v1());
 }
 
 #[test]
@@ -52,6 +68,18 @@ fn identical_artifact_requirement_binds_differently_without_identity_drift() {
         requirement.requirement_hash(),
         requirement.requirement_hash()
     );
+}
+
+#[test]
+fn component_requirement_identity_uses_digest_and_store_alias() {
+    let requirement = component_requirement();
+    assert_eq!(requirement.component_digest(), "sha256:component-a");
+    assert_eq!(requirement.store_alias(), "erp");
+    assert_eq!(
+        requirement.requirement(),
+        &ConnectionTypeDescriptor::http_v1()
+    );
+    assert_eq!(requirement.requirement_hash().len(), 64);
 }
 
 #[test]
@@ -103,10 +131,15 @@ fn schema_pins_stable_keys_tenant_isolation_immutability_and_retention() {
         assert!(CATALOG_SCHEMA.contains(&format!("CREATE POLICY {table}_tenant")));
     }
     for required in [
-        "PRIMARY KEY (tenant_id, artifact_hash, requirement_name)",
+        "connection_requirements_complete_grain",
+        "connection_requirements_legacy_key",
+        "connection_requirements_component_key",
         "PRIMARY KEY (tenant_id, environment, instance_id)",
         "PRIMARY KEY (tenant_id, environment, instance_id, generation)",
-        "PRIMARY KEY (tenant_id, catalog_id, catalog_version, artifact_hash, requirement_name)",
+        "connection_bindings_complete_grain",
+        "connection_bindings_legacy_key",
+        "connection_bindings_component_key",
+        "connection_bindings_require_requirement",
         "connection_requirements_immutable",
         "connection_generations_update_immutable",
         "connection_bindings_immutable",
@@ -123,7 +156,34 @@ fn schema_pins_stable_keys_tenant_isolation_immutability_and_retention() {
             "schema omitted {required:?}"
         );
     }
+    assert!(!CATALOG_SCHEMA.contains("CREATE FUNCTION catalog.require_connection_artifact"));
+    assert!(!CATALOG_SCHEMA.contains("CREATE TRIGGER connection_requirements_require_artifact"));
     assert!(!CATALOG_SCHEMA.contains("credential_secret"));
+}
+
+#[test]
+fn schema_pins_exactly_one_complete_connection_grain() {
+    let requirements = CATALOG_SCHEMA
+        .split_once("CREATE TABLE catalog.connection_requirements (")
+        .expect("connection requirements table")
+        .1
+        .split_once("ALTER TABLE catalog.connection_requirements")
+        .expect("connection requirements table end")
+        .0;
+    let bindings = CATALOG_SCHEMA
+        .split_once("CREATE TABLE catalog.connection_bindings (")
+        .expect("connection bindings table")
+        .1
+        .split_once("ALTER TABLE catalog.connection_bindings")
+        .expect("connection bindings table end")
+        .0;
+
+    for table in [requirements, bindings] {
+        assert!(table.contains("artifact_hash IS NOT NULL AND requirement_name IS NOT NULL"));
+        assert!(table.contains("component_digest IS NULL AND store_alias IS NULL"));
+        assert!(table.contains("artifact_hash IS NULL AND requirement_name IS NULL"));
+        assert!(table.contains("component_digest IS NOT NULL AND store_alias IS NOT NULL"));
+    }
 }
 
 #[test]
@@ -133,6 +193,10 @@ fn sql_builders_pin_values_and_keep_owners_separate() {
     assert!(insert_connection_instance_sql().contains("environment"));
     assert!(insert_connection_generation_sql().contains("credential_set_handle"));
     assert!(insert_connection_binding_sql().contains("catalog_version"));
+    assert!(
+        insert_component_connection_requirement_sql().contains("component_digest, store_alias")
+    );
+    assert!(insert_component_connection_binding_sql().contains("component_digest, store_alias"));
     assert!(insert_generation_retention_sql().contains("retained_until"));
     assert_eq!(ConnectionInstanceStatus::Enabled.as_sql(), "enabled");
     assert_eq!(ConnectionInstanceStatus::Disabled.as_sql(), "disabled");

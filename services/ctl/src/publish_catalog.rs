@@ -164,6 +164,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .await
                 .context("install connection storage")?;
         }
+        ensure_connection_component_grain(client).await?;
 
         // wamn-0h0g.18.2: the wiring relations, their activation guard and the
         // activation doorbell reach an EXISTING project database only here —
@@ -231,8 +232,72 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
         .await
         .context("install catalog release storage into baseline catalog")?;
+    ensure_connection_component_grain(client).await?;
     ensure_authoring_catalog_privileges(client).await?;
     Ok(())
+}
+
+/// Preserve legacy connection facts while converging the component-owned grain.
+async fn ensure_connection_component_grain(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    let complete: bool = client
+        .query_one(
+            "SELECT \
+               EXISTS (SELECT 1 FROM information_schema.columns \
+                       WHERE table_schema = 'catalog' \
+                         AND table_name = 'connection_requirements' \
+                         AND column_name = 'component_digest') \
+               AND EXISTS (SELECT 1 FROM information_schema.columns \
+                           WHERE table_schema = 'catalog' \
+                             AND table_name = 'connection_requirements' \
+                             AND column_name = 'store_alias') \
+               AND EXISTS (SELECT 1 FROM information_schema.columns \
+                           WHERE table_schema = 'catalog' \
+                             AND table_name = 'connection_bindings' \
+                             AND column_name = 'component_digest') \
+               AND EXISTS (SELECT 1 FROM information_schema.columns \
+                           WHERE table_schema = 'catalog' \
+                             AND table_name = 'connection_bindings' \
+                             AND column_name = 'store_alias') \
+               AND EXISTS (SELECT 1 FROM pg_constraint con \
+                           JOIN pg_class rel ON rel.oid = con.conrelid \
+                           JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
+                           WHERE ns.nspname = 'catalog' \
+                             AND rel.relname = 'connection_requirements' \
+                             AND con.conname = 'connection_requirements_complete_grain') \
+               AND EXISTS (SELECT 1 FROM pg_constraint con \
+                           JOIN pg_class rel ON rel.oid = con.conrelid \
+                           JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
+                           WHERE ns.nspname = 'catalog' \
+                             AND rel.relname = 'connection_bindings' \
+                             AND con.conname = 'connection_bindings_complete_grain') \
+               AND to_regclass('catalog.connection_requirements_component_key') IS NOT NULL \
+               AND to_regclass('catalog.connection_bindings_component_key') IS NOT NULL \
+               AND EXISTS (SELECT 1 FROM pg_trigger trigger \
+                           WHERE trigger.tgrelid = 'catalog.connection_bindings'::regclass \
+                             AND trigger.tgname = 'connection_bindings_require_requirement' \
+                             AND NOT trigger.tgisinternal) \
+               AND NOT EXISTS (SELECT 1 FROM pg_trigger trigger \
+                               WHERE trigger.tgrelid = 'catalog.connection_requirements'::regclass \
+                                 AND trigger.tgname = 'connection_requirements_require_artifact' \
+                                 AND NOT trigger.tgisinternal)",
+            &[],
+        )
+        .await?
+        .get(0);
+    if complete {
+        return Ok(());
+    }
+
+    let start = CATALOG_SCHEMA_SQL
+        .find("-- BEGIN CONNECTION COMPONENT GRAIN MIGRATION")
+        .expect("connection component grain migration start");
+    let end = CATALOG_SCHEMA_SQL
+        .find("-- END CONNECTION COMPONENT GRAIN MIGRATION")
+        .expect("connection component grain migration end");
+    client
+        .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+        .await
+        .context("migrate connection storage to the component grain")
 }
 
 /// Converge the catalog schema's role grants on an ALREADY-PROVISIONED database.
