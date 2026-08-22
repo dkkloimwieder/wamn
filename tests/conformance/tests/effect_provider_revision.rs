@@ -1348,7 +1348,6 @@ fn locked_effect_provider_closure_matches_manifest() {
             "wamn-pg-core",
             "wamn-router",
             "wamn-run-state",
-            "wamn-runner",
             "wamn-runtime",
         ]),
         "the first-party host closure drifted"

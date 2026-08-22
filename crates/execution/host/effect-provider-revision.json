@@ -72,15 +72,6 @@
       "name": "wamn-run-state",
       "version": "0.1.0",
       "root": "crates/execution/run-state",
-      "features": [
-        "effect-writer-credential",
-        "native"
-      ]
-    },
-    {
-      "name": "wamn-runner",
-      "version": "0.1.0",
-      "root": "crates/execution/flow-engine",
       "features": []
     },
     {
@@ -5853,7 +5844,7 @@
     },
     {
       "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/features",
-      "value": "native"
+      "value": ""
     },
     {
       "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/optional",
@@ -6592,102 +6583,6 @@
       "value": "^0.1.0"
     },
     {
-      "tag": "dependency/wamn-run-state/all-targets/wamn-runner/default-features",
-      "value": "true"
-    },
-    {
-      "tag": "dependency/wamn-run-state/all-targets/wamn-runner/features",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-run-state/all-targets/wamn-runner/optional",
-      "value": "false"
-    },
-    {
-      "tag": "dependency/wamn-run-state/all-targets/wamn-runner/package",
-      "value": "wamn-runner"
-    },
-    {
-      "tag": "dependency/wamn-run-state/all-targets/wamn-runner/registry",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-run-state/all-targets/wamn-runner/source",
-      "value": "path:crates/execution/flow-engine"
-    },
-    {
-      "tag": "dependency/wamn-run-state/all-targets/wamn-runner/target",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-run-state/all-targets/wamn-runner/version",
-      "value": "^0.1.0"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/serde_json/default-features",
-      "value": "true"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/serde_json/features",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/serde_json/optional",
-      "value": "false"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/serde_json/package",
-      "value": "serde_json"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/serde_json/registry",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/serde_json/source",
-      "value": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/serde_json/target",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/serde_json/version",
-      "value": "^1"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/wamn-flow/default-features",
-      "value": "true"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/wamn-flow/features",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/wamn-flow/optional",
-      "value": "false"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/wamn-flow/package",
-      "value": "wamn-flow"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/wamn-flow/registry",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/wamn-flow/source",
-      "value": "path:crates/execution/flow-model"
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/wamn-flow/target",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-runner/all-targets/wamn-flow/version",
-      "value": "^0.1.0"
-    },
-    {
       "tag": "dependency/wamn-runtime/all-targets/anyhow/default-features",
       "value": "true"
     },
@@ -6942,38 +6837,6 @@
     {
       "tag": "dependency/wamn-runtime/all-targets/hyper/version",
       "value": "^1"
-    },
-    {
-      "tag": "dependency/wamn-runtime/all-targets/oci-client/default-features",
-      "value": "false"
-    },
-    {
-      "tag": "dependency/wamn-runtime/all-targets/oci-client/features",
-      "value": "rustls-tls"
-    },
-    {
-      "tag": "dependency/wamn-runtime/all-targets/oci-client/optional",
-      "value": "false"
-    },
-    {
-      "tag": "dependency/wamn-runtime/all-targets/oci-client/package",
-      "value": "oci-client"
-    },
-    {
-      "tag": "dependency/wamn-runtime/all-targets/oci-client/registry",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-runtime/all-targets/oci-client/source",
-      "value": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "tag": "dependency/wamn-runtime/all-targets/oci-client/target",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-runtime/all-targets/oci-client/version",
-      "value": "^0.17"
     },
     {
       "tag": "dependency/wamn-runtime/all-targets/opentelemetry-otlp/default-features",
@@ -7877,18 +7740,6 @@
     },
     {
       "tag": "package/wamn-run-state/version",
-      "value": "0.1.0"
-    },
-    {
-      "tag": "package/wamn-runner/edition",
-      "value": "2024"
-    },
-    {
-      "tag": "package/wamn-runner/license",
-      "value": "Apache-2.0"
-    },
-    {
-      "tag": "package/wamn-runner/version",
       "value": "0.1.0"
     },
     {
