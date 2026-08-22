@@ -21,17 +21,16 @@ use wamn_router::{
 
 // ---- fixtures -------------------------------------------------------------
 
-/// A node invoking `component`'s `run` operation with no config.
+/// A node invoking an admitted `component` with no config.
 fn node(id: &str, component: &str) -> WiringNode {
     node_cfg(id, component, Value::Null)
 }
 
-/// A node invoking `component`'s `run` operation with opaque `config`.
+/// A node invoking an admitted `component` with opaque `config`.
 fn node_cfg(id: &str, component: &str, config: Value) -> WiringNode {
     WiringNode {
         id: id.to_string(),
         component: component.to_string(),
-        operation: "run".to_string(),
         config,
         connection: None,
         terminal: None,
@@ -525,7 +524,7 @@ fn invalid_input_is_never_retried() {
     assert_eq!(t.walk.failure().unwrap().kind, FailureKind::InvalidInput);
 }
 
-// ---- node-call context ----------------------------------------------------
+// ---- node-call ABI fields -------------------------------------------------
 
 #[test]
 fn node_call_carries_component_config_and_deadline_without_wiring_credentials() {
@@ -541,10 +540,28 @@ fn node_call_carries_component_config_and_deadline_without_wiring_credentials() 
     let t = run(&w, "r1", json!({}), |_| NodeOutcome::ok(json!({})));
     let c = &t.invoked[0];
     assert_eq!(c.component, "http-call");
-    assert_eq!(c.operation, "run");
+    assert_eq!(c.input_port, None);
+    assert_eq!(c.occurrence, 0);
     assert_eq!(c.credential, None);
     assert_eq!(c.deadline_ms, Some(5000));
     assert_eq!(c.config["url"], json!("https://x"));
+}
+
+#[test]
+fn cancelled_is_terminal_without_failure_verdict_or_successor() {
+    let w = wiring(
+        "a",
+        vec![node("a", "first"), node("b", "second")],
+        vec![edge("a", "b")],
+    );
+
+    let t = run(&w, "r1", json!({}), |_| NodeOutcome::Cancelled);
+
+    assert_eq!(t.status, WalkStatus::Cancelled);
+    assert_eq!(t.nodes(), ["a"]);
+    assert!(t.walk.failure().is_none());
+    assert!(t.walk.verdict().is_none());
+    assert_eq!(t.walk.step_seq(), 0);
 }
 
 // ---- wiring compilation guard ---------------------------------------------

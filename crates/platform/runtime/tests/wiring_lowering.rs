@@ -269,7 +269,6 @@ fn lowers_names_to_digest_keyed_nodes_and_preserves_config_terminal_and_order() 
     assert_eq!(wiring.entry(), "decode");
     let decode = wiring.node("decode").expect("decode node is lowered");
     assert_eq!(decode.component, DIGEST_A);
-    assert_eq!(decode.operation, "parse");
     assert_eq!(decode.config, json!({"format": "csv"}));
     assert_eq!(decode.terminal, None);
     let persist = wiring.node("persist").expect("persist node is lowered");

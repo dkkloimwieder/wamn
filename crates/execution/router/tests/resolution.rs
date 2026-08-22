@@ -27,7 +27,6 @@ fn wiring(entry: &str) -> Wiring {
         vec![WiringNode {
             id: entry.to_string(),
             component: "echo".to_string(),
-            operation: "run".to_string(),
             config: Value::Null,
             connection: None,
             terminal: None,

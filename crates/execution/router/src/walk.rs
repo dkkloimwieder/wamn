@@ -40,6 +40,8 @@ pub enum WalkStatus {
     Running,
     Completed,
     Failed,
+    /// The active component stopped cooperatively without a failure or verdict.
+    Cancelled,
 }
 
 impl WalkStatus {
@@ -70,10 +72,6 @@ pub enum FailureKind {
     /// [`DEDUP_ID_FIELD`] string in it, so there is no key the boundary could
     /// dedup the publish on. Routed to the node's error edge if it has one.
     MissingDedupId,
-    /// A node returned a context replacement that is not a JSON object
-    /// ([`ApplyErrorKind::InvalidContext`]). Component data, so it fails one
-    /// delivery; routed to the node's error edge if it has one.
-    InvalidContext,
     /// A [`Terminal::Respond`] node was reached by a delivery with no caller
     /// attached ([`ApplyErrorKind::RespondWithoutCaller`]) — an authored wiring
     /// meeting an ingress path it does not fit.
@@ -133,9 +131,6 @@ pub struct Walk {
     /// of one visit do not count) — the source of [`NodeCall::occurrence`], so a
     /// merge/loop node's Nth visit is distinguishable from its first.
     visits: HashMap<String, u32>,
-    /// Per-delivery context document. Successful emissions may replace it; error
-    /// emissions never can.
-    context: Value,
     result: Value,
     failure: Option<Failure>,
     /// Whether this delivery arrived with a synchronous caller waiting
@@ -168,17 +163,13 @@ impl Walk {
     pub fn result(&self) -> &Value {
         &self.result
     }
-    /// The per-delivery context document visible to the next invocation.
-    pub fn context(&self) -> &Value {
-        &self.context
-    }
     /// The recorded failure, if the walk failed.
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
     /// What this delivery ended up doing: `Some` once a terminal node has been
     /// reached or the frontier has emptied cleanly, `None` while running and on
-    /// a failed walk.
+    /// a failed or cancelled walk.
     pub fn verdict(&self) -> Option<&Verdict> {
         self.verdict.as_ref()
     }
@@ -211,16 +202,12 @@ pub struct NodeCall {
     pub input_port: Option<String>,
     /// The component to acquire a pooled instance of.
     pub component: String,
-    /// The operation to invoke on that component.
-    pub operation: String,
     pub config: Value,
     pub connection: Option<String>,
     pub credential: Option<String>,
     /// The payload entering this node — the delivery payload at the entry,
     /// otherwise the upstream node's output (unchanged across retries).
     pub payload: Value,
-    /// Snapshot of the context observed by this invocation.
-    pub context: Value,
     /// 0 on first execution, incremented per retry.
     pub attempt: u32,
     /// Which VISIT of this node in this delivery (0 = first): a merge runs once
@@ -247,8 +234,6 @@ pub enum ApplyErrorKind {
     NoActiveNode,
     /// The outcome names a node the walk is not on.
     MismatchedNode { expected: String, actual: String },
-    /// A context replacement that is not a JSON object.
-    InvalidContext(Value),
     /// The named [`Terminal::Respond`] node emitted, but no caller is attached
     /// to this delivery — a wiring answering nobody.
     RespondWithoutCaller(String),
@@ -267,18 +252,14 @@ impl ApplyError {
     /// when it cannot be folded at all.
     ///
     /// The split is the whole point of the two groups.
-    /// [`ApplyErrorKind::InvalidContext`] is a component's returned document;
     /// [`ApplyErrorKind::RespondWithoutCaller`] and
     /// [`ApplyErrorKind::SecondVerdict`] are an authored wiring meeting a
-    /// delivery it does not fit. All three are DATA, so they end ONE delivery.
+    /// delivery it does not fit. Both are DATA, so they end ONE delivery.
     /// The other three describe a driver feeding back an outcome the walk never
     /// handed out — a defect in the driver, which no wiring can recover from
     /// and which [`route`](crate::route) therefore still panics on.
     fn node_data_failure(&self) -> Option<(FailureKind, &'static str)> {
         match &self.kind {
-            ApplyErrorKind::InvalidContext(_) => {
-                Some((FailureKind::InvalidContext, "invalid-context"))
-            }
             ApplyErrorKind::RespondWithoutCaller(_) => {
                 Some((FailureKind::RespondWithoutCaller, "respond-without-caller"))
             }
@@ -299,9 +280,6 @@ impl std::fmt::Display for ApplyError {
             ApplyErrorKind::NoActiveNode => write!(f, "walk has no active node"),
             ApplyErrorKind::MismatchedNode { expected, actual } => {
                 write!(f, "active node is {expected:?}, not {actual:?}")
-            }
-            ApplyErrorKind::InvalidContext(value) => {
-                write!(f, "context replacement must be an object, got {value}")
             }
             ApplyErrorKind::RespondWithoutCaller(node) => {
                 write!(f, "node {node:?} responds, but no caller is attached")
@@ -332,7 +310,6 @@ impl Wiring {
             step_seq: 0,
             hops: 0,
             visits: HashMap::new(),
-            context: Value::Object(Default::default()),
             result: Value::Null,
             failure: None,
             caller_attached: delivery.caller_attached,
@@ -398,7 +375,8 @@ impl Wiring {
 
     /// End a walk whose frontier emptied. A verdict already recorded by a
     /// terminal node stands; otherwise this is [`Verdict::Discard`] — unless a
-    /// caller is still waiting, which is [`FailureKind::UnreleasedCaller`].
+    /// caller is still waiting, which is [`FailureKind::UnreleasedCaller`]. A
+    /// cancelled walk never reaches settlement.
     fn settle(&self, walk: &mut Walk) -> WalkStatus {
         if walk.verdict.is_none() {
             if walk.caller_attached {
@@ -428,12 +406,10 @@ impl Wiring {
             node: a.node.clone(),
             input_port: a.input_port.clone(),
             component: node.component.clone(),
-            operation: node.operation.clone(),
             config: node.config.clone(),
             connection: node.connection.clone(),
             credential: None,
             payload: a.payload.clone(),
-            context: walk.context.clone(),
             attempt: a.attempt,
             occurrence,
             deadline_ms: node.config.get("deadline-ms").and_then(Value::as_u64),
@@ -469,18 +445,7 @@ impl Wiring {
         let attempt = active.attempt;
 
         match outcome {
-            NodeOutcome::Success {
-                payload,
-                port,
-                context,
-            } => {
-                if let Some(replacement) = context.as_ref()
-                    && !replacement.is_object()
-                {
-                    return Err(ApplyError {
-                        kind: ApplyErrorKind::InvalidContext(replacement.clone()),
-                    });
-                }
+            NodeOutcome::Success { payload, port } => {
                 // Decided before anything mutates, so a rejected verdict leaves
                 // the walk exactly as it found it.
                 let verdict = match self.node(&call.node).and_then(|node| node.terminal) {
@@ -510,9 +475,6 @@ impl Wiring {
                 walk.step_seq += 1;
                 *walk.visits.entry(call.node.clone()).or_default() += 1;
                 walk.result = payload.clone();
-                if let Some(replacement) = context {
-                    walk.context = replacement;
-                }
                 if verdict.is_some() {
                     walk.verdict = verdict;
                 }
@@ -548,6 +510,10 @@ impl Wiring {
             NodeOutcome::Error(NodeError::InvalidInput(detail)) => {
                 // Never retried, regardless of budget.
                 self.error_or_fail(walk, &call.node, detail, FailureKind::InvalidInput);
+            }
+            NodeOutcome::Cancelled => {
+                walk.current = None;
+                walk.status = WalkStatus::Cancelled;
             }
         }
         Ok(())

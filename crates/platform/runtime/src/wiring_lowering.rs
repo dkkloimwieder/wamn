@@ -44,8 +44,9 @@ pub struct WiringParameterFact {
 ///
 /// This is deliberately a consumer projection, not a persistence contract.
 /// `component_digest` becomes the router's instance-pool key; the logical name,
-/// interface version and operation must match the authored document before the
-/// executable graph is built.
+/// interface version and operation select one admitted digest before the
+/// executable graph is built. The digest then identifies the uniform handler;
+/// operation is not carried into the router call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WiringOperationFact {
     pub component: String,
@@ -153,7 +154,6 @@ pub fn lower_active_wiring(
         nodes.push(RouterNode {
             id: node_id.clone(),
             component: fact.component_digest.clone(),
-            operation: node.operation.clone(),
             config: Value::Object(Map::from_iter(node.params.clone())),
             // Connection generations are host-injected authority. Neither the
             // wiring nor a component-library operation fact owns a binding.

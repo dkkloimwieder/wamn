@@ -16,15 +16,13 @@ use crate::terminal::Terminal;
 /// a legitimate loop, but bounds a permitted cycle that never terminates.
 pub const DEFAULT_HOP_LIMIT: u64 = 10_000;
 
-/// One node of a wiring: a component operation with its opaque config.
+/// One node of a wiring: admitted component bytes with opaque config.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WiringNode {
     /// Node id, unique within the wiring.
     pub id: String,
     /// The component this node invokes — also the instance-pool key.
     pub component: String,
-    /// The operation on that component's node interface.
-    pub operation: String,
     /// Opaque per-node config. The router reads only the reserved `retry` object
     /// and `deadline-ms`; everything else belongs to the component.
     pub config: Value,

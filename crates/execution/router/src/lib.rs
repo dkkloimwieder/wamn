@@ -3,7 +3,7 @@
 //! MVP outcome: crash floor · M0 execution · flow composition.
 //!
 //! Per delivery: walk a resolved [`Wiring`] in frontier order, invoke each
-//! node's component operation through the caller's [`NodeInvoker`], route the
+//! node's admitted component through the caller's [`NodeInvoker`], route the
 //! emitted payload by **port**, and stop when the frontier empties or a failure
 //! goes uncaught. What the walk decides is exactly what the retired flow engine
 //! decided — frontier ordering, port routing, error-edge semantics — with the
@@ -70,7 +70,7 @@ pub use wiring::{DEFAULT_HOP_LIMIT, Wiring, WiringEdge, WiringError, WiringError
 /// node-operation WIT binding lands; the clock methods are host services the
 /// walk needs to honor a retry backoff.
 pub trait NodeInvoker {
-    /// Acquire an instance of `call.component` and invoke `call.operation`.
+    /// Acquire an instance of `call.component` and invoke its uniform handler.
     fn invoke(&mut self, call: &NodeCall) -> NodeOutcome;
 
     /// The current monotonic millisecond reading.
@@ -92,9 +92,9 @@ pub struct Outcome {
     /// Invocations handed out, against the wiring's hop limit.
     pub hops: u64,
     /// What the delivery ended up doing, for the host to carry out. `None` when
-    /// the walk failed before reaching a terminal — a failure is not a verdict,
-    /// and turning one into a caller's answer is ingress's decision, not the
-    /// walk's.
+    /// the walk failed or was cancelled before reaching a terminal — neither is
+    /// a verdict, and translating either at an ingress boundary is not the
+    /// walk's decision.
     pub verdict: Option<Verdict>,
 }
 
@@ -120,9 +120,9 @@ pub fn route(delivery: Delivery, wiring: &Wiring, invoker: &mut impl NodeInvoker
                 let outcome = invoker.invoke(&call);
                 let now = invoker.now_ms();
                 if let Err(refused) = wiring.apply(&mut walk, &call, outcome, now) {
-                    // A refusal DATA caused — a component's context replacement,
-                    // or a wiring's terminal meeting a delivery it does not fit —
-                    // ends this delivery down the node's error edge. The panic is
+                    // A refusal DATA caused — a wiring's terminal meeting a
+                    // delivery it does not fit — ends this delivery down the
+                    // node's error edge. The panic is
                     // kept for the refusals that describe a driver feeding back an
                     // outcome the walk never handed out, which this loop, handing
                     // out one call and feeding back its answer, cannot do.

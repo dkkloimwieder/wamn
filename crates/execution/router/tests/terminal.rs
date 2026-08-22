@@ -19,7 +19,6 @@ fn node(id: &str, terminal: Option<Terminal>) -> WiringNode {
     WiringNode {
         id: id.to_string(),
         component: "echo".to_string(),
-        operation: "run".to_string(),
         config: Value::Null,
         connection: None,
         terminal,

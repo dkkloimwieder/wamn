@@ -230,14 +230,17 @@ mod tests {
         assert!(code.contains("world node {"));
         assert!(code.contains("export handler;"));
 
-        // The identity the router supplies. `(delivery-id, node-id)` is the
-        // stable idempotency basis under at-least-once redelivery; the wiring
-        // pair scopes it to the graph revision that asked for the effect.
+        // The identity and target input the router supplies. Occurrence keeps
+        // merge/loop visits distinct while retries retain one visit identity;
+        // the wiring pair scopes it to the graph revision that asked for the
+        // effect.
         for field in [
             "wiring-id: string,",
             "wiring-version: u32,",
             "node-id: string,",
             "delivery-id: string,",
+            "input-port: option<string>,",
+            "occurrence: u32,",
             "config: json,",
         ] {
             assert!(code.contains(field), "node-context lost {field:?}");
@@ -263,6 +266,32 @@ mod tests {
         assert!(
             code.contains("port: option<string>,"),
             "emission lost its port"
+        );
+        let node_context = code
+            .split_once("record node-context {")
+            .expect("node-context exists")
+            .1
+            .split_once('}')
+            .expect("node-context closes")
+            .0;
+        assert!(
+            !node_context.contains("operation:"),
+            "operation selects the admitted digest and must not enter handler.run"
+        );
+        assert!(
+            !node_context.contains("context:"),
+            "the retired mutable delivery context must not re-enter node-context"
+        );
+        let emission = code
+            .split_once("record emission {")
+            .expect("emission exists")
+            .1
+            .split_once('}')
+            .expect("emission closes")
+            .0;
+        assert!(
+            !emission.contains("context:"),
+            "a success must not return the retired mutable delivery context"
         );
 
         // Retired with the frames model and the payload store. Each of these

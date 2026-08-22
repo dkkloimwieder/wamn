@@ -18,18 +18,17 @@ pub const ERROR_PORT: &str = "error";
 
 /// What an invoked node returned. `Success` carries the output payload and the
 /// **port** it chose (a branching node selects a named port; most nodes emit on
-/// [`MAIN_PORT`]); `Error` carries the classified failure.
+/// [`MAIN_PORT`]); `Error` carries the classified failure; `Cancelled` is the
+/// explicit non-failure disposition of WIT `node-error.cancelled`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeOutcome {
     Success {
         payload: Value,
         port: String,
-        /// Whole-document in-memory context replacement. `None` leaves the
-        /// current document unchanged; there are deliberately no merge
-        /// semantics.
-        context: Option<Value>,
     },
     Error(NodeError),
+    /// The component stopped cooperatively without producing an emission.
+    Cancelled,
 }
 
 impl NodeOutcome {
@@ -38,7 +37,6 @@ impl NodeOutcome {
         NodeOutcome::Success {
             payload,
             port: MAIN_PORT.to_string(),
-            context: None,
         }
     }
 
@@ -47,16 +45,6 @@ impl NodeOutcome {
         NodeOutcome::Success {
             payload,
             port: port.into(),
-            context: None,
-        }
-    }
-
-    /// A success carrying a whole-document context replacement.
-    pub fn ok_with_context(payload: Value, port: impl Into<String>, context: Value) -> NodeOutcome {
-        NodeOutcome::Success {
-            payload,
-            port: port.into(),
-            context: Some(context),
         }
     }
 }

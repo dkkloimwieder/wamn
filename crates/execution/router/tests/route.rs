@@ -4,16 +4,16 @@
 //! `Wiring::apply` refuses a transition it cannot take, and its refusal is
 //! atomic so a driver that can re-ask its component sees the walk exactly as it
 //! found it. `route` is not such a driver: it hands out one call and feeds back
-//! the answer, so for it every refusal is already decided. Three of the six
-//! refusals are DATA — a component's returned document, or an authored wiring
-//! meeting a delivery it does not fit — and must fail ONE DELIVERY. The other
-//! three can only be produced by a driver feeding back an outcome the walk never
-//! handed out, which `route` cannot do, so those stay a panic.
+//! the answer, so for it every refusal is already decided. Two of the five
+//! refusals are DATA — an authored wiring meeting a delivery it does not fit —
+//! and must fail ONE DELIVERY. The other three can only be produced by a driver
+//! feeding back an outcome the walk never handed out, which `route` cannot do,
+//! so those stay a panic.
 
 use serde_json::{Value, json};
 use wamn_router::{
-    Delivery, ERROR_PORT, FailureKind, NodeCall, NodeOutcome, Outcome, Terminal, ThrottleKey,
-    Verdict, WalkStatus, Wiring, WiringEdge, WiringNode,
+    Delivery, FailureKind, NodeCall, NodeOutcome, Outcome, Terminal, ThrottleKey, Verdict,
+    WalkStatus, Wiring, WiringEdge, WiringNode,
 };
 
 // ---- fixtures -------------------------------------------------------------
@@ -22,7 +22,6 @@ fn node(id: &str, terminal: Option<Terminal>) -> WiringNode {
     WiringNode {
         id: id.to_string(),
         component: "echo".to_string(),
-        operation: "run".to_string(),
         config: Value::Null,
         connection: None,
         terminal,
@@ -89,87 +88,6 @@ fn failure(outcome: &Outcome) -> (&str, FailureKind, Option<&str>) {
         failure.kind,
         failure.detail.code.as_deref(),
     )
-}
-
-// ---- node data: a non-object context replacement ---------------------------
-
-/// The reported defect: `InvalidContext` is GUEST DATA — a component returned a
-/// context replacement that is not an object — and it took the whole router
-/// process down through `route`'s `.expect(..)`.
-#[test]
-fn a_non_object_context_replacement_fails_the_delivery_not_the_router() {
-    let w = wiring("a", vec![node("a", None)], vec![]);
-
-    let outcome = drive(&w, false, |_| {
-        NodeOutcome::ok_with_context(json!({"output": 1}), "main", json!(["merge"]))
-    });
-
-    assert_eq!(outcome.status, WalkStatus::Failed);
-    assert_eq!(
-        failure(&outcome),
-        ("a", FailureKind::InvalidContext, Some("invalid-context"))
-    );
-    assert_eq!(
-        outcome.verdict, None,
-        "a failure is not a verdict, so the host decides what the caller hears"
-    );
-}
-
-/// A component's bad context is an ordinary node failure, so it takes the same
-/// error edge every other node failure takes — the route wamn-0h0g.16.3 chose
-/// for `MissingDedupId` rather than the panicking surface next to it.
-#[test]
-fn a_non_object_context_replacement_takes_the_nodes_error_edge() {
-    let w = wiring(
-        "a",
-        vec![node("a", None), node("recover", None)],
-        vec![edge_on("a", ERROR_PORT, "recover")],
-    );
-
-    let mut seen: Vec<Value> = Vec::new();
-    let outcome = drive(&w, false, |call| {
-        seen.push(call.payload.clone());
-        if call.node == "a" {
-            NodeOutcome::ok_with_context(json!({"output": 1}), "main", json!("not-an-object"))
-        } else {
-            NodeOutcome::ok(json!({"recovered": true}))
-        }
-    });
-
-    assert_eq!(outcome.status, WalkStatus::Completed);
-    assert!(outcome.failure.is_none());
-    assert_eq!(
-        seen[1],
-        json!({"error": {
-            "code": "invalid-context",
-            "message": "context replacement must be an object, got \"not-an-object\"",
-        }}),
-        "the error edge carries the refusal the walk reported"
-    );
-}
-
-/// The replacement never lands: the walk's own context is what the recovery node
-/// observes, exactly as `Wiring::apply`'s atomic rejection promises a direct
-/// driver.
-#[test]
-fn a_refused_context_replacement_never_reaches_the_error_edge_node() {
-    let w = wiring(
-        "a",
-        vec![node("a", None), node("recover", None)],
-        vec![edge_on("a", ERROR_PORT, "recover")],
-    );
-
-    let mut contexts: Vec<Value> = Vec::new();
-    drive(&w, false, |call| {
-        contexts.push(call.context.clone());
-        if call.node == "a" {
-            NodeOutcome::ok_with_context(json!({"output": 1}), "main", json!(["merge"]))
-        } else {
-            NodeOutcome::ok(json!({"recovered": true}))
-        }
-    });
-
-    assert_eq!(contexts, [json!({}), json!({})]);
 }
 
 // ---- authored data: a wiring that does not fit its delivery ----------------
