@@ -199,19 +199,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flowrunner"
-version = "0.1.0"
-dependencies = [
- "boon",
- "serde_json",
- "wamn-catalog",
- "wamn-flow",
- "wamn-run-state",
- "wamn-runner",
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
 name = "fluent-uri"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

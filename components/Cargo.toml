@@ -2,7 +2,7 @@
 resolver = "2"
 # Product components are grouped by runtime role. Proof fixtures and reference
 # samples remain visibly outside those product tiers.
-members = ["ingress/flow-http", "execution/flowrunner", "execution/materializer", "fixtures/busyloop", "fixtures/connection-http-standard", "fixtures/sockprobe"]
+members = ["ingress/flow-http", "execution/materializer", "fixtures/busyloop", "fixtures/connection-http-standard", "fixtures/sockprobe"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,15 +15,12 @@ serde_json = "1"
 wit-bindgen = { version = "0.44", default-features = false, features = ["macros", "realloc"] }
 
 # Guest-owned path identities are independent of the native workspace contract.
-wamn-catalog = { path = "../crates/catalog/model", version = "0.1.0" }
 wamn-event-reg = { path = "../crates/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "../crates/events/wire", version = "0.1.0" }
-wamn-flow = { path = "../crates/execution/flow-model", version = "0.1.0" }
 wamn-flow-invocation = { path = "../crates/execution/flow-invocation", version = "0.1.0" }
 wamn-materializer = { path = "../crates/events/materializer", version = "0.1.0" }
 wamn-nodes = { package = "wamn-standard-nodes", path = "../crates/execution/standard-nodes", version = "0.1.0" }
 wamn-run-state = { path = "../crates/execution/run-state", version = "0.1.0" }
-wamn-runner = { path = "../crates/execution/flow-engine", version = "0.1.0" }
 
 [profile.release]
 opt-level = "s"
