@@ -3,7 +3,6 @@
 //! MVP outcome: proof floor.
 
 pub mod catalog;
-pub mod egressbench;
 pub mod flow;
 pub mod invocation;
 pub mod kubernetes_gate_verdict;

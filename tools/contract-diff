@@ -53,10 +53,6 @@ readonly -a WAMN_FLOW_SCHEMA=(
   test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
   -p wamn-flow
 )
-readonly -a WAMN_FLOWRUNNER_WORLD=(
-  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
-  -p wamn-proof-system --lib flowrunner_contract::tests::
-)
 
 wamn_print_plan() {
   local -r label="$1"
@@ -74,7 +70,6 @@ wamn_dry_run() {
   wamn_print_plan runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
   wamn_print_plan flow-http "${WAMN_FLOW_HTTP[@]}"
   wamn_print_plan flow-schema "${WAMN_FLOW_SCHEMA[@]}"
-  wamn_print_plan flowrunner-world "${WAMN_FLOWRUNNER_WORLD[@]}"
 }
 
 wamn_require_cargo() {
@@ -112,7 +107,6 @@ case "$WAMN_COMMAND" in
     wamn_run runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
     wamn_run flow-http "${WAMN_FLOW_HTTP[@]}"
     wamn_run flow-schema "${WAMN_FLOW_SCHEMA[@]}"
-    wamn_run flowrunner-world "${WAMN_FLOWRUNNER_WORLD[@]}"
     ;;
   *)
     wamn_usage_error "unknown command '$WAMN_COMMAND'"

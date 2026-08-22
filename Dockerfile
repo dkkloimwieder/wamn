@@ -2,7 +2,6 @@
 #   docker build --target host       -t wamn-host:dev       .  # washlet ONLY
 #   docker build --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
 #   docker build --target dispatcher -t wamn-dispatcher:dev .  # trigger dispatcher
-#   docker build --target run-worker -t wamn-run-worker:dev .  # production executor (+flowrunner.wasm)
 #   docker build --target scenario-worker -t wamn-scenario-worker:dev . # authoring management
 #   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
 #   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
@@ -42,12 +41,6 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-host
 
-FROM root-recipe AS cook-executor
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-executor
-
 FROM root-recipe AS cook-scenario-worker
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
@@ -83,9 +76,6 @@ COPY .cargo/config.toml ./.cargo/config.toml
 # The canonical deploy DDL (sql/run-state.sql) is include_str!'d by
 # publish-catalog's provisioning helpers — single source of truth, no clones.
 COPY deploy ./deploy
-# wamn-gates embeds the flowrunner dispatch source guard; copy only that file,
-# not the component target.
-COPY components/execution/flowrunner/src/lib.rs ./components/execution/flowrunner/src/lib.rs
 # wash-runtime resolves as a git dep from the fork pinned in Cargo.toml
 # (docs/archive/platform/wash-runtime-fork.md); cargo fetches it during the cook/build.
 # rust-toolchain.toml is deliberately absent: the base image already ships the
@@ -98,14 +88,6 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-host \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host
-
-FROM cook-executor AS build-executor
-COPY --from=root-source /build /build
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-executor \
- && install -D -m 0755 target/release/wamn-run-worker /native-output/wamn-run-worker
 
 FROM cook-scenario-worker AS build-scenario-worker
 COPY --from=root-source /build /build
@@ -173,11 +155,11 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-component-target,target=/build/components/target,sharing=locked \
     cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
-      -p flow-http -p flowrunner -p materializer \
+      -p flow-http -p materializer \
       -p busyloop -p connection-http-standard -p sockprobe \
  && install -d /component-output \
  && for artifact in \
-      flow_http flowrunner materializer \
+      flow_http materializer \
       busyloop connection_http_standard sockprobe; do \
       install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm" \
         "/component-output/${artifact}.wasm"; \
@@ -207,32 +189,10 @@ COPY --from=build-dispatcher /native-output/wamn-dispatcher /usr/local/bin/wamn-
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-dispatcher"]
 
-# ---- executor image: the production flow runner + its component (SR9) -------
-# The deployment/image/binary identity remains wamn-run-worker; the owning
-# source package is wamn-executor.
-FROM debian:trixie-slim AS run-worker
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-executor /native-output/wamn-run-worker /usr/local/bin/wamn-run-worker
-# The flowrunner component is a PRODUCTION artifact, not a gate fixture: the
-# run-worker (fqg.8) instantiates it to drive claimed runs, so it travels with
-# this binary (default --flowrunner /components/flowrunner.wasm).
-COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
-ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-run-worker"]
-
 # ---- scenario-worker image: authoring management service -------------------
 FROM debian:trixie-slim AS scenario-worker
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-scenario-worker /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
-# The MINTING pod's flowrunner source (wamn-0h0g.15.50). Draft validation pins a
-# trusted runtime revision derived from the exact flowrunner bytes the host
-# loaded, so the pod that mints that pin has to carry them locally — it cannot be
-# handed them by a transport without pinning a digest that names no real
-# executable. Per the wamn-0h0g.15.4 verdict flowrunner stays IN-IMAGE, so this is
-# the same locked-builder artifact and the same stable path the run-worker above
-# loads; the two images therefore agree on the digest by construction rather than
-# by a skew detector.
-COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-scenario-worker"]
 
@@ -266,15 +226,9 @@ COPY --from=build-cdc-reader /native-output/wamn-cdc-reader /usr/local/bin/wamn-
 # Dispatcher gates drive stepped and lifecycle behavior through the executable
 # boundary; the gates package does not link the deployable service crate.
 COPY --from=build-dispatcher /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher
-# Metricbench drives run telemetry through the production executor boundary;
-# the integration proof must not duplicate the executor-owned instruments.
-COPY --from=build-executor /native-output/wamn-run-worker /usr/local/bin/wamn-run-worker
 # Proof fixtures baked in so the retained gates run with no volume plumbing.
 COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
-# E13/E15 runtime raw-socket fixture: attempts raw TCP + UDP egress via
-# wasi:sockets so egressbench can assert the fork's socket_addr_check deny.
 COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm
-COPY --from=component-builder /component-output/flowrunner.wasm /bench/flowrunner.wasm
 # Callable-flow HTTP ingress: bounded routing/auth/mapping adapter over the
 # frozen flow-invocation provider contract.
 COPY --from=component-builder /component-output/flow_http.wasm /bench/flow-http.wasm

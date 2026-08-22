@@ -76,17 +76,6 @@
       "path": "crates/catalog/model",
       "role": "semantic"
     },
-    "standard-nodes-raw-sql": {
-      "path": "crates/execution/standard-nodes/src/postgres.rs",
-      "role": "compatibility-writer",
-      "temporary": {
-        "expiry_bead": "wamn-1nd",
-        "may_gain_writes": false,
-        "writer_families": [
-          "generated-tenant-entities"
-        ]
-      }
-    },
     "ctl-copy": {
       "path": "services/ctl/src/copy_project_env.rs",
       "role": "effect"
@@ -122,10 +111,6 @@
     "cdc-reader": {
       "path": "services/cdc-reader",
       "role": "reader"
-    },
-    "flowrunner": {
-      "path": "components/execution/flowrunner",
-      "role": "effect"
     },
     "materializer": {
       "path": "components/execution/materializer",
@@ -261,10 +246,6 @@
       {
         "path_prefix": "services/ctl/src/reconcile_run_plane.rs",
         "default_schema": "wamn_run"
-      },
-      {
-        "path_prefix": "components/execution/flowrunner/src",
-        "default_schema": "wamn_run"
       }
     ],
     "dynamic_writers": [
@@ -286,19 +267,6 @@
         "marker": "INSERT INTO {tbl}",
         "operations": [
           "insert"
-        ]
-      },
-      {
-        "path": "crates/execution/standard-nodes/src/postgres.rs",
-        "principal": "standard-nodes-raw-sql",
-        "family": "generated-tenant-entities",
-        "marker": "ctx.pg_execute(sql",
-        "operations": [
-          "insert",
-          "update",
-          "delete",
-          "merge",
-          "truncate"
         ]
       }
     ],
@@ -834,7 +802,6 @@
         "scenario-worker",
         "run-state",
         "execution-host",
-        "flowrunner",
         "ctl-copy"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
@@ -937,8 +904,7 @@
       ],
       "readers": [
         "scenario-worker",
-        "run-state",
-        "flowrunner"
+        "run-state"
       ],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1179,8 +1145,7 @@
         "scenario-worker"
       ],
       "readers": [
-        "run-state",
-        "flowrunner"
+        "run-state"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1511,8 +1476,7 @@
         "ctl-publish"
       ],
       "readers": [
-        "project-state",
-        "flowrunner"
+        "project-state"
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1631,14 +1595,12 @@
       "writers": [
       "run-state",
       "execution-host",
-      "flowrunner",
       "materializer"
       ],
       "readers": [
       "run-state",
       "execution-host",
       "scenario-worker",
-        "flowrunner",
         "materializer"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
@@ -1676,8 +1638,7 @@
       "readers": [
         "run-state",
         "schema-control",
-        "scenario-worker",
-        "flowrunner"
+        "scenario-worker"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1811,13 +1772,10 @@
       "schema_source": "crates/schema/compiler/src/emit.rs",
       "writers": [
         "entity-access",
-        "schema-compiler",
-        "flowrunner",
-        "standard-nodes-raw-sql"
+        "schema-compiler"
       ],
       "readers": [
         "entity-access",
-        "flowrunner",
         "cdc-reader"
       ],
       "compatibility_horizon": "one-catalog-version-and-migration-transaction",

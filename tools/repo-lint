@@ -57,24 +57,16 @@ readonly -a WAMN_ROOT_CLIPPY=(
 )
 readonly -a WAMN_COMPONENT_NATIVE_CLIPPY=(
   clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --workspace
-  --exclude flowrunner --exclude connection-http-standard
+  --exclude connection-http-standard
   --all-targets -- -D warnings
 )
 readonly -a WAMN_CONNECTION_HTTP_NATIVE_CLIPPY=(
   clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
   --package connection-http-standard -- -D warnings
 )
-readonly -a WAMN_FLOWRUNNER_NATIVE_CLIPPY=(
-  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
-  --package flowrunner --all-targets -- -D warnings -A dead-code
-)
 readonly -a WAMN_COMPONENT_WASM_CLIPPY=(
   clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --workspace
-  --exclude flowrunner --target wasm32-wasip2 -- -D warnings
-)
-readonly -a WAMN_FLOWRUNNER_WASM_CLIPPY=(
-  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
-  --package flowrunner --target wasm32-wasip2 -- -D warnings -A dead-code
+  --target wasm32-wasip2 -- -D warnings
 )
 
 wamn_print_plan() {
@@ -96,9 +88,7 @@ wamn_dry_run() {
     "$WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS"
   printf ' %q' "$WAMN_CARGO" "${WAMN_CONNECTION_HTTP_NATIVE_CLIPPY[@]}"
   printf '\n'
-  wamn_print_plan 'flowrunner-native-clippy' "${WAMN_FLOWRUNNER_NATIVE_CLIPPY[@]}"
   wamn_print_plan 'components-wasm-clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
-  wamn_print_plan 'flowrunner-wasm-clippy' "${WAMN_FLOWRUNNER_WASM_CLIPPY[@]}"
 }
 
 wamn_require_cargo() {
@@ -200,9 +190,7 @@ case "$WAMN_COMMAND" in
     wamn_run 'root Clippy' "${WAMN_ROOT_CLIPPY[@]}"
     wamn_run 'components native Clippy' "${WAMN_COMPONENT_NATIVE_CLIPPY[@]}"
     wamn_run_connection_http_native_clippy
-    wamn_run 'flowrunner native Clippy' "${WAMN_FLOWRUNNER_NATIVE_CLIPPY[@]}"
     wamn_run 'components wasm Clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
-    wamn_run 'flowrunner wasm Clippy' "${WAMN_FLOWRUNNER_WASM_CLIPPY[@]}"
     ((WAMN_ANY_LEG_FAILED == 0))
     ;;
   *)

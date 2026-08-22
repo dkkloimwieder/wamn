@@ -17,17 +17,13 @@ pub mod contextproof;
 pub mod dashproof;
 mod dispatcher_process;
 pub mod exposure_live;
-pub mod flowbench;
-mod flowrunner_linker;
 pub mod m1;
 pub mod matbench;
 pub mod materializer;
-pub mod metricbench;
 pub mod provisionbench;
 pub mod readerbench;
 mod release_fixture;
 #[cfg(test)]
 mod rie2ebench;
-pub mod runnerbench;
 pub mod streambench;
 pub mod walbench;
