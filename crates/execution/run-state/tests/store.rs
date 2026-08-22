@@ -1,8 +1,7 @@
 //! Persisted status vocabulary and canonical run-state DDL tests.
 
 use serde_json::json;
-use wamn_flow::node_contract::{ErrorDetail, NodeError};
-use wamn_run_state::{EffectUncertainFailure, FailKind, NodeErrorKind, NodeRunStatus, RunStatus};
+use wamn_run_state::{EffectUncertainFailure, FailKind, RunStatus};
 
 // ---- status vocabularies ---------------------------------------------------
 
@@ -16,21 +15,9 @@ fn status_sql_literals_round_trip() {
             s
         );
     }
-    for s in NodeRunStatus::ALL {
-        assert_eq!(NodeRunStatus::from_sql(s.as_sql()), Some(s));
-    }
     for k in FailKind::ALL {
         assert_eq!(FailKind::from_sql(k.as_sql()), Some(k));
     }
-    for k in NodeErrorKind::ALL {
-        assert_eq!(NodeErrorKind::from_sql(k.as_sql()), Some(k));
-    }
-    assert_eq!(
-        NodeErrorKind::ALL.map(NodeErrorKind::as_sql),
-        ["retryable", "rate-limited", "terminal", "invalid-input"]
-    );
-    assert_eq!(NodeErrorKind::from_sql("cancelled"), None);
-    assert!(serde_json::from_value::<NodeErrorKind>(json!("cancelled")).is_err());
     assert_eq!(RunStatus::from_sql("nope"), None);
     assert!(serde_json::from_value::<RunStatus>(json!("nope")).is_err());
     // Spot-check the wire literals the DDL CHECK constraints pin.
@@ -40,7 +27,6 @@ fn status_sql_literals_round_trip() {
     );
     assert_eq!(RunStatus::EffectUncertain.as_sql(), "effect-uncertain");
     assert!(!RunStatus::EffectUncertain.is_terminal());
-    assert_eq!(NodeErrorKind::RateLimited.as_sql(), "rate-limited");
     assert_eq!(FailKind::RetryExhausted.as_sql(), "retry-exhausted");
     assert_eq!(FailKind::RunawayBudget.as_sql(), "runaway-budget");
 }
@@ -159,15 +145,6 @@ fn postgres_fixture_has_no_retired_flow_runs_checkpoint_table() {
     assert!(!ddl.contains("flow_runs_tenant"));
 }
 
-#[test]
-fn retryable_node_error_maps_to_retryable_kind() {
-    let detail = ErrorDetail::msg("x");
-    assert_eq!(
-        NodeErrorKind::from(&NodeError::Retryable(detail)),
-        NodeErrorKind::Retryable
-    );
-}
-
 // ---- deploy/sql/run-state.sql drift guard --------------------------------------
 
 #[test]
@@ -178,19 +155,17 @@ fn run_state_sql_matches_the_model() {
     ))
     .expect("read deploy/sql/run-state.sql");
 
-    // The two tables + their tenant floor.
+    // Run history and its tenant floor.
     assert!(sql.contains("CREATE TABLE wamn_run.runs"));
-    assert!(sql.contains("CREATE TABLE wamn_run.node_runs"));
     assert!(sql.contains("FORCE ROW LEVEL SECURITY"));
     assert!(sql.contains("current_setting('app.tenant', true)"));
-    // Retired rerun lineage is absent; trusted event causation and frame keys remain.
+    // Retired rerun lineage is absent; trusted event causation and effect frame keys remain.
     assert!(!sql.contains("\n    replay_of       text"));
     assert!(!sql.contains("\n    root_run_id     text"));
     assert!(!sql.contains("CREATE INDEX runs_root "));
     assert!(sql.contains("event_source_run_id text"));
     assert!(sql.contains("event_root_run_id text"));
     assert!(sql.contains("event_depth      int"));
-    assert!(sql.contains("PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence)"));
     for frame_column in [
         "frame_id",
         "parent_frame_id",
@@ -272,11 +247,8 @@ fn run_state_sql_matches_the_model() {
         "IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN"
     ));
     // The erasure arm cannot name its caller, so it proves nothing references
-    // the pair being erased: still runnable and no effect attempt. A node
-    // projection is history, not a current-claim fact, so it does NOT refuse —
-    // that leg is what made the queue park unable to clear (wamn-0h0g.15.82).
+    // the pair being erased: still runnable and no effect attempt.
     assert!(sql.contains("IF NEW.status NOT IN ('dispatched', 'running')"));
-    assert!(!sql.contains("wamn_run.node_runs AS projection"));
     assert!(sql.contains("OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect"));
     assert!(sql.contains(
         "ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN"
@@ -309,21 +281,6 @@ fn run_state_sql_matches_the_model() {
             s.as_sql()
         );
     }
-    for s in NodeRunStatus::ALL {
-        assert!(
-            sql.contains(&format!("'{}'", s.as_sql())),
-            "node_runs CHECK missing {}",
-            s.as_sql()
-        );
-    }
-    for k in NodeErrorKind::ALL {
-        assert!(
-            sql.contains(&format!("'{}'", k.as_sql())),
-            "error_kind CHECK missing {}",
-            k.as_sql()
-        );
-    }
-    assert!(!sql.contains("'cancelled'"));
     for k in FailKind::ALL {
         assert!(
             sql.contains(&format!("'{}'", k.as_sql())),
@@ -333,10 +290,6 @@ fn run_state_sql_matches_the_model() {
     }
 
     let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        normalized.contains("error_kind text CHECK (error_kind IN ('retryable', 'rate-limited', 'terminal', 'invalid-input')),"),
-        "node_runs.error_kind CHECK must carry exactly the frozen vocabulary"
-    );
     assert!(
         normalized.contains(
             "fail_kind text CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input', \
@@ -375,7 +328,7 @@ fn run_delete_is_guarded_by_the_exact_terminal_vocabulary() {
 // ---- live-apply gate (optional) --------------------------------------------
 
 /// Apply `deploy/sql/run-state.sql` to a throwaway Postgres and assert the tenant RLS
-/// isolates rows, the idempotency index dedupes, and the FK cascades. Gated on
+/// isolates rows and the idempotency index dedupes. Gated on
 /// `WAMN_RUN_STORE_PG_URL` (a superuser URL — the harness provisions `wamn_app`);
 /// skips cleanly when unset. Mirrors the wamn-schema-compiler / wamn-schema-compiler / wamn-schema-compiler gates.
 #[test]
@@ -426,8 +379,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            ('t2', 'test', 'standard'), \
            ('t3', 'test', 'standard');\n",
     );
-    // Seed two tenants as the superuser (bypasses RLS): tenant t1 has a run with
-    // two node-runs, tenant t2 has one run — the RLS witness.
+    // Seed two tenants as the superuser (bypasses RLS): each has one run.
     script.push_str(
         "INSERT INTO wamn_run.runs (\
            tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
@@ -438,20 +390,15 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
             'running','k-a'),\
            ('t2','run-b','f',1,'run-state-fixture',1,'test',\
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
-            'running','k-b');\n\
-         INSERT INTO wamn_run.node_runs \
-           (tenant_id, run_id, frame_id, current_plan_hash, local_node_id, seq, status, output_port, output_json) \
-           VALUES ('t1','run-a',0,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','n0',0,'success','main','{}'::jsonb), \
-                  ('t1','run-a',0,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','n1',1,'success','main','{}'::jsonb);\n",
+            'running','k-b');\n",
     );
-    // As wamn_app under tenant t1: sees only t1's run + its two node-runs.
+    // As wamn_app under tenant t1: sees only t1's run.
     script.push_str(
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
          SET LOCAL search_path TO wamn_run;\n\
          SET LOCAL app.tenant = 't1';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM runs) = 1, 't1 sees only its run'; \
-               ASSERT (SELECT count(*) FROM node_runs) = 2, 't1 sees its 2 node-runs'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM runs) = 1, 't1 sees only its run'; END $$;\n\
          COMMIT;\n",
     );
     // No claim -> zero rows (safe default).
@@ -483,13 +430,11 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
            'k-a');\n",
     );
-    // The FK cascades: deleting a run removes its node-runs.
+    // Terminal run history remains deletable.
     script.push_str(
         "UPDATE wamn_run.runs SET status='completed' \
            WHERE tenant_id='t1' AND run_id='run-a';\n\
-         DELETE FROM wamn_run.runs WHERE tenant_id='t1' AND run_id='run-a';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM wamn_run.node_runs WHERE run_id='run-a') = 0, \
-               'FK ON DELETE CASCADE removed node-runs'; END $$;\n",
+         DELETE FROM wamn_run.runs WHERE tenant_id='t1' AND run_id='run-a';\n",
     );
     script.push_str("DROP SCHEMA wamn_run CASCADE; DROP SCHEMA catalog CASCADE;\n");
 

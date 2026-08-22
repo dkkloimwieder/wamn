@@ -908,7 +908,6 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
     // …and nothing wider. `runs` is the relation the dispatcher never touches.
     for denied in [
         format!("SELECT count(*) FROM {SCHEMA}.runs"),
-        format!("SELECT count(*) FROM {SCHEMA}.node_runs"),
         format!("INSERT INTO {SCHEMA}.run_queue (tenant_id) VALUES ('t')"),
     ] {
         let error = reader

@@ -453,11 +453,6 @@ mod tests {
     #[test]
     fn effect_attempt_schema_has_one_identity_and_no_successor_shape() {
         let ddl = include_str!("../../../../deploy/sql/run-state.sql");
-        let nodes = ddl
-            .split_once("CREATE TABLE wamn_run.node_runs (")
-            .and_then(|(_, tail)| tail.split_once("\n);"))
-            .map(|(table, _)| table)
-            .expect("node_runs table");
         let attempts = ddl
             .split_once("CREATE TABLE wamn_run.effect_attempts (")
             .and_then(|(_, tail)| tail.split_once("\n);"))
@@ -493,15 +488,6 @@ mod tests {
                 !attempts.contains(residue),
                 "attempt table retains {residue}"
             );
-        }
-        for residue in [
-            "current_effect_attempt_id",
-            "selected_recovery_class",
-            "recovery_class",
-            "attempt_index",
-            "attempt_dispatched_at",
-        ] {
-            assert!(!nodes.contains(residue), "node table retains {residue}");
         }
         let dispatches = ddl
             .split_once("CREATE TABLE wamn_run.effect_attempt_dispatches (")

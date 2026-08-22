@@ -329,7 +329,6 @@ DO $$ DECLARE writes int; reads int; app_writes int; callable int; app_callable 
   ASSERT has_table_privilege('{DISPATCH_READER_ROLE}', '{SCHEMA}.effect_attempts', 'SELECT');
   ASSERT NOT has_table_privilege('{DISPATCH_READER_ROLE}', '{SCHEMA}.runs', 'SELECT'),
     'the dispatch reader must not read run history';
-  ASSERT NOT has_table_privilege('{DISPATCH_READER_ROLE}', '{SCHEMA}.node_runs', 'SELECT');
 
   -- Schema and database authority: USAGE only, CONNECT only.
   ASSERT has_schema_privilege('{DISPATCH_READER_ROLE}', '{SCHEMA}', 'USAGE');

@@ -188,18 +188,6 @@ pub fn run_state_stand_in_ddl() -> String {
                  AND release_version > 0 \
                  AND manifest_digest ~ '^sha256:[0-9a-f]{{64}}$')), \
            PRIMARY KEY (tenant_id, run_id)); \
-         CREATE TABLE {SCHEMA}.node_runs ( \
-           tenant_id text NOT NULL, run_id text NOT NULL, local_node_id text NOT NULL, \
-           frame_id bigint NOT NULL DEFAULT 0, parent_frame_id bigint, call_site_id text, \
-           current_plan_hash text, occurrence int NOT NULL DEFAULT 0, \
-           seq bigint NOT NULL DEFAULT 0, \
-           status text NOT NULL DEFAULT 'started' \
-             CHECK (status IN ('started', 'success', 'error')), \
-           output_port text, output_json jsonb, input_json jsonb, error_kind text, \
-           error_detail jsonb, input_ref text, output_ref text, output_size bigint, \
-           payload_hash text, started_at timestamptz NOT NULL DEFAULT now(), \
-           ended_at timestamptz, \
-           PRIMARY KEY (tenant_id, run_id, local_node_id)); \
          CREATE TABLE {SCHEMA}.effect_attempts ( \
            tenant_id text NOT NULL, attempt_id uuid NOT NULL DEFAULT gen_random_uuid(), \
            run_id text NOT NULL, root_plan_hash text NOT NULL, current_plan_hash text NOT NULL, \
@@ -327,10 +315,6 @@ pub async fn install_effect_writer(
                  CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB \
                    NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
                END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_run_projection_writer') THEN \
-                 CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
-                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-               END IF; \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname={role_literal}) THEN \
                  CREATE ROLE {role_identifier} LOGIN PASSWORD {password_literal} \
                    NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
@@ -340,7 +324,6 @@ pub async fn install_effect_writer(
                END IF; \
              END $roles$; \
              GRANT wamn_effect_writer TO {role_identifier}; \
-             GRANT wamn_run_projection_writer TO {role_identifier}; \
              GRANT CONNECT ON DATABASE {} TO {role_identifier}; \
              GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_effect_writer; \
              GRANT SELECT (tenant_id,run_id,status) \
@@ -348,9 +331,6 @@ pub async fn install_effect_writer(
              GRANT SELECT (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
                ON {SCHEMA}.run_queue TO wamn_effect_writer; \
              GRANT SELECT,INSERT ON {SCHEMA}.effect_attempts TO wamn_effect_writer; \
-             GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_run_projection_writer; \
-             GRANT SELECT,INSERT,UPDATE,DELETE ON {SCHEMA}.node_runs \
-               TO wamn_run_projection_writer; \
              ALTER TABLE {SCHEMA}.runs ENABLE ROW LEVEL SECURITY; \
              ALTER TABLE {SCHEMA}.runs FORCE ROW LEVEL SECURITY; \
              CREATE POLICY runs_tenant ON {SCHEMA}.runs \
@@ -359,11 +339,6 @@ pub async fn install_effect_writer(
              ALTER TABLE {SCHEMA}.run_queue FORCE ROW LEVEL SECURITY; \
              CREATE POLICY run_queue_tenant ON {SCHEMA}.run_queue \
                USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')); \
-             ALTER TABLE {SCHEMA}.node_runs ENABLE ROW LEVEL SECURITY; \
-             ALTER TABLE {SCHEMA}.node_runs FORCE ROW LEVEL SECURITY; \
-             CREATE POLICY node_runs_tenant ON {SCHEMA}.node_runs \
-               USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')) \
-               WITH CHECK (tenant_id=NULLIF(current_setting('app.tenant',true),'')); \
              ALTER TABLE {SCHEMA}.effect_attempts ENABLE ROW LEVEL SECURITY; \
              ALTER TABLE {SCHEMA}.effect_attempts FORCE ROW LEVEL SECURITY; \
              CREATE POLICY effect_attempts_tenant ON {SCHEMA}.effect_attempts \
@@ -858,7 +833,7 @@ pub async fn teardown(fixture: LiveFixture) -> anyhow::Result<()> {
              DO $disconnect$ BEGIN EXECUTE format( \
                'REVOKE CONNECT ON DATABASE %I FROM {writer_role}', current_database()); \
              END $disconnect$; \
-             REVOKE wamn_effect_writer, wamn_run_projection_writer FROM {writer_role}; \
+             REVOKE wamn_effect_writer FROM {writer_role}; \
              ALTER ROLE {writer_role} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';"
         ))
         .await?;

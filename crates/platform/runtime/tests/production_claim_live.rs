@@ -24,7 +24,6 @@ use std::collections::BTreeSet;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_run_state::{
-    EffectWriterErrorKind, ResetProjectionFence,
     queue::{park_sql, select_production_claim_sql},
     schema_drift::{Need, assert_run_state_stand_in},
 };
@@ -47,7 +46,7 @@ use common::{
 fn production_claim_run_state_stand_in_tracks_schema_of_record() {
     let stand_in = common::run_state_stand_in_ddl();
     let fixture_schema = format!("{SCHEMA}.");
-    assert_eq!(stand_in.matches(&fixture_schema).count(), 3);
+    assert_eq!(stand_in.matches(&fixture_schema).count(), 2);
     let normalized = stand_in.replace(&fixture_schema, "wamn_run.");
 
     assert_run_state_stand_in(
@@ -57,7 +56,6 @@ fn production_claim_run_state_stand_in_tracks_schema_of_record() {
             ("environment_policies", Need::AbsentByDesign),
             ("runs", Need::Required),
             ("invocation_admissions", Need::AbsentByDesign),
-            ("node_runs", Need::Required),
             ("effect_attempts", Need::Required),
             ("effect_attempt_dispatches", Need::AbsentByDesign),
             ("effect_attempt_outcomes", Need::AbsentByDesign),
@@ -74,7 +72,6 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let fixture = install_fixture(&url).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
-    let writer = &fixture.writer;
     let release_hash = fixture.release_hash.clone();
 
     // Exact global FIFO: stream sequence, then run id, breaks equal timestamps.
@@ -116,16 +113,12 @@ async fn production_claim_live() -> anyhow::Result<()> {
         BTreeSet::from(["double-a".into(), "double-b".into()])
     );
 
-    // Expired pre-effect recovery deletes only node projections and NULLs only
-    // state_json; every other admitted or lineage column survives the retry.
+    // Expired pre-effect recovery NULLs only state_json; every other admitted
+    // or lineage column survives the retry.
     // `status` and the claim-time release record are excluded from the snapshot
     // because the retry CLAIM writes them; they are asserted separately below.
     //
-    // THIS LEG IS BOTH-TIER AND STAYS HERE (wamn-0h0g.20.4). A pre-effect
-    // reclaim needs no effect ledger at all: `classify_production_claim` returns
-    // `ExpiredPreEffect` for a `standard` run with an expired prior lease, and
-    // `reset_expired_pre_effect_projection` has a live production caller on both
-    // tiers (`crates/execution/host/src/lib.rs`, the `ResetRequired` arm).
+    // This leg is both-tier: a pre-effect reclaim needs no effect ledger.
     admin
         .execute(
             &format!(
@@ -154,15 +147,6 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &[&TENANT],
         )
         .await?;
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.node_runs \
-                   (tenant_id,run_id,local_node_id) VALUES ($1,'pre-effect','old-node')"
-            ),
-            &[&TENANT],
-        )
-        .await?;
     let before: Value = serde_json::from_str(
         &admin
             .query_one(
@@ -176,58 +160,6 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .await?
             .get::<_, String>(0),
     )?;
-    let reset_required = plugin.claim_next_production(COMPONENT, 30_000).await?;
-    let reset_fence = match &reset_required {
-        ProductionClaimResult::ResetRequired {
-            run_id,
-            prior_lease_owner,
-            prior_lease_expires_at,
-            prior_lease_generation,
-        } => ResetProjectionFence {
-            run_id,
-            prior_lease_owner,
-            prior_lease_expires_at,
-            prior_lease_generation: *prior_lease_generation,
-        },
-        other => panic!("expected private projection reset handoff, got {other:?}"),
-    };
-    assert!(
-        admin
-            .query_one(
-                &format!("SELECT state_json IS NOT NULL FROM {SCHEMA}.runs WHERE tenant_id=$1 AND run_id='pre-effect'"),
-                &[&TENANT],
-            )
-            .await?
-            .get::<_, bool>(0),
-        "the app handoff committed without clearing checkpoint state"
-    );
-    let wrong_generation = ResetProjectionFence {
-        prior_lease_generation: reset_fence.prior_lease_generation + 1,
-        ..reset_fence
-    };
-    let mismatch = writer
-        .reset_expired_pre_effect_projection(wrong_generation)
-        .await
-        .expect_err("a different lease generation reset projection state");
-    assert_eq!(mismatch.kind(), EffectWriterErrorKind::ResetFenceLost);
-    assert_eq!(
-        admin
-            .query_one(
-                &format!("SELECT count(*) FROM {SCHEMA}.node_runs WHERE tenant_id=$1 AND run_id='pre-effect'"),
-                &[&TENANT],
-            )
-            .await?
-            .get::<_, i64>(0),
-        1,
-        "fence mismatch mutated the projection"
-    );
-    assert_eq!(
-        writer
-            .reset_expired_pre_effect_projection(reset_fence)
-            .await
-            .map_err(anyhow::Error::new)?,
-        1
-    );
     let pre_effect = plugin.claim_next_production(COMPONENT, 30_000).await?;
     let (run_id, payload, lease_generation) = match pre_effect {
         ProductionClaimResult::Ready {
@@ -268,21 +200,17 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ),
         "the retry claim recorded the claiming pod's release exactly once"
     );
-    let (state, nodes): (Option<String>, i64) = {
-        let row = admin
-            .query_one(
-                &format!(
-                    "SELECT r.state_json::text, \
-                            (SELECT count(*) FROM {SCHEMA}.node_runs n \
-                              WHERE n.tenant_id=r.tenant_id AND n.run_id=r.run_id) \
-                       FROM {SCHEMA}.runs r WHERE r.tenant_id=$1 AND r.run_id='pre-effect'"
-                ),
-                &[&TENANT],
-            )
-            .await?;
-        (row.get(0), row.get(1))
-    };
-    assert_eq!((state, nodes), (None, 0));
+    let state: Option<String> = admin
+        .query_one(
+            &format!(
+                "SELECT state_json::text FROM {SCHEMA}.runs \
+                  WHERE tenant_id=$1 AND run_id='pre-effect'"
+            ),
+            &[&TENANT],
+        )
+        .await?
+        .get(0);
+    assert_eq!(state, None);
 
     // The effect-free exhausted path computes the generic outcome and hash in
     // the host, atomically releases an attached caller, and dequeues.
@@ -590,23 +518,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         "the reclaiming pod records its own release, not the dead attempt's"
     );
 
-    // THE ERASURE IS NOT A BLANKET HOLE — BUT ITS PRECONDITION IS NO LONGER THE
-    // RUN'S HISTORY. The record names the CLAIM currently executing the run
-    // (wamn-0h0g.13.55), so an executed node no longer pins it: a parked run has
-    // generally executed nodes and must still be able to reopen its
-    // claimability (wamn-0h0g.15.82). What still pins it is a TERMINAL STATUS
-    // here, and — on the premium class only — an ATTRIBUTED EFFECT, which is
-    // `production_claim_durable_live.rs`'s leg. value -> value' is refused on
-    // every path and every class.
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.node_runs \
-                   (tenant_id,run_id,local_node_id) VALUES ($1,'release-record','a-node')"
-            ),
-            &[&TENANT],
-        )
-        .await?;
+    // The erasure is not a blanket hole. A terminal status still pins the
+    // record here, and an attributed effect pins it on the premium class.
+    // value -> value' is refused on every path and every class.
     let third_pair = format!(
         "release_version=9, manifest_digest={}",
         quote_literal(EMPTY_HASH)
@@ -627,9 +541,6 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(db.code().code(), "55000");
     assert_eq!(db.message(), "run-release-record-immutable");
 
-    // A NODE PROJECTION NO LONGER REFUSES THE ERASURE. This is the exact leg
-    // that made the queue park the one claimability-reopening arm which could
-    // not clear.
     admin
         .execute(
             &format!(

@@ -233,32 +233,3 @@ GRANT INSERT (
     input_json, result_json, state_json, idempotency_key,
     fail_kind, updated_at
 ) ON s3.runs TO wamn_app;
-
--- One row per node execution; the (tenant_id, run_id, node_id, occurrence)
--- idempotency key prevents duplicate facts and seq preserves history order.
-CREATE TABLE s3.node_runs (
-    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
-    run_id        text NOT NULL,
-    node_id       text NOT NULL,
-    occurrence    int  NOT NULL DEFAULT 0,
-    seq           int  NOT NULL,
-    attempt       int  NOT NULL DEFAULT 0,
-    status        text NOT NULL,
-    output_port   text,
-    output_json   jsonb,
-    input_json    jsonb,
-    error_kind    text,
-    error_detail  jsonb,
-    -- 9.6 capture seams the flowrunner guest fills (wamn-srb); mirrors
-    -- deploy/sql/run-state.sql so the S3 fixture accepts the guest's writes.
-    output_size   bigint,
-    payload_hash  text,
-    PRIMARY KEY (tenant_id, run_id, node_id, occurrence),
-    FOREIGN KEY (tenant_id, run_id) REFERENCES s3.runs (tenant_id, run_id) ON DELETE CASCADE
-);
-ALTER TABLE s3.node_runs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE s3.node_runs FORCE ROW LEVEL SECURITY;
-CREATE POLICY node_runs_tenant ON s3.node_runs
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON s3.node_runs TO wamn_app;

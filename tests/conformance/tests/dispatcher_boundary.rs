@@ -184,8 +184,6 @@ fn dispatcher_reconciliation_is_tenant_scoped_and_read_only() {
         "claim_next_production",
         "grant_production_claim_sql",
         "reset_pre_effect_claim_sql",
-        "record_run_projection",
-        "reset_expired_pre_effect_projection",
         "terminalize_effect_uncertain_claim_sql",
         "terminalize_resolution_refusal_claim_sql",
         "terminalize_exhausted_production_sql",

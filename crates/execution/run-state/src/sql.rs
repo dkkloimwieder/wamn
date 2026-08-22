@@ -99,24 +99,6 @@ mod tests {
         ] {
             assert!(ddl.contains(col), "runs column {col} missing from DDL");
         }
-        for col in [
-            "frame_id",
-            "parent_frame_id",
-            "call_site_id",
-            "current_plan_hash",
-            "local_node_id",
-            "occurrence",
-            "seq",
-            "output_port",
-            "output_json",
-            "error_kind",
-            "error_detail",
-            // 9.6 capture facts persisted by the private native adapter.
-            "output_size",
-            "payload_hash",
-        ] {
-            assert!(ddl.contains(col), "node_runs column {col} missing from DDL");
-        }
     }
 
     /// The 9.6 prune statement targets `runs` (cascading to `node_runs`), scoped
@@ -142,9 +124,5 @@ mod tests {
                 if s.is_terminal() { "present" } else { "absent" }
             );
         }
-        assert!(
-            !sql.contains("node_runs"),
-            "node_runs cascades, not deleted directly"
-        );
     }
 }
