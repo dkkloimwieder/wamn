@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::json;
+use serde_json::{Value, json};
 use wamn_catalog::{WiringDocument, WiringEdge, WiringNode, WiringTerminal};
-use wamn_router::{Delivery, NodeCall, NodeOutcome, Step, Terminal, Wiring};
+use wamn_router::{
+    DEDUP_ID_FIELD, Delivery, NodeCall, NodeOutcome, Step, Terminal, Verdict, WalkStatus, Wiring,
+};
 use wamn_runtime::wiring_lowering::{
     GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringErrorKind, WiringOperationFact,
     WiringParameterFact, WiringScope, lower_active_wiring,
@@ -168,6 +170,94 @@ fn first_routed_call(wiring: &Wiring) -> NodeCall {
         panic!("first routed target is ready");
     };
     target
+}
+
+fn stored_single_node_document(terminal: Option<&str>) -> WiringDocument {
+    WiringDocument::parse(&json!({
+        "format-version": "0.1",
+        "wiring-id": "stored-terminal",
+        "version": 1,
+        "entry": "entry",
+        "nodes": {
+            "entry": {
+                "component": "parser",
+                "interface-version": "0.1.0",
+                "operation": "parse",
+                "params": { "format": "csv" },
+                "terminal": terminal,
+            },
+        },
+    }))
+    .expect("stored wiring document is valid")
+}
+
+fn drive_stored_single_node(
+    document: &WiringDocument,
+    caller_attached: bool,
+    output: Value,
+) -> (WalkStatus, Option<Verdict>) {
+    let wiring = lower(document, &operations()).expect("stored wiring lowers");
+    let mut walk = wiring.start(Delivery {
+        id: "stored-delivery".to_owned(),
+        payload: json!({"input": "value"}),
+        caller_attached,
+    });
+    let mut invocations = 0;
+
+    loop {
+        match wiring.next(&mut walk, 0) {
+            Step::Invoke(call) => {
+                invocations += 1;
+                assert_eq!(call.node, "entry");
+                wiring
+                    .apply(&mut walk, &call, NodeOutcome::ok(output.clone()), 0)
+                    .expect("stored wiring outcome applies");
+            }
+            Step::Wait { .. } => panic!("single-node stored wiring cannot wait"),
+            Step::Done(status) => {
+                assert_eq!(invocations, 1, "the stored entry runs exactly once");
+                return (status, walk.verdict().cloned());
+            }
+        }
+    }
+}
+
+#[test]
+fn stored_respond_terminal_reaches_the_router_verdict() {
+    let document = stored_single_node_document(Some("respond"));
+    let output = json!({"answer": 42});
+
+    let (status, verdict) = drive_stored_single_node(&document, true, output.clone());
+
+    assert_eq!(status, WalkStatus::Completed);
+    assert_eq!(verdict, Some(Verdict::Respond { payload: output }));
+}
+
+#[test]
+fn stored_emit_terminal_reaches_the_router_verdict() {
+    let document = stored_single_node_document(Some("emit"));
+    let output = json!({DEDUP_ID_FIELD: "stored-terminal:1:entry", "order": 42});
+
+    let (status, verdict) = drive_stored_single_node(&document, false, output.clone());
+
+    assert_eq!(status, WalkStatus::Completed);
+    assert_eq!(
+        verdict,
+        Some(Verdict::Emit {
+            event: output,
+            dedup_id: "stored-terminal:1:entry".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn stored_non_terminal_reaches_the_router_discard_verdict() {
+    let document = stored_single_node_document(None);
+
+    let (status, verdict) = drive_stored_single_node(&document, false, json!({"handled": true}));
+
+    assert_eq!(status, WalkStatus::Completed);
+    assert_eq!(verdict, Some(Verdict::Discard));
 }
 
 #[test]
