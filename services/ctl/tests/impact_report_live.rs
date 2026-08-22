@@ -116,16 +116,9 @@ async fn reset(su: &Client) {
     su.batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
         .await
         .expect("ensure wamn_scenario_author role");
-    su.batch_execute(
-        "DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
-             CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
-         END $$;",
-    )
-    .await
-    .expect("ensure wamn_effect_writer role");
+    su.batch_execute(&wamn_control_provision::sql::ensure_effect_writer_acl_role_sql())
+        .await
+        .expect("ensure effect-writer ACL roles");
     su.batch_execute(catalog_schema)
         .await
         .expect("apply deploy/sql/catalog-schema.sql");
