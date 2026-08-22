@@ -8,7 +8,13 @@ use std::process::Command;
 use url::Url;
 
 const INVENTORY: &str = include_str!("../runtime-inventory.json");
-const ALLOWED_WASH_RUNTIME_FEATURES: [&str; 4] = ["oci", "wasi-config", "wasi-otel", "washlet"];
+const ALLOWED_WASH_RUNTIME_FEATURES: [&str; 5] = [
+    "oci",
+    "wasi-config",
+    "wasi-otel",
+    "washlet",
+    "wasm_component_model_implements",
+];
 const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
 const EXECUTION_HOST_STORE_CONSTRUCTOR: &str =
     "let mut store = Store::new(raw, SharedCtx::new(ctx));";
@@ -703,6 +709,10 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
         all_features.extend(actual);
     }
     validate_feature_policy(&all_features).unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        all_features.contains("wasm_component_model_implements"),
+        "the shipped host and executor must enable named component-model imports"
+    );
 
     let recorded_workloads = inventory
         .workload_manifests

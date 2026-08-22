@@ -1462,14 +1462,29 @@ impl WamnPostgres {
         params: &[SqlValue],
         want_rows: bool,
     ) -> Result<OneShotResult, PgError> {
-        let tenant = self.require_tenant(component_id)?;
         let project = self.project_for(component_id);
+        self.one_shot_for_project(component_id, &project, sql, params, want_rows)
+            .await
+    }
+
+    /// Execute one statement using an explicitly selected named-import
+    /// project. Named `wamn:postgres` interfaces must not fall back to the
+    /// component's single `wamn.project` claim.
+    pub(super) async fn one_shot_for_project(
+        &self,
+        component_id: &str,
+        project: &str,
+        sql: &str,
+        params: &[SqlValue],
+        want_rows: bool,
+    ) -> Result<OneShotResult, PgError> {
+        let tenant = self.require_tenant(component_id)?;
         let schema = self.schema_for(component_id);
         let runner = self.runner_for(component_id);
         let role = self.role_for(component_id);
         let user_id = self.user_id_for(component_id);
         let run = self.current_run_for(component_id);
-        let (conn, pp) = self.checkout_guest(&project).await?;
+        let (conn, pp) = self.checkout_guest(project).await?;
         if let Err(e) = self
             .begin_with_claims(
                 &conn,

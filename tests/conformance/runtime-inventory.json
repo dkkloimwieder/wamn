@@ -14,7 +14,8 @@
       "manifest": "services/executor/Cargo.toml",
       "features": [
         "oci",
-        "washlet"
+        "washlet",
+        "wasm_component_model_implements"
       ]
     },
     {
@@ -24,7 +25,8 @@
         "oci",
         "wasi-config",
         "wasi-otel",
-        "washlet"
+        "washlet",
+        "wasm_component_model_implements"
       ]
     },
     {

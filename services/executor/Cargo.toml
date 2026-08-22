@@ -14,8 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 wamn-execution-host = { workspace = true }
-wamn-runtime = { workspace = true }
-wash-runtime = { workspace = true, features = ["washlet"] }
+wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
+wash-runtime = { workspace = true, features = ["washlet", "wasm_component_model_implements"] }
 anyhow = { workspace = true }
 async-nats = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }

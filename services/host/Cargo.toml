@@ -6,8 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-wamn-runtime = { workspace = true }
-wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-otel"] }
+wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
+wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-otel", "wasm_component_model_implements"] }
 anyhow = { workspace = true }
 async-nats = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }

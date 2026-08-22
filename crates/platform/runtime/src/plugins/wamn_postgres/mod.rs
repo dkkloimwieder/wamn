@@ -36,6 +36,8 @@
 //! honor the exact-decimal rule).
 
 use std::collections::HashSet;
+#[cfg(feature = "wasm_component_model_implements")]
+use std::sync::Arc;
 
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -61,6 +63,7 @@ pub use production_claim::{
 };
 pub use resources::{PgCursor, PgTransaction};
 
+#[cfg(not(feature = "wasm_component_model_implements"))]
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         world: "postgres-plugin",
@@ -73,8 +76,65 @@ mod bindings {
     });
 }
 
+#[cfg(feature = "wasm_component_model_implements")]
+mod bindings {
+    wash_runtime::wasmtime::component::bindgen!({
+        world: "postgres-plugin",
+        imports: { default: async | trappable | tracing },
+        named_imports: {
+            "wamn:postgres/client": super::NamedProject,
+        },
+        with: {
+            "wamn:postgres/client.transaction": super::PgTransaction,
+            "wamn:postgres/client.cursor": super::PgCursor,
+        },
+        wasmtime_crate: wash_runtime::wasmtime,
+    });
+}
+
+#[cfg(feature = "wasm_component_model_implements")]
+#[derive(Clone, Debug)]
+pub struct NamedProject(Arc<str>);
+
+#[cfg(feature = "wasm_component_model_implements")]
+impl NamedProject {
+    fn project(&self) -> &str {
+        &self.0
+    }
+
+    fn from_interface(interface: &WitInterface) -> anyhow::Result<Self> {
+        let name = interface
+            .name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("named wamn:postgres import has no name"))?;
+        let project = interface
+            .config
+            .get(NAMED_PROJECT_CONFIG_KEY)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "named wamn:postgres import {name:?} has no {NAMED_PROJECT_CONFIG_KEY} config"
+                )
+            })?;
+        anyhow::ensure!(
+            project.len() <= 64
+                && !project.is_empty()
+                && project
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'),
+            "invalid project {project:?} for named wamn:postgres import {name:?}"
+        );
+        Ok(Self(Arc::from(project.as_str())))
+    }
+}
+
+#[cfg(feature = "wasm_component_model_implements")]
+const NAMED_PROJECT_CONFIG_KEY: &str = "project";
+
 use bindings::wamn::postgres::client;
 use bindings::wamn::postgres::types::{Column, PgError, RowSet, SqlValue};
+
+#[cfg(feature = "wasm_component_model_implements")]
+impl bindings::wamn::postgres::types::Host for wash_runtime::engine::ctx::ActiveCtx<'_> {}
 
 pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 
@@ -155,6 +215,11 @@ impl HostPlugin for WamnPostgres {
         }
     }
 
+    #[cfg(feature = "wasm_component_model_implements")]
+    fn supports_named_instances(&self) -> bool {
+        true
+    }
+
     async fn on_workload_item_bind<'a>(
         &self,
         item: &mut WorkloadItem<'a>,
@@ -212,7 +277,48 @@ impl HostPlugin for WamnPostgres {
         // *asserted* carrier that cannot correct the welded one, and the pair it
         // asserted could disagree with the manifest the same pod resolves plans
         // against.
+        #[cfg(not(feature = "wasm_component_model_implements"))]
         client::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
+
+        #[cfg(feature = "wasm_component_model_implements")]
+        {
+            let mut named = std::collections::HashMap::new();
+            let mut has_unnamed = false;
+            for interface in interfaces.iter().filter(|interface| {
+                interface.namespace == "wamn"
+                    && interface.package == "postgres"
+                    && interface.interfaces.contains("client")
+            }) {
+                if let Some(name) = interface.name.as_deref() {
+                    named.insert(name.to_string(), NamedProject::from_interface(interface)?);
+                } else {
+                    has_unnamed = true;
+                }
+            }
+            let component = item.component().clone();
+            let linker = item.linker();
+            bindings::wamn::postgres::types::add_to_linker::<_, SharedCtx>(
+                linker,
+                extract_active_ctx,
+            )?;
+            if has_unnamed {
+                client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+            }
+            if !named.is_empty() {
+                bindings::named_imports::wamn::postgres::client::add_to_linker::<_, SharedCtx>(
+                    linker,
+                    &component,
+                    |name| {
+                        named.get(name).cloned().ok_or_else(|| {
+                            wash_runtime::wasmtime::Error::msg(format!(
+                                "unknown named wamn:postgres import {name:?}"
+                            ))
+                        })
+                    },
+                    extract_active_ctx,
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -229,6 +335,42 @@ impl HostPlugin for WamnPostgres {
     ) -> anyhow::Result<()> {
         self.clear_component_claims(workload_id);
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "wasm_component_model_implements"))]
+mod tests {
+    use super::*;
+
+    fn named_interface(name: &str, project: &str) -> WitInterface {
+        WitInterface {
+            namespace: "wamn".to_string(),
+            package: "postgres".to_string(),
+            interfaces: HashSet::from(["client".to_string()]),
+            version: None,
+            config: std::collections::HashMap::from([(
+                NAMED_PROJECT_CONFIG_KEY.to_string(),
+                project.to_string(),
+            )]),
+            name: Some(name.to_string()),
+        }
+    }
+
+    #[test]
+    fn named_postgres_import_carries_its_own_project() {
+        let alpha = NamedProject::from_interface(&named_interface("alpha", "project-a"))
+            .expect("named project config");
+        let beta = NamedProject::from_interface(&named_interface("beta", "project-b"))
+            .expect("named project config");
+        assert_eq!(alpha.project(), "project-a");
+        assert_eq!(beta.project(), "project-b");
+    }
+
+    #[test]
+    fn named_postgres_import_requires_a_valid_project() {
+        let interface = named_interface("alpha", "project/a");
+        let error = NamedProject::from_interface(&interface).expect_err("invalid project");
+        assert!(error.to_string().contains("invalid project"));
     }
 }
 
