@@ -48,8 +48,8 @@
 //! Every reader consults this one instance by reference and none of them loads,
 //! parses, or digest-verifies a manifest of its own:
 //!
-//! 1. effect authority — [`crate::plugins::wamn_postgres`] binds a run to its
-//!    plan through the manifest its recorded digest names.
+//! 1. execution — the production router driver resolves the manifest's exact
+//!    component digests and wiring identity-version pairs.
 //! 2. flow-http routing — serves `RouteDefinition` from
 //!    [`ServingManifest::attachments`].
 //! 3. jetstream delivery — gates delivery on
@@ -209,26 +209,17 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
-    use wamn_catalog::{ServingFlow, ServingRelease};
+    use wamn_catalog::{
+        ServingComponent, ServingRelease, ServingWiring,
+        UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
+    };
 
     use super::*;
 
-    const PLAN_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const ART_A: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    const PLAN_B: &str = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-    const ART_B: &str = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    const COMPONENT: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const GRAPH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const RELEASE_VERSION: u32 = 7;
-
-    fn flow(plan: &str, artifact: &str, calls: BTreeSet<String>) -> ServingFlow {
-        ServingFlow {
-            flow_version: 1,
-            plan_hash: plan.into(),
-            source_artifact: artifact.into(),
-            binding_base_artifact: artifact.into(),
-            callable_contract: None,
-            calls,
-        }
-    }
 
     fn fixture() -> ServingManifest {
         ServingManifest::new(
@@ -238,13 +229,16 @@ mod tests {
                 catalog_version: RELEASE_VERSION,
                 environment: "prod".into(),
             },
-            BTreeMap::from([
-                (
-                    "root".to_string(),
-                    flow(PLAN_A, ART_A, BTreeSet::from(["callee".to_string()])),
-                ),
-                ("callee".to_string(), flow(PLAN_B, ART_B, BTreeSet::new())),
-            ]),
+            BTreeSet::from([ServingComponent {
+                component: "transform".into(),
+                interface_version: "0.1".into(),
+                digest: COMPONENT.into(),
+            }]),
+            BTreeSet::from([ServingWiring {
+                wiring_id: "orders".into(),
+                wiring_version: 2,
+                graph_hash: GRAPH.into(),
+            }]),
             BTreeMap::new(),
             BTreeMap::new(),
         )
@@ -295,11 +289,15 @@ mod tests {
         let weld = mounts.load().expect("well-formed mount loads");
 
         assert_eq!(weld.manifest(), &expected);
-        // The reader-facing property: reader 1 walks this, and the walk is total
-        // because construction already proved every call edge names a member flow.
         assert_eq!(
-            weld.manifest().reachable_flows("root"),
-            BTreeSet::from(["root".to_string(), "callee".to_string()])
+            weld.manifest().components,
+            expected.components,
+            "the weld retains the exact component closure"
+        );
+        assert_eq!(
+            weld.manifest().wirings,
+            expected.wirings,
+            "the weld retains the exact wiring closure"
         );
     }
 
@@ -340,6 +338,23 @@ mod tests {
         assert_eq!(
             mounts.load().expect_err("garbage refuses").kind(),
             WeldErrorKind::ManifestRejected
+        );
+    }
+
+    #[test]
+    fn a_format_one_manifest_refuses_with_the_frozen_literal() {
+        let mounts = Mounts::new("format-one");
+        mounts.write_manifest_bytes(
+            br#"{"attachments":{},"flows":{},"format-version":"0.1","registrations":{},"release":{"catalog-id":"cat","catalog-version":1,"environment":"prod","tenant-id":"t1"}}"#,
+        );
+
+        let error = mounts.load().expect_err("format one refuses at the weld");
+        assert_eq!(error.kind(), WeldErrorKind::ManifestRejected);
+        assert!(
+            error
+                .to_string()
+                .contains(UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL),
+            "the weld must preserve the typed format refusal: {error}"
         );
     }
 

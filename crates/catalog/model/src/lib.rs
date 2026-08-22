@@ -27,8 +27,9 @@ pub use execution_plan::{
 };
 pub use serving_manifest::{
     MAX_SERVING_MANIFEST_BYTES, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
-    RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow,
-    ServingManifest, ServingRegistration, ServingRelease, release_manifest_configmap_name,
+    RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
+    ServingComponent, ServingManifest, ServingRegistration, ServingRelease, ServingWiring,
+    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, release_manifest_configmap_name,
 };
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringNode, WiringTerminal,
@@ -80,7 +81,8 @@ pub enum CatalogIdentityError {
     ArtifactMismatch,
     UnresolvedSource { source_id: String },
     SourceMismatch { source_id: String },
-    UnresolvableManifestFlow { flow_id: String },
+    UnsupportedServingManifestVersion { requested: String },
+    UnresolvableManifestWiring { wiring_id: String, wiring_version: u32 },
     ManifestTooLarge { bytes: usize, limit: usize },
     UnresolvedWiringNode { node_id: String },
     UnresolvedWiringEntry { node_id: String },
@@ -180,10 +182,20 @@ impl fmt::Display for CatalogIdentityError {
                     "source {source_id:?} differs from its resolved definition"
                 )
             }
-            Self::UnresolvableManifestFlow { flow_id } => {
+            Self::UnsupportedServingManifestVersion { requested } => {
                 write!(
                     formatter,
-                    "flow {flow_id:?} is absent from the serving manifest"
+                    "{}: requested {requested}; supported version is {}",
+                    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, SERVING_MANIFEST_FORMAT_VERSION
+                )
+            }
+            Self::UnresolvableManifestWiring {
+                wiring_id,
+                wiring_version,
+            } => {
+                write!(
+                    formatter,
+                    "wiring {wiring_id:?} version {wiring_version} is absent from the serving manifest"
                 )
             }
             Self::ManifestTooLarge { bytes, limit } => {

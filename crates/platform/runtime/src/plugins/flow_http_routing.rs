@@ -374,32 +374,40 @@ mod tests {
     use std::path::PathBuf;
 
     use serde_json::json;
-    use wamn_catalog::{RELEASE_MANIFEST_FILE_NAME, ServingFlow, ServingRelease};
+    use wamn_catalog::{
+        RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingRelease, ServingWiring,
+    };
 
     use super::*;
 
-    const PLAN: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const ARTIFACT: &str =
-        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const COMPONENT: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const GRAPH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const DEFINITION_HASH: &str =
         "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
     const CATALOG_VERSION: u32 = 7;
 
-    fn flow() -> ServingFlow {
-        ServingFlow {
-            flow_version: 1,
-            plan_hash: PLAN.into(),
-            source_artifact: ARTIFACT.into(),
-            binding_base_artifact: ARTIFACT.into(),
-            callable_contract: None,
-            calls: BTreeSet::new(),
-        }
+    fn components() -> BTreeSet<ServingComponent> {
+        BTreeSet::from([ServingComponent {
+            component: "http-request".into(),
+            interface_version: "0.1".into(),
+            digest: COMPONENT.into(),
+        }])
+    }
+
+    fn wirings() -> BTreeSet<ServingWiring> {
+        BTreeSet::from([ServingWiring {
+            wiring_id: "orders".into(),
+            wiring_version: 1,
+            graph_hash: GRAPH.into(),
+        }])
     }
 
     fn attachment(kind: AttachmentKind, definition: Value) -> ServingAttachment {
         ServingAttachment {
             kind,
-            flow_id: "root".into(),
+            wiring_id: "orders".into(),
+            wiring_version: 1,
             definition_hash: DEFINITION_HASH.into(),
             definition,
             auth_policy: json!({"mode": "none"}),
@@ -412,7 +420,6 @@ mod tests {
         json!({
             "id": "orders",
             "kind": "http",
-            "flow-id": "root",
             "source-id": "public",
             "route": {"host": "api.example.test", "path": "/orders/{order}", "method": "POST"},
             "mappings": [
@@ -432,7 +439,8 @@ mod tests {
                 catalog_version: CATALOG_VERSION,
                 environment: "prod".into(),
             },
-            BTreeMap::from([("root".to_string(), flow())]),
+            components(),
+            wirings(),
             attachments,
             BTreeMap::new(),
         )
@@ -641,7 +649,6 @@ mod tests {
         let broken = json!({
             "id": "broken",
             "kind": "http",
-            "flow-id": "root",
             "source-id": "public",
             "route": {"host": "api.example.test", "method": "POST"},
             "run-deadline-ms": 30000

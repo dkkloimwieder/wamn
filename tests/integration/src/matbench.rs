@@ -627,7 +627,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         catalog: "matcat",
         environment: ENV,
         registration: "r-plain",
-        flow: "f-plain",
+        wiring: "materializer-event-handler",
         entity: ENTITY,
         ops: &["insert", "delete"],
     })?;

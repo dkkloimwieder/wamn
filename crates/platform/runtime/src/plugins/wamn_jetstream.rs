@@ -881,9 +881,9 @@ impl producer::Host for ActiveCtx<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
-    use wamn_catalog::{ServingRegistration, ServingRelease};
+    use wamn_catalog::{ServingRegistration, ServingRelease, ServingWiring};
 
     use super::*;
 
@@ -1007,7 +1007,8 @@ mod tests {
     /// A serving release registering exactly one entity's ops.
     fn release_registering(entity: &str, ops: &[&str]) -> ServingManifest {
         let registration = ServingRegistration {
-            flow_id: "f1".into(),
+            wiring_id: "event-handler".into(),
+            wiring_version: 1,
             entity: entity.to_string(),
             ops: ops.iter().copied().map(String::from).collect(),
         };
@@ -1018,7 +1019,14 @@ mod tests {
                 catalog_version: 7,
                 environment: "prod".into(),
             },
-            BTreeMap::new(),
+            BTreeSet::new(),
+            BTreeSet::from([ServingWiring {
+                wiring_id: "event-handler".into(),
+                wiring_version: 1,
+                graph_hash:
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .into(),
+            }]),
             BTreeMap::new(),
             BTreeMap::from([("r1".to_string(), registration)]),
         )

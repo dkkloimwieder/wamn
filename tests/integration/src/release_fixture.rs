@@ -26,7 +26,7 @@ pub(crate) struct ReleaseFixture<'a> {
     pub(crate) catalog: &'a str,
     pub(crate) environment: &'a str,
     pub(crate) registration: &'a str,
-    pub(crate) flow: &'a str,
+    pub(crate) wiring: &'a str,
     pub(crate) entity: &'a str,
     pub(crate) ops: &'a [&'a str],
 }
@@ -49,11 +49,17 @@ pub(crate) fn load_release(
             "catalog-version": 1,
             "environment": fixture.environment,
         },
-        "flows": {},
+        "components": [],
+        "wirings": [{
+            "wiring-id": fixture.wiring,
+            "wiring-version": 1,
+            "graph-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }],
         "attachments": {},
         "registrations": {
             fixture.registration: {
-                "flow-id": fixture.flow,
+                "wiring-id": fixture.wiring,
+                "wiring-version": 1,
                 "entity": fixture.entity,
                 "ops": ops,
             },

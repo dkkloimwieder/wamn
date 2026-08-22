@@ -1462,7 +1462,7 @@ async fn build_materializer(
         catalog: resources.catalog_id.as_str(),
         environment: resources.env.as_str(),
         registration: resources.registration_id.as_str(),
-        flow: resources.flow_id.as_str(),
+        wiring: "causation-event-handler",
         entity: resources.entity_id.as_str(),
         ops: &["insert", "delete"],
     })?;
