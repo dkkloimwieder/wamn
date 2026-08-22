@@ -102,7 +102,7 @@ pub use run_plane::{
     ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_release_flow_rows_sql,
     count_retired_authored_ordering_rows_sql, count_run_rows_sql,
     count_stale_registration_keys_sql, ensure_scenario_author_role_sql, plan_run_plane,
-    rewrite_schema, select_app_scenario_author_membership_sql,
+    rewrite_schema, select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
     select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_dispatch_reader_schema_privileges_sql,

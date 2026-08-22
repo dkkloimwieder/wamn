@@ -63,8 +63,8 @@ use wamn_schema_control::{
     RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
     ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_release_flow_rows_sql,
     count_retired_authored_ordering_rows_sql, count_run_rows_sql,
-    count_stale_registration_keys_sql, plan_run_plane, select_app_scenario_author_membership_sql,
-    select_authoring_effective_column_privileges_sql,
+    count_stale_registration_keys_sql, plan_run_plane, select_app_run_queue_authority_sql,
+    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_dispatch_reader_schema_privileges_sql,
     select_dispatch_reader_table_privileges_sql,
@@ -784,6 +784,11 @@ async fn observe(
         .query_one(select_app_scenario_author_membership_sql(), &[])
         .await
         .context("read guest scenario-author membership")?
+        .get(0);
+    obs.app_run_queue_authority = client
+        .query_one(select_app_run_queue_authority_sql(), &[&schema.as_str()])
+        .await
+        .context("read guest run-queue authority")?
         .get(0);
     let capture_privileges_sql = select_run_capture_privileges_sql();
     let capture_privileges = client

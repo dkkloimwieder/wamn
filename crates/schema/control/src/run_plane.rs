@@ -2741,6 +2741,9 @@ pub struct RunPlaneObservation {
     pub effect_writer_run_column_privileges: BTreeMap<(String, String), BTreeSet<String>>,
     /// Whether guest-visible `wamn_app` inherits the host-only author role.
     pub app_is_scenario_author_member: bool,
+    /// Revocable table or column authority on `run_queue` held directly by
+    /// `wamn_app` or inherited from `PUBLIC`.
+    pub app_run_queue_authority: bool,
     /// Effective `wamn_app` authority on the run capture carrier. The first
     /// value is a table-level INSERT/UPDATE grant (which covers every column);
     /// the second is effective INSERT/UPDATE on `runs.capture_mode` itself;
@@ -2926,6 +2929,8 @@ pub enum RunPlaneActionKind {
     /// grant text comes from `wamn_control_provision`, and the effect shell
     /// appends the action. See `wamn_ctl::reconcile_run_plane`.
     RepairDispatchReaderPrivilege,
+    /// Remove every guest-visible table and column privilege on `run_queue`.
+    RemoveAppRunQueueAuthority,
     /// Strip retired keys from stored registrations.
     StripRetiredRegistrationKeys,
 }
@@ -4064,6 +4069,38 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     // `runs` now has immediate catalog FKs, so catalog creation must precede
     // every missing run-table section.
     plan.actions.extend(creates);
+
+    if obs.app_run_queue_authority {
+        let columns = obs
+            .tables
+            .get("run_queue")
+            .into_iter()
+            .flatten()
+            .filter(|column| {
+                !partition_plane_cutover_needed
+                    || !RETIRED_PARTITION_COLUMNS.contains(&column.as_str())
+            })
+            .map(|column| quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let column_revoke = if columns.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; REVOKE SELECT ({columns}), INSERT ({columns}), UPDATE ({columns}), \
+                 REFERENCES ({columns}) ON TABLE {}.run_queue FROM PUBLIC, wamn_app",
+                schema.quoted()
+            )
+        };
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RemoveAppRunQueueAuthority,
+            target: format!("{}.run_queue.app-authority", schema.as_str()),
+            sql: format!(
+                "REVOKE ALL PRIVILEGES ON TABLE {}.run_queue FROM PUBLIC, wamn_app{column_revoke}",
+                schema.quoted()
+            ),
+        });
+    }
 
     if obs.effect_writer_schema_privileges != (true, false) {
         plan.actions.push(RunPlaneAction {
@@ -5871,6 +5908,32 @@ pub fn select_run_capture_privileges_sql() -> String {
               WHERE attribute.attrelid = (SELECT oid FROM target) \
                 AND attribute.attnum > 0 AND NOT attribute.attisdropped), false)"
     )
+}
+
+/// Revocable guest-visible authority on `run_queue` from `PUBLIC` or a direct
+/// `wamn_app` ACL. An absent role or relation yields false for from-zero plans.
+pub fn select_app_run_queue_authority_sql() -> &'static str {
+    "WITH target AS ( \
+       SELECT pg_catalog.to_regclass( \
+                pg_catalog.format('%I.run_queue', $1::text)) AS oid \
+     ), app AS ( \
+       SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app' \
+     ) \
+     SELECT EXISTS ( \
+       SELECT 1 \
+         FROM target \
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = target.oid \
+         CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE( \
+           relation.relacl, pg_catalog.acldefault('r', relation.relowner))) AS acl \
+        WHERE acl.grantee = 0 OR acl.grantee = (SELECT oid FROM app) \
+     ) OR EXISTS ( \
+       SELECT 1 \
+         FROM target \
+         JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = target.oid \
+         CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl \
+        WHERE attribute.attnum > 0 AND NOT attribute.attisdropped \
+          AND (acl.grantee = 0 OR acl.grantee = (SELECT oid FROM app)) \
+     )"
 }
 
 /// Effective schema USAGE for the host-only author role on catalog and `$1`.

@@ -78,8 +78,8 @@ ALTER TABLE wamn_run.run_queue FORCE ROW LEVEL SECURITY;
 CREATE POLICY run_queue_tenant ON wamn_run.run_queue
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-REVOKE ALL PRIVILEGES ON TABLE wamn_run.run_queue FROM PUBLIC, wamn_effect_writer;
-GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.run_queue TO wamn_app;
+REVOKE ALL PRIVILEGES ON TABLE wamn_run.run_queue
+    FROM PUBLIC, wamn_app, wamn_effect_writer;
 -- The private effect writer rechecks only exact live queue authority after
 -- acquiring the shared tenant/run advisory fence. `lease_generation` prevents
 -- an owner/expiry ABA match; this remains read-only fence evidence.
