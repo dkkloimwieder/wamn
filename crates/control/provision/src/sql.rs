@@ -7,11 +7,10 @@
 //! `wamn_app` role name is a pinned constant. Values that vary (a probe's
 //! database name, a role password) travel as `$n` params or quoted literals.
 
-use crate::control_author::CONTROL_AUTHOR_ROLE;
 use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
+use crate::workload_role::WorkloadRoleFamily;
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
-use wamn_run_state::EFFECT_WRITER_ROLE;
 
 // Quote a SQL identifier (double-quoted, embedded `"` doubled). Mirrors the
 // canonical `wamn_schema_compiler::sql::quote_ident` (inlined to keep this crate's
@@ -295,14 +294,27 @@ pub fn grant_dispatch_reader_read_surface_sql(schema: &str) -> String {
 /// once the effect-ledger tables exist. This builder only establishes the
 /// cluster-global, ownership-free role identity and restrictive attributes.
 pub fn ensure_effect_writer_acl_role_sql() -> String {
+    ensure_workload_acl_role_sql(WorkloadRoleFamily::EffectWriter)
+}
+
+/// Idempotently create or harden one stable workload ACL role as NOLOGIN.
+pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
+    let role = family.acl_role();
     format!(
-        "DO $$ DECLARE role_name text := {effect_lit}; BEGIN \
+        "DO $workload_acl$ DECLARE role_name text := {role_lit}; BEGIN \
+           PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
              EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+           ELSIF EXISTS (SELECT FROM pg_roles WHERE rolname = role_name \
+                         AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
+                              OR rolinherit OR rolreplication OR rolbypassrls \
+                              OR rolpassword IS NOT NULL)) THEN \
+             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
            END IF; \
-         END $$;",
-        effect_lit = quote_literal(EFFECT_WRITER_ROLE),
+         END $workload_acl$;",
+        role_lit = quote_literal(role),
     )
 }
 
@@ -318,8 +330,26 @@ pub fn prepare_effect_writer_generation_sql(
     password: &str,
     expires_at: &str,
 ) -> String {
+    prepare_workload_generation_sql(
+        WorkloadRoleFamily::EffectWriter,
+        database,
+        role,
+        password,
+        expires_at,
+    )
+}
+
+/// Prepare one inactive generation for a closed workload family.
+pub fn prepare_workload_generation_sql(
+    family: WorkloadRoleFamily,
+    database: &str,
+    role: &str,
+    password: &str,
+    expires_at: &str,
+) -> String {
     let role_ident = quote_ident(role);
     let role_lit = quote_literal(role);
+    let membership = normalize_workload_generation_membership_sql(family, role, true);
     format!(
         "{ensure} \
          DO $$ BEGIN \
@@ -328,15 +358,55 @@ pub fn prepare_effect_writer_generation_sql(
                INHERIT NOREPLICATION NOBYPASSRLS; \
            END IF; \
          END $$; \
+         {membership} \
          ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
-         GRANT {acl_role} TO {role_ident} \
-           WITH ADMIN FALSE, INHERIT TRUE, SET TRUE; \
          GRANT CONNECT ON DATABASE {database} TO {role_ident};",
-        ensure = ensure_effect_writer_acl_role_sql(),
+        ensure = ensure_workload_acl_role_sql(family),
         password = quote_literal(password),
         expires_at = quote_literal(expires_at),
-        acl_role = quote_ident(EFFECT_WRITER_ROLE),
         database = quote_ident(database),
+    )
+}
+
+/// Normalize one existing generation's membership during lifecycle migration.
+///
+/// `active` selects the one exact stable-role edge or no edge. The effect-writer
+/// arm also removes the retired projection membership; it is migration input,
+/// never a generic family.
+pub fn normalize_workload_generation_membership_sql(
+    family: WorkloadRoleFamily,
+    role: &str,
+    active: bool,
+) -> String {
+    let role_ident = quote_ident(role);
+    let legacy_projection_revoke = if family == WorkloadRoleFamily::EffectWriter {
+        format!(
+            "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = {legacy_lit}) THEN \
+               REVOKE {legacy_ident} FROM {role_ident}; END IF; END $$;",
+            legacy_lit = quote_literal(wamn_run_state::RUN_PROJECTION_WRITER_ROLE),
+            legacy_ident = quote_ident(wamn_run_state::RUN_PROJECTION_WRITER_ROLE),
+        )
+    } else {
+        String::new()
+    };
+    let grant = if active {
+        format!(
+            "GRANT {acl_role} TO {role_ident} \
+               WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;",
+            acl_role = quote_ident(family.acl_role()),
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "{ensure} \
+         {legacy_projection_revoke} \
+         REVOKE {acl_role} FROM {role_ident}; \
+         {grant}",
+        ensure = ensure_workload_acl_role_sql(family),
+        legacy_projection_revoke = legacy_projection_revoke,
+        acl_role = quote_ident(family.acl_role()),
+        grant = grant,
     )
 }
 
@@ -345,18 +415,32 @@ pub fn prepare_effect_writer_generation_sql(
 /// The batch removes authority and then authentication. The caller commits it
 /// before terminating sessions with [`terminate_effect_writer_generation_sessions_sql`].
 pub fn retire_effect_writer_generation_sql(database: &str, role: &str) -> String {
+    retire_workload_generation_sql(WorkloadRoleFamily::EffectWriter, database, role)
+}
+
+/// Remove one workload generation's authority before disabling authentication.
+pub fn retire_workload_generation_sql(
+    family: WorkloadRoleFamily,
+    database: &str,
+    role: &str,
+) -> String {
     let role_ident = quote_ident(role);
     format!(
         "REVOKE {acl_role} FROM {role_ident}; \
          REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
          ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
-        acl_role = quote_ident(EFFECT_WRITER_ROLE),
+        acl_role = quote_ident(family.acl_role()),
         database = quote_ident(database),
     )
 }
 
 /// Terminate sessions only after credential authority removal has committed.
 pub fn terminate_effect_writer_generation_sessions_sql(role: &str) -> String {
+    terminate_workload_generation_sessions_sql(role)
+}
+
+/// Terminate sessions only after a workload generation is retired.
+pub fn terminate_workload_generation_sessions_sql(role: &str) -> String {
     let role_lit = quote_literal(role);
     format!(
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
@@ -370,6 +454,11 @@ pub fn terminate_effect_writer_generation_sessions_sql(role: &str) -> String {
 /// direct role memberships, exact direct database CONNECT ACLs, and active
 /// session count without carrying password material.
 pub fn effect_writer_generation_state_sql() -> &'static str {
+    workload_generation_state_sql()
+}
+
+/// Read one generation or stable ACL role without family-wide cardinality assumptions.
+pub fn workload_generation_state_sql() -> &'static str {
     "SELECT r.rolcanlogin, r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb, \
             r.rolreplication, r.rolbypassrls, \
             r.rolpassword IS NOT NULL AS password_set, \
@@ -380,60 +469,49 @@ pub fn effect_writer_generation_state_sql() -> &'static str {
             COALESCE((SELECT array_agg(parent.rolname::text ORDER BY parent.rolname::text) \
                         FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid \
                        WHERE m.member = r.oid), ARRAY[]::text[]) AS memberships, \
-            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND m.set_option) \
+            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND NOT m.set_option) \
                         FROM pg_auth_members m WHERE m.member = r.oid), true) \
               AS membership_options_exact, \
+            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option) \
+                        FROM pg_auth_members m WHERE m.member = r.oid), true) \
+              AS membership_options_migratable, \
             COALESCE((SELECT array_agg(member.rolname::text ORDER BY member.rolname::text) \
                         FROM pg_auth_members m JOIN pg_roles member ON member.oid = m.member \
                        WHERE m.roleid = r.oid), ARRAY[]::text[]) AS member_roles, \
-            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND m.set_option) \
+            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND NOT m.set_option) \
                         FROM pg_auth_members m WHERE m.roleid = r.oid), true) \
               AS member_options_exact, \
-            NOT (EXISTS ( \
-              SELECT 1 FROM pg_roles generation \
-               WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
-                 AND (has_database_privilege(generation.oid, current_database(), 'CONNECT') \
-                      OR EXISTS ( \
-                           SELECT 1 FROM pg_auth_members edge \
-                           JOIN pg_roles parent ON parent.oid = edge.roleid \
-                          WHERE edge.member = generation.oid \
-                            AND parent.rolname = 'wamn_effect_writer')) \
-                 AND (NOT generation.rolcanlogin OR generation.rolsuper \
-                      OR generation.rolcreatedb OR generation.rolcreaterole \
-                      OR NOT generation.rolinherit OR generation.rolreplication \
-                      OR generation.rolbypassrls \
-                      OR NOT EXISTS ( \
-                           SELECT 1 FROM pg_auth_members edge \
-                           JOIN pg_roles parent ON parent.oid = edge.roleid \
-                          WHERE edge.member = generation.oid \
-                            AND parent.rolname = 'wamn_effect_writer') \
-                      OR EXISTS ( \
-                           SELECT 1 FROM pg_auth_members edge \
-                           JOIN pg_roles parent ON parent.oid = edge.roleid \
-                          WHERE edge.member = generation.oid \
-                            AND parent.rolname NOT IN ( \
-                                  'wamn_effect_writer', 'wamn_run_projection_writer')) \
-                      OR EXISTS (SELECT 1 FROM pg_auth_members edge \
-                                  WHERE edge.member = generation.oid \
-                                    AND (edge.admin_option OR NOT edge.inherit_option \
-                                         OR NOT edge.set_option)) \
-                      OR EXISTS (SELECT 1 FROM pg_auth_members edge \
-                                  WHERE edge.roleid = generation.oid) \
-                      OR EXISTS (SELECT 1 FROM pg_shdepend dependency \
-                                  WHERE dependency.refclassid = 'pg_authid'::regclass \
-                                    AND dependency.refobjid = generation.oid \
-                                    AND dependency.deptype = 'o'))) \
-              OR (SELECT count(*) FROM pg_roles generation \
-                   WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
-                     AND has_database_privilege( \
-                           generation.oid, current_database(), 'CONNECT')) > 2 \
-              OR (SELECT count(DISTINCT substring( \
-                           generation.rolname FROM \
-                           '^wamn_effect_writer_([0-9a-f]{40})_[ab]$')) \
-                    FROM pg_roles generation \
-                   WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
-                     AND has_database_privilege( \
-                           generation.oid, current_database(), 'CONNECT')) > 1) \
+            NOT EXISTS ( \
+              SELECT 1 FROM pg_auth_members child_edge \
+              JOIN pg_roles generation ON generation.oid = child_edge.member \
+              WHERE child_edge.roleid = r.oid AND ( \
+                child_edge.admin_option OR NOT child_edge.inherit_option OR child_edge.set_option \
+                OR NOT generation.rolcanlogin OR generation.rolsuper \
+                OR generation.rolcreatedb OR generation.rolcreaterole \
+                OR NOT generation.rolinherit OR generation.rolreplication \
+                OR generation.rolbypassrls OR generation.rolpassword IS NULL \
+                OR generation.rolvaliduntil IS NULL OR NOT isfinite(generation.rolvaliduntil) \
+                OR (SELECT count(*) FROM pg_auth_members parent_edge \
+                     WHERE parent_edge.member = generation.oid) <> 1 \
+                OR EXISTS (SELECT 1 FROM pg_auth_members parent_edge \
+                            WHERE parent_edge.member = generation.oid \
+                              AND (parent_edge.admin_option \
+                                   OR NOT parent_edge.inherit_option \
+                                   OR parent_edge.set_option)) \
+                OR EXISTS (SELECT 1 FROM pg_auth_members grandchild_edge \
+                            WHERE grandchild_edge.roleid = generation.oid) \
+                OR EXISTS (SELECT 1 FROM pg_shdepend dependency \
+                            WHERE dependency.refclassid = 'pg_authid'::regclass \
+                              AND dependency.refobjid = generation.oid \
+                              AND dependency.deptype = 'o') \
+                OR (SELECT count(*) FROM pg_database direct_database \
+                    CROSS JOIN LATERAL aclexplode(direct_database.datacl) direct_acl \
+                    WHERE direct_acl.grantee = generation.oid) <> 1 \
+                OR EXISTS (SELECT 1 FROM pg_database direct_database \
+                           CROSS JOIN LATERAL aclexplode(direct_database.datacl) direct_acl \
+                           WHERE direct_acl.grantee = generation.oid \
+                             AND (direct_acl.privilege_type <> 'CONNECT' \
+                                  OR direct_acl.is_grantable)))) \
               AS generation_children_exact, \
             COALESCE((SELECT array_agg(d.datname::text ORDER BY d.datname::text) \
                         FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) acl \
@@ -582,8 +660,17 @@ pub fn role_database_acl_inventory_sql() -> &'static str {
       ORDER BY object_kind, schema_name, object_name, privilege_type"
 }
 
-/// Session-scoped serialization key for one project-environment rotation.
+/// Session-scoped serialization primitive retained for the effect-writer caller.
 pub fn effect_writer_scope_lock_sql() -> &'static str {
+    workload_scope_lock_sql()
+}
+
+/// Session-scoped serialization primitive for workload credential mutation.
+///
+/// The generic lifecycle supplies a family-global key because it normalizes
+/// every current member of that family's stable ACL role. Serializing at a
+/// narrower scope would let a stale cross-scope read regrant a retired member.
+pub fn workload_scope_lock_sql() -> &'static str {
     "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
 }
 
@@ -594,12 +681,11 @@ pub fn effect_writer_scope_lock_sql() -> &'static str {
 // [`CONTROL_AUTHOR_ROLE`]; `deploy/sql/control-portable-store.sql` owns what that
 // role may touch, and these builders own the role identities themselves.
 //
-// Deliberately parallel to the effect-writer builders above rather than shared
-// with them: author, publisher/deployer, artifact reader, and effect writer are
-// four separate principals, and a shared builder would be one edit away from
-// granting one plane's authority to another. `wamn_scenario_author` never
-// appears here — it is the project plane's author role and is never granted
-// control-database CONNECT.
+// The public family-specific functions below delegate to the closed generic
+// lifecycle builders. The family enum, rather than an arbitrary role string,
+// preserves the authority boundary while keeping prepare/retire semantics in
+// one implementation. `wamn_scenario_author` never appears here — it is the
+// project plane's author role and is never granted control-database CONNECT.
 
 /// Idempotently create or harden the stable control-author ACL role as NOLOGIN.
 ///
@@ -609,21 +695,8 @@ pub fn effect_writer_scope_lock_sql() -> &'static str {
 /// Table and schema grants deliberately do not live here — the control
 /// portable-store artifact owns them, applied as its owner after this role
 /// exists.
-pub fn ensure_control_author_acl_role_sql() -> &'static str {
-    "DO $control_author$ BEGIN \
-       PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-       IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles \
-                      WHERE rolname = 'wamn_control_author') THEN \
-         CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB \
-           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-       ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles \
-                     WHERE rolname = 'wamn_control_author' \
-                       AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-                            OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
-         ALTER ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB \
-           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-       END IF; \
-     END $control_author$;"
+pub fn ensure_control_author_acl_role_sql() -> String {
+    ensure_workload_acl_role_sql(WorkloadRoleFamily::ControlAuthor)
 }
 
 /// Prepare one inactive scoped control-author generation for authenticated use.
@@ -640,25 +713,12 @@ pub fn prepare_control_author_generation_sql(
     password: &str,
     expires_at: &str,
 ) -> String {
-    let role_ident = quote_ident(role);
-    let role_lit = quote_literal(role);
-    format!(
-        "{ensure} \
-         DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
-             CREATE ROLE {role_ident} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               INHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
-         END $$; \
-         ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
-         GRANT {acl_role} TO {role_ident} \
-           WITH ADMIN FALSE, INHERIT TRUE, SET TRUE; \
-         GRANT CONNECT ON DATABASE {database} TO {role_ident};",
-        ensure = ensure_control_author_acl_role_sql(),
-        password = quote_literal(password),
-        expires_at = quote_literal(expires_at),
-        acl_role = quote_ident(CONTROL_AUTHOR_ROLE),
-        database = quote_ident(database),
+    prepare_workload_generation_sql(
+        WorkloadRoleFamily::ControlAuthor,
+        database,
+        role,
+        password,
+        expires_at,
     )
 }
 
@@ -669,23 +729,12 @@ pub fn prepare_control_author_generation_sql(
 /// before terminating sessions with
 /// [`terminate_control_author_generation_sessions_sql`].
 pub fn retire_control_author_generation_sql(database: &str, role: &str) -> String {
-    let role_ident = quote_ident(role);
-    format!(
-        "REVOKE {acl_role} FROM {role_ident}; \
-         REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
-         ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
-        acl_role = quote_ident(CONTROL_AUTHOR_ROLE),
-        database = quote_ident(database),
-    )
+    retire_workload_generation_sql(WorkloadRoleFamily::ControlAuthor, database, role)
 }
 
 /// Terminate sessions only after control-author authority removal has committed.
 pub fn terminate_control_author_generation_sessions_sql(role: &str) -> String {
-    let role_lit = quote_literal(role);
-    format!(
-        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-           WHERE usename = {role_lit} AND pid <> pg_backend_pid();"
-    )
+    terminate_workload_generation_sessions_sql(role)
 }
 
 /// Record the owner-maintained login-identity-to-tenant mapping for one scope.
@@ -1085,7 +1134,7 @@ mod tests {
     fn writer_acl_roles_are_stable_nologin_and_own_no_grants_here() {
         let sql = ensure_effect_writer_acl_role_sql();
         assert!(sql.contains("'wamn_effect_writer'"));
-        assert!(sql.contains("'wamn_run_projection_writer'"));
+        assert!(!sql.contains("'wamn_run_projection_writer'"));
         assert!(sql.contains("CREATE ROLE %I NOLOGIN"));
         for attr in [
             "NOSUPERUSER",
@@ -1120,9 +1169,9 @@ mod tests {
         )));
         assert!(sql.contains(&format!("GRANT \"wamn_effect_writer\" TO \"{role}\"")));
         assert!(sql.contains(&format!(
-            "GRANT \"wamn_run_projection_writer\" TO \"{role}\""
+            "REVOKE \"wamn_run_projection_writer\" FROM \"{role}\""
         )));
-        assert!(sql.contains("WITH ADMIN FALSE, INHERIT TRUE, SET TRUE"));
+        assert!(sql.contains("WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"));
         assert!(sql.contains(&format!(
             "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"{role}\""
         )));
@@ -1144,9 +1193,7 @@ mod tests {
     fn generation_retire_commits_authority_removal_before_session_termination() {
         let role = "wamn_effect_writer_1111111111111111111111111111111111111111_a";
         let sql = retire_effect_writer_generation_sql("wamn-db-acme--billing--dev", role);
-        let membership = sql
-            .find("REVOKE \"wamn_effect_writer\", \"wamn_run_projection_writer\"")
-            .unwrap();
+        let membership = sql.find("REVOKE \"wamn_effect_writer\"").unwrap();
         let connect = sql.find("REVOKE CONNECT ON DATABASE").unwrap();
         let no_login = sql.find("NOLOGIN PASSWORD NULL").unwrap();
         assert!(membership < connect && connect < no_login);
@@ -1166,16 +1213,11 @@ mod tests {
     fn control_author_acl_role_is_nologin_and_hardens_on_replay() {
         let sql = ensure_control_author_acl_role_sql();
         assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
-        assert!(sql.contains(
-            "CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB \
-             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
-        ));
+        assert!(sql.contains("'wamn_control_author'"));
+        assert!(sql.contains("CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE"));
         // A replay that finds a drifted attribute must repair it, not succeed.
         assert!(sql.contains("ELSIF EXISTS"));
-        assert!(sql.contains(
-            "ALTER ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB \
-             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
-        ));
+        assert!(sql.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB"));
         for other_plane in [
             "wamn_scenario_author",
             "wamn_effect_writer",
@@ -1200,7 +1242,7 @@ mod tests {
             "0123456789abcdef",
             "2026-09-15T12:00:00Z",
         );
-        assert!(sql.contains(ensure_control_author_acl_role_sql()));
+        assert!(sql.contains(&ensure_control_author_acl_role_sql()));
         // NOLOGIN create precedes the LOGIN flip, so a crash between them leaves
         // an inert role rather than a passwordless login.
         let created = sql.find("CREATE ROLE \"wamn_control_author_2").unwrap();
@@ -1210,7 +1252,7 @@ mod tests {
         assert!(sql.contains("VALID UNTIL '2026-09-15T12:00:00Z'"));
         assert!(sql.contains(&format!(
             "GRANT \"wamn_control_author\" TO \"{role}\" \
-             WITH ADMIN FALSE, INHERIT TRUE, SET TRUE;"
+             WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;"
         )));
         assert_eq!(sql.matches("GRANT CONNECT ON DATABASE").count(), 1);
         assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn-system\""));
@@ -1288,13 +1330,13 @@ mod tests {
         assert!(sql.contains("FROM pg_catalog.pg_authid r"));
         assert!(sql.contains("r.rolpassword IS NOT NULL AS password_set"));
         assert!(sql.contains("pg_auth_members"));
-        assert!(sql.contains("NOT m.admin_option AND m.inherit_option AND m.set_option"));
+        assert!(sql.contains("NOT m.admin_option AND m.inherit_option AND NOT m.set_option"));
         assert!(sql.contains("AS generation_children_exact"));
-        assert!(sql.contains("'wamn_effect_writer', 'wamn_run_projection_writer'"));
-        assert!(sql.contains("WHERE edge.roleid = generation.oid"));
-        assert!(sql.contains("dependency.deptype = 'o'"));
-        assert!(sql.contains("current_database(), 'CONNECT')) > 2"));
-        assert!(sql.contains("count(DISTINCT substring("));
+        assert!(sql.contains("child_edge.roleid = r.oid"));
+        assert!(sql.contains("parent_edge.member = generation.oid) <> 1"));
+        assert!(sql.contains("direct_acl.privilege_type <> 'CONNECT'"));
+        assert!(!sql.contains(") > 2"));
+        assert!(!sql.contains("count(DISTINCT substring"));
         assert!(sql.contains("WHERE m.roleid = r.oid"));
         assert!(sql.contains("rolvaliduntil"));
         assert!(sql.contains("isfinite"));

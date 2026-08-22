@@ -21,39 +21,19 @@
 
 use std::fmt;
 
-use sha2::{Digest as _, Sha256};
 use url::Url;
 
 use wamn_run_state::CredentialGeneration;
+
+use crate::workload_role::{
+    WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role, workload_role_scope_hash,
+};
 
 /// Stable NOLOGIN ACL role carrying control-database authoring authority.
 ///
 /// ctl creates and hardens it (`crate::sql::ensure_control_author_acl_role_sql`);
 /// `deploy/sql/control-portable-store.sql` grants it the exact authority class.
 /// It never logs in — the A/B generations below do.
-pub const CONTROL_AUTHOR_ROLE: &str = "wamn_control_author";
-
-/// Domain separator for the control-author scope digest.
-///
-/// Distinct from the effect writer's `wamn.effect-writer.scope.v0.1`, so the
-/// same `(org, project, environment, database)` can never derive one plane's
-/// role name from the other's.
-const CONTROL_AUTHOR_SCOPE_DOMAIN: &[u8] = b"wamn.control-author.scope.v0.1";
-
-/// 160 bits of the scope digest, hex-encoded — the same width the effect-writer
-/// generations use, which keeps `wamn_control_author_<40>_<a|b>` at 62 bytes and
-/// therefore inside PostgreSQL's 63-byte identifier limit.
-const CONTROL_AUTHOR_SCOPE_HASH_HEX_LEN: usize = 40;
-
-/// Length-prefix one preimage field so no two distinct scopes can frame to the
-/// same bytes (`org = "a-b"`, `project = "c"` must not collide with
-/// `org = "a"`, `project = "b-c"`).
-fn frame(preimage: &mut Vec<u8>, value: &[u8]) {
-    let length = u64::try_from(value.len()).expect("a framed scope field fits u64");
-    preimage.extend_from_slice(&length.to_be_bytes());
-    preimage.extend_from_slice(value);
-}
-
 /// Deterministic 160-bit suffix for one management scope.
 pub fn control_author_scope_hash(
     org: &str,
@@ -61,19 +41,16 @@ pub fn control_author_scope_hash(
     environment: &str,
     database: &str,
 ) -> String {
-    let mut preimage = Vec::new();
-    frame(&mut preimage, CONTROL_AUTHOR_SCOPE_DOMAIN);
-    for (tag, value) in [
-        ("org", org),
-        ("project", project),
-        ("environment", environment),
-        ("database", database),
-    ] {
-        frame(&mut preimage, tag.as_bytes());
-        frame(&mut preimage, value.as_bytes());
-    }
-    let digest = hex::encode(Sha256::digest(preimage));
-    digest[..CONTROL_AUTHOR_SCOPE_HASH_HEX_LEN].to_string()
+    workload_role_scope_hash(
+        WorkloadRoleFamily::ControlAuthor,
+        WorkloadRoleScope::Control {
+            org,
+            project,
+            environment,
+            database,
+        },
+    )
+    .expect("control-author always uses control scope")
 }
 
 /// Scoped PostgreSQL LOGIN role for one control-author generation slot.
@@ -84,11 +61,17 @@ pub fn control_author_generation_role(
     database: &str,
     generation: CredentialGeneration,
 ) -> String {
-    format!(
-        "{CONTROL_AUTHOR_ROLE}_{}_{}",
-        control_author_scope_hash(org, project, environment, database),
-        generation.as_str()
+    workload_generation_role(
+        WorkloadRoleFamily::ControlAuthor,
+        WorkloadRoleScope::Control {
+            org,
+            project,
+            environment,
+            database,
+        },
+        generation,
     )
+    .expect("control-author always uses control scope")
 }
 
 /// Which predicate refused a control authoring connection input.
@@ -282,6 +265,7 @@ pub fn parse_control_authoring_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CONTROL_AUTHOR_ROLE;
 
     const ORG: &str = "acme";
     const PROJECT: &str = "receiving";
@@ -307,7 +291,7 @@ mod tests {
         assert_eq!(a.len(), 62);
         assert_eq!(b.len(), 62);
         let digest = &a["wamn_control_author_".len()..a.len() - 2];
-        assert_eq!(digest.len(), CONTROL_AUTHOR_SCOPE_HASH_HEX_LEN);
+        assert_eq!(digest.len(), 40);
         assert!(
             digest
                 .chars()
@@ -319,7 +303,7 @@ mod tests {
         // assertion that fails if the separator is dropped or copied.
         assert_ne!(
             control_author_scope_hash(ORG, PROJECT, ENVIRONMENT, DATABASE),
-            wamn_run_state::effect_writer_scope_hash(ORG, PROJECT, ENVIRONMENT, DATABASE)
+            wamn_run_state::effect_writer_scope_hash(PROJECT, DATABASE)
         );
         assert!(!a.contains("effect_writer"));
         assert!(!a.contains("scenario_author"));

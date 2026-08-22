@@ -12,6 +12,7 @@ psql_bin=${PSQL_BIN:-psql}
 org=
 project=
 env_name=
+tenant=
 namespace=${WAMN_NAMESPACE:-wamn-system}
 system_database_url=
 target_admin_database_url=
@@ -28,7 +29,7 @@ require_value() {
 for ((index = 0; index < ${#args[@]}; index++)); do
     argument=${args[index]}
     case "$argument" in
-        --org | --project | --env | --namespace | --system-database-url | \
+        --org | --project | --env | --tenant | --namespace | --system-database-url | \
         --target-admin-database-url | --rotate-effect-writer-generation)
             require_value "$argument" "$((index + 1))"
             value=${args[index + 1]}
@@ -36,6 +37,7 @@ for ((index = 0; index < ${#args[@]}; index++)); do
                 --org) org=$value ;;
                 --project) project=$value ;;
                 --env) env_name=$value ;;
+                --tenant) tenant=$value ;;
                 --namespace) namespace=$value ;;
                 --system-database-url) system_database_url=$value ;;
                 --target-admin-database-url) target_admin_database_url=$value ;;
@@ -46,6 +48,7 @@ for ((index = 0; index < ${#args[@]}; index++)); do
         --org=*) org=${argument#*=} ;;
         --project=*) project=${argument#*=} ;;
         --env=*) env_name=${argument#*=} ;;
+        --tenant=*) tenant=${argument#*=} ;;
         --namespace=*) namespace=${argument#*=} ;;
         --system-database-url=*) system_database_url=${argument#*=} ;;
         --target-admin-database-url=*) target_admin_database_url=${argument#*=} ;;
@@ -57,7 +60,11 @@ for ((index = 0; index < ${#args[@]}; index++)); do
         --prepare-effect-writer-generation|--prepare-effect-writer-generation=*|\
         --retire-effect-writer-generation|--retire-effect-writer-generation=*|\
         --abort-effect-writer-generation|--abort-effect-writer-generation=*|\
-        --emit-effect-writer-secret|--emit-effect-writer-secret=*)
+        --emit-effect-writer-secret|--emit-effect-writer-secret=*|\
+        --prepare-control-author-generation|--prepare-control-author-generation=*|\
+        --retire-control-author-generation|--retire-control-author-generation=*|\
+        --abort-control-author-generation|--abort-control-author-generation=*|\
+        --emit-control-author-secret|--emit-control-author-secret=*)
             echo "bootstrap: $argument is wrapper-owned and must not be supplied" >&2
             exit 2
             ;;
@@ -67,6 +74,7 @@ done
 [[ -n $org ]] || { echo "bootstrap: --org is required" >&2; exit 2; }
 [[ -n $project ]] || { echo "bootstrap: --project is required" >&2; exit 2; }
 [[ -n $env_name ]] || { echo "bootstrap: --env is required" >&2; exit 2; }
+[[ -n $tenant ]] || { echo "bootstrap: --tenant is required" >&2; exit 2; }
 if [[ -n $rotate_effect_writer_generation ]]; then
     [[ $rotate_effect_writer_generation == a || $rotate_effect_writer_generation == b ]] || {
         echo "bootstrap: --rotate-effect-writer-generation must be a or b" >&2
@@ -98,9 +106,11 @@ effect_writer_template+='{{with .metadata.labels}}{{index . "app.kubernetes.io/c
 effect_writer_template+='{{with .metadata.labels}}{{index . "wamn.org"}}{{end}}|'
 effect_writer_template+='{{with .metadata.labels}}{{index . "wamn.project"}}{{end}}|'
 effect_writer_template+='{{with .metadata.labels}}{{index . "wamn.env"}}{{end}}|'
+effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/tenant"}}{{end}}|'
 effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/credential-id"}}{{end}}|'
 effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/credential-generation"}}{{end}}|'
 effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/database-role"}}{{end}}|'
+effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/predecessor-database-role"}}{{end}}|'
 effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/issued-at"}}{{end}}|'
 effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/not-before"}}{{end}}|'
 effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/expires-at"}}{{end}}|'
@@ -137,15 +147,23 @@ canonical_utc() {
 validate_effect_writer_metadata_structure() {
     local record=$1 revoked_timestamp
     local actual_name actual_namespace managed_by component actual_org actual_project actual_env
-    local credential_id generation role issued_at not_before expires_at revoked_at
+    local actual_tenant credential_id generation role predecessor_role
+    local issued_at not_before expires_at revoked_at
     IFS='|' read -r actual_name actual_namespace managed_by component actual_org actual_project \
-        actual_env credential_id generation role issued_at not_before expires_at revoked_at <<<"$record"
+        actual_env actual_tenant credential_id generation role predecessor_role issued_at \
+        not_before expires_at revoked_at <<<"$record"
     [[ $actual_name == "$effect_writer_secret_name" && $actual_namespace == "$namespace" &&
         $managed_by == wamn && $component == effect-writer-credentials &&
         $actual_org == "$org" && $actual_project == "$project" &&
-        $actual_env == "$env_name" && $credential_id =~ ^[0-9a-f]{32}$ &&
+        $actual_env == "$env_name" &&
+        ( -z $actual_tenant || $actual_tenant == "$tenant" ) &&
+        $credential_id =~ ^[0-9a-f]{32}$ &&
         ( $generation == a || $generation == b ) &&
         $role =~ ^wamn_effect_writer_[0-9a-f]{40}_$generation$ ]] || return 1
+    if [[ -n $predecessor_role ]]; then
+        [[ $predecessor_role =~ ^wamn_effect_writer_[0-9a-f]{40}_[ab]$ &&
+            ${predecessor_role##*_} != "$generation" ]] || return 1
+    fi
     canonical_utc "$issued_at" && canonical_utc "$not_before" && \
         canonical_utc "$expires_at" || return 1
     if [[ -n $revoked_at ]]; then
@@ -158,10 +176,10 @@ validate_effect_writer_metadata_structure() {
 
 effect_writer_metadata_is_current() {
     local record=$1 now
-    local _name _namespace _managed _component _org _project _env _credential_id
-    local _generation _role _issued_at not_before expires_at revoked_at
-    IFS='|' read -r _name _namespace _managed _component _org _project _env _credential_id \
-        _generation _role _issued_at not_before expires_at revoked_at <<<"$record"
+    local _name _namespace _managed _component _org _project _env _tenant _credential_id
+    local _generation _role _predecessor _issued_at not_before expires_at revoked_at
+    IFS='|' read -r _name _namespace _managed _component _org _project _env _tenant _credential_id \
+        _generation _role _predecessor _issued_at not_before expires_at revoked_at <<<"$record"
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     [[ -z $revoked_at && ! $now < $not_before && $now < $expires_at ]]
 }
@@ -169,7 +187,7 @@ effect_writer_metadata_is_current() {
 abort_prepared_effect_writer() {
     local generation=$1
     "$ctl_bin" provision-project-env \
-        --org "$org" --project "$project" --env "$env_name" \
+        --org "$org" --project "$project" --env "$env_name" --tenant "$tenant" \
         --namespace "$namespace" \
         --target-admin-database-url "$target_admin_database_url" \
         --abort-effect-writer-generation "$generation"
@@ -189,7 +207,9 @@ abort_prepared_effect_writer_then_fail() {
 
 rotate_effect_writer() {
     local desired=$rotate_effect_writer_generation current prior current_role= current_generation=
-    local new new_role new_generation old_role= old_generation= old_login sessions login installed
+    local current_tenant= current_predecessor= legacy_scope=false
+    local new new_role new_generation new_tenant new_predecessor= old_role= old_generation=
+    local old_login sessions login installed
     if ! current=$(installed_effect_writer_metadata); then
         echo "bootstrap: failed to inspect the installed effect-writer Secret" >&2
         exit 1
@@ -199,11 +219,13 @@ rotate_effect_writer() {
             echo "bootstrap: installed effect-writer Secret metadata is invalid" >&2
             exit 1
         fi
-        IFS='|' read -r _ _ _ _ _ _ _ _ current_generation current_role _ <<<"$current"
+        IFS='|' read -r _ _ _ _ _ _ _ current_tenant _ current_generation current_role \
+            current_predecessor _ <<<"$current"
+        [[ -z $current_tenant ]] && legacy_scope=true
     fi
 
-    if [[ -z $current_role && $desired != a ]]; then
-        echo "bootstrap: initial effect-writer credential generation must be a" >&2
+    if $legacy_scope && [[ $current_generation == "$desired" ]]; then
+        echo "bootstrap: legacy effect-writer migration must target the opposite generation" >&2
         exit 1
     fi
 
@@ -215,8 +237,13 @@ rotate_effect_writer() {
         new=$current
         new_role=$current_role
         new_generation=$current_generation
-        old_generation=$([[ $desired == a ]] && printf b || printf a)
-        old_role=${new_role%_?}_$old_generation
+        if [[ -n $current_predecessor ]]; then
+            old_role=$current_predecessor
+            old_generation=${old_role##*_}
+        else
+            old_generation=$([[ $desired == a ]] && printf b || printf a)
+            old_role=${new_role%_?}_$old_generation
+        fi
     else
         prior=$current
         if [[ -n $current_role ]]; then
@@ -224,7 +251,7 @@ rotate_effect_writer() {
             old_generation=$current_generation
         fi
         "$ctl_bin" provision-project-env \
-            --org "$org" --project "$project" --env "$env_name" \
+            --org "$org" --project "$project" --env "$env_name" --tenant "$tenant" \
             --namespace "$namespace" \
             --target-admin-database-url "$target_admin_database_url" \
             --prepare-effect-writer-generation "$desired" \
@@ -239,18 +266,27 @@ rotate_effect_writer() {
             abort_prepared_effect_writer_then_fail "$desired" \
                 "ctl emitted invalid effect-writer Secret metadata"
         fi
-        IFS='|' read -r _ _ _ _ _ _ _ _ new_generation new_role _ <<<"$new"
+        IFS='|' read -r _ _ _ _ _ _ _ new_tenant _ new_generation new_role new_predecessor \
+            _ <<<"$new"
         [[ $new_generation == "$desired" ]] || {
             abort_prepared_effect_writer_then_fail "$desired" \
                 "ctl emitted the wrong effect-writer generation"
         }
-        if [[ -n $old_role && ${new_role%_?} != "${old_role%_?}" ]]; then
+        [[ $new_tenant == "$tenant" ]] || {
+            abort_prepared_effect_writer_then_fail "$desired" \
+                "ctl emitted an effect-writer credential for the wrong tenant"
+        }
+        if [[ -n $old_role && $legacy_scope == false && ${new_role%_?} != "${old_role%_?}" ]]; then
             abort_prepared_effect_writer_then_fail "$desired" \
                 "ctl emitted a role outside the installed credential scope"
         fi
+        if [[ -n $old_role && -n $new_predecessor && $new_predecessor != "$old_role" ]]; then
+            abort_prepared_effect_writer_then_fail "$desired" \
+                "ctl observed a predecessor different from the installed credential"
+        fi
         if [[ -z $old_role ]]; then
-            old_generation=$([[ $new_generation == a ]] && printf b || printf a)
-            old_role=${new_role%_?}_$old_generation
+            old_role=$new_predecessor
+            [[ -z $old_role ]] || old_generation=${old_role##*_}
         fi
         if ! login=$(effect_writer_role_login "$new_role"); then
             abort_prepared_effect_writer_then_fail "$desired" \
@@ -313,7 +349,7 @@ rotate_effect_writer() {
         }
         if [[ $old_login == t ]]; then
             "$ctl_bin" provision-project-env \
-                --org "$org" --project "$project" --env "$env_name" \
+                --org "$org" --project "$project" --env "$env_name" --tenant "$tenant" \
                 --namespace "$namespace" \
                 --target-admin-database-url "$target_admin_database_url" \
                 --retire-effect-writer-generation "$old_generation"

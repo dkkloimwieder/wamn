@@ -23,6 +23,7 @@ use wamn_run_state::RUN_PROJECTION_WRITER_ROLE;
 const ORG: &str = "pg18proof";
 const PROJECT: &str = "ledger";
 const ENVIRONMENT: &str = "dev";
+const TENANT: &str = "tenant-live";
 const INSTANCE: &str = "k3m9x2p7";
 const LEDGER_SCHEMA: &str = "wamn_runner_demo";
 const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
@@ -51,20 +52,6 @@ fn secret_path(generation: CredentialGeneration) -> PathBuf {
     ))
 }
 
-fn is_scoped_generation_role(role: &str) -> bool {
-    let Some(scoped) = role.strip_prefix("wamn_effect_writer_") else {
-        return false;
-    };
-    let Some((scope_hash, generation)) = scoped.rsplit_once('_') else {
-        return false;
-    };
-    scope_hash.len() == 40
-        && scope_hash
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        && matches!(generation, "a" | "b")
-}
-
 fn action_args(
     target_admin_url: &str,
     prepare: Option<(CredentialGeneration, &Path)>,
@@ -79,6 +66,7 @@ fn action_args(
         org: Some(ORG.to_string()),
         project: Some(PROJECT.to_string()),
         env: Some(ENVIRONMENT.to_string()),
+        tenant: Some(TENANT.to_string()),
         system_database_url: Some(system_url.into()),
         cluster: None,
         connection_limit: None,
@@ -97,6 +85,10 @@ fn action_args(
         retire_effect_writer_generation: retire,
         abort_effect_writer_generation: abort,
         emit_effect_writer_secret: prepare.map(|(_, path)| path.to_path_buf()),
+        prepare_control_author_generation: None,
+        retire_control_author_generation: None,
+        abort_control_author_generation: None,
+        emit_control_author_secret: None,
         emit_database: None,
         emit_role_sql: None,
         emit_privilege_sql: None,
@@ -147,6 +139,7 @@ async fn assert_role(
     password_set: bool,
     valid_until: Option<&str>,
     memberships: &[&str],
+    member_roles: &[&str],
     connect_databases: &[&str],
 ) {
     let row = admin
@@ -177,19 +170,15 @@ async fn assert_role(
             .collect::<Vec<_>>()
     );
     assert!(row.get::<_, bool>("membership_options_exact"));
-    let member_roles: Vec<String> = row.get("member_roles");
+    assert_eq!(
+        row.get::<_, Vec<String>>("member_roles"),
+        member_roles
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect::<Vec<_>>()
+    );
     assert!(row.get::<_, bool>("member_options_exact"));
     assert!(row.get::<_, bool>("generation_children_exact"));
-    if [EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE].contains(&role) {
-        assert!(
-            member_roles
-                .iter()
-                .all(|member| is_scoped_generation_role(member)),
-            "stable ACL role has an unexpected member"
-        );
-    } else {
-        assert!(member_roles.is_empty());
-    }
     assert_eq!(
         row.get::<_, Vec<String>>("connect_databases"),
         connect_databases
@@ -279,20 +268,8 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         .expect("install stored project-env instance");
 
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
-    let role_a = effect_writer_generation_role(
-        ORG,
-        PROJECT,
-        ENVIRONMENT,
-        &database,
-        CredentialGeneration::A,
-    );
-    let role_b = effect_writer_generation_role(
-        ORG,
-        PROJECT,
-        ENVIRONMENT,
-        &database,
-        CredentialGeneration::B,
-    );
+    let role_a = effect_writer_generation_role(TENANT, &database, CredentialGeneration::A);
+    let role_b = effect_writer_generation_role(TENANT, &database, CredentialGeneration::B);
     catalog
         .batch_execute(&format!(
             "DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)"
@@ -304,7 +281,11 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
             "DROP ROLE IF EXISTS \"{role_a}\"; DROP ROLE IF EXISTS \"{role_b}\"; \
              DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
                THEN CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                 NOREPLICATION NOBYPASSRLS; END IF; END $$;"
+                 NOREPLICATION NOBYPASSRLS; END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles \
+                              WHERE rolname = 'wamn_run_projection_writer') \
+               THEN CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
+                 NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; END $$;"
         ))
         .await
         .expect("reset lifecycle roles");
@@ -347,6 +328,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         .await
         .expect("create privilege fixtures");
     let scope = EffectWriterCredentialScope {
+        tenant: TENANT.to_string(),
         org: ORG.to_string(),
         project: PROJECT.to_string(),
         environment: ENVIRONMENT.to_string(),
@@ -400,6 +382,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         false,
         None,
         &[],
+        &[&role_a],
         &[],
     )
     .await;
@@ -412,6 +395,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         None,
         &[],
         &[],
+        &[],
     )
     .await;
     assert_role(
@@ -421,7 +405,8 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         true,
         true,
         Some(&expires_a),
-        &[EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE],
+        &[EFFECT_WRITER_ROLE],
+        &[],
         &[&database],
     )
     .await;
@@ -492,6 +477,16 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
             "run-read ACL probe {index}"
         );
     }
+    let retired_projection_membership: bool = client_a
+        .query_one(
+            "SELECT NOT has_table_privilege( \
+               current_user, 'wamn_runner_demo.node_runs', 'SELECT,INSERT,UPDATE,DELETE')",
+            &[],
+        )
+        .await
+        .expect("probe retired run-projection membership")
+        .get(0);
+    assert!(retired_projection_membership);
     let unrelated_connect: bool = target
         .query_one(
             "SELECT has_database_privilege($1, 'postgres', 'CONNECT')",
@@ -587,6 +582,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         Some("1970-01-01T00:00:00Z"),
         &[],
         &[],
+        &[],
     )
     .await;
     let abort_published = provision_project_env::run(action_args(
@@ -640,6 +636,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         Some("1970-01-01T00:00:00Z"),
         &[],
         &[],
+        &[],
     )
     .await;
     assert_role(
@@ -649,7 +646,8 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         true,
         true,
         Some(&expires_b),
-        &[EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE],
+        &[EFFECT_WRITER_ROLE],
+        &[],
         &[&database],
     )
     .await;

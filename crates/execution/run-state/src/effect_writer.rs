@@ -189,6 +189,7 @@ impl EffectWriterClient {
         }
         let schema = expected.schema.to_string();
         let expected = EffectWriterCredentialScope {
+            tenant: expected.tenant_id.to_string(),
             org: expected.org.to_string(),
             project: expected.project.to_string(),
             environment: expected.environment.to_string(),

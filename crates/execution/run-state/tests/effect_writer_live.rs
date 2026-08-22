@@ -77,15 +77,14 @@ async fn native_effect_writer_live() {
         .expect("read database identity")
         .get(0);
     let credential_scope = EffectWriterCredentialScope {
+        tenant: "t1".to_string(),
         org: "writer-live-org".to_string(),
         project: "writer-live-project".to_string(),
         environment: "writer-live-env".to_string(),
         database: database.clone(),
     };
     let generation_role = effect_writer_generation_role(
-        &credential_scope.org,
-        &credential_scope.project,
-        &credential_scope.environment,
+        &credential_scope.tenant,
         &credential_scope.database,
         CredentialGeneration::A,
     );

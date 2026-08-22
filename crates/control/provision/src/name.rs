@@ -58,6 +58,9 @@ pub const DISPATCH_READER_ROLE: &str = "wamn_dispatch_reader";
 /// Prefix for the fixed-mount effect-writer credential Secret.
 pub const EFFECT_WRITER_SECRET_PREFIX: &str = "wamn-effect-writer-";
 
+/// Prefix for the scoped control-author URL Secret.
+pub const CONTROL_AUTHOR_SECRET_PREFIX: &str = "wamn-authoring-";
+
 /// Prefix for the per-project database **and** Secret name: `wamn-db-<project>`.
 /// It is under the platform-reserved `wamn` prefix (wamn-66x) on purpose — the
 /// platform mints it, and project ids in that space are rejected.
@@ -226,6 +229,11 @@ fn project_env_database_stem(org: &str, project: &str, env: &str) -> String {
 /// carries the instance identity; its URL names the suffixed Postgres database.
 pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
     project_env_database_stem(org, project, env)
+}
+
+/// Scoped control-author Secret name consumed by scenario-worker.
+pub fn control_author_secret_name(org: &str, project: &str, env: &str) -> String {
+    format!("{CONTROL_AUTHOR_SECRET_PREFIX}{org}--{project}--{env}")
 }
 
 /// The per-project-env Kubernetes namespace:
@@ -961,32 +969,12 @@ mod tests {
     #[test]
     fn effect_writer_scope_identity_and_names_are_frozen() {
         let database = project_env_database_name("acme", "billing", "dev", INSTANCE);
-        assert_eq!(
-            effect_writer_scope_hash("acme", "billing", "dev", &database),
-            "3c92a981fa554e60b309efa67f5b35e8ba687221"
-        );
-        let a = effect_writer_generation_role(
-            "acme",
-            "billing",
-            "dev",
-            &database,
-            CredentialGeneration::A,
-        );
-        let b = effect_writer_generation_role(
-            "acme",
-            "billing",
-            "dev",
-            &database,
-            CredentialGeneration::B,
-        );
-        assert_eq!(
-            a,
-            "wamn_effect_writer_3c92a981fa554e60b309efa67f5b35e8ba687221_a"
-        );
-        assert_eq!(
-            b,
-            "wamn_effect_writer_3c92a981fa554e60b309efa67f5b35e8ba687221_b"
-        );
+        let scope_hash = effect_writer_scope_hash("tenant", &database);
+        assert_eq!(scope_hash.len(), 40);
+        let a = effect_writer_generation_role("tenant", &database, CredentialGeneration::A);
+        let b = effect_writer_generation_role("tenant", &database, CredentialGeneration::B);
+        assert_eq!(a, format!("wamn_effect_writer_{scope_hash}_a"));
+        assert_eq!(b, format!("wamn_effect_writer_{scope_hash}_b"));
         assert_eq!(a.len(), 61);
         assert_eq!(b.len(), 61);
         assert_eq!(CredentialGeneration::A.other(), CredentialGeneration::B);
@@ -998,13 +986,11 @@ mod tests {
     }
 
     #[test]
-    fn effect_writer_scope_hash_frames_every_identity_component() {
-        let base = effect_writer_scope_hash("acme", "billing", "dev", "db");
+    fn effect_writer_scope_hash_frames_tenant_and_database() {
+        let base = effect_writer_scope_hash("tenant", "db");
         for changed in [
-            effect_writer_scope_hash("acme-x", "billing", "dev", "db"),
-            effect_writer_scope_hash("acme", "billing-x", "dev", "db"),
-            effect_writer_scope_hash("acme", "billing", "prod", "db"),
-            effect_writer_scope_hash("acme", "billing", "dev", "db-x"),
+            effect_writer_scope_hash("tenant-x", "db"),
+            effect_writer_scope_hash("tenant", "db-x"),
         ] {
             assert_ne!(base, changed);
             assert_eq!(changed.len(), 40);

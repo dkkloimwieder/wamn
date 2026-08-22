@@ -969,7 +969,7 @@ fn control_author_two_tenant_authority_holds_on_postgres() {
     );
     // ctl owns the stable NOLOGIN role and the scoped LOGIN generations; this is
     // the exact text it applies.
-    install.push_str(wamn_control_provision::sql::ensure_control_author_acl_role_sql());
+    install.push_str(&wamn_control_provision::sql::ensure_control_author_acl_role_sql());
     install.push('\n');
     for role in [&author_a, &author_b] {
         install.push_str(

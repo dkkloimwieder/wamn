@@ -69,19 +69,19 @@ use tokio_postgres::{Config as PgConfig, GenericClient, NoTls};
 use url::Url;
 
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EFFECT_WRITER_ROLE, EffectWriterCredentialScope,
-    EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, compose_url, effect_writer_credential,
-    effect_writer_generation_role, effect_writer_scope_hash, project_env_database_name,
-    project_env_namespace, project_env_secret_name, render_effect_writer_secret_manifest,
+    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EffectWriterCredentialScope,
+    EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, WorkloadRoleFamily, WorkloadRoleScope,
+    compose_url, effect_writer_credential, legacy_effect_writer_generation_role,
+    project_env_database_name, project_env_namespace, project_env_secret_name,
+    render_control_author_secret_manifest, render_effect_writer_secret_manifest,
     render_project_env_database, render_project_env_secret_manifest, sql, validate_instance_suffix,
-    validate_project_env,
+    validate_project_env, workload_generation_role,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_platform_identity::{
     IdentityErrorKind, Principal, PrincipalKind, PrincipalStatus, assign_project_role,
     authenticate_pat, create_service, issue_pat, resolve_subject, revoke_pat,
 };
-use wamn_run_state::RUN_PROJECTION_WRITER_ROLE;
 
 use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policy};
 
@@ -103,6 +103,11 @@ pub struct ProvisionProjectEnvArgs {
     /// `cluster_of` — a dedicated org's `<org>-<owner(env)>`, or the shared pool.
     #[arg(long, required_unless_present = "revoke_pat_prefix")]
     pub env: Option<String>,
+
+    /// Tenant identity for tenant-scoped workload credential generations.
+    /// It is never inferred from the project or environment.
+    #[arg(long)]
+    pub tenant: Option<String>,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the org's
     /// placement, read-or-mint the stored instance suffix, and record the project
@@ -144,7 +149,10 @@ pub struct ProvisionProjectEnvArgs {
             "revoke_pat_prefix",
             "prepare_effect_writer_generation",
             "retire_effect_writer_generation",
-            "abort_effect_writer_generation"
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation"
         ]
     )]
     pub app_password: Option<String>,
@@ -159,7 +167,7 @@ pub struct ProvisionProjectEnvArgs {
     /// password on a role that is `LOGIN` and reachable from outside the
     /// cluster; provisioning refuses instead.
     ///
-    /// Mode-scoped on the same four exempt modes as `--app-password` above:
+    /// Mode-scoped on the same credential-free modes as `--app-password` above:
     /// both feed [`role_sql`], so both are owed by exactly the invocations that
     /// reach it (wamn-0h0g.12.141).
     #[arg(
@@ -169,7 +177,10 @@ pub struct ProvisionProjectEnvArgs {
             "revoke_pat_prefix",
             "prepare_effect_writer_generation",
             "retire_effect_writer_generation",
-            "abort_effect_writer_generation"
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation"
         ]
     )]
     pub dispatch_reader_password: Option<String>,
@@ -203,7 +214,10 @@ pub struct ProvisionProjectEnvArgs {
         value_name = "a|b",
         conflicts_with_all = [
             "retire_effect_writer_generation",
-            "abort_effect_writer_generation"
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation"
         ]
     )]
     pub prepare_effect_writer_generation: Option<CredentialGeneration>,
@@ -214,7 +228,10 @@ pub struct ProvisionProjectEnvArgs {
         value_name = "a|b",
         conflicts_with_all = [
             "prepare_effect_writer_generation",
-            "abort_effect_writer_generation"
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation"
         ]
     )]
     pub retire_effect_writer_generation: Option<CredentialGeneration>,
@@ -228,7 +245,10 @@ pub struct ProvisionProjectEnvArgs {
         value_name = "a|b",
         conflicts_with_all = [
             "prepare_effect_writer_generation",
-            "retire_effect_writer_generation"
+            "retire_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation"
         ]
     )]
     pub abort_effect_writer_generation: Option<CredentialGeneration>,
@@ -242,6 +262,57 @@ pub struct ProvisionProjectEnvArgs {
         requires = "prepare_effect_writer_generation"
     )]
     pub emit_effect_writer_secret: Option<PathBuf>,
+
+    /// Prepare and authenticate the inactive control-author credential generation.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation"
+        ]
+    )]
+    pub prepare_control_author_generation: Option<CredentialGeneration>,
+
+    /// Retire the old control-author generation after replacement use.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "abort_control_author_generation"
+        ]
+    )]
+    pub retire_control_author_generation: Option<CredentialGeneration>,
+
+    /// Abort a prepared control-author generation that was not published.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation"
+        ]
+    )]
+    pub abort_control_author_generation: Option<CredentialGeneration>,
+
+    /// Write the control-author URL Secret consumed by scenario-worker.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_parser = parse_secret_path,
+        requires = "prepare_control_author_generation"
+    )]
+    pub emit_control_author_secret: Option<PathBuf>,
 
     /// Write the CNPG `Database` CR (JSON) here; `-` = stdout. Absent ⇒ printed
     /// with a labeled header.
@@ -269,7 +340,10 @@ pub struct ProvisionProjectEnvArgs {
             "revoke_pat_prefix",
             "prepare_effect_writer_generation",
             "retire_effect_writer_generation",
-            "abort_effect_writer_generation"
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation"
         ]
     )]
     pub emit_secret: Option<PathBuf>,
@@ -361,6 +435,12 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     {
         return run_effect_writer_action(&args).await;
     }
+    if args.prepare_control_author_generation.is_some()
+        || args.retire_control_author_generation.is_some()
+        || args.abort_control_author_generation.is_some()
+    {
+        return run_control_author_action(&args).await;
+    }
     anyhow::ensure!(
         args.target_admin_database_url.is_none(),
         "--target-admin-database-url is valid only for an effect-writer generation action"
@@ -446,7 +526,7 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         .app_host
         .clone()
         .unwrap_or_else(|| format!("{cluster}-rw"));
-    // Both credentials are `required_unless_present_any` over the four modes
+    // Both credentials are `required_unless_present_any` over the modes
     // that provision nothing, and every one of those has already returned
     // above. A missing credential here is a broken parser contract, not a user
     // error: re-checking it would plant a second, weaker enforcement point and
@@ -509,10 +589,10 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-const EFFECT_WRITER_CREDENTIAL_TTL_DAYS: i64 = 30;
+const WORKLOAD_CREDENTIAL_TTL_DAYS: i64 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct EffectWriterRoleState {
+struct WorkloadRoleState {
     login: bool,
     superuser: bool,
     inherit: bool,
@@ -525,6 +605,7 @@ struct EffectWriterRoleState {
     valid_until_finite: bool,
     memberships: Vec<String>,
     membership_options_exact: bool,
+    membership_options_migratable: bool,
     member_roles: Vec<String>,
     member_options_exact: bool,
     generation_children_exact: bool,
@@ -533,41 +614,70 @@ struct EffectWriterRoleState {
     owned_objects: i64,
 }
 
-impl EffectWriterRoleState {
-    fn is_active_for(&self, database: &str) -> bool {
+impl WorkloadRoleState {
+    fn is_active_for(&self, family: WorkloadRoleFamily, database: &str) -> bool {
+        self.has_active_shape_for(database)
+            && self.memberships == [family.acl_role()]
+            && self.membership_options_exact
+    }
+
+    fn is_migratable_active_for(&self, family: WorkloadRoleFamily, database: &str) -> bool {
+        let memberships_are_known = self.memberships == [family.acl_role()]
+            || (family == WorkloadRoleFamily::EffectWriter
+                && self.memberships
+                    == [
+                        family.acl_role(),
+                        wamn_run_state::RUN_PROJECTION_WRITER_ROLE,
+                    ]);
+        self.has_active_shape_for(database)
+            && memberships_are_known
+            && self.membership_options_migratable
+    }
+
+    fn has_active_shape_for(&self, database: &str) -> bool {
         self.login
             && self.restrictive_attributes()
             && self.inherit
             && self.password_set
             && self.valid_until_finite
-            && (self.memberships == [EFFECT_WRITER_ROLE]
-                || self.memberships == [EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE])
-            && self.membership_options_exact
             && self.member_roles.is_empty()
             && self.member_options_exact
-            && self.generation_children_exact
             && self.connect_databases == [database]
             && self.owned_objects == 0
     }
 
     fn is_inactive(&self) -> bool {
+        self.has_inactive_shape() && self.memberships.is_empty() && self.membership_options_exact
+    }
+
+    fn is_migratable_inactive_for(&self, family: WorkloadRoleFamily) -> bool {
+        let memberships_are_known = self.memberships.is_empty()
+            || (family == WorkloadRoleFamily::EffectWriter
+                && self.memberships == [wamn_run_state::RUN_PROJECTION_WRITER_ROLE]);
+        self.has_inactive_shape() && memberships_are_known && self.membership_options_migratable
+    }
+
+    fn has_inactive_shape(&self) -> bool {
         !self.login
             && self.restrictive_attributes()
             && self.inherit
             && !self.password_set
             && self.valid_until.as_deref() == Some("1970-01-01T00:00:00Z")
             && self.valid_until_finite
-            && (self.memberships.is_empty() || self.memberships == [RUN_PROJECTION_WRITER_ROLE])
-            && self.membership_options_exact
             && self.member_roles.is_empty()
             && self.member_options_exact
-            && self.generation_children_exact
             && self.connect_databases.is_empty()
             && self.sessions == 0
             && self.owned_objects == 0
     }
 
-    fn is_acl_role(&self) -> bool {
+    fn is_acl_role(&self, family: WorkloadRoleFamily) -> bool {
+        self.has_acl_role_shape(family)
+            && self.member_options_exact
+            && self.generation_children_exact
+    }
+
+    fn has_acl_role_shape(&self, family: WorkloadRoleFamily) -> bool {
         !self.login
             && self.restrictive_attributes()
             && !self.inherit
@@ -579,9 +689,7 @@ impl EffectWriterRoleState {
             && self
                 .member_roles
                 .iter()
-                .all(|role| is_effect_writer_generation_role(role))
-            && self.member_options_exact
-            && self.generation_children_exact
+                .all(|role| is_workload_generation_role(family, role))
             && self.connect_databases.is_empty()
             && self.sessions == 0
             && self.owned_objects == 0
@@ -596,8 +704,9 @@ impl EffectWriterRoleState {
     }
 }
 
-fn is_effect_writer_generation_role(role: &str) -> bool {
-    let Some(scoped) = role.strip_prefix("wamn_effect_writer_") else {
+fn is_workload_generation_role(family: WorkloadRoleFamily, role: &str) -> bool {
+    let prefix = format!("{}_", family.acl_role());
+    let Some(scoped) = role.strip_prefix(&prefix) else {
         return false;
     };
     let Some((hash, generation)) = scoped.split_once('_') else {
@@ -610,19 +719,78 @@ fn is_effect_writer_generation_role(role: &str) -> bool {
         && matches!(generation, "a" | "b")
 }
 
-async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        args.cluster.is_none()
-            && args.connection_limit.is_none()
-            && args.app_host.is_none()
-            && args.emit_database.is_none()
-            && args.emit_role_sql.is_none()
-            && args.emit_privilege_sql.is_none()
-            && args.emit_secret.is_none()
-            && args.emit_management_author_pat_secret.is_none()
-            && args.emit_route_caller_pat_secret.is_none(),
-        "effect-writer generation actions cannot render ordinary provisioning or PAT artifacts"
-    );
+#[derive(Debug, Clone, Copy)]
+struct WorkloadLifecycle<'a> {
+    family: WorkloadRoleFamily,
+    scope: WorkloadRoleScope<'a>,
+    control_tenant: Option<&'a str>,
+}
+
+impl<'a> WorkloadLifecycle<'a> {
+    fn database(self) -> &'a str {
+        self.scope.database()
+    }
+
+    fn role(self, generation: CredentialGeneration) -> String {
+        workload_generation_role(self.family, self.scope, generation)
+            .expect("the lifecycle constructor pairs each family with its exact scope")
+    }
+
+    fn family_lock_key(self) -> String {
+        format!("wamn.workload-family.v1:{}", self.family.acl_role())
+    }
+
+    fn label(self) -> &'static str {
+        match self.family {
+            WorkloadRoleFamily::EffectWriter => "effect-writer",
+            WorkloadRoleFamily::ControlAuthor => "control-author",
+            WorkloadRoleFamily::DispatchReader => "dispatch-reader",
+            WorkloadRoleFamily::ServiceReader => "service-reader",
+            WorkloadRoleFamily::App => "app",
+            WorkloadRoleFamily::Retention => "retention",
+        }
+    }
+}
+
+fn effect_writer_lifecycle<'a>(tenant: &'a str, database: &'a str) -> WorkloadLifecycle<'a> {
+    WorkloadLifecycle {
+        family: WorkloadRoleFamily::EffectWriter,
+        scope: WorkloadRoleScope::Tenant { tenant, database },
+        control_tenant: None,
+    }
+}
+
+fn control_author_lifecycle<'a>(
+    tenant: &'a str,
+    org: &'a str,
+    project: &'a str,
+    environment: &'a str,
+    database: &'a str,
+) -> WorkloadLifecycle<'a> {
+    WorkloadLifecycle {
+        family: WorkloadRoleFamily::ControlAuthor,
+        scope: WorkloadRoleScope::Control {
+            org,
+            project,
+            environment,
+            database,
+        },
+        control_tenant: Some(tenant),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorkloadActionIdentity<'a> {
+    org: &'a str,
+    project: &'a str,
+    environment: &'a str,
+    tenant: &'a str,
+}
+
+fn workload_action_identity<'a>(
+    args: &'a ProvisionProjectEnvArgs,
+    label: &str,
+) -> anyhow::Result<WorkloadActionIdentity<'a>> {
     let org = args
         .org
         .as_deref()
@@ -634,8 +802,135 @@ async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs) -> anyhow::Res
         .env
         .as_deref()
         .expect("clap parser invariant: --env is required unless --revoke-pat-prefix is present");
+    let tenant = args
+        .tenant
+        .as_deref()
+        .with_context(|| format!("{label} generation actions require --tenant"))?;
+    anyhow::ensure!(!tenant.is_empty(), "--tenant must not be empty");
     validate_project_env(org, project, environment)
         .map_err(|error| anyhow::anyhow!("project-env names: {error}"))?;
+    Ok(WorkloadActionIdentity {
+        org,
+        project,
+        environment,
+        tenant,
+    })
+}
+
+async fn converge_workload_generation_state(
+    client: &(impl GenericClient + Sync),
+    lifecycle: WorkloadLifecycle<'_>,
+    role: &str,
+) -> anyhow::Result<Option<WorkloadRoleState>> {
+    let state = read_workload_role_state(client, role, lifecycle.label()).await?;
+    let Some(found) = state.as_ref() else {
+        return Ok(None);
+    };
+    let active =
+        if found.is_active_for(lifecycle.family, lifecycle.database()) || found.is_inactive() {
+            return Ok(state);
+        } else if found.is_migratable_active_for(lifecycle.family, lifecycle.database()) {
+            true
+        } else if found.is_migratable_inactive_for(lifecycle.family) {
+            false
+        } else {
+            return Ok(state);
+        };
+    client
+        .batch_execute(&sql::normalize_workload_generation_membership_sql(
+            lifecycle.family,
+            role,
+            active,
+        ))
+        .await
+        .with_context(|| {
+            format!(
+                "normalize legacy {} generation membership",
+                lifecycle.label()
+            )
+        })?;
+    read_workload_role_state(client, role, lifecycle.label()).await
+}
+
+async fn converge_stable_workload_memberships(
+    client: &(impl GenericClient + Sync),
+    admin_config: &PgConfig,
+    lifecycle: WorkloadLifecycle<'_>,
+) -> anyhow::Result<()> {
+    let Some(stable) =
+        read_workload_role_state(client, lifecycle.family.acl_role(), lifecycle.label()).await?
+    else {
+        return Ok(());
+    };
+    for role in stable.member_roles {
+        anyhow::ensure!(
+            is_workload_generation_role(lifecycle.family, &role),
+            "stable {} ACL role has a member outside its generation family",
+            lifecycle.label()
+        );
+        client
+            .batch_execute(&sql::normalize_workload_generation_membership_sql(
+                lifecycle.family,
+                &role,
+                true,
+            ))
+            .await
+            .with_context(|| {
+                format!(
+                    "normalize {} stable-role generation member",
+                    lifecycle.label()
+                )
+            })?;
+        let child = read_workload_role_state(client, &role, lifecycle.label())
+            .await?
+            .with_context(|| {
+                format!(
+                    "{} stable-role generation member disappeared",
+                    lifecycle.label()
+                )
+            })?;
+        let [database] = child.connect_databases.as_slice() else {
+            anyhow::bail!(
+                "{} stable-role generation member does not carry exactly one direct database CONNECT grant",
+                lifecycle.label()
+            );
+        };
+        anyhow::ensure!(
+            child.is_active_for(lifecycle.family, database),
+            "{} stable-role generation member is not an exact active credential",
+            lifecycle.label()
+        );
+        verify_role_acl_inventory(
+            admin_config,
+            &role,
+            RoleAclExpectation::Generation { database },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.cluster.is_none()
+            && args.connection_limit.is_none()
+            && args.app_host.is_none()
+            && args.emit_database.is_none()
+            && args.emit_role_sql.is_none()
+            && args.emit_privilege_sql.is_none()
+            && args.emit_secret.is_none()
+            && args.emit_control_author_secret.is_none()
+            && args.emit_management_author_pat_secret.is_none()
+            && args.emit_route_caller_pat_secret.is_none(),
+        "effect-writer generation actions cannot render ordinary provisioning or PAT artifacts"
+    );
+    let identity = workload_action_identity(args, "effect-writer")?;
+    let WorkloadActionIdentity {
+        org,
+        project,
+        environment,
+        tenant,
+    } = identity;
     let system_url = args.system_database_url.as_deref().context(
         "effect-writer generation actions require --system-database-url to resolve the stored instance suffix",
     )?;
@@ -647,118 +942,286 @@ async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs) -> anyhow::Res
         .as_deref()
         .context("effect-writer generation actions require --target-admin-database-url")?;
     let admin_config = exact_project_database_config(admin_url, &database)?;
+    let lifecycle = effect_writer_lifecycle(tenant, &database);
 
     if let Some(generation) = args.prepare_effect_writer_generation {
         let secret_path = args.emit_effect_writer_secret.as_deref().context(
             "--prepare-effect-writer-generation requires --emit-effect-writer-secret PATH",
         )?;
         ensure_secret_path(secret_path, "--emit-effect-writer-secret")?;
-        prepare_effect_writer_generation(
-            args,
-            &admin_config,
+        let validity = workload_validity(Utc::now());
+        let scope = EffectWriterCredentialScope {
+            tenant: tenant.to_string(),
+            org: org.to_string(),
+            project: project.to_string(),
+            environment: environment.to_string(),
+            database: database.clone(),
+        };
+        let legacy_desired =
+            legacy_effect_writer_generation_role(org, project, environment, &database, generation);
+        let legacy_other = legacy_effect_writer_generation_role(
             org,
             project,
             environment,
             &database,
+            generation.other(),
+        );
+        prepare_workload_generation(
+            &admin_config,
+            lifecycle,
+            Some(&legacy_desired),
+            Some(&legacy_other),
             generation,
-            secret_path,
-            Utc::now(),
+            &validity.expires_at,
+            |role, password, predecessor_role| {
+                let credential_id = random_lower_hex(16)?;
+                let credential_url = workload_url(admin_url, role, password, &database)?;
+                let credential = effect_writer_credential(
+                    &scope,
+                    &credential_id,
+                    generation,
+                    &validity,
+                    &credential_url,
+                );
+                let mut secret =
+                    render_effect_writer_secret_manifest(&triple, &args.namespace, &credential);
+                if let Some(predecessor_role) = predecessor_role {
+                    secret["metadata"]["annotations"]["wamn.io/predecessor-database-role"] =
+                        json!(predecessor_role);
+                }
+                write_secret_json(secret_path, &secret)
+                    .context("write authenticated effect-writer Secret")
+            },
         )
-        .await
+        .await?;
+        println!(
+            "prepared and authenticated effect-writer credential generation {} for {}/{}/{}; wrote {}",
+            generation.as_str(),
+            org,
+            project,
+            environment,
+            secret_path.display()
+        );
+        Ok(())
     } else if let Some(generation) = args.retire_effect_writer_generation {
         anyhow::ensure!(
             args.emit_effect_writer_secret.is_none(),
             "--emit-effect-writer-secret is valid only when preparing a generation"
         );
-        retire_effect_writer_generation(
-            &admin_config,
+        let legacy_role =
+            legacy_effect_writer_generation_role(org, project, environment, &database, generation);
+        retire_workload_generation(&admin_config, lifecycle, Some(&legacy_role), generation)
+            .await?;
+        println!(
+            "retired effect-writer credential generation {} for {}/{}/{}",
+            generation.as_str(),
             org,
             project,
-            environment,
-            &database,
-            generation,
-        )
-        .await
+            environment
+        );
+        Ok(())
     } else if let Some(generation) = args.abort_effect_writer_generation {
         anyhow::ensure!(
             args.emit_effect_writer_secret.is_none(),
             "--emit-effect-writer-secret is valid only when preparing a generation"
         );
-        abort_effect_writer_generation(
-            &admin_config,
+        abort_workload_generation(&admin_config, lifecycle, generation).await?;
+        println!(
+            "aborted unpublished effect-writer credential generation {} for {}/{}/{}",
+            generation.as_str(),
             org,
             project,
-            environment,
-            &database,
-            generation,
-        )
-        .await
+            environment
+        );
+        Ok(())
     } else {
         anyhow::bail!("no effect-writer generation action selected")
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the action, admin authority, exact scope, selected generation, output, and injected clock are distinct security inputs"
-)]
-async fn prepare_effect_writer_generation(
-    args: &ProvisionProjectEnvArgs,
+async fn run_control_author_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.cluster.is_none()
+            && args.connection_limit.is_none()
+            && args.app_host.is_none()
+            && args.target_admin_database_url.is_none()
+            && args.emit_database.is_none()
+            && args.emit_role_sql.is_none()
+            && args.emit_privilege_sql.is_none()
+            && args.emit_secret.is_none()
+            && args.emit_effect_writer_secret.is_none()
+            && args.emit_management_author_pat_secret.is_none()
+            && args.emit_route_caller_pat_secret.is_none(),
+        "control-author generation actions cannot render ordinary provisioning, effect-writer, or PAT artifacts"
+    );
+    let identity = workload_action_identity(args, "control-author")?;
+    let WorkloadActionIdentity {
+        org,
+        project,
+        environment,
+        tenant,
+    } = identity;
+    let admin_url = args
+        .system_database_url
+        .as_deref()
+        .context("control-author generation actions require --system-database-url")?;
+    let admin_config = named_database_config(admin_url, "control-author admin")?;
+    let database = admin_config
+        .get_dbname()
+        .expect("named_database_config requires a database name");
+    let lifecycle = control_author_lifecycle(tenant, org, project, environment, database);
+
+    if let Some(generation) = args.prepare_control_author_generation {
+        let secret_path = args.emit_control_author_secret.as_deref().context(
+            "--prepare-control-author-generation requires --emit-control-author-secret PATH",
+        )?;
+        ensure_secret_path(secret_path, "--emit-control-author-secret")?;
+        let validity = workload_validity(Utc::now());
+        let triple = Triple::new(org, project, environment);
+        prepare_workload_generation(
+            &admin_config,
+            lifecycle,
+            None,
+            None,
+            generation,
+            &validity.expires_at,
+            |role, password, _predecessor_role| {
+                let credential_url = workload_url(admin_url, role, password, database)?;
+                let secret = render_control_author_secret_manifest(
+                    &triple,
+                    &args.namespace,
+                    &credential_url,
+                );
+                write_secret_json(secret_path, &secret)
+                    .context("write authenticated control-author Secret")
+            },
+        )
+        .await?;
+        println!(
+            "prepared and authenticated control-author credential generation {} for {}/{}/{}; wrote {}",
+            generation.as_str(),
+            org,
+            project,
+            environment,
+            secret_path.display()
+        );
+        Ok(())
+    } else if let Some(generation) = args.retire_control_author_generation {
+        anyhow::ensure!(
+            args.emit_control_author_secret.is_none(),
+            "--emit-control-author-secret is valid only when preparing a generation"
+        );
+        retire_workload_generation(&admin_config, lifecycle, None, generation).await?;
+        println!(
+            "retired control-author credential generation {} for {}/{}/{}",
+            generation.as_str(),
+            org,
+            project,
+            environment
+        );
+        Ok(())
+    } else if let Some(generation) = args.abort_control_author_generation {
+        anyhow::ensure!(
+            args.emit_control_author_secret.is_none(),
+            "--emit-control-author-secret is valid only when preparing a generation"
+        );
+        abort_workload_generation(&admin_config, lifecycle, generation).await?;
+        println!(
+            "aborted unpublished control-author credential generation {} for {}/{}/{}",
+            generation.as_str(),
+            org,
+            project,
+            environment
+        );
+        Ok(())
+    } else {
+        anyhow::bail!("no control-author generation action selected")
+    }
+}
+
+async fn prepare_workload_generation<F>(
     admin_config: &PgConfig,
-    org: &str,
-    project: &str,
-    environment: &str,
-    database: &str,
+    lifecycle: WorkloadLifecycle<'_>,
+    legacy_desired_role: Option<&str>,
+    legacy_other_role: Option<&str>,
     generation: CredentialGeneration,
-    secret_path: &Path,
-    now: DateTime<Utc>,
-) -> anyhow::Result<()> {
-    let role = effect_writer_generation_role(org, project, environment, database, generation);
-    let other_role =
-        effect_writer_generation_role(org, project, environment, database, generation.other());
-    let (mut admin, admin_task) = connect_config(admin_config, "effect-writer admin").await?;
-    let scope_key = effect_writer_scope_hash(org, project, environment, database);
-    lock_effect_writer_scope(&admin, &scope_key).await?;
+    expires_at: &str,
+    publish: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(&str, &str, Option<&str>) -> anyhow::Result<()>,
+{
+    let database = lifecycle.database();
+    let role = lifecycle.role(generation);
+    let mut other_role = lifecycle.role(generation.other());
+    let (mut admin, admin_task) = connect_config(admin_config, lifecycle.label()).await?;
+    lock_workload_family(&admin, lifecycle).await?;
     let transaction = admin
         .transaction()
         .await
-        .context("begin effect-writer generation prepare")?;
+        .with_context(|| format!("begin {} generation prepare", lifecycle.label()))?;
     transaction
         .batch_execute(sql::revoke_public_connect_floor_sql())
         .await
         .context("converge cluster PUBLIC CONNECT floor")?;
-    verify_public_access_floor(&transaction).await?;
-    let desired = read_effect_writer_role_state(&transaction, &role).await?;
-    let other = read_effect_writer_role_state(&transaction, &other_role).await?;
+    verify_public_access_floor(&transaction, lifecycle.label()).await?;
+    converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
+    let desired = converge_workload_generation_state(&transaction, lifecycle, &role).await?;
+    if let Some(legacy_role) = legacy_desired_role {
+        if let Some(legacy) =
+            converge_workload_generation_state(&transaction, lifecycle, legacy_role).await?
+        {
+            anyhow::ensure!(
+                legacy.is_inactive(),
+                "legacy effect-writer migration must prepare the opposite generation"
+            );
+        }
+    }
+    let mut other =
+        converge_workload_generation_state(&transaction, lifecycle, &other_role).await?;
+    if other.as_ref().is_none_or(WorkloadRoleState::is_inactive)
+        && let Some(legacy_role) = legacy_other_role
+    {
+        let legacy =
+            converge_workload_generation_state(&transaction, lifecycle, legacy_role).await?;
+        if legacy.as_ref().is_some_and(|state| !state.is_inactive()) {
+            other_role = legacy_role.to_string();
+            other = legacy;
+        }
+    }
     let recovering_active = match (generation, desired.as_ref(), other.as_ref()) {
         (CredentialGeneration::A, desired, None)
-            if desired.is_none_or(EffectWriterRoleState::is_inactive) =>
+            if desired.is_none_or(WorkloadRoleState::is_inactive) =>
         {
             false
         }
         (CredentialGeneration::A, Some(desired), None)
-            if desired.is_active_for(database) && desired.sessions == 0 =>
+            if desired.is_active_for(lifecycle.family, database) && desired.sessions == 0 =>
         {
             true
         }
         (_, desired, Some(other))
-            if desired.is_none_or(EffectWriterRoleState::is_inactive)
-                && other.is_active_for(database) =>
+            if desired.is_none_or(WorkloadRoleState::is_inactive)
+                && other.is_active_for(lifecycle.family, database) =>
         {
             false
         }
         (_, Some(desired), Some(other))
-            if desired.is_active_for(database)
+            if desired.is_active_for(lifecycle.family, database)
                 && desired.sessions == 0
-                && other.is_active_for(database) =>
+                && other.is_active_for(lifecycle.family, database) =>
         {
             true
         }
         (CredentialGeneration::B, None, None) => {
-            anyhow::bail!("initial effect-writer credential generation must be a")
+            anyhow::bail!(
+                "initial {} credential generation must be a",
+                lifecycle.label()
+            )
         }
         _ => anyhow::bail!(
-            "effect-writer generation prepare requires an inactive target, or an exact zero-session active target recovered after failed Secret publication"
+            "{} generation prepare requires an inactive target, or an exact zero-session active target recovered after failed Secret publication",
+            lifecycle.label()
         ),
     };
     let desired_acl = if recovering_active {
@@ -775,50 +1238,76 @@ async fn prepare_effect_writer_generation(
         )
         .await?;
     }
-    if read_effect_writer_role_state(&transaction, EFFECT_WRITER_ROLE)
+    let predecessor_role = other.as_ref().map(|_| other_role.as_str());
+    if read_workload_role_state(&transaction, lifecycle.family.acl_role(), lifecycle.label())
         .await?
         .is_some()
+        && lifecycle.family == WorkloadRoleFamily::EffectWriter
     {
         verify_role_acl_inventory(
             admin_config,
-            EFFECT_WRITER_ROLE,
+            lifecycle.family.acl_role(),
             RoleAclExpectation::EffectAclRole,
         )
         .await?;
     }
     let password = random_lower_hex(32)?;
-    let credential_id = random_lower_hex(16)?;
-    let validity = effect_writer_validity(now);
     transaction
-        .batch_execute(&sql::prepare_effect_writer_generation_sql(
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            lifecycle.family,
             database,
             &role,
             &password,
-            &validity.expires_at,
+            expires_at,
         ))
         .await
-        .context("prepare effect-writer credential generation")?;
+        .with_context(|| format!("prepare {} credential generation", lifecycle.label()))?;
+    if let (
+        Some(tenant),
+        WorkloadRoleScope::Control {
+            org,
+            project,
+            environment,
+            ..
+        },
+    ) = (lifecycle.control_tenant, lifecycle.scope)
+    {
+        let mapped: Option<String> = transaction
+            .query_opt(
+                sql::upsert_control_author_tenant_mapping_sql(),
+                &[&role, &tenant, &org, &project, &environment],
+            )
+            .await
+            .context("record control-author login tenant mapping")?
+            .map(|row| row.get("tenant_id"));
+        anyhow::ensure!(
+            mapped.as_deref() == Some(tenant),
+            "control-author login identity already maps to a different tenant"
+        );
+    }
     transaction
         .commit()
         .await
-        .context("commit effect-writer credential generation prepare")?;
+        .with_context(|| format!("commit {} generation prepare", lifecycle.label()))?;
 
     let publish_result = async {
-        let writer_config = writer_config(admin_config, &role, &password, database);
-        authenticate_effect_writer(&writer_config, &role, database)
+        let credential_config = workload_config(admin_config, &role, &password, database);
+        authenticate_workload_generation(&credential_config, lifecycle, &role)
             .await
-            .context("authenticate prepared effect-writer generation")?;
+            .with_context(|| format!("authenticate prepared {} generation", lifecycle.label()))?;
 
-        let prepared = read_effect_writer_role_state(&admin, &role)
+        let prepared = read_workload_role_state(&admin, &role, lifecycle.label())
             .await?
-            .context("prepared effect-writer generation disappeared")?;
+            .with_context(|| format!("prepared {} generation disappeared", lifecycle.label()))?;
         anyhow::ensure!(
-            prepared.is_active_for(database),
-            "prepared effect-writer generation did not have the exact active ACL"
+            prepared.is_active_for(lifecycle.family, database),
+            "prepared {} generation did not have the exact active ACL",
+            lifecycle.label()
         );
         anyhow::ensure!(
-            prepared.valid_until.as_deref() == Some(validity.expires_at.as_str()),
-            "prepared effect-writer generation VALID UNTIL does not match credential expires-at"
+            prepared.valid_until.as_deref() == Some(expires_at),
+            "prepared {} generation VALID UNTIL does not match credential expires-at",
+            lifecycle.label()
         );
         verify_role_acl_inventory(
             admin_config,
@@ -826,132 +1315,116 @@ async fn prepare_effect_writer_generation(
             RoleAclExpectation::Generation { database },
         )
         .await?;
-        let acl_role = read_effect_writer_role_state(&admin, EFFECT_WRITER_ROLE)
-            .await?
-            .context("stable effect-writer ACL role disappeared")?;
-        anyhow::ensure!(
-            acl_role.is_acl_role(),
-            "stable effect-writer ACL role is not a connection-free NOLOGIN role"
-        );
-        verify_role_acl_inventory(
-            admin_config,
-            EFFECT_WRITER_ROLE,
-            RoleAclExpectation::EffectAclRole,
-        )
-        .await?;
-        let scope = EffectWriterCredentialScope {
-            org: org.to_string(),
-            project: project.to_string(),
-            environment: environment.to_string(),
-            database: database.to_string(),
-        };
-        let credential_url = writer_url(
-            args.target_admin_database_url
-                .as_deref()
-                .expect("action validated target admin URL"),
-            &role,
-            &password,
-            database,
-        )?;
-        let credential = effect_writer_credential(
-            &scope,
-            &credential_id,
-            generation,
-            &validity,
-            &credential_url,
-        );
-        let triple = Triple::new(org, project, environment);
-        let secret = render_effect_writer_secret_manifest(&triple, &args.namespace, &credential);
-        write_secret_json(secret_path, &secret)
-            .context("write authenticated effect-writer Secret")?;
+        verify_stable_workload_role(&admin, admin_config, lifecycle).await?;
+        publish(&role, &password, predecessor_role)?;
         Ok::<(), anyhow::Error>(())
     }
     .await;
     if let Err(error) = publish_result {
         let rollback =
-            rollback_prepared_effect_writer_generation(&admin, admin_config, database, &role).await;
+            rollback_prepared_workload_generation(&admin, admin_config, lifecycle, &role).await;
         drop(admin);
         let _ = admin_task.await;
         if let Err(rollback_error) = rollback {
             anyhow::bail!(
-                "effect-writer prepare failed after LOGIN was enabled: {error:#}; rollback also failed: {rollback_error:#}"
+                "{} prepare failed after LOGIN was enabled: {error:#}; rollback also failed: {rollback_error:#}",
+                lifecycle.label()
             );
         }
         return Err(error);
     }
-    println!(
-        "prepared and authenticated effect-writer credential generation {} for {}/{}/{}; wrote {}",
-        generation.as_str(),
-        org,
-        project,
-        environment,
-        secret_path.display()
-    );
     drop(admin);
     let _ = admin_task.await;
     Ok(())
 }
 
-async fn rollback_prepared_effect_writer_generation(
+async fn rollback_prepared_workload_generation(
     admin: &(impl GenericClient + Sync),
     admin_config: &PgConfig,
-    database: &str,
+    lifecycle: WorkloadLifecycle<'_>,
     role: &str,
 ) -> anyhow::Result<()> {
     admin
-        .batch_execute(&sql::retire_effect_writer_generation_sql(database, role))
+        .batch_execute(&sql::retire_workload_generation_sql(
+            lifecycle.family,
+            lifecycle.database(),
+            role,
+        ))
         .await
-        .context("revoke prepared effect-writer generation authority")?;
+        .with_context(|| format!("revoke prepared {} generation authority", lifecycle.label()))?;
     admin
-        .batch_execute(&sql::terminate_effect_writer_generation_sessions_sql(role))
+        .batch_execute(&sql::terminate_workload_generation_sessions_sql(role))
         .await
-        .context("terminate prepared effect-writer generation sessions")?;
-    let state = read_effect_writer_role_state(admin, role)
+        .with_context(|| {
+            format!(
+                "terminate prepared {} generation sessions",
+                lifecycle.label()
+            )
+        })?;
+    let state = read_workload_role_state(admin, role, lifecycle.label())
         .await?
-        .context("rolled-back effect-writer generation disappeared")?;
+        .with_context(|| format!("rolled-back {} generation disappeared", lifecycle.label()))?;
     anyhow::ensure!(
         state.is_inactive(),
-        "rolled-back effect-writer generation did not converge to inactive"
+        "rolled-back {} generation did not converge to inactive",
+        lifecycle.label()
     );
     verify_role_acl_inventory(admin_config, role, RoleAclExpectation::None).await
 }
 
-async fn retire_effect_writer_generation(
+async fn retire_workload_generation(
     admin_config: &PgConfig,
-    org: &str,
-    project: &str,
-    environment: &str,
-    database: &str,
+    lifecycle: WorkloadLifecycle<'_>,
+    legacy_old_role: Option<&str>,
     generation: CredentialGeneration,
 ) -> anyhow::Result<()> {
-    let old_role = effect_writer_generation_role(org, project, environment, database, generation);
-    let replacement_role =
-        effect_writer_generation_role(org, project, environment, database, generation.other());
-    let (mut admin, admin_task) = connect_config(admin_config, "effect-writer admin").await?;
-    let scope_key = effect_writer_scope_hash(org, project, environment, database);
-    lock_effect_writer_scope(&admin, &scope_key).await?;
+    let database = lifecycle.database();
+    let mut old_role = lifecycle.role(generation);
+    let replacement_role = lifecycle.role(generation.other());
+    let (mut admin, admin_task) = connect_config(admin_config, lifecycle.label()).await?;
+    lock_workload_family(&admin, lifecycle).await?;
     let transaction = admin
         .transaction()
         .await
-        .context("begin effect-writer generation retirement")?;
-    verify_public_access_floor(&transaction).await?;
-    let old = read_effect_writer_role_state(&transaction, &old_role)
-        .await?
-        .context("old effect-writer generation does not exist")?;
-    let replacement = read_effect_writer_role_state(&transaction, &replacement_role)
-        .await?
-        .context("replacement effect-writer generation does not exist")?;
+        .with_context(|| format!("begin {} generation retirement", lifecycle.label()))?;
+    verify_public_access_floor(&transaction, lifecycle.label()).await?;
+    converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
+    let mut old = converge_workload_generation_state(&transaction, lifecycle, &old_role).await?;
+    if old.as_ref().is_none_or(WorkloadRoleState::is_inactive)
+        && let Some(legacy_role) = legacy_old_role
+    {
+        let legacy =
+            converge_workload_generation_state(&transaction, lifecycle, legacy_role).await?;
+        if legacy.as_ref().is_some_and(|state| !state.is_inactive()) {
+            old_role = legacy_role.to_string();
+            old = legacy;
+        }
+    }
+    let old =
+        old.with_context(|| format!("old {} generation does not exist", lifecycle.label()))?;
+    let replacement =
+        converge_workload_generation_state(&transaction, lifecycle, &replacement_role)
+            .await?
+            .with_context(|| {
+                format!(
+                    "replacement {} generation does not exist",
+                    lifecycle.label()
+                )
+            })?;
     anyhow::ensure!(
-        old.is_active_for(database),
-        "old effect-writer generation is not the exact active credential"
+        old.is_active_for(lifecycle.family, database),
+        "old {} generation is not the exact active credential",
+        lifecycle.label()
     );
     anyhow::ensure!(
-        replacement.is_active_for(database),
-        "replacement effect-writer generation is not LOGIN-capable with exact ACL"
+        replacement.is_active_for(lifecycle.family, database),
+        "replacement {} generation is not LOGIN-capable with exact ACL",
+        lifecycle.label()
     );
     anyhow::ensure!(
         replacement.sessions > 0,
-        "replacement effect-writer generation has no verified live private-pool session"
+        "replacement {} generation has no verified live private-pool session",
+        lifecycle.label()
     );
     verify_role_acl_inventory(
         admin_config,
@@ -966,67 +1439,68 @@ async fn retire_effect_writer_generation(
     )
     .await?;
     transaction
-        .batch_execute(&sql::retire_effect_writer_generation_sql(
-            database, &old_role,
-        ))
-        .await
-        .context("retire old effect-writer credential generation")?;
-    transaction
-        .commit()
-        .await
-        .context("commit effect-writer generation retirement")?;
-    admin
-        .batch_execute(&sql::terminate_effect_writer_generation_sessions_sql(
+        .batch_execute(&sql::retire_workload_generation_sql(
+            lifecycle.family,
+            database,
             &old_role,
         ))
         .await
-        .context("terminate retired effect-writer generation sessions")?;
-    let retired = read_effect_writer_role_state(&admin, &old_role)
+        .with_context(|| format!("retire old {} credential generation", lifecycle.label()))?;
+    transaction
+        .commit()
+        .await
+        .with_context(|| format!("commit {} generation retirement", lifecycle.label()))?;
+    admin
+        .batch_execute(&sql::terminate_workload_generation_sessions_sql(&old_role))
+        .await
+        .with_context(|| {
+            format!(
+                "terminate retired {} generation sessions",
+                lifecycle.label()
+            )
+        })?;
+    let retired = read_workload_role_state(&admin, &old_role, lifecycle.label())
         .await?
-        .context("retired effect-writer generation disappeared")?;
+        .with_context(|| format!("retired {} generation disappeared", lifecycle.label()))?;
     anyhow::ensure!(
         retired.is_inactive(),
-        "old effect-writer generation did not converge to inactive"
-    );
-    println!(
-        "retired effect-writer credential generation {} for {}/{}/{}",
-        generation.as_str(),
-        org,
-        project,
-        environment
+        "old {} generation did not converge to inactive",
+        lifecycle.label()
     );
     drop(admin);
     let _ = admin_task.await;
     Ok(())
 }
 
-async fn abort_effect_writer_generation(
+async fn abort_workload_generation(
     admin_config: &PgConfig,
-    org: &str,
-    project: &str,
-    environment: &str,
-    database: &str,
+    lifecycle: WorkloadLifecycle<'_>,
     generation: CredentialGeneration,
 ) -> anyhow::Result<()> {
-    let role = effect_writer_generation_role(org, project, environment, database, generation);
-    let (mut admin, admin_task) = connect_config(admin_config, "effect-writer admin").await?;
-    let scope_key = effect_writer_scope_hash(org, project, environment, database);
-    lock_effect_writer_scope(&admin, &scope_key).await?;
+    let database = lifecycle.database();
+    let role = lifecycle.role(generation);
+    let (mut admin, admin_task) = connect_config(admin_config, lifecycle.label()).await?;
+    lock_workload_family(&admin, lifecycle).await?;
     let transaction = admin
         .transaction()
         .await
-        .context("begin effect-writer generation abort")?;
-    verify_public_access_floor(&transaction).await?;
-    let prepared = read_effect_writer_role_state(&transaction, &role)
+        .with_context(|| format!("begin {} generation abort", lifecycle.label()))?;
+    verify_public_access_floor(&transaction, lifecycle.label()).await?;
+    converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
+    let prepared = converge_workload_generation_state(&transaction, lifecycle, &role)
         .await?
-        .context("prepared effect-writer generation does not exist")?;
+        .with_context(|| format!("prepared {} generation does not exist", lifecycle.label()))?;
+    let other_role = lifecycle.role(generation.other());
+    let _ = converge_workload_generation_state(&transaction, lifecycle, &other_role).await?;
     anyhow::ensure!(
-        prepared.is_active_for(database),
-        "prepared effect-writer generation is not the exact active credential"
+        prepared.is_active_for(lifecycle.family, database),
+        "prepared {} generation is not the exact active credential",
+        lifecycle.label()
     );
     anyhow::ensure!(
         prepared.sessions == 0,
-        "published or in-use effect-writer generation cannot be aborted"
+        "published or in-use {} generation cannot be aborted",
+        lifecycle.label()
     );
     verify_role_acl_inventory(
         admin_config,
@@ -1034,53 +1508,49 @@ async fn abort_effect_writer_generation(
         RoleAclExpectation::Generation { database },
     )
     .await?;
-    let acl_role = read_effect_writer_role_state(&transaction, EFFECT_WRITER_ROLE)
-        .await?
-        .context("stable effect-writer ACL role does not exist")?;
-    anyhow::ensure!(
-        acl_role.is_acl_role(),
-        "stable effect-writer ACL role is not a connection-free NOLOGIN role"
-    );
-    verify_role_acl_inventory(
-        admin_config,
-        EFFECT_WRITER_ROLE,
-        RoleAclExpectation::EffectAclRole,
-    )
-    .await?;
+    verify_stable_workload_role(&transaction, admin_config, lifecycle).await?;
     transaction
-        .batch_execute(&sql::retire_effect_writer_generation_sql(database, &role))
+        .batch_execute(&sql::retire_workload_generation_sql(
+            lifecycle.family,
+            database,
+            &role,
+        ))
         .await
-        .context("abort unpublished effect-writer credential generation")?;
+        .with_context(|| {
+            format!(
+                "abort unpublished {} credential generation",
+                lifecycle.label()
+            )
+        })?;
     transaction
         .commit()
         .await
-        .context("commit effect-writer generation abort")?;
+        .with_context(|| format!("commit {} generation abort", lifecycle.label()))?;
     admin
-        .batch_execute(&sql::terminate_effect_writer_generation_sessions_sql(&role))
+        .batch_execute(&sql::terminate_workload_generation_sessions_sql(&role))
         .await
-        .context("terminate aborted effect-writer generation sessions")?;
-    let aborted = read_effect_writer_role_state(&admin, &role)
+        .with_context(|| {
+            format!(
+                "terminate aborted {} generation sessions",
+                lifecycle.label()
+            )
+        })?;
+    let aborted = read_workload_role_state(&admin, &role, lifecycle.label())
         .await?
-        .context("aborted effect-writer generation disappeared")?;
+        .with_context(|| format!("aborted {} generation disappeared", lifecycle.label()))?;
     anyhow::ensure!(
         aborted.is_inactive(),
-        "aborted effect-writer generation did not converge to inactive"
+        "aborted {} generation did not converge to inactive",
+        lifecycle.label()
     );
     verify_role_acl_inventory(admin_config, &role, RoleAclExpectation::None).await?;
-    println!(
-        "aborted unpublished effect-writer credential generation {} for {}/{}/{}",
-        generation.as_str(),
-        org,
-        project,
-        environment
-    );
     drop(admin);
     let _ = admin_task.await;
     Ok(())
 }
 
-fn effect_writer_validity(now: DateTime<Utc>) -> EffectWriterCredentialValidity {
-    let expires_at = now + chrono::Duration::days(EFFECT_WRITER_CREDENTIAL_TTL_DAYS);
+fn workload_validity(now: DateTime<Utc>) -> EffectWriterCredentialValidity {
+    let expires_at = now + chrono::Duration::days(WORKLOAD_CREDENTIAL_TTL_DAYS);
     EffectWriterCredentialValidity {
         issued_at: now.to_rfc3339_opts(SecondsFormat::Secs, true),
         not_before: now.to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -1147,7 +1617,18 @@ fn exact_project_database_config(admin_url: &str, database: &str) -> anyhow::Res
     Ok(config)
 }
 
-fn writer_config(admin: &PgConfig, role: &str, password: &str, database: &str) -> PgConfig {
+fn named_database_config(admin_url: &str, purpose: &str) -> anyhow::Result<PgConfig> {
+    let config = PgConfig::from_str(admin_url).with_context(|| format!("parse {purpose} URL"))?;
+    anyhow::ensure!(
+        config
+            .get_dbname()
+            .is_some_and(|database| !database.is_empty()),
+        "{purpose} URL must name the exact database"
+    );
+    Ok(config)
+}
+
+fn workload_config(admin: &PgConfig, role: &str, password: &str, database: &str) -> PgConfig {
     let mut config = admin.clone();
     config.user(role);
     config.password(password);
@@ -1155,7 +1636,7 @@ fn writer_config(admin: &PgConfig, role: &str, password: &str, database: &str) -
     config
 }
 
-fn writer_url(
+fn workload_url(
     admin_url: &str,
     role: &str,
     password: &str,
@@ -1167,9 +1648,9 @@ fn writer_url(
         "target admin URL must use postgres or postgresql"
     );
     url.set_username(role)
-        .map_err(|_| anyhow::anyhow!("set effect-writer URL username"))?;
+        .map_err(|_| anyhow::anyhow!("set workload URL username"))?;
     url.set_password(Some(password))
-        .map_err(|_| anyhow::anyhow!("set effect-writer URL password"))?;
+        .map_err(|_| anyhow::anyhow!("set workload URL password"))?;
     url.set_path(&format!("/{database}"));
     url.set_query(None);
     url.set_fragment(None);
@@ -1190,12 +1671,12 @@ async fn connect_config(
     Ok((client, tokio::spawn(connection)))
 }
 
-async fn authenticate_effect_writer(
+async fn authenticate_workload_generation(
     config: &PgConfig,
+    lifecycle: WorkloadLifecycle<'_>,
     role: &str,
-    database: &str,
 ) -> anyhow::Result<()> {
-    let (client, task) = connect_config(config, "prepared effect-writer generation").await?;
+    let (client, task) = connect_config(config, lifecycle.label()).await?;
     let row = client
         .query_one(
             "SELECT current_user::text, current_database()::text, \
@@ -1203,7 +1684,7 @@ async fn authenticate_effect_writer(
             &[],
         )
         .await
-        .context("probe prepared effect-writer generation")?;
+        .with_context(|| format!("probe prepared {} generation", lifecycle.label()))?;
     let current_user: String = row.get(0);
     let current_database: String = row.get(1);
     let can_create_temporary: bool = row.get(2);
@@ -1212,31 +1693,35 @@ async fn authenticate_effect_writer(
         "prepared generation authenticated as wrong role"
     );
     anyhow::ensure!(
-        current_database == database,
+        current_database == lifecycle.database(),
         "prepared generation authenticated to wrong database"
     );
     anyhow::ensure!(
         !can_create_temporary,
-        "prepared generation inherited TEMPORARY on the project database"
+        "prepared generation inherited TEMPORARY on its database"
     );
     drop(client);
     task.await
-        .context("join effect-writer authentication connection")??;
+        .with_context(|| format!("join {} authentication connection", lifecycle.label()))??;
     Ok(())
 }
 
-async fn lock_effect_writer_scope(
+async fn lock_workload_family(
     client: &(impl GenericClient + Sync),
-    scope_key: &str,
+    lifecycle: WorkloadLifecycle<'_>,
 ) -> anyhow::Result<()> {
+    let family_key = lifecycle.family_lock_key();
     client
-        .query_one(sql::effect_writer_scope_lock_sql(), &[&scope_key])
+        .query_one(sql::workload_scope_lock_sql(), &[&family_key])
         .await
-        .context("acquire effect-writer scope rotation lock")?;
+        .with_context(|| format!("acquire {} family rotation lock", lifecycle.label()))?;
     Ok(())
 }
 
-async fn verify_public_access_floor(client: &(impl GenericClient + Sync)) -> anyhow::Result<()> {
+async fn verify_public_access_floor(
+    client: &(impl GenericClient + Sync),
+    label: &str,
+) -> anyhow::Result<()> {
     let databases: Vec<String> = client
         .query(sql::public_connect_databases_sql(), &[])
         .await
@@ -1246,7 +1731,7 @@ async fn verify_public_access_floor(client: &(impl GenericClient + Sync)) -> any
         .collect();
     anyhow::ensure!(
         databases.is_empty(),
-        "effect-writer preparation requires PUBLIC CONNECT revoked on every connectable database (template1 included); still granted on {databases:?}"
+        "{label} generation actions require PUBLIC CONNECT revoked on every connectable database (template1 included); still granted on {databases:?}"
     );
     let public_temporary: bool = client
         .query_one(sql::public_temporary_on_current_database_sql(), &[])
@@ -1255,8 +1740,28 @@ async fn verify_public_access_floor(client: &(impl GenericClient + Sync)) -> any
         .get(0);
     anyhow::ensure!(
         !public_temporary,
-        "effect-writer generation actions require PUBLIC TEMPORARY revoked on the exact project database"
+        "{label} generation actions require PUBLIC TEMPORARY revoked on the exact database"
     );
+    Ok(())
+}
+
+async fn verify_stable_workload_role(
+    client: &(impl GenericClient + Sync),
+    admin_config: &PgConfig,
+    lifecycle: WorkloadLifecycle<'_>,
+) -> anyhow::Result<()> {
+    let role = lifecycle.family.acl_role();
+    let state = read_workload_role_state(client, role, lifecycle.label())
+        .await?
+        .with_context(|| format!("stable {} ACL role does not exist", lifecycle.label()))?;
+    anyhow::ensure!(
+        state.is_acl_role(lifecycle.family),
+        "stable {} ACL role is not a connection-free NOLOGIN role with exact generation members",
+        lifecycle.label()
+    );
+    if lifecycle.family == WorkloadRoleFamily::EffectWriter {
+        verify_role_acl_inventory(admin_config, role, RoleAclExpectation::EffectAclRole).await?;
+    }
     Ok(())
 }
 
@@ -1433,15 +1938,16 @@ fn verify_effect_writer_acl_role_inventory(
     Ok(())
 }
 
-async fn read_effect_writer_role_state(
+async fn read_workload_role_state(
     client: &(impl GenericClient + Sync),
     role: &str,
-) -> anyhow::Result<Option<EffectWriterRoleState>> {
+    label: &str,
+) -> anyhow::Result<Option<WorkloadRoleState>> {
     let row = client
-        .query_opt(sql::effect_writer_generation_state_sql(), &[&role])
+        .query_opt(sql::workload_generation_state_sql(), &[&role])
         .await
-        .context("read effect-writer generation state")?;
-    Ok(row.map(|row| EffectWriterRoleState {
+        .with_context(|| format!("read {label} generation state"))?;
+    Ok(row.map(|row| WorkloadRoleState {
         login: row.get("rolcanlogin"),
         superuser: row.get("rolsuper"),
         inherit: row.get("rolinherit"),
@@ -1454,6 +1960,7 @@ async fn read_effect_writer_role_state(
         valid_until_finite: row.get("valid_until_finite"),
         memberships: row.get("memberships"),
         membership_options_exact: row.get("membership_options_exact"),
+        membership_options_migratable: row.get("membership_options_migratable"),
         member_roles: row.get("member_roles"),
         member_options_exact: row.get("member_options_exact"),
         generation_children_exact: row.get("generation_children_exact"),
@@ -1996,6 +2503,7 @@ fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<
 mod tests {
     use super::*;
     use clap::{CommandFactory as _, FromArgMatches as _, Parser};
+    use wamn_control_provision::EFFECT_WRITER_ROLE;
 
     #[derive(Debug, Parser)]
     struct TestCli {
@@ -2024,7 +2532,7 @@ mod tests {
             "dev",
             // Required with no default on a PROVISIONING invocation
             // (wamn-0h0g.12.122), which is every invocation this helper builds.
-            // The four credential-free modes are exempt (wamn-0h0g.12.141) and
+            // The credential-free modes are exempt (wamn-0h0g.12.141) and
             // must therefore be parsed bare — see
             // `the_credential_free_modes_parse_without_either_password`.
             "--dispatch-reader-password",
@@ -2101,14 +2609,17 @@ mod tests {
         }
     }
 
-    /// Every effect-writer action is a non-revoke invocation, so the same Clap
-    /// contract makes its identity accesses infallible in all three action modes.
+    /// Every workload action is a non-revoke invocation, so the same Clap
+    /// contract makes its identity accesses infallible in every action mode.
     #[test]
-    fn clap_guards_the_effect_writer_identity_accesses_in_every_action_mode() {
+    fn clap_guards_the_workload_identity_accesses_in_every_action_mode() {
         for action in [
             "--prepare-effect-writer-generation",
             "--retire-effect-writer-generation",
             "--abort-effect-writer-generation",
+            "--prepare-control-author-generation",
+            "--retire-control-author-generation",
+            "--abort-control-author-generation",
         ] {
             for omitted in ["--org", "--project", "--env"] {
                 let mut argv = vec![
@@ -2119,8 +2630,6 @@ mod tests {
                     "billing",
                     "--env",
                     "dev",
-                    "--target-admin-database-url",
-                    "postgresql://postgres@localhost/wamn-db-acme--billing--dev",
                     action,
                     "a",
                 ];
@@ -2131,7 +2640,7 @@ mod tests {
                 argv.drain(at..=at + 1);
 
                 let error = TestCli::try_parse_from(argv)
-                    .expect_err("an effect-writer action accepted a missing identity member");
+                    .expect_err("a workload action accepted a missing identity member");
                 assert_eq!(
                     error.kind(),
                     clap::error::ErrorKind::MissingRequiredArgument,
@@ -2145,12 +2654,12 @@ mod tests {
             .next()
             .expect("the module has an implementation");
         let identity_accesses = implementation
-            .split("async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs)")
+            .split("fn workload_action_identity<'a>(")
             .nth(1)
-            .expect("the effect-writer action exists")
-            .split("validate_project_env")
+            .expect("the shared workload identity parser exists")
+            .split("Ok(WorkloadActionIdentity")
             .next()
-            .expect("the identity accesses precede validation");
+            .expect("the identity accesses precede construction");
         assert_eq!(
             identity_accesses.matches(".expect(").count(),
             3,
@@ -2703,7 +3212,7 @@ mod tests {
     }
 
     /// The other half of the two guards above (wamn-0h0g.12.141). Refusing a
-    /// missing credential is only half the contract: the four modes that
+    /// missing credential is only half the contract: the modes that
     /// provision nothing reach neither [`compose_url`] nor [`role_sql`], so the
     /// parser must not demand a secret they would immediately discard — which
     /// is what forced `deploy/mvp/bootstrap.sh`'s generation and revoke call
@@ -2857,8 +3366,13 @@ mod tests {
 
     #[test]
     fn stable_acl_role_members_are_only_scoped_generation_roles() {
-        assert!(is_effect_writer_generation_role(
+        assert!(is_workload_generation_role(
+            WorkloadRoleFamily::EffectWriter,
             "wamn_effect_writer_0123456789abcdef0123456789abcdef01234567_a"
+        ));
+        assert!(is_workload_generation_role(
+            WorkloadRoleFamily::ControlAuthor,
+            "wamn_control_author_0123456789abcdef0123456789abcdef01234567_b"
         ));
         for invalid in [
             "wamn_effect_writer_a",
@@ -2867,7 +3381,7 @@ mod tests {
             "unrelated_0123456789abcdef0123456789abcdef01234567_a",
         ] {
             assert!(
-                !is_effect_writer_generation_role(invalid),
+                !is_workload_generation_role(WorkloadRoleFamily::EffectWriter, invalid),
                 "accepted {invalid}"
             );
         }

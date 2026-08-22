@@ -293,18 +293,14 @@ pub async fn install_effect_writer(
         .await?
         .get(0);
     let scope = EffectWriterCredentialScope {
+        tenant: "claim-live-tenant".to_string(),
         org: "claim-live-org".to_string(),
         project: "claim-live-project".to_string(),
         environment: "claim-live-env".to_string(),
         database: database.clone(),
     };
-    let role = effect_writer_generation_role(
-        &scope.org,
-        &scope.project,
-        &scope.environment,
-        &scope.database,
-        CredentialGeneration::A,
-    );
+    let role =
+        effect_writer_generation_role(&scope.tenant, &scope.database, CredentialGeneration::A);
     let role_identifier = quote_identifier(&role);
     let role_literal = quote_literal(&role);
     let password_literal = quote_literal(WRITER_PASSWORD);

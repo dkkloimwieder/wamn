@@ -9,7 +9,7 @@ use sha2::{Digest as _, Sha256};
 use url::Url;
 
 /// Frozen document identity for the private effect-writer credential.
-pub const EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION: &str = "0.1";
+pub const EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION: &str = "0.2";
 /// Only key carried by the fixed-mount effect-writer Secret.
 pub const EFFECT_WRITER_CREDENTIAL_KEY: &str = "credential.json";
 /// Stable absolute path read by the executor's private loader.
@@ -61,6 +61,7 @@ impl std::str::FromStr for CredentialGeneration {
 /// Exact project-environment scope bound into an effect-writer credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectWriterCredentialScope {
+    pub tenant: String,
     pub org: String,
     pub project: String,
     pub environment: String,
@@ -84,6 +85,7 @@ pub struct EffectWriterCredential {
     credential_id: String,
     generation: CredentialGeneration,
     role: String,
+    tenant: String,
     org: String,
     project: String,
     environment: String,
@@ -103,6 +105,7 @@ impl fmt::Debug for EffectWriterCredential {
             .field("credential_id", &self.credential_id)
             .field("generation", &self.generation)
             .field("role", &self.role)
+            .field("tenant", &self.tenant)
             .field("org", &self.org)
             .field("project", &self.project)
             .field("environment", &self.environment)
@@ -185,13 +188,8 @@ pub fn effect_writer_credential(
         schema_version: EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION.to_string(),
         credential_id: credential_id.to_string(),
         generation,
-        role: effect_writer_generation_role(
-            &scope.org,
-            &scope.project,
-            &scope.environment,
-            &scope.database,
-            generation,
-        ),
+        role: effect_writer_generation_role(&scope.tenant, &scope.database, generation),
+        tenant: scope.tenant.clone(),
         org: scope.org.clone(),
         project: scope.project.clone(),
         environment: scope.environment.clone(),
@@ -225,7 +223,7 @@ pub fn validate_effect_writer_credential(
     if credential.schema_version != EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION {
         return Err(EffectWriterCredentialError::new(
             EffectWriterCredentialErrorKind::Identity,
-            "effect-writer credential schema-version must be 0.1",
+            "effect-writer credential schema-version must be 0.2",
         ));
     }
     if credential.credential_id.len() != 32 || !is_lower_hex(&credential.credential_id) {
@@ -234,20 +232,16 @@ pub fn validate_effect_writer_credential(
             "effect-writer credential-id must be 32 lowercase hex digits",
         ));
     }
-    let expected_role = effect_writer_generation_role(
-        &expected.org,
-        &expected.project,
-        &expected.environment,
-        &expected.database,
-        credential.generation,
-    );
+    let expected_role =
+        effect_writer_generation_role(&expected.tenant, &expected.database, credential.generation);
     if credential.role != expected_role {
         return Err(EffectWriterCredentialError::new(
             EffectWriterCredentialErrorKind::Identity,
             "effect-writer credential role does not match its scoped generation",
         ));
     }
-    if credential.org != expected.org
+    if credential.tenant != expected.tenant
+        || credential.org != expected.org
         || credential.project != expected.project
         || credential.environment != expected.environment
         || credential.database != expected.database
@@ -312,21 +306,11 @@ pub fn validate_effect_writer_credential(
     Ok(())
 }
 
-/// Deterministic 160-bit suffix for one project environment.
-pub fn effect_writer_scope_hash(
-    org: &str,
-    project: &str,
-    environment: &str,
-    database: &str,
-) -> String {
+/// Deterministic 160-bit suffix for one tenant in one database.
+pub fn effect_writer_scope_hash(tenant: &str, database: &str) -> String {
     let mut preimage = Vec::new();
     frame(&mut preimage, EFFECT_WRITER_SCOPE_DOMAIN);
-    for (tag, value) in [
-        ("org", org),
-        ("project", project),
-        ("environment", environment),
-        ("database", database),
-    ] {
+    for (tag, value) in [("tenant", tenant), ("database", database)] {
         frame(&mut preimage, tag.as_bytes());
         frame(&mut preimage, value.as_bytes());
     }
@@ -336,15 +320,13 @@ pub fn effect_writer_scope_hash(
 
 /// Scoped PostgreSQL LOGIN role for one credential-generation slot.
 pub fn effect_writer_generation_role(
-    org: &str,
-    project: &str,
-    environment: &str,
+    tenant: &str,
     database: &str,
     generation: CredentialGeneration,
 ) -> String {
     format!(
         "{EFFECT_WRITER_ROLE}_{}_{}",
-        effect_writer_scope_hash(org, project, environment, database),
+        effect_writer_scope_hash(tenant, database),
         generation.as_str()
     )
 }
@@ -395,6 +377,7 @@ mod tests {
 
     fn scope() -> EffectWriterCredentialScope {
         EffectWriterCredentialScope {
+            tenant: "tenant".to_string(),
             org: "org".to_string(),
             project: "project".to_string(),
             environment: "production".to_string(),
@@ -404,13 +387,8 @@ mod tests {
 
     fn document() -> Vec<u8> {
         let scope = scope();
-        let role = effect_writer_generation_role(
-            &scope.org,
-            &scope.project,
-            &scope.environment,
-            &scope.database,
-            CredentialGeneration::A,
-        );
+        let role =
+            effect_writer_generation_role(&scope.tenant, &scope.database, CredentialGeneration::A);
         serde_json::to_vec(&effect_writer_credential(
             &scope,
             "0123456789abcdef0123456789abcdef",

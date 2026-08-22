@@ -17,8 +17,8 @@ use wamn_control_registry::Triple;
 use wamn_run_state::{EFFECT_WRITER_CREDENTIAL_KEY, EffectWriterCredential};
 
 use crate::name::{
-    APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_effect_writer_secret_name,
-    project_env_secret_name, secret_name,
+    APP_ROLE, cdc_object_name, control_author_secret_name, project_env_cdc_secret_name,
+    project_env_effect_writer_secret_name, project_env_secret_name, secret_name,
 };
 
 /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
@@ -122,6 +122,10 @@ pub fn render_effect_writer_secret_manifest(
             Value::String(credential.role().to_string()),
         ),
         (
+            "wamn.io/tenant".to_string(),
+            Value::String(field("tenant").to_string()),
+        ),
+        (
             "wamn.io/issued-at".to_string(),
             Value::String(field("issued-at").to_string()),
         ),
@@ -163,6 +167,33 @@ pub fn render_effect_writer_secret_manifest(
         "stringData": {
             (EFFECT_WRITER_CREDENTIAL_KEY): serde_json::to_string(credential)
                 .expect("effect-writer credential serializes"),
+        },
+    })
+}
+
+/// Render the scoped control-author URL Secret consumed by scenario-worker.
+pub fn render_control_author_secret_manifest(triple: &Triple, namespace: &str, url: &str) -> Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": control_author_secret_name(
+                &triple.org,
+                &triple.project,
+                triple.env.as_str(),
+            ),
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "wamn",
+                "app.kubernetes.io/component": "control-author-credentials",
+                "wamn.org": triple.org,
+                "wamn.project": triple.project,
+                "wamn.env": triple.env.as_str(),
+            },
+        },
+        "type": "Opaque",
+        "stringData": {
+            "url": url,
         },
     })
 }
@@ -227,18 +258,14 @@ mod tests {
     fn writer_fixture() -> (Triple, EffectWriterCredentialScope, EffectWriterCredential) {
         let triple = Triple::new("acme", "billing", "dev");
         let scope = EffectWriterCredentialScope {
+            tenant: "tenant".to_string(),
             org: "acme".to_string(),
             project: "billing".to_string(),
             environment: "dev".to_string(),
             database: "wamn-db-acme--billing--dev".to_string(),
         };
-        let role = effect_writer_generation_role(
-            &scope.org,
-            &scope.project,
-            &scope.environment,
-            &scope.database,
-            CredentialGeneration::A,
-        );
+        let role =
+            effect_writer_generation_role(&scope.tenant, &scope.database, CredentialGeneration::A);
         let credential = effect_writer_credential(
             &scope,
             "0123456789abcdef0123456789abcdef",
@@ -306,6 +333,18 @@ mod tests {
     }
 
     #[test]
+    fn control_author_secret_matches_the_scenario_worker_mount() {
+        let triple = Triple::new("acme", "receiving", "dev");
+        let url = "postgres://wamn_control_author_scope_a:secret@control-rw/wamn-system";
+        let secret = render_control_author_secret_manifest(&triple, "wamn-system", url);
+        assert_eq!(
+            secret["metadata"]["name"],
+            "wamn-authoring-acme--receiving--dev"
+        );
+        assert_eq!(secret["stringData"]["url"], url);
+    }
+
+    #[test]
     fn cdc_secret_is_a_distinct_replication_tier_reference() {
         let t = Triple::new("acme", "billing", "dev");
         let url =
@@ -349,7 +388,7 @@ mod tests {
         );
         assert_eq!(
             secret["metadata"]["annotations"].as_object().unwrap().len(),
-            6
+            7
         );
         assert_eq!(
             secret["metadata"]["annotations"]["wamn.io/credential-id"],
@@ -358,6 +397,10 @@ mod tests {
         assert_eq!(
             secret["metadata"]["annotations"]["wamn.io/issued-at"],
             "2026-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            secret["metadata"]["annotations"]["wamn.io/tenant"],
+            "tenant"
         );
         assert_eq!(
             secret["metadata"]["annotations"]["wamn.io/not-before"],
