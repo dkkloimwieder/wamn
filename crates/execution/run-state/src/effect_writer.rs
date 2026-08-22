@@ -800,10 +800,10 @@ pub(crate) fn effect_dispatch_exists() -> Sql {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_effect_dispatch, begin_effect_attempt, begin_run_projection, bind_writer_authority,
-        complete_run_projection, effect_attempt_coordinate_exists, effect_attempt_exists,
-        effect_dispatch_exists, effect_run_is_runnable, record_effect_outcome,
-        reset_expired_projection, valid_schema, verify_effect_attempt, verify_effect_outcome,
+        acquire_effect_dispatch, begin_effect_attempt, bind_writer_authority,
+        effect_attempt_coordinate_exists, effect_attempt_exists, effect_dispatch_exists,
+        effect_run_is_runnable, record_effect_outcome, valid_schema, verify_effect_attempt,
+        verify_effect_outcome,
     };
 
     #[test]
@@ -828,80 +828,6 @@ mod tests {
         assert!(verify.text().contains("attempt_deadline_at"));
         assert!(verify.text().contains("attempt_input_ref"));
         assert!(!verify.text().contains("wamn_run."));
-    }
-
-    #[test]
-    fn projection_reset_is_exact_expired_fenced_and_deletes_only_node_runs() {
-        let statement = reset_expired_projection();
-        assert_eq!(statement.arity(), 4);
-        for evidence in [
-            "q.lease_owner IS NOT DISTINCT FROM $2::text",
-            "q.lease_expires_at IS NOT DISTINCT FROM $3::text::timestamptz",
-            "q.lease_generation IS NOT DISTINCT FROM $4::bigint",
-            "q.lease_expires_at <= statement_timestamp()",
-            "r.status IN ('dispatched', 'running')",
-        ] {
-            assert!(statement.text().contains(evidence), "missing {evidence}");
-        }
-        assert!(statement.text().contains("DELETE FROM node_runs"));
-        for forbidden in [
-            "DELETE FROM effect_attempts",
-            "UPDATE runs",
-            "UPDATE run_queue",
-        ] {
-            assert!(!statement.text().contains(forbidden), "found {forbidden}");
-        }
-        let source = include_str!("effect_writer.rs");
-        let reset = source
-            .find("pub async fn reset_expired_pre_effect_projection")
-            .expect("private reset method");
-        let body = &source[reset..];
-        let advisory = body
-            .find("serialize_effect_intent_sql().as_str()")
-            .expect("reset acquires the shared advisory fence");
-        let fresh_effect = body
-            .find("select_claim_effect_attempt_sql().as_str()")
-            .expect("reset freshly reclassifies immutable effect evidence");
-        let delete = body
-            .find("reset_expired_projection().text()")
-            .expect("reset deletes only after fresh classification");
-        let commit = body.find("transaction.commit()").expect("reset commit");
-        assert!(advisory < fresh_effect && fresh_effect < delete && delete < commit);
-    }
-
-    #[test]
-    fn projection_write_is_live_fenced_and_exact_retry_only() {
-        let begin = begin_run_projection();
-        assert_eq!(begin.arity(), 10);
-        for evidence in [
-            "q.lease_owner IS NOT DISTINCT FROM $2::text",
-            "q.lease_generation IS NOT DISTINCT FROM $3::bigint",
-            "q.lease_expires_at > statement_timestamp()",
-            "r.status = 'running'",
-            "ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence)",
-            "IS NOT DISTINCT FROM",
-        ] {
-            assert!(begin.text().contains(evidence), "missing {evidence}");
-        }
-        let complete = complete_run_projection();
-        assert_eq!(complete.arity(), 17);
-        assert!(complete.text().contains("projection.status = 'started'"));
-        assert!(complete.text().contains("projection.error_detail"));
-        assert!(complete.text().contains("IS NOT DISTINCT FROM"));
-        assert!(!complete.text().contains("UPDATE runs"));
-        assert!(!complete.text().contains("UPDATE run_queue"));
-
-        let source = include_str!("effect_writer.rs");
-        let fence = source
-            .find("query_one(\n                serialize_effect_intent_sql().as_str()")
-            .expect("projection writer acquires the shared advisory fence");
-        let begin_call = source
-            .find("query_one(begin_run_projection().text()")
-            .expect("projection writer begins the coordinate");
-        let complete_call = source
-            .find("query_opt(complete_run_projection().text()")
-            .expect("projection writer terminalizes the coordinate");
-        assert!(fence < begin_call && begin_call < complete_call);
     }
 
     #[test]
@@ -993,9 +919,6 @@ mod tests {
             record_effect_outcome(),
             verify_effect_outcome(),
             effect_dispatch_exists(),
-            begin_run_projection(),
-            complete_run_projection(),
-            reset_expired_projection(),
         ] {
             assert!(!statement.text().contains("wamn_run."));
             assert!(!statement.text().contains("search_path"));

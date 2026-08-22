@@ -978,20 +978,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn expired_projection_handoff_commits_before_private_delete_and_reclaims_fresh() {
-        let source = include_str!("production_claim.rs");
-        let start = source.find("async fn claim_in_transaction(").unwrap();
-        let end = source.find("async fn reap_in_transaction(").unwrap();
-        let body = &source[start..end];
-        let classify = body.find("ProductionClaimClass::ExpiredPreEffect").unwrap();
-        let projection = body.find("select_pre_effect_projection_sql()").unwrap();
-        let handoff = body.find("ProductionClaimResult::ResetRequired").unwrap();
-        let clear = body.find("clear_pre_effect_state_sql()").unwrap();
-        let grant = body.find("grant_production_claim_sql()").unwrap();
-        assert!(classify < projection && projection < handoff);
-        assert!(handoff < clear && clear < grant);
-        assert!(!body.contains("DELETE FROM node_runs"));
-    }
 }

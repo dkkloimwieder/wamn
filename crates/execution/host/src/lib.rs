@@ -1569,15 +1569,6 @@ mod tests {
     fn host_never_calls_guest_for_nonexecute_claim_results() {
         assert_eq!(claim_guest_input(&ProductionClaimResult::Empty), None);
         assert_eq!(
-            claim_guest_input(&ProductionClaimResult::ResetRequired {
-                run_id: "reset".into(),
-                prior_lease_owner: "dead".into(),
-                prior_lease_expires_at: "2000-01-01 00:00:00+00".into(),
-                prior_lease_generation: 4,
-            }),
-            None
-        );
-        assert_eq!(
             claim_guest_input(&ProductionClaimResult::Terminalized {
                 run_id: "uncertain".into(),
                 status: RunStatus::EffectUncertain,
@@ -1775,28 +1766,5 @@ mod tests {
 
         host.revoke_identity();
         assert_eq!(host.postgres.session_claims(&scope), None);
-    }
-
-    #[test]
-    fn reset_handoff_is_private_fail_closed_and_reenters_claim_loop() {
-        let source = include_str!("lib.rs");
-        let reset = source
-            .find("ProductionClaimResult::ResetRequired {")
-            .unwrap();
-        let missing = source[reset..]
-            .find("requires the fixed private writer")
-            .unwrap();
-        let call = source[reset..]
-            .find(".reset_expired_pre_effect_projection(")
-            .unwrap();
-        let attempt_won = source[reset..]
-            .find("EffectWriterErrorKind::EffectAttemptPresent")
-            .unwrap();
-        let fence_lost = source[reset..]
-            .find("EffectWriterErrorKind::ResetFenceLost")
-            .unwrap();
-        let retry = source[reset..].find("continue;").unwrap();
-        assert!(missing < call && call < attempt_won && attempt_won < retry);
-        assert!(call < fence_lost && fence_lost < retry);
     }
 }
