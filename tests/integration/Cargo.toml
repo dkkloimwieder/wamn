@@ -28,7 +28,6 @@ wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-gate-harness = { workspace = true }
-wamn-test-fixtures = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-execution-host = { workspace = true }

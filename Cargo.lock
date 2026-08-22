@@ -4493,7 +4493,6 @@ dependencies = [
  "wamn-schema-control",
  "wamn-schema-model",
  "wamn-standard-nodes",
- "wamn-test-fixtures",
  "wamn-test-infrastructure",
  "wash-runtime",
  "wasmtime-wasi",
@@ -4671,17 +4670,6 @@ name = "wamn-standard-nodes"
 version = "0.1.0"
 dependencies = [
  "wamn-flow",
-]
-
-[[package]]
-name = "wamn-test-fixtures"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "tokio",
- "tokio-postgres",
- "wamn-gate-harness",
- "wamn-run-state",
 ]
 
 [[package]]

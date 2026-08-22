@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixtures", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/flow-model", "crates/execution/flow-invocation", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/model", "crates/schema/compiler", "crates/schema/control", "crates/data/entity-access", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/scenarios/model", "crates/execution/standard-nodes", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
+members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/flow-model", "crates/execution/flow-invocation", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/model", "crates/schema/compiler", "crates/schema/control", "crates/data/entity-access", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/scenarios/model", "crates/execution/standard-nodes", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
@@ -116,7 +116,6 @@ wamn-schema-compiler = { path = "crates/schema/compiler", version = "0.1.0" }
 wamn-schema-control = { path = "crates/schema/control", version = "0.1.0" }
 wamn-schema-model = { path = "crates/schema/model", version = "0.1.0" }
 wamn-standard-nodes = { path = "crates/execution/standard-nodes", version = "0.1.0" }
-wamn-test-fixtures = { path = "test-support/fixtures", version = "0.1.0" }
 wamn-test-infrastructure = { path = "test-support/infrastructure", version = "0.1.0" }
 wamn-waker = { path = "services/waker", version = "0.1.0" }
 
