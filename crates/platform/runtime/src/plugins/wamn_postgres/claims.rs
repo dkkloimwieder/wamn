@@ -242,11 +242,7 @@ SELECT r.status, r.execution_bundle_hash = $2, \
        instance.lifecycle_status = 'enabled', instance.active_generation, \
        generation.generation, generation.definition_json::text, generation.definition_hash, \
        generation.credential_set_handle, \
-       CASE \
-           WHEN r.trigger_source = 'scenario-draft' \
-            AND r.invocation_context #>> '{{source,producer}}' = 'draft-scenario' \
-           THEN grant_row.generation IS NOT NULL AND grant_row.revoked_at IS NULL \
-           WHEN r.trigger_source IS DISTINCT FROM 'scenario-draft' \
+       CASE WHEN r.trigger_source IS DISTINCT FROM 'scenario-draft' \
             AND r.invocation_context #>> '{{source,producer}}' IS DISTINCT FROM 'draft-scenario' \
            THEN true \
            ELSE false \
@@ -286,11 +282,6 @@ SELECT r.status, r.execution_bundle_hash = $2, \
    AND generation.environment = instance.environment \
    AND generation.instance_id = instance.instance_id \
    AND generation.generation = instance.active_generation \
-  LEFT JOIN catalog.draft_safe_connection_grants AS grant_row \
-    ON grant_row.tenant_id = generation.tenant_id \
-   AND grant_row.environment = generation.environment \
-   AND grant_row.instance_id = generation.instance_id \
-   AND grant_row.generation = generation.generation \
  WHERE r.run_id = $1",
         durable = DURABLE_CLASS_SQL_PREDICATE,
     )
@@ -1972,7 +1963,7 @@ mod tests {
     }
 
     #[test]
-    fn effect_authority_resolves_the_current_binding_and_draft_grant() {
+    fn effect_authority_resolves_the_current_binding_and_rejects_draft_markers() {
         for required in [
             "requirement.artifact_hash = $7",
             "requirement.requirement_name = $8",
@@ -1982,18 +1973,17 @@ mod tests {
             "binding.requirement_name = $8",
             "binding.environment = r.environment",
             "generation.generation = instance.active_generation",
-            "catalog.draft_safe_connection_grants AS grant_row",
-            "grant_row.revoked_at IS NULL",
-            "r.trigger_source = 'scenario-draft'",
-            "#>> '{source,producer}' = 'draft-scenario'",
-            "trigger_source IS DISTINCT FROM 'scenario-draft'",
-            "#>> '{source,producer}' IS DISTINCT FROM 'draft-scenario'",
         ] {
             assert!(
                 CONNECTION_EFFECT_SNAPSHOT_SQL.contains(required),
                 "effect authority snapshot omits {required:?}"
             );
         }
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(
+            "CASE WHEN r.trigger_source IS DISTINCT FROM 'scenario-draft' AND \
+             r.invocation_context #>> '{source,producer}' IS DISTINCT FROM 'draft-scenario' \
+             THEN true ELSE false END"
+        ));
     }
 
     // R16 — the validators stay as the identity-format contract (demoted from the
