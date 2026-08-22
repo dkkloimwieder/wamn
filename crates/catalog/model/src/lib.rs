@@ -16,6 +16,7 @@ mod execution_plan;
 mod serving_manifest;
 mod wiring;
 mod wiring_activation;
+mod wiring_compatibility;
 
 pub use component_library::{
     AdmittedComponent, AdmittedComponentParameter, AdmittedComponentPort, ComponentCatalogScope,
@@ -44,6 +45,9 @@ pub use wiring::{
 pub use wiring_activation::{
     WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, flip_activation,
     previous_confirmed_definition, record_activation_event, resolve_active_wiring,
+};
+pub use wiring_compatibility::{
+    WiringCompatibilityError, WiringCompatibilityErrorKind, validate_wiring_compatibility,
 };
 
 use std::cmp::Ordering;
