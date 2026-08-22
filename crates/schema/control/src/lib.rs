@@ -97,8 +97,8 @@ pub use replica_identity::{
 };
 pub use run_plane::{
     BareSchemaName, EFFECT_WRITER_ROLE, EffectWriterRoleObservation, InvalidBareSchemaName,
-    LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME, RUN_PROJECTION_WRITER_ROLE, RowPolicyObservation,
-    RowSecurityObservation, RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
+    LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME, RowPolicyObservation, RowSecurityObservation,
+    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
     ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_release_flow_rows_sql,
     count_retired_authored_ordering_rows_sql, count_run_rows_sql,
     count_stale_registration_keys_sql, ensure_scenario_author_role_sql, plan_run_plane,
@@ -112,11 +112,8 @@ pub use run_plane::{
     select_effect_writer_role_sql, select_effect_writer_run_column_privileges_sql,
     select_effect_writer_run_table_privileges_sql, select_effect_writer_schema_privileges_sql,
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
-    select_node_runs_column_privileges_sql, select_node_runs_effective_column_privileges_sql,
-    select_node_runs_effective_privileges_sql, select_node_runs_table_privileges_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
-    select_run_projection_schema_privileges_sql, select_run_projection_writer_role_sql,
     select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
     select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,

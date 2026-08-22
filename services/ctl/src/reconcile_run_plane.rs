@@ -73,11 +73,8 @@ use wamn_schema_control::{
     select_effect_writer_role_sql, select_effect_writer_run_column_privileges_sql,
     select_effect_writer_run_table_privileges_sql, select_effect_writer_schema_privileges_sql,
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
-    select_node_runs_column_privileges_sql, select_node_runs_effective_column_privileges_sql,
-    select_node_runs_effective_privileges_sql, select_node_runs_table_privileges_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
-    select_run_projection_schema_privileges_sql, select_run_projection_writer_role_sql,
     select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
     select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
@@ -88,8 +85,8 @@ use wamn_schema_control::{
 ///
 /// **This is a permission, not an ordering assertion.** Membership never claims
 /// an action leads the plan; it says the action MAY lead it. Every member either
-/// refuses outright — the two `Verify*` role boundaries are pure `DO` blocks
-/// that `RAISE` or do nothing — or opens with an `ACCESS EXCLUSIVE` lock. Most
+/// refuses outright — the `VerifyEffectWriterRole` boundary is a pure `DO`
+/// block that `RAISE`s or does nothing — or opens with an `ACCESS EXCLUSIVE` lock. Most
 /// lock-taking members preflight before migration. `FailureDetailCutover` is
 /// the deliberate exception: its one `ALTER TABLE ... DROP COLUMN ... RESTRICT`
 /// is transactional, so a dependent-object refusal rolls back both column drops.
@@ -111,11 +108,15 @@ use wamn_schema_control::{
 /// look dead; it is not (wamn-0h0g.20.13 was filed on exactly that misreading).
 /// `EffectWriterCutover` has the identical two-push shape — a populated-ledger
 /// early return plus a mid-plan push — and invites the identical misreading.
+/// `RetireNodeRuns` is simpler: a present retired table produces a one-action
+/// plan, so its RESTRICT failure or successful discard always precedes role
+/// bootstrap and every unrelated target-database repair.
 ///
 /// **The written order is NOT execution order.** The lookup is `contains`, which
-/// is order-insensitive, so the order here is decoration. The planner emits both
-/// `Verify*` kinds AFTER `PartitionPlaneCutover` and `ChildRunCutover` — the
-/// reverse of how they are listed. `pre_role_bootstrap_allowlist_is_exact` pins
+/// is order-insensitive, so the order here is decoration. The planner emits
+/// `VerifyEffectWriterRole` AFTER `PartitionPlaneCutover` and
+/// `ChildRunCutover` — the reverse of how it is listed.
+/// `pre_role_bootstrap_allowlist_is_exact` pins
 /// this array by equality and so freezes the order: it certifies the SET, and
 /// must not be read as certifying a sequence.
 ///
@@ -137,7 +138,7 @@ use wamn_schema_control::{
 ///    strips the pre-bootstrap property from every allowlisted action behind it.
 const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 11] = [
     RunPlaneActionKind::VerifyEffectWriterRole,
-    RunPlaneActionKind::VerifyRunProjectionWriterRole,
+    RunPlaneActionKind::RetireNodeRuns,
     RunPlaneActionKind::ExecutionPinCutover,
     RunPlaneActionKind::FrameIdentityCutover,
     RunPlaneActionKind::EffectWriterCutover,
@@ -512,8 +513,14 @@ pub async fn reconcile(
 
     let obs = observe(client, schema).await?;
     let mut plan = plan_run_plane(schema, &obs);
-    if let Some(action) = dispatch_reader_read_surface_action(schema, &obs, !plan.is_noop()) {
-        plan.actions.push(action);
+    let retires_node_runs = matches!(
+        plan.actions.as_slice(),
+        [action] if action.kind == RunPlaneActionKind::RetireNodeRuns
+    );
+    if !retires_node_runs {
+        if let Some(action) = dispatch_reader_read_surface_action(schema, &obs, !plan.is_noop()) {
+            plan.actions.push(action);
+        }
     }
     if apply {
         let mut applied = 0;
@@ -625,22 +632,6 @@ async fn observe(
                 owns_objects: row.get(8),
                 membership_out_of_bounds: row.get(9),
             }),
-        run_projection_writer_role: client
-            .query_opt(&select_run_projection_writer_role_sql(), &[])
-            .await
-            .context("read run-projection-writer role boundary")?
-            .map(|row| EffectWriterRoleObservation {
-                can_login: row.get(0),
-                is_superuser: row.get(1),
-                can_create_database: row.get(2),
-                can_create_role: row.get(3),
-                inherits_roles: row.get(4),
-                can_replicate: row.get(5),
-                bypasses_rls: row.get(6),
-                can_connect: row.get(7),
-                owns_objects: row.get(8),
-                membership_out_of_bounds: row.get(9),
-            }),
         ..Default::default()
     };
     let writer_schema = client
@@ -651,67 +642,6 @@ async fn observe(
         .await
         .context("read effect-writer schema privileges")?;
     obs.effect_writer_schema_privileges = (writer_schema.get(0), writer_schema.get(1));
-    let projection_schema = client
-        .query_one(
-            select_run_projection_schema_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read run-projection-writer schema privileges")?;
-    obs.run_projection_schema_privileges = (projection_schema.get(0), projection_schema.get(1));
-    for row in client
-        .query(select_node_runs_table_privileges_sql(), &[&schema.as_str()])
-        .await
-        .context("read direct node-runs privileges")?
-    {
-        obs.node_runs_table_privileges
-            .entry(row.get(0))
-            .or_default()
-            .insert(row.get(1));
-    }
-    for row in client
-        .query(
-            select_node_runs_column_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read direct node-runs column privileges")?
-    {
-        obs.node_runs_column_privileges
-            .entry(row.get(0))
-            .or_default()
-            .insert(row.get(1));
-    }
-    for row in client
-        .query(
-            select_node_runs_effective_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read effective node-runs privileges")?
-    {
-        obs.node_runs_effective_privileges
-            .entry(row.get(0))
-            .or_default()
-            .insert(row.get(1));
-        obs.node_runs_owner = Some(row.get(2));
-        if row.get(3) {
-            obs.node_runs_app_members.insert(row.get(0));
-        }
-    }
-    for row in client
-        .query(
-            select_node_runs_effective_column_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read effective node-runs column privileges")?
-    {
-        obs.node_runs_effective_column_privileges
-            .entry(row.get(0))
-            .or_default()
-            .insert(row.get(1));
-    }
     for row in client
         .query(
             select_effect_ledger_table_privileges_sql(),

@@ -540,7 +540,8 @@ impl EffectWriterRoleState {
             && self.inherit
             && self.password_set
             && self.valid_until_finite
-            && self.memberships == [EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE]
+            && (self.memberships == [EFFECT_WRITER_ROLE]
+                || self.memberships == [EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE])
             && self.membership_options_exact
             && self.member_roles.is_empty()
             && self.member_options_exact
@@ -556,7 +557,7 @@ impl EffectWriterRoleState {
             && !self.password_set
             && self.valid_until.as_deref() == Some("1970-01-01T00:00:00Z")
             && self.valid_until_finite
-            && self.memberships.is_empty()
+            && (self.memberships.is_empty() || self.memberships == [RUN_PROJECTION_WRITER_ROLE])
             && self.membership_options_exact
             && self.member_roles.is_empty()
             && self.member_options_exact
@@ -785,18 +786,6 @@ async fn prepare_effect_writer_generation(
         )
         .await?;
     }
-    if read_effect_writer_role_state(&transaction, RUN_PROJECTION_WRITER_ROLE)
-        .await?
-        .is_some()
-    {
-        verify_role_acl_inventory(
-            admin_config,
-            RUN_PROJECTION_WRITER_ROLE,
-            RoleAclExpectation::ProjectionAclRole,
-        )
-        .await?;
-    }
-
     let password = random_lower_hex(32)?;
     let credential_id = random_lower_hex(16)?;
     let validity = effect_writer_validity(now);
@@ -850,20 +839,6 @@ async fn prepare_effect_writer_generation(
             RoleAclExpectation::EffectAclRole,
         )
         .await?;
-        let projection_role = read_effect_writer_role_state(&admin, RUN_PROJECTION_WRITER_ROLE)
-            .await?
-            .context("stable run-projection ACL role disappeared")?;
-        anyhow::ensure!(
-            projection_role.is_acl_role(),
-            "stable run-projection ACL role is not a connection-free NOLOGIN role"
-        );
-        verify_role_acl_inventory(
-            admin_config,
-            RUN_PROJECTION_WRITER_ROLE,
-            RoleAclExpectation::ProjectionAclRole,
-        )
-        .await?;
-
         let scope = EffectWriterCredentialScope {
             org: org.to_string(),
             project: project.to_string(),
@@ -1070,19 +1045,6 @@ async fn abort_effect_writer_generation(
         admin_config,
         EFFECT_WRITER_ROLE,
         RoleAclExpectation::EffectAclRole,
-    )
-    .await?;
-    let projection_role = read_effect_writer_role_state(&transaction, RUN_PROJECTION_WRITER_ROLE)
-        .await?
-        .context("stable run-projection ACL role does not exist")?;
-    anyhow::ensure!(
-        projection_role.is_acl_role(),
-        "stable run-projection ACL role is not a connection-free NOLOGIN role"
-    );
-    verify_role_acl_inventory(
-        admin_config,
-        RUN_PROJECTION_WRITER_ROLE,
-        RoleAclExpectation::ProjectionAclRole,
     )
     .await?;
     transaction
@@ -1303,7 +1265,6 @@ enum RoleAclExpectation<'a> {
     None,
     Generation { database: &'a str },
     EffectAclRole,
-    ProjectionAclRole,
 }
 
 async fn verify_role_acl_inventory(
@@ -1356,9 +1317,6 @@ async fn verify_role_acl_inventory(
             RoleAclExpectation::EffectAclRole => {
                 verify_effect_writer_acl_role_inventory(role, &database, &inventory)?;
             }
-            RoleAclExpectation::ProjectionAclRole => {
-                verify_run_projection_acl_role_inventory(role, &database, &inventory)?;
-            }
             expectation => {
                 for acl in &inventory {
                     let allowed = match expectation {
@@ -1369,8 +1327,7 @@ async fn verify_role_acl_inventory(
                                 && acl.object_name == expected
                                 && acl.privilege == "CONNECT"
                         }
-                        RoleAclExpectation::EffectAclRole
-                        | RoleAclExpectation::ProjectionAclRole => {
+                        RoleAclExpectation::EffectAclRole => {
                             unreachable!("handled above")
                         }
                     };
@@ -1391,54 +1348,6 @@ async fn verify_role_acl_inventory(
     Ok(())
 }
 
-fn verify_run_projection_acl_role_inventory(
-    role: &str,
-    database: &str,
-    inventory: &[RoleAcl],
-) -> anyhow::Result<()> {
-    let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
-    for acl in inventory {
-        anyhow::ensure!(
-            matches!(acl.object_kind.as_str(), "schema" | "relation"),
-            "stable role {role:?} carries non-projection {} ACL in database {database:?}",
-            acl.object_kind
-        );
-        by_schema
-            .entry(acl.schema_name.clone())
-            .or_default()
-            .insert((
-                acl.object_kind.clone(),
-                acl.object_name.clone(),
-                acl.privilege.clone(),
-            ));
-    }
-    for (schema, actual) in by_schema {
-        anyhow::ensure!(
-            !schema.starts_with("pg_")
-                && !matches!(
-                    schema.as_str(),
-                    "public" | "information_schema" | "wamn_system" | "catalog" | "app"
-                ),
-            "stable role {role:?} carries projection ACLs in reserved schema {schema:?} in database {database:?}"
-        );
-        let mut expected =
-            BTreeSet::from([("schema".to_string(), schema.clone(), "USAGE".to_string())]);
-        for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
-            expected.insert((
-                "relation".to_string(),
-                "node_runs".to_string(),
-                privilege.to_string(),
-            ));
-        }
-        anyhow::ensure!(
-            actual == expected,
-            "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact run-projection grant set"
-        );
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 struct RoleAcl {
     object_kind: String,
     schema_name: String,

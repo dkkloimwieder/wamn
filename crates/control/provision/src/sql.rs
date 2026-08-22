@@ -11,7 +11,7 @@ use crate::control_author::CONTROL_AUTHOR_ROLE;
 use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
-use wamn_run_state::{EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE};
+use wamn_run_state::EFFECT_WRITER_ROLE;
 
 // Quote a SQL identifier (double-quoted, embedded `"` doubled). Mirrors the
 // canonical `wamn_schema_compiler::sql::quote_ident` (inlined to keep this crate's
@@ -296,16 +296,13 @@ pub fn grant_dispatch_reader_read_surface_sql(schema: &str) -> String {
 /// cluster-global, ownership-free role identity and restrictive attributes.
 pub fn ensure_effect_writer_acl_role_sql() -> String {
     format!(
-        "DO $$ DECLARE role_name text; BEGIN \
-           FOREACH role_name IN ARRAY ARRAY[{effect_lit}, {projection_lit}] LOOP \
-             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
-               EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                 NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-             END IF; \
-           END LOOP; \
+        "DO $$ DECLARE role_name text := {effect_lit}; BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
+             EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+           END IF; \
          END $$;",
         effect_lit = quote_literal(EFFECT_WRITER_ROLE),
-        projection_lit = quote_literal(RUN_PROJECTION_WRITER_ROLE),
     )
 }
 
@@ -313,7 +310,7 @@ pub fn ensure_effect_writer_acl_role_sql() -> String {
 ///
 /// `role` is the validated deterministic generation name. The caller verifies
 /// the slot is inactive before applying this batch. Password and server-side
-/// `VALID UNTIL` are replaced, membership is exactly the two stable ACL roles, and
+/// `VALID UNTIL` are replaced, new membership is the stable effect ACL role, and
 /// direct database authority is solely `CONNECT` on this project database.
 pub fn prepare_effect_writer_generation_sql(
     database: &str,
@@ -334,14 +331,11 @@ pub fn prepare_effect_writer_generation_sql(
          ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
          GRANT {acl_role} TO {role_ident} \
            WITH ADMIN FALSE, INHERIT TRUE, SET TRUE; \
-         GRANT {projection_role} TO {role_ident} \
-           WITH ADMIN FALSE, INHERIT TRUE, SET TRUE; \
          GRANT CONNECT ON DATABASE {database} TO {role_ident};",
         ensure = ensure_effect_writer_acl_role_sql(),
         password = quote_literal(password),
         expires_at = quote_literal(expires_at),
         acl_role = quote_ident(EFFECT_WRITER_ROLE),
-        projection_role = quote_ident(RUN_PROJECTION_WRITER_ROLE),
         database = quote_ident(database),
     )
 }
@@ -353,11 +347,10 @@ pub fn prepare_effect_writer_generation_sql(
 pub fn retire_effect_writer_generation_sql(database: &str, role: &str) -> String {
     let role_ident = quote_ident(role);
     format!(
-        "REVOKE {acl_role}, {projection_role} FROM {role_ident}; \
+        "REVOKE {acl_role} FROM {role_ident}; \
          REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
          ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
         acl_role = quote_ident(EFFECT_WRITER_ROLE),
-        projection_role = quote_ident(RUN_PROJECTION_WRITER_ROLE),
         database = quote_ident(database),
     )
 }
@@ -404,18 +397,22 @@ pub fn effect_writer_generation_state_sql() -> &'static str {
                            SELECT 1 FROM pg_auth_members edge \
                            JOIN pg_roles parent ON parent.oid = edge.roleid \
                           WHERE edge.member = generation.oid \
-                            AND parent.rolname IN ( \
-                                  'wamn_effect_writer', 'wamn_run_projection_writer'))) \
+                            AND parent.rolname = 'wamn_effect_writer')) \
                  AND (NOT generation.rolcanlogin OR generation.rolsuper \
                       OR generation.rolcreatedb OR generation.rolcreaterole \
                       OR NOT generation.rolinherit OR generation.rolreplication \
                       OR generation.rolbypassrls \
-                      OR (SELECT array_agg(parent.rolname::text ORDER BY parent.rolname::text) \
-                            FROM pg_auth_members edge \
-                            JOIN pg_roles parent ON parent.oid = edge.roleid \
-                           WHERE edge.member = generation.oid) \
-                         IS DISTINCT FROM ARRAY[ \
-                              'wamn_effect_writer', 'wamn_run_projection_writer']::text[] \
+                      OR NOT EXISTS ( \
+                           SELECT 1 FROM pg_auth_members edge \
+                           JOIN pg_roles parent ON parent.oid = edge.roleid \
+                          WHERE edge.member = generation.oid \
+                            AND parent.rolname = 'wamn_effect_writer') \
+                      OR EXISTS ( \
+                           SELECT 1 FROM pg_auth_members edge \
+                           JOIN pg_roles parent ON parent.oid = edge.roleid \
+                          WHERE edge.member = generation.oid \
+                            AND parent.rolname NOT IN ( \
+                                  'wamn_effect_writer', 'wamn_run_projection_writer')) \
                       OR EXISTS (SELECT 1 FROM pg_auth_members edge \
                                   WHERE edge.member = generation.oid \
                                     AND (edge.admin_option OR NOT edge.inherit_option \

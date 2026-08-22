@@ -1,7 +1,6 @@
--- Run-state storage schema (5.7). The production tables that PERSIST flow
--- execution: `runs` (one row per execution) and `node_runs` (one row per node
--- execution). This is the durable, queryable record behind run history, at-
--- least-once execution and immutable run/node history. The pure engine
+-- Run-state storage schema (5.7). The production `runs` table persists one row
+-- per execution. This is the durable, queryable record behind run history and
+-- at-least-once execution. The pure engine
 -- (crates/execution/flow-engine, 5.2) is a single-shot in-memory reducer; these
 -- tables are the facts the driver (components/execution/flowrunner) writes.
 --
@@ -10,8 +9,7 @@
 -- fixtures carry their own `runs`/`node_runs` copies (postgres-init.sql schema
 -- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
 -- target of the crate's live-apply gate. Assumes pre-existing `wamn_app`,
--- `wamn_scenario_author`, stable `wamn_effect_writer`, and stable
--- `wamn_run_projection_writer` ACL roles. Role and
+-- `wamn_scenario_author` and stable `wamn_effect_writer` ACL roles. Role and
 -- scoped LOGIN credential-generation lifecycle is provisioning-owned; this
 -- artifact grants the stable role ledger append/read authority plus only the
 -- narrow run columns needed for its fenced runnable-state recheck.
@@ -34,11 +32,10 @@
 
 CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
 REVOKE ALL PRIVILEGES ON SCHEMA wamn_run
-    FROM PUBLIC, wamn_effect_writer, wamn_run_projection_writer;
+    FROM PUBLIC, wamn_effect_writer;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_scenario_author;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_effect_writer;
-GRANT USAGE ON SCHEMA wamn_run TO wamn_run_projection_writer;
 
 -- Producer roles cannot name `runs.durability_class` in their INSERT grants.
 -- This invoker-rights trigger therefore performs the only admission-time
@@ -270,8 +267,7 @@ ON wamn_run.environment_policies
 FOR SELECT
 USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.environment_policies
-    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer,
-         wamn_run_projection_writer;
+    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
 GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_scenario_author;
 
@@ -544,71 +540,8 @@ GRANT SELECT, INSERT ON wamn_run.invocation_admissions TO wamn_app;
 GRANT UPDATE (tenant_id) ON wamn_run.invocation_admissions TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- node_runs: one row per framed node execution.
--- The occurrence identity is (tenant_id, run_id, frame_id, local_node_id, occurrence):
--- `occurrence` disambiguates a node the frame LOOPS through (0 = first visit).
--- Frameless/call-free executions use the root frame (frame_id 0, no parent or
--- call site) with current_plan_hash = runs.execution_bundle_hash.
--- `seq` preserves execution order for history reads. `input_json` and
--- `output_json` carry capture facts when the run's admission mode allows them.
--- The `*_ref` columns are RESERVED nullable seams
--- for 5.10 (payload byte store). Capture policy belongs to the run admission
--- row and is not duplicated per node; full capture stores only scrubbed input,
--- output, output size, and the optional output hash.
--- ---------------------------------------------------------------------------
-CREATE TABLE wamn_run.node_runs (
-    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
-    run_id        text NOT NULL,
-    frame_id      bigint NOT NULL DEFAULT 0,
-    parent_frame_id bigint,
-    call_site_id  text,
-    current_plan_hash text NOT NULL,
-    local_node_id text NOT NULL,
-    occurrence    int  NOT NULL DEFAULT 0,
-    seq           bigint NOT NULL,
-    status        text NOT NULL
-        CHECK (status IN ('started', 'success', 'error')),
-    output_port   text,
-    output_json   jsonb,
-    input_json    jsonb,
-    error_kind    text CHECK (error_kind IN ('retryable', 'rate-limited', 'terminal',
-                                            'invalid-input')),
-    error_detail  jsonb,
-    -- Reserved seams (5.10 payload byte store / 9.6 capture policy):
-    input_ref     text,
-    output_ref    text,
-    output_size   bigint,
-    payload_hash  text,
-    started_at    timestamptz NOT NULL DEFAULT now(),
-    ended_at      timestamptz,
-    CONSTRAINT node_runs_frame_check CHECK (frame_id >= 0),
-    CONSTRAINT node_runs_frame_relation_check CHECK (
-        (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL)
-        OR
-        (frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0
-         AND parent_frame_id < frame_id AND call_site_id IS NOT NULL
-         AND call_site_id ~ '^[a-z0-9-]+$')
-    ),
-    CONSTRAINT node_runs_plan_hash_check
-        CHECK (current_plan_hash ~ '^sha256:[0-9a-f]{64}$'),
-    CONSTRAINT node_runs_local_node_check CHECK (local_node_id ~ '^[a-z0-9-]+$'),
-    PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence),
-    FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
-);
--- Run history reads rows in dispatch order.
-CREATE INDEX node_runs_seq ON wamn_run.node_runs (tenant_id, run_id, seq);
-ALTER TABLE wamn_run.node_runs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE wamn_run.node_runs FORCE ROW LEVEL SECURITY;
-CREATE POLICY node_runs_tenant ON wamn_run.node_runs
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT ON wamn_run.node_runs TO wamn_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.node_runs
-    TO wamn_run_projection_writer;
-
--- ---------------------------------------------------------------------------
--- Immutable effect-attempt ledger. `node_runs` remains the current occurrence
--- projection; every effectful occurrence has one server-minted identity here.
+-- Immutable effect-attempt ledger. Every effectful occurrence has one
+-- server-minted identity here.
 -- wamn-0h0g.4.9 installs the inaccessible writer primitive. wamn-0h0g.5.4
 -- first wires and activates it; until then execution remains hard-refused.
 -- ---------------------------------------------------------------------------

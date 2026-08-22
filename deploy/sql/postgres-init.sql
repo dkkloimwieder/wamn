@@ -41,17 +41,6 @@ DO $effect_writer$ BEGIN
   END IF;
 END $effect_writer$;
 
--- Stable host-only ACL role for the mutable node-run projection. The same
--- scoped A/B LOGIN generations inherit this alongside the ledger-only role.
-DO $run_projection_writer$ BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = 'wamn_run_projection_writer') THEN
-    CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  END IF;
-END $run_projection_writer$;
-
 CREATE DATABASE wamn OWNER postgres;
 
 \connect wamn

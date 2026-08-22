@@ -2,8 +2,8 @@
 //!
 //! MVP outcome: crash floor · M0 execution · flow composition.
 //!
-//! This crate owns the transactionally coupled `runs`, `node_runs`, `run_queue`,
-//! lease, timer, and terminal lifecycle. It contains only decisions and
+//! This crate owns the transactionally coupled `runs`, `run_queue`, lease,
+//! timer, and terminal lifecycle. It contains only decisions and
 //! parameterized SQL; Postgres, clocks, and
 //! doorbells remain adapter effects.
 //!
@@ -77,7 +77,7 @@ pub use effect_writer::{
 #[cfg(feature = "native")]
 pub use effect_writer::{
     EffectWriterClient, EffectWriterError, EffectWriterErrorKind, EffectWriterScope,
-    ResetProjectionFence, RunProjectionFence, RunProjectionOutcome, RunProjectionPersistence,
+    ResetProjectionFence,
 };
 #[cfg(feature = "effect-writer-credential")]
 pub use effect_writer_credential::{

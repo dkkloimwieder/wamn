@@ -51,10 +51,9 @@
 //! (`extra_columns`) and preserved. Explicit cutovers physically remove only
 //! named retired state after locked safety preflights. The partition-plane
 //! cutover requires drained leases and refuses nonempty dead-letter history;
-//! the frame/effect-writer cutovers remove retired identity/recovery columns;
-//! the capture-projection cutover removes retired non-authoritative node
-//! columns; the rerun-lineage cutover removes only the two retired run columns
-//! and their canonical index while preserving every run row; and the stored-test
+//! the effect-writer cutovers remove retired identity/recovery columns; the
+//! rerun-lineage cutover removes only the two retired run columns and its
+//! canonical index while preserving every run row; and the stored-test
 //! cutover removes retired persistence. PostgreSQL
 //! validates new CHECKs against existing rows and aborts on incompatible data.
 
@@ -252,48 +251,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         name: "invocation_admissions_tenant_id_check",
         definition: "CHECK (tenant_id <> ''::text)",
         origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_status_check",
-        definition: "CHECK (status = ANY (ARRAY['started'::text, 'success'::text, 'error'::text]))",
-        origin: CheckOrigin::Inline("status"),
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_error_kind_check",
-        definition: "CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text]))",
-        origin: CheckOrigin::Inline("error_kind"),
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_frame_check",
-        definition: "CHECK (frame_id >= 0)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_frame_relation_check",
-        definition: "CHECK (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL OR frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0 AND parent_frame_id < frame_id AND call_site_id IS NOT NULL AND call_site_id ~ '^[a-z0-9-]+$'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_plan_hash_check",
-        definition: "CHECK (current_plan_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_local_node_check",
-        definition: "CHECK (local_node_id ~ '^[a-z0-9-]+$'::text)",
-        origin: CheckOrigin::Table,
     },
     CheckSpec {
         table: "effect_attempts",
@@ -1183,21 +1140,6 @@ const AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_DEF: &str = "CHECK (octet_length(o
 const AUTHORING_COMMAND_PRIMARY_INDEX_DEF: &str = "CREATE UNIQUE INDEX authoring_command_audit_pkey ON catalog.authoring_command_audit USING btree (tenant_id, principal_id, command_id)";
 const AUTHORING_COMMAND_AUDIT_ID_INDEX_DEF: &str = "CREATE UNIQUE INDEX authoring_command_audit_audit_id_key ON catalog.authoring_command_audit USING btree (tenant_id, audit_id)";
 
-const RETIRED_NODE_ATTEMPT_COLUMNS: &[&str] = &[
-    "current_effect_attempt_id",
-    "attempt",
-    "selected_recovery_class",
-    "recovery_class",
-    "generation_fact_kind",
-    "connection_generation",
-    "credential_generation",
-    "attempt_started_at",
-    "attempt_dispatched_at",
-    "attempt_deadline_at",
-    "attempt_input_ref",
-    "attempt_key",
-];
-
 const RETIRED_EFFECT_ATTEMPT_COLUMNS: &[&str] = &[
     "attempt_key",
     "attempt_index",
@@ -1205,14 +1147,6 @@ const RETIRED_EFFECT_ATTEMPT_COLUMNS: &[&str] = &[
     "legacy_imported",
     "selected_recovery_class",
     "recovery_class",
-];
-
-const NODE_FRAME_COLUMNS: &[&str] = &[
-    "frame_id",
-    "parent_frame_id",
-    "call_site_id",
-    "current_plan_hash",
-    "local_node_id",
 ];
 
 const EFFECT_FRAME_COLUMNS: &[&str] = &[
@@ -1235,16 +1169,6 @@ effect_attempts_dispatch_identity_key ON wamn_run.effect_attempts USING btree \
 const EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF: &str = "CREATE UNIQUE INDEX \
 effect_attempt_dispatches_occurrence_key ON wamn_run.effect_attempt_dispatches USING btree \
 (tenant_id, run_id, frame_id, local_node_id, occurrence)";
-const NODE_RUNS_PKEY_DEF: &str = "CREATE UNIQUE INDEX node_runs_pkey ON \
-wamn_run.node_runs USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence)";
-
-const NODE_FRAME_CHECKS: &[&str] = &[
-    "node_runs_frame_check",
-    "node_runs_frame_relation_check",
-    "node_runs_plan_hash_check",
-    "node_runs_local_node_check",
-];
-
 const EFFECT_FRAME_CHECKS: &[&str] = &[
     "effect_attempts_root_plan_hash_check",
     "effect_attempts_current_plan_hash_check",
@@ -1266,22 +1190,12 @@ fn effect_writer_cutover_owned_check(table: &str, name: &str) -> bool {
         )
 }
 
-fn retired_node_attempt_check(definition: &str) -> bool {
-    let tokens = ident_tokens(definition);
-    RETIRED_NODE_ATTEMPT_COLUMNS
-        .iter()
-        .any(|column| tokens.contains(*column))
-}
-
 fn frame_identity_column(table: &str, column: &str) -> bool {
-    (table == "node_runs" && NODE_FRAME_COLUMNS.contains(&column))
-        || (table == "effect_attempts" && EFFECT_FRAME_COLUMNS.contains(&column))
-        || (matches!(table, "node_runs" | "effect_attempts") && column == "node_id")
+    table == "effect_attempts" && (EFFECT_FRAME_COLUMNS.contains(&column) || column == "node_id")
 }
 
 fn frame_identity_check(table: &str, name: &str) -> bool {
-    (table == "node_runs" && NODE_FRAME_CHECKS.contains(&name))
-        || (table == "effect_attempts" && EFFECT_FRAME_CHECKS.contains(&name))
+    table == "effect_attempts" && EFFECT_FRAME_CHECKS.contains(&name)
 }
 
 fn expected_check_definition(table: &str, name: &str) -> Option<&'static str> {
@@ -1317,22 +1231,6 @@ fn check_contract_complete(obs: &RunPlaneObservation, table: &str, names: &[&str
                 .is_some_and(|actual| actual == expected)
         })
     })
-}
-
-fn node_frame_contract_complete(obs: &RunPlaneObservation, schema: &BareSchemaName) -> bool {
-    let Some(columns) = obs.tables.get("node_runs") else {
-        return true;
-    };
-    !columns.contains("node_id")
-        && column_contract_complete(obs, "node_runs", "frame_id", "bigint", true)
-        && column_contract_complete(obs, "node_runs", "parent_frame_id", "bigint", false)
-        && column_contract_complete(obs, "node_runs", "call_site_id", "text", false)
-        && column_contract_complete(obs, "node_runs", "current_plan_hash", "text", true)
-        && column_contract_complete(obs, "node_runs", "local_node_id", "text", true)
-        && check_contract_complete(obs, "node_runs", NODE_FRAME_CHECKS)
-        && obs.indexes.get("node_runs_pkey").is_some_and(|definition| {
-            normalize_observed_schema(definition, schema) == NODE_RUNS_PKEY_DEF
-        })
 }
 
 fn effect_frame_contract_complete(obs: &RunPlaneObservation, schema: &BareSchemaName) -> bool {
@@ -1399,7 +1297,6 @@ fn postgres_visible_identifier(name: &str) -> &str {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FrameIdentityCutoverTargets {
-    node: bool,
     effect: bool,
     dispatch: bool,
     restore_dispatch_fk: bool,
@@ -1407,14 +1304,11 @@ struct FrameIdentityCutoverTargets {
 
 impl FrameIdentityCutoverTargets {
     const fn needed(self) -> bool {
-        self.node || self.effect
+        self.effect
     }
 
     fn includes_table(self, table: &str) -> bool {
-        matches!(
-            (table, self.node, self.effect),
-            ("node_runs", true, _) | ("effect_attempts", _, true)
-        )
+        table == "effect_attempts" && self.effect
     }
 }
 
@@ -1425,7 +1319,6 @@ fn frame_identity_cutover_targets(
     let effect = !effect_frame_contract_complete(obs, schema);
     let dispatch = effect && obs.tables.contains_key("effect_attempt_dispatches");
     FrameIdentityCutoverTargets {
-        node: !node_frame_contract_complete(obs, schema),
         effect,
         dispatch,
         restore_dispatch_fk: dispatch && !effect_writer_ledger_cutover_needed(schema, obs),
@@ -1441,12 +1334,6 @@ fn frame_identity_cutover_sql(
     let schema = target.quoted();
     let mut sql = String::new();
     let mut populated = Vec::new();
-    if targets.node {
-        sql.push_str(&format!(
-            "LOCK TABLE {schema}.node_runs IN ACCESS EXCLUSIVE MODE;\n"
-        ));
-        populated.push(format!("EXISTS (SELECT 1 FROM {schema}.node_runs)"));
-    }
     if targets.effect {
         sql.push_str(&format!(
             "LOCK TABLE {schema}.effect_attempts IN ACCESS EXCLUSIVE MODE;\n"
@@ -1467,47 +1354,13 @@ BEGIN
     IF {} THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
-            MESSAGE = 'frame-identity-cutover-requires-empty-node-and-effect-facts';
+            MESSAGE = 'frame-identity-cutover-requires-empty-effect-facts';
     END IF;
 END
 $frame_identity_cutover$;
 "#,
         populated.join(" OR ")
     ));
-    if targets.node {
-        sql.push_str(&format!(
-            r#"ALTER TABLE {schema}.node_runs
-    DROP CONSTRAINT IF EXISTS node_runs_pkey,
-    DROP CONSTRAINT IF EXISTS node_runs_frame_check,
-    DROP CONSTRAINT IF EXISTS node_runs_frame_relation_check,
-    DROP CONSTRAINT IF EXISTS node_runs_plan_hash_check,
-    DROP CONSTRAINT IF EXISTS node_runs_local_node_check;
-ALTER TABLE {schema}.node_runs
-    DROP COLUMN IF EXISTS node_id,
-    DROP COLUMN IF EXISTS frame_id,
-    DROP COLUMN IF EXISTS parent_frame_id,
-    DROP COLUMN IF EXISTS call_site_id,
-    DROP COLUMN IF EXISTS current_plan_hash,
-    DROP COLUMN IF EXISTS local_node_id;
-ALTER TABLE {schema}.node_runs
-    ADD COLUMN frame_id bigint NOT NULL DEFAULT 0,
-    ADD COLUMN parent_frame_id bigint,
-    ADD COLUMN call_site_id text,
-    ADD COLUMN current_plan_hash text NOT NULL,
-    ADD COLUMN local_node_id text NOT NULL,
-    ADD CONSTRAINT node_runs_frame_check CHECK (frame_id >= 0),
-    ADD CONSTRAINT node_runs_frame_relation_check CHECK (
-        (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL)
-        OR (frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0
-            AND parent_frame_id < frame_id AND call_site_id IS NOT NULL
-            AND call_site_id ~ '^[a-z0-9-]+$')
-    ),
-    ADD CONSTRAINT node_runs_plan_hash_check CHECK (current_plan_hash ~ '^sha256:[0-9a-f]{{64}}$'),
-    ADD CONSTRAINT node_runs_local_node_check CHECK (local_node_id ~ '^[a-z0-9-]+$'),
-    ADD PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence);
-"#
-        ));
-    }
     if targets.effect {
         if targets.dispatch {
             sql.push_str(&format!(
@@ -1583,17 +1436,6 @@ fn effect_writer_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation)
     let target = schema;
     let schema = target.quoted();
     let ledger_cutover_needed = effect_writer_ledger_cutover_needed(target, obs);
-    let retired_node_columns: Vec<&str> = obs
-        .tables
-        .get("node_runs")
-        .into_iter()
-        .flat_map(|columns| {
-            RETIRED_NODE_ATTEMPT_COLUMNS
-                .iter()
-                .copied()
-                .filter(|column| columns.contains(*column))
-        })
-        .collect();
     let present_ledgers: Vec<&str> = if ledger_cutover_needed {
         [
             "effect_attempts",
@@ -1606,12 +1448,7 @@ fn effect_writer_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation)
     } else {
         Vec::new()
     };
-    let mut locked_tables = Vec::new();
-    if !retired_node_columns.is_empty() {
-        locked_tables.push("node_runs");
-    }
-    locked_tables.extend(present_ledgers.iter().copied());
-    let mut sql = locked_tables
+    let mut sql = present_ledgers
         .iter()
         .map(|table| {
             format!(
@@ -1644,27 +1481,6 @@ END
 $retire$;
 "#,
     ));
-
-    if !retired_node_columns.is_empty() {
-        sql.push_str(&format!(
-            r#"ALTER TABLE {schema}.node_runs
-    DROP CONSTRAINT IF EXISTS node_runs_current_effect_attempt_fk,
-    DROP CONSTRAINT IF EXISTS node_runs_selected_recovery_class_check,
-    DROP CONSTRAINT IF EXISTS node_runs_recovery_class_check,
-    DROP CONSTRAINT IF EXISTS node_runs_generation_fact_kind_check,
-    DROP CONSTRAINT IF EXISTS node_runs_check,
-    DROP CONSTRAINT IF EXISTS node_runs_check1,
-    DROP CONSTRAINT IF EXISTS node_runs_check2,
-    DROP CONSTRAINT IF EXISTS node_runs_check3;
-"#,
-        ));
-        let drops = retired_node_columns
-            .iter()
-            .map(|column| format!("DROP COLUMN {}", quote_ident(column)))
-            .collect::<Vec<_>>()
-            .join(",\n    ");
-        sql.push_str(&format!("ALTER TABLE {schema}.node_runs\n    {drops};\n"));
-    }
 
     if !ledger_cutover_needed {
         return sql;
@@ -1830,18 +1646,6 @@ fn effect_writer_ledger_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneOb
         .helper_functions
         .contains_key("guard_effect_fact_append");
     attempts_need_cutover || dispatches_need_cutover || retired_insert_guard_present
-}
-
-fn retired_node_attempt_columns_present(obs: &RunPlaneObservation) -> bool {
-    obs.tables.get("node_runs").is_some_and(|columns| {
-        RETIRED_NODE_ATTEMPT_COLUMNS
-            .iter()
-            .any(|column| columns.contains(*column))
-    })
-}
-
-fn effect_writer_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
-    effect_writer_ledger_cutover_needed(schema, obs) || retired_node_attempt_columns_present(obs)
 }
 
 fn disposition_provenance_migration_sql() -> &'static str {
@@ -2495,8 +2299,6 @@ pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
 pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 /// Stable NOLOGIN ACL role inherited only by scoped writer generations.
 pub const EFFECT_WRITER_ROLE: &str = "wamn_effect_writer";
-/// Stable NOLOGIN ACL role inherited by the same scoped writer generations.
-pub const RUN_PROJECTION_WRITER_ROLE: &str = "wamn_run_projection_writer";
 const EFFECT_WRITER_RUN_READ_COLUMNS: [(&str, &[&str]); 2] = [
     ("runs", &["tenant_id", "run_id", "status"]),
     (
@@ -2707,24 +2509,8 @@ pub struct RunPlaneObservation {
     pub scenario_author_role: Option<ScenarioAuthorRoleObservation>,
     /// Stable writer role attributes, ownership, membership, and CONNECT.
     pub effect_writer_role: Option<EffectWriterRoleObservation>,
-    /// Stable projection-writer role attributes, ownership, membership, and CONNECT.
-    pub run_projection_writer_role: Option<EffectWriterRoleObservation>,
     /// Exact direct `(USAGE-without-PUBLIC, effective-CREATE)` schema boundary.
     pub effect_writer_schema_privileges: (bool, bool),
-    /// Exact direct `(USAGE-without-PUBLIC, effective-CREATE)` projection boundary.
-    pub run_projection_schema_privileges: (bool, bool),
-    /// Direct `node_runs` grants keyed by grantee.
-    pub node_runs_table_privileges: BTreeMap<String, BTreeSet<String>>,
-    /// Direct `node_runs` column grants keyed by grantee.
-    pub node_runs_column_privileges: BTreeMap<String, BTreeSet<String>>,
-    /// Effective `node_runs` grants keyed by grantee.
-    pub node_runs_effective_privileges: BTreeMap<String, BTreeSet<String>>,
-    /// Roles whose effective projection read is inherited from `wamn_app`.
-    pub node_runs_app_members: BTreeSet<String>,
-    /// Effective `node_runs` column grants keyed by grantee.
-    pub node_runs_effective_column_privileges: BTreeMap<String, BTreeSet<String>>,
-    /// Owner of `node_runs`, because ownership can restore revoked authority.
-    pub node_runs_owner: Option<String>,
     /// Direct ledger grants keyed by `(table, grantee)`.
     pub effect_ledger_table_privileges: BTreeMap<(String, String), BTreeSet<String>>,
     /// Effective ledger grants keyed by `(table, grantee)`.
@@ -2852,12 +2638,10 @@ pub enum RunPlaneActionKind {
     CreateTable,
     /// Add a record column missing from a present table.
     AddColumn,
-    /// Strict empty-only conversion from legacy node/effect identity to frames.
+    /// Discard the retired mutable node projection and its database-local ACLs.
+    RetireNodeRuns,
+    /// Strict empty-only conversion from legacy effect identity to frames.
     FrameIdentityCutover,
-    /// Preserve the output-size fact while removing retired node capture columns.
-    CaptureProjectionCutover,
-    /// Widen trusted global node-fact sequence storage from int4 to int8.
-    WidenNodeRunSequence,
     /// Remove invocation-admission expiry and make the client key optional.
     InvocationAdmissionRetentionCutover,
     /// Delete the retired partition plane after a locked drain/evidence preflight.
@@ -2876,8 +2660,6 @@ pub enum RunPlaneActionKind {
     EffectWriterCutover,
     /// Refuse a provisioning-owned stable writer role outside its frozen shape.
     VerifyEffectWriterRole,
-    /// Refuse a projection-writer role outside its frozen ACL-only shape.
-    VerifyRunProjectionWriterRole,
     /// Converge exact stable-writer schema/table ACLs and deny other writers.
     RepairEffectWriterPrivilege,
     /// Drop/re-add a drifted record CHECK, or add it when absent.
@@ -2958,8 +2740,6 @@ pub struct RunPlanePlan {
     pub extra_columns: Vec<(String, String)>,
 }
 
-const RETIRED_CAPTURE_PROJECTION_COLUMNS: &[&str] = &["preview_head", "capture_mode", "redacted"];
-const LEGACY_OUTPUT_SIZE_COLUMN: &str = "payload_size";
 const RETIRED_RERUN_LINEAGE_COLUMNS: &[&str] = &["replay_of", "root_run_id"];
 const RETIRED_FAILURE_DETAIL_COLUMNS: &[&str] = &["fail_node", "fail_reason"];
 const RETIRED_EFFECT_DISPOSITION_TABLES: [&str; 2] =
@@ -3088,60 +2868,6 @@ fn failure_detail_cutover_sql(schema: &BareSchemaName) -> String {
 ALTER TABLE {target}.runs
     DROP COLUMN IF EXISTS fail_node RESTRICT,
     DROP COLUMN IF EXISTS fail_reason RESTRICT;"#
-    )
-}
-
-fn capture_output_size_rename_needed(obs: &RunPlaneObservation) -> bool {
-    obs.tables.get("node_runs").is_some_and(|columns| {
-        columns.contains(LEGACY_OUTPUT_SIZE_COLUMN) && !columns.contains("output_size")
-    })
-}
-
-fn capture_output_size_conflict(obs: &RunPlaneObservation) -> bool {
-    obs.tables.get("node_runs").is_some_and(|columns| {
-        columns.contains(LEGACY_OUTPUT_SIZE_COLUMN) && columns.contains("output_size")
-    })
-}
-
-fn capture_projection_cutover_needed(obs: &RunPlaneObservation) -> bool {
-    obs.tables.get("node_runs").is_some_and(|columns| {
-        capture_output_size_rename_needed(obs)
-            || capture_output_size_conflict(obs)
-            || RETIRED_CAPTURE_PROJECTION_COLUMNS
-                .iter()
-                .any(|column| columns.contains(*column))
-    })
-}
-
-fn capture_projection_cutover_sql(
-    schema: &BareSchemaName,
-    rename_output_size: bool,
-    output_size_conflict: bool,
-) -> String {
-    let target = schema.quoted();
-    let rename = if rename_output_size {
-        format!(
-            "ALTER TABLE {target}.node_runs \
-               RENAME COLUMN {LEGACY_OUTPUT_SIZE_COLUMN} TO output_size; "
-        )
-    } else {
-        String::new()
-    };
-    let refuse_conflict = if output_size_conflict {
-        "DO $capture_projection$ BEGIN RAISE EXCEPTION USING \
-         ERRCODE = '55000', MESSAGE = 'capture-output-size-columns-conflict'; \
-         END $capture_projection$; "
-    } else {
-        ""
-    };
-    format!(
-        "LOCK TABLE {target}.node_runs IN ACCESS EXCLUSIVE MODE; \
-         {refuse_conflict}\
-         {rename}\
-         ALTER TABLE {target}.node_runs \
-           DROP COLUMN IF EXISTS preview_head, \
-           DROP COLUMN IF EXISTS capture_mode, \
-           DROP COLUMN IF EXISTS redacted"
     )
 }
 
@@ -3591,20 +3317,6 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
         || !obs.app_run_capture_privileges.2
 }
 
-fn is_effect_writer_generation_role(role: &str) -> bool {
-    let Some(suffix) = role.strip_prefix("wamn_effect_writer_") else {
-        return false;
-    };
-    let Some((scope_hash, generation)) = suffix.rsplit_once('_') else {
-        return false;
-    };
-    scope_hash.len() == 40
-        && scope_hash
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        && matches!(generation, "a" | "b")
-}
-
 fn generation_role_contract_violation_sql() -> &'static str {
     "EXISTS ( \
          SELECT 1 FROM pg_catalog.pg_roles AS generation \
@@ -3615,19 +3327,22 @@ fn generation_role_contract_violation_sql() -> &'static str {
                       SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
                       JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
                      WHERE edge.member = generation.oid \
-                       AND parent.rolname IN ( \
-                             'wamn_effect_writer', 'wamn_run_projection_writer'))) \
+                       AND parent.rolname = 'wamn_effect_writer')) \
             AND (NOT generation.rolcanlogin OR generation.rolsuper \
                  OR generation.rolcreatedb OR generation.rolcreaterole \
                  OR NOT generation.rolinherit OR generation.rolreplication \
                  OR generation.rolbypassrls \
-                 OR (SELECT pg_catalog.array_agg( \
-                              parent.rolname::text ORDER BY parent.rolname::text) \
-                       FROM pg_catalog.pg_auth_members AS edge \
-                       JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
-                      WHERE edge.member = generation.oid) \
-                    IS DISTINCT FROM ARRAY[ \
-                         'wamn_effect_writer', 'wamn_run_projection_writer']::text[] \
+                 OR NOT EXISTS ( \
+                      SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
+                      JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
+                     WHERE edge.member = generation.oid \
+                       AND parent.rolname = 'wamn_effect_writer') \
+                 OR EXISTS ( \
+                      SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
+                      JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
+                     WHERE edge.member = generation.oid \
+                       AND parent.rolname NOT IN ( \
+                             'wamn_effect_writer', 'wamn_run_projection_writer')) \
                  OR EXISTS ( \
                       SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
                        WHERE edge.member = generation.oid \
@@ -3657,6 +3372,36 @@ fn generation_role_contract_violation_sql() -> &'static str {
 /// driver read; the returned plan is what it should execute, in order.
 pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> RunPlanePlan {
     let mut plan = RunPlanePlan::default();
+    if obs.tables.contains_key("node_runs") {
+        let target = schema.quoted();
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RetireNodeRuns,
+            target: format!("{}.node_runs", schema.as_str()),
+            sql: format!(
+                r#"LOCK TABLE {target}.node_runs IN ACCESS EXCLUSIVE MODE;
+-- Populated rows are deliberately discarded without archive: node_runs held
+-- only dead mutable projection coordinates, while runs retains run history.
+DROP TABLE IF EXISTS {target}.node_runs RESTRICT;
+DO $retire_run_projection_authority$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles
+                WHERE rolname = 'wamn_run_projection_writer') THEN
+        EXECUTE pg_catalog.format(
+            'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I FROM wamn_run_projection_writer',
+            '{schema}'
+        );
+        EXECUTE pg_catalog.format(
+            'REVOKE ALL PRIVILEGES ON SCHEMA %I FROM wamn_run_projection_writer',
+            '{schema}'
+        );
+    END IF;
+END
+$retire_run_projection_authority$;"#,
+                schema = schema.as_str(),
+            ),
+        });
+        return plan;
+    }
     let has_runs = obs.tables.contains_key("runs");
     let capture_mode_present = obs
         .tables
@@ -3685,7 +3430,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     }
 
     let effect_writer_ledger_cutover_needed = effect_writer_ledger_cutover_needed(schema, obs);
-    let effect_writer_cutover_needed = effect_writer_cutover_needed(schema, obs);
     if effect_writer_ledger_cutover_needed && obs.effect_ledger_rows != 0 {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::EffectWriterCutover,
@@ -3779,54 +3523,15 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             ),
         });
     }
-    if obs
-        .run_projection_writer_role
-        .is_none_or(|role| !role.is_acl_only())
-    {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::VerifyRunProjectionWriterRole,
-            target: RUN_PROJECTION_WRITER_ROLE.to_string(),
-            sql: format!("DO $run_projection_writer_role$ \
-                  DECLARE role_oid oid; \
-                  BEGIN \
-                    SELECT oid INTO role_oid FROM pg_catalog.pg_roles \
-                     WHERE rolname = 'wamn_run_projection_writer' AND NOT rolcanlogin \
-                       AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole \
-                       AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls; \
-                    IF role_oid IS NULL \
-                       OR pg_catalog.has_database_privilege(role_oid, current_database(), 'CONNECT') \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = role_oid) \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspowner = role_oid) \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE proowner = role_oid) \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datdba = role_oid) \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member = role_oid) \
-                       OR EXISTS ( \
-                            SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
-                            JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
-                            WHERE membership.roleid = role_oid \
-                              AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
-                                   OR NOT member.rolcanlogin OR member.rolsuper \
-                                   OR member.rolcreatedb OR member.rolcreaterole \
-                                   OR NOT member.rolinherit OR member.rolreplication \
-                                   OR member.rolbypassrls)) \
-                       OR {generation_contract} \
-                    THEN RAISE EXCEPTION USING ERRCODE = '42501', \
-                         MESSAGE = 'run-projection-writer-role-out-of-bounds'; \
-                    END IF; \
-                  END $run_projection_writer_role$",
-                generation_contract = generation_role_contract_violation_sql(),
-            ),
-        });
-    }
     let frame_cutover_targets = frame_identity_cutover_targets(obs, schema);
     if frame_cutover_targets.needed() {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::FrameIdentityCutover,
-            target: "node_runs.effect_attempts.frame-identity".to_string(),
+            target: "effect_attempts.frame-identity".to_string(),
             sql: frame_identity_cutover_sql(schema, frame_cutover_targets),
         });
     }
-    if effect_writer_cutover_needed {
+    if effect_writer_ledger_cutover_needed {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::EffectWriterCutover,
             target: "effect-ledgers.coordinate-writer-boundary".to_string(),
@@ -3842,35 +3547,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             kind: RunPlaneActionKind::FailureDetailCutover,
             target: "runs.failure-detail".to_string(),
             sql: failure_detail_cutover_sql(schema),
-        });
-    }
-    let capture_output_size_rename_needed = capture_output_size_rename_needed(obs);
-    let capture_output_size_conflict = capture_output_size_conflict(obs);
-    let capture_projection_cutover_needed = capture_projection_cutover_needed(obs);
-    if capture_projection_cutover_needed {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::CaptureProjectionCutover,
-            target: "node_runs.capture-projection".to_string(),
-            sql: capture_projection_cutover_sql(
-                schema,
-                capture_output_size_rename_needed,
-                capture_output_size_conflict,
-            ),
-        });
-    }
-    if obs.tables.contains_key("node_runs")
-        && obs
-            .column_types
-            .get(&("node_runs".to_string(), "seq".to_string()))
-            .is_some_and(|column_type| column_type != "bigint")
-    {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::WidenNodeRunSequence,
-            target: "node_runs.seq".to_string(),
-            sql: format!(
-                "ALTER TABLE {}.node_runs ALTER COLUMN seq TYPE bigint USING seq::bigint",
-                schema.quoted()
-            ),
         });
     }
     let invocation_columns = obs.tables.get("invocation_admissions");
@@ -3956,7 +3632,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     }
 
     // 1. Missing run-plane tables → EnsureSchema once, then per-table sections
-    //    in file order (FKs resolve: runs before node_runs and run_queue).
+    //    in file order so retained foreign keys resolve.
     let mut any_missing = false;
     let mut creates = Vec::new();
     for file in RUN_PLANE_FILES {
@@ -4122,203 +3798,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 schema.as_str(),
             ),
         });
-    }
-    if obs.run_projection_schema_privileges != (true, false) {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
-            target: format!("{}.projection-usage", schema.as_str()),
-            sql: format!(
-                "REVOKE ALL PRIVILEGES ON SCHEMA {} FROM {RUN_PROJECTION_WRITER_ROLE}; \
-                 GRANT USAGE ON SCHEMA {} TO {RUN_PROJECTION_WRITER_ROLE}; \
-                 DO $run_projection_schema_acl$ BEGIN \
-                   IF NOT pg_catalog.has_schema_privilege('{RUN_PROJECTION_WRITER_ROLE}', '{}', 'USAGE') \
-                      OR pg_catalog.has_schema_privilege('{RUN_PROJECTION_WRITER_ROLE}', '{}', 'CREATE') \
-                   THEN RAISE EXCEPTION USING ERRCODE = '42501', \
-                        MESSAGE = 'run-projection-writer-schema-privilege-out-of-bounds'; \
-                   END IF; \
-                 END $run_projection_schema_acl$",
-                schema.quoted(),
-                schema.quoted(),
-                schema.as_str(),
-                schema.as_str(),
-            ),
-        });
-    }
-    if obs.tables.contains_key("node_runs")
-        && !frame_cutover_targets.node
-        && !effect_writer_cutover_needed
-        && !effect_writer_ledger_cutover_needed
-        && !capture_projection_cutover_needed
-    {
-        let expected = |grantee: &str| -> BTreeSet<String> {
-            match grantee {
-                "wamn_app" => ["SELECT"].into_iter().map(str::to_string).collect(),
-                RUN_PROJECTION_WRITER_ROLE => ["SELECT", "INSERT", "UPDATE", "DELETE"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
-                _ => BTreeSet::new(),
-            }
-        };
-        let fixed_grantees = [
-            "PUBLIC",
-            "wamn_app",
-            SCENARIO_AUTHOR_ROLE,
-            EFFECT_WRITER_ROLE,
-            RUN_PROJECTION_WRITER_ROLE,
-        ];
-        let direct_drifted = fixed_grantees.into_iter().any(|grantee| {
-            obs.node_runs_table_privileges
-                .get(grantee)
-                .cloned()
-                .unwrap_or_default()
-                != expected(grantee)
-        }) || obs.node_runs_table_privileges.iter().any(
-            |(grantee, privileges)| {
-                !fixed_grantees.contains(&grantee.as_str()) && !privileges.is_empty()
-            },
-        ) || obs
-            .node_runs_column_privileges
-            .values()
-            .any(|privileges| !privileges.is_empty());
-        let expected_effective = |grantee: &str| -> BTreeSet<String> {
-            if is_effect_writer_generation_role(grantee) {
-                ["SELECT", "INSERT", "UPDATE", "DELETE"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect()
-            } else if obs.node_runs_app_members.contains(grantee) {
-                ["SELECT"].into_iter().map(str::to_string).collect()
-            } else {
-                expected(grantee)
-            }
-        };
-        let effective_drifted = obs
-            .node_runs_effective_privileges
-            .iter()
-            .any(|(grantee, privileges)| privileges != &expected_effective(grantee))
-            || fixed_grantees[1..].iter().any(|grantee| {
-                obs.node_runs_effective_privileges
-                    .get(*grantee)
-                    .cloned()
-                    .unwrap_or_default()
-                    != expected_effective(grantee)
-            });
-        let expected_column = |grantee: &str| -> BTreeSet<String> {
-            if is_effect_writer_generation_role(grantee) {
-                ["SELECT", "INSERT", "UPDATE"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect()
-            } else if obs.node_runs_app_members.contains(grantee) {
-                ["SELECT"].into_iter().map(str::to_string).collect()
-            } else {
-                match grantee {
-                    "wamn_app" => ["SELECT"].into_iter().map(str::to_string).collect(),
-                    RUN_PROJECTION_WRITER_ROLE => ["SELECT", "INSERT", "UPDATE"]
-                        .into_iter()
-                        .map(str::to_string)
-                        .collect(),
-                    _ => BTreeSet::new(),
-                }
-            }
-        };
-        let effective_column_drifted = obs
-            .node_runs_effective_column_privileges
-            .iter()
-            .any(|(grantee, privileges)| privileges != &expected_column(grantee))
-            || fixed_grantees[1..].iter().any(|grantee| {
-                obs.node_runs_effective_column_privileges
-                    .get(*grantee)
-                    .cloned()
-                    .unwrap_or_default()
-                    != expected_column(grantee)
-            });
-        let boundary_owned = obs.node_runs_owner.as_deref().is_some_and(|owner| {
-            [
-                "wamn_app",
-                SCENARIO_AUTHOR_ROLE,
-                EFFECT_WRITER_ROLE,
-                RUN_PROJECTION_WRITER_ROLE,
-            ]
-            .contains(&owner)
-        });
-        if direct_drifted || effective_drifted || effective_column_drifted || boundary_owned {
-            let qualified = format!("{}.node_runs", schema.quoted());
-            let columns = obs.tables["node_runs"]
-                .iter()
-                .map(|column| quote_ident(column))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let revoke_grantees = fixed_grantees
-                .into_iter()
-                .map(str::to_string)
-                .chain(obs.node_runs_table_privileges.keys().cloned())
-                .chain(obs.node_runs_column_privileges.keys().cloned())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .map(|grantee| {
-                    if grantee == "PUBLIC" {
-                        grantee
-                    } else {
-                        quote_ident(&grantee)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
-                target: format!("{}.node_runs", schema.as_str()),
-                sql: format!(
-                    "REVOKE SELECT ({columns}), INSERT ({columns}), UPDATE ({columns}), \
-                            REFERENCES ({columns}) ON TABLE {qualified} \
-                       FROM {revoke_grantees}; \
-                     REVOKE ALL PRIVILEGES ON TABLE {qualified} \
-                       FROM {revoke_grantees}; \
-                     GRANT SELECT ON TABLE {qualified} TO wamn_app; \
-                     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {qualified} \
-                       TO {RUN_PROJECTION_WRITER_ROLE}; \
-                     DO $node_runs_projection_acl$ BEGIN \
-                       IF EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
-                                   WHERE pg_catalog.has_table_privilege('wamn_app', '{qualified}', privilege)) \
-                          OR EXISTS (SELECT 1 FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
-                                   WHERE pg_catalog.has_table_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', privilege) \
-                                      OR pg_catalog.has_table_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', privilege)) \
-                          OR EXISTS (SELECT 1 FROM unnest(ARRAY['TRUNCATE','REFERENCES','TRIGGER']) privilege \
-                                   WHERE pg_catalog.has_table_privilege('{RUN_PROJECTION_WRITER_ROLE}', '{qualified}', privilege)) \
-                          OR pg_catalog.has_any_column_privilege('wamn_app', '{qualified}', 'INSERT,UPDATE,REFERENCES') \
-                          OR pg_catalog.has_any_column_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', 'SELECT,INSERT,UPDATE,REFERENCES') \
-                          OR pg_catalog.has_any_column_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', 'SELECT,INSERT,UPDATE,REFERENCES') \
-                          OR pg_catalog.has_any_column_privilege('{RUN_PROJECTION_WRITER_ROLE}', '{qualified}', 'REFERENCES') \
-                          OR EXISTS ( \
-                               SELECT 1 FROM pg_catalog.pg_roles AS actor \
-                               CROSS JOIN pg_catalog.pg_class AS relation \
-                               WHERE relation.oid = pg_catalog.to_regclass('{qualified}') \
-                                 AND NOT actor.rolsuper AND actor.oid <> relation.relowner \
-                                 AND actor.rolname !~ '^pg_' \
-                                 AND actor.rolname NOT IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}', \
-                                                           '{EFFECT_WRITER_ROLE}', '{RUN_PROJECTION_WRITER_ROLE}') \
-                                 AND actor.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
-                                 AND (NOT pg_catalog.pg_has_role(actor.oid, 'wamn_app', 'USAGE') \
-                                      OR pg_catalog.has_table_privilege(actor.oid, relation.oid, \
-                                           'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
-                                      OR pg_catalog.has_any_column_privilege(actor.oid, relation.oid, \
-                                           'INSERT,UPDATE,REFERENCES')) \
-                                 AND (pg_catalog.has_table_privilege(actor.oid, relation.oid, \
-                                         'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
-                                      OR pg_catalog.has_any_column_privilege(actor.oid, relation.oid, \
-                                         'SELECT,INSERT,UPDATE,REFERENCES'))) \
-                          OR (SELECT owner.rolname FROM pg_catalog.pg_class relation \
-                              JOIN pg_catalog.pg_roles owner ON owner.oid = relation.relowner \
-                             WHERE relation.oid = pg_catalog.to_regclass('{qualified}')) \
-                             IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}', '{EFFECT_WRITER_ROLE}', '{RUN_PROJECTION_WRITER_ROLE}') \
-                       THEN RAISE EXCEPTION USING ERRCODE = '42501', \
-                            MESSAGE = 'node-runs-projection-privilege-out-of-bounds'; \
-                       END IF; \
-                     END $node_runs_projection_acl$"
-                ),
-            });
-        }
     }
     for table in [
         "effect_attempts",
@@ -4593,18 +4072,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 "wamn_app",
                 SCENARIO_AUTHOR_ROLE,
                 EFFECT_WRITER_ROLE,
-                RUN_PROJECTION_WRITER_ROLE,
             ]
         } else {
             &["PUBLIC", "wamn_app", SCENARIO_AUTHOR_ROLE]
         };
         let effective_grantees: &[&str] = if is_environment_policy {
-            &[
-                "wamn_app",
-                SCENARIO_AUTHOR_ROLE,
-                EFFECT_WRITER_ROLE,
-                RUN_PROJECTION_WRITER_ROLE,
-            ]
+            &["wamn_app", SCENARIO_AUTHOR_ROLE, EFFECT_WRITER_ROLE]
         } else {
             &["wamn_app", SCENARIO_AUTHOR_ROLE]
         };
@@ -4612,7 +4085,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             let privileges = match grantee {
                 "wamn_app" => spec.app,
                 SCENARIO_AUTHOR_ROLE => spec.author,
-                "PUBLIC" | EFFECT_WRITER_ROLE | RUN_PROJECTION_WRITER_ROLE => &[],
+                "PUBLIC" | EFFECT_WRITER_ROLE => &[],
                 _ => unreachable!("closed authoring grantee set"),
             };
             privileges
@@ -4695,7 +4168,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             let expected = match grantee {
                 "wamn_app" => spec.app,
                 SCENARIO_AUTHOR_ROLE => spec.author,
-                EFFECT_WRITER_ROLE | RUN_PROJECTION_WRITER_ROLE => &[],
+                EFFECT_WRITER_ROLE => &[],
                 _ => unreachable!("closed effective grantee set"),
             };
             for privilege in TABLE_PRIVILEGE_TYPES {
@@ -4787,10 +4260,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 {
                     continue;
                 }
-                if capture_output_size_rename_needed && table == "node_runs" && col == "output_size"
-                {
-                    continue;
-                }
                 if !live_cols.contains(col) {
                     let add_column_sql = format!(
                         "ALTER TABLE {}.{} ADD COLUMN {def}",
@@ -4867,24 +4336,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 if effect_writer_ledger_cutover_needed
                     && table == "effect_attempts"
                     && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&col.as_str())
-                {
-                    continue;
-                }
-                if retired_node_attempt_columns_present(obs)
-                    && table == "node_runs"
-                    && RETIRED_NODE_ATTEMPT_COLUMNS.contains(&col.as_str())
-                {
-                    continue;
-                }
-                if capture_projection_cutover_needed
-                    && table == "node_runs"
-                    && RETIRED_CAPTURE_PROJECTION_COLUMNS.contains(&col.as_str())
-                {
-                    continue;
-                }
-                if (capture_output_size_rename_needed || capture_output_size_conflict)
-                    && table == "node_runs"
-                    && col == LEGACY_OUTPUT_SIZE_COLUMN
                 {
                     continue;
                 }
@@ -5029,9 +4480,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         if obs.tables.contains_key(table)
             && record_table_names().contains(table.as_str())
             && !expected_checks.contains(&(table.as_str(), name.as_str()))
-            && !(retired_node_attempt_columns_present(obs)
-                && table == "node_runs"
-                && retired_node_attempt_check(definition))
             && !(effect_writer_ledger_cutover_needed
                 && effect_writer_cutover_owned_check(table, name))
             && !(frame_cutover_targets.includes_table(table) && frame_identity_check(table, name))
@@ -5447,33 +4895,6 @@ pub fn select_effect_writer_role_sql() -> String {
     )
 }
 
-/// Projection-writer role attributes plus ownership/membership/CONNECT.
-pub fn select_run_projection_writer_role_sql() -> String {
-    format!(
-        "SELECT role.rolcanlogin, role.rolsuper, role.rolcreatedb, role.rolcreaterole, \
-            role.rolinherit, role.rolreplication, role.rolbypassrls, \
-            pg_catalog.has_database_privilege(role.oid, current_database(), 'CONNECT'), \
-            EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = role.oid) \
-              OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspowner = role.oid) \
-              OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE proowner = role.oid) \
-              OR EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datdba = role.oid), \
-            EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member = role.oid) \
-              OR EXISTS ( \
-                   SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
-                   JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
-                   WHERE membership.roleid = role.oid \
-                     AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
-                          OR NOT member.rolcanlogin OR member.rolsuper \
-                          OR member.rolcreatedb OR member.rolcreaterole \
-                          OR NOT member.rolinherit OR member.rolreplication \
-                          OR member.rolbypassrls)) \
-              OR {generation_contract} \
-       FROM pg_catalog.pg_roles AS role \
-      WHERE role.rolname = 'wamn_run_projection_writer'",
-        generation_contract = generation_role_contract_violation_sql(),
-    )
-}
-
 /// Exact direct writer USAGE/no-PUBLIC boundary plus effective CREATE.
 pub fn select_effect_writer_schema_privileges_sql() -> &'static str {
     "SELECT COALESCE( \
@@ -5489,87 +4910,6 @@ pub fn select_effect_writer_schema_privileges_sql() -> &'static str {
        LEFT JOIN pg_catalog.pg_roles AS role \
          ON role.rolname = 'wamn_effect_writer' \
        LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = $1"
-}
-
-/// Exact direct projection-writer USAGE/no-PUBLIC boundary plus effective CREATE.
-pub fn select_run_projection_schema_privileges_sql() -> &'static str {
-    "SELECT COALESCE( \
-              EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE( \
-                        namespace.nspacl, pg_catalog.acldefault('n', namespace.nspowner))) acl \
-                       WHERE acl.grantee = role.oid AND acl.privilege_type = 'USAGE') \
-              AND NOT EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE( \
-                        namespace.nspacl, pg_catalog.acldefault('n', namespace.nspowner))) acl \
-                       WHERE acl.grantee = 0 \
-                         AND acl.privilege_type IN ('USAGE', 'CREATE')), false), \
-            COALESCE(pg_catalog.has_schema_privilege(role.oid, namespace.oid, 'CREATE'), false) \
-       FROM (SELECT 1) AS singleton \
-       LEFT JOIN pg_catalog.pg_roles AS role \
-         ON role.rolname = 'wamn_run_projection_writer' \
-       LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = $1"
-}
-
-/// Direct table grants on the mutable run projection.
-pub fn select_node_runs_table_privileges_sql() -> &'static str {
-    "SELECT CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE grantee.rolname END, \
-            acl.privilege_type \
-       FROM pg_catalog.pg_class AS relation \
-       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-       CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl \
-       LEFT JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee \
-      WHERE namespace.nspname = $1 AND relation.relname = 'node_runs' \
-        AND (acl.grantee = 0 OR (acl.grantee <> relation.relowner AND NOT grantee.rolsuper)) \
-      ORDER BY 1, 2"
-}
-
-/// Direct column grants on the mutable run projection, across every grantee.
-pub fn select_node_runs_column_privileges_sql() -> &'static str {
-    "SELECT CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE grantee.rolname END, \
-            acl.privilege_type \
-       FROM pg_catalog.pg_class AS relation \
-       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-       JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
-       CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl \
-       LEFT JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee \
-      WHERE namespace.nspname = $1 AND relation.relname = 'node_runs' \
-        AND attribute.attnum > 0 AND NOT attribute.attisdropped \
-        AND (acl.grantee = 0 OR (acl.grantee <> relation.relowner AND NOT grantee.rolsuper)) \
-      ORDER BY 1, 2"
-}
-
-/// Effective table grants and owner on the mutable run projection.
-pub fn select_node_runs_effective_privileges_sql() -> &'static str {
-    "SELECT actor.rolname, privilege.name, owner.rolname, \
-            pg_catalog.pg_has_role(actor.oid, 'wamn_app', 'USAGE') \
-       FROM pg_catalog.pg_class AS relation \
-       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-       JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
-       CROSS JOIN pg_catalog.pg_roles AS actor \
-       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
-                          ('DELETE'::text), ('TRUNCATE'::text), \
-                          ('REFERENCES'::text), ('TRIGGER'::text)) AS privilege(name) \
-      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
-        AND relation.relname = 'node_runs' \
-        AND NOT actor.rolsuper AND actor.oid <> owner.oid \
-        AND actor.rolname !~ '^pg_' \
-        AND pg_catalog.has_table_privilege(actor.oid, relation.oid, privilege.name) \
-      ORDER BY actor.rolname, privilege.name"
-}
-
-/// Effective column grants on the mutable run projection.
-pub fn select_node_runs_effective_column_privileges_sql() -> &'static str {
-    "SELECT actor.rolname, privilege.name \
-       FROM pg_catalog.pg_class AS relation \
-       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-       JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
-       CROSS JOIN pg_catalog.pg_roles AS actor \
-       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
-                          ('REFERENCES'::text)) AS privilege(name) \
-      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
-        AND relation.relname = 'node_runs' \
-        AND NOT actor.rolsuper AND actor.oid <> owner.oid \
-        AND actor.rolname !~ '^pg_' \
-        AND pg_catalog.has_any_column_privilege(actor.oid, relation.oid, privilege.name) \
-      ORDER BY actor.rolname, privilege.name"
 }
 
 /// Direct grants on the three immutable effect-writer ledgers.
@@ -5719,7 +5059,7 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
     "SELECT table_schema, table_name, grantee, privilege_type \
        FROM information_schema.table_privileges \
       WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author', \
-                        'wamn_effect_writer', 'wamn_run_projection_writer') \
+                        'wamn_effect_writer') \
         AND ((table_schema = 'catalog' AND table_name IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
@@ -5748,7 +5088,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
        JOIN pg_catalog.pg_namespace AS namespace \
          ON namespace.oid = relation.relnamespace \
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
-                              'wamn_effect_writer', 'wamn_run_projection_writer') \
+                              'wamn_effect_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
@@ -5777,7 +5117,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
        JOIN pg_catalog.pg_namespace AS namespace \
          ON namespace.oid = relation.relnamespace \
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
-                              'wamn_effect_writer', 'wamn_run_projection_writer') \
+                              'wamn_effect_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \

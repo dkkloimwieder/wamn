@@ -106,49 +106,6 @@ pub struct ResetProjectionFence<'a> {
     pub prior_lease_generation: i64,
 }
 
-/// Exact live claim authority attached by the host to one trusted node fact.
-#[derive(Debug, Clone, Copy)]
-pub struct RunProjectionFence<'a> {
-    pub run_id: &'a str,
-    pub lease_owner: &'a str,
-    pub lease_generation: i64,
-}
-
-/// Terminal portion of a trusted frame fact after host-owned translation.
-#[derive(Debug, Clone, Copy)]
-pub enum RunProjectionOutcome<'a> {
-    Success {
-        output_port: &'a str,
-    },
-    Error {
-        kind: crate::NodeErrorKind,
-        detail_json: &'a str,
-    },
-}
-
-/// Database-shaped persistence DTO for one host-validated node fact.
-///
-/// This is deliberately not the `.3.5` wire/fact type. Before `.5.4` calls
-/// this inactive adapter, that owner must verify source/root identity and use
-/// checked `u64`/`u32` to `i64`/`i32` conversions. No guest or transport value
-/// constructs persistence identity directly.
-#[derive(Debug, Clone, Copy)]
-pub struct RunProjectionPersistence<'a> {
-    pub fence: RunProjectionFence<'a>,
-    pub current_plan_hash: &'a str,
-    pub frame_id: i64,
-    pub parent_frame_id: Option<i64>,
-    pub call_site_id: Option<&'a str>,
-    pub local_node_id: &'a str,
-    pub occurrence: i32,
-    pub sequence: i64,
-    pub outcome: RunProjectionOutcome<'a>,
-    pub output_json: Option<&'a str>,
-    pub input_json: Option<&'a str>,
-    pub output_size: Option<i64>,
-    pub payload_hash: Option<&'a str>,
-}
-
 /// Stable internal failure categories for the private native adapter boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectWriterErrorKind {
@@ -159,8 +116,6 @@ pub enum EffectWriterErrorKind {
     RunNotRunnable,
     EffectAttemptPresent,
     ResetFenceLost,
-    DivergentProjection,
-    ProjectionFenceLost,
     Storage,
 }
 
@@ -427,124 +382,6 @@ impl EffectWriterClient {
         u64::try_from(deleted).map_err(|source| {
             EffectWriterError::new(EffectWriterErrorKind::Storage, "decode projection reset")
                 .with_run(fence.run_id)
-                .with_source(source)
-        })
-    }
-
-    /// Persist one trusted completed node fact behind the exact live claim.
-    ///
-    /// This API is native-only and has no production caller until `.5.4` owns
-    /// the trusted fact translation. It inserts the started coordinate and
-    /// terminalizes it atomically, accepting only an exact terminal retry.
-    pub async fn record_run_projection(
-        &self,
-        fact: RunProjectionPersistence<'_>,
-    ) -> Result<(), EffectWriterError> {
-        let (output_port, error_kind, error_detail) = match fact.outcome {
-            RunProjectionOutcome::Success { output_port } => (output_port, None, None),
-            RunProjectionOutcome::Error { kind, detail_json } => {
-                ("error", Some(kind.as_sql()), Some(detail_json))
-            }
-        };
-        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 17] = [
-            &fact.fence.run_id,
-            &fact.fence.lease_owner,
-            &fact.fence.lease_generation,
-            &fact.current_plan_hash,
-            &fact.frame_id,
-            &fact.parent_frame_id,
-            &fact.call_site_id,
-            &fact.local_node_id,
-            &fact.occurrence,
-            &fact.sequence,
-            &output_port,
-            &fact.output_json,
-            &fact.input_json,
-            &error_kind,
-            &error_detail,
-            &fact.output_size,
-            &fact.payload_hash,
-        ];
-        let mut connection = self.pool.get().await.map_err(|source| {
-            EffectWriterError::new(
-                EffectWriterErrorKind::Storage,
-                "checkout private projection connection",
-            )
-            .with_run(fact.fence.run_id)
-            .with_source(source)
-        })?;
-        let transaction = connection
-            .build_transaction()
-            .isolation_level(tokio_postgres::IsolationLevel::ReadCommitted)
-            .start()
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin projection write")
-                    .with_run(fact.fence.run_id)
-                    .with_source(source)
-            })?;
-        transaction
-            .query_one(
-                bind_writer_authority().text(),
-                &[&self.tenant_id, &self.schema],
-            )
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind projection authority")
-                    .with_run(fact.fence.run_id)
-                    .with_source(source)
-            })?;
-        transaction
-            .query_one(
-                serialize_effect_intent_sql().as_str(),
-                &[&fact.fence.run_id],
-            )
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "fence projection write")
-                    .with_run(fact.fence.run_id)
-                    .with_source(source)
-            })?;
-        let started = transaction
-            .query_one(begin_run_projection().text(), &params[..10])
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin projection")
-                    .with_run(fact.fence.run_id)
-                    .with_source(source)
-            })?;
-        if !started.get::<_, bool>(0) {
-            return Err(EffectWriterError::new(
-                EffectWriterErrorKind::ProjectionFenceLost,
-                "verify projection claim fence",
-            )
-            .with_run(fact.fence.run_id));
-        }
-        if !started.get::<_, bool>(1) {
-            return Err(EffectWriterError::new(
-                EffectWriterErrorKind::DivergentProjection,
-                "verify projection identity",
-            )
-            .with_run(fact.fence.run_id));
-        }
-        let terminal = transaction
-            .query_opt(complete_run_projection().text(), &params)
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "complete projection")
-                    .with_run(fact.fence.run_id)
-                    .with_source(source)
-            })?;
-        if terminal.is_none() {
-            return Err(EffectWriterError::new(
-                EffectWriterErrorKind::DivergentProjection,
-                "verify terminal projection retry",
-            )
-            .with_run(fact.fence.run_id));
-        }
-        transaction.commit().await.map_err(|source| {
-            EffectWriterError::new(EffectWriterErrorKind::Storage, "commit projection write")
-                .with_run(fact.fence.run_id)
                 .with_source(source)
         })
     }
@@ -939,91 +776,6 @@ fn bind_writer_authority() -> Sql {
                     'search_path', \
                     pg_catalog.quote_ident($2::text) || ', pg_catalog, pg_temp', true)",
         2,
-    )
-}
-
-/// Insert the started projection coordinate behind the exact live lease, or
-/// verify that an existing coordinate has the same immutable identity.
-fn begin_run_projection() -> Sql {
-    Sql::new(
-        r#"WITH authority AS MATERIALIZED (
-    SELECT q.tenant_id, q.run_id
-      FROM run_queue AS q
-      JOIN runs AS r
-        ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id
-     WHERE q.tenant_id = current_setting('app.tenant', true)
-       AND q.run_id = $1::text
-       AND q.lease_owner IS NOT DISTINCT FROM $2::text
-       AND q.lease_generation IS NOT DISTINCT FROM $3::bigint
-       AND q.lease_expires_at > statement_timestamp()
-       AND r.status = 'running'
-),
-accepted AS (
-    INSERT INTO node_runs AS projection
-        (tenant_id, run_id, current_plan_hash, frame_id, parent_frame_id,
-         call_site_id, local_node_id, occurrence, seq, status)
-    SELECT tenant_id, run_id, $4::text, $5::bigint, $6::bigint,
-           $7::text, $8::text, $9::int, $10::bigint, 'started'
-      FROM authority
-    ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence)
-    DO UPDATE SET seq = projection.seq
-      WHERE ROW(projection.current_plan_hash, projection.frame_id,
-                projection.parent_frame_id, projection.call_site_id,
-                projection.local_node_id, projection.occurrence, projection.seq)
-            IS NOT DISTINCT FROM
-            ROW($4::text, $5::bigint, $6::bigint, $7::text,
-                $8::text, $9::int, $10::bigint)
-    RETURNING run_id
-)
-SELECT EXISTS (SELECT 1 FROM authority), EXISTS (SELECT 1 FROM accepted)"#,
-        10,
-    )
-}
-
-/// Terminalize a started projection or accept only a byte-equivalent retry.
-fn complete_run_projection() -> Sql {
-    Sql::new(
-        r#"UPDATE node_runs AS projection
-   SET status = CASE WHEN $14::text IS NULL THEN 'success' ELSE 'error' END,
-       output_port = $11::text,
-       output_json = $12::text::jsonb,
-       input_json = $13::text::jsonb,
-       error_kind = $14::text,
-       error_detail = $15::text::jsonb,
-       output_size = $16::bigint,
-       payload_hash = $17::text,
-       ended_at = CASE WHEN projection.status = 'started'
-                       THEN statement_timestamp() ELSE projection.ended_at END
- WHERE projection.tenant_id = current_setting('app.tenant', true)
-   AND projection.run_id = $1::text
-   AND EXISTS (
-       SELECT 1 FROM run_queue AS queue
-       JOIN runs AS runnable_run
-         ON runnable_run.tenant_id = queue.tenant_id
-        AND runnable_run.run_id = queue.run_id
-      WHERE queue.tenant_id = projection.tenant_id
-        AND queue.run_id = projection.run_id
-        AND queue.lease_owner IS NOT DISTINCT FROM $2::text
-        AND queue.lease_generation IS NOT DISTINCT FROM $3::bigint
-        AND queue.lease_expires_at > statement_timestamp()
-        AND runnable_run.status = 'running')
-   AND projection.frame_id = $5::bigint
-   AND projection.local_node_id = $8::text
-   AND projection.occurrence = $9::int
-   AND ROW(projection.current_plan_hash, projection.parent_frame_id,
-           projection.call_site_id, projection.seq)
-       IS NOT DISTINCT FROM ROW($4::text, $6::bigint, $7::text, $10::bigint)
-   AND (projection.status = 'started'
-        OR ROW(projection.status, projection.output_port,
-               projection.output_json, projection.input_json,
-               projection.error_kind, projection.error_detail,
-               projection.output_size, projection.payload_hash)
-           IS NOT DISTINCT FROM
-           ROW(CASE WHEN $14::text IS NULL THEN 'success' ELSE 'error' END,
-               $11::text, $12::text::jsonb, $13::text::jsonb,
-               $14::text, $15::text::jsonb, $16::bigint, $17::text))
-RETURNING run_id"#,
-        17,
     )
 }
 
