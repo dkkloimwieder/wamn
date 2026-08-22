@@ -244,7 +244,7 @@ fn write_json(path: &PathBuf, doc: &serde_json::Value) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
+    use clap::{CommandFactory as _, FromArgMatches as _, Parser};
 
     use super::{ProvisionProjectArgs, parse_host_port};
 
@@ -252,6 +252,15 @@ mod tests {
     struct TestCli {
         #[command(flatten)]
         args: ProvisionProjectArgs,
+    }
+
+    fn parse_without_app_password_env<const N: usize>(
+        argv: [&str; N],
+    ) -> Result<ProvisionProjectArgs, clap::Error> {
+        let matches = TestCli::command()
+            .mut_arg("app_password", |arg| arg.env(None::<&str>))
+            .try_get_matches_from(argv)?;
+        TestCli::from_arg_matches(&matches).map(|cli| cli.args)
     }
 
     /// No `default_value` on `--app-password` (wamn-0h0g.12.129). A default
@@ -262,15 +271,26 @@ mod tests {
     /// re-acquire one.
     #[test]
     fn the_app_password_has_no_default() {
+        let error = parse_without_app_password_env(["test", "--project", "billing"])
+            .expect_err("provisioning accepted a missing --app-password");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
         assert!(
-            TestCli::try_parse_from(["test", "--project", "billing"]).is_err(),
-            "provisioning accepted a missing --app-password"
+            error.to_string().contains("--app-password"),
+            "unexpected missing-argument error: {error}"
         );
         assert_eq!(
-            TestCli::try_parse_from(["test", "--project", "billing", "--app-password", "probe"])
-                .unwrap()
-                .args
-                .app_password,
+            parse_without_app_password_env([
+                "test",
+                "--project",
+                "billing",
+                "--app-password",
+                "probe",
+            ])
+            .unwrap()
+            .app_password,
             "probe"
         );
     }

@@ -2086,12 +2086,22 @@ fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{CommandFactory as _, FromArgMatches as _, Parser};
 
     #[derive(Debug, Parser)]
     struct TestCli {
         #[command(flatten)]
         args: ProvisionProjectEnvArgs,
+    }
+
+    fn parse_without_password_envs<const N: usize>(
+        argv: [&str; N],
+    ) -> Result<ProvisionProjectEnvArgs, clap::Error> {
+        let matches = TestCli::command()
+            .mut_arg("app_password", |arg| arg.env(None::<&str>))
+            .mut_arg("dispatch_reader_password", |arg| arg.env(None::<&str>))
+            .try_get_matches_from(argv)?;
+        TestCli::from_arg_matches(&matches).map(|cli| cli.args)
     }
 
     fn parse_args(extra: &[&str]) -> Result<ProvisionProjectEnvArgs, clap::Error> {
@@ -2722,20 +2732,27 @@ mod tests {
     /// both credentials on this command now refuse rather than defaulting.
     #[test]
     fn the_dispatch_reader_password_has_no_default() {
+        let error = parse_without_password_envs([
+            "test",
+            "--org",
+            "acme",
+            "--project",
+            "billing",
+            "--env",
+            "dev",
+            "--app-password",
+            "app-probe",
+            "--emit-secret",
+            "/tmp/db.json",
+        ])
+        .expect_err("provisioning accepted a missing --dispatch-reader-password");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
         assert!(
-            TestCli::try_parse_from([
-                "test",
-                "--org",
-                "acme",
-                "--project",
-                "billing",
-                "--env",
-                "dev",
-                "--emit-secret",
-                "/tmp/db.json",
-            ])
-            .is_err(),
-            "provisioning accepted a missing --dispatch-reader-password"
+            error.to_string().contains("--dispatch-reader-password"),
+            "unexpected missing-argument error: {error}"
         );
         assert_eq!(
             parse_args(&["--emit-secret", "/tmp/db.json"])
@@ -2752,22 +2769,27 @@ mod tests {
     /// 2026-08-19 measured that live on every cluster the role existed on.
     #[test]
     fn the_app_password_has_no_default() {
+        let error = parse_without_password_envs([
+            "test",
+            "--org",
+            "acme",
+            "--project",
+            "billing",
+            "--env",
+            "dev",
+            "--dispatch-reader-password",
+            "reader-probe",
+            "--emit-secret",
+            "/tmp/db.json",
+        ])
+        .expect_err("provisioning accepted a missing --app-password");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
         assert!(
-            TestCli::try_parse_from([
-                "test",
-                "--org",
-                "acme",
-                "--project",
-                "billing",
-                "--env",
-                "dev",
-                "--dispatch-reader-password",
-                "reader-probe",
-                "--emit-secret",
-                "/tmp/db.json",
-            ])
-            .is_err(),
-            "provisioning accepted a missing --app-password"
+            error.to_string().contains("--app-password"),
+            "unexpected missing-argument error: {error}"
         );
     }
 
@@ -2779,20 +2801,20 @@ mod tests {
     /// sites to invent one. The exempt list is `--emit-secret`'s: the
     /// credentials and the Secret are owed by the same invocations.
     ///
-    /// Deliberately built on a bare `TestCli::try_parse_from` rather than
-    /// [`parse_args`], which injects both credentials and would leave every
-    /// assertion here vacuous.
+    /// Deliberately built without [`parse_args`], which injects both credentials
+    /// and would leave every assertion here vacuous. The test parser also
+    /// ignores ambient credential variables so they cannot contaminate the
+    /// asserted command-line shape.
     #[test]
     fn the_credential_free_modes_parse_without_either_password() {
-        let revoke = TestCli::try_parse_from([
+        let revoke = parse_without_password_envs([
             "test",
             "--system-database-url",
             "postgresql://postgres@localhost/postgres",
             "--revoke-pat-prefix",
             "0123456789abcdef",
         ])
-        .expect("revoke provisions nothing and needs no database credential")
-        .args;
+        .expect("revoke provisions nothing and needs no database credential");
         assert!(revoke.app_password.is_none());
         assert!(revoke.dispatch_reader_password.is_none());
 
@@ -2801,7 +2823,7 @@ mod tests {
             "--retire-effect-writer-generation",
             "--abort-effect-writer-generation",
         ] {
-            let parsed = TestCli::try_parse_from([
+            let parsed = parse_without_password_envs([
                 "test",
                 "--org",
                 "acme",
@@ -2814,8 +2836,7 @@ mod tests {
                 action,
                 "a",
             ])
-            .unwrap_or_else(|e| panic!("{action} demanded a database credential: {e}"))
-            .args;
+            .unwrap_or_else(|e| panic!("{action} demanded a database credential: {e}"));
             assert!(
                 parsed.app_password.is_none(),
                 "{action} acquired an --app-password"
