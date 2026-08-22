@@ -1907,6 +1907,115 @@ BEFORE UPDATE OR DELETE ON catalog.wiring_activation_events
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 -- END WIRING STORAGE MIGRATION (wamn-0h0g.18.2)
 
+-- BEGIN RELEASE COMPONENT MEMBERSHIP MIGRATION (wamn-0h0g.25.2)
+-- ---------------------------------------------------------------------------
+-- The immutable component closure of one release, recorded at the grain that
+-- produced it: an exact wiring version and an admitted component digest. The
+-- component name and interface version are deliberately not copied here;
+-- `catalog.component_library` is immutable and the digest foreign key resolves
+-- those facts without creating a second component carrier. A wiring with the
+-- same component at several nodes contributes one row, while two wirings using
+-- the same digest remain separately attributable.
+--
+-- This is the format-2 serving-manifest source. Legacy `release_flows` and
+-- execution plans are never converted into these rows: a release is either
+-- minted from current wiring/component facts or has no component closure.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.release_components (
+    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id       text NOT NULL CHECK (catalog_id <> ''),
+    catalog_version  int NOT NULL CHECK (catalog_version > 0),
+    wiring_id        text NOT NULL CHECK (wiring_id <> ''),
+    wiring_version   int NOT NULL CHECK (wiring_version > 0),
+    component_digest text NOT NULL
+        CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
+    PRIMARY KEY (
+        tenant_id, catalog_id, catalog_version,
+        wiring_id, wiring_version, component_digest
+    ),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.release_manifests
+            (tenant_id, catalog_id, catalog_version),
+    FOREIGN KEY (tenant_id, catalog_id, wiring_id, wiring_version)
+        REFERENCES catalog.wirings (tenant_id, catalog_id, wiring_id, version),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version, component_digest)
+        REFERENCES catalog.component_library
+            (tenant_id, catalog_id, catalog_version, component_digest)
+);
+ALTER TABLE catalog.release_components ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.release_components FORCE ROW LEVEL SECURITY;
+CREATE POLICY release_components_tenant ON catalog.release_components
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.release_components TO wamn_app;
+CREATE TRIGGER release_components_immutable
+BEFORE UPDATE OR DELETE ON catalog.release_components
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+-- The complete v2 source freeze. Component membership remains relational above
+-- for promotion coverage; these exact canonical bytes additionally bind every
+-- attachment and registration fact so retrying one release coordinate cannot
+-- silently mint another serving identity.
+CREATE TABLE catalog.release_manifest_v2_snapshots (
+    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id       text NOT NULL CHECK (catalog_id <> ''),
+    catalog_version  int NOT NULL CHECK (catalog_version > 0),
+    manifest_digest  text NOT NULL
+        CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    canonical_bytes  bytea NOT NULL CHECK (octet_length(canonical_bytes) > 0),
+    PRIMARY KEY (tenant_id, catalog_id, catalog_version),
+    CONSTRAINT release_manifest_v2_snapshots_exact_hash CHECK (
+        manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex')
+    ),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.release_manifests
+            (tenant_id, catalog_id, catalog_version)
+);
+ALTER TABLE catalog.release_manifest_v2_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.release_manifest_v2_snapshots FORCE ROW LEVEL SECURITY;
+CREATE POLICY release_manifest_v2_snapshots_tenant
+ON catalog.release_manifest_v2_snapshots
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.release_manifest_v2_snapshots TO wamn_app;
+CREATE TRIGGER release_manifest_v2_snapshots_immutable
+BEFORE UPDATE OR DELETE ON catalog.release_manifest_v2_snapshots
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+-- Take the same release-coordinate lock as the mint before checking the seal.
+-- That makes a concurrent out-of-band INSERT wait for an in-flight mint's
+-- snapshot and refuse after it commits, rather than slipping into its closure.
+CREATE FUNCTION catalog.guard_release_component_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    PERFORM 1
+    FROM catalog.release_manifests
+    WHERE tenant_id = NEW.tenant_id
+      AND catalog_id = NEW.catalog_id
+      AND catalog_version = NEW.catalog_version
+    FOR UPDATE;
+
+    IF EXISTS (
+        SELECT 1
+        FROM catalog.release_manifest_v2_snapshots
+        WHERE tenant_id = NEW.tenant_id
+          AND catalog_id = NEW.catalog_id
+          AND catalog_version = NEW.catalog_version
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'release-component-membership-frozen';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER release_components_snapshot_seal
+BEFORE INSERT ON catalog.release_components
+FOR EACH ROW EXECUTE FUNCTION catalog.guard_release_component_insert();
+-- END RELEASE COMPONENT MEMBERSHIP MIGRATION (wamn-0h0g.25.2)
+
 -- ---------------------------------------------------------------------------
 -- Event registrations (EVT-REG, D19 v3 §5, crates/events/registration). One row per
 -- registration: a subscribing flow's declaration of WHICH entity's row events it

@@ -107,7 +107,9 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     to_regclass('catalog.wiring_activation_events') IS NOT NULL, \
                     to_regprocedure('catalog.register_release_source(text,text,integer,text,text,jsonb,text)') IS NOT NULL, \
                     to_regprocedure('catalog.register_release_attachment(text,text,integer,text,text,text,text,text,jsonb,text,text,text,text)') IS NOT NULL, \
-                    to_regclass('catalog.component_library') IS NOT NULL",
+                    to_regclass('catalog.component_library') IS NOT NULL, \
+                    to_regclass('catalog.release_components') IS NOT NULL, \
+                    to_regclass('catalog.release_manifest_v2_snapshots') IS NOT NULL",
             &[],
         )
         .await?;
@@ -229,6 +231,25 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .context("install component library storage")?;
         }
 
+        let release_component_objects = [
+            release_row.get::<_, bool>(26),
+            release_row.get::<_, bool>(27),
+        ];
+        if !release_component_objects.iter().all(|present| *present) {
+            anyhow::ensure!(
+                release_component_objects.iter().all(|present| !*present),
+                "catalog release component storage is partially installed; reconcile it before publication"
+            );
+            install_catalog_migration_if_missing(
+                client,
+                "catalog.release_components",
+                "-- BEGIN RELEASE COMPONENT MEMBERSHIP MIGRATION",
+                "-- END RELEASE COMPONENT MEMBERSHIP MIGRATION",
+                "install release component membership",
+            )
+            .await?;
+        }
+
         ensure_authoring_catalog_privileges(client).await?;
         return Ok(());
     }
@@ -247,8 +268,57 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         .await
         .context("install catalog release storage into baseline catalog")?;
     ensure_connection_component_grain(client).await?;
+    for (relation, begin, end, context) in [
+        (
+            "catalog.component_library",
+            "-- BEGIN COMPONENT LIBRARY STORAGE MIGRATION",
+            "-- END COMPONENT LIBRARY STORAGE MIGRATION",
+            "install component library storage",
+        ),
+        (
+            "catalog.wirings",
+            "-- BEGIN WIRING STORAGE MIGRATION",
+            "-- END WIRING STORAGE MIGRATION",
+            "install wiring storage",
+        ),
+        (
+            "catalog.release_components",
+            "-- BEGIN RELEASE COMPONENT MEMBERSHIP MIGRATION",
+            "-- END RELEASE COMPONENT MEMBERSHIP MIGRATION",
+            "install release component membership",
+        ),
+    ] {
+        install_catalog_migration_if_missing(client, relation, begin, end, context).await?;
+    }
     ensure_authoring_catalog_privileges(client).await?;
     Ok(())
+}
+
+/// Apply one delimited additive migration when its anchor relation is absent.
+async fn install_catalog_migration_if_missing(
+    client: &tokio_postgres::Client,
+    relation: &str,
+    begin: &str,
+    end: &str,
+    context: &'static str,
+) -> anyhow::Result<()> {
+    let installed: bool = client
+        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&relation])
+        .await?
+        .get(0);
+    if installed {
+        return Ok(());
+    }
+    let start = CATALOG_SCHEMA_SQL
+        .find(begin)
+        .expect("catalog migration start marker");
+    let end = CATALOG_SCHEMA_SQL
+        .find(end)
+        .expect("catalog migration end marker");
+    client
+        .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+        .await
+        .context(context)
 }
 
 /// Preserve legacy connection facts while converging the component-owned grain.
@@ -341,6 +411,10 @@ async fn ensure_authoring_catalog_privileges(
              GRANT SELECT ON catalog.catalog_heads TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.component_library FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.component_library TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.release_components FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.release_components TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.release_manifest_v2_snapshots FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.release_manifest_v2_snapshots TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.connection_requirements FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.connection_requirements TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.connection_instances FROM PUBLIC, wamn_app, wamn_scenario_author; \
@@ -357,7 +431,9 @@ async fn ensure_authoring_catalog_privileges(
                   OR has_table_privilege('wamn_scenario_author', 'catalog.release_manifests', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.release_flows', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalog_heads', 'UPDATE') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.component_library', 'INSERT') THEN \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.component_library', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.release_components', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.release_manifest_v2_snapshots', 'INSERT') THEN \
                  RAISE EXCEPTION USING ERRCODE = '42501', \
                    MESSAGE = 'authoring-effective-privilege-out-of-bounds:catalog'; \
                END IF; \
