@@ -21,7 +21,7 @@
 //!   D19 §5). A guest binds a durable consumer by name and publishes to a
 //!   subject; it cannot create, configure, or delete a stream here.
 //! - Event DELIVERY is gated on the serving release's registration projection
-//!   ([`ServingManifest::registrations`] — reader 4 of the release-manifest
+//!   ([`ServingManifest::registrations`] — reader 3 of the release-manifest
 //!   weld, `wamn-0h0g.15.95`): a durable consumer binds only over subjects some
 //!   registration of the release sources, so an event whose registration
 //!   identity is not the release's never reaches a component.
@@ -144,7 +144,7 @@ pub struct WamnJetstream {
     /// from it and discarded it, so nothing here could say whose event plane a
     /// publish or an ack belonged to.
     claims: std::sync::RwLock<HashMap<String, JetstreamClaim>>,
-    /// The release this process serves, held BY REFERENCE — reader 4 of the
+    /// The release this process serves, held BY REFERENCE — reader 3 of the
     /// release-manifest weld. `None` ⇒ this process carries no release; see
     /// [`WamnJetstream::with_release`].
     release: Option<Arc<ReleaseManifestWeld>>,
@@ -201,7 +201,7 @@ impl WamnJetstream {
         self
     }
 
-    /// Attach the release this process serves — reader 4 of the release-manifest
+    /// Attach the release this process serves — reader 3 of the release-manifest
     /// weld, consulted by reference. This plugin never loads, parses or
     /// digest-verifies a manifest, and keeps no copy of one: the weld already
     /// holds the digest-named document for the life of the process, and a
@@ -210,12 +210,9 @@ impl WamnJetstream {
     /// # Where the release gate starts, and where it stops
     ///
     /// `None` means this host was given no release, and then every consumer bind
-    /// is REFUSED. That is the fail-closed half of the same posture that makes
-    /// [`RunnerPlanSupply`](crate::plugins::runner_plan_supply::RunnerPlanSupply)
-    /// report `unavailable` for every run on a release-less process: a host that
-    /// cannot name the registrations of a release cannot decide that an event
-    /// belongs to one, and delivering it anyway would hand the identity back to
-    /// the guest sweep this gate took it from.
+    /// is REFUSED. A host that cannot name the registrations of a release cannot
+    /// decide that an event belongs to one, and delivering it anyway would hand
+    /// the identity back to the guest sweep this gate took it from.
     ///
     /// The gate stops at consumption. `producer::publish` and `doorbell::ring`
     /// keep working on a release-less host, because neither carries a
@@ -456,7 +453,7 @@ fn map_get_stream_err(stream: &str, e: &GetStreamError) -> JsError {
 }
 
 // ---------------------------------------------------------------------------
-// The release gate (reader 4 of the weld)
+// The release gate (reader 3 of the weld)
 // ---------------------------------------------------------------------------
 
 /// The named refusal class for a consumer bind the serving release does not

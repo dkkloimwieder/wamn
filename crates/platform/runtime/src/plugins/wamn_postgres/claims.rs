@@ -187,36 +187,6 @@ pub struct ConnectionEffectSnapshot {
     pub root_flow_id: String,
 }
 
-/// What plan supply needs from a run's own row: which flow it entered at, and
-/// which release it was admitted under.
-///
-/// This is the whole of the run-side input to resolution now that
-/// `run_flow_resolutions` is gone (wamn-0h0g.15.10). The reachable plan set is
-/// derived from the release manifest, not stored per run, so nothing here
-/// mentions a plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunReleaseBinding {
-    /// The run's tenant, as recorded — the plan cache's scope key.
-    pub tenant_id: String,
-    /// The run's root flow. Only source left: the `wamn:runner/plan-supply` WIT
-    /// passes a run id and nothing else, and the host is constructed once per
-    /// process, so the root cannot be handed in at construction.
-    pub flow_id: String,
-    /// The serving-manifest digest recorded write-once at claim
-    /// (wamn-0h0g.15.11), or `None` for a row admitted before anything wrote it.
-    pub manifest_digest: Option<String>,
-}
-
-/// `wamn_run.runs` is RLS-scoped by `runs_tenant`
-/// (`deploy/sql/run-state.sql:319`); the tenant predicate is spelled anyway, in
-/// the policy's own `NULLIF` form, so the statement is correct read on its own
-/// and cannot widen if a future grant path arrives with RLS bypassed.
-const RUN_RELEASE_BINDING_SQL: &str = "\
-SELECT r.tenant_id, r.flow_id, r.manifest_digest \
-  FROM wamn_run.runs AS r \
- WHERE r.tenant_id = NULLIF(current_setting('app.tenant', true), '') \
-   AND r.run_id = $1";
-
 /// `authorized_plan` DOES NOT BIND THE PLAN TO THE RUN, and by owner ruling
 /// (wamn-0h0g.15.66) it never will again. Its only run-scoped predicate was an
 /// EXISTS over `run_flow_resolutions`, deleted with that table
@@ -1431,72 +1401,6 @@ impl WamnPostgres {
         }
     }
 
-    /// Read a run's root flow and recorded release under injected tenant RLS.
-    ///
-    /// `Ok(None)` is an absent run, not an error: plan supply reports it as
-    /// `not-found` rather than as an unavailable dependency.
-    pub async fn run_release_binding(
-        &self,
-        component_id: &str,
-        run_id: &str,
-    ) -> anyhow::Result<Option<RunReleaseBinding>> {
-        let tenant = self
-            .tenant_for(component_id)
-            .context("plan supply has no host-injected tenant")?;
-        let project = self.project_for(component_id);
-        let schema = self.schema_for(component_id);
-        let (conn, policy) = self
-            .checkout_platform(&project)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = self
-            .begin_with_claims(
-                &conn,
-                &tenant,
-                schema.as_deref(),
-                None,
-                None,
-                None,
-                None,
-                policy.statement_timeout_ms,
-            )
-            .await
-        {
-            self.destroy(conn);
-            return Err(anyhow::anyhow!(error.to_string()));
-        }
-        let result: anyhow::Result<Option<RunReleaseBinding>> = async {
-            let Some(row) = conn
-                .query_opt(RUN_RELEASE_BINDING_SQL, &[&run_id])
-                .await
-                .context("query run release binding")?
-            else {
-                return Ok(None);
-            };
-            Ok(Some(RunReleaseBinding {
-                tenant_id: row.try_get(0)?,
-                flow_id: row.try_get(1)?,
-                manifest_digest: row.try_get(2)?,
-            }))
-        }
-        .await;
-        match result {
-            Ok(binding) => {
-                if let Err(error) = conn.batch_execute("COMMIT").await {
-                    self.destroy(conn);
-                    return Err(error).context("commit run release binding read");
-                }
-                Ok(binding)
-            }
-            Err(error) => {
-                if conn.batch_execute("ROLLBACK").await.is_err() {
-                    self.destroy(conn);
-                }
-                Err(error)
-            }
-        }
-    }
-
     pub(super) fn destroy(&self, obj: Object) {
         destroy_connection(obj, &self.destroyed);
     }
@@ -1783,24 +1687,6 @@ mod tests {
                 ("platform", DEFAULT_PROJECT.to_string()),
             ]
         );
-    }
-
-    /// Renamed from `plan_supply_reads_only_immutable_run_map_and_bundle_identity`
-    /// (wamn-0h0g.15.12): plan supply no longer reads bundle bytes at all, so the
-    /// old name promised an assertion this statement cannot make. What is pinned
-    /// is what the statement must stay: the run's own row, tenant-scoped in the
-    /// policy's exact form, and read-only.
-    #[test]
-    fn run_release_binding_reads_one_tenant_scoped_run_row() {
-        assert!(RUN_RELEASE_BINDING_SQL.contains("FROM wamn_run.runs AS r"));
-        assert!(
-            RUN_RELEASE_BINDING_SQL
-                .contains("r.tenant_id = NULLIF(current_setting('app.tenant', true), '')")
-        );
-        assert!(RUN_RELEASE_BINDING_SQL.contains("r.run_id = $1"));
-        // Plan bytes reach a run only by digest-verified OCI pull now.
-        assert!(!RUN_RELEASE_BINDING_SQL.contains("execution_bundles"));
-        assert!(!RUN_RELEASE_BINDING_SQL.contains("exact_bytes"));
     }
 
     // The claim-time record must match `runs_release_record_check` exactly, or a

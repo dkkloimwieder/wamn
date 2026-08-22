@@ -7,7 +7,6 @@ pub mod connection_generation;
 pub mod engine;
 pub mod flow_invocation;
 pub mod memory_metrics;
-pub mod plan_artifact;
 pub mod plugins;
 pub mod release_manifest;
 pub mod wiring_doorbell;

@@ -1,11 +1,6 @@
 # P0 environment-owned connection admission. The real F3 runner may reach
 # serve-echo; egress-escape is deliberately absent for the retained M0 egress
 # boundary proof.
-#
-# [15.113] The plan-registry peer is deliberately NOT repeated here. Policies are
-# additive, so the platform floor (deploy/platform/runner-netpol.yaml, applied
-# alongside this one) already admits registry:5000 for gate runs, and a
-# connection policy never widens the floor.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

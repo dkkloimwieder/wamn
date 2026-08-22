@@ -32,11 +32,6 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
-/// Repository plan artifacts are published under in the in-cluster dev registry
-/// (`deploy/platform/registry.yaml`, Service `registry:5000`). The digest is
-/// carried as the tag, so the base itself carries neither tag nor digest.
-pub const DEFAULT_PLAN_ARTIFACT_BASE: &str = "registry:5000/wamn/execution-plans";
-
 /// Production executor configuration.
 #[derive(Debug, Args)]
 pub struct ExecutorArgs {
@@ -96,33 +91,10 @@ pub struct ExecutorArgs {
     /// Directory the digest-named release-manifest ConfigMap is projected into.
     ///
     /// Passing it is what makes this process a serving one: the manifest is the
-    /// sole carrier of release identity, and every plan this executor supplies is
-    /// named by it. Omitted, the executor starts and reports `unavailable` for
-    /// every run rather than resolving plans from anywhere else; passed and
-    /// unusable, the executor refuses to start.
+    /// sole carrier of release identity. Omitted, the executor starts without a
+    /// release; passed and unusable, the executor refuses to start.
     #[arg(long, env = "WAMN_RELEASE_MANIFEST_ROOT")]
     pub release_manifest_root: Option<PathBuf>,
-
-    /// `<registry>/<repository>` execution-plan artifacts are published under.
-    #[arg(
-        long,
-        env = "WAMN_PLAN_ARTIFACT_BASE",
-        default_value = DEFAULT_PLAN_ARTIFACT_BASE
-    )]
-    pub plan_artifact_base: String,
-
-    /// Pull plan artifacts over plain HTTP. The dev registry is anonymous plain
-    /// HTTP; the wash host reaches the same one with
-    /// `--allow-insecure-registries`.
-    #[arg(long, env = "WAMN_INSECURE_PLAN_REGISTRY")]
-    pub insecure_plan_registry: bool,
-
-    /// Bound on one plan pull, connect and read alike, in milliseconds.
-    ///
-    /// A pull runs before any effect, so exceeding it releases the run to be
-    /// requeued rather than holding a lease against a registry that never answers.
-    #[arg(long, default_value_t = 10_000)]
-    pub plan_fetch_timeout_ms: u64,
 
     /// Lease TTL for a claimed run, in milliseconds.
     #[arg(long, default_value_t = 30_000)]
@@ -182,7 +154,7 @@ fn resolve_execution_target_id(
 /// serves no release, wrong for a replica welded to one, where a mis-targeted
 /// apply would converge silently and the first expired pre-effect projection
 /// would then fail every drain turn instead. Serving-ness is read from the
-/// argument, never recovered from a failure, the same call `load_plan_release`
+/// argument, never recovered from a failure, the same call `load_release_weld`
 /// makes.
 fn verify_serving_environment_identity(
     release_manifest_root: Option<&Path>,
@@ -427,12 +399,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         production_capabilities(allowed_hosts, Arc::new(RunnerEgressPolicy::default())),
         args.release_manifest_root
             .as_deref()
-            .map(|manifest_root| ReleaseSupply {
-                manifest_root,
-                plan_artifact_base: &args.plan_artifact_base,
-                insecure_registry: args.insecure_plan_registry,
-                fetch_timeout: Duration::from_millis(args.plan_fetch_timeout_ms),
-            }),
+            .map(|manifest_root| ReleaseSupply { manifest_root }),
         args.lease_ttl_ms,
     )
     .await?;

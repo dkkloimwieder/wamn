@@ -38,11 +38,6 @@ world causation-plugin {
   import wamn:runner/causation@0.1.0;
 }
 
-/// Host-side bindgen world for immutable claimed-run plan supply.
-world runner-plan-supply-plugin {
-  import wamn:runner/plan-supply@0.1.0;
-}
-
 /// Host-side bindgen world for the trusted one-frame HTTP effect surface.
 world runner-http-effect-plugin {
   import wamn:runner/http-effect@0.1.0;
@@ -75,7 +70,7 @@ world logging-plugin {
 /// Host-side bindgen world for authoritative flow-http route supply
 /// (wamn-0h0g.15.96): the host IMPLEMENTS `routes`, `authenticate` and
 /// `caller-connected`, serving `route-definition` out of the mounted serving
-/// manifest's attachment projection — reader 3 of the release-manifest weld. No
+/// manifest's attachment projection — reader 2 of the release-manifest weld. No
 /// route read reaches the project database. See plugins/flow_http_routing.rs.
 world flow-http-routing-plugin {
   import wamn:flow-http-routing/routing@0.1.0;

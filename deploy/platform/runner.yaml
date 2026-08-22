@@ -212,27 +212,6 @@ spec:
             # decides the process's posture.
             - name: WAMN_RELEASE_MANIFEST_ROOT
               value: /etc/wamn/release-manifest
-            # [15.49] Plan bytes are pulled by digest from the in-cluster dev
-            # registry (deploy/platform/registry.yaml), which is anonymous plain
-            # HTTP — the same posture the wash host takes with
-            # `--allow-insecure-registries`, and scoped to that one registry
-            # rather than globally (crates/platform/runtime/src/plan_artifact.rs:213).
-            # REQUIRED here, not tuning: OciPlanSource::new never connects, so an
-            # https-only client fails at the FIRST PULL instead of at startup —
-            # a pod welded to its release that cannot supply a single plan.
-            # `"true"` exactly: clap's SetTrue action implies ValueParser::bool(),
-            # so `"1"` is a startup parse error rather than an enable.
-            # --plan-artifact-base is left at its default
-            # (registry:5000/wamn/execution-plans, services/executor/src/lib.rs:38),
-            # which already names that Service.
-            #
-            # [15.113] The netpol side is CLOSED: runner-netpol.yaml admits
-            # app: registry in wamn-system on TCP 5000 as a platform-plane peer,
-            # so this HOST-process pull is no longer denied at the network. Note
-            # every netpol in this repo is INERT under kind's kindnetd, which does
-            # not enforce NetworkPolicy — the peer matters on a policy-enforcing
-            # CNI, which is where the denial would otherwise first appear.
-            - { name: WAMN_INSECURE_PLAN_REGISTRY, value: "true" }
             # [wamn-yf3] Run-path observability. The flowrunner emits a few
             # structured wasi:logging records per run (node/run lifecycle) that
             # the wamn:logging plugin enriches (host-injected tenant/project +

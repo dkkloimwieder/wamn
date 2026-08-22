@@ -1,4 +1,4 @@
-//! The release-manifest weld — one load, one verification, four readers.
+//! The release-manifest weld — one load, one verification, three readers.
 //!
 //! A pod carries exactly one release. Its serving manifest arrives as an
 //! immutable, digest-named ConfigMap ([`RELEASE_MANIFEST_MOUNT_PATH`]) — the
@@ -17,12 +17,6 @@
 //! from, so there is nothing to invalidate. `docs/deployment-simplification-
 //! spec.md`'s "cache forever" means exactly process-lifetime immutability, never
 //! durability.
-//!
-//! The one genuine cache nearby is
-//! [`ResolutionPlanCache`](crate::plugins::runner_plan_supply) over *plan
-//! bytes*, which is entry-bounded, tenant-scoped and evicting because plan bytes
-//! are fetched by digest and may be dropped and re-fetched. The manifest is read
-//! once from a file and never re-read. Keep the two apart.
 //!
 //! # Identity is derived, never asserted — and pod-to-release binding is the
 //! # pod template's, by ratified design
@@ -49,21 +43,19 @@
 //! every run record and authority decision downstream. Malformed bytes mean the
 //! pod never goes Ready, which is the only refusal that means anything here.
 //!
-//! # The four enumerated readers
+//! # The three enumerated readers
 //!
 //! Every reader consults this one instance by reference and none of them loads,
 //! parses, or digest-verifies a manifest of its own:
 //!
-//! 1. plan supply — [`crate::plugins::runner_plan_supply`] walks
-//!    [`ServingManifest::reachable_flows`] and fetches that set by digest.
-//! 2. effect authority — [`crate::plugins::wamn_postgres`] binds a run to its
+//! 1. effect authority — [`crate::plugins::wamn_postgres`] binds a run to its
 //!    plan through the manifest its recorded digest names.
-//! 3. flow-http routing — serves `RouteDefinition` from
+//! 2. flow-http routing — serves `RouteDefinition` from
 //!    [`ServingManifest::attachments`].
-//! 4. jetstream delivery — gates delivery on
+//! 3. jetstream delivery — gates delivery on
 //!    [`ServingManifest::registrations`].
 //!
-//! Readers 1 and 2 run in the flowrunner in-process host, readers 3 and 4 in the
+//! Reader 1 runs in the flowrunner in-process host; readers 2 and 3 run in the
 //! wash host. Those are separate processes and cannot share one object, so the
 //! rule is one instance *per process*: construct once, hand it out by reference,
 //! and never hold two.
