@@ -4240,7 +4240,6 @@ dependencies = [
  "wamn-schema-compiler",
  "wamn-schema-control",
  "wamn-schema-model",
- "wamn-standard-nodes",
 ]
 
 [[package]]
@@ -4681,11 +4680,7 @@ dependencies = [
 name = "wamn-standard-nodes"
 version = "0.1.0"
 dependencies = [
- "jmespath",
- "serde_json",
- "wamn-entity-access",
  "wamn-flow",
- "wamn-pg-core",
 ]
 
 [[package]]
