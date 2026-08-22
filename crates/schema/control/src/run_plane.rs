@@ -2863,6 +2863,8 @@ pub enum RunPlaneActionKind {
     ChildRunCutover,
     /// Delete retired replay/root run lineage while preserving every run row.
     RerunLineageCutover,
+    /// Delete retired per-node failure detail while preserving every run row.
+    FailureDetailCutover,
     /// Delete retired stored-suite tables, audit relation, and helper functions.
     StoredSuiteCutover,
     /// Empty-only deletion of the retired effect-disposition request/outcome plane.
@@ -2954,6 +2956,7 @@ pub struct RunPlanePlan {
 const RETIRED_CAPTURE_PROJECTION_COLUMNS: &[&str] = &["preview_head", "capture_mode", "redacted"];
 const LEGACY_OUTPUT_SIZE_COLUMN: &str = "payload_size";
 const RETIRED_RERUN_LINEAGE_COLUMNS: &[&str] = &["replay_of", "root_run_id"];
+const RETIRED_FAILURE_DETAIL_COLUMNS: &[&str] = &["fail_node", "fail_reason"];
 const RETIRED_EFFECT_DISPOSITION_TABLES: [&str; 2] =
     ["effect_disposition_requests", "effect_dispositions"];
 const RETIRED_EFFECT_DISPOSITION_HELPER: &str = "guard_effect_disposition_append";
@@ -3058,6 +3061,28 @@ DROP INDEX IF EXISTS {target}.runs_root;
 ALTER TABLE {target}.runs
     DROP COLUMN IF EXISTS replay_of,
     DROP COLUMN IF EXISTS root_run_id;"#
+    )
+}
+
+fn failure_detail_cutover_needed(obs: &RunPlaneObservation) -> bool {
+    obs.tables.get("runs").is_some_and(|columns| {
+        RETIRED_FAILURE_DETAIL_COLUMNS
+            .iter()
+            .any(|column| columns.contains(*column))
+    })
+}
+
+fn failure_detail_cutover_sql(schema: &BareSchemaName) -> String {
+    let target = schema.quoted();
+    format!(
+        r#"LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE;
+-- wamn-0h0g.12.173/.12.175: populated retired failure-detail values are
+-- deliberately discarded, not archived. fail_node names a deleted plan
+-- coordinate, and fail_reason is superseded by fail_kind plus the typed caller
+-- outcome; retaining either would preserve a dangling or duplicate record.
+ALTER TABLE {target}.runs
+    DROP COLUMN IF EXISTS fail_node RESTRICT,
+    DROP COLUMN IF EXISTS fail_reason RESTRICT;"#
     )
 }
 
@@ -3665,6 +3690,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         return plan;
     }
 
+    let failure_detail_cutover_needed = failure_detail_cutover_needed(obs);
     let partition_plane_cutover_needed = partition_plane_cutover_needed(obs);
     if partition_plane_cutover_needed {
         plan.actions.push(RunPlaneAction {
@@ -3802,6 +3828,17 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             sql: effect_writer_cutover_sql(schema, obs),
         });
     }
+    // This is the final pre-role-bootstrap migration. Keeping it behind the
+    // older guarded cutovers preserves their refusal ordering on compound
+    // legacy schemas, while `RESTRICT` dependency failures still happen before
+    // the shell creates/hardens roles or repairs membership.
+    if failure_detail_cutover_needed {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::FailureDetailCutover,
+            target: "runs.failure-detail".to_string(),
+            sql: failure_detail_cutover_sql(schema),
+        });
+    }
     let capture_output_size_rename_needed = capture_output_size_rename_needed(obs);
     let capture_output_size_conflict = capture_output_size_conflict(obs);
     let capture_projection_cutover_needed = capture_projection_cutover_needed(obs);
@@ -3902,6 +3939,8 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 (!child_run_cutover_needed || !RETIRED_CHILD_RUN_COLUMNS.contains(&column.as_str()))
                     && (!rerun_lineage_cutover_needed
                         || !RETIRED_RERUN_LINEAGE_COLUMNS.contains(&column.as_str()))
+                    && (!failure_detail_cutover_needed
+                        || !RETIRED_FAILURE_DETAIL_COLUMNS.contains(&column.as_str()))
             })
             .cloned();
         plan.actions.push(RunPlaneAction {
@@ -4400,6 +4439,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                     && !(table == "runs"
                         && rerun_lineage_cutover_needed
                         && RETIRED_RERUN_LINEAGE_COLUMNS.contains(&column.as_str()))
+                    && !(table == "runs"
+                        && failure_detail_cutover_needed
+                        && RETIRED_FAILURE_DETAIL_COLUMNS.contains(&column.as_str()))
             })
             .map(|column| quote_ident(column))
             .collect::<Vec<_>>()
@@ -4731,8 +4773,11 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                                     .map(|(column, _)| column.clone()),
                             )
                             .filter(|column| {
-                                !child_run_cutover_needed
-                                    || !RETIRED_CHILD_RUN_COLUMNS.contains(&column.as_str())
+                                (!child_run_cutover_needed
+                                    || !RETIRED_CHILD_RUN_COLUMNS.contains(&column.as_str()))
+                                    && (!failure_detail_cutover_needed
+                                        || !RETIRED_FAILURE_DETAIL_COLUMNS
+                                            .contains(&column.as_str()))
                             });
                         format!(
                             "LOCK TABLE {}.runs IN ACCESS EXCLUSIVE MODE; {add_column_sql}; {}",
@@ -4821,6 +4866,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 if rerun_lineage_cutover_needed
                     && table == "runs"
                     && RETIRED_RERUN_LINEAGE_COLUMNS.contains(&col.as_str())
+                {
+                    continue;
+                }
+                if failure_detail_cutover_needed
+                    && table == "runs"
+                    && RETIRED_FAILURE_DETAIL_COLUMNS.contains(&col.as_str())
                 {
                     continue;
                 }
@@ -7046,6 +7097,27 @@ CREATE INDEX event_registrations_by_entity
 
     #[test]
     fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
+        let run_columns = record_columns(RUN_STATE_SQL, "wamn_run", "runs")
+            .into_iter()
+            .map(|(column, _)| column)
+            .collect::<BTreeSet<_>>();
+        assert!(run_columns.contains("fail_kind"));
+        assert!(run_columns.contains("caller_outcome_kind"));
+        for retired in RETIRED_FAILURE_DETAIL_COLUMNS {
+            assert!(
+                !run_columns.contains(*retired),
+                "fresh runs record restored retired failure detail {retired}"
+            );
+            assert!(
+                !RUNS_ADMISSION_PINS_TRIGGER_DEF.contains(retired),
+                "write-once trigger unexpectedly names retired failure detail {retired}"
+            );
+            assert!(
+                !RUNS_ADMISSION_PINS_TRIGGER_SQL.contains(retired),
+                "trigger SQL unexpectedly names retired failure detail {retired}"
+            );
+        }
+
         let expected_fail_kind = "CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))";
         let fail_kind = CHECK_SPECS
             .iter()
@@ -7261,6 +7333,102 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .any(|action| action.kind == RunPlaneActionKind::ChildRunCutover)
         );
+    }
+
+    #[test]
+    fn failure_detail_cutover_handles_each_partial_shape_exactly_once() {
+        for legacy_columns in [
+            &["fail_node"][..],
+            &["fail_reason"][..],
+            &["fail_node", "fail_reason"][..],
+        ] {
+            let mut legacy = observation_at_record();
+            legacy
+                .tables
+                .get_mut("runs")
+                .expect("record runs")
+                .extend(legacy_columns.iter().map(|column| (*column).to_string()));
+
+            let plan = plan_run_plane(&schema("demo"), &legacy);
+            assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+            let cutover = &plan.actions[0];
+            assert_eq!(cutover.kind, RunPlaneActionKind::FailureDetailCutover);
+            assert_eq!(cutover.target, "runs.failure-detail");
+            assert!(
+                cutover
+                    .sql
+                    .starts_with("LOCK TABLE \"demo\".runs IN ACCESS EXCLUSIVE MODE;")
+            );
+            assert!(cutover.sql.contains(
+                "populated retired failure-detail values are\n-- deliberately discarded, not archived"
+            ));
+            assert!(
+                cutover
+                    .sql
+                    .contains("DROP COLUMN IF EXISTS fail_node RESTRICT")
+            );
+            assert!(
+                cutover
+                    .sql
+                    .contains("DROP COLUMN IF EXISTS fail_reason RESTRICT")
+            );
+            assert_eq!(cutover.sql.matches("DROP COLUMN IF EXISTS").count(), 2);
+            for forbidden in ["CASCADE", "IS NOT NULL", "SELECT ", "BEGIN;", "COMMIT;"] {
+                assert!(
+                    !cutover.sql.contains(forbidden),
+                    "unsafe failure-detail cutover SQL {forbidden:?}: {}",
+                    cutover.sql
+                );
+            }
+            assert!(plan.extra_columns.is_empty());
+        }
+
+        assert!(
+            !plan_run_plane(&schema("demo"), &observation_at_record())
+                .actions
+                .iter()
+                .any(|action| action.kind == RunPlaneActionKind::FailureDetailCutover)
+        );
+    }
+
+    #[test]
+    fn failure_detail_cutover_leads_without_poisoning_following_acl_repairs() {
+        let mut legacy = observation_at_record();
+        legacy.tables.get_mut("runs").expect("record runs").extend(
+            RETIRED_FAILURE_DETAIL_COLUMNS
+                .iter()
+                .map(|column| (*column).to_string()),
+        );
+        legacy.app_run_capture_privileges.0 = true;
+        legacy.effect_writer_run_table_privileges.insert(
+            "runs".to_string(),
+            ["SELECT".to_string()].into_iter().collect(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        assert_eq!(
+            plan.actions.first().map(|action| action.kind),
+            Some(RunPlaneActionKind::FailureDetailCutover),
+            "actions: {:#?}",
+            plan.actions
+        );
+        for kind in [
+            RunPlaneActionKind::RepairRunCapturePrivilege,
+            RunPlaneActionKind::RepairEffectWriterPrivilege,
+        ] {
+            let repair = plan
+                .actions
+                .iter()
+                .find(|action| action.kind == kind && action.target.contains("runs"))
+                .unwrap_or_else(|| panic!("missing {kind:?} after cutover"));
+            for retired in RETIRED_FAILURE_DETAIL_COLUMNS {
+                assert!(
+                    !repair.sql.contains(retired),
+                    "post-cutover {kind:?} still names {retired}: {}",
+                    repair.sql
+                );
+            }
+        }
     }
 
     #[test]

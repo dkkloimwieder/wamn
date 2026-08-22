@@ -101,8 +101,6 @@ const RUN_COLUMNS: &[&str] = &[
     "run_deadline_at",
     "terminal_reason",
     "fail_kind",
-    "fail_node",
-    "fail_reason",
     "created_at",
     "updated_at",
 ];
@@ -449,8 +447,8 @@ fn app_run_writes_are_confined_to_the_ratified_column_sets() {
             "UPDATE runs SET idempotency_key='stolen' WHERE run_id='r1'",
         ),
         (
-            "update-fail_node",
-            "UPDATE runs SET fail_node='n0' WHERE run_id='r1'",
+            "update-created_at",
+            "UPDATE runs SET created_at=now() WHERE run_id='r1'",
         ),
         (
             "update-tenant_id",

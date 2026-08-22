@@ -53,8 +53,6 @@ const CANONICAL_RUN_COLUMNS: &[&str] = &[
     "run_deadline_at",
     "terminal_reason",
     "fail_kind",
-    "fail_node",
-    "fail_reason",
     "created_at",
     "updated_at",
 ];
@@ -176,8 +174,6 @@ fn run_repair_grants_only_the_ratified_app_column_sets() {
     // the columns that separate the two shapes is what keeps a revert visible.
     for withheld in [
         "capture_mode",
-        "fail_node",
-        "fail_reason",
         "created_at",
         "result_json",
         "state_json",
@@ -201,8 +197,6 @@ fn run_repair_grants_only_the_ratified_app_column_sets() {
         "trigger_source",
         "input_json",
         "idempotency_key",
-        "fail_node",
-        "fail_reason",
         "created_at",
     ] {
         assert!(
@@ -243,10 +237,10 @@ fn a_column_absent_from_the_live_table_is_repaired_without_being_invented() {
 
 #[test]
 fn a_new_runs_column_earns_only_the_grants_its_ratified_sets_name() {
-    // `terminal_reason` is UPDATE-only and `fail_node` belongs to neither set,
+    // `terminal_reason` is UPDATE-only and `created_at` belongs to neither set,
     // so restoring them exercises both halves of the add-column arm.
     let mut columns = CANONICAL_RUN_COLUMNS.to_vec();
-    columns.retain(|column| *column != "terminal_reason" && *column != "fail_node");
+    columns.retain(|column| *column != "terminal_reason" && *column != "created_at");
     let obs = broadly_granted_runs(&columns);
     let plan = plan_run_plane(&schema(), &obs);
 
@@ -257,7 +251,7 @@ fn a_new_runs_column_earns_only_the_grants_its_ratified_sets_name() {
             .unwrap_or_else(|| panic!("{target} is added back"))
     };
 
-    let unratified = added("runs.fail_node");
+    let unratified = added("runs.created_at");
     assert!(
         !unratified.sql.contains("GRANT"),
         "a column no application statement writes was granted anyway: {}",

@@ -89,8 +89,11 @@ use wamn_schema_control::{
 /// **This is a permission, not an ordering assertion.** Membership never claims
 /// an action leads the plan; it says the action MAY lead it. Every member either
 /// refuses outright — the two `Verify*` role boundaries are pure `DO` blocks
-/// that `RAISE` or do nothing — or opens with an `ACCESS EXCLUSIVE` lock and a
-/// preflight that refuses before it migrates anything. `ensure_wamn_app_role` is
+/// that `RAISE` or do nothing — or opens with an `ACCESS EXCLUSIVE` lock. Most
+/// lock-taking members preflight before migration. `FailureDetailCutover` is
+/// the deliberate exception: its one `ALTER TABLE ... DROP COLUMN ... RESTRICT`
+/// is transactional, so a dependent-object refusal rolls back both column drops.
+/// `ensure_wamn_app_role` is
 /// itself a WRITE: it `CREATE ROLE`s `wamn_app`, hardens `wamn_scenario_author`,
 /// and `REVOKE`s the membership between them. So the property this buys is
 /// **refuse before you mutate** — the reconciler must not create or re-harden
@@ -132,7 +135,7 @@ use wamn_schema_control::{
 /// 2. A non-allowlisted push interleaved AHEAD of allowlisted ones — the loop
 ///    consumes a PREFIX, so the first non-member truncates it and silently
 ///    strips the pre-bootstrap property from every allowlisted action behind it.
-const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 10] = [
+const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 11] = [
     RunPlaneActionKind::VerifyEffectWriterRole,
     RunPlaneActionKind::VerifyRunProjectionWriterRole,
     RunPlaneActionKind::ExecutionPinCutover,
@@ -141,6 +144,7 @@ const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 10] = [
     RunPlaneActionKind::PartitionPlaneCutover,
     RunPlaneActionKind::ChildRunCutover,
     RunPlaneActionKind::RerunLineageCutover,
+    RunPlaneActionKind::FailureDetailCutover,
     RunPlaneActionKind::StoredSuiteCutover,
     RunPlaneActionKind::RetiredEffectDispositionCutover,
 ];
@@ -1304,6 +1308,7 @@ mod tests {
                 RunPlaneActionKind::PartitionPlaneCutover,
                 RunPlaneActionKind::ChildRunCutover,
                 RunPlaneActionKind::RerunLineageCutover,
+                RunPlaneActionKind::FailureDetailCutover,
                 RunPlaneActionKind::StoredSuiteCutover,
                 RunPlaneActionKind::RetiredEffectDispositionCutover,
             ]

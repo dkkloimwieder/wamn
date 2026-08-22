@@ -38,7 +38,7 @@ pub fn ladder_ddl(schema: &str) -> String {
             input_json jsonb, result_json jsonb, state_json jsonb, \
             updated_at timestamptz NOT NULL DEFAULT now(), \
             idempotency_key text, \
-            fail_kind text, fail_node text, fail_reason text, \
+            fail_kind text, \
             CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'), \
             PRIMARY KEY (tenant_id, run_id));\
          ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\

@@ -61,7 +61,7 @@ fn runner_ddl(schema: &str) -> String {
             caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \
             caller_release_node_id text, caller_outcome_hash text, \
             caller_released_at timestamptz, \
-            fail_kind text, fail_node text, fail_reason text, \
+            fail_kind text, \
             updated_at timestamptz NOT NULL DEFAULT now(), \
             PRIMARY KEY (tenant_id, run_id));\
          ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\

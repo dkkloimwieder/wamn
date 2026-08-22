@@ -100,7 +100,7 @@ fn runs_stand_in() -> String {
         caller_http_status int, caller_release_node_id text, caller_outcome_hash text, \
         caller_released_at timestamptz, response_deadline_at timestamptz, \
         run_deadline_at timestamptz, terminal_reason text, \
-        fail_kind text, fail_node text, fail_reason text, \
+        fail_kind text, \
         created_at timestamptz NOT NULL DEFAULT now(), \
         updated_at timestamptz NOT NULL DEFAULT now(), \
         CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'), \

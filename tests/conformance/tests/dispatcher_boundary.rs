@@ -13,6 +13,14 @@ const EXECUTION_HOST_SOURCE: &str = "crates/execution/host/src/lib.rs";
 const RUN_STATE_SQL_SOURCE: &str = "crates/execution/run-state/src/sql.rs";
 const RUN_STATE_QUEUE_SQL_SOURCE: &str = "crates/execution/run-state/src/queue/sql.rs";
 const RUN_STATE_TRANSITIONS_SOURCE: &str = "crates/execution/run-state/src/transitions.rs";
+const FRESH_RUN_STATE_CARRIERS: &[&str] = &[
+    "deploy/sql/run-state.sql",
+    "deploy/sql/postgres-init.sql",
+    "test-support/fixtures/runner.rs",
+    "tests/conformance/src/schema_drift.rs",
+    "tests/integration/src/runnerbench.rs",
+    "crates/platform/runtime/tests/common/mod.rs",
+];
 const EXECUTOR_SOURCE: &str = "services/executor/src/lib.rs";
 const EXECUTOR_MANIFEST: &str = "services/executor/Cargo.toml";
 const WAKER_SOURCE: &str = "services/waker/src/lib.rs";
@@ -326,6 +334,19 @@ fn retired_uncalled_run_builders_stay_deleted_while_park_remains() {
         queue_sql.contains("pub fn park_sql() -> String"),
         "run-state queue must retain park_sql"
     );
+}
+
+#[test]
+fn fresh_run_state_carriers_omit_retired_failure_detail_columns() {
+    for path in FRESH_RUN_STATE_CARRIERS {
+        let source = read(path);
+        for retired_column in ["fail_node", "fail_reason"] {
+            assert!(
+                !source.contains(retired_column),
+                "fresh run-state carrier {path} restored retired failure detail {retired_column:?}"
+            );
+        }
+    }
 }
 
 #[test]

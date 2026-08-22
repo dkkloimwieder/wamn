@@ -354,8 +354,6 @@ CREATE TABLE wamn_run.runs (
                                               'dispatch-budget', 'unresolvable-name',
                                               'hash-invalid-bytes', 'foreign-revision',
                                               'incompatible-contract', 'unbound-requirement')),
-    fail_node       text,
-    fail_reason     text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     CHECK (catalog_id <> ''
@@ -459,9 +457,8 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- `admit_sql`), which subsumes every other app-role run insert; the UPDATE set
 -- is the union of the run-plane's claim, park, release, and terminalize
 -- statements (queue/sql.rs, transitions.rs). Columns whose only writer is the
--- management admission (`capture_mode`), the project-admin operator verb, or an
--- uncalled builder (`fail_node`, `fail_reason` — only `update_run_failed_sql`,
--- which nothing invokes) are DELIBERATELY ABSENT, as is `durability_class`.
+-- management admission (`capture_mode`) or the project-admin operator verb are
+-- DELIBERATELY ABSENT, as is `durability_class`.
 -- Its only admission-time writer is `runs_pin_durability_class`, which resolves
 -- the project-local system-policy projection; no producer statement may name
 -- it. A column added to this table does NOT join

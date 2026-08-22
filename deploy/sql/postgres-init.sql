@@ -225,8 +225,6 @@ CREATE TABLE s3.runs (
     state_json      jsonb,
     idempotency_key text,
     fail_kind       text,
-    fail_node       text,
-    fail_reason     text,
     updated_at      timestamptz NOT NULL DEFAULT now(),
     CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'),
     PRIMARY KEY (tenant_id, run_id)
@@ -240,11 +238,11 @@ GRANT SELECT, DELETE ON s3.runs TO wamn_app;
 GRANT INSERT (
     tenant_id, run_id, flow_id, flow_version, status, trigger_source,
     input_json, result_json, state_json, idempotency_key,
-    fail_kind, fail_node, fail_reason, updated_at
+    fail_kind, updated_at
 ), UPDATE (
     tenant_id, run_id, flow_id, flow_version, status, trigger_source,
     input_json, result_json, state_json, idempotency_key,
-    fail_kind, fail_node, fail_reason, updated_at
+    fail_kind, updated_at
 ) ON s3.runs TO wamn_app;
 
 -- One row per node execution; the (tenant_id, run_id, node_id, occurrence)

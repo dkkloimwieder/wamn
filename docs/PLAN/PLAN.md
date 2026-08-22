@@ -33,7 +33,6 @@ Do not claim the dependent implementation until its row is resolved in Beads.
 
 | Owner | Required answer |
 |---|---|
-| `.12.173` | Retire dead `runs.fail_node`/`fail_reason` columns physically, or name their concrete claimant and authority contract. |
 | `.15.180` | Carry the recovered conflicting run id without exposing it through anonymous HTTP, or keep separate result types. |
 | `.12.151` | Keep the two release-membership conflict vocabularies or converge both tiers on one typed refusal. |
 | `.13.42` | Post-MVP only: customer-hosted router residency and signed-release trust. |

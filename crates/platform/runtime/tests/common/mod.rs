@@ -179,7 +179,7 @@ pub fn run_state_stand_in_ddl() -> String {
            caller_release_node_id text, caller_outcome_hash text, \
            caller_released_at timestamptz, response_deadline_at timestamptz, \
            run_deadline_at timestamptz, terminal_reason text, \
-           fail_kind text, fail_node text, fail_reason text, \
+           fail_kind text, \
            created_at timestamptz NOT NULL DEFAULT now(), \
            updated_at timestamptz NOT NULL DEFAULT now(), \
            CONSTRAINT runs_release_record_check CHECK ( \
