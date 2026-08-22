@@ -7,7 +7,6 @@
 //! Artifact lifecycle policy such as polling, doorbell subscription, shutdown,
 //! and production capability selection remains in the service leaves.
 
-mod effect_writer;
 mod pool;
 
 pub use pool::{
@@ -16,8 +15,6 @@ pub use pool::{
     InvalidExecutionPoolLimits, InvocationDisposition, PoolCapacityError, PoolCleanupError,
     RetirementReason, ReusableExecutionInstance,
 };
-
-use effect_writer::load_effect_writer;
 
 include!(concat!(env!("OUT_DIR"), "/effect_provider_revision.rs"));
 
@@ -48,7 +45,7 @@ use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode as P3ErrorCode;
 use tracing::Instrument as _;
 
 use wamn_catalog::{ExecutionRuntimeRevision, HOST_EFFECT_CONTRACT_VERSION};
-use wamn_run_state::{EffectWriterErrorKind, FailKind, ResetProjectionFence, RunStatus};
+use wamn_run_state::{FailKind, RunStatus};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION, MEMORY_CAP_BYTES};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
@@ -524,12 +521,6 @@ pub struct ExecutionIdentity<'a> {
     pub tenant: &'a str,
     pub schema: Option<&'a str>,
     pub project: &'a str,
-    /// Project-environment org, required only by the private production writer.
-    pub org: Option<&'a str>,
-    /// Project-environment name, required only by the private production writer.
-    pub environment: Option<&'a str>,
-    /// Exact project database, required only by the private production writer.
-    pub database: Option<&'a str>,
 }
 
 /// Register this replica's HOST-INJECTED wasi:logging claim: the run-path log
@@ -588,9 +579,6 @@ pub struct ExecutionHost {
     /// is rebound UNDER it at every checkout — see [`ExecutionAcquisition`].
     component_id: Box<str>,
     runtime_revision: TrustedExecutionRuntimeRevision,
-    /// Fixed private writer. Only expired-pre-effect projection reset is active;
-    /// effect dispatch and frame-fact persistence remain unmounted until .5.4.
-    effect_writer: Option<wamn_run_state::EffectWriterClient>,
     ttl_ms: u64,
     /// [9.8] `Some` when a memory limiter is attached (a budget was configured);
     /// each drive then publishes the store's high-water into the meter.
@@ -626,7 +614,6 @@ pub struct ExecutionHost {
 /// | the causation run context | cleared by the same call; the runner re-declares it per run |
 /// | the `wasi:logging` `(tenant, project)` claim | [`Self::claims`] → `WamnLogging::set_claim` |
 /// | the `wamn:runner/egress` declaration | cleared at revoke; the runner re-declares it per run |
-/// | the private effect-writer's project-environment scope | [`Self::effect_writer`] |
 /// | the trace parent for this acquisition | [`Self::span`] |
 ///
 /// Connection-generation resolution has no element of its own: a generation is
@@ -664,27 +651,19 @@ pub struct ExecutionHost {
 pub struct ExecutionAcquisition {
     /// Every `wamn:postgres` claim this checkout resolves under.
     pub claims: SessionClaims,
-    /// The private production writer scoped to this acquisition's
-    /// project-environment, or `None` where no private writer is mounted.
-    ///
-    /// Carried already-constructed rather than built here: the client owns a
-    /// connection pool, and opening one is async while a rebind is not.
-    pub effect_writer: Option<wamn_run_state::EffectWriterClient>,
     /// The trace parent for this acquisition. [`tracing::Span::none`] leaves
     /// host-side spans parented wherever the driving task puts them.
     pub span: tracing::Span,
 }
 
 impl ExecutionAcquisition {
-    /// An acquisition with no trace parent and no private writer.
+    /// An acquisition with no trace parent.
     ///
-    /// The shape a caller that has neither has — a gate, a bench, or any driver
-    /// running outside a trace. Host-side spans then parent wherever the driving
-    /// task puts them, which is what they did before this seam existed.
+    /// The shape of a gate, bench, or driver running outside a trace. Host-side
+    /// spans then parent wherever the driving task puts them.
     pub fn untraced(claims: SessionClaims) -> Self {
         Self {
             claims,
-            effect_writer: None,
             span: tracing::Span::none(),
         }
     }
@@ -763,7 +742,6 @@ impl ReusableExecutionInstance for ExecutionHost {
             &claims.tenant,
             claims.project.as_deref().unwrap_or(DEFAULT_PROJECT),
         );
-        self.effect_writer = acquisition.effect_writer.clone();
         self.span = acquisition.span.clone();
         Ok(())
     }
@@ -779,7 +757,6 @@ impl ReusableExecutionInstance for ExecutionHost {
         // Declared by the trusted runner per run through `wamn:runner/egress`
         // rather than at bind, so this is the ONLY place it is removed.
         self.egress.clear_declared(&self.component_id);
-        self.effect_writer = None;
         self.span = tracing::Span::none();
     }
 
@@ -794,7 +771,6 @@ impl std::fmt::Debug for ExecutionHost {
             .debug_struct("ExecutionHost")
             .field("runtime_revision", &self.runtime_revision)
             .field("component_id", &self.component_id)
-            .field("effect_writer_loaded", &self.effect_writer.is_some())
             .field("ttl_ms", &self.ttl_ms)
             .field("disposed", &self.live.is_none())
             .finish_non_exhaustive()
@@ -824,7 +800,6 @@ impl ExecutionHost {
     ) -> anyhow::Result<Self> {
         let runtime_revision = TrustedExecutionRuntimeRevision::from_flowrunner_bytes(guest);
         let release_weld = load_release_weld(release)?;
-        let effect_writer = load_effect_writer(&identity).await?;
         let ExecutionIdentity {
             owner,
             tenant,
@@ -964,7 +939,6 @@ impl ExecutionHost {
             egress,
             component_id: owner.into(),
             runtime_revision,
-            effect_writer,
             ttl_ms: bounded_attempt_ms(ttl_ms),
             mem,
             span: tracing::Span::none(),
@@ -1082,37 +1056,6 @@ impl ExecutionHost {
             }
             match claim {
                 ProductionClaimResult::Empty => break,
-                ProductionClaimResult::ResetRequired {
-                    run_id,
-                    prior_lease_owner,
-                    prior_lease_expires_at,
-                    prior_lease_generation,
-                } => {
-                    let writer = self.effect_writer.as_ref().ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "expired pre-effect projection requires the fixed private writer"
-                        )
-                    })?;
-                    match writer
-                        .reset_expired_pre_effect_projection(ResetProjectionFence {
-                            run_id: &run_id,
-                            prior_lease_owner: &prior_lease_owner,
-                            prior_lease_expires_at: &prior_lease_expires_at,
-                            prior_lease_generation,
-                        })
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(error)
-                            if matches!(
-                                error.kind(),
-                                EffectWriterErrorKind::EffectAttemptPresent
-                                    | EffectWriterErrorKind::ResetFenceLost
-                            ) => {}
-                        Err(error) => return Err(error.into()),
-                    }
-                    continue;
-                }
                 ProductionClaimResult::Terminalized {
                     run_id,
                     status,
@@ -1140,9 +1083,7 @@ fn claim_guest_input(claim: &ProductionClaimResult) -> Option<(&str, &str)> {
         ProductionClaimResult::Ready {
             run_id, payload, ..
         } => Some((run_id, payload)),
-        ProductionClaimResult::Empty
-        | ProductionClaimResult::ResetRequired { .. }
-        | ProductionClaimResult::Terminalized { .. } => None,
+        ProductionClaimResult::Empty | ProductionClaimResult::Terminalized { .. } => None,
     }
 }
 
@@ -1272,7 +1213,6 @@ mod tests {
                 egress: Arc::new(RunnerEgressPolicy::default()),
                 component_id: "deadline-gate".into(),
                 runtime_revision: TrustedExecutionRuntimeRevision::from_flowrunner_bytes(&bytes),
-                effect_writer: None,
                 ttl_ms: 40,
                 mem: None,
                 span: tracing::Span::none(),
@@ -1377,9 +1317,6 @@ mod tests {
             tenant: "acme",
             schema: Some("wamn_run"),
             project: "receiving",
-            org: None,
-            environment: None,
-            database: None,
         };
         register_logging_claim(&logging, &identity);
         // Keyed by the component id (== owner); the enrichment is the runner's.
@@ -1726,7 +1663,6 @@ mod tests {
                 tenant: tenant.to_string(),
                 ..SessionClaims::default()
             },
-            effect_writer: None,
             span,
         }
     }

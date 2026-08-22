@@ -8,9 +8,8 @@ use tokio_postgres::types::FromSql;
 use wamn_run_state::queue::{
     ProductionClaimClass, advance_claim_attempts_sql, classify_production_claim,
     clear_pre_effect_state_sql, grant_production_claim_sql, select_claim_effect_attempt_sql,
-    select_exhausted_production_sql, select_pre_effect_projection_sql, select_production_claim_sql,
-    serialize_effect_intent_sql, terminalize_effect_uncertain_claim_sql,
-    terminalize_exhausted_production_sql,
+    select_exhausted_production_sql, select_production_claim_sql, serialize_effect_intent_sql,
+    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
 };
 use wamn_run_state::{DurabilityClass, EffectUncertainFailure, FailKind, RunStatus};
 
@@ -82,14 +81,6 @@ pub enum ProductionClaimResult {
         payload: String,
         lease_generation: i64,
     },
-    /// A committed app claim observed an exact expired pre-effect fence whose
-    /// mutable projection must be cleared by the private native writer.
-    ResetRequired {
-        run_id: String,
-        prior_lease_owner: String,
-        prior_lease_expires_at: String,
-        prior_lease_generation: i64,
-    },
     /// Claim-time classification removed the row without execution.
     Terminalized {
         run_id: String,
@@ -130,9 +121,6 @@ enum ClaimTurn {
 struct SelectedClaim {
     run_id: String,
     had_prior_lease: bool,
-    prior_lease_owner: Option<String>,
-    prior_lease_expires_at: Option<String>,
-    prior_lease_generation: i64,
     status: RunStatus,
     payload: String,
     /// The class the run was admitted under, read off the row this turn already
@@ -408,36 +396,6 @@ async fn claim_in_transaction(
                 .map(ClaimTurn::Claimed);
         }
         ProductionClaimClass::ExpiredPreEffect => {
-            let projection_sql = select_pre_effect_projection_sql();
-            let projection = connection
-                .prepare_cached(&projection_sql)
-                .await
-                .map_err(|error| storage("prepare pre-effect projection check", error))?;
-            let projection_row = connection
-                .query_one(&projection, &[&selected.run_id])
-                .await
-                .map_err(|error| storage("classify pre-effect projection", error))?;
-            let has_projection = row_value(&projection_row, 0, "pre-effect projection")?;
-            if has_projection {
-                return Ok(ClaimTurn::Claimed(ProductionClaimResult::ResetRequired {
-                    run_id: selected.run_id,
-                    prior_lease_owner: selected.prior_lease_owner.ok_or_else(|| {
-                        ProductionClaimError::new(
-                            ProductionClaimErrorKind::Contract,
-                            "decode reset fence",
-                            "expired claim lacks prior lease owner",
-                        )
-                    })?,
-                    prior_lease_expires_at: selected.prior_lease_expires_at.ok_or_else(|| {
-                        ProductionClaimError::new(
-                            ProductionClaimErrorKind::Contract,
-                            "decode reset fence",
-                            "expired claim lacks prior lease expiry",
-                        )
-                    })?,
-                    prior_lease_generation: selected.prior_lease_generation,
-                }));
-            }
             let clear_sql = clear_pre_effect_state_sql();
             let clear = connection
                 .prepare_cached(&clear_sql)
@@ -456,8 +414,8 @@ async fn claim_in_transaction(
     }
 
     // Crash evidence advances on every path that reaches the grant, in its own
-    // statement OUTSIDE the grant's subtransaction. Terminalization and the
-    // projection-reset handoff return above and still do not count.
+    // statement OUTSIDE the grant's subtransaction. Terminalization returns
+    // above and still does not count.
     let advance_sql = advance_claim_attempts_sql();
     let advance = connection
         .prepare_cached(&advance_sql)
@@ -730,7 +688,7 @@ fn generic_failure_outcome(
 }
 
 fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimError> {
-    let status: String = row_value(row, 5, "run status")?;
+    let status: String = row_value(row, 2, "run status")?;
     let status = RunStatus::from_sql(&status).ok_or_else(|| {
         ProductionClaimError::new(
             ProductionClaimErrorKind::Contract,
@@ -742,15 +700,12 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     // (wamn-0h0g.20.1): a claim must not enroll a run in premium machinery on
     // the strength of data it could not parse, and it must not fail the queue
     // either.
-    let class_text: String = row_value(row, 7, "durability class")?;
+    let class_text: String = row_value(row, 4, "durability class")?;
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
-        prior_lease_owner: row_value(row, 2, "prior lease owner")?,
-        prior_lease_expires_at: row_value(row, 3, "prior lease expiry")?,
-        prior_lease_generation: row_value(row, 4, "prior lease generation")?,
         status,
-        payload: row_value(row, 6, "authoritative input")?,
+        payload: row_value(row, 3, "authoritative input")?,
         durability_class: DurabilityClass::from_sql_or_default(&class_text),
     })
 }

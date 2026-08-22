@@ -4,32 +4,15 @@
 //! non-default native feature keeps private statements beside their opaque
 //! connection-backed adapter.
 //!
-//! THIS MODULE HAS A LIVE PRODUCTION CALLER, and the halves differ
-//! (wamn-0h0g.20.2 — the previous claim that none was activated was stale, and
-//! a stale "nothing calls this" is how shelved code gets deleted out from under
-//! a live path):
-//!
-//! * [`EffectWriterClient::reset_expired_pre_effect_projection`] IS ACTIVATED.
-//!   The host loads the writer in `crates/execution/host/src/lib.rs`
-//!   (`load_effect_writer`, ~:847) and invokes the reset inside the drain
-//!   loop's `ProductionClaimResult::ResetRequired` arm (~:1116). That arm is
-//!   reachable only for a run whose claim classified `ExpiredPreEffect`, which
-//!   the class gate leaves reachable on BOTH tiers — a pre-effect reclaim needs
-//!   no effect ledger.
-//! * [`EffectWriterClient::begin_attempt`] and
-//!   [`EffectWriterClient::record_outcome`] — the effect ATTEMPT ledger proper
-//!   — have no production caller. Every call site is a live gate
-//!   (`tests/effect_writer_live.rs`,
-//!   `crates/platform/runtime/tests/production_claim_live.rs`). Those are the
-//!   entry points wamn-0h0g.20.3 parks behind the class gate; this file is not
-//!   deletable while the reset half stands.
+//! The effect-attempt APIs remain unmounted in production; their callers are
+//! live gates for the later activation owner.
 
 use std::time::SystemTime;
 
 use crate::effect_writer_credential::{
     EffectWriterCredentialScope, parse_effect_writer_credential, validate_effect_writer_credential,
 };
-use crate::queue::{select_claim_effect_attempt_sql, serialize_effect_intent_sql};
+use crate::queue::serialize_effect_intent_sql;
 use deadpool_postgres::{Manager, Pool};
 use tokio_postgres::NoTls;
 use wamn_pg_core::Sql;
@@ -97,15 +80,6 @@ pub struct RecordEffectOutcome<'a> {
     pub outcome_status: &'a str,
 }
 
-/// Exact expired claim identity carried across the committed app/private reset boundary.
-#[derive(Debug, Clone, Copy)]
-pub struct ResetProjectionFence<'a> {
-    pub run_id: &'a str,
-    pub prior_lease_owner: &'a str,
-    pub prior_lease_expires_at: &'a str,
-    pub prior_lease_generation: i64,
-}
-
 /// Stable internal failure categories for the private native adapter boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectWriterErrorKind {
@@ -114,8 +88,6 @@ pub enum EffectWriterErrorKind {
     MissingAttempt,
     MissingDispatch,
     RunNotRunnable,
-    EffectAttemptPresent,
-    ResetFenceLost,
     Storage,
 }
 
@@ -125,7 +97,6 @@ pub struct EffectWriterError {
     kind: EffectWriterErrorKind,
     operation: &'static str,
     attempt_id: Option<String>,
-    run_id: Option<String>,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -140,18 +111,12 @@ impl EffectWriterError {
             kind,
             operation,
             attempt_id: None,
-            run_id: None,
             source: None,
         }
     }
 
     fn with_attempt(mut self, attempt_id: impl Into<String>) -> Self {
         self.attempt_id = Some(attempt_id.into());
-        self
-    }
-
-    fn with_run(mut self, run_id: impl Into<String>) -> Self {
-        self.run_id = Some(run_id.into());
         self
     }
 
@@ -170,9 +135,6 @@ impl std::fmt::Display for EffectWriterError {
         )?;
         if let Some(attempt_id) = &self.attempt_id {
             write!(formatter, " (attempt {attempt_id})")?;
-        }
-        if let Some(run_id) = &self.run_id {
-            write!(formatter, " (run {run_id})")?;
         }
         Ok(())
     }
@@ -281,108 +243,6 @@ impl EffectWriterClient {
             pool,
             tenant_id,
             schema,
-        })
-    }
-
-    /// Delete only a mutable projection still owned by the exact expired claim.
-    ///
-    /// The shared advisory fence precedes a fresh immutable-ledger snapshot.
-    /// The delete then rechecks owner, expiry, generation, expiry-at-reset, and
-    /// runnable status in the same transaction. It never clears run state,
-    /// rewrites resolution evidence, or grants a replacement lease.
-    pub async fn reset_expired_pre_effect_projection(
-        &self,
-        fence: ResetProjectionFence<'_>,
-    ) -> Result<u64, EffectWriterError> {
-        let mut connection = self.pool.get().await.map_err(|source| {
-            EffectWriterError::new(
-                EffectWriterErrorKind::Storage,
-                "checkout private reset connection",
-            )
-            .with_run(fence.run_id)
-            .with_source(source)
-        })?;
-        let transaction = connection
-            .build_transaction()
-            .isolation_level(tokio_postgres::IsolationLevel::ReadCommitted)
-            .start()
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin projection reset")
-                    .with_run(fence.run_id)
-                    .with_source(source)
-            })?;
-        transaction
-            .query_one(
-                bind_writer_authority().text(),
-                &[&self.tenant_id, &self.schema],
-            )
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind reset authority")
-                    .with_run(fence.run_id)
-                    .with_source(source)
-            })?;
-        transaction
-            .query_one(serialize_effect_intent_sql().as_str(), &[&fence.run_id])
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "fence projection reset")
-                    .with_run(fence.run_id)
-                    .with_source(source)
-            })?;
-        let effect_row = transaction
-            .query_one(select_claim_effect_attempt_sql().as_str(), &[&fence.run_id])
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(
-                    EffectWriterErrorKind::Storage,
-                    "classify reset effect evidence",
-                )
-                .with_run(fence.run_id)
-                .with_source(source)
-            })?;
-        if effect_row.get::<_, bool>(0) {
-            return Err(EffectWriterError::new(
-                EffectWriterErrorKind::EffectAttemptPresent,
-                "classify projection reset",
-            )
-            .with_run(fence.run_id));
-        }
-        let reset = transaction
-            .query_one(
-                reset_expired_projection().text(),
-                &[
-                    &fence.run_id,
-                    &fence.prior_lease_owner,
-                    &fence.prior_lease_expires_at,
-                    &fence.prior_lease_generation,
-                ],
-            )
-            .await
-            .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "delete projection")
-                    .with_run(fence.run_id)
-                    .with_source(source)
-            })?;
-        let fence_matches: bool = reset.get(0);
-        let deleted: i64 = reset.get(1);
-        if !fence_matches {
-            return Err(EffectWriterError::new(
-                EffectWriterErrorKind::ResetFenceLost,
-                "verify projection reset fence",
-            )
-            .with_run(fence.run_id));
-        }
-        transaction.commit().await.map_err(|source| {
-            EffectWriterError::new(EffectWriterErrorKind::Storage, "commit projection reset")
-                .with_run(fence.run_id)
-                .with_source(source)
-        })?;
-        u64::try_from(deleted).map_err(|source| {
-            EffectWriterError::new(EffectWriterErrorKind::Storage, "decode projection reset")
-                .with_run(fence.run_id)
-                .with_source(source)
         })
     }
 
@@ -776,35 +636,6 @@ fn bind_writer_authority() -> Sql {
                     'search_path', \
                     pg_catalog.quote_ident($2::text) || ', pg_catalog, pg_temp', true)",
         2,
-    )
-}
-
-/// Delete mutable projection rows only while the committed prior claim fence
-/// still denotes the same expired runnable run.
-fn reset_expired_projection() -> Sql {
-    Sql::new(
-        r#"WITH exact_claim AS MATERIALIZED (
-    SELECT q.tenant_id, q.run_id
-      FROM run_queue AS q
-      JOIN runs AS r
-        ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id
-     WHERE q.tenant_id = current_setting('app.tenant', true)
-       AND q.run_id = $1::text
-       AND q.lease_owner IS NOT DISTINCT FROM $2::text
-       AND q.lease_expires_at IS NOT DISTINCT FROM $3::text::timestamptz
-       AND q.lease_generation IS NOT DISTINCT FROM $4::bigint
-       AND q.lease_expires_at <= statement_timestamp()
-       AND r.status IN ('dispatched', 'running')
-),
-deleted AS (
-    DELETE FROM node_runs AS projection
-     USING exact_claim AS claim
-     WHERE projection.tenant_id = claim.tenant_id
-       AND projection.run_id = claim.run_id
-     RETURNING projection.run_id
-)
-SELECT EXISTS (SELECT 1 FROM exact_claim), count(*)::bigint FROM deleted"#,
-        4,
     )
 }
 

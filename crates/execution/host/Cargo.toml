@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 wamn-catalog = { workspace = true }
 wamn-runtime = { workspace = true }
-wamn-run-state = { workspace = true, features = ["native"] }
+wamn-run-state = { workspace = true }
 wash-runtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }

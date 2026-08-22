@@ -41,8 +41,8 @@ pub fn enqueue_evt_sql() -> String {
 /// correlated to `selected_run`, the row this statement already joins and locks,
 /// so the gate costs no extra relation and no extra lookup.
 ///
-/// The projection is exactly what the host composer decodes: the run id, the
-/// reset fence, the status it validates, the authoritative input it hands
+/// The projection is exactly what the host composer decodes: the run id, prior
+/// lease evidence, the status it validates, the authoritative input it hands
 /// the guest, and the durability class it gates the rest of the turn on. The
 /// release identity a claim records is NOT read here — it comes from the
 /// claiming pod, and the lease grant writes it.
@@ -50,8 +50,7 @@ pub fn select_production_claim_sql() -> String {
     format!(
         "WITH candidate AS MATERIALIZED ( \
              SELECT q.tenant_id, q.run_id, \
-                    q.lease_expires_at IS NOT NULL AS had_prior_lease, \
-                    q.lease_owner, q.lease_expires_at, q.lease_generation \
+                    q.lease_expires_at IS NOT NULL AS had_prior_lease \
                FROM run_queue AS q \
                JOIN runs AS selected_run \
                  ON selected_run.tenant_id = q.tenant_id \
@@ -73,9 +72,7 @@ pub fn select_production_claim_sql() -> String {
               FOR UPDATE OF selected_run, q SKIP LOCKED \
               LIMIT 1 \
          ) \
-         SELECT candidate.run_id, candidate.had_prior_lease, \
-                candidate.lease_owner, candidate.lease_expires_at::text, \
-                candidate.lease_generation, r.status, \
+         SELECT candidate.run_id, candidate.had_prior_lease, r.status, \
                 ({execution_input})::text AS input_json, \
                 r.durability_class \
            FROM candidate \
@@ -110,14 +107,6 @@ pub fn select_claim_effect_attempt_sql() -> String {
     .to_string()
 }
 
-/// Whether the selected run still has mutable projection rows to reset.
-pub fn select_pre_effect_projection_sql() -> String {
-    "SELECT EXISTS ( \
-         SELECT 1 FROM node_runs \
-          WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1)"
-        .to_string()
-}
-
 /// Serialize effect-attempt creation against claim-time classification.
 ///
 /// `$1` is the run id. The tenant claim and run id form one transaction-scoped
@@ -133,8 +122,7 @@ pub fn serialize_effect_intent_sql() -> String {
         .to_string()
 }
 
-/// Replace the abandoned attempt's run-level projection only after projection
-/// deletion. `$1` is the selected run id.
+/// Replace the abandoned attempt's run-level state. `$1` is the selected run id.
 ///
 /// `state_json` and the claim-time release record are the only run columns
 /// changed; immutable ledgers and the already-materialized resolution map are
@@ -145,19 +133,10 @@ pub fn serialize_effect_intent_sql() -> String {
 /// reach this statement, so no effect was ever attributed to the pair being
 /// cleared, and the database guard permits the erasure for exactly that reason.
 ///
-/// The `NOT EXISTS` on `node_runs` is this statement's OWN precondition — the
-/// composer routes a projection-carrying run to the private reset handoff
-/// instead — and since wamn-0h0g.15.82 it is the only place that precondition
-/// is enforced. The guard no longer refuses an erasure over an executed
-/// projection, because the record names the CLAIM CURRENTLY EXECUTING the run,
-/// not the run's history (wamn-0h0g.13.55).
 pub fn clear_pre_effect_state_sql() -> String {
     "UPDATE runs \
         SET state_json = NULL, release_version = NULL, manifest_digest = NULL \
       WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
-        AND NOT EXISTS ( \
-            SELECT 1 FROM node_runs \
-             WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1) \
       RETURNING run_id"
         .to_string()
 }

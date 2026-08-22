@@ -42,8 +42,7 @@ pub mod durability;
 #[cfg(feature = "effect-writer-credential")]
 pub mod effect_writer_credential;
 // Host-only effect-ledger statements stay out of the default guest-safe graph.
-// The projection-reset half HAS a production caller (the host drain loop's
-// `ResetRequired` arm); the attempt-ledger half does not. See the module doc.
+// The attempt-ledger adapter remains unmounted in production. See the module doc.
 #[cfg(feature = "native")]
 mod effect_writer;
 /// Durable lookup and bounded-wait queries for flow invocation.
@@ -77,7 +76,6 @@ pub use effect_writer::{
 #[cfg(feature = "native")]
 pub use effect_writer::{
     EffectWriterClient, EffectWriterError, EffectWriterErrorKind, EffectWriterScope,
-    ResetProjectionFence,
 };
 #[cfg(feature = "effect-writer-credential")]
 pub use effect_writer_credential::{
