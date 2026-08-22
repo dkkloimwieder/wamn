@@ -66,6 +66,46 @@ pub struct ScopedWiringOperationFacts<'a> {
     pub operations: &'a [WiringOperationFact],
 }
 
+/// Project one persisted component-library row onto the lowering seam.
+///
+/// Every component-owned field survives exactly. Environment is intentionally
+/// supplied by [`ScopedWiringOperationFacts`] because it belongs to the active
+/// wiring, not component admission. Typed schemas remain available on the
+/// source fact for the semantic gate and are erased only after that gate has
+/// established exact digest compatibility.
+pub fn project_component_operation(
+    component: &wamn_catalog::AdmittedComponent,
+) -> WiringOperationFact {
+    WiringOperationFact {
+        component: component.component.clone(),
+        interface_version: component.interface_version.clone(),
+        operation: component.operation.clone(),
+        component_digest: component.component_digest.clone(),
+        input_ports: component
+            .input_ports
+            .iter()
+            .map(|port| port.name.clone())
+            .collect(),
+        output_ports: component
+            .output_ports
+            .iter()
+            .map(|port| port.name.clone())
+            .collect(),
+        parameters: component
+            .parameters
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter.name.clone(),
+                    WiringParameterFact {
+                        required: parameter.required,
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
 /// Stable classification for a refused catalog-to-router lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WiringLoweringErrorKind {

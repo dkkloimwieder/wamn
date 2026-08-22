@@ -1,5 +1,4 @@
-//! Structurally refuses publication of first-party components that import
-//! `wasi:sockets`.
+//! Pure import admission for platform and tenant components.
 //!
 //! MVP outcome: egress confinement (import allowlist, mutation-proofed).
 //!
@@ -43,6 +42,8 @@ impl ComponentImports {
     }
 }
 
+use std::collections::BTreeSet;
+
 /// The retained policy population: first-party platform components.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicyProfile {
@@ -61,6 +62,111 @@ pub fn analyze(
 ) -> Result<PolicyReport, EgressGuardError> {
     screen_imports(imports, label)?;
     Ok(PolicyReport)
+}
+
+/// The complete WASI package set tenant components may import directly.
+///
+/// Matching is by exact `namespace:package`; this is deliberately not a
+/// `wasi:*` prefix policy. Filesystem, sockets, HTTP, CLI environment/process,
+/// and every future WASI package therefore remain denied until this list is
+/// changed deliberately.
+pub const TENANT_WASI_PACKAGES: [&str; 4] =
+    ["wasi:io", "wasi:clocks", "wasi:random", "wasi:logging"];
+
+/// Stable classification for a refused tenant import inventory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TenantImportErrorKind {
+    InvalidPlatformCapability,
+    UnadmittedImport,
+}
+
+/// Refusal from the closed tenant import policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantImportError {
+    kind: TenantImportErrorKind,
+    component: Box<str>,
+    imports: Box<[String]>,
+}
+
+impl TenantImportError {
+    /// Stable refusal class for callers that must not match display text.
+    pub fn kind(&self) -> TenantImportErrorKind {
+        self.kind
+    }
+
+    /// Exact registry entry or component imports that were refused.
+    pub fn imports(&self) -> &[String] {
+        &self.imports
+    }
+}
+
+impl std::fmt::Display for TenantImportError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            TenantImportErrorKind::InvalidPlatformCapability => write!(
+                formatter,
+                "component {:?} was given invalid platform capability package(s) {:?}",
+                self.component, self.imports
+            ),
+            TenantImportErrorKind::UnadmittedImport => write!(
+                formatter,
+                "component {:?} imports unadmitted package interface(s) {:?}",
+                self.component, self.imports
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TenantImportError {}
+
+/// Enforce the closed tenant import policy.
+///
+/// `admitted_platform_packages` is the caller's closed platform registry
+/// projection for this component. Its entries must be exact unversioned
+/// `wamn:<package>` names. An import is accepted only when its package is one
+/// of those exact entries or one of [`TENANT_WASI_PACKAGES`].
+pub fn analyze_tenant(
+    imports: &ComponentImports,
+    admitted_platform_packages: &BTreeSet<String>,
+    label: &str,
+) -> Result<PolicyReport, TenantImportError> {
+    let invalid_registry: Vec<_> = admitted_platform_packages
+        .iter()
+        .filter(|package| !valid_platform_package(package))
+        .cloned()
+        .collect();
+    if !invalid_registry.is_empty() {
+        return Err(TenantImportError {
+            kind: TenantImportErrorKind::InvalidPlatformCapability,
+            component: label.into(),
+            imports: invalid_registry.into_boxed_slice(),
+        });
+    }
+
+    let denied: Vec<_> = imports
+        .iter()
+        .filter(|name| {
+            let package = import_pkg(name);
+            !TENANT_WASI_PACKAGES.contains(&package)
+                && !admitted_platform_packages.contains(package)
+        })
+        .map(str::to_owned)
+        .collect();
+    if denied.is_empty() {
+        Ok(PolicyReport)
+    } else {
+        Err(TenantImportError {
+            kind: TenantImportErrorKind::UnadmittedImport,
+            component: label.into(),
+            imports: denied.into_boxed_slice(),
+        })
+    }
+}
+
+fn valid_platform_package(package: &str) -> bool {
+    package
+        .strip_prefix("wamn:")
+        .is_some_and(|name| !name.is_empty() && !name.contains(['/', '@', '*']))
 }
 
 /// The denied WIT `namespace:package`. A component importing ANY interface of
@@ -221,5 +327,50 @@ mod tests {
                 "wasi:sockets/ip-name-lookup@0.2.3".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn tenant_policy_is_exact_and_has_no_namespace_wildcard() {
+        let admitted = BTreeSet::from(["wamn:postgres".to_string()]);
+        let imports = ComponentImports::new([
+            "wasi:io/streams@0.2.3".to_string(),
+            "wasi:clocks/monotonic-clock@0.2.3".to_string(),
+            "wasi:random/random@0.2.3".to_string(),
+            "wasi:logging/logging@0.1.0-draft".to_string(),
+            "wamn:postgres/client@0.1.0".to_string(),
+        ]);
+
+        assert!(analyze_tenant(&imports, &admitted, "tenant-node").is_ok());
+    }
+
+    #[test]
+    fn tenant_policy_refuses_every_unlisted_authority_surface() {
+        let imports = ComponentImports::new([
+            "wasi:filesystem/types@0.2.3".to_string(),
+            "wasi:sockets/tcp@0.2.3".to_string(),
+            "wasi:http/outgoing-handler@0.2.3".to_string(),
+            "wasi:cli/environment@0.2.3".to_string(),
+            "wamn:postgres/client@0.1.0".to_string(),
+            "other:host/process@1.0.0".to_string(),
+        ]);
+
+        let error = analyze_tenant(&imports, &BTreeSet::new(), "tenant-node")
+            .expect_err("unlisted packages must refuse");
+        assert_eq!(error.kind(), TenantImportErrorKind::UnadmittedImport);
+        assert_eq!(error.imports().len(), 6);
+    }
+
+    #[test]
+    fn tenant_platform_registry_rejects_wildcards_and_interface_names() {
+        for entry in ["wamn:*", "wamn:postgres/client", "wamn:postgres@0.1.0"] {
+            let admitted = BTreeSet::from([entry.to_string()]);
+            let error =
+                analyze_tenant(&ComponentImports::new(Vec::new()), &admitted, "tenant-node")
+                    .expect_err("the platform registry must contain exact package names");
+            assert_eq!(
+                error.kind(),
+                TenantImportErrorKind::InvalidPlatformCapability
+            );
+        }
     }
 }

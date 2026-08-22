@@ -1632,6 +1632,50 @@ CREATE POLICY seed_datasets_tenant ON catalog.seed_datasets
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.seed_datasets TO wamn_app;
 
+-- BEGIN COMPONENT LIBRARY STORAGE MIGRATION (wamn-0h0g.21.1)
+-- ---------------------------------------------------------------------------
+-- Immutable, catalog-versioned component admission facts. The byte validator
+-- stores one logical operation per component digest, the exact import inventory
+-- it audited, and normalized typed port/parameter JSON containing each schema's
+-- RFC 8785 digest. Environment is intentionally absent: environment selects a
+-- wiring pointer; it never changes what bytes or interface a catalog admitted.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.component_library (
+    tenant_id          text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id         text NOT NULL CHECK (catalog_id <> ''),
+    catalog_version    int NOT NULL CHECK (catalog_version > 0),
+    component          text NOT NULL CHECK (component <> ''),
+    interface_version  text NOT NULL CHECK (interface_version <> ''),
+    operation          text NOT NULL CHECK (operation <> ''),
+    component_digest   text NOT NULL
+        CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
+    imports            jsonb NOT NULL CHECK (jsonb_typeof(imports) = 'array'),
+    imports_fingerprint text NOT NULL
+        CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+    input_ports        jsonb NOT NULL CHECK (jsonb_typeof(input_ports) = 'array'),
+    output_ports       jsonb NOT NULL CHECK (jsonb_typeof(output_ports) = 'array'),
+    parameters         jsonb NOT NULL CHECK (jsonb_typeof(parameters) = 'array'),
+    admitted_at        timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (
+        tenant_id, catalog_id, catalog_version, component, interface_version
+    ),
+    CONSTRAINT component_library_one_operation_per_digest UNIQUE (
+        tenant_id, catalog_id, catalog_version, component_digest
+    ),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
+);
+ALTER TABLE catalog.component_library ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.component_library FORCE ROW LEVEL SECURITY;
+CREATE POLICY component_library_tenant ON catalog.component_library
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.component_library TO wamn_app;
+CREATE TRIGGER component_library_immutable
+BEFORE UPDATE OR DELETE ON catalog.component_library
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+-- END COMPONENT LIBRARY STORAGE MIGRATION (wamn-0h0g.21.1)
+
 -- BEGIN WIRING STORAGE MIGRATION (wamn-0h0g.18.2)
 -- ---------------------------------------------------------------------------
 -- Wirings: the gated tenant graph over palette components (exe-model rev 4 R3,

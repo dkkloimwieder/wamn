@@ -10,12 +10,19 @@
 //! compatibility readers still live in effect crates: no connection,
 //! transaction, or clock is reachable from here.
 
+mod component_library;
 mod execution_node_id;
 mod execution_plan;
 mod serving_manifest;
 mod wiring;
 mod wiring_activation;
 
+pub use component_library::{
+    AdmittedComponent, AdmittedComponentParameter, AdmittedComponentPort, ComponentCatalogScope,
+    ComponentDeclaration, ComponentFactError, ComponentFactErrorKind,
+    ComponentParameterDeclaration, ComponentPortDeclaration, ComponentSchema,
+    normalize_component_fact, schema_digests_match,
+};
 pub use execution_node_id::{ExecutionNodeId, ExecutionNodeIdError};
 pub use execution_plan::{
     CALLABLE_CONTRACT_VERSION, CallFlowInstruction, CallableContract, CallableEffectCeiling,
@@ -57,35 +64,82 @@ const MODEL_OWNED_NODES: [&str; 1] = ["call-flow"];
 /// A catalog identity construction error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CatalogIdentityError {
-    EmptyIdentity { field: &'static str },
-    NonCanonicalIdentity { field: &'static str },
-    ZeroVersion { field: &'static str },
-    InvalidDigest { field: &'static str },
-    InvalidDefinition { message: String },
+    EmptyIdentity {
+        field: &'static str,
+    },
+    NonCanonicalIdentity {
+        field: &'static str,
+    },
+    ZeroVersion {
+        field: &'static str,
+    },
+    InvalidDigest {
+        field: &'static str,
+    },
+    InvalidDefinition {
+        message: String,
+    },
     NonCanonicalJson,
-    MutableIdentityInput { field: String },
-    DuplicateInterface { node_type: String },
-    NonCanonicalInterfaceOrder { node_type: String },
-    InvalidInterface { node_type: String, message: String },
+    MutableIdentityInput {
+        field: String,
+    },
+    DuplicateInterface {
+        node_type: String,
+    },
+    NonCanonicalInterfaceOrder {
+        node_type: String,
+    },
+    InvalidInterface {
+        node_type: String,
+        message: String,
+    },
     GraphHashMismatch,
     DraftContentHashMismatch,
     ValidatedDraftIdentityMismatch,
     ArtifactIdMismatch,
     ArtifactHashMismatch,
     ExecutionBundleHashMismatch,
-    UnresolvedInterface { node_type: String },
-    UnexpectedInterface { node_type: String },
-    FlowInvalid { codes: Vec<&'static str> },
-    DuplicateMember { field: &'static str, id: String },
-    NonCanonicalMemberOrder { field: &'static str, id: String },
+    UnresolvedInterface {
+        node_type: String,
+    },
+    UnexpectedInterface {
+        node_type: String,
+    },
+    FlowInvalid {
+        codes: Vec<&'static str>,
+    },
+    DuplicateMember {
+        field: &'static str,
+        id: String,
+    },
+    NonCanonicalMemberOrder {
+        field: &'static str,
+        id: String,
+    },
     ArtifactMismatch,
-    UnresolvedSource { source_id: String },
-    SourceMismatch { source_id: String },
-    UnsupportedServingManifestVersion { requested: String },
-    UnresolvableManifestWiring { wiring_id: String, wiring_version: u32 },
-    ManifestTooLarge { bytes: usize, limit: usize },
-    UnresolvedWiringNode { node_id: String },
-    UnresolvedWiringEntry { node_id: String },
+    UnresolvedSource {
+        source_id: String,
+    },
+    SourceMismatch {
+        source_id: String,
+    },
+    UnsupportedServingManifestVersion {
+        requested: String,
+    },
+    UnresolvableManifestWiring {
+        wiring_id: String,
+        wiring_version: u32,
+    },
+    ManifestTooLarge {
+        bytes: usize,
+        limit: usize,
+    },
+    UnresolvedWiringNode {
+        node_id: String,
+    },
+    UnresolvedWiringEntry {
+        node_id: String,
+    },
 }
 
 impl fmt::Display for CatalogIdentityError {

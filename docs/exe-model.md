@@ -11,7 +11,12 @@ This document wins every design conflict.
 1. **Components and wirings.** Developers publish digest-pinned, import-audited
    components with typed ports (JSON Schema), parameters, effects and connection
    requirements. Users compose them as versioned wirings. Developers own logic;
-   users own composition.
+   users own composition. Tenant admission accepts only the closed platform
+   capability registry plus exact WASI I/O, clocks, random and logging packages;
+   it grants no `wasi:*` wildcard. MVP wiring compatibility is exact canonical
+   schema-digest equality: structural subtyping would be a compatibility promise
+   that cannot be withdrawn, while exact equality can be relaxed deliberately
+   later.
 2. **Durability.** The default is at-least-once delivery, producer idempotency and
    OTel as the record. The classifier/effect-ledger crash floor remains shelved
    behind a future premium-durability class gate.

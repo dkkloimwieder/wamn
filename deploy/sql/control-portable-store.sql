@@ -116,6 +116,32 @@ CREATE TABLE IF NOT EXISTS catalog.catalog_heads (
         REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
 );
 
+CREATE TABLE IF NOT EXISTS catalog.component_library (
+    tenant_id          text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id         text NOT NULL CHECK (catalog_id <> ''),
+    catalog_version    int NOT NULL CHECK (catalog_version > 0),
+    component          text NOT NULL CHECK (component <> ''),
+    interface_version  text NOT NULL CHECK (interface_version <> ''),
+    operation          text NOT NULL CHECK (operation <> ''),
+    component_digest   text NOT NULL
+        CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
+    imports            jsonb NOT NULL CHECK (jsonb_typeof(imports) = 'array'),
+    imports_fingerprint text NOT NULL
+        CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+    input_ports        jsonb NOT NULL CHECK (jsonb_typeof(input_ports) = 'array'),
+    output_ports       jsonb NOT NULL CHECK (jsonb_typeof(output_ports) = 'array'),
+    parameters         jsonb NOT NULL CHECK (jsonb_typeof(parameters) = 'array'),
+    admitted_at        timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (
+        tenant_id, catalog_id, catalog_version, component, interface_version
+    ),
+    CONSTRAINT component_library_one_operation_per_digest UNIQUE (
+        tenant_id, catalog_id, catalog_version, component_digest
+    ),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
+);
+
 CREATE TABLE IF NOT EXISTS catalog.flow_drafts (
     tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     draft_id   text NOT NULL CHECK (draft_id <> ''),
@@ -593,7 +619,8 @@ BEGIN
         'catalog.release_flows', 'catalog.catalog_heads',
         'catalog.flow_drafts', 'catalog.validated_flow_drafts',
         'catalog.release_exposure_manifests', 'catalog.release_sources',
-        'catalog.release_attachments', 'catalog.connection_requirements',
+        'catalog.release_attachments', 'catalog.component_library',
+        'catalog.connection_requirements',
         'catalog.draft_safe_connection_grants', 'catalog.authoring_command_audit',
         'catalog.release_flow_test_evidence', 'catalog.deployment_attestations',
         'wamn_run.authoring_test_run_reservations',
@@ -628,6 +655,7 @@ BEGIN
         'catalog.release_manifests', 'catalog.release_flows',
         'catalog.validated_flow_drafts', 'catalog.release_exposure_manifests',
         'catalog.release_sources', 'catalog.release_attachments',
+        'catalog.component_library',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
         'catalog.release_flow_test_evidence', 'catalog.deployment_attestations',
         'wamn_run.authoring_test_reports'
@@ -791,7 +819,7 @@ BEGIN
     FROM pg_tables WHERE schemaname = 'catalog';
     IF catalog_tables IS DISTINCT FROM ARRAY[
         'authoring_command_audit', 'catalog_heads', 'catalogs',
-        'connection_requirements', 'deployment_attestations',
+        'component_library', 'connection_requirements', 'deployment_attestations',
         'draft_safe_connection_grants', 'execution_bundles', 'flow_artifacts',
         'flow_drafts', 'release_attachments', 'release_exposure_manifests',
         'release_flow_test_evidence', 'release_flows', 'release_manifests',
@@ -887,6 +915,7 @@ BEGIN
             ('catalog.catalogs'), ('catalog.flow_artifacts'),
             ('catalog.execution_bundles'), ('catalog.release_manifests'),
             ('catalog.release_flows'), ('catalog.catalog_heads'),
+            ('catalog.component_library'),
             ('catalog.flow_drafts'), ('catalog.validated_flow_drafts'),
             ('catalog.release_exposure_manifests'), ('catalog.release_sources'),
             ('catalog.release_attachments'), ('catalog.connection_requirements'),
@@ -925,7 +954,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '553b3164f9618b2a83d125dd04a99b886efb65a3e808ea102e2c65905802c2ad'
+       '6332d4aabea5da44eebe7c2fb28fe89fc55d9978625db2fbf17d74b7446db0d1'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';

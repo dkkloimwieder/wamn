@@ -106,7 +106,8 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     to_regclass('catalog.wiring_activation') IS NOT NULL, \
                     to_regclass('catalog.wiring_activation_events') IS NOT NULL, \
                     to_regprocedure('catalog.register_release_source(text,text,integer,text,text,jsonb,text)') IS NOT NULL, \
-                    to_regprocedure('catalog.register_release_attachment(text,text,integer,text,text,text,text,text,jsonb,text,text,text,text)') IS NOT NULL",
+                    to_regprocedure('catalog.register_release_attachment(text,text,integer,text,text,text,text,text,jsonb,text,text,text,text)') IS NOT NULL, \
+                    to_regclass('catalog.component_library') IS NOT NULL",
             &[],
         )
         .await?;
@@ -213,6 +214,19 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
                 .await
                 .context("install release copy conflict routines")?;
+        }
+
+        if !release_row.get::<_, bool>(25) {
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN COMPONENT LIBRARY STORAGE MIGRATION")
+                .expect("component library migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END COMPONENT LIBRARY STORAGE MIGRATION")
+                .expect("component library migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install component library storage")?;
         }
 
         ensure_authoring_catalog_privileges(client).await?;
@@ -325,6 +339,8 @@ async fn ensure_authoring_catalog_privileges(
              GRANT SELECT ON catalog.release_flows TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.catalog_heads FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.catalog_heads TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.component_library FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.component_library TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.connection_requirements FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.connection_requirements TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.connection_instances FROM PUBLIC, wamn_app, wamn_scenario_author; \
@@ -340,7 +356,8 @@ async fn ensure_authoring_catalog_privileges(
                   OR has_table_privilege('wamn_scenario_author', 'catalog.flow_artifacts', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.release_manifests', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.release_flows', 'INSERT') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.catalog_heads', 'UPDATE') THEN \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.catalog_heads', 'UPDATE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.component_library', 'INSERT') THEN \
                  RAISE EXCEPTION USING ERRCODE = '42501', \
                    MESSAGE = 'authoring-effective-privilege-out-of-bounds:catalog'; \
                END IF; \
