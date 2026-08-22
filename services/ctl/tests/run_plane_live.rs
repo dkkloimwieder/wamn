@@ -711,6 +711,15 @@ async fn partition_plane_cutover_live() {
     partition_plane_cutover_leg(&su).await;
 }
 
+#[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
+async fn partition_plane_active_lease_refusal_live() {
+    let url = std::env::var("WAMN_CTL_PG_URL")
+        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let su = connect(&url).await;
+    partition_plane_active_lease_refusal_leg(&su).await;
+}
+
 /// The dispatcher read principal's in-database surface (wamn-0h0g.12.123).
 ///
 /// The `SELECT` grants target relations in the run-plane schema, which does not
@@ -3264,6 +3273,13 @@ async fn partition_plane_active_lease_refusal_leg(su: &Client) {
             .expect("install later authority-repair sentinel");
         match lease_source {
             "run_queue" => {
+                su.batch_execute(&format!(
+                    "INSERT INTO {SCHEMA}.environment_policies \
+                       (tenant_id,expected_environment,durability_class) \
+                     VALUES ('leased','dev','standard')"
+                ))
+                .await
+                .expect("seed the admitted environment policy");
                 seed_run_pin_parents(su, "leased", "cat", 1, "dev").await;
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.runs \
