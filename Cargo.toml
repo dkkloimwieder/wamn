@@ -1,11 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixtures", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/flow-model", "crates/execution/flow-invocation", "crates/execution/flow-engine", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/model", "crates/schema/compiler", "crates/schema/control", "crates/data/entity-access", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/scenarios/model", "crates/execution/standard-nodes", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
+members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixtures", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/flow-model", "crates/execution/flow-invocation", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/model", "crates/schema/compiler", "crates/schema/control", "crates/data/entity-access", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/scenarios/model", "crates/execution/standard-nodes", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
   "crates/data/entity-access",
-  "crates/execution/flow-engine",
   "crates/execution/flow-invocation",
   "crates/execution/flow-model",
   "crates/execution/host",
@@ -109,7 +108,6 @@ wamn-proof-integration = { path = "tests/integration", version = "0.1.0" }
 wamn-proof-system = { path = "tests/system", version = "0.1.0" }
 wamn-router = { path = "crates/execution/router", version = "0.1.0" }
 wamn-run-state = { path = "crates/execution/run-state", version = "0.1.0" }
-wamn-runner = { path = "crates/execution/flow-engine", version = "0.1.0" }
 wamn-runtime = { path = "crates/platform/runtime", version = "0.1.0" }
 wamn-scenario-model = { path = "crates/scenarios/model", version = "0.1.0" }
 wamn-scenario-worker = { path = "services/scenario-worker", version = "0.1.0" }

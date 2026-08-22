@@ -20,9 +20,6 @@ native = [
 test-util = []
 
 [dependencies]
-# Run-state decisions map the pure engine's execution taxonomy to persisted
-# RunStatus/FailKind/NodeError literals.
-wamn-runner = { workspace = true }
 # Canonical JSON hashing and node-error taxonomy.
 # Capture policy itself is run-state-owned and no longer comes from `Flow`.
 wamn-flow = { workspace = true }

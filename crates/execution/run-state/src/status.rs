@@ -152,16 +152,6 @@ where
     validate_effect_uncertain_run_id(run_id).map_err(serde::de::Error::custom)
 }
 
-impl From<wamn_runner::ExecutionStatus> for RunStatus {
-    fn from(s: wamn_runner::ExecutionStatus) -> RunStatus {
-        match s {
-            wamn_runner::ExecutionStatus::Running => RunStatus::Running,
-            wamn_runner::ExecutionStatus::Completed => RunStatus::Completed,
-            wamn_runner::ExecutionStatus::Failed => RunStatus::Failed,
-        }
-    }
-}
-
 /// Why a run failed — the persisted vocabulary, including engine failures and
 /// failures owned by claim-time resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,19 +217,6 @@ impl FailKind {
 
     pub fn from_sql(s: &str) -> Option<FailKind> {
         FailKind::ALL.into_iter().find(|v| v.as_sql() == s)
-    }
-}
-
-impl From<wamn_runner::ExecutionFailureKind> for FailKind {
-    fn from(k: wamn_runner::ExecutionFailureKind) -> FailKind {
-        match k {
-            wamn_runner::ExecutionFailureKind::Terminal => FailKind::Terminal,
-            wamn_runner::ExecutionFailureKind::RetryExhausted => FailKind::RetryExhausted,
-            wamn_runner::ExecutionFailureKind::InvalidInput => FailKind::InvalidInput,
-            wamn_runner::ExecutionFailureKind::RunawayBudget => FailKind::RunawayBudget,
-            wamn_runner::ExecutionFailureKind::DepthBudget => FailKind::DepthBudget,
-            wamn_runner::ExecutionFailureKind::DispatchBudget => FailKind::DispatchBudget,
-        }
     }
 }
 
