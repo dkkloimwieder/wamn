@@ -359,6 +359,8 @@ fn admission_live() {
                     WHERE tenant_id='t1' AND run_id='policy-scope-probe')='durable', \
                   'the trigger did not use the tenant-qualified policy key'; \
          END $$; \
+         UPDATE wamn_run.runs SET status='completed' \
+          WHERE tenant_id='t1' AND run_id='policy-scope-probe'; \
          DELETE FROM wamn_run.runs \
           WHERE tenant_id='t1' AND run_id='policy-scope-probe';",
     );

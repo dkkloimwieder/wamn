@@ -386,6 +386,30 @@ fn run_state_sql_matches_the_model() {
     );
 }
 
+#[test]
+fn run_delete_is_guarded_by_the_exact_terminal_vocabulary() {
+    let sql = include_str!("../../../../deploy/sql/run-state.sql");
+    let (_, guard_and_rest) = sql
+        .split_once("CREATE FUNCTION wamn_run.guard_terminal_run_delete()")
+        .expect("run-state record declares the delete guard");
+    let (guard, _) = guard_and_rest
+        .split_once("REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;")
+        .expect("the ordinary trigger function is not publicly executable");
+
+    assert!(
+        guard.contains(
+            "IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN"
+        )
+    );
+    assert!(guard.contains("ERRCODE = '55000'"));
+    assert!(guard.contains("MESSAGE = 'run-delete-nonterminal'"));
+    assert!(!guard.contains("effect-uncertain"));
+    assert!(!guard.contains("SECURITY DEFINER"));
+    assert!(sql.contains(
+        "CREATE TRIGGER runs_terminal_delete_only\nBEFORE DELETE ON wamn_run.runs\nFOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();"
+    ));
+}
+
 // ---- live-apply gate (optional) --------------------------------------------
 
 /// Apply `deploy/sql/run-state.sql` to a throwaway Postgres and assert the tenant RLS
@@ -433,6 +457,13 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     );
     script.push_str(&ddl);
     script.push('\n');
+    script.push_str(
+        "INSERT INTO wamn_run.environment_policies \
+           (tenant_id, expected_environment, durability_class) VALUES \
+           ('t1', 'test', 'standard'), \
+           ('t2', 'test', 'standard'), \
+           ('t3', 'test', 'standard');\n",
+    );
     // Seed two tenants as the superuser (bypasses RLS): tenant t1 has a run with
     // two node-runs, tenant t2 has one run — the RLS witness.
     script.push_str(
@@ -492,7 +523,9 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     );
     // The FK cascades: deleting a run removes its node-runs.
     script.push_str(
-        "DELETE FROM wamn_run.runs WHERE tenant_id='t1' AND run_id='run-a';\n\
+        "UPDATE wamn_run.runs SET status='completed' \
+           WHERE tenant_id='t1' AND run_id='run-a';\n\
+         DELETE FROM wamn_run.runs WHERE tenant_id='t1' AND run_id='run-a';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM wamn_run.node_runs WHERE run_id='run-a') = 0, \
                'FK ON DELETE CASCADE removed node-runs'; END $$;\n",
     );

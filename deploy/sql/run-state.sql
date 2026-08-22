@@ -228,6 +228,27 @@ BEGIN
 END
 $$;
 
+-- `wamn_app` retains DELETE only for tenant-scoped history pruning. The table
+-- grant cannot express the prune statement's terminal-state predicate, so this
+-- ordinary invoker-rights trigger makes that predicate caller-independent. An
+-- `effect-uncertain` run is deliberately not terminal: its operator resolution
+-- remains part of the durable audit floor and cannot be pruned as history
+-- (wamn-0h0g.12.128).
+CREATE FUNCTION wamn_run.guard_terminal_run_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'run-delete-nonterminal';
+    END IF;
+    RETURN OLD;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;
+
 -- Owner ruling wamn-0h0g.20.7 (2026-08-21): the system env policy is projected
 -- by `reconcile-run-plane`; admission reads only this local relation and freezes
 -- the selected class onto the run row, so policy changes affect future runs only.
@@ -422,6 +443,9 @@ BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash
                  durability_class, release_version, manifest_digest
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
+CREATE TRIGGER runs_terminal_delete_only
+BEFORE DELETE ON wamn_run.runs
+FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- The guest-visible application role may drive the existing run-state columns,
 -- but it cannot author or mutate the admission-owned capture carrier, nor the
 -- admission-owned durability-class carrier. Off-path admissions omit those
@@ -448,8 +472,8 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 -- clause, and the run plane locks this table in the claim and fence paths.
 --
 -- DELETE stays table-wide because `wamn-ctl prune-run-history` connects AS
--- `wamn_app` and needs it; the statement itself is terminal-only, but the grant
--- is not, so a live run remains deletable by an author (tracked separately).
+-- `wamn_app` and needs it. `runs_terminal_delete_only` makes the statement's
+-- terminal-only predicate caller-independent without adding a privileged role.
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs FROM PUBLIC, wamn_effect_writer;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
 GRANT INSERT (

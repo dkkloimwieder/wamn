@@ -68,7 +68,15 @@ pub struct CaptureBenchArgs {
 
 fn run_state_ddl() -> String {
     include_str!("../../../deploy/sql/run-state.sql")
+        .replace(
+            "wamn_run_projection_writer",
+            "__capture_projection_writer_role__",
+        )
         .replace("wamn_run", SCHEMA)
+        .replace(
+            "__capture_projection_writer_role__",
+            "wamn_run_projection_writer",
+        )
         .replace(
             "catalog.catalog_heads",
             &format!("{CATALOG_SCHEMA}.catalog_heads"),
@@ -122,7 +130,16 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
         ),
     )
     .await?;
-    admin_exec(admin_url, &run_state_ddl()).await
+    admin_exec(admin_url, &run_state_ddl()).await?;
+    admin_exec(
+        admin_url,
+        &format!(
+            "INSERT INTO {SCHEMA}.environment_policies \
+               (tenant_id, expected_environment, durability_class) \
+             VALUES ('{TENANT}', 'test', 'standard');"
+        ),
+    )
+    .await
 }
 
 async fn teardown(admin_url: &str) -> anyhow::Result<()> {
@@ -583,6 +600,13 @@ pub async fn run(args: CaptureBenchArgs) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn schema_rewrite_preserves_the_stable_projection_role() {
+        let ddl = super::run_state_ddl();
+        assert!(ddl.contains("wamn_run_projection_writer"));
+        assert!(!ddl.contains("wamn_capture_projection_writer"));
+    }
+
     #[test]
     fn fixture_uses_the_retained_event_entry() {
         let flow = super::linear_flow();

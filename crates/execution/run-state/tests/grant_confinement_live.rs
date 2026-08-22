@@ -1,6 +1,6 @@
 //! Ignored live gate: what the guest-visible `wamn_app` role may and may NOT do
 //! to `wamn_run.runs` and `wamn_run.invocation_admissions`
-//! after the wamn-0h0g.12.37 / .12.40 / .12.41 confinements.
+//! after the wamn-0h0g.12.37 / .12.40 / .12.41 / .12.128 confinements.
 //!
 //! Every denial here is asserted TWICE and deliberately so. A statement
 //! rejected by the tenant policy also raises SQLSTATE 42501, so an outcome
@@ -358,6 +358,12 @@ fn app_run_writes_are_confined_to_the_ratified_column_sets() {
     let _serialize = INSTALL.lock().unwrap_or_else(|poison| poison.into_inner());
     let url = url();
     install(&url);
+    success(
+        &url,
+        "INSERT INTO wamn_run.environment_policies \
+           (tenant_id, expected_environment, durability_class) \
+         VALUES ('t1', 'prod', 'standard');",
+    );
 
     success(
         &url,
@@ -479,6 +485,12 @@ fn admission_ledger_is_append_only_and_still_key_share_lockable() {
     let _serialize = INSTALL.lock().unwrap_or_else(|poison| poison.into_inner());
     let url = url();
     install(&url);
+    success(
+        &url,
+        "INSERT INTO wamn_run.environment_policies \
+           (tenant_id, expected_environment, durability_class) \
+         VALUES ('t1', 'prod', 'standard');",
+    );
 
     success(
         &url,
@@ -516,6 +528,7 @@ fn admission_ledger_is_append_only_and_still_key_share_lockable() {
                 principal_digest, client_key_digest, client_request_fingerprint, \
                 admitted_catalog_version, admitted_flow_version, run_id) \
              VALUES ('t1','cat','prod','http-a','d','p','ck','fp',1,1,'a1'); \
+             INSERT INTO run_queue (tenant_id, run_id) VALUES ('t1','a1'); \
              DO $probe$ DECLARE locked text; BEGIN \
                SELECT run_id INTO locked FROM invocation_admissions \
                  WHERE run_id='a1' FOR KEY SHARE; \
@@ -579,23 +592,57 @@ fn admission_ledger_is_append_only_and_still_key_share_lockable() {
         assert!(refused.contains("refused"), "{name} was not refused");
     }
 
-    // Referential integrity still reaps the ledger row without a DELETE grant:
-    // the cascade runs as the REFERENCING table's owner, not as `wamn_app`.
+    // The app role needs table-wide DELETE for retention, but the ordinary
+    // trigger makes the prune statement's terminal predicate
+    // caller-independent. This is a database refusal, not an API convention.
+    let nonterminal_refused = success(
+        &url,
+        &format!(
+            "{} DO $probe$ DECLARE state text; detail text; BEGIN \
+               BEGIN \
+                 DELETE FROM runs WHERE run_id='a1'; \
+                 RAISE EXCEPTION 'probe-not-refused'; \
+               EXCEPTION WHEN SQLSTATE '55000' THEN \
+                 GET STACKED DIAGNOSTICS state = RETURNED_SQLSTATE, \
+                                         detail = MESSAGE_TEXT; \
+                 ASSERT state = '55000', 'nonterminal delete SQLSTATE drifted'; \
+                 ASSERT detail = 'run-delete-nonterminal', \
+                        'nonterminal delete refusal drifted: ' || detail; \
+               END; \
+               ASSERT EXISTS (SELECT FROM runs WHERE run_id='a1'), \
+                      'a refused delete removed the live run'; \
+               ASSERT EXISTS (SELECT FROM run_queue WHERE run_id='a1'), \
+                      'a refused delete cascaded the live queue row'; \
+             END $probe$; ROLLBACK; SELECT 'refused';",
+            app_preamble()
+        ),
+    );
+    assert!(
+        nonterminal_refused.contains("refused"),
+        "a dispatched run was deletable through the table grant"
+    );
+
+    // Referential integrity still reaps the ledger row once the run is
+    // terminal. The cascade runs as the REFERENCING table's owner, not as
+    // `wamn_app`, so the admission ledger needs no DELETE grant of its own.
     success(
         &url,
         &format!(
-            "{} DELETE FROM runs WHERE run_id='a1'; COMMIT; \
+            "{} UPDATE runs SET status='completed' WHERE run_id='a1'; \
+             DELETE FROM runs WHERE run_id='a1'; COMMIT; \
              SELECT 'cascaded';",
             app_preamble()
         ),
     );
     let remaining = success(
         &url,
-        "SELECT count(*) FROM wamn_run.invocation_admissions WHERE run_id='a1';",
+        "SELECT \
+           (SELECT count(*) FROM wamn_run.invocation_admissions WHERE run_id='a1'), \
+           (SELECT count(*) FROM wamn_run.run_queue WHERE run_id='a1');",
     );
     assert_eq!(
         remaining.trim(),
-        "0",
-        "ON DELETE CASCADE must reap the admission without a DELETE grant"
+        "0|0",
+        "ON DELETE CASCADE must reap both admission and queue authority"
     );
 }
