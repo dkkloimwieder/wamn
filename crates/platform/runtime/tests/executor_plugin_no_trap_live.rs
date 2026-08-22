@@ -1,4 +1,4 @@
-//! Runtime proof of the no-trap discipline for the five executor-sandbox
+//! Runtime proof of the no-trap discipline for the four executor-sandbox
 //! plugins (`wamn-0h0g.15.53`).
 //!
 //! # Why this exists
@@ -11,12 +11,12 @@
 //! declares no error channel — rather than as a wasm trap. This COMPLEMENTS the
 //! static audit; it replaces nothing.
 //!
-//! # The five
+//! # The four
 //!
-//! `crates/execution/host/src/lib.rs` registers exactly five plugins on the
+//! `crates/execution/host/src/lib.rs` registers exactly four plugins on the
 //! executor's flowrunner store: `WAMN_POSTGRES_ID`, `RUNNER_EGRESS_ID`,
-//! `RUNNER_PLAN_SUPPLY_ID`, `WAMN_LOGGING_ID`, `CONNECTION_HTTP_ID`. Those are
-//! gate B's five and the five proved here. `wamn_flow_invocation`,
+//! `WAMN_LOGGING_ID`, `CONNECTION_HTTP_ID`. Those are gate B's retained four and
+//! the four proved here. `wamn_flow_invocation`,
 //! `wamn_jetstream`, `flow_http_routing` and `wamn_credentials` are deliberately
 //! out of scope: the first three are not on the executor store, and the fourth
 //! implements no `HostPlugin` and has no WIT surface at all.
@@ -58,7 +58,6 @@ use std::sync::{Arc, Mutex};
 use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
-use wamn_runtime::plugins::runner_plan_supply::{self, RUNNER_PLAN_SUPPLY_ID, RunnerPlanSupply};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -108,19 +107,8 @@ const GUEST_ID: &str = "no-trap-guest";
 ///
 /// The canonical ABI stores a variant's discriminant first, at offset 0, for
 /// every variant regardless of payload. This is the one layout fact every test
-/// here relies on, and it holds identically for all five plugins.
+/// here relies on, and it holds identically for all four plugins.
 const RET_OK_ERR: u32 = 768;
-
-/// Address of the ERROR variant's own discriminant inside a returned
-/// `result<T, E>` whose maximum case alignment is 4.
-///
-/// Canonical-ABI variant layout is `discriminant`, padded up to the maximum case
-/// alignment, then the payload. A `result` has 2 cases, so its discriminant is
-/// one byte and the payload starts at `align_to(1, 4) == 4`. Applies to
-/// `result<run-resolution-snapshot, supply-error>`: `run-resolution-snapshot` is
-/// three `list`/`string` fields (alignment 4) and `supply-error` is four unit
-/// cases (alignment 1), so the maximum case alignment is 4.
-const RET_ERR_ALIGN4: u32 = RET_OK_ERR + 4;
 
 /// The same address for a returned `result<T, E>` whose maximum case alignment
 /// is 8, so the payload starts at `align_to(1, 8) == 8`. Applies to
@@ -134,10 +122,10 @@ const RET_ERR_ALIGN8: u32 = RET_OK_ERR + 8;
 ///
 /// The plugins are registered through `Ctx::with_plugins` and the capability is
 /// linked by hand with the plugin module's own `add_to_linker`. That is exactly
-/// what `crates/execution/host/src/lib.rs` does for all five: `with_plugins`
+/// what `crates/execution/host/src/lib.rs` does for all four: `with_plugins`
 /// makes `ActiveCtx::try_get_plugin` resolve, and the hand link installs the
 /// host functions. `HostPlugin::world` gates only `on_workload_item_bind`, which
-/// the executor never relies on for these five, so this test must not either.
+/// the executor never relies on for these four, so this test must not either.
 async fn drive_guest(
     guest_wat: &str,
     plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>>,
@@ -441,121 +429,7 @@ async fn wamn_logging_absorbs_a_garbage_guest_context_without_trapping_the_guest
 }
 
 // ---------------------------------------------------------------------------
-// 3. runner_plan_supply — wamn:runner/plan-supply@0.1.0
-// ---------------------------------------------------------------------------
-
-/// `load-run-snapshot` IS `result`-shaped, and `RunnerPlanSupply::new(_, None,
-/// _)` is the documented no-release process shape whose every load reports
-/// `unavailable` rather than resolving plans from somewhere else. That check is
-/// the first statement in the plugin's `load_run_snapshot`, so no database is
-/// reached.
-///
-/// `result<run-resolution-snapshot, supply-error>` flattens to 7 core values, so
-/// the return is indirect: the core signature is `(run-id ptr, run-id len,
-/// retptr)`. Data segment: `no-such-run` at 256 (len 11).
-fn plan_supply_guest() -> String {
-    format!(
-        r#"
-(component
-  ;; wamn-0h0g.15.53
-  (import "wamn:runner/plan-supply@0.1.0" (instance $supply
-    ;; Types are declared as instancedecls rather than inline. That is the
-    ;; clearer spelling, but it is NOT what makes this guest validate — see
-    ;; wamn-0h0g.15.133. Measured: this instance import validates when the
-    ;; exported function's result is PRIMITIVE (`(result u32)`) and is rejected
-    ;; with "instance not valid to be used as import" when it is COMPOUND,
-    ;; whether the compound type is written inline or hoisted here.
-    (type $plan (record
-      (field "flow-id" string)
-      (field "execution-bundle-hash" string)
-      (field "source-artifact-hash" string)
-      (field "exact-bytes" (list u8))))
-    (type $plans (list $plan))
-    (type $snapshot (record
-      (field "root-flow-id" string)
-      (field "root-execution-bundle-hash" string)
-      (field "plans" $plans)))
-    (type $supply-error (variant
-      (case "not-found")
-      (case "incomplete")
-      (case "hash-mismatch")
-      (case "unavailable")))
-    (type $loaded (result $snapshot (error $supply-error)))
-    (export "load-run-snapshot" (func
-      (param "run-id" string)
-      (result $loaded)))))
-  (import "verdict" (func $verdict (param "code" u32)))
-{libc}
-  (core func $load-lowered
-    (canon lower (func $supply "load-run-snapshot")
-      (memory $libc "memory")
-      (realloc (func $libc "realloc"))))
-  (core func $verdict-lowered (canon lower (func $verdict)))
-
-  (core module $main
-    (import "libc" "memory" (memory 1))
-    (import "host" "load" (func $load (param i32 i32 i32)))
-    (import "host" "verdict" (func $verdict (param i32)))
-    (func (export "drive")
-      i32.const {enter}
-      call $verdict
-      i32.const 256
-      i32.const 11
-      i32.const 768
-      call $load
-      ;; ok/err discriminant, then the supply-error case
-      i32.const {ok_err}
-      i32.load8_u
-      call $verdict
-      i32.const {err_case}
-      i32.load8_u
-      call $verdict))
-  (core instance $main (instantiate $main
-    (with "libc" (instance $libc))
-    (with "host" (instance
-      (export "load" (func $load-lowered))
-      (export "verdict" (func $verdict-lowered))))))
-  (func (export "drive") (canon lift (core func $main "drive")))
-)
-"#,
-        libc = libc_module("no-such-run"),
-        enter = MARK_ENTER,
-        ok_err = RET_OK_ERR,
-        err_case = RET_ERR_ALIGN4,
-    )
-}
-
-#[tokio::test]
-#[ignore = "wamn-0h0g.15.133: the guest's imported-instance function type carries a COMPOUND result, which wasmtime 47 rejects as \"instance not valid to be used as import\"; a primitive result validates. The harness itself is proven by runner_egress, which passes."]
-async fn runner_plan_supply_maps_a_missing_release_to_unavailable_not_a_trap() {
-    let postgres = Arc::new(offline_postgres());
-    let supply =
-        Arc::new(RunnerPlanSupply::new(postgres, None, 8).expect("plan cache limit is valid"));
-    let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
-    plugins.insert(
-        RUNNER_PLAN_SUPPLY_ID,
-        supply as Arc<dyn HostPlugin + Send + Sync>,
-    );
-
-    let (outcome, trail) = drive_guest(
-        &plan_supply_guest(),
-        plugins,
-        runner_plan_supply::add_to_linker,
-    )
-    .await;
-
-    outcome.expect("the guest survived the plan-supply refusal");
-    // `1` is `err`, `3` is `unavailable` — the fourth case of `supply-error`. A
-    // `0` in either slot would mean the error path was never reached.
-    assert_eq!(
-        trail,
-        vec![MARK_ENTER, 1, 3],
-        "a release-less process reports unavailable through the WIT error channel"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 4. wamn_postgres — wamn:postgres/client@0.1.0
+// 3. wamn_postgres — wamn:postgres/client@0.1.0
 // ---------------------------------------------------------------------------
 
 /// The plugin's own contract: a `WamnPostgresConfig` with no `database_url`
@@ -687,7 +561,7 @@ async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_no
 }
 
 // ---------------------------------------------------------------------------
-// 5. connection_http — wamn:runner/http-effect@0.1.0
+// 4. connection_http — wamn:runner/http-effect@0.1.0
 // ---------------------------------------------------------------------------
 
 /// `ConnectionHttp` implements the TRUSTED `wamn:runner/http-effect` surface,
