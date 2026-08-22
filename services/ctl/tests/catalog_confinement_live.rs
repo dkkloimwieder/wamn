@@ -25,6 +25,8 @@
 //! Hermetic: the preamble drops the `catalog` schema and re-hardens both roles,
 //! so no leftover healthy object can satisfy an `IF NOT EXISTS` guard.
 
+mod support;
+
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::publish_catalog::ensure_catalog_storage;
@@ -283,7 +285,7 @@ async fn permitted(su: &Client, statement: &str) {
 /// one test entry — parallel entries would clobber each other's reset.
 #[tokio::test]
 async fn the_app_login_reads_the_catalog_schema_of_record_and_never_writes_it() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the catalog confinement gate");
         return;
     };

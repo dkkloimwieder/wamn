@@ -28,6 +28,8 @@
 //! Hermetic: each test drops+recreates the `catalog` metadata schema and the data
 //! schema in its preamble, and teardown leaves nothing behind.
 
+mod support;
+
 use std::sync::LazyLock;
 
 use tokio_postgres::{Client, NoTls};
@@ -178,7 +180,7 @@ async fn reconcile_to_full(su: &Client) {
 
 #[tokio::test]
 async fn an_absent_or_rls_hidden_registration_set_refuses_by_name_and_flips_nothing() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-0h0g.12.103 refusal gate");
         return;
     };
@@ -290,7 +292,7 @@ async fn an_absent_or_rls_hidden_registration_set_refuses_by_name_and_flips_noth
 /// pass the refusal test and fail this one.
 #[tokio::test]
 async fn a_provisioned_environment_with_no_registrations_still_reconciles() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-0h0g.12.103 precision gate");
         return;
     };

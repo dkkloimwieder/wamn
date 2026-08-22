@@ -21,6 +21,8 @@
 //! data schema, and the publish snapshot tables in its preamble, so a re-run
 //! starts clean and teardown leaves nothing behind.
 
+mod support;
+
 use std::sync::LazyLock;
 
 use tokio_postgres::{Client, NoTls};
@@ -179,8 +181,8 @@ fn migrate_dry_run_args(
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn orphan_guard_refuses_then_proceeds() {
-    let url = std::env::var("WAMN_CTL_PG_URL")
-        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url =
+        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let _serialized = SERIALIZE.lock().await;
     let su = connect(&url).await;
     migrate_scenario(&su, &url).await;
@@ -285,8 +287,9 @@ async fn applied_version(su: &Client) -> Option<i32> {
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL 18 TCP database via WAMN_CTL_PG_URL"]
 async fn an_unreadable_registration_set_refuses_the_migration_by_name() {
-    let url = std::env::var("WAMN_CTL_PG_URL")
-        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 TCP database");
+    let url = support::LockedUrl::required(
+        "WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 TCP database",
+    );
     let app_url = role_url(&url, RLS_ROLE)
         .expect("WAMN_CTL_PG_URL must be a TCP URL with an explicit database name");
     let _serialized = SERIALIZE.lock().await;
@@ -431,8 +434,8 @@ async fn an_unreadable_registration_set_refuses_the_migration_by_name() {
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn a_provisioned_but_empty_registration_set_still_passes_the_guard() {
-    let url = std::env::var("WAMN_CTL_PG_URL")
-        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url =
+        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let _serialized = SERIALIZE.lock().await;
     let su = connect(&url).await;
     reset(&su).await;

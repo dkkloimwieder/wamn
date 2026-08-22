@@ -23,6 +23,8 @@
 //! the test slot in its preamble, so a re-run starts clean and teardown leaves
 //! nothing behind.
 
+mod support;
+
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::reconcile_replica_identity::reconcile;
@@ -149,7 +151,7 @@ async fn reset(su: &Client) {
 
 #[tokio::test]
 async fn reconcile_flips_relreplident_and_the_flip_enriches_wal_non_retroactively() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the l5i9.31 replica-identity gate");
         return;
     };

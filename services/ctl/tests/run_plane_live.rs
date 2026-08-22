@@ -70,6 +70,8 @@
 //!   5-literal record form; the runaway UPDATE then succeeds and a re-run is a
 //!   no-op (the reconciled CHECK converges with fresh provisioning).
 
+mod support;
+
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
@@ -657,7 +659,7 @@ fn assert_db_code(error: tokio_postgres::Error, expected: &str, context: &str) {
 
 #[tokio::test]
 async fn run_plane_reconcile_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-1wdq run-plane gate");
         return;
     };
@@ -698,8 +700,8 @@ async fn run_plane_reconcile_live() {
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn frame_identity_cutover_live() {
-    let url = std::env::var("WAMN_CTL_PG_URL")
-        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url =
+        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let su = connect(&url).await;
     frame_identity_cutover_leg(&su).await;
 }
@@ -707,8 +709,8 @@ async fn frame_identity_cutover_live() {
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn effect_writer_cutover_live() {
-    let url = std::env::var("WAMN_CTL_PG_URL")
-        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url =
+        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let su = connect(&url).await;
     effect_writer_cutover_leg(&su).await;
 }
@@ -716,8 +718,8 @@ async fn effect_writer_cutover_live() {
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn partition_plane_cutover_live() {
-    let url = std::env::var("WAMN_CTL_PG_URL")
-        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url =
+        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let su = connect(&url).await;
     partition_plane_cutover_leg(&su).await;
 }
@@ -725,8 +727,8 @@ async fn partition_plane_cutover_live() {
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn partition_plane_active_lease_refusal_live() {
-    let url = std::env::var("WAMN_CTL_PG_URL")
-        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url =
+        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let su = connect(&url).await;
     partition_plane_active_lease_refusal_leg(&su).await;
 }
@@ -875,7 +877,7 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
 
 #[tokio::test]
 async fn execution_pin_cutover_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the execution-pin cutover gate");
         return;
     };
@@ -885,7 +887,7 @@ async fn execution_pin_cutover_live() {
 
 #[tokio::test]
 async fn stored_suite_cutover_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the stored-suite cutover gate");
         return;
     };
@@ -895,7 +897,7 @@ async fn stored_suite_cutover_live() {
 
 #[tokio::test]
 async fn authoring_storage_authority_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the authoring authority gate");
         return;
     };
@@ -905,7 +907,7 @@ async fn authoring_storage_authority_live() {
 
 #[tokio::test]
 async fn child_run_cutover_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the child-run cutover gate");
         return;
     };
@@ -915,7 +917,7 @@ async fn child_run_cutover_live() {
 
 #[tokio::test]
 async fn rerun_lineage_cutover_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the rerun-lineage cutover gate");
         return;
     };
@@ -929,7 +931,7 @@ async fn rerun_lineage_cutover_live() {
 /// `catalog` schema, the run-plane schema, and the cluster-wide roles.
 #[tokio::test]
 async fn dispatch_reader_read_surface_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the dispatch-reader read-surface gate");
         return;
     };
@@ -939,7 +941,7 @@ async fn dispatch_reader_read_surface_live() {
 
 #[tokio::test]
 async fn environment_policy_row_security_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the environment-policy RLS gate");
         return;
     };
@@ -949,7 +951,7 @@ async fn environment_policy_row_security_live() {
 
 #[tokio::test]
 async fn registry_durability_schema_ensure_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the registry durability migration gate");
         return;
     };
@@ -967,7 +969,7 @@ async fn registry_durability_schema_ensure_live() {
 /// before either the system-policy carrier or either project database changes.
 #[tokio::test]
 async fn reconcile_target_identity_guard_live() {
-    let Some(system_url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(system_url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the run-plane target-identity gate");
         return;
     };
@@ -1096,7 +1098,7 @@ async fn reconcile_target_identity_guard_live() {
                 "{label} lost the stable target-refusal prefix: {message}"
             );
             assert!(
-                !message.contains(&system_url) && !message.contains(target_url),
+                !message.contains(&*system_url) && !message.contains(target_url),
                 "{label} leaked a database URL: {message}"
             );
             if kind == ReconcileTargetErrorKind::RegistryTarget {
@@ -1240,7 +1242,7 @@ async fn reconcile_target_identity_guard_live() {
 
 #[tokio::test]
 async fn retired_effect_disposition_cutover_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping retired disposition cutover gate");
         return;
     };

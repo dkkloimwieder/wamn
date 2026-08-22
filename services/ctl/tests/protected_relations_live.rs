@@ -5,6 +5,8 @@
 //! `WAMN_UPDATE_PROTECTED_RELATIONS=1` only when intentionally regenerating
 //! `architecture/protected-writes.json`.
 
+mod support;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -896,8 +898,8 @@ async fn generate_rows(
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn protected_relations_match_reconciled_postgres() {
-    let url = std::env::var("WAMN_CTL_PG_URL")
-        .expect("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url =
+        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let repository = repository();
     let client = connect(&url).await;
     prepare_scratch_database(&client).await;

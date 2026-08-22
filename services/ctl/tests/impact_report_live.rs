@@ -17,6 +17,8 @@
 //!
 //! Hermetic: drops+recreates the `catalog` metadata schema + the data schema.
 
+mod support;
+
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::impact_report::{compile_plan, gather_impact};
@@ -151,7 +153,7 @@ async fn column_present(su: &Client, table: &str, column: &str) -> bool {
 
 #[tokio::test]
 async fn impact_report_names_the_affected_change() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the 11.8 impact-analysis gate");
         return;
     };

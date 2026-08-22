@@ -25,6 +25,8 @@
 //!    `owner_statement_asymmetry_leg`);
 //! 4. **the dispatcher can dial**, as the new principal, with no manual SQL.
 
+mod support;
+
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, sql};
@@ -131,7 +133,7 @@ async fn can_connect(su: &Client, role: &str, database: &str) -> bool {
 
 #[tokio::test]
 async fn dispatch_reader_provisioning_live() {
-    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+    let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-0h0g.12.122 provisioning gate");
         return;
     };

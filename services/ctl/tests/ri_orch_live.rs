@@ -6,6 +6,8 @@
 //! The retired periodic CronJob and refused `publish-catalog` path are not test
 //! subjects (wamn-0h0g.12.70).
 
+mod support;
+
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::{migrate_catalog, reconcile_replica_identity};
@@ -132,7 +134,7 @@ fn repair_args(
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL via WAMN_CTL_PG_URL"]
 async fn migrate_catalog_reconciles_replica_identity_after_commit() {
-    let url = std::env::var("WAMN_CTL_PG_URL").expect("WAMN_CTL_PG_URL must name a fresh PG18");
+    let url = support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PG18");
     let client = connect(&url).await;
     reset(&client).await;
     seed_delete_registration(&client).await;
@@ -157,7 +159,7 @@ async fn migrate_catalog_reconciles_replica_identity_after_commit() {
 #[tokio::test]
 #[ignore = "requires a fresh PostgreSQL via WAMN_CTL_PG_URL"]
 async fn operator_repair_is_dry_runnable_scoped_and_idempotent() {
-    let url = std::env::var("WAMN_CTL_PG_URL").expect("WAMN_CTL_PG_URL must name a fresh PG18");
+    let url = support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PG18");
     let client = connect(&url).await;
     reset(&client).await;
 

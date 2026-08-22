@@ -1,4 +1,10 @@
+mod support;
+
+use std::collections::BTreeSet;
+use std::fs::{OpenOptions, TryLockError};
 use std::process::Command;
+
+const LOCK_CHILD_ENV: &str = "WAMN_CTL_LOCK_CHILD";
 
 const MVP_VERBS: &[&str] = &[
     "provision-project",
@@ -35,6 +41,155 @@ fn command_help(binary: &str, command: &str) -> String {
         .expect("run ctl command help");
     assert!(output.status.success());
     String::from_utf8(output.stdout).expect("help is UTF-8")
+}
+
+#[test]
+fn ctl_live_database_lock_inventory_is_exact() {
+    const CTL_DATABASE_URL_ENV: &str = concat!("WAMN_CTL_", "PG_URL");
+    const SOURCES: [(&str, &str, usize, usize); 9] = [
+        (
+            "catalog_confinement_live.rs",
+            include_str!("catalog_confinement_live.rs"),
+            1,
+            0,
+        ),
+        (
+            "dispatch_reader_provisioning_live.rs",
+            include_str!("dispatch_reader_provisioning_live.rs"),
+            1,
+            0,
+        ),
+        (
+            "impact_report_live.rs",
+            include_str!("impact_report_live.rs"),
+            1,
+            0,
+        ),
+        (
+            "orphan_guard_live.rs",
+            include_str!("orphan_guard_live.rs"),
+            0,
+            3,
+        ),
+        (
+            "protected_relations_live.rs",
+            include_str!("protected_relations_live.rs"),
+            0,
+            1,
+        ),
+        (
+            "replica_identity_live.rs",
+            include_str!("replica_identity_live.rs"),
+            1,
+            0,
+        ),
+        (
+            "replica_identity_unreadable_live.rs",
+            include_str!("replica_identity_unreadable_live.rs"),
+            2,
+            0,
+        ),
+        ("ri_orch_live.rs", include_str!("ri_orch_live.rs"), 0, 2),
+        (
+            "run_plane_live.rs",
+            include_str!("run_plane_live.rs"),
+            11,
+            4,
+        ),
+    ];
+
+    let _optional: fn() -> Option<support::LockedUrl> = support::LockedUrl::optional;
+    let _required: fn(&str) -> support::LockedUrl = support::LockedUrl::required;
+    let expected: BTreeSet<String> = SOURCES
+        .iter()
+        .map(|(path, _, _, _)| (*path).to_string())
+        .collect();
+    let mut actual = BTreeSet::new();
+    let tests = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    for entry in std::fs::read_dir(tests).expect("read the wamn-ctl test directory") {
+        let path = entry.expect("read a wamn-ctl test entry").path();
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("read a wamn-ctl test source");
+        if source.contains(CTL_DATABASE_URL_ENV) {
+            actual.insert(
+                path.file_name()
+                    .expect("test source has a file name")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+    assert_eq!(actual, expected, "control live-URL test-binary inventory");
+
+    let direct_env_read = format!("std::env::var(\"{CTL_DATABASE_URL_ENV}\")");
+    let mut optional = 0;
+    let mut required = 0;
+    for (path, source, expected_optional, expected_required) in SOURCES {
+        assert_eq!(
+            source.matches("mod support;").count(),
+            1,
+            "{path} must import the shared lock exactly once"
+        );
+        assert!(
+            !source.contains(&direct_env_read),
+            "{path} bypasses the shared lock"
+        );
+        let actual_optional = source.matches("support::LockedUrl::optional()").count();
+        let actual_required = source.matches("support::LockedUrl::required(").count();
+        assert_eq!(
+            actual_optional, expected_optional,
+            "{path} optional entries"
+        );
+        assert_eq!(
+            actual_required, expected_required,
+            "{path} required entries"
+        );
+        optional += actual_optional;
+        required += actual_required;
+    }
+    assert_eq!((optional, required), (17, 10));
+}
+
+#[test]
+#[ignore = "child process for ctl_live_database_lock_excludes_another_process"]
+fn ctl_live_database_lock_child_observes_parent() {
+    if std::env::var_os(LOCK_CHILD_ENV).is_none() {
+        return;
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(std::env::temp_dir().join(support::LOCK_FILE_NAME))
+        .expect("open the child-process lock file");
+    assert!(
+        matches!(file.try_lock(), Err(TryLockError::WouldBlock)),
+        "the child process acquired the parent process's live-database lock"
+    );
+}
+
+#[test]
+fn ctl_live_database_lock_excludes_another_process() {
+    let _lock = support::lock();
+    let output =
+        Command::new(std::env::current_exe().expect("locate the verb-surface test binary"))
+            .args([
+                "--ignored",
+                "--exact",
+                "ctl_live_database_lock_child_observes_parent",
+            ])
+            .env(LOCK_CHILD_ENV, "1")
+            .output()
+            .expect("run the child-process lock probe");
+    assert!(
+        output.status.success(),
+        "child-process lock probe failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
