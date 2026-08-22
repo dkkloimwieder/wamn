@@ -12,6 +12,7 @@ const MVP_VERBS: &[&str] = &[
     "provision-project-env",
     "enable-cdc-project-env",
     "migrate-catalog",
+    "push-component",
     "reconcile-replica-identity",
     "reconcile-run-plane",
     "terminalize-effect-uncertain",

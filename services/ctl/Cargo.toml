@@ -43,6 +43,7 @@ tracing = { workspace = true }
 # keeps its meaning (dep diagnostics to stderr), matching the pre-split
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+oci-client = { workspace = true }
 # 4.1b publish-catalog: catalog snapshot model + the 3.2 tenant-floor DDL.
 wamn-schema-model = { workspace = true }
 wamn-schema-compiler = { workspace = true }
@@ -62,6 +63,9 @@ wamn-control-registry = { workspace = true }
 # MVP management authentication: stable service principals, project roles, and
 # independently issued/revoked PATs for provision-project-env.
 wamn-platform-identity = { workspace = true }
+# push-component is the sole production caller of byte admission and shares
+# the immutable OCI media/reference contract with the runtime pull side.
+wamn-runtime = { workspace = true }
 # wamn-8df.5 copy-project-env: the definition pass re-compiles the copied RLS
 # policy rows and applies them on the dst.
 # 9.6 prune-run-history: the single-source run-state SQL builder

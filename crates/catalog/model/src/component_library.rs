@@ -20,14 +20,16 @@ pub struct ComponentCatalogScope {
 }
 
 /// One author-declared input or output port before admission.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentPortDeclaration {
     pub name: String,
     pub schema: Value,
 }
 
 /// One author-declared component parameter before admission.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentParameterDeclaration {
     pub name: String,
     pub schema: Value,
@@ -38,7 +40,8 @@ pub struct ComponentParameterDeclaration {
 ///
 /// The operation is singular by construction. A digest therefore cannot hide
 /// several logical operations behind the uniform `wamn:node/handler.run` ABI.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentDeclaration {
     pub scope: ComponentCatalogScope,
     pub component: String,
@@ -389,6 +392,26 @@ mod tests {
         assert_eq!(fact.component_digest, format!("sha256:{}", "a".repeat(64)));
         assert_eq!(fact.imports.len(), 2);
         assert!(fact.imports_fingerprint.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn declaration_document_is_exact_kebab_case_json() {
+        let document = serde_json::to_value(declaration()).expect("declaration serializes");
+        assert!(document.get("input-ports").is_some());
+        assert!(document.get("interface-version").is_some());
+        assert_eq!(document["scope"]["tenant-id"], "tenant-a");
+        assert_eq!(
+            serde_json::from_value::<ComponentDeclaration>(document.clone())
+                .expect("exact declaration parses"),
+            declaration()
+        );
+
+        let mut unknown = document;
+        unknown
+            .as_object_mut()
+            .expect("declaration is an object")
+            .insert("environment".to_owned(), json!("dev"));
+        assert!(serde_json::from_value::<ComponentDeclaration>(unknown).is_err());
     }
 
     #[test]

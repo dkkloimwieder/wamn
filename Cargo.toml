@@ -63,6 +63,10 @@ libc = "0.2"
 opentelemetry = { version = "0.31", default-features = false }
 opentelemetry-otlp = { version = "0.31", default-features = false }
 opentelemetry_sdk = { version = "0.31", default-features = false }
+# The component publisher and puller share this exact client and TLS family.
+# Disable the crate's test-only default feature; wash-runtime already resolves
+# the same oci-client version with rustls.
+oci-client = { version = "0.17", default-features = false, features = ["rustls-tls"] }
 rand_core = "0.10"
 reqwest = { version = "0.13", default-features = false }
 ring = "0.17"

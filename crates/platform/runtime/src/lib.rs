@@ -3,6 +3,7 @@
 //! MVP outcome: crash floor · M0 execution · flow composition.
 
 pub mod component_admission;
+pub mod component_artifact;
 pub mod connection_authority;
 pub mod connection_generation;
 pub mod engine;
