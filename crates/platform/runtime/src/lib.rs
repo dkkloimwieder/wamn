@@ -4,6 +4,7 @@
 
 pub mod component_admission;
 pub mod component_artifact;
+pub mod component_artifact_source;
 pub mod connection_authority;
 pub mod connection_generation;
 pub mod engine;

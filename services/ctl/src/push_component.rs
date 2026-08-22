@@ -12,15 +12,18 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use clap::Args;
 use oci_client::client::{ClientConfig, ClientProtocol, Config, ImageLayer};
-use oci_client::manifest::{OciDescriptor, OciImageManifest};
+use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, Config as PgConfig, NoTls};
 use wamn_catalog::{AdmittedComponent, ComponentDeclaration};
-use wamn_runtime::component_admission::{component_digest, validate_component_admission};
+use wamn_runtime::component_admission::validate_component_admission;
 use wamn_runtime::component_artifact::{
     COMPONENT_CONFIG_MEDIA_TYPE, COMPONENT_LAYER_MEDIA_TYPE, component_artifact_config_bytes,
     component_artifact_reference,
+};
+use wamn_runtime::component_artifact_source::{
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 
 /// Bound each registry connect/read phase without adding a second deployment knob.
@@ -116,11 +119,12 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
 
     publish_and_verify(
         &reference,
+        &args.artifact_base,
         artifact.registry(),
         args.insecure_registry,
         &component_bytes,
         &config_bytes,
-        &admitted.component_digest,
+        &admitted,
     )
     .await?;
 
@@ -131,11 +135,12 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
 
 async fn publish_and_verify(
     reference: &Reference,
+    artifact_base: &str,
     registry: &str,
     insecure: bool,
     component_bytes: &[u8],
     config_bytes: &[u8],
-    expected_digest: &str,
+    component: &AdmittedComponent,
 ) -> anyhow::Result<()> {
     let protocol = if insecure {
         ClientProtocol::HttpsExcept(vec![registry.to_owned()])
@@ -154,24 +159,12 @@ async fn publish_and_verify(
         COMPONENT_LAYER_MEDIA_TYPE.to_owned(),
         None,
     );
-    ensure!(
-        layer.sha256_digest() == expected_digest,
-        "component-artifact-local-body-digest-mismatch"
-    );
     let config = Config::new(
         config_bytes.to_vec(),
         COMPONENT_CONFIG_MEDIA_TYPE.to_owned(),
         None,
     );
-    let config_digest = config.sha256_digest();
     let manifest = OciImageManifest::build(std::slice::from_ref(&layer), &config, None);
-    verify_manifest(
-        &manifest,
-        expected_digest,
-        component_bytes.len(),
-        &config_digest,
-        config_bytes.len(),
-    )?;
 
     client
         .push(
@@ -185,84 +178,16 @@ async fn publish_and_verify(
         .with_context(|| format!("push component artifact {reference}"))?;
 
     // Publication is not a successful catalog admission until the immutable
-    // reference can be read back and independently proves both bodies.
-    let (published, _) = client
-        .pull_image_manifest(reference, &auth)
+    // reference can be read back by the production puller and independently
+    // proves the descriptor, config facts, and exact component body.
+    let source_config =
+        ComponentArtifactSourceConfig::new(artifact_base, insecure, REGISTRY_IO_TIMEOUT)
+            .context("configure published component verification source")?;
+    ComponentArtifactSource::new(source_config)
+        .pull_verified(component)
         .await
-        .with_context(|| format!("verify published component manifest {reference}"))?;
-    let (published_layer, published_config) = verify_manifest(
-        &published,
-        expected_digest,
-        component_bytes.len(),
-        &config_digest,
-        config_bytes.len(),
-    )?;
-    let mut returned_component = Vec::with_capacity(component_bytes.len());
-    client
-        .pull_blob(reference, published_layer, &mut returned_component)
-        .await
-        .with_context(|| format!("verify published component body {reference}"))?;
-    ensure!(
-        component_digest(&returned_component) == expected_digest,
-        "component-artifact-published-body-digest-mismatch"
-    );
-    ensure!(
-        returned_component == component_bytes,
-        "component-artifact-published-body-bytes-mismatch"
-    );
-    let mut returned_config = Vec::with_capacity(config_bytes.len());
-    client
-        .pull_blob(reference, published_config, &mut returned_config)
-        .await
-        .with_context(|| format!("verify published component config {reference}"))?;
-    ensure!(
-        returned_config == config_bytes,
-        "component-artifact-published-config-mismatch"
-    );
+        .with_context(|| format!("verify published component artifact {reference}"))?;
     Ok(())
-}
-
-fn verify_manifest<'a>(
-    manifest: &'a OciImageManifest,
-    expected_component_digest: &str,
-    expected_component_size: usize,
-    expected_config_digest: &str,
-    expected_config_size: usize,
-) -> anyhow::Result<(&'a OciDescriptor, &'a OciDescriptor)> {
-    ensure!(
-        manifest.schema_version == 2,
-        "component-artifact-manifest-schema-mismatch"
-    );
-    ensure!(
-        manifest.layers.len() == 1,
-        "component-artifact-layer-cardinality-mismatch"
-    );
-    let layer = &manifest.layers[0];
-    ensure!(
-        layer.media_type == COMPONENT_LAYER_MEDIA_TYPE,
-        "component-artifact-layer-media-type-mismatch"
-    );
-    ensure!(
-        layer.digest == expected_component_digest,
-        "component-artifact-layer-digest-mismatch"
-    );
-    ensure!(
-        layer.size == i64::try_from(expected_component_size).unwrap_or(i64::MAX),
-        "component-artifact-layer-size-mismatch"
-    );
-    ensure!(
-        manifest.config.media_type == COMPONENT_CONFIG_MEDIA_TYPE,
-        "component-artifact-config-media-type-mismatch"
-    );
-    ensure!(
-        manifest.config.digest == expected_config_digest,
-        "component-artifact-config-digest-mismatch"
-    );
-    ensure!(
-        manifest.config.size == i64::try_from(expected_config_size).unwrap_or(i64::MAX),
-        "component-artifact-config-size-mismatch"
-    );
-    Ok((layer, &manifest.config))
 }
 
 async fn persist_admitted_component(
@@ -348,44 +273,9 @@ async fn persist_with_client(
 
 #[cfg(test)]
 mod tests {
+    use wamn_catalog::{ComponentCatalogScope, ComponentDeclaration};
+
     use super::*;
-
-    fn descriptor(media_type: &str, digest: &str, size: i64) -> OciDescriptor {
-        OciDescriptor {
-            media_type: media_type.to_owned(),
-            digest: digest.to_owned(),
-            size,
-            ..OciDescriptor::default()
-        }
-    }
-
-    fn manifest(digest: &str) -> OciImageManifest {
-        OciImageManifest {
-            schema_version: 2,
-            config: descriptor(COMPONENT_CONFIG_MEDIA_TYPE, "sha256:config", 17),
-            layers: vec![descriptor(COMPONENT_LAYER_MEDIA_TYPE, digest, 23)],
-            ..OciImageManifest::default()
-        }
-    }
-
-    #[test]
-    fn manifest_verifier_pins_both_descriptors_and_one_layer() {
-        let digest = format!("sha256:{}", "a".repeat(64));
-        verify_manifest(&manifest(&digest), &digest, 23, "sha256:config", 17)
-            .expect("exact manifest verifies");
-
-        let mut extra = manifest(&digest);
-        extra.layers.push(extra.layers[0].clone());
-        assert!(verify_manifest(&extra, &digest, 23, "sha256:config", 17).is_err());
-
-        let mut wrong_media = manifest(&digest);
-        wrong_media.layers[0].media_type = "application/wasm".to_owned();
-        assert!(verify_manifest(&wrong_media, &digest, 23, "sha256:config", 17).is_err());
-
-        let mut wrong_config = manifest(&digest);
-        wrong_config.config.digest = "sha256:other".to_owned();
-        assert!(verify_manifest(&wrong_config, &digest, 23, "sha256:config", 17).is_err());
-    }
 
     #[test]
     fn persistence_is_append_only_and_exact_retry_only() {
@@ -397,5 +287,55 @@ mod tests {
             CLAIM_TENANT_SQL,
             "SELECT set_config('app.tenant', $1, true)"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a disposable registry in WAMN_COMPONENT_ARTIFACT_BASE"]
+    async fn production_publisher_and_puller_round_trip_exact_bytes() {
+        let artifact_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
+            .expect("set WAMN_COMPONENT_ARTIFACT_BASE to a disposable HTTP registry/repository");
+        let component_bytes = b"\0asm\r\0\x01\0";
+        let engine = wamn_runtime::build_engine(&[]).expect("component admission engine builds");
+        let component = validate_component_admission(
+            &engine,
+            component_bytes,
+            wamn_runtime::component_admission::ComponentAdmissionRequest {
+                declaration: ComponentDeclaration {
+                    scope: ComponentCatalogScope {
+                        tenant_id: "tenant-a".to_owned(),
+                        catalog_id: "orders".to_owned(),
+                        catalog_version: 1,
+                    },
+                    component: "round-trip".to_owned(),
+                    interface_version: "0.1.0".to_owned(),
+                    operation: "run".to_owned(),
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+                admitted_platform_packages: std::collections::BTreeSet::new(),
+            },
+        )
+        .expect("fixture bytes admit");
+        let artifact = component_artifact_reference(&artifact_base, &component.component_digest)
+            .expect("fixture artifact reference derives");
+        let reference = Reference::with_tag(
+            artifact.registry().to_owned(),
+            artifact.repository().to_owned(),
+            artifact.tag().to_owned(),
+        );
+        let config_bytes = component_artifact_config_bytes(&component);
+
+        publish_and_verify(
+            &reference,
+            &artifact_base,
+            artifact.registry(),
+            true,
+            component_bytes,
+            &config_bytes,
+            &component,
+        )
+        .await
+        .expect("production publisher and puller agree");
     }
 }

@@ -82,6 +82,35 @@ pub struct ComponentArtifactReference {
     tag: Box<str>,
 }
 
+/// Parsed artifact base shared internally by the publisher contract and puller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ComponentArtifactBase {
+    registry: Box<str>,
+    repository: Box<str>,
+}
+
+impl ComponentArtifactBase {
+    pub(crate) fn registry(&self) -> &str {
+        &self.registry
+    }
+
+    pub(crate) fn repository(&self) -> &str {
+        &self.repository
+    }
+
+    pub(crate) fn reference(
+        &self,
+        component_digest: &str,
+    ) -> Result<ComponentArtifactReference, ComponentArtifactReferenceError> {
+        let tag = component_digest_tag(component_digest)?;
+        Ok(ComponentArtifactReference {
+            registry: self.registry.clone(),
+            repository: self.repository.clone(),
+            tag: tag.into(),
+        })
+    }
+}
+
 impl ComponentArtifactReference {
     /// Registry host, including an explicit port when configured.
     pub fn registry(&self) -> &str {
@@ -119,6 +148,12 @@ pub fn component_artifact_reference(
     artifact_base: &str,
     component_digest: &str,
 ) -> Result<ComponentArtifactReference, ComponentArtifactReferenceError> {
+    parse_component_artifact_base(artifact_base)?.reference(component_digest)
+}
+
+pub(crate) fn parse_component_artifact_base(
+    artifact_base: &str,
+) -> Result<ComponentArtifactBase, ComponentArtifactReferenceError> {
     let invalid_base = |reason| {
         ComponentArtifactReferenceError::new(
             ComponentArtifactReferenceErrorKind::InvalidBase,
@@ -159,7 +194,14 @@ pub fn component_artifact_reference(
         ));
     }
 
-    let tag = component_digest
+    Ok(ComponentArtifactBase {
+        registry: registry.into(),
+        repository: repository.into(),
+    })
+}
+
+fn component_digest_tag(component_digest: &str) -> Result<&str, ComponentArtifactReferenceError> {
+    component_digest
         .strip_prefix(HASH_PREFIX)
         .filter(|hex| {
             hex.len() == HASH_HEX_LEN
@@ -172,13 +214,7 @@ pub fn component_artifact_reference(
                 ComponentArtifactReferenceErrorKind::InvalidDigest,
                 "expected sha256:<64 lowercase hex digits>",
             )
-        })?;
-
-    Ok(ComponentArtifactReference {
-        registry: registry.into(),
-        repository: repository.into(),
-        tag: tag.into(),
-    })
+        })
 }
 
 /// Canonical OCI config bytes for an admitted component.
