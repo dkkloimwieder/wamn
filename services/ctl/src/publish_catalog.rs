@@ -101,18 +101,6 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     to_regclass('catalog.connection_generations') IS NOT NULL, \
                     to_regclass('catalog.connection_bindings') IS NOT NULL, \
                     to_regclass('catalog.connection_generation_retention') IS NOT NULL, \
-                    to_regclass('catalog.flow_drafts') IS NOT NULL, \
-                    to_regclass('catalog.validated_flow_drafts') IS NOT NULL, \
-                    to_regclass('catalog.draft_safe_connection_grants') IS NOT NULL, \
-                    to_regclass('catalog.authoring_command_audit') IS NOT NULL, \
-                    EXISTS (SELECT 1 FROM information_schema.columns \
-                             WHERE table_schema = 'catalog' \
-                               AND table_name = 'flow_drafts' \
-                               AND column_name = 'definition'), \
-                    EXISTS (SELECT 1 FROM information_schema.columns \
-                             WHERE table_schema = 'catalog' \
-                               AND table_name = 'authoring_command_audit' \
-                               AND column_name = 'provenance_commit'), \
                     to_regclass('catalog.wirings') IS NOT NULL, \
                     to_regclass('catalog.wiring_tombstones') IS NOT NULL, \
                     to_regclass('catalog.wiring_activation') IS NOT NULL, \
@@ -177,100 +165,16 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .context("install connection storage")?;
         }
 
-        let authoring_draft_objects = [
-            release_row.get::<_, bool>(19),
-            release_row.get::<_, bool>(20),
-        ];
-        if !authoring_draft_objects.iter().all(|present| *present) {
-            anyhow::ensure!(
-                authoring_draft_objects.iter().all(|present| !*present),
-                "catalog authoring draft storage is partially installed; reconcile it before publication"
-            );
-            let start = CATALOG_SCHEMA_SQL
-                .find("-- BEGIN AUTHORING DRAFT STORAGE MIGRATION")
-                .expect("authoring draft storage migration start");
-            let end = CATALOG_SCHEMA_SQL
-                .find("-- END AUTHORING DRAFT STORAGE MIGRATION")
-                .expect("authoring draft storage migration end");
-            client
-                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
-                .await
-                .context("install authoring draft storage")?;
-        }
-
-        if !release_row.get::<_, bool>(21) {
-            let start = CATALOG_SCHEMA_SQL
-                .find("-- BEGIN AUTHORING CONNECTION AUTHORITY MIGRATION")
-                .expect("authoring connection authority migration start");
-            let end = CATALOG_SCHEMA_SQL
-                .find("-- END AUTHORING CONNECTION AUTHORITY MIGRATION")
-                .expect("authoring connection authority migration end");
-            client
-                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
-                .await
-                .context("install authoring connection authority")?;
-        }
-
-        // The adapter's startup authority probe hard-requires the ledger, so an
-        // existing catalog that predates wamn-ctc8.8 must gain it here or the
-        // management surface refuses to start against that project.
-        if !release_row.get::<_, bool>(22) {
-            let start = CATALOG_SCHEMA_SQL
-                .find("-- BEGIN AUTHORING COMMAND AUDIT MIGRATION")
-                .expect("authoring command audit migration start");
-            let end = CATALOG_SCHEMA_SQL
-                .find("-- END AUTHORING COMMAND AUDIT MIGRATION")
-                .expect("authoring command audit migration end");
-            client
-                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
-                .await
-                .context("install authoring command audit")?;
-        }
-
-        // Both slices below run after the two above deliberately: an existing
-        // catalog may have just gained `flow_drafts` or the audit ledger in
-        // this same pass, and these alter exactly those tables.
-
-        // A draft saved before wamn-ftfc.2 was reparsed into `jsonb`, so its
-        // exact submitted text no longer exists anywhere. The backfill recovers
-        // the document, not the bytes; that is the most an upgrade can honestly
-        // do, and every revision saved afterwards is byte-exact.
-        if !release_row.get::<_, bool>(23) {
-            let start = CATALOG_SCHEMA_SQL
-                .find("-- BEGIN AUTHORING DRAFT DEFINITION MIGRATION")
-                .expect("authoring draft definition migration start");
-            let end = CATALOG_SCHEMA_SQL
-                .find("-- END AUTHORING DRAFT DEFINITION MIGRATION")
-                .expect("authoring draft definition migration end");
-            client
-                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
-                .await
-                .context("install exact-text authoring draft storage")?;
-        }
-
-        if !release_row.get::<_, bool>(24) {
-            let start = CATALOG_SCHEMA_SQL
-                .find("-- BEGIN AUTHORING COMMAND PROVENANCE MIGRATION")
-                .expect("authoring command provenance migration start");
-            let end = CATALOG_SCHEMA_SQL
-                .find("-- END AUTHORING COMMAND PROVENANCE MIGRATION")
-                .expect("authoring command provenance migration end");
-            client
-                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
-                .await
-                .context("install authoring command provenance attribution")?;
-        }
-
         // wamn-0h0g.18.2: the wiring relations, their activation guard and the
         // activation doorbell reach an EXISTING project database only here —
         // `catalog-schema.sql` applies whole on a fresh install and never again.
         // All four or none: the slice is one CREATE TABLE run, so a partial
         // install is a reconcile, not something to re-execute over.
         let wiring_objects = [
-            release_row.get::<_, bool>(25),
-            release_row.get::<_, bool>(26),
-            release_row.get::<_, bool>(27),
-            release_row.get::<_, bool>(28),
+            release_row.get::<_, bool>(19),
+            release_row.get::<_, bool>(20),
+            release_row.get::<_, bool>(21),
+            release_row.get::<_, bool>(22),
         ];
         if !wiring_objects.iter().all(|present| *present) {
             anyhow::ensure!(
@@ -290,8 +194,8 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         }
 
         let release_copy_routines = [
-            release_row.get::<_, bool>(29),
-            release_row.get::<_, bool>(30),
+            release_row.get::<_, bool>(23),
+            release_row.get::<_, bool>(24),
         ];
         if !release_copy_routines.iter().all(|present| *present) {
             anyhow::ensure!(
@@ -364,33 +268,8 @@ async fn ensure_authoring_catalog_privileges(
              GRANT SELECT ON catalog.connection_generations TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.connection_bindings FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.connection_bindings TO wamn_app, wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON catalog.flow_drafts FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT, UPDATE ON catalog.flow_drafts TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON catalog.validated_flow_drafts FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.validated_flow_drafts TO wamn_app; \
-             GRANT SELECT, INSERT ON catalog.validated_flow_drafts TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON catalog.draft_safe_connection_grants FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.draft_safe_connection_grants TO wamn_app, wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT ON catalog.authoring_command_audit TO wamn_scenario_author; \
              DO $effective_acl$ BEGIN \
-               IF has_table_privilege('wamn_app', 'catalog.flow_drafts', 'INSERT') \
-                  OR has_table_privilege('wamn_app', 'catalog.flow_drafts', 'UPDATE') \
-                  OR has_table_privilege('wamn_app', 'catalog.flow_drafts', 'DELETE') \
-                  OR has_table_privilege('wamn_app', 'catalog.validated_flow_drafts', 'INSERT') \
-                  OR has_table_privilege('wamn_app', 'catalog.draft_safe_connection_grants', 'INSERT') \
-                  OR has_table_privilege('wamn_app', 'catalog.draft_safe_connection_grants', 'UPDATE') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'INSERT') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'UPDATE') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'DELETE') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'TRUNCATE') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'REFERENCES') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'TRIGGER') \
-                  OR has_table_privilege('wamn_app', 'catalog.authoring_command_audit', 'SELECT') \
-                  OR has_table_privilege('wamn_app', 'catalog.authoring_command_audit', 'INSERT') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.authoring_command_audit', 'UPDATE') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.authoring_command_audit', 'DELETE') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'INSERT') \
+               IF has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'DELETE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.flow_artifacts', 'INSERT') \

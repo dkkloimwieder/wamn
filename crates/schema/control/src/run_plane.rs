@@ -1409,33 +1409,6 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "flow_drafts",
-        app: &[],
-        author: &["SELECT", "INSERT", "UPDATE"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::Catalog,
-        table: "validated_flow_drafts",
-        app: &["SELECT"],
-        author: &["SELECT", "INSERT"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::Catalog,
-        table: "draft_safe_connection_grants",
-        app: &["SELECT"],
-        author: &["SELECT"],
-    },
-    // The command ledger is append-only management-plane evidence: the author
-    // adds and reads rows, the guest runtime credential never sees it, and
-    // nobody gets UPDATE or DELETE.
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::Catalog,
-        table: "authoring_command_audit",
-        app: &[],
-        author: &["SELECT", "INSERT"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::Catalog,
         table: "connection_requirements",
         app: &["SELECT"],
         author: &["SELECT"],
@@ -4721,10 +4694,8 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
         AND ((table_schema = 'catalog' AND table_name IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
-               'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
-               'connection_generations', 'connection_bindings', \
-               'draft_safe_connection_grants', 'authoring_command_audit')) \
+               'connection_generations', 'connection_bindings')) \
           OR (table_schema = $1 AND table_name IN ('environment_policies', 'runs'))) \
       ORDER BY table_schema, table_name, grantee, privilege_type"
 }
@@ -4748,10 +4719,8 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
-               'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
-               'connection_generations', 'connection_bindings', \
-               'draft_safe_connection_grants', 'authoring_command_audit')) \
+               'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
               AND relation.relname IN ('environment_policies', 'runs'))) \
         AND pg_catalog.has_table_privilege( \
@@ -4776,10 +4745,8 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
-               'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
-               'connection_generations', 'connection_bindings', \
-               'draft_safe_connection_grants', 'authoring_command_audit')) \
+               'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
               AND relation.relname IN ('environment_policies', 'runs'))) \
         AND pg_catalog.has_any_column_privilege( \
@@ -4800,10 +4767,8 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
-               'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
-               'connection_generations', 'connection_bindings', \
-               'draft_safe_connection_grants', 'authoring_command_audit')) \
+               'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
               AND relation.relname IN ('environment_policies', 'runs'))) \
       ORDER BY namespace.nspname, relation.relname"
