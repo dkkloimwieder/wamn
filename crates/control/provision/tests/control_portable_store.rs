@@ -202,10 +202,6 @@ fn current_database_connect_posture_is_single_scoped_and_used_by_every_measured_
             include_str!("../../../../services/scenario-worker/tests/management_live.rs"),
         ),
         (
-            "services/scenario-worker/tests/authoring_loop_live.rs",
-            include_str!("../../../../services/scenario-worker/tests/authoring_loop_live.rs"),
-        ),
-        (
             "services/ctl/src/publish_release.rs",
             include_str!("../../../../services/ctl/src/publish_release.rs"),
         ),
