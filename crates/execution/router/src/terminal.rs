@@ -15,6 +15,7 @@
 //! router.
 
 use serde_json::Value;
+use wamn_event_wire::Op;
 
 /// The reserved field of an [`Terminal::Emit`] node's emitted JSON object
 /// carrying the dedup id, e.g. `{"dedup-id": "...", ...}`.
@@ -30,14 +31,25 @@ pub const DEDUP_ID_FIELD: &str = "dedup-id";
 ///
 /// Absent on ordinary nodes: most of a graph is intermediate work, and only a
 /// node that ends the delivery carries this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Terminal {
     /// Releases the synchronous caller waiting on this delivery, with the
     /// node's emitted payload as the answer.
     Respond,
     /// Publishes the node's emitted payload as a derived event, keyed by the
-    /// [`DEDUP_ID_FIELD`] the author put in it.
-    Emit,
+    /// [`DEDUP_ID_FIELD`] the author put in it and routed only by this admitted
+    /// selector.
+    Emit { entity: String, operation: Op },
+}
+
+impl Terminal {
+    /// Construct an Emit terminal from the selector admitted with its wiring.
+    pub fn emit(entity: impl Into<String>, operation: Op) -> Self {
+        Self::Emit {
+            entity: entity.into(),
+            operation,
+        }
+    }
 }
 
 /// How one delivery ended — the router's verdict, decided by the walk and
@@ -52,8 +64,14 @@ pub enum Verdict {
     /// prerogative, and the caller's answer is this payload, not whatever the
     /// last node happened to produce.
     Respond { payload: Value, node_id: String },
-    /// Publish `event` into the boundary under `dedup_id`.
-    Emit { event: Value, dedup_id: String },
+    /// Publish `event` into the boundary under `dedup_id`, using only the
+    /// selector copied from the admitted terminal occurrence.
+    Emit {
+        event: Value,
+        dedup_id: String,
+        entity: String,
+        operation: Op,
+    },
     /// Nothing to answer and nothing to publish: the frontier emptied with no
     /// caller attached and no terminal node reached.
     Discard,

@@ -9,6 +9,7 @@ license.workspace = true
 # Payloads, per-node config, and the run-context document are JSON. No schema of
 # its own: the router is a walk, not a contract.
 serde_json = { workspace = true }
+wamn-event-wire = { workspace = true }
 
 # The wiring resolution cache's one instrument, beside the executor's
 # `wamn.run.*` counters. Metrics only — no SDK and no exporter: this crate

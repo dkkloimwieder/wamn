@@ -24,6 +24,7 @@ serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2 = { workspace = true }
 url = { workspace = true }
 wamn-flow = { workspace = true }
+wamn-event-wire = { workspace = true }
 
 # A self dev-dependency, so this crate's own `tests/` directory — a separate
 # compilation unit that cannot see its parent's features — builds with

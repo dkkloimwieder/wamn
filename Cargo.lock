@@ -4163,6 +4163,7 @@ dependencies = [
  "sha2 0.11.0",
  "url",
  "wamn-catalog",
+ "wamn-event-wire",
  "wamn-flow",
 ]
 
@@ -4298,6 +4299,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]
@@ -4311,6 +4313,7 @@ dependencies = [
  "tracing",
  "wamn-catalog",
  "wamn-control-registry",
+ "wamn-event-wire",
  "wamn-router",
  "wamn-runtime",
  "wash-runtime",
@@ -4330,6 +4333,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "wamn-event-wire",
  "wamn-execution-host",
  "wamn-run-state",
  "wamn-runtime",
@@ -4520,6 +4524,7 @@ version = "0.1.0"
 dependencies = [
  "opentelemetry",
  "serde_json",
+ "wamn-event-wire",
 ]
 
 [[package]]

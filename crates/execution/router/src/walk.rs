@@ -448,7 +448,10 @@ impl Wiring {
             NodeOutcome::Success { payload, port } => {
                 // Decided before anything mutates, so a rejected verdict leaves
                 // the walk exactly as it found it.
-                let verdict = match self.node(&call.node).and_then(|node| node.terminal) {
+                let verdict = match self
+                    .node(&call.node)
+                    .and_then(|node| node.terminal.as_ref())
+                {
                     None => None,
                     Some(terminal) => {
                         match terminal_verdict(walk, &call.node, terminal, &payload)? {
@@ -598,7 +601,7 @@ impl Wiring {
 fn terminal_verdict(
     walk: &Walk,
     node: &str,
-    terminal: Terminal,
+    terminal: &Terminal,
     payload: &Value,
 ) -> Result<Option<Verdict>, ApplyError> {
     if walk.verdict.is_some() {
@@ -614,13 +617,15 @@ fn terminal_verdict(
             payload: payload.clone(),
             node_id: node.to_string(),
         })),
-        Terminal::Emit => Ok(payload
+        Terminal::Emit { entity, operation } => Ok(payload
             .get(DEDUP_ID_FIELD)
             .and_then(Value::as_str)
             .filter(|id| !id.is_empty())
             .map(|id| Verdict::Emit {
                 event: payload.clone(),
                 dedup_id: id.to_string(),
+                entity: entity.clone(),
+                operation: *operation,
             })),
     }
 }

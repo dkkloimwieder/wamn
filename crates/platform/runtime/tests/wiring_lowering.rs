@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use wamn_catalog::{WiringDocument, WiringEdge, WiringNode, WiringTerminal};
+use wamn_event_wire::Op;
 use wamn_router::{
     DEDUP_ID_FIELD, Delivery, NodeCall, NodeOutcome, Step, Terminal, Verdict, WalkStatus, Wiring,
 };
@@ -87,7 +88,7 @@ fn document(to_port: Option<&str>) -> WiringDocument {
                     interface_version: "0.2.0".to_owned(),
                     operation: "write".to_owned(),
                     params: BTreeMap::from([("relation".to_owned(), json!("order-audit"))]),
-                    terminal: Some(WiringTerminal::Emit),
+                    terminal: Some(WiringTerminal::emit("order-audit", Op::Insert)),
                 },
             ),
             (
@@ -172,7 +173,7 @@ fn first_routed_call(wiring: &Wiring) -> NodeCall {
     target
 }
 
-fn stored_single_node_document(terminal: Option<&str>) -> WiringDocument {
+fn stored_single_node_document(terminal: Option<Value>) -> WiringDocument {
     WiringDocument::parse(&json!({
         "format-version": "0.1",
         "wiring-id": "stored-terminal",
@@ -224,7 +225,7 @@ fn drive_stored_single_node(
 
 #[test]
 fn stored_respond_terminal_reaches_the_router_verdict() {
-    let document = stored_single_node_document(Some("respond"));
+    let document = stored_single_node_document(Some(json!("respond")));
     let output = json!({"answer": 42});
 
     let (status, verdict) = drive_stored_single_node(&document, true, output.clone());
@@ -241,7 +242,9 @@ fn stored_respond_terminal_reaches_the_router_verdict() {
 
 #[test]
 fn stored_emit_terminal_reaches_the_router_verdict() {
-    let document = stored_single_node_document(Some("emit"));
+    let document = stored_single_node_document(Some(json!({
+        "emit": {"entity": "orders", "operation": "insert"}
+    })));
     let output = json!({DEDUP_ID_FIELD: "stored-terminal:1:entry", "order": 42});
 
     let (status, verdict) = drive_stored_single_node(&document, false, output.clone());
@@ -252,6 +255,8 @@ fn stored_emit_terminal_reaches_the_router_verdict() {
         Some(Verdict::Emit {
             event: output,
             dedup_id: "stored-terminal:1:entry".to_owned(),
+            entity: "orders".to_owned(),
+            operation: Op::Insert,
         })
     );
 }
@@ -284,7 +289,10 @@ fn lowers_names_to_digest_keyed_nodes_and_preserves_config_terminal_and_order() 
     let audit = wiring.node("audit").expect("audit node is lowered");
     assert_eq!(audit.component, DIGEST_B);
     assert_eq!(audit.config, json!({"relation": "order-audit"}));
-    assert_eq!(audit.terminal, Some(Terminal::Emit));
+    assert_eq!(
+        audit.terminal,
+        Some(Terminal::emit("order-audit", Op::Insert))
+    );
 
     let edges: Vec<_> = wiring.successors("decode", "record").collect();
     assert_eq!(

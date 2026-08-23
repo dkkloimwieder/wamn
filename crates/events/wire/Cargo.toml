@@ -9,3 +9,4 @@ license.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 chrono = { workspace = true, features = ["std", "serde"] }
+sha2 = { workspace = true }

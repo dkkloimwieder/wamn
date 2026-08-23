@@ -24,8 +24,9 @@
 //!   weld, `wamn-0h0g.15.95`): a durable consumer binds only over subjects some
 //!   registration of the release sources, so an event whose registration
 //!   identity is not the release's never reaches a component.
-//!   Generic event publication and the doorbell hint are not release-gated.
-//!   The reserved `dlq.*` namespace is host-only: exact registration bind ties
+//!   Generic non-event publication and the doorbell hint are not release-gated.
+//!   The reserved `evt.*` and `dlq.*` namespaces are host-only: derived events
+//!   use [`WamnJetstream::publish_derived`], while exact registration bind ties
 //!   a fetched message to its release identity before dead-letter publication.
 //! - A publish waits for the server ack (async-nats: send future, then the
 //!   server-ack future) — the returned `publish-ack` is the only delivery truth.
@@ -57,7 +58,8 @@ use wamn_control_registry::identifiers::{
     ExecutionTargetId, doorbell_subject, mvp_execution_target_id,
 };
 use wamn_event_wire::{
-    DEAD_LETTER_STREAM, DeadLetter, DeadLetterHeader, dead_letter_message_id, dead_letter_subject,
+    Causation, DEAD_LETTER_STREAM, DeadLetter, DeadLetterHeader, DerivedEvent, Op,
+    dead_letter_message_id, dead_letter_subject, derived_msg_id, stream_name, subject,
     subject_token,
 };
 
@@ -91,6 +93,70 @@ use bindings::wamn::jetstream::producer;
 use bindings::wamn::jetstream::types::{Header, JsError, MessageMeta};
 
 pub const WAMN_JETSTREAM_ID: &str = "wamn-jetstream";
+
+/// Trusted workload claim carrying the exact event environment.
+pub const ENVIRONMENT_CONFIG_KEY: &str = "wamn.environment";
+
+/// The host-owned inputs needed to publish one admitted Emit terminal.
+///
+/// Scope is intentionally absent. [`WamnJetstream::publish_derived`] resolves
+/// tenant, project, and environment from the claim bound to `component_id`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DerivedPublishRequest {
+    pub component_id: String,
+    pub entity: String,
+    pub operation: Op,
+    pub payload: serde_json::Value,
+    pub dedup_id: String,
+    pub causation: Causation,
+}
+
+/// Server-confirmed storage of one derived event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedPublishAck {
+    pub stream_name: String,
+    pub stream_seq: u64,
+    pub duplicate: bool,
+}
+
+/// Stable host classification for derived publication failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DerivedPublishErrorKind {
+    UnboundScope,
+    InvalidInput,
+    ConnectionUnavailable,
+    Serialization,
+    PublishRejected,
+    UnexpectedStream,
+}
+
+/// Contextual failure returned by the native derived-event publisher seam.
+#[derive(Debug)]
+pub struct DerivedPublishError {
+    kind: DerivedPublishErrorKind,
+    detail: Box<str>,
+}
+
+impl DerivedPublishError {
+    fn new(kind: DerivedPublishErrorKind, detail: impl Into<Box<str>>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+        }
+    }
+
+    pub fn kind(&self) -> DerivedPublishErrorKind {
+        self.kind
+    }
+}
+
+impl std::fmt::Display for DerivedPublishError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for DerivedPublishError {}
 
 /// Wire the `wamn:jetstream` consumer + producer host functions into a linker
 /// directly. The host path calls this from [`HostPlugin::on_workload_item_bind`];
@@ -142,8 +208,8 @@ pub struct WamnJetstream {
     /// Per-component execution target for the doorbell subject, registered at
     /// workload bind by the trusted MVP placement adapter — never guest-supplied.
     execution_targets: std::sync::RwLock<HashMap<String, ExecutionTargetId>>,
-    /// Per-component tenant/project claim, registered at workload bind from the
-    /// same trusted `wamn.tenant` / `wamn.project` config the `wamn:postgres`
+    /// Per-component tenant/project/environment claim, registered at workload
+    /// bind from the same trusted `wamn.*` config the `wamn:postgres`
     /// claims read. It exists only to enrich this plugin's effect spans: before
     /// `wamn-0h0g.24.3` the bind read the tenant, derived the execution target
     /// from it and discarded it, so nothing here could say whose event plane a
@@ -162,6 +228,82 @@ pub struct WamnJetstream {
 struct JetstreamClaim {
     tenant: Box<str>,
     project: Box<str>,
+    environment: Box<str>,
+}
+
+#[derive(Debug)]
+struct PreparedDerivedPublication {
+    component_id: String,
+    claim: JetstreamClaim,
+    subject: String,
+    message_id: String,
+    expected_stream: String,
+    body: Vec<u8>,
+}
+
+fn prepare_derived_publication(
+    claim: JetstreamClaim,
+    request: DerivedPublishRequest,
+) -> Result<PreparedDerivedPublication, DerivedPublishError> {
+    if request.entity.is_empty() || request.entity.trim() != request.entity {
+        return Err(DerivedPublishError::new(
+            DerivedPublishErrorKind::InvalidInput,
+            "derived event entity is empty or noncanonical",
+        ));
+    }
+    if request.dedup_id.is_empty() {
+        return Err(DerivedPublishError::new(
+            DerivedPublishErrorKind::InvalidInput,
+            "derived event dedup-id is empty",
+        ));
+    }
+    if request.causation.run.is_empty() || request.causation.root.is_empty() {
+        return Err(DerivedPublishError::new(
+            DerivedPublishErrorKind::InvalidInput,
+            "derived event causation is incomplete",
+        ));
+    }
+
+    let event = DerivedEvent::new(
+        claim.tenant.to_string(),
+        claim.project.to_string(),
+        claim.environment.to_string(),
+        request.entity,
+        request.operation,
+        request.payload,
+        request.dedup_id,
+        request.causation,
+    );
+    let event_subject = subject(
+        &claim.tenant,
+        &claim.project,
+        &claim.environment,
+        &event.entity,
+        event.op,
+    );
+    let message_id = derived_msg_id(
+        &claim.tenant,
+        &claim.project,
+        &claim.environment,
+        &event.entity,
+        event.op,
+        &event.dedup_id,
+    );
+    let expected_stream = stream_name(&claim.tenant, &claim.environment);
+    let body = serde_json::to_vec(&event).map_err(|error| {
+        DerivedPublishError::new(
+            DerivedPublishErrorKind::Serialization,
+            format!("serialize derived event: {error}"),
+        )
+    })?;
+    Ok(PreparedDerivedPublication {
+        component_id: request.component_id,
+        claim,
+        subject: event_subject,
+        message_id,
+        expected_stream,
+        body,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -320,10 +462,17 @@ impl WamnJetstream {
             .cloned()
     }
 
-    /// Register a component's bind-time tenant/project claim for span
-    /// enrichment. Both come from the trusted workload config; neither is
-    /// validated here, because nothing but a trace label depends on them.
-    fn set_claim(&self, component_id: &str, tenant: Option<&str>, project: Option<&str>) {
+    /// Register a component's bind-time scope claim. All values come from the
+    /// trusted workload config. Generic guest operations use them only for
+    /// enrichment; the native derived publisher separately requires a complete
+    /// subject-safe claim.
+    fn set_claim(
+        &self,
+        component_id: &str,
+        tenant: Option<&str>,
+        project: Option<&str>,
+        environment: Option<&str>,
+    ) {
         self.claims
             .write()
             .expect("jetstream claims lock poisoned")
@@ -332,8 +481,45 @@ impl WamnJetstream {
                 JetstreamClaim {
                     tenant: tenant.unwrap_or_default().into(),
                     project: project.unwrap_or(DEFAULT_PROJECT).into(),
+                    environment: environment.unwrap_or_default().into(),
                 },
             );
+    }
+
+    /// Bind the exact trusted scope used by native derived publication.
+    ///
+    /// The production driver calls this at instance checkout and revokes it at
+    /// check-in. No scope operand exists on [`DerivedPublishRequest`], so a
+    /// guest or wiring payload has nothing it can echo or redirect.
+    pub fn bind_derived_scope(
+        &self,
+        component_id: &str,
+        tenant: &str,
+        project: &str,
+        environment: &str,
+    ) -> Result<(), DerivedPublishError> {
+        for (field, value) in [
+            ("tenant", tenant),
+            ("project", project),
+            ("environment", environment),
+        ] {
+            if value.is_empty() || value.trim() != value || subject_token(value) != value {
+                return Err(DerivedPublishError::new(
+                    DerivedPublishErrorKind::InvalidInput,
+                    format!("derived event {field} claim is empty or not one NATS subject token"),
+                ));
+            }
+        }
+        self.set_claim(component_id, Some(tenant), Some(project), Some(environment));
+        Ok(())
+    }
+
+    /// Revoke a native derived-publication claim at instance check-in.
+    pub fn revoke_derived_scope(&self, component_id: &str) {
+        self.claims
+            .write()
+            .expect("jetstream claims lock poisoned")
+            .remove(component_id);
     }
 
     /// The claim registered for a component, or the unclaimed default. An
@@ -348,7 +534,39 @@ impl WamnJetstream {
             .unwrap_or_else(|| JetstreamClaim {
                 tenant: Box::default(),
                 project: DEFAULT_PROJECT.into(),
+                environment: Box::default(),
             })
+    }
+
+    fn required_derived_claim(
+        &self,
+        component_id: &str,
+    ) -> Result<JetstreamClaim, DerivedPublishError> {
+        let claim = self
+            .claims
+            .read()
+            .expect("jetstream claims lock poisoned")
+            .get(component_id)
+            .cloned()
+            .ok_or_else(|| {
+                DerivedPublishError::new(
+                    DerivedPublishErrorKind::UnboundScope,
+                    "derived-event-scope-unbound",
+                )
+            })?;
+        for value in [
+            claim.tenant.as_ref(),
+            claim.project.as_ref(),
+            claim.environment.as_ref(),
+        ] {
+            if value.is_empty() || value.trim() != value || subject_token(value) != value {
+                return Err(DerivedPublishError::new(
+                    DerivedPublishErrorKind::UnboundScope,
+                    "derived-event-scope-incomplete-or-invalid",
+                ));
+            }
+        }
+        Ok(claim)
     }
 
     /// Resolve (lazily connect + memoize) the JetStream context. Unconfigured or
@@ -373,6 +591,75 @@ impl WamnJetstream {
         let ctx = async_nats::jetstream::new(client);
         *guard = Some(ctx.clone());
         Ok(ctx)
+    }
+
+    /// Publish an admitted Emit terminal and return only after JetStream's
+    /// server acknowledgement resolves.
+    pub async fn publish_derived(
+        &self,
+        request: DerivedPublishRequest,
+    ) -> Result<DerivedPublishAck, DerivedPublishError> {
+        let claim = self.required_derived_claim(&request.component_id)?;
+        let publication = prepare_derived_publication(claim, request)?;
+        let mut headers = HeaderMap::new();
+        headers.insert(NATS_MESSAGE_ID, publication.message_id.as_str());
+
+        let span = js_span(
+            &publication.claim,
+            &publication.component_id,
+            "publish-derived",
+        );
+        let started = std::time::Instant::now();
+        let result = async {
+            let ctx = self.ensure_ctx().await.map_err(|error| {
+                DerivedPublishError::new(
+                    DerivedPublishErrorKind::ConnectionUnavailable,
+                    format!("derived event JetStream unavailable: {error:?}"),
+                )
+            })?;
+            // Two awaits are load-bearing: queue completion may follow only
+            // the server ACK, never the client-side send future.
+            let ack = ctx
+                .publish_with_headers(publication.subject, headers, publication.body.into())
+                .await
+                .map_err(|error| {
+                    DerivedPublishError::new(
+                        DerivedPublishErrorKind::PublishRejected,
+                        format!("send derived event: {error}"),
+                    )
+                })?
+                .await
+                .map_err(|error| {
+                    DerivedPublishError::new(
+                        DerivedPublishErrorKind::PublishRejected,
+                        format!("store derived event: {error}"),
+                    )
+                })?;
+            if ack.stream != publication.expected_stream {
+                return Err(DerivedPublishError::new(
+                    DerivedPublishErrorKind::UnexpectedStream,
+                    format!(
+                        "derived event stored in stream {:?}, expected {:?}",
+                        ack.stream, publication.expected_stream
+                    ),
+                ));
+            }
+            Ok(DerivedPublishAck {
+                stream_name: ack.stream,
+                stream_seq: ack.sequence,
+                duplicate: ack.duplicate,
+            })
+        }
+        .instrument(span)
+        .await;
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "publish-derived",
+            &publication.claim.project,
+            started.elapsed(),
+        );
+        result
     }
 }
 
@@ -408,14 +695,20 @@ impl HostPlugin for WamnJetstream {
         // The sole MVP placement adapter maps the same trusted `wamn.tenant`
         // config the postgres claims use into a distinct validated execution
         // target. The guest supplies neither the tenant nor the target.
-        let (tenant, project) = {
+        let (tenant, project, environment) = {
             let config = &item.local_resources().config;
             (
                 config.get(TENANT_CONFIG_KEY).cloned(),
                 config.get(PROJECT_CONFIG_KEY).cloned(),
+                config.get(ENVIRONMENT_CONFIG_KEY).cloned(),
             )
         };
-        self.set_claim(item.id(), tenant.as_deref(), project.as_deref());
+        self.set_claim(
+            item.id(),
+            tenant.as_deref(),
+            project.as_deref(),
+            environment.as_deref(),
+        );
         if let Some(tenant) = tenant {
             let execution_target_id = mvp_execution_target_id(&tenant)?;
             self.set_execution_target(item.id(), execution_target_id.clone());
@@ -537,6 +830,7 @@ fn map_get_stream_err(stream: &str, e: &GetStreamError) -> JsError {
 /// a held registration apart from a transient `connection-unavailable`.
 const UNREGISTERED_SOURCE: &str = "unregistered-source";
 const RESERVED_DEAD_LETTER_SUBJECT: &str = "reserved-dead-letter-subject";
+const RESERVED_EVENT_SUBJECT: &str = "reserved-event-subject";
 const CONSUMER_CONFIG_DRIFT: &str = "registration-consumer-config-drift";
 
 /// The `(entity, op)` tail of one event subject — the whole of a registration's
@@ -666,6 +960,10 @@ fn exact_registration_identity(
 
 fn is_reserved_dead_letter_subject(subject: &str) -> bool {
     subject == "dlq" || subject.starts_with("dlq.")
+}
+
+fn is_reserved_event_subject(subject: &str) -> bool {
+    subject == "evt" || subject.starts_with("evt.")
 }
 
 fn exact_consumer_config_drift(
@@ -1206,6 +1504,11 @@ impl producer::Host for ActiveCtx<'_> {
                     "{RESERVED_DEAD_LETTER_SUBJECT}: use a bound message's dead-letter method"
                 )));
             }
+            if is_reserved_event_subject(&subject) {
+                return Err(JsError::PublishRejected(format!(
+                    "{RESERVED_EVENT_SUBJECT}: derived events use the host-owned publisher"
+                )));
+            }
             let ctx = plugin.ensure_ctx().await?;
             let map = to_header_map(&headers);
             // Two awaits: the send future, then the server-ack future. The awaited
@@ -1336,6 +1639,115 @@ mod tests {
             ack.duplicate,
             "a deduped publish is a SUCCESS carrying duplicate=true"
         );
+    }
+
+    fn derived_request(component_id: &str, dedup_id: &str) -> DerivedPublishRequest {
+        DerivedPublishRequest {
+            component_id: component_id.into(),
+            entity: "orders".into(),
+            operation: Op::Update,
+            payload: serde_json::json!(["arbitrary", {"status": "ready"}]),
+            dedup_id: dedup_id.into(),
+            causation: Causation {
+                run: "registration:delivery:9".into(),
+                root: "registration:delivery:1".into(),
+                depth: 3,
+            },
+        }
+    }
+
+    #[test]
+    fn derived_publication_uses_only_the_bound_scope_and_admitted_selector() {
+        let dangerous_author_id = "author\r\nNats-Msg-Id: forged";
+        let publication = prepare_derived_publication(
+            JetstreamClaim {
+                tenant: "acme".into(),
+                project: "app".into(),
+                environment: "dev".into(),
+            },
+            derived_request("component-1", dangerous_author_id),
+        )
+        .expect("trusted scope and admitted selector prepare");
+
+        assert_eq!(publication.subject, "evt.acme.app.dev.orders.update");
+        assert_eq!(publication.expected_stream, "EVT_acme_dev");
+        assert_eq!(
+            publication.message_id,
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                "orders",
+                Op::Update,
+                dangerous_author_id,
+            )
+        );
+        assert_eq!(publication.message_id.len(), "derived:".len() + 64);
+        assert!(!publication.message_id.contains("\r\n"));
+
+        let event = DerivedEvent::from_slice(&publication.body).expect("derived wire decodes");
+        assert_eq!(event.tenant, "acme");
+        assert_eq!(event.project, "app");
+        assert_eq!(event.environment, "dev");
+        assert_eq!(event.entity, "orders");
+        assert_eq!(event.op, Op::Update);
+        assert_eq!(event.dedup_id, dangerous_author_id);
+        assert_eq!(
+            event.payload,
+            serde_json::json!(["arbitrary", {"status": "ready"}])
+        );
+    }
+
+    #[test]
+    fn derived_publication_refuses_an_unbound_or_partial_scope() {
+        let plugin = WamnJetstream::new(WamnJetstreamConfig { nats_url: None });
+        assert_eq!(
+            plugin
+                .required_derived_claim("component-1")
+                .unwrap_err()
+                .kind(),
+            DerivedPublishErrorKind::UnboundScope
+        );
+        plugin.set_claim("component-1", Some("acme"), Some("app"), None);
+        assert_eq!(
+            plugin
+                .required_derived_claim("component-1")
+                .unwrap_err()
+                .kind(),
+            DerivedPublishErrorKind::UnboundScope
+        );
+        plugin.set_claim(
+            "component-1",
+            Some("other.tenant"),
+            Some("app"),
+            Some("dev"),
+        );
+        assert_eq!(
+            plugin
+                .required_derived_claim("component-1")
+                .unwrap_err()
+                .kind(),
+            DerivedPublishErrorKind::UnboundScope
+        );
+        assert!(
+            plugin
+                .bind_derived_scope("component-1", "other.tenant", "app", "dev")
+                .is_err(),
+            "a claim that can escape one subject token is refused"
+        );
+        plugin
+            .bind_derived_scope("component-1", "acme", "app", "dev")
+            .expect("complete trusted scope binds");
+        assert_eq!(
+            plugin
+                .required_derived_claim("component-1")
+                .expect("claim resolves")
+                .environment
+                .as_ref(),
+            "dev"
+        );
+        plugin.revoke_derived_scope("component-1");
+        assert!(plugin.required_derived_claim("component-1").is_err());
     }
 
     #[test]
@@ -1501,6 +1913,14 @@ mod tests {
     }
 
     #[test]
+    fn generic_publish_cannot_name_the_host_owned_event_namespace() {
+        for subject in ["evt", "evt.acme.app.dev.orders.insert"] {
+            assert!(is_reserved_event_subject(subject));
+        }
+        assert!(!is_reserved_event_subject("wamn.jstest.orders.insert"));
+    }
+
+    #[test]
     fn exact_registration_consumer_keeps_transport_redelivery_armed() {
         let requested = consumer::ConsumerConfig {
             stream_name: "EVT_acme_prod".into(),
@@ -1639,5 +2059,86 @@ mod tests {
         assert_eq!(count, 1, "exactly one message stored (dedupe held)");
 
         ctx.delete_stream(stream_name).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn live_derived_publish_replay_converges_through_jetstream_dedup() {
+        let Ok(url) = std::env::var("WAMN_EVT_NATS_URL") else {
+            eprintln!(
+                "skipping live_derived_publish_replay_converges_through_jetstream_dedup: WAMN_EVT_NATS_URL unset"
+            );
+            return;
+        };
+
+        let client = async_nats::connect(&url).await.expect("connect");
+        let ctx = async_nats::jetstream::new(client);
+        let stream = "EVT_wamnjsderived_dev";
+        let event_subject = "evt.wamnjsderived.app.dev.orders.update";
+        let _ = ctx.delete_stream(stream).await;
+        ctx.create_stream(StreamConfig {
+            name: stream.into(),
+            subjects: vec!["evt.wamnjsderived.*.dev.>".into()],
+            storage: StorageType::File,
+            num_replicas: 1,
+            duplicate_window: Duration::from_secs(120),
+            ..Default::default()
+        })
+        .await
+        .expect("create derived stream");
+
+        let plugin = WamnJetstream::new(WamnJetstreamConfig {
+            nats_url: Some(url),
+        });
+        plugin
+            .bind_derived_scope("component-1", "wamnjsderived", "app", "dev")
+            .expect("trusted scope binds");
+        let first = plugin
+            .publish_derived(derived_request("component-1", "author:orders:7"))
+            .await
+            .expect("first server ack");
+        assert!(!first.duplicate);
+        assert_eq!(first.stream_name, stream);
+        let replay = plugin
+            .publish_derived(derived_request("component-1", "author:orders:7"))
+            .await
+            .expect("replay server ack");
+        assert!(replay.duplicate, "the replay converges at JetStream dedup");
+        assert_eq!(replay.stream_seq, first.stream_seq);
+
+        let stream_handle = ctx.get_stream(stream).await.expect("get stream");
+        let consumer = stream_handle
+            .get_or_create_consumer(
+                "derived_mat_test",
+                PullConfig {
+                    durable_name: Some("derived_mat_test".into()),
+                    ack_policy: AckPolicy::Explicit,
+                    filter_subject: event_subject.into(),
+                    ack_wait: Duration::from_secs(5),
+                    max_deliver: -1,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("bind derived consumer");
+        let mut batch = consumer
+            .fetch()
+            .max_messages(10)
+            .expires(Duration::from_secs(2))
+            .messages()
+            .await
+            .expect("fetch derived event");
+        let mut stored = Vec::new();
+        while let Some(item) = batch.next().await {
+            let message = item.expect("derived message");
+            stored.push(DerivedEvent::from_slice(&message.payload).expect("derived wire"));
+            message.ack().await.expect("ack derived message");
+        }
+        assert_eq!(stored.len(), 1, "the replay was not stored twice");
+        assert_eq!(stored[0].dedup_id, "author:orders:7");
+        assert_eq!(stored[0].entity, "orders");
+        assert_eq!(stored[0].op, Op::Update);
+        assert_eq!(stored[0].causation.depth, 3);
+
+        ctx.delete_stream(stream).await.expect("cleanup");
     }
 }

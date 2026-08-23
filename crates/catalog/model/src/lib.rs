@@ -30,7 +30,8 @@ pub use serving_manifest::{
     release_manifest_configmap_name,
 };
 pub use wiring::{
-    WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringNode, WiringTerminal,
+    WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
+    WiringTerminal,
 };
 pub use wiring_activation::{
     WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, flip_activation,

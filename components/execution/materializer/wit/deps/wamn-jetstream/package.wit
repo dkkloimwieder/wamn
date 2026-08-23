@@ -19,7 +19,8 @@ package wamn:jetstream@0.1.0;
 /// - Streams are provisioned out-of-band (per-org `EVT_<org>_<env>` streams,
 ///   D19 §5). A guest binds a durable consumer by name and publishes to a
 ///   subject; it CANNOT create, configure, or delete a stream through this
-///   interface. Generic publication refuses the reserved `dlq.*` namespace;
+///   interface. Generic publication refuses the host-owned `evt.*` and
+///   `dlq.*` namespaces;
 ///   only a message fetched through an exact registration bind can dead-letter,
 ///   and the host derives that destination.
 /// - A publish waits for the server ack: the returned `publish-ack` is the only
@@ -191,7 +192,9 @@ interface producer {
     duplicate: bool,
   }
 
-  /// Publish with headers to a JetStream subject and WAIT for the server ack.
+  /// Publish with headers to a non-`evt.*`, non-`dlq.*` JetStream subject and
+  /// WAIT for the server ack. Derived events use a native host seam so a guest
+  /// cannot choose their scope or admitted selector.
   /// Set a `Nats-Msg-Id` header to participate in the stream's dedupe window
   /// — the whole reason this package carries headers on publish (the CDC reader
   /// and any guest emitter both need it, and `wasmcloud:messaging` cannot).

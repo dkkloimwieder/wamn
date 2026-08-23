@@ -9,7 +9,7 @@
 //! for 0.2.
 
 use serde_json::{Map, Value, json};
-use wamn_event_wire::{Envelope, Op};
+use wamn_event_wire::{DerivedEvent, Envelope, Op};
 
 /// Build the condition context from one envelope:
 /// `{"op": "<insert|update|delete>", "old": {…}|null, "new": {…}|null}`.
@@ -26,6 +26,20 @@ pub fn event_context(envelope: &Envelope) -> Value {
         "op": envelope.op.as_str(),
         "old": envelope.old.clone().map(Value::Object).unwrap_or(Value::Null),
         "new": envelope.new.clone().map(Value::Object).unwrap_or(Value::Null),
+    })
+}
+
+/// Build the existing registration-condition context for a derived event.
+///
+/// Derived events deliberately have no CDC old/new images. Their arbitrary
+/// payload occupies `new` while `old` remains null, preserving the frozen
+/// `{op, old, new}` condition language without pretending the payload came
+/// from WAL.
+pub fn derived_event_context(event: &DerivedEvent) -> Value {
+    json!({
+        "op": event.op.as_str(),
+        "old": Value::Null,
+        "new": event.payload,
     })
 }
 
@@ -142,5 +156,27 @@ mod tests {
     fn a_table_without_tenant_id_is_not_scopable() {
         let env = envelope(Op::Insert, None, Some(json!({"id": "7"})));
         assert_eq!(tenant_of(&env), None);
+    }
+
+    #[test]
+    fn derived_context_preserves_arbitrary_payload_without_fabricating_images() {
+        let event = DerivedEvent::new(
+            "t1",
+            "app",
+            "dev",
+            "receipts",
+            Op::Insert,
+            json!(["arbitrary", 7]),
+            "d1",
+            wamn_event_wire::Causation {
+                run: "run-1".into(),
+                root: "run-1".into(),
+                depth: 0,
+            },
+        );
+        assert_eq!(
+            derived_event_context(&event),
+            json!({"op": "insert", "old": null, "new": ["arbitrary", 7]})
+        );
     }
 }

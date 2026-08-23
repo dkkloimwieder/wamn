@@ -10,10 +10,11 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 use wamn_event_reg::{EventRegistration, RegistrationInput};
-use wamn_event_wire::Envelope;
+use wamn_event_wire::{DerivedEvent, Envelope};
 use wamn_materializer::{
-    DecideError, MAX_CAUSATION_DEPTH, RefuseReason, SkipReason, Verdict, decide, serviceable,
-    sql::select_registrations_sql, verified_source_event_id,
+    DecideError, MAX_CAUSATION_DEPTH, RefuseReason, SkipReason, Verdict, decide, decide_derived,
+    serviceable, sql::select_registrations_sql, verified_derived_source_event_id,
+    verified_source_event_id,
 };
 
 use wamn::jetstream::consumer::{self, ConsumerConfig, Message};
@@ -21,7 +22,7 @@ use wamn::jetstream::types::Header;
 use wamn::postgres::client;
 use wamn::postgres::types::{PgError, SqlValue};
 use wamn::router_delivery::delivery::{
-    self, DeliveryError, DeliveryOutcome, DeliveryRequest, Source,
+    self, DeliveryError, DeliveryOutcome, DeliveryRequest, ParentCausation, Source,
 };
 
 struct Config {
@@ -107,7 +108,6 @@ struct Counters {
     held_registrations: u64,
     poison: u64,
     retry: u64,
-    emit_blocked: u64,
     dead_lettered: u64,
     dead_letter_retry: u64,
 }
@@ -130,7 +130,6 @@ impl Counters {
             "held-registrations": self.held_registrations,
             "poison": self.poison,
             "retry": self.retry,
-            "emit-blocked": self.emit_blocked,
             "dead-lettered": self.dead_lettered,
             "dead-letter-retry": self.dead_letter_retry,
         })
@@ -247,6 +246,7 @@ struct PreparedMessage {
     payload: Value,
     stream_seq: u64,
     source_event_id: String,
+    parent_causation: Option<wamn_event_wire::Causation>,
 }
 
 enum Preparation {
@@ -254,10 +254,30 @@ enum Preparation {
         payload: Value,
         stream_seq: u64,
         source_event_id: String,
+        parent_causation: Option<wamn_event_wire::Causation>,
     },
     Ack,
     Nack,
     DeadLetter(&'static str),
+}
+
+#[derive(Debug, PartialEq)]
+enum SourceEvent {
+    Cdc(Envelope),
+    Derived(DerivedEvent),
+}
+
+fn decode_source_event(body: &[u8]) -> Result<SourceEvent, &'static str> {
+    let value = serde_json::from_slice::<Value>(body).map_err(|_| "poison-invalid-envelope")?;
+    if value.get("format-version").is_some() {
+        DerivedEvent::from_slice(body)
+            .map(SourceEvent::Derived)
+            .map_err(|_| "poison-invalid-derived-event")
+    } else {
+        serde_json::from_value::<Envelope>(value)
+            .map(SourceEvent::Cdc)
+            .map_err(|_| "poison-invalid-envelope")
+    }
 }
 
 fn prepare_message(
@@ -273,22 +293,48 @@ fn prepare_message(
         return Preparation::Nack;
     }
     let body = message.body();
-    let envelope: Envelope = match serde_json::from_slice(&body) {
-        Ok(envelope) => envelope,
-        Err(error) => {
+    let source = match decode_source_event(&body) {
+        Ok(source) => source,
+        Err(reason) => {
             counters.poison += 1;
             eprintln!(
-                "wamn::materializer REFUSED poison stream_seq={}: envelope parse failed ({error})",
-                metadata.stream_seq
+                "wamn::materializer REFUSED poison stream_seq={}: event record parse failed",
+                metadata.stream_seq,
             );
-            return Preparation::DeadLetter("poison-invalid-envelope");
+            return Preparation::DeadLetter(reason);
         }
     };
     let headers = message.headers();
     let message_ids = nats_message_ids(&headers);
-    let Some(source_event_id) =
-        verified_source_event_id(&config.project, &config.env, &envelope, &message_ids)
-    else {
+    let (source_event_id, verdict) = match &source {
+        SourceEvent::Cdc(envelope) => (
+            verified_source_event_id(&config.project, &config.env, envelope, &message_ids),
+            decide(
+                &serving.registration,
+                serving.condition.as_ref(),
+                envelope,
+                &config.tenant,
+                config.max_depth,
+            ),
+        ),
+        SourceEvent::Derived(event) => (
+            verified_derived_source_event_id(
+                &config.tenant,
+                &config.project,
+                &config.env,
+                event,
+                &message_ids,
+            ),
+            decide_derived(
+                &serving.registration,
+                serving.condition.as_ref(),
+                event,
+                &config.tenant,
+                config.max_depth,
+            ),
+        ),
+    };
+    let Some(source_event_id) = source_event_id else {
         counters.poison += 1;
         eprintln!(
             "wamn::materializer REFUSED poison stream_seq={}: Nats-Msg-Id is missing, duplicated, or inconsistent",
@@ -296,17 +342,16 @@ fn prepare_message(
         );
         return Preparation::DeadLetter("poison-source-id");
     };
-    match decide(
-        &serving.registration,
-        serving.condition.as_ref(),
-        &envelope,
-        &config.tenant,
-        config.max_depth,
-    ) {
+    let parent_causation = match &source {
+        SourceEvent::Cdc(envelope) => envelope.causation.clone(),
+        SourceEvent::Derived(event) => Some(event.causation.clone()),
+    };
+    match verdict {
         Verdict::Deliver(payload) => Preparation::Deliver {
             payload,
             stream_seq: metadata.stream_seq,
             source_event_id: source_event_id.as_str().to_string(),
+            parent_causation,
         },
         Verdict::Skip(reason) => {
             match reason {
@@ -354,7 +399,9 @@ enum DeliveryDisposition {
 
 fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> DeliveryDisposition {
     match result {
-        Ok(DeliveryOutcome::Respond(_) | DeliveryOutcome::Discard) => DeliveryDisposition::Ack,
+        Ok(DeliveryOutcome::Respond(_) | DeliveryOutcome::Emit(_) | DeliveryOutcome::Discard) => {
+            DeliveryDisposition::Ack
+        }
         Ok(DeliveryOutcome::Failed(failure)) => {
             DeliveryDisposition::DeadLetter(match failure.kind {
                 delivery::FailureKind::Terminal => "router-terminal",
@@ -372,7 +419,7 @@ fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> Deli
             | DeliveryError::InvalidRequest
             | DeliveryError::InvalidPayload,
         ) => DeliveryDisposition::DeadLetter("router-deterministic-refusal"),
-        Ok(DeliveryOutcome::Emit(_) | DeliveryOutcome::Cancelled)
+        Ok(DeliveryOutcome::Cancelled)
         | Err(DeliveryError::WiringNotPreloaded | DeliveryError::ExecutionFailed) => {
             DeliveryDisposition::Retry
         }
@@ -391,6 +438,7 @@ fn deliver(
     registration_id: &str,
     delivery_id: String,
     payload: &Value,
+    parent_causation: Option<&wamn_event_wire::Causation>,
 ) -> Result<DeliveryOutcome, DeliveryError> {
     let payload = serde_json::to_string(payload).map_err(|_| DeliveryError::InvalidPayload)?;
     delivery::deliver(&DeliveryRequest {
@@ -399,6 +447,10 @@ fn deliver(
         payload,
         caller: None,
         trace: None,
+        parent_causation: parent_causation.map(|parent| ParentCausation {
+            root: parent.root.clone(),
+            depth: parent.depth,
+        }),
     })
 }
 
@@ -420,6 +472,32 @@ fn batch_payload(messages: &[PreparedMessage]) -> Value {
 
 fn ordered_batch_payload<'a>(payloads: impl IntoIterator<Item = &'a Value>) -> Value {
     Value::Array(payloads.into_iter().cloned().collect())
+}
+
+fn batch_parent_causation(messages: &[PreparedMessage]) -> Option<&wamn_event_wire::Causation> {
+    common_root_parent_causation(
+        messages
+            .iter()
+            .map(|message| message.parent_causation.as_ref()),
+    )
+}
+
+fn common_root_parent_causation<'a>(
+    parents: impl IntoIterator<Item = Option<&'a wamn_event_wire::Causation>>,
+) -> Option<&'a wamn_event_wire::Causation> {
+    let mut parents = parents.into_iter();
+    let first = parents.next()??;
+    let mut deepest = first;
+    for candidate in parents {
+        let candidate = candidate?;
+        if candidate.root != first.root {
+            return None;
+        }
+        if candidate.depth > deepest.depth {
+            deepest = candidate;
+        }
+    }
+    Some(deepest)
 }
 
 fn acknowledge(message: &Message, counters: &mut Counters) {
@@ -475,14 +553,7 @@ fn settle_delivery(
             }
         }
         DeliveryDisposition::Retry => {
-            if matches!(result, Ok(DeliveryOutcome::Emit(_))) {
-                counters.emit_blocked += 1;
-                eprintln!(
-                    "wamn::materializer emit has no explicit subject selector; nack without inferring entity/op from guest JSON"
-                );
-            } else {
-                eprintln!("wamn::materializer router delivery did not settle: {result:?}");
-            }
+            eprintln!("wamn::materializer router delivery did not settle: {result:?}");
             for message in messages {
                 if execution_budget_exhausted_after_failure(
                     message.metadata().delivered,
@@ -554,11 +625,13 @@ fn serve(config: &Config, serving: &Serving, counters: &mut Counters) {
                 payload,
                 stream_seq,
                 source_event_id,
+                parent_causation,
             } => prepared.push(PreparedMessage {
                 message,
                 payload,
                 stream_seq,
                 source_event_id,
+                parent_causation,
             }),
             Preparation::Ack => acknowledge(&message, counters),
             Preparation::Nack => nack(&message, config, counters),
@@ -594,6 +667,7 @@ fn serve(config: &Config, serving: &Serving, counters: &mut Counters) {
                     &registration.registration_id,
                     delivery_id,
                     &prepared.payload,
+                    prepared.parent_causation.as_ref(),
                 );
                 settle_delivery(&result, &[&prepared.message], config, counters);
             }
@@ -602,7 +676,12 @@ fn serve(config: &Config, serving: &Serving, counters: &mut Counters) {
             counters.batches += 1;
             let delivery_id = batch_delivery_id(&registration.registration_id, &prepared);
             let payload = batch_payload(&prepared);
-            let result = deliver(&registration.registration_id, delivery_id, &payload);
+            let result = deliver(
+                &registration.registration_id,
+                delivery_id,
+                &payload,
+                batch_parent_causation(&prepared),
+            );
             let messages = prepared
                 .iter()
                 .map(|prepared| &prepared.message)
@@ -677,6 +756,7 @@ fn main() {
 mod tests {
     use super::*;
     use wamn::router_delivery::delivery::{DeliveryFailure, FailureKind};
+    use wamn_event_wire::{Causation, Op};
 
     fn envelope() -> Envelope {
         serde_json::from_value(serde_json::json!({
@@ -711,6 +791,37 @@ mod tests {
     }
 
     #[test]
+    fn derived_origin_decodes_separately_from_the_cdc_envelope() {
+        let event = DerivedEvent::new(
+            "tenant",
+            "app",
+            "dev",
+            "receipts",
+            Op::Delete,
+            serde_json::json!(["arbitrary", {"id": 7}]),
+            "author:receipt:7",
+            Causation {
+                run: "delivery-7".into(),
+                root: "delivery-1".into(),
+                depth: 2,
+            },
+        );
+        let bytes = serde_json::to_vec(&event).unwrap();
+        assert_eq!(
+            decode_source_event(&bytes),
+            Ok(SourceEvent::Derived(event.clone()))
+        );
+        assert!(serde_json::from_slice::<Envelope>(&bytes).is_err());
+
+        let mut future = serde_json::to_value(event).unwrap();
+        future["format-version"] = "0.2".into();
+        assert_eq!(
+            decode_source_event(&serde_json::to_vec(&future).unwrap()),
+            Err("poison-invalid-derived-event")
+        );
+    }
+
+    #[test]
     fn router_completion_matrix_separates_deterministic_poison_from_retry() {
         let failed = Ok(DeliveryOutcome::Failed(DeliveryFailure {
             kind: FailureKind::InvalidInput,
@@ -723,10 +834,6 @@ mod tests {
         );
         for result in [
             Ok(DeliveryOutcome::Cancelled),
-            Ok(DeliveryOutcome::Emit(delivery::Emission {
-                event: "{}".into(),
-                dedup_id: "author-key".into(),
-            })),
             Err(DeliveryError::ExecutionFailed),
         ] {
             assert_eq!(delivery_disposition(&result), DeliveryDisposition::Retry);
@@ -744,6 +851,10 @@ mod tests {
         for result in [
             Ok(DeliveryOutcome::Discard),
             Ok(DeliveryOutcome::Respond("{}".into())),
+            Ok(DeliveryOutcome::Emit(delivery::Emission {
+                event: "{}".into(),
+                dedup_id: "author-key".into(),
+            })),
         ] {
             assert_eq!(delivery_disposition(&result), DeliveryDisposition::Ack);
         }
@@ -759,6 +870,60 @@ mod tests {
             ordered_batch_payload(&inputs),
             serde_json::json!([inputs[0], inputs[1]])
         );
+    }
+
+    #[test]
+    fn a_batch_propagates_the_deepest_parent_only_with_one_truthful_root() {
+        let parents = [
+            Causation {
+                run: "run-a".into(),
+                root: "root".into(),
+                depth: 2,
+            },
+            Causation {
+                run: "run-b".into(),
+                root: "root".into(),
+                depth: 5,
+            },
+            Causation {
+                run: "run-c".into(),
+                root: "root".into(),
+                depth: 5,
+            },
+        ];
+        assert_eq!(
+            common_root_parent_causation(parents.iter().map(Some))
+                .map(|parent| parent.run.as_str()),
+            Some("run-b")
+        );
+    }
+
+    #[test]
+    fn a_batch_with_mixed_roots_mints_a_new_root() {
+        let parents = [
+            Causation {
+                run: "run-a".into(),
+                root: "root-a".into(),
+                depth: 2,
+            },
+            Causation {
+                run: "run-b".into(),
+                root: "root-b".into(),
+                depth: 5,
+            },
+        ];
+        assert_eq!(common_root_parent_causation(parents.iter().map(Some)), None);
+    }
+
+    #[test]
+    fn a_batch_with_any_missing_parent_mints_a_new_root() {
+        let parent = Causation {
+            run: "run-a".into(),
+            root: "root".into(),
+            depth: 2,
+        };
+        assert_eq!(common_root_parent_causation([Some(&parent), None]), None);
+        assert_eq!(common_root_parent_causation([None]), None);
     }
 
     #[test]

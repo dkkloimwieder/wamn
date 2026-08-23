@@ -212,6 +212,8 @@ pub enum ProductionRouterAction {
     Emit {
         event: serde_json::Value,
         dedup_id: String,
+        entity: String,
+        operation: wamn_event_wire::Op,
     },
     /// Cancellation is not a failure verdict; leave the lease to redelivery.
     Cancelled,
@@ -295,10 +297,22 @@ fn production_router_action_with_mode(
                 ));
             }
         },
-        Some(Verdict::Emit { event, dedup_id }) => {
+        Some(Verdict::Emit { event, .. }) if mode == RouterResultMode::StoredResult => {
+            return Ok(ProductionRouterAction::Complete(
+                ProductionCompletion::completed(event.clone(), None),
+            ));
+        }
+        Some(Verdict::Emit {
+            event,
+            dedup_id,
+            entity,
+            operation,
+        }) => {
             return Ok(ProductionRouterAction::Emit {
                 event: event.clone(),
                 dedup_id: dedup_id.clone(),
+                entity: entity.clone(),
+                operation: *operation,
             });
         }
         Some(Verdict::Discard) if mode != RouterResultMode::DurableCaller => {
@@ -1981,6 +1995,8 @@ mod tests {
                 verdict: Some(Verdict::Emit {
                     event: serde_json::json!({"order": 42}),
                     dedup_id: "wiring-1:7:first:d1".into(),
+                    entity: "orders".into(),
+                    operation: wamn_event_wire::Op::Insert,
                 }),
             };
 
@@ -1989,10 +2005,36 @@ mod tests {
                 ProductionRouterAction::Emit {
                     event: serde_json::json!({"order": 42}),
                     dedup_id: "wiring-1:7:first:d1".into(),
+                    entity: "orders".into(),
+                    operation: wamn_event_wire::Op::Insert,
                 },
                 "later {status:?} must not suppress the first emit verdict"
             );
         }
+    }
+
+    #[test]
+    fn candidate_emit_is_a_stored_observable_not_a_boundary_effect() {
+        let event = serde_json::json!({"order": 42, "dedup-id": "d1"});
+        let outcome = Outcome {
+            status: WalkStatus::Completed,
+            result: serde_json::Value::Null,
+            failure: None,
+            hops: 1,
+            verdict: Some(Verdict::Emit {
+                event: event.clone(),
+                dedup_id: "d1".into(),
+                entity: "orders".into(),
+                operation: wamn_event_wire::Op::Insert,
+            }),
+        };
+        let ProductionRouterAction::Complete(completion) =
+            production_router_result_action(&outcome).expect("candidate observable maps")
+        else {
+            panic!("candidate emit must not request production publication");
+        };
+        assert_eq!(completion.result, event);
+        assert!(completion.caller.is_none());
     }
 
     #[test]

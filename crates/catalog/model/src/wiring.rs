@@ -50,6 +50,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+/// Closed event operation used by an admitted Emit selector.
+pub type WiringEventOperation = wamn_event_wire::Op;
 
 use crate::{CatalogIdentityError, DefinitionHash, validate_text};
 
@@ -68,15 +70,32 @@ pub const WIRING_DOCUMENT_FORMAT_VERSION: &str = "0.1";
 /// `wamn_router::Verdict::Discard` is what the walk settles on when the frontier
 /// empties having reached no terminal at all, so a node declaring it would be
 /// declaring the absence of itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WiringTerminal {
     /// Release the synchronous caller waiting on this delivery, answering with
     /// this node's emitted payload.
     Respond,
     /// Publish this node's emitted payload as a derived event, keyed by the
-    /// author-supplied dedup id the component put in it.
-    Emit,
+    /// author-supplied dedup id the component put in it. The selector is exact
+    /// admitted wiring data; the guest payload can never choose its subject.
+    Emit {
+        /// Stable catalog entity id used in the event subject and registration
+        /// match, never a physical relation name inferred at execution time.
+        entity: String,
+        /// The exact event operation admitted for this terminal occurrence.
+        operation: WiringEventOperation,
+    },
+}
+
+impl WiringTerminal {
+    /// Construct an emit terminal from its exact admitted selector.
+    pub fn emit(entity: impl Into<String>, operation: WiringEventOperation) -> Self {
+        Self::Emit {
+            entity: entity.into(),
+            operation,
+        }
+    }
 }
 
 /// One graph step: an operation of one palette component.
@@ -254,6 +273,9 @@ impl WiringDocument {
             validate_text(&node.component, "component")?;
             validate_text(&node.interface_version, "interface-version")?;
             validate_text(&node.operation, "operation")?;
+            if let Some(WiringTerminal::Emit { entity, .. }) = &node.terminal {
+                validate_text(entity, "emit-entity")?;
+            }
         }
 
         for edge in &self.edges {
@@ -300,6 +322,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use serde_json::{Value, json};
+    use wamn_event_wire::Op;
     use wamn_flow::{Expect, ExpectedOutcome, MAX_TEST_SET_CASES, TestSetCase};
 
     use super::{WiringDocument, WiringEdge, WiringNode, WiringTerminal};
@@ -437,7 +460,7 @@ mod tests {
         let mut wiring = crud_wiring(Vec::new());
         wiring.nodes.insert(
             "publish".to_owned(),
-            terminal_node("bus", WiringTerminal::Emit),
+            terminal_node("bus", WiringTerminal::emit("orders", Op::Insert)),
         );
         wiring.edges.push(WiringEdge {
             from: "write".to_owned(),
@@ -451,7 +474,10 @@ mod tests {
         // spelling here would be a second contract for the same decision.
         assert_eq!(stored["entry"], json!("in"));
         assert_eq!(stored["nodes"]["out"]["terminal"], json!("respond"));
-        assert_eq!(stored["nodes"]["publish"]["terminal"], json!("emit"));
+        assert_eq!(
+            stored["nodes"]["publish"]["terminal"],
+            json!({"emit": {"entity": "orders", "operation": "insert"}})
+        );
         assert!(
             !stored["nodes"]["write"]
                 .as_object()
@@ -469,7 +495,7 @@ mod tests {
         );
         assert_eq!(
             read_back.nodes["publish"].terminal,
-            Some(WiringTerminal::Emit)
+            Some(WiringTerminal::emit("orders", Op::Insert))
         );
         assert_eq!(read_back.nodes["write"].terminal, None);
         assert_eq!(read_back, wiring);
@@ -594,11 +620,38 @@ mod tests {
             .nodes
             .get_mut("out")
             .expect("the respond node")
-            .terminal = Some(WiringTerminal::Emit);
+            .terminal = Some(WiringTerminal::emit("orders", Op::Update));
         assert_ne!(reterminaled.wiring_hash(), hash);
+
+        let mut reselected = reterminaled;
+        reselected
+            .nodes
+            .get_mut("out")
+            .expect("the emit node")
+            .terminal = Some(WiringTerminal::emit("shipments", Op::Update));
+        assert_ne!(reselected.wiring_hash(), hash);
 
         let mut reentered = wiring;
         reentered.entry = "write".to_owned();
         assert_ne!(reentered.wiring_hash(), hash);
+    }
+
+    #[test]
+    fn an_emit_terminal_requires_a_complete_exact_selector() {
+        let base = serde_json::to_value(crud_wiring(Vec::new())).expect("serializes");
+        for terminal in [
+            json!("emit"),
+            json!({"emit": {"operation": "insert"}}),
+            json!({"emit": {"entity": "orders"}}),
+            json!({"emit": {"entity": "orders", "operation": "truncate"}}),
+            json!({"emit": {"entity": "", "operation": "insert"}}),
+        ] {
+            let mut stored = base.clone();
+            stored["nodes"]["out"]["terminal"] = terminal.clone();
+            assert!(
+                WiringDocument::parse(&stored).is_err(),
+                "partial or foreign selector admitted: {terminal}"
+            );
+        }
     }
 }

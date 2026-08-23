@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 use serde_json::{Map, Value};
-use wamn_event_wire::Envelope;
+use wamn_event_wire::{DerivedEvent, Envelope};
 
 #[derive(Serialize)]
 struct EventInput<'a> {
@@ -21,6 +21,11 @@ pub fn event_input(envelope: &Envelope) -> Value {
         old: envelope.old.as_ref(),
     })
     .expect("event input serializes")
+}
+
+/// Project a derived event to the exact arbitrary payload its author emitted.
+pub fn derived_event_input(event: &DerivedEvent) -> Value {
+    event.payload.clone()
 }
 
 #[cfg(test)]
@@ -71,5 +76,24 @@ mod tests {
             event_input(&envelope(Op::Insert, None, Some(json!({"id": "7"})))),
             json!({"event": "insert", "new": {"id": "7"}})
         );
+    }
+
+    #[test]
+    fn derived_input_is_the_arbitrary_payload_byte_semantics() {
+        let event = DerivedEvent::new(
+            "t1",
+            "app",
+            "dev",
+            "receipts",
+            Op::Delete,
+            json!([1, {"nested": true}]),
+            "d1",
+            wamn_event_wire::Causation {
+                run: "run-1".into(),
+                root: "run-1".into(),
+                depth: 0,
+            },
+        );
+        assert_eq!(derived_event_input(&event), json!([1, {"nested": true}]));
     }
 }

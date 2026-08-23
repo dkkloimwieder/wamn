@@ -2,11 +2,11 @@
 
 use serde_json::Value;
 use wamn_event_reg::EventRegistration;
-use wamn_event_wire::{Causation, Envelope};
+use wamn_event_wire::{Causation, DerivedEvent, Envelope};
 
 use crate::condition::{CompiledCondition, ConditionOutcome, compile_condition};
-use crate::context::{event_context, tenant_of};
-use crate::input::event_input;
+use crate::context::{derived_event_context, event_context, tenant_of};
+use crate::input::{derived_event_input, event_input};
 
 /// A source-event coordinate proven to match the delivered NATS identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +26,34 @@ pub fn verified_source_event_id(
     message_ids: &[&str],
 ) -> Option<VerifiedSourceEventId> {
     let expected = wamn_event_wire::msg_id(project, environment, envelope.lsn);
+    match message_ids {
+        [actual] if *actual == expected => Some(VerifiedSourceEventId(expected)),
+        _ => None,
+    }
+}
+
+/// Accept exactly one host-scoped `Nats-Msg-Id` matching a derived record.
+///
+/// Scope equality is checked before identity derivation, so bytes claiming a
+/// foreign tenant/project/environment cannot borrow the local header identity.
+pub fn verified_derived_source_event_id(
+    tenant: &str,
+    project: &str,
+    environment: &str,
+    event: &DerivedEvent,
+    message_ids: &[&str],
+) -> Option<VerifiedSourceEventId> {
+    if event.tenant != tenant || event.project != project || event.environment != environment {
+        return None;
+    }
+    let expected = wamn_event_wire::derived_msg_id(
+        tenant,
+        project,
+        environment,
+        &event.entity,
+        event.op,
+        &event.dedup_id,
+    );
     match message_ids {
         [actual] if *actual == expected => Some(VerifiedSourceEventId(expected)),
         _ => None,
@@ -122,6 +150,46 @@ pub fn decide(
     Verdict::Deliver(event_input(envelope))
 }
 
+/// Decide whether one host-published derived event reaches the registration.
+pub fn decide_derived(
+    registration: &EventRegistration,
+    condition: Option<&CompiledCondition>,
+    event: &DerivedEvent,
+    tenant: &str,
+    max_depth: u32,
+) -> Verdict {
+    if event.entity != registration.entity.as_str() {
+        return Verdict::Skip(SkipReason::EntityMismatch);
+    }
+    if !registration.ops.contains(&event.op) {
+        return Verdict::Skip(SkipReason::OpMismatch);
+    }
+    if event.tenant != tenant {
+        return Verdict::Skip(SkipReason::ForeignTenant);
+    }
+    if registration.condition.is_some() {
+        let Some(condition) = condition else {
+            return Verdict::Refuse(RefuseReason::ConditionError(
+                "condition present but not compiled".into(),
+            ));
+        };
+        if condition.references_old() {
+            return Verdict::Refuse(RefuseReason::OldImageAbsent);
+        }
+        match condition.matches(&derived_event_context(event)) {
+            Ok(true) => {}
+            Ok(false) => return Verdict::Skip(SkipReason::ConditionFalse),
+            Err(error) => return Verdict::Refuse(RefuseReason::ConditionError(error)),
+        }
+    }
+    if event.causation.depth.saturating_add(1) > max_depth {
+        return Verdict::Refuse(RefuseReason::DepthExceeded {
+            parent: event.causation.clone(),
+        });
+    }
+    Verdict::Deliver(derived_event_input(event))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +269,91 @@ mod tests {
             expected
         );
         assert!(verified_source_event_id("app", "dev", &envelope, &[]).is_none());
+    }
+
+    fn derived(depth: u32) -> DerivedEvent {
+        DerivedEvent::new(
+            "t1",
+            "app",
+            "dev",
+            "receipts",
+            Op::Insert,
+            json!(["arbitrary", {"status": "ready"}]),
+            "author:receipt:7",
+            Causation {
+                run: "delivery-7".into(),
+                root: "delivery-1".into(),
+                depth,
+            },
+        )
+    }
+
+    #[test]
+    fn matching_derived_event_delivers_exact_arbitrary_payload() {
+        assert_eq!(
+            decide_derived(&registration(None), None, &derived(3), "t1", 16),
+            Verdict::Deliver(json!(["arbitrary", {"status": "ready"}]))
+        );
+    }
+
+    #[test]
+    fn derived_event_keeps_registration_condition_and_depth_gates() {
+        let registration = registration(Some("new[1].status == 'ready'"));
+        let condition = serviceable(&registration).unwrap().unwrap();
+        assert!(matches!(
+            decide_derived(&registration, Some(&condition), &derived(3), "t1", 16),
+            Verdict::Deliver(_)
+        ));
+        assert!(matches!(
+            decide_derived(&registration, Some(&condition), &derived(16), "t1", 16),
+            Verdict::Refuse(RefuseReason::DepthExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn derived_source_identity_requires_exact_scope_and_one_header() {
+        let event = derived(0);
+        let expected = wamn_event_wire::derived_msg_id(
+            "t1",
+            "app",
+            "dev",
+            &event.entity,
+            event.op,
+            &event.dedup_id,
+        );
+        assert_eq!(
+            verified_derived_source_event_id("t1", "app", "dev", &event, &[&expected])
+                .unwrap()
+                .as_str(),
+            expected
+        );
+        assert!(
+            verified_derived_source_event_id("other", "app", "dev", &event, &[&expected]).is_none()
+        );
+        assert!(
+            verified_derived_source_event_id("t1", "app", "dev", &event, &[&expected, &expected])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn derived_wire_identity_reaches_one_matching_registration_without_run_admission() {
+        let encoded = serde_json::to_vec(&derived(3)).expect("derived event serializes");
+        let event = DerivedEvent::from_slice(&encoded).expect("derived event wire decodes");
+        let message_id = wamn_event_wire::derived_msg_id(
+            "t1",
+            "app",
+            "dev",
+            &event.entity,
+            event.op,
+            &event.dedup_id,
+        );
+        let source = verified_derived_source_event_id("t1", "app", "dev", &event, &[&message_id])
+            .expect("host-scoped source identity verifies");
+        assert_eq!(source.as_str(), message_id);
+        assert_eq!(
+            decide_derived(&registration(None), None, &event, "t1", 16),
+            Verdict::Deliver(json!(["arbitrary", {"status": "ready"}]))
+        );
     }
 }

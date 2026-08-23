@@ -92,6 +92,7 @@ impl Backend for GuestBackend {
                 traceparent: trace.traceparent,
                 tracestate: trace.tracestate,
             }),
+            parent_causation: None,
         };
         delivery::deliver(&request)
             .map(convert_delivery_outcome)

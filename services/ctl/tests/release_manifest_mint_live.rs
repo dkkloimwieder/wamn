@@ -10,7 +10,8 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
     AttachmentKind, ServingAttachment, ServingManifest, ServingRegistration,
-    ServingRegistrationInput, ServingWiring, WiringDocument, WiringNode, WiringTerminal,
+    ServingRegistrationInput, ServingWiring, WiringDocument, WiringEventOperation, WiringNode,
+    WiringTerminal,
 };
 use wamn_ctl::publish_catalog::ensure_catalog_storage;
 use wamn_ctl::publish_release::{
@@ -271,13 +272,23 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
     seed_component(&admin, "http-request", COMPONENT_A).await;
     seed_component(&admin, "transform", COMPONENT_B).await;
     let orders = wiring("orders", 1, "http-request", WiringTerminal::Respond);
-    let shipping = wiring("shipping", 2, "transform", WiringTerminal::Emit);
+    let shipping = wiring(
+        "shipping",
+        2,
+        "transform",
+        WiringTerminal::emit("orders", WiringEventOperation::Insert),
+    );
     let orders_hash = orders.wiring_hash().to_string();
     let shipping_hash = shipping.wiring_hash().to_string();
     seed_wiring(&admin, &orders, &orders_hash).await;
     seed_wiring(&admin, &shipping, &shipping_hash).await;
 
-    let corrupt = wiring("corrupt", 3, "transform", WiringTerminal::Emit);
+    let corrupt = wiring(
+        "corrupt",
+        3,
+        "transform",
+        WiringTerminal::emit("orders", WiringEventOperation::Insert),
+    );
     seed_wiring(&admin, &corrupt, WRONG_GRAPH).await;
     let corrupt_targets = BTreeSet::from([ReleaseWiringTarget {
         wiring_id: "corrupt".to_string(),

@@ -31,6 +31,7 @@ use wamn_catalog::{
     WiringTerminal, flip_activation, previous_confirmed_definition, record_activation_event,
     resolve_active_wiring,
 };
+use wamn_event_wire::Op;
 
 /// Every gate here rewrites the ONE `catalog` schema of the one database
 /// `WAMN_CATALOG_PG_URL` names, so they take turns. Without this the default
@@ -397,7 +398,11 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
             ),
             (
                 "publish".to_owned(),
-                node("bus", "emit", Some(WiringTerminal::Emit)),
+                node(
+                    "bus",
+                    "emit",
+                    Some(WiringTerminal::emit("orders", Op::Insert)),
+                ),
             ),
         ]),
         vec![
@@ -485,7 +490,7 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
     );
     assert_eq!(
         read_back.nodes["publish"].terminal,
-        Some(WiringTerminal::Emit)
+        Some(WiringTerminal::emit("orders", Op::Insert))
     );
     assert_eq!(read_back.nodes["write"].terminal, None);
     assert_eq!(

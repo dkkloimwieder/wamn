@@ -8,6 +8,7 @@
 //! walk records rather than the absence of one.
 
 use serde_json::{Value, json};
+use wamn_event_wire::Op;
 use wamn_router::{
     ApplyErrorKind, DEDUP_ID_FIELD, Delivery, ErrorDetail, FailureKind, NodeError, NodeOutcome,
     Step, Terminal, Verdict, Walk, WalkStatus, Wiring, WiringEdge, WiringNode,
@@ -74,6 +75,10 @@ fn run(
 /// A node emitting a payload that names it.
 fn says(node: &str) -> NodeOutcome {
     NodeOutcome::ok(json!({ "at": node }))
+}
+
+fn emit_terminal() -> Terminal {
+    Terminal::emit("orders", Op::Insert)
 }
 
 // ---- respond --------------------------------------------------------------
@@ -225,7 +230,7 @@ fn first_respond_verdict_stands_when_later_work_fails_or_cancels() {
 
 #[test]
 fn emit_publishes_the_event_under_the_authors_dedup_id() {
-    let w = wiring("a", vec![node("a", Some(Terminal::Emit))], vec![]);
+    let w = wiring("a", vec![node("a", Some(emit_terminal()))], vec![]);
     let mut walk = started(&w, false);
     let event = json!({ DEDUP_ID_FIELD: "wiring-1:7:a:d1", "order": 42 });
     let (_, status) = run(&w, &mut walk, |_| NodeOutcome::ok(event.clone()));
@@ -236,6 +241,8 @@ fn emit_publishes_the_event_under_the_authors_dedup_id() {
         Some(&Verdict::Emit {
             event,
             dedup_id: "wiring-1:7:a:d1".to_string(),
+            entity: "orders".to_string(),
+            operation: Op::Insert,
         }),
         "the dedup id travels beside the event the boundary dedups on"
     );
@@ -247,7 +254,7 @@ fn emit_publishes_the_event_under_the_authors_dedup_id() {
 fn emit_without_a_dedup_id_routes_to_the_error_edge() {
     let w = wiring(
         "a",
-        vec![node("a", Some(Terminal::Emit)), node("oops", None)],
+        vec![node("a", Some(emit_terminal())), node("oops", None)],
         vec![edge_on("a", "error", "oops")],
     );
     let mut walk = started(&w, false);
@@ -267,7 +274,7 @@ fn emit_without_a_dedup_id_routes_to_the_error_edge() {
 
 #[test]
 fn emit_without_a_dedup_id_and_no_error_edge_fails_the_walk() {
-    let w = wiring("a", vec![node("a", Some(Terminal::Emit))], vec![]);
+    let w = wiring("a", vec![node("a", Some(emit_terminal()))], vec![]);
     let mut walk = started(&w, false);
     // An empty dedup id is as unpublishable as an absent one.
     let (_, status) = run(&w, &mut walk, |_| {

@@ -15,6 +15,10 @@
 //! Pure — no IO, no clock; every string this crate emits is pinned by a test.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+
+/// The only derived-event record format admitted by this release line.
+pub const DERIVED_EVENT_FORMAT_VERSION: &str = "0.1";
 
 /// Row operation — the `<op>` subject segment. v3 publishes exactly these
 /// three; TRUNCATE is not part of the event plane (a reader logs and skips it).
@@ -49,6 +53,89 @@ pub struct Causation {
     pub run: String,
     pub root: String,
     pub depth: u32,
+}
+
+/// One host-published event emitted by a wiring terminal.
+///
+/// This is deliberately not [`Envelope`]. A derived event has no WAL
+/// provenance to report: its identity is the admitted terminal selector, the
+/// author's logical deduplication operand, and the causation the host derives
+/// from the delivery it is completing. Tenant, project, and environment are
+/// copied from bound host claims so no guest or wiring field can redirect the
+/// event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct DerivedEvent {
+    pub format_version: String,
+    pub tenant: String,
+    pub project: String,
+    pub environment: String,
+    pub entity: String,
+    pub op: Op,
+    pub payload: serde_json::Value,
+    pub dedup_id: String,
+    pub causation: Causation,
+}
+
+impl DerivedEvent {
+    /// Construct the record from host-owned scope and selector facts.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the constructor makes every frozen wire field explicit"
+    )]
+    pub fn new(
+        tenant: impl Into<String>,
+        project: impl Into<String>,
+        environment: impl Into<String>,
+        entity: impl Into<String>,
+        op: Op,
+        payload: serde_json::Value,
+        dedup_id: impl Into<String>,
+        causation: Causation,
+    ) -> Self {
+        Self {
+            format_version: DERIVED_EVENT_FORMAT_VERSION.to_owned(),
+            tenant: tenant.into(),
+            project: project.into(),
+            environment: environment.into(),
+            entity: entity.into(),
+            op,
+            payload,
+            dedup_id: dedup_id.into(),
+            causation,
+        }
+    }
+
+    /// Parse a stored record and fail closed on a foreign version.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        let event: Self = serde_json::from_slice(bytes)?;
+        if event.format_version != DERIVED_EVENT_FORMAT_VERSION {
+            return Err(<serde_json::Error as serde::de::Error>::custom(format!(
+                "unsupported derived-event format-version {}",
+                event.format_version
+            )));
+        }
+        for (field, value) in [
+            ("tenant", event.tenant.as_str()),
+            ("project", event.project.as_str()),
+            ("environment", event.environment.as_str()),
+            ("entity", event.entity.as_str()),
+            ("causation.run", event.causation.run.as_str()),
+            ("causation.root", event.causation.root.as_str()),
+        ] {
+            if value.is_empty() || value.trim() != value || value.as_bytes().contains(&0) {
+                return Err(<serde_json::Error as serde::de::Error>::custom(format!(
+                    "derived-event {field} is empty or noncanonical"
+                )));
+            }
+        }
+        if event.dedup_id.is_empty() {
+            return Err(<serde_json::Error as serde::de::Error>::custom(
+                "derived-event dedup-id is empty",
+            ));
+        }
+        Ok(event)
+    }
 }
 
 /// One row event on the wire: `{op, old, new, entity?, table, lsn, txid,
@@ -152,6 +239,40 @@ pub fn project_env(project: &str, env: &str) -> String {
 /// is the row event's WAL position (decimal), unique per event.
 pub fn msg_id(project: &str, env: &str, lsn: u64) -> String {
     format!("{}:{lsn}", project_env(project, env))
+}
+
+/// Host-owned, header-safe `Nats-Msg-Id` for a derived event.
+///
+/// The type discriminator keeps author ids that happen to be decimal apart
+/// from CDC LSN identities. The trusted scope prevents the same author id in a
+/// different tenant/project/environment and admitted terminal selector from
+/// colliding. Only a bounded digest reaches the NATS header; the logical
+/// operand itself remains byte-for-byte author supplied in
+/// [`DerivedEvent::dedup_id`]. Length framing prevents concatenation ambiguity
+/// between scope fields.
+pub fn derived_msg_id(
+    tenant: &str,
+    project: &str,
+    env: &str,
+    entity: &str,
+    op: Op,
+    dedup_id: &str,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"wamn.event.derived-msg-id.v0.1\0");
+    for field in [tenant, project, env, entity, op.as_str(), dedup_id] {
+        digest.update(u64::try_from(field.len()).unwrap_or(u64::MAX).to_be_bytes());
+        digest.update(field.as_bytes());
+    }
+    let digest = digest.finalize();
+    let mut message_id = String::with_capacity("derived:".len() + digest.len() * 2);
+    message_id.push_str("derived:");
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in digest {
+        message_id.push(char::from(HEX[usize::from(byte >> 4)]));
+        message_id.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    message_id
 }
 
 /// `evt.<org>.<project>.<env>.<entity>.<op>` — the subject one event lands on.
@@ -267,6 +388,58 @@ mod tests {
     fn msg_id_is_project_env_colon_decimal_lsn() {
         assert_eq!(msg_id("app", "dev", 0x0100_0000), "app_dev:16777216");
         assert_eq!(project_env("app", "dev"), "app_dev");
+    }
+
+    #[test]
+    fn derived_msg_id_is_host_scoped_and_keeps_the_author_operand() {
+        let id = derived_msg_id(
+            "acme",
+            "app",
+            "dev",
+            "orders",
+            Op::Insert,
+            "orders:7:created",
+        );
+        assert!(id.starts_with("derived:"));
+        assert_eq!(id.len(), "derived:".len() + 64);
+        assert_eq!(
+            id, "derived:cf149c1c457f676c23a7f5283b38a002bcf41e2ad1fa4c5fb03f513b4d2f3c38",
+            "the domain, field order, selector scope, and length framing are wire identity"
+        );
+        assert!(!id.contains("orders:7:created"));
+        assert!(
+            id.chars()
+                .all(|c| c == ':' || c.is_ascii_hexdigit() || c.is_ascii_lowercase())
+        );
+        assert_ne!(
+            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "42"),
+            msg_id("app", "dev", 42),
+            "a numeric author id cannot collide with a CDC LSN"
+        );
+        assert_ne!(
+            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
+            derived_msg_id("other", "app", "dev", "orders", Op::Insert, "same")
+        );
+        assert_ne!(
+            derived_msg_id("a", "bc", "dev", "orders", Op::Insert, "same"),
+            derived_msg_id("ab", "c", "dev", "orders", Op::Insert, "same"),
+            "length framing keeps adjacent fields unambiguous"
+        );
+        assert_ne!(
+            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
+            derived_msg_id("acme", "app", "dev", "receipts", Op::Insert, "same"),
+            "the admitted entity is part of stream-wide dedup scope"
+        );
+        assert_ne!(
+            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
+            derived_msg_id("acme", "app", "dev", "orders", Op::Update, "same"),
+            "the admitted operation is part of stream-wide dedup scope"
+        );
+        assert_eq!(
+            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
+            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
+            "an exact replay retains one stream-wide dedup identity"
+        );
     }
 
     #[test]
@@ -409,6 +582,55 @@ mod tests {
         // The frozen shape rejects smuggled fields.
         let smuggled = r#"{"run":"a","root":"b","depth":1,"x":2}"#;
         assert!(serde_json::from_str::<Causation>(smuggled).is_err());
+    }
+
+    #[test]
+    fn derived_event_is_a_distinct_versioned_wire_without_wal_provenance() {
+        let event = DerivedEvent::new(
+            "acme",
+            "app",
+            "dev",
+            "orders",
+            Op::Update,
+            serde_json::json!(["arbitrary", {"nested": true}]),
+            "orders:7:updated",
+            Causation {
+                run: "registration:delivery:9".into(),
+                root: "root:1".into(),
+                depth: 3,
+            },
+        );
+        let bytes = serde_json::to_vec(&event).unwrap();
+        assert_eq!(
+            String::from_utf8(bytes.clone()).unwrap(),
+            r#"{"format-version":"0.1","tenant":"acme","project":"app","environment":"dev","entity":"orders","op":"update","payload":["arbitrary",{"nested":true}],"dedup-id":"orders:7:updated","causation":{"run":"registration:delivery:9","root":"root:1","depth":3}}"#
+        );
+        assert_eq!(DerivedEvent::from_slice(&bytes).unwrap(), event);
+        assert!(
+            serde_json::from_slice::<Envelope>(&bytes).is_err(),
+            "derived bytes must never decode as the frozen CDC envelope"
+        );
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        for absent in ["lsn", "txid", "commit-ts", "commit_ts", "table"] {
+            assert!(
+                value.get(absent).is_none(),
+                "fabricated {absent} reached the wire"
+            );
+        }
+
+        let future = serde_json::to_vec(&serde_json::json!({
+            "format-version": "0.2",
+            "tenant": "acme",
+            "project": "app",
+            "environment": "dev",
+            "entity": "orders",
+            "op": "insert",
+            "payload": null,
+            "dedup-id": "d1",
+            "causation": {"run": "r", "root": "r", "depth": 0}
+        }))
+        .unwrap();
+        assert!(DerivedEvent::from_slice(&future).is_err());
     }
 
     #[test]

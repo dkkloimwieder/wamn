@@ -5,7 +5,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use wamn_catalog::{AttachmentKind, ServingManifest};
+use wamn_event_wire::Causation;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
+use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -25,7 +27,7 @@ mod bindings {
 
 use bindings::wamn::router_delivery::delivery::{
     self, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryRequest, Emission,
-    FailureKind as WireFailureKind, Source,
+    FailureKind as WireFailureKind, ParentCausation, Source,
 };
 
 /// Host-plugin identity for the one guest-to-router bridge.
@@ -35,12 +37,28 @@ pub const ROUTER_DELIVERY_ID: &str = "wamn-router-delivery";
 pub struct RouterDeliveryBridge {
     driver: Arc<RouterDriver>,
     release: Arc<ReleaseManifestWeld>,
+    jetstream: Arc<WamnJetstream>,
 }
 
 impl RouterDeliveryBridge {
     /// Bind the bridge to the process's existing driver and welded manifest.
-    pub fn new(driver: Arc<RouterDriver>, release: Arc<ReleaseManifestWeld>) -> Self {
-        Self { driver, release }
+    pub fn new(
+        driver: Arc<RouterDriver>,
+        release: Arc<ReleaseManifestWeld>,
+        jetstream: Arc<WamnJetstream>,
+        project: &str,
+    ) -> anyhow::Result<Self> {
+        jetstream.bind_derived_scope(
+            ROUTER_DELIVERY_ID,
+            &release.manifest().release.tenant_id,
+            project,
+            &release.manifest().release.environment,
+        )?;
+        Ok(Self {
+            driver,
+            release,
+            jetstream,
+        })
     }
 
     async fn deliver(&self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError> {
@@ -50,6 +68,7 @@ impl RouterDeliveryBridge {
             payload,
             caller,
             trace,
+            parent_causation,
         } = request;
         if delivery_id.is_empty() {
             return Err(DeliveryError::InvalidRequest);
@@ -62,6 +81,10 @@ impl RouterDeliveryBridge {
                 return Err(DeliveryError::InvalidRequest);
             }
         };
+        if parent_causation.is_some() && !matches!(source, SourceRef::Registration(_)) {
+            return Err(DeliveryError::InvalidRequest);
+        }
+        let causation = derived_causation(&delivery_id, parent_causation)?;
         let target =
             resolve_target(self.release.manifest(), source).ok_or(DeliveryError::SourceNotFound)?;
 
@@ -101,7 +124,10 @@ impl RouterDeliveryBridge {
             tracestate,
         };
         match self.driver.execute(request).await {
-            Ok(delivery) => lower_outcome(delivery.outcome),
+            Ok(delivery) => {
+                self.publish_emit(&delivery.outcome, causation).await?;
+                lower_outcome(delivery.outcome)
+            }
             Err(error) if error.downcast_ref::<PreloadedWiringMissing>().is_some() => {
                 Err(DeliveryError::WiringNotPreloaded)
             }
@@ -110,6 +136,63 @@ impl RouterDeliveryBridge {
                 Err(DeliveryError::ExecutionFailed)
             }
         }
+    }
+
+    async fn publish_emit(
+        &self,
+        outcome: &Outcome,
+        causation: Causation,
+    ) -> Result<(), DeliveryError> {
+        let Some(Verdict::Emit {
+            event,
+            dedup_id,
+            entity,
+            operation,
+        }) = outcome.verdict.as_ref()
+        else {
+            return Ok(());
+        };
+        self.jetstream
+            .publish_derived(DerivedPublishRequest {
+                component_id: ROUTER_DELIVERY_ID.to_owned(),
+                entity: entity.clone(),
+                operation: *operation,
+                payload: event.clone(),
+                dedup_id: dedup_id.clone(),
+                causation,
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                tracing::warn!(
+                    error = %error,
+                    error_kind = ?error.kind(),
+                    "derived-event publication did not receive a server ACK"
+                );
+                DeliveryError::ExecutionFailed
+            })
+    }
+}
+
+fn derived_causation(
+    delivery_id: &str,
+    parent: Option<ParentCausation>,
+) -> Result<Causation, DeliveryError> {
+    match parent {
+        Some(parent) if parent.root.is_empty() => Err(DeliveryError::InvalidRequest),
+        Some(parent) => Ok(Causation {
+            run: delivery_id.to_owned(),
+            root: parent.root,
+            depth: parent
+                .depth
+                .checked_add(1)
+                .ok_or(DeliveryError::InvalidRequest)?,
+        }),
+        None => Ok(Causation {
+            run: delivery_id.to_owned(),
+            root: delivery_id.to_owned(),
+            depth: 0,
+        }),
     }
 }
 
@@ -252,7 +335,9 @@ fn lower_verdict(verdict: Verdict) -> Result<DeliveryOutcome, DeliveryError> {
         Verdict::Respond { payload, .. } => serde_json::to_string(&payload)
             .map(DeliveryOutcome::Respond)
             .map_err(|_| DeliveryError::ExecutionFailed),
-        Verdict::Emit { event, dedup_id } => serde_json::to_string(&event)
+        Verdict::Emit {
+            event, dedup_id, ..
+        } => serde_json::to_string(&event)
             .map(|event| DeliveryOutcome::Emit(Emission { event, dedup_id }))
             .map_err(|_| DeliveryError::ExecutionFailed),
         Verdict::Discard => Ok(DeliveryOutcome::Discard),
@@ -309,6 +394,43 @@ mod tests {
             resolve_target(&manifest(), SourceRef::Attachment("shipping")),
             None,
             "a wiring id is not an attachment id and cannot bypass the projection"
+        );
+    }
+
+    #[test]
+    fn host_mints_current_causation_and_only_inherits_parent_root_depth() {
+        assert_eq!(
+            derived_causation("delivery-1", None).unwrap(),
+            Causation {
+                run: "delivery-1".into(),
+                root: "delivery-1".into(),
+                depth: 0,
+            }
+        );
+        assert_eq!(
+            derived_causation(
+                "delivery-2",
+                Some(ParentCausation {
+                    root: "delivery-1".into(),
+                    depth: 3,
+                })
+            )
+            .unwrap(),
+            Causation {
+                run: "delivery-2".into(),
+                root: "delivery-1".into(),
+                depth: 4,
+            }
+        );
+        assert!(
+            derived_causation(
+                "delivery-2",
+                Some(ParentCausation {
+                    root: String::new(),
+                    depth: 1,
+                })
+            )
+            .is_err()
         );
     }
 

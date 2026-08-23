@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
+wamn-event-wire = { workspace = true }
 wamn-router = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wash-runtime = { workspace = true }

@@ -20,6 +20,13 @@ interface delivery {
     tracestate: option<string>,
   }
 
+  /// Parent lineage supplied only by the trusted registration ingress. The
+  /// host derives the current run from delivery-id and increments depth.
+  record parent-causation {
+    root: string,
+    depth: u32,
+  }
+
   /// One delivery. Wiring coordinates are deliberately absent: the host
   /// re-derives them from the welded release and `source`.
   record delivery-request {
@@ -28,6 +35,7 @@ interface delivery {
     payload: string,
     caller: option<caller-context>,
     trace: option<trace-context>,
+    parent-causation: option<parent-causation>,
   }
 
   /// The router's exhaustive terminal failure classes.
@@ -50,6 +58,9 @@ interface delivery {
     message: string,
   }
 
+  /// An Emit already stored (or deduped) by the host-owned JetStream
+  /// publisher. Receiving this outcome is therefore permission to ACK a
+  /// registration source message.
   record emission {
     event: string,
     dedup-id: string,

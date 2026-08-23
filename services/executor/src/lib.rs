@@ -14,6 +14,7 @@ use anyhow::Context as _;
 use clap::Args;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
+use wamn_event_wire::Causation;
 use wamn_execution_host::{
     CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
     CandidateWiringTarget, RouterDriver, RouterDriverConfig, RouterDriverRequest,
@@ -25,6 +26,7 @@ use wamn_runtime::component_artifact_source::{
 };
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
+use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
@@ -171,6 +173,13 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         None => WamnCredentials::empty(),
     });
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
+    let jetstream = Arc::new(WamnJetstream::from_env());
+    jetstream.bind_derived_scope(
+        QUEUE_CLAIM_SCOPE,
+        &scope.tenant_id,
+        &args.project,
+        &scope.environment,
+    )?;
     let allowed_hosts: Arc<[AllowedHost]> = args
         .allowed_hosts
         .iter()
@@ -219,7 +228,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         "executor router queue driver ready"
     );
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let serving = serve_queue(driver.as_ref(), &postgres, &scope, lease_ttl_ms);
+    let serving = serve_queue(driver.as_ref(), &postgres, &jetstream, &scope, lease_ttl_ms);
     let readiness = readiness::serve(readiness_listener, readiness_probe);
     tokio::pin!(serving);
     tokio::pin!(readiness);
@@ -243,11 +252,12 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
 async fn serve_queue(
     driver: &RouterDriver,
     postgres: &WamnPostgres,
+    jetstream: &WamnJetstream,
     scope: &QueueScope,
     lease_ttl_ms: i64,
 ) -> anyhow::Result<()> {
     loop {
-        match drain_one(driver, postgres, scope, lease_ttl_ms).await {
+        match drain_one(driver, postgres, jetstream, scope, lease_ttl_ms).await {
             Ok(true) => continue,
             Ok(false) => {}
             Err(error) => {
@@ -261,6 +271,7 @@ async fn serve_queue(
 async fn drain_one(
     driver: &RouterDriver,
     postgres: &WamnPostgres,
+    jetstream: &WamnJetstream,
     scope: &QueueScope,
     lease_ttl_ms: i64,
 ) -> anyhow::Result<bool> {
@@ -353,6 +364,7 @@ async fn drain_one(
             drive_claim(
                 driver,
                 postgres,
+                jetstream,
                 &run_id,
                 lease_generation,
                 lease_ttl_ms,
@@ -373,6 +385,7 @@ async fn drain_one(
 async fn drive_claim(
     driver: &RouterDriver,
     postgres: &WamnPostgres,
+    jetstream: &WamnJetstream,
     run_id: &str,
     lease_generation: i64,
     lease_ttl_ms: i64,
@@ -475,12 +488,51 @@ async fn drive_claim(
         ProductionRouterAction::Complete(completion) => {
             commit_completion(postgres, run_id, lease_generation, &completion).await?;
         }
-        ProductionRouterAction::Emit { dedup_id, .. } => {
-            tracing::warn!(
+        ProductionRouterAction::Emit {
+            event,
+            dedup_id,
+            entity,
+            operation,
+        } => {
+            let publish = jetstream
+                .publish_derived(DerivedPublishRequest {
+                    component_id: QUEUE_CLAIM_SCOPE.to_owned(),
+                    entity,
+                    operation,
+                    payload: event.clone(),
+                    dedup_id,
+                    causation: Causation {
+                        run: run_id.to_owned(),
+                        root: run_id.to_owned(),
+                        depth: 0,
+                    },
+                })
+                .await;
+            match publish {
+                Ok(ack) => tracing::info!(
+                    run_id,
+                    stream = ack.stream_name,
+                    stream_seq = ack.stream_seq,
+                    duplicate = ack.duplicate,
+                    "derived event server ACK received before queue completion"
+                ),
+                Err(error) => {
+                    tracing::warn!(
+                        run_id,
+                        error = %error,
+                        error_kind = ?error.kind(),
+                        "derived event was not server-acknowledged; lease left for replay"
+                    );
+                    return Ok(());
+                }
+            }
+            commit_completion(
+                postgres,
                 run_id,
-                dedup_id,
-                "router emit awaits the wamn-0h0g.19.8 publisher; lease left for redelivery"
-            );
+                lease_generation,
+                &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::completed(event, None),
+            )
+            .await?;
         }
         ProductionRouterAction::Cancelled => {
             tracing::info!(

@@ -198,7 +198,7 @@ pub fn lower_active_wiring(
             // Connection generations are host-injected authority. Neither the
             // wiring nor a component-library operation fact owns a binding.
             connection: None,
-            terminal: node.terminal.map(lower_terminal),
+            terminal: node.terminal.as_ref().map(lower_terminal),
         });
     }
 
@@ -387,9 +387,9 @@ fn resolve_target_port(
     }
 }
 
-fn lower_terminal(terminal: CatalogTerminal) -> Terminal {
+fn lower_terminal(terminal: &CatalogTerminal) -> Terminal {
     match terminal {
         CatalogTerminal::Respond => Terminal::Respond,
-        CatalogTerminal::Emit => Terminal::Emit,
+        CatalogTerminal::Emit { entity, operation } => Terminal::emit(entity, *operation),
     }
 }

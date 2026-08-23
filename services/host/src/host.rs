@@ -324,6 +324,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         oci_pull_timeout: Some(Duration::from_secs(30)),
         oci_cache_dir: args.oci_cache_dir.clone(),
     };
+    let jetstream = Arc::new(
+        WamnJetstream::from_env()
+            .with_doorbell(doorbell_client)
+            .with_release(release.clone()),
+    );
 
     let mut builder = ClusterHostBuilder::default()
         .with_engine((*engine).clone())
@@ -353,11 +358,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // release's registration projection, so an event whose registration
         // identity is not in this release never reaches a component. The plugin
         // takes the loaded manifest — it does not load one.
-        .with_plugin(Arc::new(
-            WamnJetstream::from_env()
-                .with_doorbell(doorbell_client)
-                .with_release(release.clone()),
-        ))?
+        .with_plugin(Arc::clone(&jetstream))?
         // wamn-0h0g.15.96: READER 3 of the weld, and the first host-side
         // implementation of wamn:flow-http-routing. Routes come off the manifest's
         // attachment projection, so the serving path reads no project database.
@@ -370,7 +371,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         builder = builder.with_plugin(Arc::new(RouterDeliveryBridge::new(
             Arc::clone(driver),
             Arc::clone(release),
-        )))?;
+            Arc::clone(&jetstream),
+            &args.project,
+        )?))?;
     }
 
     if let Some(host_name) = &args.host_name {

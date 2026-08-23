@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 wamn-execution-host = { workspace = true }
+wamn-event-wire = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wash-runtime = { workspace = true, features = ["washlet", "wasm_component_model_implements"] }
