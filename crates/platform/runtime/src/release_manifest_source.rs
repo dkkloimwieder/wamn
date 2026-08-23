@@ -22,10 +22,10 @@
 //! [`ReleaseManifestWeld`](crate::release_manifest::ReleaseManifestWeld).
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use oci_client::client::{ClientConfig, ClientProtocol};
+use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::MAX_SERVING_MANIFEST_BYTES;
@@ -45,6 +45,8 @@ pub enum ReleaseManifestFetchErrorKind {
     InvalidReference,
     /// The projected registry credential could not be loaded for this registry.
     Credential,
+    /// A configured PEM CA bundle could not be read as a trust root.
+    TrustAnchor,
     /// The registry or the named artifact is not currently available.
     Unavailable,
     /// The registry answered with bytes or metadata the named digest contradicts.
@@ -82,6 +84,14 @@ impl ReleaseManifestFetchError {
             kind: ReleaseManifestFetchErrorKind::Credential,
             reference: None,
             refusal,
+        }
+    }
+
+    fn trust_anchor() -> Self {
+        Self {
+            kind: ReleaseManifestFetchErrorKind::TrustAnchor,
+            reference: None,
+            refusal: "release-manifest-artifact-ca-bundle-unreadable",
         }
     }
 
@@ -145,6 +155,9 @@ pub struct ReleaseManifestSource {
     client: OciClient,
     base: ComponentArtifactBase,
     auth: RegistryAuth,
+    /// Kept so [`ReleaseManifestSource::with_ca_paths`] can rebuild the client
+    /// without re-reading the credential.
+    insecure_registry: bool,
 }
 
 impl ReleaseManifestSource {
@@ -162,17 +175,7 @@ impl ReleaseManifestSource {
             .map_err(|_| ReleaseManifestFetchError::invalid_reference())?;
         let credentials = read_registry_credentials(registry_auth_file, base.registry())
             .map_err(|error| ReleaseManifestFetchError::credential(error.refusal()))?;
-        let protocol = if insecure_registry {
-            ClientProtocol::HttpsExcept(vec![base.registry().to_owned()])
-        } else {
-            ClientProtocol::Https
-        };
-        let client = OciClient::new(ClientConfig {
-            protocol,
-            read_timeout: Some(REGISTRY_IO_TIMEOUT),
-            connect_timeout: Some(REGISTRY_IO_TIMEOUT),
-            ..ClientConfig::default()
-        });
+        let client = registry_client(base.registry(), insecure_registry, Vec::new());
         Ok(Self {
             client,
             base,
@@ -180,7 +183,33 @@ impl ReleaseManifestSource {
                 credentials.username().to_owned(),
                 credentials.password().to_owned(),
             ),
+            insecure_registry,
         })
+    }
+
+    /// Trust the PEM CA bundles at `paths` for pulls from this release repository.
+    ///
+    /// This source builds its own `oci-client`, so the process-wide trust roots
+    /// a host installs through `wash_runtime::oci::set_extra_ca_certificates` do
+    /// not reach it — the same gap
+    /// [`ComponentArtifactSourceConfig::with_ca_paths`](crate::component_artifact_source::ComponentArtifactSourceConfig::with_ca_paths)
+    /// documents, and the reason a release pull from a registry behind a private
+    /// CA fails TLS without this.
+    ///
+    /// Pass the same paths the host passed to that call, and call it first:
+    /// validation lives there, and it refuses an unusable bundle before the
+    /// process starts. Empty `paths` leave this source on the compiled-in roots.
+    pub fn with_ca_paths(mut self, paths: &[PathBuf]) -> Result<Self, ReleaseManifestFetchError> {
+        if paths.is_empty() {
+            return Ok(self);
+        }
+        let mut bundles = Vec::with_capacity(paths.len());
+        for path in paths {
+            bundles
+                .push(std::fs::read(path).map_err(|_| ReleaseManifestFetchError::trust_anchor())?);
+        }
+        self.client = registry_client(self.base.registry(), self.insecure_registry, bundles);
+        Ok(self)
     }
 
     /// Pull the exact canonical bytes this manifest digest addresses.
@@ -259,6 +288,28 @@ impl fmt::Debug for ReleaseManifestSource {
             .field("repository", &self.base.repository())
             .finish_non_exhaustive()
     }
+}
+
+/// One registry client for this release repository, over these trust roots.
+fn registry_client(registry: &str, insecure_registry: bool, ca_bundles: Vec<Vec<u8>>) -> OciClient {
+    let protocol = if insecure_registry {
+        ClientProtocol::HttpsExcept(vec![registry.to_owned()])
+    } else {
+        ClientProtocol::Https
+    };
+    OciClient::new(ClientConfig {
+        protocol,
+        read_timeout: Some(REGISTRY_IO_TIMEOUT),
+        connect_timeout: Some(REGISTRY_IO_TIMEOUT),
+        extra_root_certificates: ca_bundles
+            .into_iter()
+            .map(|data| Certificate {
+                encoding: CertificateEncoding::Pem,
+                data,
+            })
+            .collect(),
+        ..ClientConfig::default()
+    })
 }
 
 /// The mint and the mount reader share this ceiling; the puller enforces it too.

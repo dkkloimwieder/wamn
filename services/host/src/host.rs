@@ -26,6 +26,7 @@ use wamn_runtime::engine::{PoolSizing, build_engine_sized};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::spawn_epoch_ticker;
 
 #[derive(Debug, Args)]
@@ -139,19 +140,36 @@ pub struct HostArgs {
     #[arg(long = "pool-slots", env = "WAMN_POOL_SLOTS", default_value_t = PoolSizing::default().slots)]
     pub pool_slots: u32,
 
-    /// Directory the digest-named release-manifest ConfigMap is projected into —
-    /// normally `/etc/wamn/release-manifest`, the mount path
-    /// `wamn_catalog::RELEASE_MANIFEST_MOUNT_PATH` names.
+    /// Registry/repository holding this environment's release-manifest
+    /// artifacts, paired with [`HostArgs::release_manifest_digest`].
     ///
-    /// Absent means this host serves no release; present and unusable means it
-    /// refuses to start. See [`load_release`] for why that distinction lives in
-    /// this argument's shape rather than in an error.
+    /// Both absent means this host serves no release; both present and the pull
+    /// unusable means it refuses to start. See [`load_release`] for why that
+    /// distinction lives in these arguments' shape rather than in an error.
+    ///
+    /// The pair is mutually `requires`d, so the third state a pair invents —
+    /// base without digest — is refused by clap at startup rather than
+    /// discovered as a pod that quietly serves nothing.
     ///
     /// Unlike every flag above it, this one is NOT part of the chart's rendered
-    /// surface: `wash host` upstream has no release model. It is set on our own
-    /// host template, which `wamn-0h0g.15.98` writes.
-    #[arg(long = "release-manifest-root", env = "WAMN_RELEASE_MANIFEST_ROOT")]
-    pub release_manifest_root: Option<PathBuf>,
+    /// surface: `wash host` upstream has no release model. It is carried per
+    /// host group by `hostGroups[].extraArgs`.
+    #[arg(
+        long = "release-artifact-base",
+        env = "WAMN_RELEASE_ARTIFACT_BASE",
+        requires = "release_manifest_digest"
+    )]
+    pub release_artifact_base: Option<String>,
+
+    /// SHA-256 digest, `sha256:<hex>`, of the one serving manifest this host is
+    /// welded to. Travels in the pod template; the registry's bytes are refused
+    /// unless they hash to exactly this.
+    #[arg(
+        long = "release-manifest-digest",
+        env = "WAMN_RELEASE_MANIFEST_DIGEST",
+        requires = "release_artifact_base"
+    )]
+    pub release_manifest_digest: Option<String>,
 
     /// Maximum resolved wirings retained by the one production router driver.
     #[arg(
@@ -186,51 +204,68 @@ pub struct HostArgs {
     pub allowed_hosts: Vec<String>,
 }
 
-/// Load and verify this process's release, or record that it carries none.
+/// Pull and verify this process's release, or record that it carries none.
 ///
 /// This is the wash host's weld construction site: the one place in this process
-/// that reads the mounted manifest. flow-http routing (`wamn-0h0g.15.96`) and
-/// jetstream delivery gating (`wamn-0h0g.15.95`) take the loaded manifest from
-/// here by reference; nobody loads a second copy.
+/// that turns registry bytes into a manifest. flow-http routing
+/// (`wamn-0h0g.15.96`) and jetstream delivery gating (`wamn-0h0g.15.95`) take the
+/// loaded manifest from here by reference; nobody loads a second copy.
 ///
-/// # The absent-mount posture
+/// # Why the registry and not a mount
 ///
-/// The two absent-mount cases are told apart by the *argument*, never by
-/// inspecting a failure:
+/// A projected ConfigMap carries no usable binding between the bytes and the
+/// name the template asked for: the same template places both, so comparing
+/// them tests the template against itself. A registry is a third party — the
+/// digest travels in the pod template, the bytes come from the registry, and the
+/// pull refuses unless they agree (`wamn-0h0g.15.98`).
 ///
-/// - **No root passed.** This host was never given a release: nothing to mount
+/// # The absent-release posture
+///
+/// The two absent cases are told apart by the *arguments*, never by inspecting a
+/// failure:
+///
+/// - **No pair passed.** This host was never given a release: nothing to pull
 ///   and nothing to refuse. It serves exactly as it did before the release model
 ///   existed.
-/// - **Passed, but the mount is absent, unreadable or non-canonical.** This host
-///   was told it serves a release and cannot. Startup fails and the pod never goes
-///   ready — the only refusal worth making, since a host serving an unverified
-///   manifest would be routing and gating against nothing.
+/// - **Passed, but the artifact is absent, unreachable or non-canonical.** This
+///   host was told it serves a release and cannot. Startup fails and the pod
+///   never goes ready — the only refusal worth making, since a host serving an
+///   unverified manifest would be routing and gating against nothing.
 ///
-/// Those three are the complete mount-time set. There is deliberately no
-/// digest-mismatch case here: the weld takes no expected digest and *derives* both
-/// identity halves from the bytes it verified (`wamn-0h0g.15.104`), so the name and
-/// the content are one fact and cannot disagree. The only digest comparison in the
-/// system is at run time, between a run's recorded digest and the pod's carried
-/// one, and it belongs to the claim path.
-///
-/// Encoding it in the argument is forced, not stylistic: `wamn-0h0g.15.104`
-/// collapsed the weld's error kinds to two, so "no mount" and "corrupt mount"
-/// both arrive as `ManifestUnreadable` and cannot be separated afterwards.
+/// The half-passed third state cannot reach here at all: the two arguments
+/// mutually `requires` each other, so clap refuses it at startup.
 ///
 /// The node-component registry is deliberately a separate explicit argument.
-/// A manifest mount establishes release identity; it never implies where
+/// A release artifact establishes release identity; it never implies where
 /// digest-addressed component bytes may be pulled from.
-fn load_release(manifest_root: Option<&Path>) -> anyhow::Result<Option<Arc<ReleaseManifestWeld>>> {
-    let Some(manifest_root) = manifest_root else {
+async fn load_release(
+    artifact_base: Option<&str>,
+    manifest_digest: Option<&str>,
+    insecure_registry: bool,
+    registry_auth_file: Option<&Path>,
+    ca_paths: &[PathBuf],
+) -> anyhow::Result<Option<Arc<ReleaseManifestWeld>>> {
+    let (Some(artifact_base), Some(manifest_digest)) = (artifact_base, manifest_digest) else {
         return Ok(None);
     };
-    let weld = ReleaseManifestWeld::load_from(manifest_root).map_err(|error| {
-        anyhow::anyhow!(
-            "serving release manifest under {} is unusable ({:?}): {error}",
-            manifest_root.display(),
-            error.kind()
-        )
-    })?;
+    let registry_auth_file =
+        registry_auth_file.context("a release-backed host requires --registry-auth-file")?;
+    let source = ReleaseManifestSource::new(artifact_base, insecure_registry, registry_auth_file)
+        .context("configure the release-manifest registry")?
+        .with_ca_paths(ca_paths)
+        .context("trust the configured OCI CA bundles for the release pull")?;
+    let canonical_bytes = source
+        .pull_verified(manifest_digest)
+        .await
+        .context("pull the serving release manifest")?;
+    let origin = format!("{artifact_base}@{manifest_digest}");
+    let weld =
+        ReleaseManifestWeld::load_canonical_bytes(&canonical_bytes, &origin).map_err(|error| {
+            anyhow::anyhow!(
+                "serving release manifest {origin} is unusable ({:?}): {error}",
+                error.kind()
+            )
+        })?;
     // Shared by reference-count rather than by borrow: every release-gated
     // plugin and the router driver are `Arc`-owned, so none can hold a lifetime
     // tied to `run`'s stack. One allocation remains the process's only manifest.
@@ -252,7 +287,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
 
     // THE WELD IS CONSTRUCTED FIRST, and the ordering is load-bearing rather than
-    // tidy. Under ruling wamn-0h0g.15.102 the mounted manifest is the SOLE carrier
+    // tidy. Under ruling wamn-0h0g.15.102 the verified manifest is the SOLE carrier
     // of the (release version, manifest digest) pair, so every consumer takes the
     // pair from this object — including the claim-time recording that
     // wamn-0h0g.15.103 repoints at it. A component that bound before the weld
@@ -261,7 +296,17 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // get wrong, and makes a host that cannot verify its release refuse before it
     // opens a socket. The one-site-per-process guard in
     // tests/conformance/src/runtime_inventory.rs pins both facts across both hosts.
-    let release = load_release(args.release_manifest_root.as_deref())?;
+    //
+    // It also runs after the CA install above, which is why the release pull can
+    // reach a registry behind the chart's own CA.
+    let release = load_release(
+        args.release_artifact_base.as_deref(),
+        args.release_manifest_digest.as_deref(),
+        args.allow_insecure_registries,
+        args.registry_auth_file.as_deref(),
+        &args.oci_ca_paths,
+    )
+    .await?;
     anyhow::ensure!(
         release.is_none() || args.epoch_tick_ms > 0,
         "a release-backed router requires --epoch-tick-ms greater than zero"
@@ -479,40 +524,97 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser as _;
+
     use super::*;
 
-    /// The R2 posture's first half: a host given no root was never given a
-    /// release, so there is nothing to load and nothing to refuse.
-    #[test]
-    fn a_host_given_no_root_carries_no_release() {
-        let release = load_release(None).expect("no root is not a failure");
+    const RELEASE_BASE: &str = "registry.invalid/wamn/releases";
+    const RELEASE_DIGEST: &str =
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+    #[derive(Debug, clap::Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: HostArgs,
+    }
+
+    /// The R2 posture's first half: a host given no release pair was never given
+    /// a release, so there is nothing to pull and nothing to refuse.
+    #[tokio::test]
+    async fn a_host_given_no_release_pair_carries_no_release() {
+        let release = load_release(None, None, false, None, &[])
+            .await
+            .expect("no release pair is not a failure");
         assert!(
             release.is_none(),
-            "a host with no release root must carry no release rather than \
+            "a host with no release pair must carry no release rather than \
              loading one from somewhere else"
         );
     }
 
-    /// The R2 posture's second half, and the reason the distinction cannot be
-    /// recovered from the error: this path is absent, which is exactly the fault
-    /// an unmounted ConfigMap produces, and it must still be fatal — because the
-    /// caller asked for a release.
-    #[test]
-    fn a_host_given_an_unusable_root_refuses() {
-        // Deliberately a path that cannot exist rather than a scratch directory:
-        // the fault under test is the absent mount itself, and manufacturing it
-        // needs no filesystem.
-        let root = Path::new("/nonexistent/wamn-release-manifest-root");
-        let error = load_release(Some(root)).expect_err("an unusable root must refuse");
-        let message = format!("{error}");
+    /// The R2 posture's second half: a host told it serves a release and unable
+    /// to configure the pull must fail startup rather than serve unwelded.
+    ///
+    /// The credential is the first thing the source reads, so an absent one
+    /// refuses before any network I/O — which is what keeps this proof hermetic.
+    #[tokio::test]
+    async fn a_host_given_an_unusable_release_pair_refuses() {
+        let auth_file = Path::new("/nonexistent/wamn-registry-auth.json");
+        let error = load_release(
+            Some(RELEASE_BASE),
+            Some(RELEASE_DIGEST),
+            false,
+            Some(auth_file),
+            &[],
+        )
+        .await
+        .expect_err("an unusable release pair must refuse");
+        let message = format!("{error:#}");
         assert!(
-            message.contains("/nonexistent/wamn-release-manifest-root"),
-            "the refusal must name the root it could not use: {message}"
+            message.contains("registry-credentials-unreadable"),
+            "the refusal must name the transfer invariant it could not satisfy: {message}"
         );
-        assert!(
-            message.contains("ManifestUnreadable"),
-            "an absent mount must surface as ManifestUnreadable, the kind \
-             wamn-0h0g.15.104 left for it: {message}"
+    }
+
+    /// The third state a base-plus-digest pair invents — one half without the
+    /// other — is refused by the parser, so it never reaches [`load_release`] and
+    /// never becomes a pod that quietly serves no release.
+    #[test]
+    fn a_host_given_half_a_release_pair_refuses_to_parse() {
+        for half in [
+            ["--release-artifact-base", RELEASE_BASE],
+            ["--release-manifest-digest", RELEASE_DIGEST],
+        ] {
+            let error = TestCli::try_parse_from(["wamn-host", half[0], half[1]])
+                .expect_err("half a release pair must refuse to parse");
+            let message = error.to_string();
+            assert!(
+                message.contains("--release-artifact-base")
+                    && message.contains("--release-manifest-digest"),
+                "the refusal must name both halves of the pair: {message}"
+            );
+        }
+    }
+
+    /// Both halves together parse, so the refusal above is the missing half and
+    /// not the pair itself.
+    #[test]
+    fn a_host_given_both_release_halves_parses() {
+        let cli = TestCli::try_parse_from([
+            "wamn-host",
+            "--release-artifact-base",
+            RELEASE_BASE,
+            "--release-manifest-digest",
+            RELEASE_DIGEST,
+        ])
+        .expect("a complete release pair parses");
+        assert_eq!(
+            cli.args.release_artifact_base.as_deref(),
+            Some(RELEASE_BASE)
+        );
+        assert_eq!(
+            cli.args.release_manifest_digest.as_deref(),
+            Some(RELEASE_DIGEST)
         );
     }
 }

@@ -6,7 +6,7 @@
 mod readiness;
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,6 +37,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     WamnPostgresConfig, production_router_action, production_router_result_action,
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 const QUEUE_CLAIM_SCOPE: &str = "wamn-executor-queue";
 const DEFAULT_LEASE_TTL_MS: u64 = 30_000;
@@ -102,9 +103,20 @@ pub struct ExecutorArgs {
     #[arg(long, env = "WAMN_ALLOWED_HOSTS", value_delimiter = ',')]
     pub allowed_hosts: Vec<String>,
 
-    /// Directory containing the canonical format-2 serving manifest.
-    #[arg(long, env = "WAMN_RELEASE_MANIFEST_ROOT")]
-    pub release_manifest_root: PathBuf,
+    /// Explicit registry/repository holding the release-manifest artifacts.
+    ///
+    /// The manifest arrives over OCI rather than as a projected ConfigMap: a
+    /// mount carries no usable binding between the bytes and the name the
+    /// template asked for, while a registry is a third party the digest below
+    /// can be proven against (`crates/platform/runtime/src/release_manifest_source.rs`).
+    #[arg(long, env = "WAMN_RELEASE_ARTIFACT_BASE")]
+    pub release_artifact_base: String,
+
+    /// SHA-256 digest, `sha256:<hex>`, of the one serving manifest this
+    /// executor is welded to. Travels in the pod template; the registry's bytes
+    /// are refused unless they hash to exactly this.
+    #[arg(long, env = "WAMN_RELEASE_MANIFEST_DIGEST")]
+    pub release_manifest_digest: String,
 
     /// Explicit registry/repository holding digest-addressed node components.
     #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE")]
@@ -154,6 +166,45 @@ pub struct ExecutorArgs {
     pub pool_slots: u32,
 }
 
+/// Pull, verify and weld this process's one release.
+///
+/// This is the executor's weld construction site: the single place in this
+/// process that turns registry bytes into the (release version, manifest
+/// digest) pair every consumer reads. Under ruling `wamn-0h0g.15.102` the
+/// manifest is that pair's sole carrier, so a second construction would be a
+/// second carrier with nothing reconciling them.
+///
+/// Refusal is the only outcome besides a welded release: unlike the host, an
+/// executor exists to serve a release, so "no release" is not a posture it has.
+async fn load_release(
+    artifact_base: &str,
+    manifest_digest: &str,
+    insecure_registry: bool,
+    registry_auth_file: &Path,
+    ca_paths: &[PathBuf],
+) -> anyhow::Result<Arc<ReleaseManifestWeld>> {
+    let source = ReleaseManifestSource::new(artifact_base, insecure_registry, registry_auth_file)
+        .context("configure the release-manifest registry")?
+        .with_ca_paths(ca_paths)
+        .context("trust the configured OCI CA bundles for the release pull")?;
+    let canonical_bytes = source
+        .pull_verified(manifest_digest)
+        .await
+        .context("pull the serving release manifest")?;
+    let origin = format!("{artifact_base}@{manifest_digest}");
+    let weld =
+        ReleaseManifestWeld::load_canonical_bytes(&canonical_bytes, &origin).map_err(|error| {
+            anyhow::anyhow!(
+                "serving release manifest {origin} is unusable ({:?}): {error}",
+                error.kind()
+            )
+        })?;
+    // Shared by reference-count: the driver and the session-claim scope both
+    // outlive `run`'s stack frame, and one allocation stays the process's only
+    // manifest.
+    Ok(Arc::new(weld))
+}
+
 fn resolve_owner(arg: Option<String>) -> String {
     arg.filter(|owner| !owner.is_empty())
         .or_else(|| {
@@ -182,15 +233,14 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         .or_else(|| std::env::var("DATABASE_URL").ok())
         .context("no database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")?;
     let owner = resolve_owner(args.runner.clone());
-    let release = Arc::new(
-        ReleaseManifestWeld::load_from(&args.release_manifest_root).map_err(|error| {
-            anyhow::anyhow!(
-                "serving release manifest under {} is unusable ({:?}): {error}",
-                args.release_manifest_root.display(),
-                error.kind()
-            )
-        })?,
-    );
+    let release = load_release(
+        &args.release_artifact_base,
+        &args.release_manifest_digest,
+        args.allow_insecure_registries,
+        &args.registry_auth_file,
+        &args.oci_ca_paths,
+    )
+    .await?;
     let scope = QueueScope {
         tenant_id: release.manifest().release.tenant_id.clone(),
         project: args.project.clone(),
@@ -659,8 +709,10 @@ mod tests {
 
         let cli = TestCli::try_parse_from([
             "wamn-executor",
-            "--release-manifest-root",
-            "/release",
+            "--release-artifact-base",
+            "registry.invalid/wamn/releases",
+            "--release-manifest-digest",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             "--component-artifact-base",
             "registry.invalid/wamn/components",
             "--registry-auth-file",
