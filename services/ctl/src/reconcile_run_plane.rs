@@ -1194,7 +1194,7 @@ mod tests {
             PRE_ROLE_BOOTSTRAP_ACTIONS,
             [
                 RunPlaneActionKind::VerifyEffectWriterRole,
-                RunPlaneActionKind::VerifyRunProjectionWriterRole,
+                RunPlaneActionKind::RetireNodeRuns,
                 RunPlaneActionKind::RetireExecutionBundles,
                 RunPlaneActionKind::FrameIdentityCutover,
                 RunPlaneActionKind::RetireLegacyAdmissionSurface,

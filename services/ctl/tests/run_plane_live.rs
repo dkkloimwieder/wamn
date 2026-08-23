@@ -84,7 +84,6 @@ use wamn_ctl::reconcile_run_plane::{
 use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
-const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/authoring-tests.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
@@ -514,7 +513,7 @@ async fn install_current_run_plane(su: &Client) {
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply current catalog schema");
-    for ddl in [RUN_STATE_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
+    for ddl in [RUN_STATE_SQL, RUN_QUEUE_SQL] {
         su.batch_execute(&rewrite_schema(ddl, &schema))
             .await
             .expect("apply current run-plane schema");
@@ -970,16 +969,6 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
 }
 
 #[tokio::test]
-async fn execution_pin_cutover_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the execution-pin cutover gate");
-        return;
-    };
-    let su = connect(&url).await;
-    execution_pin_cutover_leg(&su).await;
-}
-
-#[tokio::test]
 async fn stored_suite_cutover_live() {
     let Some(url) = support::LockedUrl::optional() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the stored-suite cutover gate");
@@ -1351,338 +1340,6 @@ async fn retired_effect_disposition_cutover_live() {
     };
     let su = connect(&url).await;
     retired_effect_disposition_cutover_leg(&su).await;
-}
-
-async fn regress_execution_pin_contract(su: &Client) {
-    su.batch_execute(&format!(
-        "DROP TRIGGER runs_admission_pins_immutable ON {SCHEMA}.runs; \
-         DROP FUNCTION {SCHEMA}.guard_run_admission_pins_immutable(); \
-         DROP TRIGGER runs_pin_durability_class ON {SCHEMA}.runs; \
-         DROP FUNCTION {SCHEMA}.pin_run_durability_class(); \
-         DROP INDEX {SCHEMA}.runs_release; \
-         DROP INDEX {SCHEMA}.runs_execution_bundle; \
-         ALTER TABLE {SCHEMA}.runs \
-           DROP CONSTRAINT runs_release_fk, \
-           DROP CONSTRAINT runs_execution_bundle_fk, \
-           DROP CONSTRAINT runs_check, \
-           ALTER COLUMN catalog_id DROP NOT NULL, \
-           ALTER COLUMN catalog_version DROP NOT NULL, \
-           ALTER COLUMN catalog_version TYPE bigint USING catalog_version::bigint, \
-           ALTER COLUMN environment DROP NOT NULL, \
-           DROP COLUMN execution_bundle_hash; \
-         ALTER TABLE {SCHEMA}.runs \
-           ADD CONSTRAINT runs_check CHECK ((catalog_id IS NULL) = (catalog_version IS NULL)), \
-           ADD CONSTRAINT runs_environment_check CHECK (environment IS NULL OR environment <> ''); \
-         DROP INDEX catalog.release_flows_execution_bundle; \
-         ALTER TABLE catalog.release_flows \
-           DROP CONSTRAINT release_flows_execution_bundle_fk, \
-           DROP CONSTRAINT release_flows_execution_bundle_hash_check, \
-           DROP COLUMN execution_bundle_hash;"
-    ))
-    .await
-    .expect("regress execution-pin contract");
-}
-
-async fn execution_pin_cutover_leg(su: &Client) {
-    reset(su).await;
-    let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply current catalog for pin cutover");
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply current runs for pin cutover");
-    regress_execution_pin_contract(su).await;
-
-    let plan = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("empty legacy schema accepts execution-pin cutover");
-    assert_eq!(
-        plan.actions
-            .iter()
-            .filter(|action| action.kind == RunPlaneActionKind::ExecutionPinCutover)
-            .count(),
-        1
-    );
-    let columns = su
-        .query(
-            "SELECT table_schema, table_name, column_name, data_type, is_nullable \
-             FROM information_schema.columns \
-             WHERE (table_schema='catalog' AND table_name='release_flows' \
-                    AND column_name='execution_bundle_hash') \
-                OR (table_schema=$1 AND table_name='runs' \
-                    AND column_name IN ('catalog_id','catalog_version','environment', \
-                                        'execution_bundle_hash')) \
-             ORDER BY table_schema, table_name, column_name",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("read converged execution-pin columns");
-    assert_eq!(columns.len(), 5);
-    for row in &columns {
-        let column: String = row.get(2);
-        let data_type: String = row.get(3);
-        let nullable: String = row.get(4);
-        assert_eq!(nullable, "NO", "{column} is mandatory");
-        assert_eq!(
-            data_type,
-            if column == "catalog_version" {
-                "integer"
-            } else {
-                "text"
-            }
-        );
-    }
-    for object in [
-        "release_flows_execution_bundle_fk",
-        "runs_release_fk",
-        "runs_execution_bundle_fk",
-        "release_flows_execution_bundle",
-        "runs_release",
-        "runs_execution_bundle",
-        "runs_admission_pins_immutable",
-        "runs_pin_durability_class",
-    ] {
-        let present: bool = su
-            .query_one(
-                "SELECT to_regclass($1) IS NOT NULL \
-                    OR to_regclass('catalog.' || $2) IS NOT NULL \
-                    OR EXISTS (SELECT 1 FROM pg_constraint WHERE conname=$2) \
-                    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgname=$2 AND NOT tgisinternal)",
-                &[&format!("{SCHEMA}.{object}"), &object],
-            )
-            .await
-            .expect("observe execution-pin object")
-            .get(0);
-        assert!(present, "missing execution-pin object {object}");
-    }
-    let durability_pin_function: bool = su
-        .query_one(
-            "SELECT to_regprocedure($1) IS NOT NULL",
-            &[&format!("{SCHEMA}.pin_run_durability_class()")],
-        )
-        .await
-        .expect("observe restored durability-pin function")
-        .get(0);
-    assert!(
-        durability_pin_function,
-        "missing durability-pin projection function"
-    );
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.environment_policies \
-           (tenant_id,expected_environment,durability_class) \
-         VALUES ('pin','dev','standard')"
-    ))
-    .await
-    .expect("seed the execution-pin environment policy");
-    su.batch_execute(&format!(
-        "INSERT INTO catalog.catalogs \
-           (tenant_id,catalog_id,version,environment,schema_version) \
-           VALUES ('pin','cat',1,'dev','0.1'); \
-         INSERT INTO catalog.execution_bundles \
-           (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-           VALUES ('pin','{EMPTY_EXECUTION_BUNDLE_HASH}','0.1',''::bytea,0); \
-         INSERT INTO catalog.release_manifests \
-           (tenant_id,catalog_id,catalog_version) \
-           VALUES ('pin','cat',1); \
-         INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-            environment,execution_bundle_hash) \
-           VALUES ('pin','run','flow',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}')"
-    ))
-    .await
-    .expect("seed conforming execution pins");
-    let update = su
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs SET environment='prod' \
-                 WHERE tenant_id='pin' AND run_id='run'"
-            ),
-            &[],
-        )
-        .await
-        .expect_err("run admission pin update must refuse");
-    let update_db = update
-        .as_db_error()
-        .expect("pin update is a database refusal");
-    assert_eq!(update_db.code().code(), "55000");
-    assert_eq!(update_db.message(), "run-admission-pin-immutable");
-    let environment: String = su
-        .query_one(
-            &format!(
-                "SELECT environment FROM {SCHEMA}.runs \
-                 WHERE tenant_id='pin' AND run_id='run'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read unchanged execution pins")
-        .get(0);
-    assert_eq!(environment, "dev");
-    let again = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("execution-pin cutover is idempotent");
-    assert!(again.is_noop(), "cutover converged: {:#?}", again.actions);
-
-    reset(su).await;
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply current catalog for refusal");
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply current runs for refusal");
-    regress_execution_pin_contract(su).await;
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs (tenant_id,run_id,flow_id,flow_version) \
-         VALUES ('legacy','legacy-run','flow',1)"
-    ))
-    .await
-    .expect("seed structurally unpinned legacy run");
-
-    let error = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("populated legacy execution-pin cutover must refuse");
-    assert_db_code(
-        error.downcast().expect("postgres refusal"),
-        "55000",
-        "legacy pin cutover",
-    );
-    assert!(!catalog_column_exists(su, "release_flows", "execution_bundle_hash").await);
-    assert!(!column_exists(su, "runs", "execution_bundle_hash").await);
-    let durability_pin_objects = su
-        .query_one(
-            "SELECT \
-               EXISTS (SELECT 1 FROM pg_trigger \
-                        WHERE tgname='runs_pin_durability_class' AND NOT tgisinternal), \
-               to_regprocedure($1) IS NOT NULL",
-            &[&format!("{SCHEMA}.pin_run_durability_class()")],
-        )
-        .await
-        .expect("observe rolled-back durability-pin objects");
-    assert_eq!(
-        (
-            durability_pin_objects.get::<_, bool>(0),
-            durability_pin_objects.get::<_, bool>(1),
-        ),
-        (false, false),
-        "populated legacy refusal rolls back durability-pin restoration"
-    );
-    let version_type: String = su
-        .query_one(
-            "SELECT data_type FROM information_schema.columns \
-             WHERE table_schema=$1 AND table_name='runs' AND column_name='catalog_version'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("read rolled-back catalog_version type")
-        .get(0);
-    assert_eq!(version_type, "bigint");
-
-    reset(su).await;
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply current catalog for release-row refusal");
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply current runs for release-row refusal");
-    regress_execution_pin_contract(su).await;
-    su.batch_execute(
-        "INSERT INTO catalog.catalogs \
-           (tenant_id,catalog_id,version,environment,schema_version) \
-           VALUES ('legacy','cat',1,'dev','0.1'); \
-         INSERT INTO catalog.flow_artifacts \
-           (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash) \
-           VALUES ('legacy','flow',1,'0.1','{}'::jsonb,'graph','artifact'); \
-         INSERT INTO catalog.release_manifests \
-           (tenant_id,catalog_id,catalog_version) \
-           VALUES ('legacy','cat',1); \
-         INSERT INTO catalog.release_flows \
-           (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
-           VALUES ('legacy','cat',1,'flow',1);",
-    )
-    .await
-    .expect("seed structurally unpinned legacy release member");
-    let error = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("populated release membership must refuse pin cutover");
-    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
-    let database = postgres
-        .as_db_error()
-        .expect("release-row cutover is a database refusal");
-    assert_eq!(database.code().code(), "55000");
-    assert_eq!(
-        database.message(),
-        "execution-pin-cutover-requires-empty-run-and-release-membership"
-    );
-    assert!(!catalog_column_exists(su, "release_flows", "execution_bundle_hash").await);
-    assert!(!column_exists(su, "runs", "execution_bundle_hash").await);
-
-    // The population wamn-0h0g.20.9 is really about: a legacy database that ALSO
-    // predates the admission-pin carriers. PostgreSQL validates a
-    // `BEFORE UPDATE OF <columns>` list at CREATE TRIGGER time, so a cutover
-    // naming a column it never ADDs aborts here — and only here, which is why
-    // the carrier-present leg above stayed green while the migration was broken.
-    reset(su).await;
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply current catalog for carrier-less legacy cutover");
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply current runs for carrier-less legacy cutover");
-    regress_execution_pin_contract(su).await;
-    // The pin trigger and its function are already gone, so each column drops
-    // with only its own constraints and column grants depending on it.
-    su.batch_execute(&format!(
-        "ALTER TABLE {SCHEMA}.runs \
-           DROP COLUMN capture_mode, \
-           DROP COLUMN durability_class;"
-    ))
-    .await
-    .expect("regress the admission-pin carriers");
-    assert!(!column_exists(su, "runs", "capture_mode").await);
-    assert!(!column_exists(su, "runs", "durability_class").await);
-
-    reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("carrier-less legacy schema accepts the execution-pin cutover");
-    for (column, check) in [
-        ("capture_mode", "runs_capture_mode_check"),
-        ("durability_class", "runs_durability_class_check"),
-    ] {
-        assert!(column_exists(su, "runs", column).await, "{column} restored");
-        let constrained: bool = su
-            .query_one(
-                "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = $1)",
-                &[&check],
-            )
-            .await
-            .expect("observe restored carrier CHECK")
-            .get(0);
-        assert!(constrained, "{column} regained {check}");
-    }
-    // The carrier a column-scoped trigger does not NAME is silently unguarded
-    // (the wamn-0h0g.20.1 unnamed-arm class), so the migration must restore the
-    // full column list, not merely the columns it happened to add.
-    let trigger: String = su
-        .query_one(
-            "SELECT pg_get_triggerdef(oid) FROM pg_trigger \
-              WHERE tgname = 'runs_admission_pins_immutable' AND NOT tgisinternal",
-            &[],
-        )
-        .await
-        .expect("observe restored admission-pin trigger")
-        .get(0);
-    assert!(trigger.contains("capture_mode"), "{trigger}");
-    assert!(trigger.contains("durability_class"), "{trigger}");
-
-    let again = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("carrier-less legacy cutover is idempotent");
-    assert!(
-        again.is_noop(),
-        "carrier cutover converged: {:#?}",
-        again.actions
-    );
 }
 
 /// Persisted authored ordering bytes have no lossless global-FIFO backfill.
@@ -2887,9 +2544,6 @@ async fn shared_runner_legacy_leg(su: &Client) {
     ))
     .await
     .expect("build shared-runner legacy run plane");
-    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
-        .await
-        .expect("apply authoring tests");
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog schema");
@@ -4570,9 +4224,6 @@ async fn current_noop_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
-        .await
-        .expect("apply authoring tests");
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
@@ -4610,9 +4261,6 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
-        .await
-        .expect("apply authoring tests");
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
@@ -4645,11 +4293,6 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     assert!(plan.actions.iter().any(|action| {
         action.kind == RunPlaneActionKind::AddColumn && action.target == "runs.capture_mode"
     }));
-    assert!(
-        plan.actions
-            .iter()
-            .any(|action| { action.kind == RunPlaneActionKind::CaptureProjectionCutover })
-    );
     let mode: String = su
         .query_one(
             &format!("SELECT capture_mode FROM {SCHEMA}.runs WHERE run_id='legacy-off'"),
@@ -4799,7 +4442,7 @@ async fn stored_suite_cutover_leg(su: &Client) {
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog before stored-suite cutover");
-    for ddl in [RUN_STATE_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
+    for ddl in [RUN_STATE_SQL, RUN_QUEUE_SQL] {
         su.batch_execute(&rewrite_schema(ddl, &schema))
             .await
             .expect("apply current run plane before stored-suite cutover");
@@ -5160,9 +4803,6 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     wamn_ctl::publish_catalog::ensure_catalog_storage(su)
         .await
         .expect("additively install catalog authoring storage");
-    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
-        .await
-        .expect("apply authoring-test storage from the record");
     for table in [
         "flow_drafts",
         "validated_flow_drafts",
@@ -5652,7 +5292,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog-schema");
-    for ddl in [RUN_STATE_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
+    for ddl in [RUN_STATE_SQL, RUN_QUEUE_SQL] {
         su.batch_execute(&rewrite_schema(ddl, &schema))
             .await
             .expect("apply current run-plane record");

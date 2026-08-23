@@ -1211,6 +1211,8 @@ async fn activate_once(
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr as _;
+
     use super::*;
 
     #[test]
