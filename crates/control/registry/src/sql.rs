@@ -223,8 +223,7 @@ mod tests {
         assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER flow_artifacts_immutable"));
         assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER release_flows_immutable"));
         assert!(CATALOG_SCHEMA.contains("MESSAGE = 'flow-version-content-conflict'"));
-        assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.execution_bundles"));
-        assert!(CATALOG_SCHEMA.contains("exact_bytes            bytea NOT NULL"));
+        assert!(!CATALOG_SCHEMA.contains("catalog.execution_bundles"));
         assert!(CATALOG_SCHEMA.contains("PRIMARY KEY (tenant_id, catalog_id, environment)"));
         assert!(CATALOG_SCHEMA.contains("GRANT SELECT ON catalog.flow_artifacts"));
         assert!(

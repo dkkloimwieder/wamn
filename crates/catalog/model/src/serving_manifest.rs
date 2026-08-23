@@ -514,8 +514,6 @@ mod tests {
         ];
         for (name, source) in [
             ("lib.rs", include_str!("lib.rs")),
-            ("execution_node_id.rs", include_str!("execution_node_id.rs")),
-            ("execution_plan.rs", include_str!("execution_plan.rs")),
             ("serving_manifest.rs", include_str!("serving_manifest.rs")),
         ] {
             for marker in SECOND_PRODUCER {

@@ -61,10 +61,10 @@ use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{
     BareSchemaName, EffectWriterRoleObservation, RowPolicyObservation, RowSecurityObservation,
     RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
-    ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_release_flow_rows_sql,
-    count_retired_authored_ordering_rows_sql, count_run_rows_sql,
-    count_stale_registration_keys_sql, plan_run_plane, select_app_run_queue_authority_sql,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    ScenarioAuthorRoleObservation, catalog_schema_present_sql,
+    count_retired_authored_ordering_rows_sql, count_stale_registration_keys_sql, plan_run_plane,
+    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_dispatch_reader_schema_privileges_sql,
     select_dispatch_reader_table_privileges_sql,
@@ -97,19 +97,8 @@ use wamn_schema_control::{
 /// cluster roles on a database it is about to refuse to touch. A refusal fails
 /// the batch, `reconcile` returns `Err`, and the bootstrap below never runs.
 ///
-/// **`ExecutionPinCutover` earns membership on ONE path.**
-/// `wamn_schema_control::plan_run_plane` pushes that kind twice, and only the
-/// first push can lead: on the populated-refusal early return — pin contract
-/// incomplete AND `runs`/`catalog.release_flows` holding rows — it is pushed
-/// into an empty plan and the planner RETURNS, so the action is the whole plan
-/// and the loop in [`reconcile`] finds it at index 0. The second push, on the
-/// empty-database path that actually performs the migration, is deliberately
-/// mid-plan and can never lead. Reading only that second push makes this member
-/// look dead; it is not (wamn-0h0g.20.13 was filed on exactly that misreading).
-/// `EffectWriterCutover` has the identical two-push shape — a populated-ledger
-/// early return plus a mid-plan push — and invites the identical misreading.
-/// `RetireNodeRuns` is simpler: a present retired table produces a one-action
-/// plan, so its RESTRICT failure or successful discard always precedes role
+/// `RetireNodeRuns` and `RetireExecutionBundles` each produce a one-action
+/// plan. Their RESTRICT failure or successful discard therefore precedes role
 /// bootstrap and every unrelated target-database repair.
 ///
 /// **The written order is NOT execution order.** The lookup is `contains`, which
@@ -119,15 +108,6 @@ use wamn_schema_control::{
 /// `pre_role_bootstrap_allowlist_is_exact` pins
 /// this array by equality and so freezes the order: it certifies the SET, and
 /// must not be read as certifying a sequence.
-///
-/// **One wrinkle, unreachable in practice.** `execution_pin_cutover_sql` is the
-/// only allowlisted builder whose SQL names `wamn_app` (`GRANT INSERT
-/// (execution_bundle_hash), UPDATE (release_version, manifest_digest) ON
-/// {target}.runs TO wamn_app`) — the one member carrying a dependency on the
-/// bootstrap it is permitted to precede. It cannot fire: that builder leads only
-/// via the populated early return, and its own preflight raises `55000` on
-/// exactly the nonempty tables that put it there, so the `GRANT` is never
-/// reached. Recorded, not coded around.
 ///
 /// **The hazard to actually guard** lives in the planner, invisible from here:
 /// 1. A NEW refusing cutover pushed into the plan without being added to this
@@ -139,7 +119,7 @@ use wamn_schema_control::{
 const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 11] = [
     RunPlaneActionKind::VerifyEffectWriterRole,
     RunPlaneActionKind::RetireNodeRuns,
-    RunPlaneActionKind::ExecutionPinCutover,
+    RunPlaneActionKind::RetireExecutionBundles,
     RunPlaneActionKind::FrameIdentityCutover,
     RunPlaneActionKind::EffectWriterCutover,
     RunPlaneActionKind::PartitionPlaneCutover,
@@ -909,13 +889,6 @@ async fn observe(
             .context("count persisted retired flow-ordering keys")?
             .get(0);
     }
-    if obs.tables.contains_key("runs") {
-        obs.run_rows = client
-            .query_one(&count_run_rows_sql(schema), &[])
-            .await
-            .context("count run rows for execution-pin cutover")?
-            .get(0);
-    }
     for row in client
         .query(select_schema_indexes_sql(), &[&schema.as_str()])
         .await
@@ -1017,13 +990,6 @@ async fn observe(
         {
             obs.catalog_triggers
                 .insert((row.get(0), row.get(1)), row.get(2));
-        }
-        if obs.catalog_tables.contains("release_flows") {
-            obs.release_flow_rows = client
-                .query_one(count_release_flow_rows_sql(), &[])
-                .await
-                .context("count release-flow rows for execution-pin cutover")?
-                .get(0);
         }
         if obs.catalog_tables.contains("event_registrations") {
             obs.stale_registration_key_rows = client
@@ -1186,9 +1152,9 @@ mod tests {
     }
 
     /// The one POSITIVE reachability assertion behind
-    /// [`PRE_ROLE_BOOTSTRAP_ACTIONS`]: on a populated schema whose execution-pin
-    /// contract is incomplete, the plan [`reconcile`] walks is EXACTLY the
-    /// refusing cutover, and that kind is allowlisted — so the whole plan runs
+    /// [`PRE_ROLE_BOOTSTRAP_ACTIONS`]: when the retired plan table is present,
+    /// the plan [`reconcile`] walks is exactly the carrier cutover, and that
+    /// kind is allowlisted — so the whole plan runs
     /// ahead of `ensure_wamn_app_role`, which never touches a database about to
     /// refuse.
     ///
@@ -1198,10 +1164,9 @@ mod tests {
     /// the cutover the WHOLE plan rather than the head of an 89-action one.
     /// Deleting either turns this red.
     #[test]
-    fn a_populated_execution_pin_refusal_leads_the_pre_bootstrap_prefix() {
+    fn execution_bundle_retirement_leads_the_pre_bootstrap_prefix() {
         let obs = RunPlaneObservation {
-            tables: BTreeMap::from([("runs".to_string(), BTreeSet::new())]),
-            run_rows: 1,
+            catalog_tables: BTreeSet::from(["execution_bundles".to_string()]),
             ..Default::default()
         };
 
@@ -1209,7 +1174,7 @@ mod tests {
         assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
         assert_eq!(
             plan.actions[0].kind,
-            RunPlaneActionKind::ExecutionPinCutover
+            RunPlaneActionKind::RetireExecutionBundles
         );
         assert!(PRE_ROLE_BOOTSTRAP_ACTIONS.contains(&plan.actions[0].kind));
         // …and the shell appends nothing behind it, so the plan `reconcile`
@@ -1237,7 +1202,7 @@ mod tests {
             [
                 RunPlaneActionKind::VerifyEffectWriterRole,
                 RunPlaneActionKind::VerifyRunProjectionWriterRole,
-                RunPlaneActionKind::ExecutionPinCutover,
+                RunPlaneActionKind::RetireExecutionBundles,
                 RunPlaneActionKind::FrameIdentityCutover,
                 RunPlaneActionKind::EffectWriterCutover,
                 RunPlaneActionKind::PartitionPlaneCutover,

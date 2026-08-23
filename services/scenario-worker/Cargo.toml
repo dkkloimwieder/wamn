@@ -7,19 +7,16 @@ license.workspace = true
 
 [dependencies]
 wamn-authoring-model = { workspace = true }
-wamn-catalog = { workspace = true }
 # wamn-0h0g.8.18: the scoped control-author credential contract. Default features
 # only — the pure naming and connection-input validators, no `ops` surface, no DB
 # or K8s client. Both sides of the credential must derive the same generation
 # name, so the contract lives in one crate rather than being restated here.
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
-wamn-execution-host = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-flow = { workspace = true }
-wamn-standard-nodes = { workspace = true }
 wash-runtime = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }

@@ -16,7 +16,6 @@
 use std::convert::Infallible;
 use std::fmt;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -528,19 +527,6 @@ pub struct ManagementServeArgs {
     /// relations. Unchanged by the residency move.
     #[arg(long, default_value = "wamn_run")]
     pub source_schema: String,
-
-    /// Exact flowrunner component this image ships (wamn-0h0g.15.50).
-    ///
-    /// The minting pod derives the trusted runtime revision every validation pins
-    /// from these bytes, so it must carry them locally. Per the wamn-0h0g.15.4
-    /// verdict flowrunner stays in-image; this is the same stable in-image path
-    /// the executor loads from.
-    #[arg(
-        long = "flowrunner",
-        env = "WAMN_FLOWRUNNER_PATH",
-        default_value = wamn_execution_host::DEFAULT_FLOWRUNNER_PATH
-    )]
-    pub flowrunner: PathBuf,
 }
 
 impl ManagementServeArgs {
@@ -630,16 +616,6 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
         .bind
         .parse()
         .with_context(|| format!("invalid management bind address {:?}", args.bind))?;
-    // The first I/O of the process. Reading the component this image ships is
-    // what makes the minting pod able to derive a trusted runtime revision at all
-    // (wamn-0h0g.15.50); an image without it refuses at startup rather than at
-    // the first validate.
-    let flowrunner_bytes = std::fs::read(&args.flowrunner).with_context(|| {
-        format!(
-            "read the in-image flowrunner component {}",
-            args.flowrunner.display()
-        )
-    })?;
     let (identity, connection) = tokio_postgres::connect(&args.system_url, NoTls)
         .await
         .context("connect the T1 system database for identity")?;
@@ -648,12 +624,8 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
             tracing::error!(%error, "system identity database connection failed");
         }
     });
-    let backend = InternalAuthoringBackend::connect(
-        &args.control_authoring_database_url,
-        &scope,
-        flowrunner_bytes,
-    )
-    .await?;
+    let backend =
+        InternalAuthoringBackend::connect(&args.control_authoring_database_url, &scope).await?;
     let surface = Arc::new(Surface {
         identity,
         backend: tokio::sync::Mutex::new(backend),
@@ -792,14 +764,7 @@ const fn query_kind(query: &AuthoringQuery) -> &'static str {
 /// `wamn-ftfc.22` re-checked each remaining kind against this tree instead of
 /// inheriting the reasons recorded when the route landed:
 ///
-/// - `validate` has a backend, and since wamn-0h0g.15.50 this process does carry
-///   the exact loaded flowrunner bytes the host derives the trusted runtime
-///   revision from — they come from the component this image ships, held on the
-///   backend as process configuration precisely so no transport can choose them.
-///   What is still missing is the applied catalog identity, which the contract
-///   request does not carry; supplying that from a transport would persist a
-///   content-addressed pin against a catalog version nobody observed. Mounting the
-///   route is wamn-0h0g.7.4's.
+/// - `validate` lost its retired execution-plan compiler and has no backend.
 /// - `draft-run` has no backend for admitting one arbitrary authored input.
 /// - `publish` has no backend.
 async fn dispatch_command(
@@ -972,7 +937,6 @@ mod tests {
             .find("parse_control_authoring_url(")
             .expect("serve settles the authoring scope");
         for io in [
-            "std::fs::read(",
             "tokio_postgres::connect(",
             "InternalAuthoringBackend::connect(",
             "TcpListener::bind(",

@@ -179,31 +179,6 @@ REVOKE ALL ON FUNCTION catalog.register_flow_artifact(
     text, text, int, text, jsonb, text, text
 ) FROM PUBLIC;
 
-CREATE TABLE catalog.execution_bundles (
-    tenant_id              text NOT NULL CHECK (tenant_id <> ''),
-    execution_bundle_hash  text NOT NULL
-        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
-    format_version         text NOT NULL CHECK (format_version = '0.1'),
-    exact_bytes            bytea NOT NULL,
-    byte_length            int NOT NULL
-        CHECK (byte_length = octet_length(exact_bytes)),
-    created_at             timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, execution_bundle_hash),
-    CONSTRAINT execution_bundles_exact_hash CHECK (
-        execution_bundle_hash = 'sha256:' || encode(sha256(exact_bytes), 'hex')
-    )
-);
-ALTER TABLE catalog.execution_bundles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE catalog.execution_bundles FORCE ROW LEVEL SECURITY;
-CREATE POLICY execution_bundles_tenant ON catalog.execution_bundles
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT ON catalog.execution_bundles TO wamn_app;
-GRANT SELECT, INSERT ON catalog.execution_bundles TO wamn_scenario_author;
-CREATE TRIGGER execution_bundles_immutable
-BEFORE UPDATE OR DELETE ON catalog.execution_bundles
-FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
-
 -- The release identity row: one row per (tenant, catalog, version). It is the
 -- idempotency anchor a republication conflicts on, the provenance record of who
 -- published, and the foreign-key root that makes "member of a release that does
@@ -270,8 +245,7 @@ ALTER TABLE catalog.release_manifests
 -- member set, so it has nothing to compare. Membership is structural instead,
 -- and each of the three cases has its own enforcement:
 --   CHANGED  refused by catalog.release_flows' primary key, which covers the
---            member coordinate and leaves flow_version and
---            execution_bundle_hash outside the key, and by the
+--            member coordinate and leaves flow_version outside the key, and by the
 --            release_flows_immutable UPDATE trigger, which closes the
 --            mutate-in-place route.
 --   REMOVED  refused by the release_flows_delete_immutable trigger.
@@ -323,20 +297,12 @@ CREATE TABLE catalog.release_flows (
     catalog_version int  NOT NULL,
     flow_id         text NOT NULL,
     flow_version    int  NOT NULL,
-    execution_bundle_hash text NOT NULL,
     PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, flow_id, flow_version)
-        REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version),
-    CONSTRAINT release_flows_execution_bundle_hash_check
-        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
-    CONSTRAINT release_flows_execution_bundle_fk
-        FOREIGN KEY (tenant_id, execution_bundle_hash)
-        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version)
 );
-CREATE INDEX release_flows_execution_bundle
-    ON catalog.release_flows (tenant_id, execution_bundle_hash);
 ALTER TABLE catalog.release_flows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.release_flows FORCE ROW LEVEL SECURITY;
 CREATE POLICY release_flows_tenant ON catalog.release_flows

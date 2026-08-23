@@ -102,17 +102,6 @@ pub fn select_registration_docs_for_catalog_sql() -> String {
 // Immutable catalog releases (FLOW-SPEC rev18 §5.1–§5.4a).
 // ---------------------------------------------------------------------------
 
-/// Store one immutable canonical execution plan before a release or draft
-/// references it.
-///
-/// Params: tenant, execution-bundle hash, exact canonical bytes.
-pub fn insert_execution_bundle_sql() -> &'static str {
-    "INSERT INTO catalog.execution_bundles \
-       (tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_length) \
-     VALUES ($1, $2, '0.1', $3, octet_length($3::bytea)) \
-     ON CONFLICT (tenant_id, execution_bundle_hash) DO NOTHING"
-}
-
 /// Register one fully resolved immutable artifact. The database function makes
 /// an identical retry a no-op and raises `flow-version-content-conflict` when
 /// the identity tuple already names different content.
@@ -170,14 +159,12 @@ pub fn count_nonterminal_release_runs_sql(schema: &str) -> String {
     )
 }
 
-/// Persist one release member. Missing artifacts or execution bundles are
-/// rejected by tenant-scoped FKs; an identical retry converges through
-/// `DO NOTHING`.
+/// Persist one release member. Missing artifacts are rejected by the
+/// tenant-scoped FK; an identical retry converges through `DO NOTHING`.
 pub fn insert_release_flow_sql() -> &'static str {
     "INSERT INTO catalog.release_flows \
-       (tenant_id, catalog_id, catalog_version, flow_id, flow_version, \
-        execution_bundle_hash) \
-     VALUES ($1, $2, $3, $4, $5, $6) \
+       (tenant_id, catalog_id, catalog_version, flow_id, flow_version) \
+     VALUES ($1, $2, $3, $4, $5) \
      ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING"
 }
 
@@ -239,21 +226,6 @@ pub fn record_release_publication_sql() -> &'static str {
         destructive, checksum) \
      VALUES ($1, $2, $3, $4, $5, 0, false, $6) \
      ON CONFLICT (tenant_id, catalog_id, environment, to_version) DO NOTHING"
-}
-
-/// Read the immutable artifacts and memberships copied by `copy-project-env`.
-pub fn select_release_artifacts_sql() -> &'static str {
-    "SELECT a.flow_id, a.flow_version, a.schema_version, a.graph_json::text, \
-            a.graph_hash, a.artifact_hash, r.execution_bundle_hash, b.exact_bytes \
-     FROM catalog.release_flows r \
-     JOIN catalog.flow_artifacts a \
-       ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
-      AND a.flow_version = r.flow_version \
-     JOIN catalog.execution_bundles b \
-       ON b.tenant_id = r.tenant_id \
-      AND b.execution_bundle_hash = r.execution_bundle_hash \
-     WHERE r.tenant_id = $1 AND r.catalog_id = $2 AND r.catalog_version = $3 \
-     ORDER BY a.flow_id"
 }
 
 /// Derive a release's member set from `catalog.release_flows`, the row-per-member
@@ -321,8 +293,6 @@ mod tests {
     //! schema of record so a renamed column fails HERE, not only against a live
     //! PG (the include_str! mirror of the gates `schema_drift` discipline).
 
-    use sha2::{Digest as _, Sha256};
-
     const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
     #[test]
@@ -345,49 +315,9 @@ mod tests {
     }
 
     #[test]
-    fn execution_bundles_ddl_is_byte_for_byte_unchanged() {
-        const START: &str = "CREATE TABLE catalog.execution_bundles (";
-        const NEXT_SECTION: &str = "\n-- The release identity row:";
-        const EXPECTED_SHA256: &str =
-            "960e6f2e9f5db1e6752f32ca7518791f1fdd6e94d23af481bb63559472a5a952";
-
-        assert_eq!(CATALOG_SCHEMA.match_indices(START).count(), 1);
-
-        let start = CATALOG_SCHEMA
-            .find(START)
-            .expect("catalog schema contains the execution_bundles table");
-        let (ddl, _) = CATALOG_SCHEMA[start..]
-            .split_once(NEXT_SECTION)
-            .expect("execution_bundles DDL precedes the sealed member section");
-
-        assert_eq!(
-            ddl.len(),
-            1_324,
-            "execution_bundles DDL byte length drifted"
-        );
-        let actual_sha256 = Sha256::digest(ddl.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        assert_eq!(actual_sha256, EXPECTED_SHA256);
-    }
-
-    #[test]
-    fn execution_bundle_insert_preserves_exact_bytes_and_is_idempotent() {
-        assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.execution_bundles"));
-        assert!(CATALOG_SCHEMA.contains("exact_bytes            bytea NOT NULL"));
-        assert!(CATALOG_SCHEMA.contains("octet_length(exact_bytes)"));
-
-        let insert = super::insert_execution_bundle_sql();
-        assert!(insert.contains("format_version, exact_bytes, byte_length"));
-        assert!(insert.contains("octet_length($3::bytea)"));
-        assert!(insert.contains("ON CONFLICT (tenant_id, execution_bundle_hash) DO NOTHING"));
-    }
-
-    #[test]
     fn immutable_release_sql_tracks_catalog_schema() {
-        assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.execution_bundles"));
-        assert!(CATALOG_SCHEMA.contains("execution_bundles_exact_hash"));
+        assert!(!CATALOG_SCHEMA.contains("CREATE TABLE catalog.execution_bundles"));
+        assert!(!CATALOG_SCHEMA.contains("execution_bundle_hash"));
         for table in [
             "flow_artifacts",
             "release_manifests",
@@ -410,20 +340,6 @@ mod tests {
             "SELECT catalog.register_flow_artifact(\
        $1, $2, $3, $4, $5::text::jsonb, $6, $7)"
         );
-        assert_eq!(
-            super::select_release_artifacts_sql(),
-            "SELECT a.flow_id, a.flow_version, a.schema_version, a.graph_json::text, \
-            a.graph_hash, a.artifact_hash, r.execution_bundle_hash, b.exact_bytes \
-     FROM catalog.release_flows r \
-     JOIN catalog.flow_artifacts a \
-       ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
-      AND a.flow_version = r.flow_version \
-     JOIN catalog.execution_bundles b \
-       ON b.tenant_id = r.tenant_id \
-      AND b.execution_bundle_hash = r.execution_bundle_hash \
-     WHERE r.tenant_id = $1 AND r.catalog_id = $2 AND r.catalog_version = $3 \
-     ORDER BY a.flow_id"
-        );
         assert!(
             super::register_release_manifest_sql().contains("catalog.register_release_manifest")
         );
@@ -433,7 +349,9 @@ mod tests {
             super::count_nonterminal_release_runs_sql("app")
                 .contains("catalog_version = $3::integer")
         );
-        assert!(super::insert_release_flow_sql().contains("flow_version, execution_bundle_hash"));
+        assert!(super::insert_release_flow_sql().contains("flow_id, flow_version)"));
+        assert!(super::insert_release_flow_sql().contains("VALUES ($1, $2, $3, $4, $5)"));
+        assert!(!super::insert_release_flow_sql().contains("$6"));
         assert!(super::insert_release_flow_sql().contains("DO NOTHING"));
         assert_eq!(
             super::insert_release_source_sql(),

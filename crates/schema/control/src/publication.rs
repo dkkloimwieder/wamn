@@ -34,10 +34,6 @@ pub enum PublicationError {
     DuplicateFlow {
         flow_id: String,
     },
-    MissingRootPlan {
-        flow_id: String,
-        flow_version: i32,
-    },
 }
 
 impl fmt::Display for PublicationError {
@@ -65,13 +61,6 @@ impl fmt::Display for PublicationError {
             Self::DuplicateFlow { flow_id } => {
                 write!(formatter, "catalog-release-duplicate-flow: {flow_id:?}")
             }
-            Self::MissingRootPlan {
-                flow_id,
-                flow_version,
-            } => write!(
-                formatter,
-                "missing-root-plan: flow {flow_id:?} version {flow_version} has no validated execution plan"
-            ),
         }
     }
 }
@@ -195,18 +184,5 @@ mod tests {
             ]),
             Err(PublicationError::DuplicateFlow { .. })
         ));
-    }
-
-    #[test]
-    fn missing_root_plan_is_a_distinct_publication_refusal() {
-        let error = PublicationError::MissingRootPlan {
-            flow_id: "orders".into(),
-            flow_version: 7,
-        };
-
-        assert_eq!(
-            error.to_string(),
-            "missing-root-plan: flow \"orders\" version 7 has no validated execution plan"
-        );
     }
 }

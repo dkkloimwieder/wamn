@@ -196,7 +196,6 @@ BEGIN
     IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
        OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
        OR NEW.environment IS DISTINCT FROM OLD.environment
-       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash
        OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
        OR NEW.durability_class IS DISTINCT FROM OLD.durability_class
        OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
@@ -292,7 +291,6 @@ CREATE TABLE wamn_run.runs (
     catalog_id      text NOT NULL,
     catalog_version int NOT NULL,
     environment     text NOT NULL,
-    execution_bundle_hash text NOT NULL,
     attachment_id   text,
     registration_id text,
     -- Trusted immutable CDC event ancestry is distinct from retired execution
@@ -361,8 +359,7 @@ CREATE TABLE wamn_run.runs (
     updated_at      timestamptz NOT NULL DEFAULT now(),
     CHECK (catalog_id <> ''
            AND catalog_version > 0
-           AND environment <> ''
-           AND execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
+           AND environment <> ''),
     CHECK (jsonb_typeof(invocation_context) = 'object'
            AND octet_length(invocation_context::text) <= 16384),
     CHECK (
@@ -407,10 +404,7 @@ CREATE TABLE wamn_run.runs (
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk
         FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
-    CONSTRAINT runs_execution_bundle_fk
-        FOREIGN KEY (tenant_id, execution_bundle_hash)
-        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
 CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_key)
@@ -418,7 +412,6 @@ CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_ke
 -- History listing and trusted CDC event-causation traversal.
 CREATE INDEX runs_flow ON wamn_run.runs (tenant_id, flow_id, created_at);
 CREATE INDEX runs_release ON wamn_run.runs (tenant_id, catalog_id, catalog_version);
-CREATE INDEX runs_execution_bundle ON wamn_run.runs (tenant_id, execution_bundle_hash);
 CREATE INDEX runs_event_root ON wamn_run.runs (tenant_id, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
 CREATE INDEX runs_response_deadline ON wamn_run.runs (tenant_id, response_deadline_at)
@@ -445,7 +438,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- The guard is column-scoped, so the claim-time record columns must be named
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,
+BEFORE UPDATE OF catalog_id, catalog_version, environment, capture_mode,
                  durability_class, wiring_id, wiring_version, release_version, manifest_digest
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
@@ -483,7 +476,7 @@ REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs FROM PUBLIC, wamn_effect_writer;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
 GRANT INSERT (
     tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
-    environment, execution_bundle_hash, wiring_id, wiring_version, attachment_id, registration_id,
+    environment, wiring_id, wiring_version, attachment_id, registration_id,
     event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
     input_json, invocation_context,
     admission_context_version, platform_revision, idempotency_key,

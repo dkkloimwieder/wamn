@@ -538,7 +538,6 @@ pub struct ValidatedDraftIdentity {
     pub draft: DraftIdentity,
     pub runtime_flow_version: u32,
     pub artifact_hash: String,
-    pub execution_bundle_hash: String,
     pub catalog: CatalogIdentity,
     pub environment: String,
 }

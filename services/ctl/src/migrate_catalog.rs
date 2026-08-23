@@ -546,9 +546,8 @@ async fn carry_forward_release(
     if let Some(source_version) = current_version {
         tx.execute(
             "INSERT INTO catalog.release_flows \
-               (tenant_id, catalog_id, catalog_version, flow_id, flow_version, \
-                execution_bundle_hash) \
-             SELECT tenant_id, catalog_id, $4, flow_id, flow_version, execution_bundle_hash \
+               (tenant_id, catalog_id, catalog_version, flow_id, flow_version) \
+             SELECT tenant_id, catalog_id, $4, flow_id, flow_version \
              FROM catalog.release_flows \
              WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
              ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING",
@@ -707,8 +706,6 @@ mod tests {
         flow_id: &str,
         definitions_prefix: Option<&str>,
     ) {
-        let execution_bundle_bytes = br#"{}"#;
-        let execution_bundle_hash = wamn_catalog::execution_bundle_hash(execution_bundle_bytes);
         let graph_json = format!(r#"{{"flow-id":"{flow_id}"}}"#);
         let graph_hash = format!("{flow_id}-graph-hash");
         let artifact_hash = format!("{flow_id}-artifact-hash");
@@ -727,16 +724,6 @@ mod tests {
         .await
         .unwrap();
         tx.execute(
-            wamn_schema_control::sql::insert_execution_bundle_sql(),
-            &[
-                &tenant,
-                &execution_bundle_hash,
-                &execution_bundle_bytes.as_slice(),
-            ],
-        )
-        .await
-        .unwrap();
-        tx.execute(
             wamn_schema_control::sql::register_release_manifest_sql(),
             &[&tenant, &catalog_id, &catalog_version],
         )
@@ -744,14 +731,7 @@ mod tests {
         .unwrap();
         tx.execute(
             wamn_schema_control::sql::insert_release_flow_sql(),
-            &[
-                &tenant,
-                &catalog_id,
-                &catalog_version,
-                &flow_id,
-                &1_i32,
-                &execution_bundle_hash,
-            ],
+            &[&tenant, &catalog_id, &catalog_version, &flow_id, &1_i32],
         )
         .await
         .unwrap();
@@ -923,8 +903,6 @@ mod tests {
             )
             .await
             .unwrap();
-        let execution_bundle_bytes = br#"{}"#;
-        let execution_bundle_hash = wamn_catalog::execution_bundle_hash(execution_bundle_bytes);
         let seed = client.transaction().await.unwrap();
         for (fixture_tenant, fixture_catalog, version, flow, definitions) in [
             (&tenant, &catalog_id, 1, "main-flow", Some("main")),
@@ -1336,12 +1314,11 @@ mod tests {
             .query_one(
                 "SELECT EXISTS (SELECT 1 FROM catalog.release_flows \
                  WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 2 \
-                   AND flow_id = 'main-flow' AND flow_version = 1 \
-                   AND execution_bundle_hash = $3) \
+                   AND flow_id = 'main-flow' AND flow_version = 1) \
                  AND EXISTS (SELECT 1 FROM catalog.catalog_heads \
                  WHERE tenant_id = $1 AND catalog_id = $2 AND environment = 'dev' \
                    AND applied_catalog_version = 2)",
-                &[&tenant, &catalog_id, &execution_bundle_hash],
+                &[&tenant, &catalog_id],
             )
             .await
             .unwrap()

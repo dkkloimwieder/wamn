@@ -15,7 +15,7 @@
 //! It also owns `wamn-ftfc.2`'s S1 write path: a checkout client reads
 //! working-tree definition files and submits their content with the revision it
 //! last saw. That half proves the submitted document reaches the canonical
-//! store, that the exact stored revision is the one the canonical validate read
+//! store, that the exact stored revision is the one the canonical store read
 //! returns, that a stale working copy refuses before mutating anything, that
 //! the public HTTP path and the canonical audited handler path agree, and that
 //! attribution a client attaches is inert.
@@ -56,10 +56,6 @@ const PROJECT: &str = "receiving";
 const OTHER_PROJECT: &str = "shipping";
 const ENVIRONMENT: &str = "dev";
 const AUTHOR_PASSWORD: &str = "wamn-management-live";
-/// Bytes standing in for the in-image flowrunner (wamn-0h0g.15.50). This gate
-/// mounts no `validate` route, so their content is inert here; what matters is
-/// that the process refuses to start without them.
-const FLOWRUNNER_BYTES: &[u8] = b"management-live-flowrunner";
 /// Fixed loopback port for the gate. The gate is serial and env-gated, so a
 /// fixed port is simpler than plumbing an ephemeral one out of the listener.
 const BIND: &str = "127.0.0.1:18088";
@@ -563,13 +559,8 @@ async fn authoring_durable_counts(admin: &Client) -> Vec<i64> {
     (0..row.len()).map(|index| row.get(index)).collect()
 }
 
-/// Read one exact draft revision through the very statement
-/// `validate_flow_draft` selects with, so this gate cannot agree with the
-/// canonical read by accident.
-///
-/// `validate` is the only command that resolves a mutable revision; `draft-run`
-/// and `promote` consume the immutable pin it produces, so they inherit exactly
-/// whatever this returns.
+/// Read one exact draft revision through the canonical mutable-document store
+/// statement, so this gate cannot agree with the production read by accident.
 async fn draft_at_revision(admin: &Client, draft: &str, revision: i64) -> Option<(String, String)> {
     admin
         .query_opt(
@@ -641,13 +632,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("provision the gate");
 
-    // The minting pod's flowrunner source (wamn-0h0g.15.50). In production it is
-    // the component the image ships; here it is a file, because the surface must
-    // refuse to start without one and this gate proves it can start.
-    let flowrunner_fixture = std::env::temp_dir().join("wamn-management-live-flowrunner.wasm");
-    std::fs::write(&flowrunner_fixture, FLOWRUNNER_BYTES)
-        .expect("stage the in-image flowrunner fixture");
-
     // Two admitted principals for the same project, one service principal, one
     // principal admitted only for a different project, and one with no role.
     let alice = admitted_human(&admin, "alice@example.com", PROJECT, "project-author")
@@ -713,7 +697,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             environment: ENVIRONMENT.to_owned(),
             tenant: TENANT.to_owned(),
             source_schema: SOURCE_SCHEMA.to_owned(),
-            flowrunner: flowrunner_fixture.clone(),
         },
     ));
     // The listener binds inside the spawned task; give it the connection.
@@ -1061,7 +1044,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // returns, carrying the document the client submitted.
     let (flow_id, stored) = draft_at_revision(&admin, "draft-checkout", 2)
         .await
-        .expect("the canonical validate read finds the revision the client was handed");
+        .expect("the canonical store read finds the revision the client was handed");
     assert_eq!(flow_id, "receive-material");
     assert_eq!(
         as_json(&stored),
@@ -1069,7 +1052,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "the stored revision is not the document the client submitted"
     );
     // A superseded revision is not separately addressable: the draft is one
-    // mutable document, so `validate` can only ever pin the current revision.
+    // mutable document, so the store exposes only its current revision.
     assert!(
         draft_at_revision(&admin, "draft-checkout", 1)
             .await
@@ -1219,13 +1202,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("authorize the parity author")
         .expect("alice is admitted");
-    let mut backend = InternalAuthoringBackend::connect(
-        &author_url(&url),
-        &authoring_scope(),
-        FLOWRUNNER_BYTES.to_vec(),
-    )
-    .await
-    .expect("connect the canonical authoring backend");
+    let mut backend = InternalAuthoringBackend::connect(&author_url(&url), &authoring_scope())
+        .await
+        .expect("connect the canonical authoring backend");
     let scope = CommandScope::new(TENANT, ORG, PROJECT, ENVIRONMENT);
     let request = |draft: &str| SaveFlowDraft {
         tenant_id: TENANT.to_owned(),
@@ -1302,13 +1281,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // Separate database connections eliminate the HTTP surface's process-local
     // mutex from this proof. Exact retries produce one mutation and one ledger
     // row, then both callers receive the exact same stored envelope bytes.
-    let mut concurrent_backend = InternalAuthoringBackend::connect(
-        &author_url(&url),
-        &authoring_scope(),
-        FLOWRUNNER_BYTES.to_vec(),
-    )
-    .await
-    .expect("connect the concurrent authoring backend");
+    let mut concurrent_backend =
+        InternalAuthoringBackend::connect(&author_url(&url), &authoring_scope())
+            .await
+            .expect("connect the concurrent authoring backend");
     let exact_document = save_document("concurrent-exact", PROJECT, 0, "draft-concurrent-exact");
     let exact_command: wamn_authoring_model::AuthoringRequest =
         serde_json::from_value(as_json(&exact_document)["body"].clone()).unwrap();
@@ -1508,8 +1484,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
 
     // ---- a half-finished edit is a preserved draft, not a failure ----------
-    // This is the normal state of a file between two keystrokes. Save stores
-    // it; `validate` is where unparseable text becomes a typed refusal.
+    // This is the normal state of a file between two keystrokes. Save stores it
+    // without parsing.
     let ledger_before = ledger_rows(&admin).await.len();
     let broken = "{\"schema-version\":\"0.1\",\n  \"nodes\": [";
     let broken_file = edit(&root, "broken.flow.json", broken);

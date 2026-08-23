@@ -1,4 +1,4 @@
--- Portable authoring, release, test, and execution-plan storage for the T1
+-- Portable authoring, release, and test storage for the T1
 -- control database (wamn-0h0g.9.9). Apply after system-schema.sql as
 -- wamn_system. This artifact is deliberately dormant: it grants no production
 -- role access and installs no project/runtime compatibility path.
@@ -61,20 +61,6 @@ CREATE TABLE IF NOT EXISTS catalog.flow_artifacts (
     PRIMARY KEY (tenant_id, flow_id, flow_version)
 );
 
-CREATE TABLE IF NOT EXISTS catalog.execution_bundles (
-    tenant_id             text NOT NULL CHECK (tenant_id <> ''),
-    execution_bundle_hash text NOT NULL
-        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
-    format_version        text NOT NULL CHECK (format_version = '0.1'),
-    exact_bytes           bytea NOT NULL,
-    byte_length           int NOT NULL CHECK (byte_length = octet_length(exact_bytes)),
-    created_at            timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, execution_bundle_hash),
-    CONSTRAINT execution_bundles_exact_hash CHECK (
-        execution_bundle_hash = 'sha256:' || encode(sha256(exact_bytes), 'hex')
-    )
-);
-
 CREATE TABLE IF NOT EXISTS catalog.release_manifests (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
@@ -92,18 +78,12 @@ CREATE TABLE IF NOT EXISTS catalog.release_flows (
     catalog_version      int NOT NULL,
     flow_id              text NOT NULL,
     flow_version         int NOT NULL,
-    execution_bundle_hash text NOT NULL
-        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
     PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, flow_id, flow_version)
-        REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version),
-    FOREIGN KEY (tenant_id, execution_bundle_hash)
-        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version)
 );
-CREATE INDEX IF NOT EXISTS release_flows_execution_bundle
-    ON catalog.release_flows (tenant_id, execution_bundle_hash);
 
 CREATE TABLE IF NOT EXISTS catalog.catalog_heads (
     tenant_id              text NOT NULL CHECK (tenant_id <> ''),
@@ -188,8 +168,6 @@ CREATE TABLE IF NOT EXISTS catalog.validated_flow_drafts (
     graph_json                 jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object'),
     graph_hash                 text NOT NULL CHECK (graph_hash <> ''),
     draft_artifact_hash        text NOT NULL CHECK (draft_artifact_hash <> ''),
-    execution_bundle_hash      text NOT NULL
-        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
     binding_base_artifact_hash text NOT NULL CHECK (binding_base_artifact_hash <> ''),
     validated_draft_hash       text NOT NULL CHECK (validated_draft_hash <> ''),
     validated_at               timestamptz NOT NULL DEFAULT now(),
@@ -197,13 +175,10 @@ CREATE TABLE IF NOT EXISTS catalog.validated_flow_drafts (
     CONSTRAINT validated_flow_drafts_exact_pin UNIQUE (
         tenant_id, draft_id, draft_revision, draft_content_hash,
         catalog_id, catalog_version, environment,
-        runtime_flow_version, draft_artifact_hash, execution_bundle_hash,
-        binding_base_artifact_hash
+        runtime_flow_version, draft_artifact_hash, binding_base_artifact_hash
     ),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.catalogs (tenant_id, catalog_id, version),
-    FOREIGN KEY (tenant_id, execution_bundle_hash)
-        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
 );
 
 CREATE TABLE IF NOT EXISTS catalog.release_exposure_manifests (
@@ -454,8 +429,6 @@ CREATE TABLE IF NOT EXISTS catalog.release_flow_test_evidence (
     validated_draft_id         text NOT NULL CHECK (validated_draft_id <> ''),
     report_id                  text NOT NULL CHECK (report_id <> ''),
     source_artifact_hash       text NOT NULL CHECK (source_artifact_hash <> ''),
-    execution_bundle_hash      text NOT NULL
-        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
     tested_resolution_map_bytes bytea NOT NULL,
     tested_resolution_map_hash text NOT NULL
         CHECK (tested_resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'),
@@ -468,8 +441,6 @@ CREATE TABLE IF NOT EXISTS catalog.release_flow_test_evidence (
         REFERENCES catalog.validated_flow_drafts (tenant_id, validated_draft_hash),
     FOREIGN KEY (tenant_id, report_id)
         REFERENCES wamn_run.authoring_test_reports (tenant_id, report_id),
-    FOREIGN KEY (tenant_id, execution_bundle_hash)
-        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash),
     CONSTRAINT release_flow_test_evidence_map_hash_check CHECK (
         tested_resolution_map_hash = 'sha256:' || encode(
             sha256(tested_resolution_map_bytes), 'hex'
@@ -493,6 +464,12 @@ CREATE TABLE IF NOT EXISTS catalog.deployment_attestations (
         REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version)
 );
 
+DROP FUNCTION IF EXISTS catalog.register_release_flow_test_evidence(
+    text, text, int, text, text, text, text, text, bytea, text
+);
+DROP FUNCTION IF EXISTS catalog.register_release_flow_test_evidence(
+    text, text, int, text, text, text, text, text, text, bytea, text
+);
 CREATE OR REPLACE FUNCTION catalog.register_release_flow_test_evidence(
     p_tenant_id text,
     p_catalog_id text,
@@ -501,7 +478,6 @@ CREATE OR REPLACE FUNCTION catalog.register_release_flow_test_evidence(
     p_validated_draft_id text,
     p_report_id text,
     p_source_artifact_hash text,
-    p_execution_bundle_hash text,
     p_tested_resolution_map_bytes bytea,
     p_tested_resolution_map_hash text
 )
@@ -514,13 +490,12 @@ BEGIN
     INSERT INTO catalog.release_flow_test_evidence (
         tenant_id, catalog_id, catalog_version, flow_id,
         validated_draft_id, report_id, source_artifact_hash,
-        execution_bundle_hash, tested_resolution_map_bytes,
-        tested_resolution_map_hash
+        tested_resolution_map_bytes, tested_resolution_map_hash
     ) VALUES (
         p_tenant_id, p_catalog_id, p_catalog_version, p_flow_id,
         p_validated_draft_id, p_report_id,
-        p_source_artifact_hash, p_execution_bundle_hash,
-        p_tested_resolution_map_bytes, p_tested_resolution_map_hash
+        p_source_artifact_hash, p_tested_resolution_map_bytes,
+        p_tested_resolution_map_hash
     )
     ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING
     RETURNING created_at INTO existing_created_at;
@@ -538,7 +513,6 @@ BEGIN
       AND validated_draft_id = p_validated_draft_id
       AND report_id = p_report_id
       AND source_artifact_hash = p_source_artifact_hash
-      AND execution_bundle_hash = p_execution_bundle_hash
       AND tested_resolution_map_bytes = p_tested_resolution_map_bytes
       AND tested_resolution_map_hash = p_tested_resolution_map_hash;
 
@@ -550,7 +524,7 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.register_release_flow_test_evidence(
-    text, text, int, text, text, text, text, text, bytea, text
+    text, text, int, text, text, text, text, bytea, text
 ) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION catalog.register_deployment_attestation(
@@ -607,6 +581,26 @@ REVOKE ALL ON FUNCTION catalog.register_deployment_attestation(
     text, text, int, text, text, text, text, timestamptz
 ) FROM PUBLIC;
 
+-- Persisted bundle bytes are deliberately discarded without archive or
+-- conversion. Drop every direct carrier first so the final RESTRICT drop is a
+-- dependency tripwire, not an instruction to amputate an un-inventoried object.
+DO $retire_execution_bundles$
+BEGIN
+    LOCK TABLE catalog.release_flows, catalog.validated_flow_drafts,
+        catalog.release_flow_test_evidence IN ACCESS EXCLUSIVE MODE;
+    ALTER TABLE catalog.release_flows
+        DROP COLUMN IF EXISTS execution_bundle_hash RESTRICT;
+    ALTER TABLE catalog.validated_flow_drafts
+        DROP COLUMN IF EXISTS execution_bundle_hash RESTRICT;
+    ALTER TABLE catalog.release_flow_test_evidence
+        DROP COLUMN IF EXISTS execution_bundle_hash RESTRICT;
+    IF to_regclass('catalog.execution_bundles') IS NOT NULL THEN
+        LOCK TABLE catalog.execution_bundles IN ACCESS EXCLUSIVE MODE;
+        DROP TABLE catalog.execution_bundles RESTRICT;
+    END IF;
+END
+$retire_execution_bundles$;
+
 -- Tenant isolation is structural even while the dormant tables are owner-only.
 DO $policies$
 DECLARE
@@ -615,7 +609,7 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.catalogs', 'catalog.flow_artifacts',
-        'catalog.execution_bundles', 'catalog.release_manifests',
+        'catalog.release_manifests',
         'catalog.release_flows', 'catalog.catalog_heads',
         'catalog.flow_drafts', 'catalog.validated_flow_drafts',
         'catalog.release_exposure_manifests', 'catalog.release_sources',
@@ -651,7 +645,7 @@ DECLARE
     trigger_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.flow_artifacts', 'catalog.execution_bundles',
+        'catalog.flow_artifacts',
         'catalog.release_manifests', 'catalog.release_flows',
         'catalog.validated_flow_drafts', 'catalog.release_exposure_manifests',
         'catalog.release_sources', 'catalog.release_attachments',
@@ -712,9 +706,6 @@ $triggers$;
 -- LEVEL SECURITY with no `app.tenant`, the applying owner reads zero rows from
 -- every retained relation, so an emptiness guard or an `INSERT ... SELECT` copy
 -- would silently treat a populated table as empty (wamn-0h0g.15.91).
-DROP FUNCTION IF EXISTS catalog.register_release_flow_test_evidence(
-    text, text, int, text, text, text, text, text, text, bytea, text
-);
 DROP FUNCTION IF EXISTS catalog.register_deployment_attestation(
     text, text, int, text, text, text, text, jsonb, timestamptz
 );
@@ -820,7 +811,7 @@ BEGIN
     IF catalog_tables IS DISTINCT FROM ARRAY[
         'authoring_command_audit', 'catalog_heads', 'catalogs',
         'component_library', 'connection_requirements', 'deployment_attestations',
-        'draft_safe_connection_grants', 'execution_bundles', 'flow_artifacts',
+        'draft_safe_connection_grants', 'flow_artifacts',
         'flow_drafts', 'release_attachments', 'release_exposure_manifests',
         'release_flow_test_evidence', 'release_flows', 'release_manifests',
         'release_sources', 'validated_flow_drafts'
@@ -851,7 +842,6 @@ BEGIN
         'catalog_version:integer:true', 'flow_id:text:true',
         'validated_draft_id:text:true', 'report_id:text:true',
         'source_artifact_hash:text:true',
-        'execution_bundle_hash:text:true',
         'tested_resolution_map_bytes:bytea:true',
         'tested_resolution_map_hash:text:true',
         'created_at:timestamp with time zone:true'
@@ -888,7 +878,7 @@ BEGIN
     WHERE con.conrelid = 'catalog.release_flow_test_evidence'::regclass
       AND con.contype <> 'n';
     IF evidence_constraints_fingerprint <>
-       '8b8b8486f43076be7fe3a056a4f01acb43b4d78febbe36843c8ebde9d27d1816'
+       '96216cbdb364cd136ed8d1e925673cc8870beb1d15f9b016c7268b78066ac0a7'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'release-flow-test-evidence-constraint-drift';
@@ -913,7 +903,7 @@ BEGIN
     WITH retained_relations(relation) AS (
         VALUES
             ('catalog.catalogs'), ('catalog.flow_artifacts'),
-            ('catalog.execution_bundles'), ('catalog.release_manifests'),
+            ('catalog.release_manifests'),
             ('catalog.release_flows'), ('catalog.catalog_heads'),
             ('catalog.component_library'),
             ('catalog.flow_drafts'), ('catalog.validated_flow_drafts'),
@@ -954,7 +944,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '6332d4aabea5da44eebe7c2fb28fe89fc55d9978625db2fbf17d74b7446db0d1'
+       '15a4659022aa6802a354623a3dea548c17b45659f586807c16e441536459979e'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';
@@ -1072,7 +1062,7 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.flow_artifacts', 'catalog.execution_bundles',
+        'catalog.flow_artifacts',
         'catalog.release_manifests', 'catalog.release_flows',
         'catalog.catalog_heads', 'catalog.flow_drafts',
         'catalog.validated_flow_drafts', 'catalog.connection_requirements',
@@ -1121,11 +1111,12 @@ GRANT SELECT, INSERT, UPDATE ON catalog.flow_drafts TO wamn_control_author;
 
 -- Append-only facts: immutable after append, enforced by their own triggers as
 -- well as by the absence of UPDATE and DELETE here.
-REVOKE ALL PRIVILEGES ON catalog.validated_flow_drafts, catalog.execution_bundles,
+REVOKE ALL PRIVILEGES ON catalog.validated_flow_drafts,
     catalog.authoring_command_audit, wamn_run.authoring_test_reports
     FROM wamn_control_author;
-GRANT SELECT, INSERT ON catalog.validated_flow_drafts, catalog.execution_bundles,
-    catalog.authoring_command_audit, wamn_run.authoring_test_reports
+GRANT SELECT ON catalog.validated_flow_drafts TO wamn_control_author;
+GRANT SELECT, INSERT ON catalog.authoring_command_audit,
+    wamn_run.authoring_test_reports
     TO wamn_control_author;
 
 -- Reservation and case-map state machines: exactly the transitions they landed
@@ -1179,9 +1170,6 @@ BEGIN
                  ('catalog', 'flow_drafts', 'INSERT'),
                  ('catalog', 'flow_drafts', 'UPDATE'),
                  ('catalog', 'validated_flow_drafts', 'SELECT'),
-                 ('catalog', 'validated_flow_drafts', 'INSERT'),
-                 ('catalog', 'execution_bundles', 'SELECT'),
-                 ('catalog', 'execution_bundles', 'INSERT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'INSERT'),
                  ('wamn_run', 'authoring_test_reports', 'SELECT'),
@@ -1209,7 +1197,7 @@ BEGIN
                                           'CREATE')
        OR pg_catalog.has_function_privilege(
             'wamn_control_author',
-            'catalog.register_release_flow_test_evidence(text,text,int,text,text,text,text,text,bytea,text)',
+            'catalog.register_release_flow_test_evidence(text,text,int,text,text,text,text,bytea,text)',
             'EXECUTE')
        OR pg_catalog.has_function_privilege(
             'wamn_control_author',

@@ -4616,15 +4616,12 @@ dependencies = [
  "tracing",
  "url",
  "wamn-authoring-model",
- "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
- "wamn-execution-host",
  "wamn-flow",
  "wamn-platform-identity",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-standard-nodes",
  "wash-runtime",
 ]
 

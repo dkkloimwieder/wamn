@@ -33,7 +33,6 @@ fn portable_store_record_is_exact_and_storage_only() {
     for relation in [
         "catalog.catalogs",
         "catalog.flow_artifacts",
-        "catalog.execution_bundles",
         "catalog.release_manifests",
         "catalog.release_flows",
         "catalog.catalog_heads",
@@ -85,9 +84,8 @@ fn portable_store_record_is_exact_and_storage_only() {
         sql.contains("REFERENCES catalog.validated_flow_drafts (tenant_id, validated_draft_hash)")
     );
     assert!(sql.contains("REFERENCES wamn_run.authoring_test_reports (tenant_id, report_id)"));
-    assert!(
-        sql.contains("REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)")
-    );
+    assert!(!sql.contains("CREATE TABLE IF NOT EXISTS catalog.execution_bundles"));
+    assert!(sql.contains("DROP TABLE catalog.execution_bundles RESTRICT"));
     assert!(!sql.contains("REFERENCES registry."));
     assert!(!sql.contains("REFERENCES catalog.connection_generations"));
     // wamn-0h0g.8.18 ended the dormancy for exactly ONE principal. Everything the
@@ -153,7 +151,7 @@ fn portable_store_record_is_exact_and_storage_only() {
         E'\n' ORDER BY (con.contype::text || ':'
         || pg_get_constraintdef(con.oid, true)) COLLATE "C""#
     ));
-    assert!(sql.contains("8b8b8486f43076be7fe3a056a4f01acb43b4d78febbe36843c8ebde9d27d1816"));
+    assert!(sql.contains("96216cbdb364cd136ed8d1e925673cc8870beb1d15f9b016c7268b78066ac0a7"));
     assert!(!sql.contains("ab4c8a54366eab426d72c31c81531e929a4b615d051f300be7c993c628699f78"));
     assert!(!sql.contains("06bf7790877f52c2094511dc368d605f7de4b112383fc6b857d8886844160c85"));
     assert!(!sql.contains("7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed"));
@@ -336,11 +334,10 @@ fn control_author_authority_is_the_exact_ratified_class() {
         "catalog.catalog_heads",
         "catalog.connection_requirements",
         "catalog.draft_safe_connection_grants",
+        "catalog.validated_flow_drafts",
     ];
     // Append-only facts: immutable after append.
     let append_only = [
-        "catalog.validated_flow_drafts",
-        "catalog.execution_bundles",
         "catalog.authoring_command_audit",
         "wamn_run.authoring_test_reports",
     ];
@@ -681,7 +678,6 @@ fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
     let map_bytes = wamn_flow::canonical_json_bytes(&resolution);
     let map_hash = wamn_flow::canonical_json_sha256(&resolution);
     let map_hex = hex_from_bytes(&map_bytes);
-    let bundle_hex = hex_from_bytes(b"plan");
 
     let mut script = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
     script.push_str(
@@ -710,16 +706,16 @@ fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype <> 'n') = 15,
-         'release evidence must retain exactly 15 governed constraints';
+            AND contype <> 'n') = 13,
+         'release evidence must retain exactly 13 governed constraints';
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype = 'c') = 10,
-         'release evidence must retain exactly ten CHECK constraints';
+            AND contype = 'c') = 9,
+         'release evidence must retain exactly nine CHECK constraints';
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype = 'f') = 4,
-         'release evidence must retain exactly four local foreign keys';
+            AND contype = 'f') = 3,
+         'release evidence must retain exactly three local foreign keys';
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
             AND contype = 'p') = 1,
@@ -732,7 +728,7 @@ DO $$ BEGIN
           FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
             AND contype <> 'n') =
-         '8b8b8486f43076be7fe3a056a4f01acb43b4d78febbe36843c8ebde9d27d1816',
+         '96216cbdb364cd136ed8d1e925673cc8870beb1d15f9b016c7268b78066ac0a7',
          'release evidence constraint fingerprint must be version-stable';
 END $$;
 
@@ -743,29 +739,22 @@ VALUES ('tenant-a','cat',1,'dev','0.1','applied');
 INSERT INTO catalog.flow_artifacts
   (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash)
 VALUES ('tenant-a','flow-a',1,'0.1','{{}}','graph','artifact-a');
-INSERT INTO catalog.execution_bundles
-  (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length)
-VALUES ('tenant-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-        '0.1',decode('{bundle_hex}','hex'),4);
 INSERT INTO catalog.release_manifests
   (tenant_id,catalog_id,catalog_version)
 VALUES ('tenant-a','cat',1);
 INSERT INTO catalog.release_flows
-  (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash)
-VALUES ('tenant-a','cat',1,'flow-a',1,
-        'sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'));
+  (tenant_id,catalog_id,catalog_version,flow_id,flow_version)
+VALUES ('tenant-a','cat',1,'flow-a',1);
 INSERT INTO catalog.flow_drafts
   (tenant_id,draft_id,flow_id,revision,definition)
 VALUES ('tenant-a','draft-a','flow-a',1,'{{}}');
 INSERT INTO catalog.validated_flow_drafts
   (tenant_id,draft_id,draft_revision,draft_edited_at,draft_content_hash,
    catalog_id,catalog_version,environment,flow_id,runtime_flow_version,
-   graph_json,graph_hash,draft_artifact_hash,execution_bundle_hash,
-   binding_base_artifact_hash,validated_draft_hash)
+   graph_json,graph_hash,draft_artifact_hash,binding_base_artifact_hash,
+   validated_draft_hash)
 VALUES ('tenant-a','draft-a',1,now(),'draft-content','cat',1,'dev','flow-a',1,
-        '{{}}','graph','artifact-a',
-        'sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-        'artifact-a','validated-a');
+        '{{}}','graph','artifact-a','artifact-a','validated-a');
 INSERT INTO wamn_run.authoring_test_run_reservations
   (tenant_id,report_id,command_hash,validated_draft_id,
    catalog_id,catalog_version,case_count,whole_deadline_at)
@@ -782,12 +771,10 @@ DO $$ DECLARE
 BEGIN
   first_created_at := catalog.register_release_flow_test_evidence(
     'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-    decode('{map_hex}','hex'),'{map_hash}');
+    'artifact-a',decode('{map_hex}','hex'),'{map_hash}');
   retry_created_at := catalog.register_release_flow_test_evidence(
     'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-    decode('{map_hex}','hex'),'{map_hash}');
+    'artifact-a',decode('{map_hex}','hex'),'{map_hash}');
   ASSERT first_created_at = retry_created_at,
          'exact evidence retry must return the original server timestamp';
   ASSERT (SELECT tested_resolution_map_bytes
@@ -799,8 +786,7 @@ END $$;
 DO $$ BEGIN BEGIN
   PERFORM catalog.register_release_flow_test_evidence(
     'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-    convert_to('{{"flow-a":"changed"}}','UTF8'),
+    'artifact-a',convert_to('{{"flow-a":"changed"}}','UTF8'),
     'sha256:'||encode(sha256(convert_to('{{"flow-a":"changed"}}','UTF8')),'hex'));
   ASSERT false, 'same evidence coordinate with different bytes must conflict';
 EXCEPTION WHEN unique_violation THEN
@@ -810,22 +796,18 @@ END; END $$;
 DO $$ BEGIN BEGIN
   INSERT INTO catalog.release_flow_test_evidence
     (tenant_id,catalog_id,catalog_version,flow_id,validated_draft_id,report_id,
-     source_artifact_hash,execution_bundle_hash,
-     tested_resolution_map_bytes,tested_resolution_map_hash)
+     source_artifact_hash,tested_resolution_map_bytes,tested_resolution_map_hash)
   VALUES ('tenant-a','cat',1,'missing','validated-a','report-a',
-          'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-          decode('{map_hex}','hex'),'sha256:'||repeat('0',64));
+          'artifact-a',decode('{map_hex}','hex'),'sha256:'||repeat('0',64));
   ASSERT false, 'bad tested map hash must fail';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
 DO $$ BEGIN BEGIN
   INSERT INTO catalog.release_flow_test_evidence
     (tenant_id,catalog_id,catalog_version,flow_id,validated_draft_id,report_id,
-     source_artifact_hash,execution_bundle_hash,
-     tested_resolution_map_bytes,tested_resolution_map_hash)
+     source_artifact_hash,tested_resolution_map_bytes,tested_resolution_map_hash)
   VALUES ('tenant-a','cat',1,'missing-flow','validated-a','report-a',
-          'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-          decode('{map_hex}','hex'),'{map_hash}');
+          'artifact-a',decode('{map_hex}','hex'),'{map_hash}');
   ASSERT false, 'evidence coordinates must retain local foreign keys';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
@@ -950,7 +932,6 @@ fn control_author_two_tenant_authority_holds_on_postgres() {
     assert_ne!(author_a, author_b);
     const PASSWORD: &str = "control-author-live-proof";
 
-    let bundle_hex = hex_from_bytes(b"plan");
     let mut install = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
     install.push_str(
         "DROP SCHEMA IF EXISTS catalog CASCADE;\n\
@@ -1061,17 +1042,12 @@ DO $seed$ DECLARE tenant text; BEGIN
     INSERT INTO catalog.flow_artifacts
       (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash)
     VALUES (tenant,'flow-a',1,'0.1','{{}}','graph','artifact-'||tenant);
-    INSERT INTO catalog.execution_bundles
-      (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length)
-    VALUES (tenant,'sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-            '0.1',decode('{bundle_hex}','hex'),4);
     INSERT INTO catalog.release_manifests
       (tenant_id,catalog_id,catalog_version)
     VALUES (tenant,'cat',1);
     INSERT INTO catalog.release_flows
-      (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash)
-    VALUES (tenant,'cat',1,'flow-a',1,
-            'sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'));
+      (tenant_id,catalog_id,catalog_version,flow_id,flow_version)
+    VALUES (tenant,'cat',1,'flow-a',1);
     INSERT INTO catalog.flow_drafts
       (tenant_id,draft_id,flow_id,revision,definition)
     VALUES (tenant,'draft-a','flow-a',1,'{{}}');
@@ -1128,12 +1104,6 @@ UPDATE catalog.flow_drafts
    SET revision = revision + 1, definition = '{{"edited":true}}',
        edited_at = clock_timestamp() + interval '1 microsecond'
  WHERE tenant_id = 'tenant-a' AND draft_id = 'draft-b';
-INSERT INTO catalog.execution_bundles
-  (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length)
-VALUES ('tenant-a',
-        'sha256:'||encode(sha256(convert_to('authored','UTF8')),'hex'),
-        '0.1',convert_to('authored','UTF8'),
-        octet_length(convert_to('authored','UTF8')));
 INSERT INTO catalog.authoring_command_audit
   (tenant_id,command_id,command_kind,principal_id,principal_kind,principal_subject,
    effective_role,org,project,environment,target_ref,request_hash,outcome_bytes)
@@ -1184,7 +1154,7 @@ DO $denials$ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN PERFORM catalog.register_release_flow_test_evidence(
       'tenant-a','cat',1,'flow-a','validated-tenant-a','report-a','artifact-tenant-a',
-      'sha256:'||repeat('3',64),convert_to('{{}}','UTF8'),'sha256:'||repeat('4',64));
+      convert_to('{{}}','UTF8'),'sha256:'||repeat('4',64));
     ASSERT false, 'the author published evidence';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN PERFORM catalog.register_deployment_attestation(
@@ -1224,9 +1194,6 @@ DO $denials$ BEGIN
   EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
   BEGIN UPDATE catalog.validated_flow_drafts SET flow_id = 'moved';
     ASSERT false, 'the author mutated an immutable validation';
-  EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
-  BEGIN UPDATE catalog.execution_bundles SET format_version = '9.9';
-    ASSERT false, 'the author mutated an immutable bundle';
   EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
   BEGIN UPDATE wamn_run.authoring_test_reports SET passed = false;
     ASSERT false, 'the author mutated a finalized report';

@@ -85,13 +85,6 @@ mod tests {
             args.control_authoring_database_url,
             "postgres://control.invalid/wamn-system"
         );
-        // The in-image component the minting pod derives its runtime revision
-        // from defaults to the same path the executor loads (wamn-0h0g.15.50).
-        assert_eq!(
-            args.flowrunner,
-            std::path::Path::new(wamn_execution_host::DEFAULT_FLOWRUNNER_PATH)
-        );
-
         assert!(Cli::try_parse_from(["wamn-scenario-worker"]).is_err());
         assert!(Cli::try_parse_from(["wamn-scenario-worker", "--tenant", "tenant-a"]).is_err());
         // Every scope component is required: none of them has a default that

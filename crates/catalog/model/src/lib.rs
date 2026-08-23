@@ -11,8 +11,6 @@
 //! transaction, or clock is reachable from here.
 
 mod component_library;
-mod execution_node_id;
-mod execution_plan;
 mod serving_manifest;
 mod wiring;
 mod wiring_activation;
@@ -23,15 +21,6 @@ pub use component_library::{
     ComponentDeclaration, ComponentFactError, ComponentFactErrorKind,
     ComponentParameterDeclaration, ComponentPortDeclaration, ComponentSchema,
     normalize_component_fact, schema_digests_match,
-};
-pub use execution_node_id::{ExecutionNodeId, ExecutionNodeIdError};
-pub use execution_plan::{
-    CALLABLE_CONTRACT_VERSION, CallFlowInstruction, CallableContract, CallableEffectCeiling,
-    CallableReturnContract, EXECUTION_PLAN_FORMAT_VERSION, ExecutionConnectionRequirement,
-    ExecutionEffectPolicy, ExecutionPlanBody, ExecutionPlanEdge, ExecutionPlanHeader,
-    ExecutionPlanNode, ExecutionPlanV2, ExecutionRuntimeRevision, ExecutionSourceMapEntry,
-    HOST_EFFECT_CONTRACT_VERSION, PLAN_COMPILER_REVISION, RootTerminalBehavior,
-    entry_input_schema_hash, execution_bundle_hash, read_execution_plan,
 };
 pub use serving_manifest::{
     MAX_SERVING_MANIFEST_BYTES, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
@@ -98,11 +87,8 @@ pub enum CatalogIdentityError {
         message: String,
     },
     GraphHashMismatch,
-    DraftContentHashMismatch,
-    ValidatedDraftIdentityMismatch,
     ArtifactIdMismatch,
     ArtifactHashMismatch,
-    ExecutionBundleHashMismatch,
     UnresolvedInterface {
         node_type: String,
     },
@@ -184,18 +170,6 @@ impl fmt::Display for CatalogIdentityError {
                 )
             }
             Self::GraphHashMismatch => write!(formatter, "flow graph hash does not match"),
-            Self::DraftContentHashMismatch => {
-                write!(
-                    formatter,
-                    "draft content hash does not match draft document"
-                )
-            }
-            Self::ValidatedDraftIdentityMismatch => {
-                write!(
-                    formatter,
-                    "validated draft identity does not match its exact pins"
-                )
-            }
             Self::ArtifactIdMismatch => {
                 write!(
                     formatter,
@@ -203,12 +177,6 @@ impl fmt::Display for CatalogIdentityError {
                 )
             }
             Self::ArtifactHashMismatch => write!(formatter, "flow artifact hash does not match"),
-            Self::ExecutionBundleHashMismatch => {
-                write!(
-                    formatter,
-                    "execution bundle hash differs from its exact bytes"
-                )
-            }
             Self::UnresolvedInterface { node_type } => {
                 write!(
                     formatter,
@@ -340,9 +308,9 @@ impl fmt::Display for ArtifactHash {
 /// content by [`ServingManifest::from_canonical_bytes`]. From there it travels
 /// further than any other hash in the system — through the claim-time run
 /// recording, effect-authority equality, and the deployment attestation, across
-/// two host processes and four manifest readers. Every flow-level hash it could
-/// be mistaken for (`plan-hash`, `source-artifact`, `binding-base-artifact`,
-/// `definition-hash`) is a bare `String`, so the type is what keeps them apart.
+/// two host processes and four manifest readers. Other catalog hashes it could
+/// be mistaken for (`component-digest`, `wiring-hash`, `definition-hash`) are
+/// bare `String`s, so the type is what keeps them apart.
 ///
 /// Like [`DefinitionHash`] and [`ArtifactHash`] it derives `Serialize` but *not*
 /// `Deserialize`: a derived `Deserialize` would bypass [`Self::parse`] at exactly
@@ -705,165 +673,9 @@ impl DraftContentHash {
     }
 }
 
-/// Exact inputs bound by one validated draft execution identity.
-#[derive(Debug, Clone, Copy)]
-pub struct ValidatedDraftIdentityInput<'a> {
-    pub tenant_id: &'a str,
-    pub draft_id: &'a str,
-    pub draft_revision: u64,
-    pub flow_id: &'a str,
-    pub runtime_flow_version: u32,
-    pub draft_content_hash: &'a str,
-    pub draft_artifact_hash: &'a str,
-    pub execution_bundle_hash: &'a str,
-    pub catalog_id: &'a str,
-    pub catalog_version: u32,
-    pub environment: &'a str,
-    pub binding_base_artifact_hash: &'a str,
-}
-
-/// Content address binding a validated graph to its exact executable and environment view.
-///
-/// The bundle and artifact hashes are independently reverified at load, then this identity
-/// prevents either valid value from being transplanted onto a different validated draft.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct ValidatedDraftIdentity(String);
-
-impl ValidatedDraftIdentity {
-    pub fn new(input: ValidatedDraftIdentityInput<'_>) -> Result<Self, CatalogIdentityError> {
-        for (value, field) in [
-            (input.tenant_id, "tenant-id"),
-            (input.draft_id, "draft-id"),
-            (input.flow_id, "flow-id"),
-            (input.catalog_id, "catalog-id"),
-            (input.environment, "environment"),
-        ] {
-            validate_text(value, field)?;
-        }
-        for (value, field) in [
-            (input.draft_content_hash, "draft-content-hash"),
-            (input.draft_artifact_hash, "draft-artifact-hash"),
-            (input.execution_bundle_hash, "execution-bundle-hash"),
-            (
-                input.binding_base_artifact_hash,
-                "binding-base-artifact-hash",
-            ),
-        ] {
-            validate_digest(value, field)?;
-        }
-        if input.runtime_flow_version == 0 {
-            return Err(CatalogIdentityError::ZeroVersion {
-                field: "runtime-flow-version",
-            });
-        }
-        if input.draft_revision == 0 {
-            return Err(CatalogIdentityError::ZeroVersion {
-                field: "draft-revision",
-            });
-        }
-        if input.catalog_version == 0 {
-            return Err(CatalogIdentityError::ZeroVersion {
-                field: "catalog-version",
-            });
-        }
-        let runtime_flow_version = input.runtime_flow_version.to_be_bytes();
-        let draft_revision = input.draft_revision.to_be_bytes();
-        let catalog_version = input.catalog_version.to_be_bytes();
-        Ok(Self(digest(&frames(
-            "validated-flow-draft",
-            [
-                ("tenant-id", input.tenant_id.as_bytes()),
-                ("draft-id", input.draft_id.as_bytes()),
-                ("draft-revision", draft_revision.as_slice()),
-                ("flow-id", input.flow_id.as_bytes()),
-                ("runtime-flow-version", runtime_flow_version.as_slice()),
-                ("draft-content-hash", input.draft_content_hash.as_bytes()),
-                ("draft-artifact-hash", input.draft_artifact_hash.as_bytes()),
-                (
-                    "execution-bundle-hash",
-                    input.execution_bundle_hash.as_bytes(),
-                ),
-                ("catalog-id", input.catalog_id.as_bytes()),
-                ("catalog-version", catalog_version.as_slice()),
-                ("environment", input.environment.as_bytes()),
-                (
-                    "binding-base-artifact-hash",
-                    input.binding_base_artifact_hash.as_bytes(),
-                ),
-            ],
-        ))))
-    }
-
-    pub fn from_storage(
-        expected_hash: &str,
-        input: ValidatedDraftIdentityInput<'_>,
-    ) -> Result<Self, CatalogIdentityError> {
-        validate_digest(expected_hash, "validated-draft-identity")?;
-        let identity = Self::new(input)?;
-        if identity.as_str() != expected_hash {
-            return Err(CatalogIdentityError::ValidatedDraftIdentityMismatch);
-        }
-        Ok(identity)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for ValidatedDraftIdentity {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
 impl fmt::Display for DraftContentHash {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
-    }
-}
-
-/// One validated flow draft pinned to its exact executable bundle.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DraftArtifact {
-    content_hash: DraftContentHash,
-    artifact: Artifact,
-    execution_plan: ExecutionPlanV2,
-}
-
-impl DraftArtifact {
-    /// Validate a draft against resolved public interfaces and pin its bundle.
-    pub fn new(
-        tenant_id: impl Into<String>,
-        flow: &Flow,
-        interfaces: Vec<NodeInterface>,
-        execution_plan: ExecutionPlanV2,
-    ) -> Result<Self, CatalogIdentityError> {
-        execution_plan.validate()?;
-        let content_hash = DraftContentHash::for_flow(flow);
-        let artifact = Artifact::new(tenant_id, flow, interfaces)?;
-        if execution_plan.header.root_artifact_hash != artifact.identity().artifact_hash().as_str()
-        {
-            return Err(CatalogIdentityError::ArtifactMismatch);
-        }
-        Ok(Self {
-            content_hash,
-            artifact,
-            execution_plan,
-        })
-    }
-
-    pub fn content_hash(&self) -> &DraftContentHash {
-        &self.content_hash
-    }
-
-    pub fn artifact(&self) -> &Artifact {
-        &self.artifact
-    }
-
-    pub fn execution_plan(&self) -> &ExecutionPlanV2 {
-        &self.execution_plan
     }
 }
 
@@ -952,99 +764,6 @@ impl PinnedArtifact {
 
     pub fn flow(&self) -> &Flow {
         &self.flow
-    }
-}
-
-/// Environment and binding-base pins needed to verify a persisted validated draft row.
-#[derive(Debug, Clone, Copy)]
-pub struct StoredValidatedDraftContext<'a> {
-    pub expected_identity_hash: &'a str,
-    pub draft_id: &'a str,
-    pub draft_revision: u64,
-    pub catalog_id: &'a str,
-    pub catalog_version: u32,
-    pub environment: &'a str,
-    pub binding_base_artifact_hash: &'a str,
-}
-
-/// A persisted validated draft reverified at the execution boundary.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PinnedDraftArtifact {
-    content_hash: DraftContentHash,
-    artifact: PinnedArtifact,
-    execution_plan: ExecutionPlanV2,
-    validated_identity: ValidatedDraftIdentity,
-}
-
-impl PinnedDraftArtifact {
-    /// Verify the graph, plan bytes, and complete draft identity together.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the immutable draft row's content and plan pins are verified together"
-    )]
-    pub fn from_storage(
-        expected_tenant_id: &str,
-        expected_flow_id: &str,
-        runtime_flow_version: u32,
-        draft_content_hash: &str,
-        graph_json: &str,
-        graph_hash: &str,
-        draft_artifact_hash: &str,
-        execution_plan_bytes: &[u8],
-        execution_bundle_hash: &str,
-        context: StoredValidatedDraftContext<'_>,
-    ) -> Result<Self, CatalogIdentityError> {
-        let artifact = PinnedArtifact::from_storage(
-            expected_tenant_id,
-            expected_flow_id,
-            runtime_flow_version,
-            graph_json,
-            graph_hash,
-            draft_artifact_hash,
-        )?;
-        let content_hash = DraftContentHash::parse(draft_content_hash)?;
-        if content_hash != DraftContentHash::for_flow(artifact.flow()) {
-            return Err(CatalogIdentityError::DraftContentHashMismatch);
-        }
-        let execution_plan = read_execution_plan(execution_bundle_hash, execution_plan_bytes)?;
-        if execution_plan.header.root_artifact_hash != draft_artifact_hash {
-            return Err(CatalogIdentityError::ArtifactMismatch);
-        }
-        let validated_identity = ValidatedDraftIdentity::from_storage(
-            context.expected_identity_hash,
-            ValidatedDraftIdentityInput {
-                tenant_id: expected_tenant_id,
-                draft_id: context.draft_id,
-                draft_revision: context.draft_revision,
-                flow_id: expected_flow_id,
-                runtime_flow_version,
-                draft_content_hash: content_hash.as_str(),
-                draft_artifact_hash,
-                execution_bundle_hash,
-                catalog_id: context.catalog_id,
-                catalog_version: context.catalog_version,
-                environment: context.environment,
-                binding_base_artifact_hash: context.binding_base_artifact_hash,
-            },
-        )?;
-        Ok(Self {
-            content_hash,
-            artifact,
-            execution_plan,
-            validated_identity,
-        })
-    }
-
-    pub fn artifact(&self) -> &PinnedArtifact {
-        &self.artifact
-    }
-
-    pub fn execution_plan(&self) -> &ExecutionPlanV2 {
-        &self.execution_plan
-    }
-
-    pub fn validated_identity(&self) -> &ValidatedDraftIdentity {
-        &self.validated_identity
     }
 }
 
