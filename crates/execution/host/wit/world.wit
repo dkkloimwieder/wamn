@@ -1,0 +1,6 @@
+package wamn:execution-host@0.1.0;
+
+/// Native provider for attachment and registration delivery.
+world router-delivery-plugin {
+  import wamn:router-delivery/delivery@0.1.0;
+}

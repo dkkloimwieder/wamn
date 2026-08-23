@@ -13,5 +13,6 @@ wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"
 wash-runtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 serde_json = { workspace = true }

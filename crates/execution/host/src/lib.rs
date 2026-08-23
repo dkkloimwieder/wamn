@@ -1,6 +1,7 @@
 //! Shared production router driver and digest-keyed component instance pool.
 
 mod pool;
+mod router_delivery;
 mod router_driver;
 
 pub use pool::{
@@ -9,8 +10,9 @@ pub use pool::{
     InvalidExecutionPoolLimits, InvocationDisposition, PoolCapacityError, PoolCleanupError,
     RetirementReason, ReusableExecutionInstance,
 };
+pub use router_delivery::{ROUTER_DELIVERY_ID, RouterDeliveryBridge};
 pub use router_driver::{
-    DEFAULT_WIRING_CACHE_CAPACITY, RouterDelivery, RouterDriver, RouterDriverConfig,
-    RouterDriverRequest, RouterDriverSnapshot, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
-    WiringResolution,
+    DEFAULT_WIRING_CACHE_CAPACITY, PreloadedWiringMissing, RouterDelivery, RouterDriver,
+    RouterDriverConfig, RouterDriverRequest, RouterDriverSnapshot, WIRING_CACHE_CAPACITY_ENV,
+    WiringCacheCapacity, WiringResolution,
 };

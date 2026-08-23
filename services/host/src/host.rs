@@ -16,7 +16,8 @@ use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
 use wamn_execution_host::{
-    RouterDriver, RouterDriverConfig, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
+    RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WIRING_CACHE_CAPACITY_ENV,
+    WiringCacheCapacity,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -259,7 +260,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     let postgres = Arc::new(WamnPostgres::from_env().context("wamn:postgres plugin init")?);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
-    let _router_driver = match release.as_ref() {
+    let router_driver = match release.as_ref() {
         Some(release) => {
             let artifact_base = args
                 .component_artifact_base
@@ -279,7 +280,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .iter()
                 .map(|value| value.parse())
                 .collect::<Result<Vec<_>, _>>()?;
-            Some(RouterDriver::new(
+            Some(Arc::new(RouterDriver::new(
                 Arc::clone(&engine),
                 Arc::clone(&postgres),
                 credentials,
@@ -294,10 +295,20 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     cache_capacity: args.wiring_cache_capacity,
                     epoch_tick: Duration::from_millis(args.epoch_tick_ms),
                 },
-            )?)
+            )?))
         }
         None => None,
     };
+    if let Some(driver) = &router_driver {
+        // The complete immutable release closure is resident before a workload
+        // or HTTP socket can become reachable. Direct delivery uses the
+        // cache-only resolution arm and refuses a later miss; it never turns a
+        // request into a PostgreSQL lookup.
+        driver
+            .preload_release_wirings()
+            .await
+            .context("preload release wirings")?;
+    }
 
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
@@ -346,6 +357,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // attachment projection, so the serving path reads no project database.
         .with_plugin(Arc::new(FlowHttpRouting::new(release.clone())))?;
 
+    if let (Some(driver), Some(release)) = (&router_driver, &release) {
+        builder = builder.with_plugin(Arc::new(RouterDeliveryBridge::new(
+            Arc::clone(driver),
+            Arc::clone(release),
+        )))?;
+    }
+
     if let Some(host_name) = &args.host_name {
         builder = builder.with_host_name(host_name);
     }
@@ -369,7 +387,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let cluster_host = builder.build().context("failed to build cluster host")?;
     tracing::info!(
-        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-invocation, wamn:flow-http-routing)"
+        router_delivery = router_driver.is_some(),
+        "wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-invocation, wamn:flow-http-routing)"
     );
     // Whether this host carries a release is the first thing an operator needs from
     // the log: it decides whether the release-gated interfaces have a manifest to

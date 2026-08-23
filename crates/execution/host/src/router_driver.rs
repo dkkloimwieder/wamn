@@ -129,7 +129,24 @@ pub enum WiringResolution {
     /// Queue admission already froze this immutable version. Pointer flips do
     /// not reinterpret it.
     Frozen,
+    /// Direct ingress may use only an immutable release wiring loaded before
+    /// the serving socket became reachable. A miss is a typed refusal and
+    /// never falls through to PostgreSQL.
+    Preloaded,
 }
+
+/// A direct-ingress request named a release wiring absent from the startup
+/// preload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreloadedWiringMissing;
+
+impl fmt::Display for PreloadedWiringMissing {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("release-wiring-not-preloaded")
+    }
+}
+
+impl std::error::Error for PreloadedWiringMissing {}
 
 /// Trusted coordinates handed from an ingress admission owner to the driver.
 #[derive(Debug, Clone)]
@@ -270,6 +287,45 @@ impl RouterDriver {
         }
     }
 
+    /// Resolve every immutable wiring in the welded release before ingress is
+    /// served.
+    ///
+    /// The cache must hold the complete closure at once. Refusing startup when
+    /// the configured bound is smaller is what makes [`WiringResolution::Preloaded`]
+    /// a no-PostgreSQL request path rather than a best-effort warm cache.
+    pub async fn preload_release_wirings(&self) -> anyhow::Result<()> {
+        let manifest = self.release.manifest();
+        anyhow::ensure!(
+            manifest.wirings.len() <= self.config.cache_capacity.get().get(),
+            "release-wiring-preload-exceeds-cache-capacity"
+        );
+        for member in &manifest.wirings {
+            let request = RouterDriverRequest {
+                tenant_id: manifest.release.tenant_id.clone(),
+                catalog_id: manifest.release.catalog_id.clone(),
+                environment: manifest.release.environment.clone(),
+                wiring_id: member.wiring_id.clone(),
+                wiring_version: member.wiring_version,
+                delivery_id: format!("preload:{}:{}", member.wiring_id, member.wiring_version),
+                payload: serde_json::Value::Null,
+                caller_attached: false,
+                resolution: WiringResolution::Frozen,
+                role: None,
+                user_id: None,
+                traceparent: None,
+                tracestate: None,
+            };
+            let resolved = self.resolve_frozen(&request).await.with_context(|| {
+                format!(
+                    "preload release wiring {:?} version {}",
+                    member.wiring_id, member.wiring_version
+                )
+            })?;
+            self.validate_wiring_closure(&request, &resolved)?;
+        }
+        Ok(())
+    }
+
     /// Execute one direct or queued delivery through the same router and node
     /// invoker. The caller owns acting on the terminal verdict.
     pub async fn execute(&self, request: RouterDriverRequest) -> anyhow::Result<RouterDelivery> {
@@ -324,7 +380,23 @@ impl RouterDriver {
         match request.resolution {
             WiringResolution::Active => self.resolve_active(request).await,
             WiringResolution::Frozen => self.resolve_frozen(request).await,
+            WiringResolution::Preloaded => self.resolve_preloaded(request),
         }
+    }
+
+    fn resolve_preloaded(
+        &self,
+        request: &RouterDriverRequest,
+    ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
+        self.cache
+            .get_version(
+                &request.tenant_id,
+                &request.catalog_id,
+                &request.environment,
+                &request.wiring_id,
+                request.wiring_version,
+            )
+            .ok_or_else(|| anyhow::Error::new(PreloadedWiringMissing))
     }
 
     async fn resolve_active(
