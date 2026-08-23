@@ -36,10 +36,10 @@
 //!   flows present, queue absent → the one global FIFO queue appears and its FK
 //!   resolves.
 //! - **from-zero** (manifestations 3 + 5 + 6, the ephemeral-fixture wipe): a
-//!   bare database without even the `wamn_app` role. `--dry-run` first, proven
-//!   STRICTLY read-only; then the apply provisions everything — run plane +
-//!   `catalog` schema — and a functional smoke as `wamn_app` proves the
-//!   sections' grants + RLS isolation end-to-end.
+//!   database without project schemas while the cluster-scoped runtime roles
+//!   remain shared. `--dry-run` first, proven STRICTLY read-only; then the apply
+//!   provisions everything — run plane + `catalog` schema — and a functional
+//!   smoke as `wamn_app` proves the sections' grants + RLS isolation end-to-end.
 //! - **invocation retention cutover**: the legacy admission expiry column/index
 //!   are removed and the client-key carrier becomes optional; a second pass is
 //!   a no-op.
@@ -778,7 +778,7 @@ async fn run_plane_reconcile_live() {
     drop(cli_su);
     drop_database(&su, &cli_database).await;
     queue_missing_leg(&su).await;
-    from_zero_leg(&su).await;
+    from_zero_leg(&su, &url).await;
     child_run_cutover_leg(&su).await;
     rerun_lineage_cutover_leg(&su).await;
     failure_detail_cutover_leg(&su).await;
@@ -4124,49 +4124,67 @@ async fn queue_missing_leg(su: &Client) {
     assert!(claimable.contains("(tenant_id, available_at, stream_seq, run_id, lease_expires_at)"));
 }
 
-/// Manifestations 3 + 5 + 6 (the ephemeral-fixture wipe): a bare database —
-/// neither the `wamn_app` nor host-only author role. Dry-run first (strictly
-/// read-only), then the
-/// apply provisions run plane + `catalog`, and a functional smoke as
-/// `wamn_app` proves grants + RLS isolation from the applied sections.
-async fn from_zero_leg(su: &Client) {
+/// Manifestations 3 + 5 + 6 (the ephemeral-fixture wipe): a database with no
+/// project schemas. The fixed runtime roles are cluster-scoped and shared, so
+/// this leg must preserve them even when another database has an object owned
+/// by `wamn_app`. Dry-run first (strictly read-only), then apply provisions run
+/// plane + `catalog`, and a functional smoke as `wamn_app` proves grants + RLS
+/// isolation from the applied sections.
+async fn from_zero_leg(su: &Client, base_url: &str) {
     reset(su).await;
     let schema = schema();
-    su.batch_execute(
-        "DROP OWNED BY wamn_app; \
-         DROP ROLE wamn_app; \
-         DROP OWNED BY wamn_scenario_author; \
-         DROP ROLE wamn_scenario_author;",
-    )
-    .await
-    .expect("remove the runtime role (bare database)");
+    let sentinel_database = "wamn_run_plane_from_zero_role_sentinel";
+    recreate_database(su, sentinel_database).await;
+    let sentinel_url = database_url(base_url, sentinel_database);
+    let sentinel = connect(&sentinel_url).await;
+    sentinel
+        .batch_execute(
+            "CREATE TABLE public.wamn_app_role_sentinel (id int PRIMARY KEY); \
+             ALTER TABLE public.wamn_app_role_sentinel OWNER TO wamn_app; \
+             CREATE TABLE public.wamn_scenario_author_role_sentinel \
+               (id int PRIMARY KEY); \
+             ALTER TABLE public.wamn_scenario_author_role_sentinel \
+               OWNER TO wamn_scenario_author;",
+        )
+        .await
+        .expect("create cross-database runtime-role ownership sentinel");
+    drop(sentinel);
 
-    // --dry-run is STRICTLY read-only: it neither creates the role nor tables.
+    let role_oids_before = su
+        .query_one(
+            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app'), \
+                    (SELECT oid::bigint FROM pg_roles \
+                      WHERE rolname = 'wamn_scenario_author')",
+            &[],
+        )
+        .await
+        .expect("snapshot shared runtime roles");
+    let role_oids_before = (
+        role_oids_before.get::<_, i64>(0),
+        role_oids_before.get::<_, i64>(1),
+    );
+
+    // --dry-run is STRICTLY read-only: it changes neither shared roles nor tables.
     let dry = reconcile_run_plane::reconcile(su, &schema, false)
         .await
         .expect("dry-run plans");
     assert!(!dry.is_noop());
-    let role_exists: bool = su
+    let role_oids_after = su
         .query_one(
-            "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app')",
+            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app'), \
+                    (SELECT oid::bigint FROM pg_roles \
+                      WHERE rolname = 'wamn_scenario_author')",
             &[],
         )
         .await
-        .expect("probe role")
-        .get(0);
-    assert!(!role_exists, "dry-run does not create the role");
-    let author_role_exists: bool = su
-        .query_one(
-            "SELECT EXISTS (SELECT FROM pg_roles \
-             WHERE rolname = 'wamn_scenario_author')",
-            &[],
-        )
-        .await
-        .expect("probe author role")
-        .get(0);
-    assert!(
-        !author_role_exists,
-        "dry-run does not create the author role"
+        .expect("re-read shared runtime roles");
+    assert_eq!(
+        (
+            role_oids_after.get::<_, i64>(0),
+            role_oids_after.get::<_, i64>(1),
+        ),
+        role_oids_before,
+        "dry-run preserves the shared cluster roles"
     );
     assert!(
         !table_exists(su, SCHEMA, "runs").await,
@@ -4260,6 +4278,32 @@ async fn from_zero_leg(su: &Client) {
     su.batch_execute("RESET ROLE; SELECT set_config('app.tenant', '', false)")
         .await
         .expect("drop back to superuser");
+
+    let sentinel = connect(&sentinel_url).await;
+    let sentinel_owners = sentinel
+        .query_one(
+            "SELECT pg_get_userbyid((SELECT relowner FROM pg_class \
+                                      WHERE oid = \
+                                        'public.wamn_app_role_sentinel'::regclass)), \
+                    pg_get_userbyid((SELECT relowner FROM pg_class \
+                                      WHERE oid = \
+                                        'public.wamn_scenario_author_role_sentinel'::regclass))",
+            &[],
+        )
+        .await
+        .expect("read cross-database runtime-role ownership sentinels");
+    let app_owner: String = sentinel_owners.get(0);
+    let author_owner: String = sentinel_owners.get(1);
+    assert_eq!(
+        app_owner, "wamn_app",
+        "from-zero reconciliation preserves sibling-database runtime ownership"
+    );
+    assert_eq!(
+        author_owner, "wamn_scenario_author",
+        "from-zero reconciliation preserves sibling-database author ownership"
+    );
+    drop(sentinel);
+    drop_database(su, sentinel_database).await;
 }
 
 async fn visible_environment_policy_rows(url: &str, tenant: &str) -> i64 {
