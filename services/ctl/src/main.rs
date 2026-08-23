@@ -4,8 +4,9 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    enable_cdc_project_env, migrate_catalog, provision, provision_org, provision_project_env,
-    push_component, reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
+    enable_cdc_project_env, migrate_catalog, promote, provision, provision_org,
+    provision_project_env, push_component, reconcile_replica_identity, reconcile_run_plane,
+    terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -33,6 +34,8 @@ enum Command {
     MigrateCatalog(migrate_catalog::MigrateCatalogArgs),
     /// Validate and publish exact component bytes, then append their T1 library fact
     PushComponent(push_component::PushComponentArgs),
+    /// Promote one verified v2 release into a target environment
+    Promote(promote::PromoteArgs),
     /// Detect or repair per-entity REPLICA IDENTITY drift from the catalog's registrations — one-shot, idempotent ALTERs (wamn-l5i9.31)
     ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
     /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
@@ -64,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,
         Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
         Command::PushComponent(args) => push_component::run(args).await,
+        Command::Promote(args) => promote::run(args).await,
         Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
         Command::ReconcileRunPlane(args) => reconcile_run_plane::run(args).await,
         Command::TerminalizeEffectUncertain(args) => terminalize_effect_uncertain::run(args).await,

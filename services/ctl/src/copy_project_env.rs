@@ -1,17 +1,14 @@
 //! The `copy-project-env` subcommand (wamn-8df.5): the unified env-symmetric
-//! **copy** between two `(org, project, env)` triples — deploy / promote /
-//! clone / move in one operation (`docs/archive/platform/deployment-model.md` §4).
+//! **data copy** between two `(org, project, env)` triples.
 //!
 //! The plan comes from the pure [`wamn_control_provision::plan_copy`]; this driver holds
 //! the connections and executes each [`CopyStep`] by composing the shipped
 //! machinery:
 //!
-//! * `include: definition` / `include: both` — **refused before any I/O**
-//!   (wamn-0h0g.8.18): the definition records' durable owner is the control
-//!   database. There is no definition execution path left in this driver.
-//! * `include: data` — `pg_restore --data-only --disable-triggers` of the data
-//!   schema from a fresh `pg_dump -Fd` snapshot (the q3n.10 artifact, recorded
-//!   in `provisioning.dumps`).
+//! Definition promotion now has one production owner, `wamn-ctl promote`.
+//! This operations verb retains only `pg_restore --data-only
+//! --disable-triggers` from a fresh `pg_dump -Fd` snapshot (the q3n.10
+//! artifact, recorded in `provisioning.dumps`).
 //!
 //! **The cutover gate (fixes cjv.7):** a `--cutover` copy is a *move* — the
 //! pipeline `Quiesce → Snapshot → Restore → Verify → Cutover` is mandatory,
@@ -33,40 +30,20 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
-use clap::{Args, ValueEnum};
+use clap::Args;
 use tokio_postgres::NoTls;
 use tokio_postgres::error::SqlState;
 
 use wamn_control_provision::{
-    COPY_SAGA_KIND, CopyInclude, CopyMode, CopyRequest, CopyScope, CopyStep, count_rows_sql,
-    dump_object_key, list_schema_tables_sql, pg_dump_argv, pg_restore_data_only_argv, plan_copy,
-    project_env_database_name, quiesce_database_sql, sql as provision_sql,
-    terminate_database_backends_sql, unquiesce_database_sql, validate_project_env,
+    COPY_SAGA_KIND, CopyRequest, CopyStep, count_rows_sql, dump_object_key, list_schema_tables_sql,
+    pg_dump_argv, pg_restore_data_only_argv, plan_copy, project_env_database_name,
+    quiesce_database_sql, sql as provision_sql, terminate_database_backends_sql,
+    unquiesce_database_sql, validate_project_env,
 };
 use wamn_control_registry::Triple;
 
 use crate::restore_project_env::swap_db;
 use wamn_schema_control::BareSchemaName;
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum IncludeArg {
-    /// Structure only: catalog + flows + RLS policies + event registrations.
-    Definition,
-    /// Rows only: `pg_restore --data-only` of the data schema.
-    Data,
-    /// Everything: a full-fidelity dump/restore.
-    Both,
-}
-
-impl From<IncludeArg> for CopyInclude {
-    fn from(a: IncludeArg) -> Self {
-        match a {
-            IncludeArg::Definition => CopyInclude::Definition,
-            IncludeArg::Data => CopyInclude::Data,
-            IncludeArg::Both => CopyInclude::Both,
-        }
-    }
-}
 
 #[derive(Debug, Args)]
 pub struct CopyProjectEnvArgs {
@@ -89,10 +66,6 @@ pub struct CopyProjectEnvArgs {
     /// Destination environment slug.
     #[arg(long)]
     pub dst_env: String,
-
-    /// What the copy carries.
-    #[arg(long, value_enum, default_value = "both")]
-    pub include: IncludeArg,
 
     /// This copy is a MOVE: the src's traffic cuts over to the dst. Runs the
     /// mandatory quiesce → verify → gated-cutover pipeline, recorded step by
@@ -126,11 +99,6 @@ pub struct CopyProjectEnvArgs {
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
-    /// Tenant claim the definition rows are scoped to (`app.tenant`). Required
-    /// for a definition copy (catalogs / flows / RLS policies are per-tenant).
-    #[arg(long)]
-    pub tenant: Option<String>,
-
     /// The data schema the entity tables live in (verify counts it; a
     /// data-only restore is scoped to it).
     #[arg(long, default_value = "public")]
@@ -140,12 +108,6 @@ pub struct CopyProjectEnvArgs {
     /// the `dump-project-env --run-now` layout).
     #[arg(long, default_value = "/tmp/wamn-dump")]
     pub dump_root: PathBuf,
-
-    /// Record a backup-checkpoint attestation for each destructive definition
-    /// reconciliation. Requires --system-database-url; an exact durable record
-    /// may also be reused by a retry.
-    #[arg(long)]
-    pub confirm_with_backup: bool,
 
     /// Print the step plan and exit without connecting anywhere.
     #[arg(long)]
@@ -167,34 +129,16 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
 
     let src = Triple::new(&args.src_org, &args.src_project, args.src_env.as_str());
     let dst = Triple::new(&args.dst_org, &args.dst_project, args.dst_env.as_str());
-    let include: CopyInclude = args.include.into();
-    // wamn-0h0g.8.18 cutover: a definition copy writes the catalog, flow, and
-    // release records whose durable owner is now the control database, so it would
-    // promote a definition nothing reads. Refused for `definition` AND `both`
-    // before ANY I/O — everything above this line is pure name validation, so no
-    // plan has been printed, no dump directory touched, no cluster dialled.
-    //
-    // Matched explicitly rather than through `CopyInclude::wants_definition`,
-    // which is FALSE for `Both`: `both` carries the definition implicitly through
-    // a full `pg_restore` instead of a separate definition pass, so the helper
-    // would have let exactly the widest case through.
-    if matches!(include, CopyInclude::Definition | CopyInclude::Both) {
-        bail!(crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
-    }
     let request = CopyRequest {
         src: src.clone(),
         dst: dst.clone(),
-        include,
-        scope: CopyScope::Whole,
-        mode: CopyMode::Snapshot,
         cutover: args.cutover,
         deprovision_old: args.deprovision_old,
     };
     let steps = plan_copy(&request).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     println!(
-        "copy {src} -> {dst} (include: {}, {}):",
-        include.as_str(),
+        "data copy {src} -> {dst} ({}):",
         if args.cutover {
             "MOVE with cutover"
         } else {
@@ -208,9 +152,6 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if include.wants_definition() && args.tenant.is_none() {
-        bail!("a definition copy needs --tenant (catalogs / flows / RLS policies are per-tenant)");
-    }
     let src_admin = args
         .src_admin_url
         .as_deref()
@@ -300,8 +241,8 @@ async fn execute_steps(
         match step {
             CopyStep::Quiesce { .. } => exec_quiesce(ctx).await?,
             CopyStep::Snapshot { src } => exec_snapshot(ctx, src, recorder).await?,
-            CopyStep::RestoreData { data_only, .. } => exec_restore_data(ctx, *data_only).await?,
-            CopyStep::Verify { src, dst, include } => exec_verify(ctx, src, dst, *include).await?,
+            CopyStep::RestoreData { .. } => exec_restore_data(ctx).await?,
+            CopyStep::Verify { src, dst } => exec_verify(ctx, src, dst).await?,
             CopyStep::Cutover { src, dst } => {
                 // THE GATE (cjv.7): refuse unless every prior step — quiesce and
                 // verify included — is durably recorded in the saga.
@@ -437,11 +378,9 @@ async fn exec_snapshot(
     Ok(())
 }
 
-/// `pg_restore` the snapshot into the dst. `data_only` scopes to the data
-/// schema (`--data-only --disable-triggers` — no trigger may fire per restored
-/// row); a full restore keeps ownership + ACLs (the dst cluster
-/// carries `wamn_app` — the provision-project-env precondition).
-async fn exec_restore_data(ctx: &mut ExecCtx<'_>, data_only: bool) -> anyhow::Result<()> {
+/// `pg_restore --data-only --disable-triggers` the snapshot into the dst data
+/// schema. A restore replays state; no trigger may fire per restored row.
+async fn exec_restore_data(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
     let dump_dir = ctx
         .dump_dir
         .as_ref()
@@ -449,65 +388,42 @@ async fn exec_restore_data(ctx: &mut ExecCtx<'_>, data_only: bool) -> anyhow::Re
         .to_string_lossy()
         .to_string();
     let dst_url = swap_db(ctx.dst_admin, ctx.dst_db);
-    let argv = if data_only {
-        pg_restore_data_only_argv(&dst_url, &dump_dir, ctx.data_schema.as_str())
-    } else {
-        // Full fidelity: schema + rows + ownership/ACLs (no --no-owner).
-        vec![
-            "pg_restore".to_string(),
-            "-d".to_string(),
-            dst_url,
-            dump_dir,
-        ]
-    };
+    let argv = pg_restore_data_only_argv(&dst_url, &dump_dir, ctx.data_schema.as_str());
     run_argv(&argv)?;
-    println!(
-        "  restored into {:?} ({})",
-        ctx.dst_db,
-        if data_only { "data only" } else { "full" }
-    );
+    println!("  restored data into {:?}", ctx.dst_db);
     Ok(())
 }
 
-/// Verify the dst against the src. Data: the data schema's table sets match and
-/// every table's exact row count matches. Definition: each applied catalog's
-/// document is byte-equal on the dst, and immutable releases / RLS rows match.
-async fn exec_verify(
-    ctx: &mut ExecCtx<'_>,
-    _src: &Triple,
-    _dst: &Triple,
-    include: CopyInclude,
-) -> anyhow::Result<()> {
+/// Verify the dst data-schema table set and exact row counts against the src.
+async fn exec_verify(ctx: &mut ExecCtx<'_>, _src: &Triple, _dst: &Triple) -> anyhow::Result<()> {
     let (src_client, src_task) = connect(&swap_db(ctx.src_admin, ctx.src_db)).await?;
     let (dst_client, dst_task) = connect(&swap_db(ctx.dst_admin, ctx.dst_db)).await?;
 
-    if include.wants_data() {
-        let schema = &ctx.data_schema;
-        let src_tables = list_tables(&src_client, schema.as_str())
-            .await
-            .context("list src tables")?;
-        let dst_tables = list_tables(&dst_client, schema.as_str())
-            .await
-            .context("list dst tables")?;
+    let schema = &ctx.data_schema;
+    let src_tables = list_tables(&src_client, schema.as_str())
+        .await
+        .context("list src tables")?;
+    let dst_tables = list_tables(&dst_client, schema.as_str())
+        .await
+        .context("list dst tables")?;
+    anyhow::ensure!(
+        src_tables == dst_tables,
+        "verify FAILED: table sets differ in schema {schema:?} (src {src_tables:?}, \
+         dst {dst_tables:?})"
+    );
+    for table in &src_tables {
+        let sql = count_rows_sql(schema.as_str(), table);
+        let s: i64 = src_client.query_one(sql.as_str(), &[]).await?.get(0);
+        let d: i64 = dst_client.query_one(sql.as_str(), &[]).await?.get(0);
         anyhow::ensure!(
-            src_tables == dst_tables,
-            "verify FAILED: table sets differ in schema {schema:?} (src {src_tables:?}, \
-             dst {dst_tables:?})"
-        );
-        for table in &src_tables {
-            let sql = count_rows_sql(schema.as_str(), table);
-            let s: i64 = src_client.query_one(sql.as_str(), &[]).await?.get(0);
-            let d: i64 = dst_client.query_one(sql.as_str(), &[]).await?.get(0);
-            anyhow::ensure!(
-                s == d,
-                "verify FAILED: {schema}.{table} row counts differ (src {s}, dst {d})"
-            );
-        }
-        println!(
-            "  verified: {} table(s) in {schema:?}, all row counts match",
-            src_tables.len()
+            s == d,
+            "verify FAILED: {schema}.{table} row counts differ (src {s}, dst {d})"
         );
     }
+    println!(
+        "  verified: {} table(s) in {schema:?}, all row counts match",
+        src_tables.len()
+    );
 
     drop(src_client);
     drop(dst_client);
@@ -666,130 +582,4 @@ fn run_argv(argv: &[String]) -> anyhow::Result<()> {
 async fn list_tables(client: &tokio_postgres::Client, schema: &str) -> anyhow::Result<Vec<String>> {
     let rows = client.query(list_schema_tables_sql(), &[&schema]).await?;
     Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn include_arg_maps_onto_the_pure_axis() {
-        assert_eq!(
-            CopyInclude::from(IncludeArg::Definition).as_str(),
-            "definition"
-        );
-        assert_eq!(CopyInclude::from(IncludeArg::Data).as_str(), "data");
-        assert_eq!(CopyInclude::from(IncludeArg::Both).as_str(), "both");
-    }
-
-    /// The one axis value that still copies, and the two that no longer do.
-    ///
-    /// `Both` is the trap: `wants_definition()` is FALSE for it, so a guard
-    /// written on that helper would have let the widest case through.
-    #[test]
-    fn only_the_data_axis_asks_for_a_definition_this_plane_no_longer_owns() {
-        assert!(CopyInclude::Definition.wants_definition());
-        assert!(
-            !CopyInclude::Both.wants_definition(),
-            "the refusal must not be written on wants_definition()"
-        );
-        assert!(CopyInclude::Both.wants_data() && CopyInclude::Data.wants_data());
-        assert!(!CopyInclude::Definition.wants_data());
-        // Flag closure: every representable axis is classified, and exactly one is
-        // still available.
-        let closed =
-            |include: CopyInclude| matches!(include, CopyInclude::Definition | CopyInclude::Both);
-        assert!(closed(CopyInclude::from(IncludeArg::Definition)));
-        assert!(closed(CopyInclude::from(IncludeArg::Both)));
-        assert!(!closed(CopyInclude::from(IncludeArg::Data)));
-        // `--include` defaults to `both`, so a bare invocation refuses too.
-        let source = include_str!("copy_project_env.rs");
-        assert!(source.contains(r#"#[arg(long, value_enum, default_value = "both")]"#));
-    }
-
-    /// wamn-0h0g.8.18: the closed axes refuse before ANY I/O, and the open one
-    /// still gets past the refusal.
-    ///
-    /// Every URL is unroutable and the dump root does not exist, so any I/O would
-    /// surface as its own context literal instead of the refusal — and a
-    /// connection attempt would stall rather than return promptly.
-    #[tokio::test]
-    async fn definition_and_both_refuse_before_any_connection_or_file() {
-        let args = |include: IncludeArg| CopyProjectEnvArgs {
-            src_org: "acme".to_owned(),
-            src_project: "receiving".to_owned(),
-            src_env: "dev".to_owned(),
-            dst_org: "acme".to_owned(),
-            dst_project: "receiving".to_owned(),
-            dst_env: "prod".to_owned(),
-            include,
-            cutover: false,
-            deprovision_old: false,
-            confirm: false,
-            src_admin_url: Some("postgresql://invalid.invalid/never".to_owned()),
-            dst_admin_url: None,
-            system_database_url: Some("postgresql://invalid.invalid/never".to_owned()),
-            tenant: Some("tenant-a".to_owned()),
-            data_schema: "public".to_owned(),
-            dump_root: std::env::temp_dir().join("control-copy-closed-8-18"),
-            confirm_with_backup: false,
-            plan: false,
-            saga_id: None,
-        };
-        for closed in [IncludeArg::Definition, IncludeArg::Both] {
-            let error = run(args(closed))
-                .await
-                .expect_err("a definition-bearing copy must refuse");
-            let message = format!("{error:#}");
-            assert_eq!(message, crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
-            for io in [
-                "postgres connect",
-                "system db connect",
-                "create the copy saga",
-                "spawn ",
-                "pg_dump",
-            ] {
-                assert!(!message.contains(io), "the copy reached {io}: {message}");
-            }
-        }
-        // Data-only still works: it must fail LATER, on the connection, not here.
-        let error = run(args(IncludeArg::Data))
-            .await
-            .expect_err("an unroutable data copy fails at its connection");
-        let message = format!("{error:#}");
-        assert_ne!(message, crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
-        assert!(
-            !message.contains("control-definition-publish-requires"),
-            "data-only copy was refused: {message}"
-        );
-    }
-
-    /// The refusal precedes every effect in `run`, measured on the source itself:
-    /// no plan is printed, no clock read, no connection opened.
-    #[test]
-    fn the_copy_refusal_precedes_every_effect_in_run() {
-        let source = include_str!("copy_project_env.rs");
-        let run_body = source
-            .split("pub async fn run(args: CopyProjectEnvArgs)")
-            .nth(1)
-            .expect("the copy verb exists")
-            .split("\n/// ")
-            .next()
-            .expect("the verb body ends");
-        let refusal = run_body
-            .find("CONTROL_DEFINITION_PUBLISH_REFUSAL")
-            .expect("the verb refuses");
-        for effect in [
-            "plan_copy(",
-            "println!(",
-            "unix_seconds()",
-            "SagaRecorder::connect(",
-            "execute_steps(",
-        ] {
-            let at = run_body
-                .find(effect)
-                .unwrap_or_else(|| panic!("the verb performs {effect}"));
-            assert!(refusal < at, "{effect} runs before the refusal");
-        }
-    }
 }

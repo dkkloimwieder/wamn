@@ -221,6 +221,30 @@ async fn persist_with_client(
     component: &AdmittedComponent,
     catalog_version: i32,
 ) -> anyhow::Result<()> {
+    let transaction = client
+        .transaction()
+        .await
+        .context("begin component-library admission")?;
+    transaction
+        .query_one(CLAIM_TENANT_SQL, &[&component.scope.tenant_id])
+        .await
+        .context("claim component-library tenant")?;
+    append_or_verify_admitted_component(&transaction, component, catalog_version).await?;
+    transaction
+        .commit()
+        .await
+        .context("commit component-library admission")
+}
+
+/// Append one admitted component fact, or prove an exact retry.
+///
+/// The caller owns the transaction and tenant claim so release promotion can
+/// combine this write with its target wiring and pointer cutover atomically.
+pub(crate) async fn append_or_verify_admitted_component(
+    transaction: &tokio_postgres::Transaction<'_>,
+    component: &AdmittedComponent,
+    catalog_version: i32,
+) -> anyhow::Result<()> {
     let imports =
         serde_json::to_string(&component.imports).context("serialize admitted imports")?;
     let input_ports =
@@ -244,14 +268,6 @@ async fn persist_with_client(
         &parameters,
     ];
 
-    let transaction = client
-        .transaction()
-        .await
-        .context("begin component-library admission")?;
-    transaction
-        .query_one(CLAIM_TENANT_SQL, &[&component.scope.tenant_id])
-        .await
-        .context("claim component-library tenant")?;
     let inserted = transaction
         .query_opt(INSERT_COMPONENT_SQL, &params)
         .await
@@ -265,10 +281,7 @@ async fn persist_with_client(
             .get(0);
         ensure!(exact, "component-library-fact-conflict");
     }
-    transaction
-        .commit()
-        .await
-        .context("commit component-library admission")
+    Ok(())
 }
 
 #[cfg(test)]

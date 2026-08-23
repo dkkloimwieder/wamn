@@ -82,9 +82,9 @@ pub use control_author::{
 };
 #[cfg(feature = "ops")]
 pub use copy::{
-    COPY_SAGA_KIND, CopyInclude, CopyMode, CopyRequest, CopyScope, CopyStep, count_rows_sql,
-    list_schema_tables_sql, pg_restore_data_only_argv, plan_copy, quiesce_database_sql,
-    terminate_database_backends_sql, unquiesce_database_sql,
+    COPY_SAGA_KIND, CopyRequest, CopyStep, count_rows_sql, list_schema_tables_sql,
+    pg_restore_data_only_argv, plan_copy, quiesce_database_sql, terminate_database_backends_sql,
+    unquiesce_database_sql,
 };
 pub use database::render_project_env_database;
 #[cfg(feature = "ops")]
