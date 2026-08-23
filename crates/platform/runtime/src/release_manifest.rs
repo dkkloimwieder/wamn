@@ -1,11 +1,13 @@
 //! The release-manifest weld — one load, one verification, three readers.
 //!
-//! A pod carries exactly one release. Its serving manifest arrives as an
-//! immutable, digest-named ConfigMap ([`RELEASE_MANIFEST_MOUNT_PATH`]) — the
-//! *sole* carrier of release identity. [`ReleaseManifestWeld::load`] reads it
-//! once and derives both halves of the `(release version, manifest digest)` pair
-//! from the verified content itself, then holds the parsed document for the life
-//! of the process.
+//! A pod carries exactly one release, delivered by one of two carriers: the
+//! digest-addressed OCI release artifact its pod template names, pulled by
+//! [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource),
+//! or an immutable digest-named ConfigMap projected at
+//! [`RELEASE_MANIFEST_MOUNT_PATH`]. Either way the bytes are the *sole* carrier
+//! of release identity. The weld reads them once and derives both halves of the
+//! `(release version, manifest digest)` pair from the verified content itself,
+//! then holds the parsed document for the life of the process.
 //!
 //! # This is a weld, not a cache
 //!
@@ -27,6 +29,13 @@
 //! pod template* that mounts the bytes, so comparing them tests the template's
 //! internal consistency against itself. A pod cannot second-guess its own birth
 //! certificate.
+//!
+//! The OCI carrier is the case where that check *does* mean something, and it is
+//! made before the bytes reach this weld rather than here: the digest travels in
+//! the pod template and the bytes come from a registry, so
+//! [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource)
+//! refuses unless the two agree. This weld still derives identity from content
+//! alone and asserts nothing about where the content came from.
 //!
 //! What binds this pod to this release is the pod template, and that is not a gap
 //! — it is where the wasmCloud-v2 model assigns the fact. The template is
@@ -157,15 +166,22 @@ impl ReleaseManifestWeld {
                 format!("read serving manifest {}: {error}", manifest_path.display()),
             )
         })?;
+        Self::load_canonical_bytes(&bytes, &manifest_path.display().to_string())
+    }
 
+    /// Load and verify bytes a carrier has already delivered whole.
+    ///
+    /// `origin` names that carrier in refusals — a mount path, or the OCI
+    /// reference a
+    /// [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource)
+    /// proved the bytes against. It takes no part in verification: identity
+    /// still comes only out of the bytes.
+    pub fn load_canonical_bytes(bytes: &[u8], origin: &str) -> Result<Self, WeldError> {
         let (manifest, manifest_digest) =
-            ServingManifest::from_canonical_bytes(&bytes).map_err(|error| {
+            ServingManifest::from_canonical_bytes(bytes).map_err(|error| {
                 WeldError::new(
                     WeldErrorKind::ManifestRejected,
-                    format!(
-                        "serving manifest {} refused: {error}",
-                        manifest_path.display()
-                    ),
+                    format!("serving manifest {origin} refused: {error}"),
                 )
             })?;
 
@@ -176,9 +192,8 @@ impl ReleaseManifestWeld {
             WeldError::new(
                 WeldErrorKind::ManifestRejected,
                 format!(
-                    "serving manifest {} names release version {} which the run plane \
+                    "serving manifest {origin} names release version {} which the run plane \
                          cannot record: {error}",
-                    manifest_path.display(),
                     manifest.release.catalog_version
                 ),
             )

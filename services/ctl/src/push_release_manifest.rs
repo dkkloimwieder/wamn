@@ -10,16 +10,16 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
-use oci_client::client::{ClientConfig, ClientProtocol, Config, ImageLayer};
+use oci_client::client::{ClientConfig, ClientProtocol};
 use oci_client::errors::{OciDistributionError, OciErrorCode};
-use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
+use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::{ManifestDigest, ServingManifest};
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_runtime::release_manifest_artifact::{
-    RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE, RELEASE_MANIFEST_CONFIG_BYTES,
-    RELEASE_MANIFEST_CONFIG_MEDIA_TYPE, release_manifest_artifact_reference,
+    RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs, release_manifest_artifact_layout,
+    release_manifest_artifact_reference, verify_release_manifest_artifact_layout,
 };
 
 /// Bound each registry connect/read phase without adding a deployment knob.
@@ -213,7 +213,7 @@ pub async fn publish_release_manifest(
         });
     }
 
-    let (layer, config, manifest) = artifact_layout(canonical_bytes);
+    let (layer, config, manifest) = release_manifest_artifact_layout(canonical_bytes);
     client
         .push(
             &reference,
@@ -264,23 +264,6 @@ fn registry_auth(credentials: &RegistryCredentials) -> RegistryAuth {
         credentials.username().to_owned(),
         credentials.password().to_owned(),
     )
-}
-
-fn artifact_layout(canonical_bytes: &[u8]) -> (ImageLayer, Config, OciImageManifest) {
-    let layer = ImageLayer::new(
-        canonical_bytes.to_vec(),
-        RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE.to_owned(),
-        None,
-    );
-    let config = Config::new(
-        RELEASE_MANIFEST_CONFIG_BYTES.to_vec(),
-        RELEASE_MANIFEST_CONFIG_MEDIA_TYPE.to_owned(),
-        None,
-    );
-    let mut manifest = OciImageManifest::build(std::slice::from_ref(&layer), &config, None);
-    manifest.media_type = Some(OCI_IMAGE_MEDIA_TYPE.to_owned());
-    manifest.artifact_type = Some(RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE.to_owned());
-    (layer, config, manifest)
 }
 
 async fn probe_exact_artifact(
@@ -349,64 +332,15 @@ async fn probe_exact_artifact(
     Ok(true)
 }
 
-#[derive(Debug)]
-struct VerifiedManifestLayout<'a> {
-    layer: &'a OciDescriptor,
-    config: &'a OciDescriptor,
-}
-
+/// Translate the shared layout contract's refusal into this boundary's error.
 fn verify_manifest_layout<'a>(
     manifest: &'a OciImageManifest,
     expected_digest: &str,
     expected_size: usize,
     reference: &Reference,
-) -> Result<VerifiedManifestLayout<'a>, ReleaseManifestPublishError> {
-    let (_, expected_config, expected_manifest) = artifact_layout(&[]);
-    let expected_config_digest = expected_config.sha256_digest();
-    if manifest.schema_version != 2
-        || manifest.media_type.as_deref() != Some(OCI_IMAGE_MEDIA_TYPE)
-        || manifest.artifact_type.as_deref() != Some(RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE)
-        || manifest.subject.is_some()
-        || manifest.annotations.is_some()
-    {
-        return Err(conflict(
-            reference,
-            "release-manifest-artifact-envelope-mismatch",
-        ));
-    }
-    if manifest.layers.len() != 1 {
-        return Err(conflict(
-            reference,
-            "release-manifest-artifact-layer-cardinality-mismatch",
-        ));
-    }
-    let layer = &manifest.layers[0];
-    if layer.media_type != RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE
-        || layer.digest != expected_digest
-        || layer.size != i64::try_from(expected_size).unwrap_or(i64::MAX)
-        || layer.urls.is_some()
-        || layer.annotations.is_some()
-        || layer.artifact_type.is_some()
-    {
-        return Err(conflict(
-            reference,
-            "release-manifest-artifact-layer-mismatch",
-        ));
-    }
-    let config = &manifest.config;
-    if config.media_type != RELEASE_MANIFEST_CONFIG_MEDIA_TYPE
-        || config.digest != expected_config_digest
-        || config.size != expected_manifest.config.size
-        || config.urls.is_some()
-        || config.annotations.is_some()
-        || config.artifact_type.is_some()
-    {
-        return Err(conflict(
-            reference,
-            "release-manifest-artifact-config-mismatch",
-        ));
-    }
-    Ok(VerifiedManifestLayout { layer, config })
+) -> Result<ReleaseManifestArtifactBlobs<'a>, ReleaseManifestPublishError> {
+    verify_release_manifest_artifact_layout(manifest, expected_digest, Some(expected_size))
+        .map_err(|refusal| conflict(reference, refusal.refusal()))
 }
 
 fn artifact_is_absent(error: &OciDistributionError) -> bool {
@@ -438,6 +372,8 @@ fn conflict(reference: &Reference, refusal: &'static str) -> ReleaseManifestPubl
 
 #[cfg(test)]
 mod tests {
+    use wamn_runtime::release_manifest_artifact::RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE;
+
     use super::*;
 
     const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1"}],"format-version":2,"registrations":{},"release":{"catalog-id":"orders","catalog-version":1,"environment":"prod","tenant-id":"tenant-a"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","wiring-id":"orders","wiring-version":1}]}"#;
@@ -454,7 +390,7 @@ mod tests {
     fn exact_layout_carries_only_canonical_manifest_bytes() {
         let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
             .expect("fixture is a canonical v2 manifest");
-        let (layer, config, manifest) = artifact_layout(CANONICAL_MANIFEST);
+        let (layer, config, manifest) = release_manifest_artifact_layout(CANONICAL_MANIFEST);
         let verified = verify_manifest_layout(
             &manifest,
             digest.as_str(),
@@ -487,7 +423,7 @@ mod tests {
     fn wrong_or_multi_layer_layout_refuses_as_conflict() {
         let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
             .expect("fixture is a canonical v2 manifest");
-        let (_, _, mut manifest) = artifact_layout(CANONICAL_MANIFEST);
+        let (_, _, mut manifest) = release_manifest_artifact_layout(CANONICAL_MANIFEST);
         manifest.layers[0].media_type = "application/octet-stream".to_owned();
         let error = verify_manifest_layout(
             &manifest,
