@@ -17,11 +17,23 @@
 //! manifest is read here. A pre-component release therefore cannot be converted
 //! into v2: it must be published from current wiring and component records or it
 //! has no v2 manifest.
+//!
+//! The `publish-release` verb is an INTERIM operator surface. Attachment and
+//! registration facts arrive as hand-authored JSON documents because no table
+//! projects them: `catalog.release_attachments` is flow-keyed and carries
+//! neither a wiring version nor an auth policy, and `catalog.event_registrations`
+//! is absent from the control portable store. Ruling `wamn-0h0g.15.164` moves
+//! registrations into that store; the projection replaces these two arguments
+//! then. Both stay REQUIRED until it does, because an empty registration set is
+//! a valid manifest with a real digest and must be chosen, never defaulted.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
+use anyhow::Context as _;
+use clap::Args;
 use serde::de::DeserializeOwned;
-use tokio_postgres::Transaction;
+use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentParameter, AdmittedComponentPort, ArtifactHash,
     ComponentCatalogScope, ManifestDigest, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
@@ -86,6 +98,29 @@ VALUES ($1, $2, $3, $4, $5)";
 pub struct ReleaseWiringTarget {
     pub wiring_id: String,
     pub wiring_version: u32,
+}
+
+impl std::str::FromStr for ReleaseWiringTarget {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (wiring_id, version) = value
+            .split_once('=')
+            .ok_or_else(|| "expected WIRING_ID=VERSION".to_owned())?;
+        if wiring_id.is_empty() || wiring_id.chars().any(char::is_whitespace) {
+            return Err("wiring id must be non-empty and free of whitespace".to_owned());
+        }
+        let wiring_version = version
+            .parse::<u32>()
+            .map_err(|_| format!("wiring version {version:?} is not a whole number"))?;
+        if wiring_version == 0 {
+            return Err("wiring version must be greater than zero".to_owned());
+        }
+        Ok(Self {
+            wiring_id: wiring_id.to_owned(),
+            wiring_version,
+        })
+    }
 }
 
 /// Inputs owned by the release publisher.
@@ -197,6 +232,101 @@ struct ReleaseComponentMembership {
     wiring_id: String,
     wiring_version: u32,
     component_digest: String,
+}
+
+/// INTERIM arguments for the first-release mint (see the module documentation).
+#[derive(Debug, Args)]
+pub struct PublishReleaseArgs {
+    /// Owner URL to the project-environment database carrying the catalog facts.
+    #[arg(long)]
+    pub database_url: String,
+
+    /// Tenant claim carried by the release.
+    #[arg(long)]
+    pub tenant: String,
+
+    /// Catalog identity of the release.
+    #[arg(long)]
+    pub catalog_id: String,
+
+    /// Exact catalog version whose release identity is frozen.
+    #[arg(long)]
+    pub catalog_version: u32,
+
+    /// Exact wiring version in the closure. Repeat once per released wiring.
+    #[arg(long = "wiring", value_name = "WIRING_ID=VERSION", required = true)]
+    pub wirings: Vec<ReleaseWiringTarget>,
+
+    /// INTERIM: JSON object of attachment id to serving attachment; `{}` for none.
+    #[arg(long)]
+    pub attachments: PathBuf,
+
+    /// INTERIM: JSON object of registration id to serving registration; `{}` for none.
+    #[arg(long)]
+    pub registrations: PathBuf,
+}
+
+/// Mint one v2 release from explicit wiring, attachment, and registration facts.
+pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
+    let attachments: BTreeMap<String, ServingAttachment> =
+        read_document(&args.attachments, "attachments")?;
+    let registrations: BTreeMap<String, ServingRegistration> =
+        read_document(&args.registrations, "registrations")?;
+    let catalog_version = i32::try_from(args.catalog_version)
+        .context("catalog-version exceeds the PostgreSQL integer carrier")?;
+    let wirings = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
+    let request = MintReleaseManifest {
+        tenant_id: &args.tenant,
+        catalog_id: &args.catalog_id,
+        catalog_version,
+        wirings: &wirings,
+        attachments: &attachments,
+        registrations: &registrations,
+    };
+
+    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
+        .await
+        .context("connect to the release project environment")?;
+    let connection_task = tokio::spawn(connection);
+    let minted = mint_in_transaction(&mut client, &request).await;
+    match minted {
+        Ok(digest) => {
+            drop(client);
+            connection_task
+                .await
+                .context("join the release mint connection")?
+                .context("drive the release mint connection")?;
+            println!("{digest}");
+            Ok(())
+        }
+        Err(error) => {
+            connection_task.abort();
+            Err(error)
+        }
+    }
+}
+
+async fn mint_in_transaction(
+    client: &mut Client,
+    request: &MintReleaseManifest<'_>,
+) -> anyhow::Result<ManifestDigest> {
+    let transaction = client
+        .transaction()
+        .await
+        .context("begin the release mint")?;
+    let minted = mint_release_manifest(&transaction, request).await?;
+    transaction
+        .commit()
+        .await
+        .context("commit the release mint")?;
+    Ok(minted.digest)
+}
+
+fn read_document<T: DeserializeOwned>(path: &Path, field: &'static str) -> anyhow::Result<T> {
+    let bytes =
+        std::fs::read(path).with_context(|| format!("read release {field} {}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse release {field} {}", path.display()))
 }
 
 /// Mint and freeze one v2 release closure in the caller's transaction.
@@ -623,4 +753,125 @@ fn serving_version(version: i32, field: &'static str) -> Result<u32, MintManifes
 
 fn storage(context: &'static str, error: tokio_postgres::Error) -> MintManifestError {
     MintManifestError::with_source(MintManifestErrorKind::Storage, context, error)
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+    use wamn_catalog::ServingRegistrationInput;
+
+    use super::*;
+
+    /// Host command for the flattened argument surface under test.
+    #[derive(Debug, clap::Parser)]
+    struct PublishProbe {
+        #[command(flatten)]
+        args: PublishReleaseArgs,
+    }
+
+    const COORDINATE: [&str; 8] = [
+        "--database-url",
+        "postgres://release.invalid/env",
+        "--tenant",
+        "tenant-a",
+        "--catalog-id",
+        "orders",
+        "--catalog-version",
+        "3",
+    ];
+
+    fn parse(closure: &[&str]) -> Result<PublishReleaseArgs, clap::Error> {
+        let mut argv = vec!["publish-release"];
+        argv.extend_from_slice(&COORDINATE);
+        argv.extend_from_slice(closure);
+        PublishProbe::try_parse_from(argv).map(|probe| probe.args)
+    }
+
+    #[test]
+    fn a_wiring_target_names_one_exact_positive_version() {
+        let target: ReleaseWiringTarget = "orders=2".parse().expect("an exact coordinate parses");
+        assert_eq!(target.wiring_id, "orders");
+        assert_eq!(target.wiring_version, 2);
+        for refused in [
+            "orders",
+            "orders=",
+            "=2",
+            "orders=0",
+            "orders=-1",
+            "or ders=1",
+        ] {
+            assert!(
+                refused.parse::<ReleaseWiringTarget>().is_err(),
+                "accepted {refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_interim_mint_requires_named_wirings_and_both_documents() {
+        let complete = parse(&[
+            "--wiring",
+            "orders=1",
+            "--wiring",
+            "shipping=2",
+            "--attachments",
+            "attachments.json",
+            "--registrations",
+            "registrations.json",
+        ])
+        .expect("the interim surface parses");
+        assert_eq!(
+            complete.wirings,
+            vec![
+                ReleaseWiringTarget {
+                    wiring_id: "orders".to_owned(),
+                    wiring_version: 1,
+                },
+                ReleaseWiringTarget {
+                    wiring_id: "shipping".to_owned(),
+                    wiring_version: 2,
+                },
+            ]
+        );
+        assert_eq!(complete.attachments, PathBuf::from("attachments.json"));
+        assert_eq!(complete.registrations, PathBuf::from("registrations.json"));
+
+        // Neither document defaults to the empty set: an empty registration set
+        // is a valid manifest with a real digest and must be chosen explicitly.
+        let refusals: [Vec<&str>; 3] = [
+            vec!["--attachments", "a.json", "--registrations", "r.json"],
+            vec!["--wiring", "orders=1", "--registrations", "r.json"],
+            vec!["--wiring", "orders=1", "--attachments", "a.json"],
+        ];
+        for refused in refusals {
+            assert!(parse(&refused).is_err(), "accepted {refused:?}");
+        }
+    }
+
+    #[test]
+    fn hand_authored_documents_use_the_serving_manifest_spelling() {
+        let attachments: BTreeMap<String, ServingAttachment> = serde_json::from_str(
+            r#"{"orders-http":{"kind":"http","wiring-id":"orders","wiring-version":1,
+                "definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555",
+                "definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},
+                "auth-policy":{"mode":"none"}}}"#,
+        )
+        .expect("a hand-authored attachment document parses");
+        let attachment = &attachments["orders-http"];
+        assert_eq!(attachment.wiring_version, 1);
+        assert_eq!(attachment.auth_policy, serde_json::json!({"mode": "none"}));
+
+        let registrations: BTreeMap<String, ServingRegistration> = serde_json::from_str(
+            r#"{"orders-changed":{"wiring-id":"shipping","wiring-version":2,
+                "entity":"orders","ops":["insert"],"input":"batch"}}"#,
+        )
+        .expect("a hand-authored registration document parses");
+        let registration = &registrations["orders-changed"];
+        assert_eq!(registration.entity, "orders");
+        assert_eq!(registration.input, ServingRegistrationInput::Batch);
+
+        let none: BTreeMap<String, ServingRegistration> =
+            serde_json::from_str("{}").expect("an explicitly empty document parses");
+        assert!(none.is_empty());
+    }
 }
