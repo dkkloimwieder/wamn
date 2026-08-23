@@ -7,9 +7,10 @@
 //! instance pool, router behavior, or retry policy.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use oci_client::client::{ClientConfig, ClientProtocol};
+use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::errors::OciDistributionError;
 use oci_client::manifest::{OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
@@ -32,6 +33,10 @@ pub struct ComponentArtifactSourceConfig {
     insecure_registry: bool,
     fetch_timeout: Duration,
     credentials: Option<RegistryCredentials>,
+    /// PEM CA bundles this source trusts on top of the compiled-in roots, kept
+    /// as read bytes rather than `oci_client::client::Certificate` so the
+    /// configuration stays comparable.
+    ca_bundles: Vec<Vec<u8>>,
 }
 
 impl ComponentArtifactSourceConfig {
@@ -46,7 +51,35 @@ impl ComponentArtifactSourceConfig {
             insecure_registry,
             fetch_timeout,
             credentials: None,
+            ca_bundles: Vec::new(),
         })
+    }
+
+    /// Trust the PEM CA bundles at `paths` for pulls from this source.
+    ///
+    /// This source builds its own `oci-client`, so the process-wide trust roots
+    /// a host installs through `wash_runtime::oci::set_extra_ca_certificates`
+    /// do not reach it. Without this it sees only the roots `oci-client`
+    /// compiles in, and an in-cluster registry behind a private CA is
+    /// unreachable short of dropping verification altogether.
+    ///
+    /// Pass the same paths the host passed to that call, and call it first:
+    /// validation lives there, and it refuses a bundle that is unreadable or
+    /// unusable as a trust root rather than starting a host that will reject
+    /// every pull. That refusal is load-bearing for this side too, because
+    /// `oci-client` builds its client through `Client::new`, which logs and
+    /// falls back to a wholly default configuration when a certificate fails to
+    /// parse — discarding the registry protocol and the timeouts along with the
+    /// trust roots, and leaving only a warning to say so.
+    ///
+    /// Empty `paths` leave this source on the compiled-in roots.
+    pub fn with_ca_paths(mut self, paths: &[PathBuf]) -> Result<Self, ComponentArtifactCaError> {
+        for path in paths {
+            let bundle = std::fs::read(path)
+                .map_err(|source| ComponentArtifactCaError::unreadable(path, source))?;
+            self.ca_bundles.push(bundle);
+        }
+        Ok(self)
     }
 
     /// Authenticate pulls with one complete credential for this exact registry.
@@ -74,7 +107,40 @@ impl fmt::Debug for ComponentArtifactSourceConfig {
             .field("insecure_registry", &self.insecure_registry)
             .field("fetch_timeout", &self.fetch_timeout)
             .field("authenticated", &self.credentials.is_some())
+            .field("extra_ca_bundles", &self.ca_bundles.len())
             .finish()
+    }
+}
+
+/// Contextual refusal from the extra OCI trust-root boundary.
+#[derive(Debug)]
+pub struct ComponentArtifactCaError {
+    path: PathBuf,
+    source: std::io::Error,
+}
+
+impl ComponentArtifactCaError {
+    fn unreadable(path: &Path, source: std::io::Error) -> Self {
+        Self {
+            path: path.to_owned(),
+            source,
+        }
+    }
+}
+
+impl fmt::Display for ComponentArtifactCaError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "OCI CA bundle {}: oci-ca-bundle-unreadable",
+            self.path.display()
+        )
+    }
+}
+
+impl std::error::Error for ComponentArtifactCaError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
     }
 }
 
@@ -191,6 +257,14 @@ impl ComponentArtifactSource {
             protocol,
             read_timeout: Some(config.fetch_timeout),
             connect_timeout: Some(config.fetch_timeout),
+            extra_root_certificates: config
+                .ca_bundles
+                .into_iter()
+                .map(|data| Certificate {
+                    encoding: CertificateEncoding::Pem,
+                    data,
+                })
+                .collect(),
             ..ClientConfig::default()
         });
         Self {

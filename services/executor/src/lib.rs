@@ -116,6 +116,19 @@ pub struct ExecutorArgs {
     #[arg(long, default_value_t = false)]
     pub allow_insecure_registries: bool,
 
+    /// Extra PEM CA bundles trusted when pulling from OCI registries: for a
+    /// registry behind a private or in-cluster CA, which the compiled-in public
+    /// roots do not cover.
+    ///
+    /// Prefer this to `--allow-insecure-registries`, which does not relax
+    /// verification but replaces it: that flag switches every registry to plain
+    /// HTTP, so credentials travel in the clear and no certificate is checked.
+    ///
+    /// Spelled exactly as the host's, so one registry posture reads the same on
+    /// both deployables (`services/host/src/host.rs`).
+    #[arg(long = "oci-ca-path", env = "WASH_OCI_CA_PATHS", value_delimiter = ',')]
+    pub oci_ca_paths: Vec<PathBuf>,
+
     /// Private status-only HTTP listener for the Kubernetes readiness probe.
     #[arg(long, env = "WAMN_READINESS_BIND", default_value = readiness::DEFAULT_BIND)]
     pub readiness_bind: SocketAddr,
@@ -145,6 +158,14 @@ fn resolve_owner(arg: Option<String>) -> String {
 
 pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
+
+    // Installed once, before anything can pull, and the call that validates the
+    // bundles: an executor pointed at an unreadable or unusable CA refuses here
+    // rather than starting and rejecting every pull from its registry.
+    if !args.oci_ca_paths.is_empty() {
+        wash_runtime::oci::set_extra_ca_certificates(&args.oci_ca_paths)
+            .context("trust the configured OCI CA bundles")?;
+    }
 
     let database_url = args
         .database_url
@@ -216,7 +237,9 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         Duration::from_secs(30),
     )?
     .with_registry_auth_file(&args.registry_auth_file)
-    .context("load component registry pull credential")?;
+    .context("load component registry pull credential")?
+    .with_ca_paths(&args.oci_ca_paths)
+    .context("trust the configured OCI CA bundles for component pulls")?;
     let source = ComponentArtifactSource::new(source_config);
     let engine = Arc::new(build_engine(&[])?);
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);

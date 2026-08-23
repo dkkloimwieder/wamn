@@ -99,6 +99,21 @@ pub struct HostArgs {
     #[arg(long = "allow-insecure-registries", default_value_t = false)]
     pub allow_insecure_registries: bool,
 
+    /// Extra PEM CA bundles trusted when pulling from OCI registries: for a
+    /// registry behind a private or in-cluster CA, which the compiled-in public
+    /// roots do not cover. Applies to every pull this host makes — the
+    /// ClusterHost's workload components and this process's digest-verified
+    /// component source alike.
+    ///
+    /// Prefer this to `--allow-insecure-registries`, which does not relax
+    /// verification but replaces it: that flag switches every registry to plain
+    /// HTTP, so credentials travel in the clear and no certificate is checked.
+    ///
+    /// Named to match what the chart renders (`hostGroups[].ociCaPaths` →
+    /// `--oci-ca-path`, charts/runtime-operator/templates/runtime/deployment.yaml).
+    #[arg(long = "oci-ca-path", env = "WASH_OCI_CA_PATHS", value_delimiter = ',')]
+    pub oci_ca_paths: Vec<PathBuf>,
+
     /// The directory to use for caching OCI artifacts
     #[arg(long = "oci-cache-dir")]
     pub oci_cache_dir: Option<PathBuf>,
@@ -213,6 +228,17 @@ fn load_release(manifest_root: Option<&Path>) -> anyhow::Result<Option<Arc<Relea
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
+    // Trust roots are a property of the host, not of any one pull, so they are
+    // installed once here rather than carried to every construction site. This
+    // must run before anything can pull: it is what the ClusterHost's own
+    // workload pulls consult, and it is the call that validates the bundles, so
+    // a host pointed at an unreadable or unusable CA refuses here instead of
+    // starting and rejecting every pull from the registry it was given.
+    if !args.oci_ca_paths.is_empty() {
+        wash_runtime::oci::set_extra_ca_certificates(&args.oci_ca_paths)
+            .context("trust the configured OCI CA bundles")?;
+    }
+
     // THE WELD IS CONSTRUCTED FIRST, and the ordering is load-bearing rather than
     // tidy. Under ruling wamn-0h0g.15.102 the mounted manifest is the SOLE carrier
     // of the (release version, manifest digest) pair, so every consumer takes the
@@ -278,7 +304,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 Duration::from_secs(30),
             )?
             .with_registry_auth_file(registry_auth_file)
-            .context("load component registry pull credential")?;
+            .context("load component registry pull credential")?
+            .with_ca_paths(&args.oci_ca_paths)
+            .context("trust the configured OCI CA bundles for component pulls")?;
             let source = ComponentArtifactSource::new(source_config);
             let credentials = Arc::new(match &args.credentials_file {
                 Some(path) => WamnCredentials::from_file(path)?,
