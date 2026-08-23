@@ -46,7 +46,17 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
     assert!(provision.contains(
         "let instance = read_project_env_instance(system_url, &triple).await?; let database = project_env_database_name(org, project, environment, &instance);"
     ));
-    assert!(provision.contains("database: database.to_string(),"));
+    // Pinned to the BINDING, not to the owned-conversion method: 358f6792
+    // (wamn-0h0g.13.59) rewrote this exact line from `database.to_string()` to
+    // `database.clone()` in a pure refactor and turned the guard red on a
+    // spelling with no behaviour behind it. What is load-bearing is that the
+    // credential scope is fed the stored-suffix-derived `database`, never a
+    // freshly recomputed name (wamn-0h0g.15.137).
+    assert!(
+        provision.contains("database: database."),
+        "the effect-writer credential scope must carry the stored-suffix-derived \
+         `database` binding"
+    );
     assert!(
         provision.contains(
             "render_effect_writer_secret_manifest(&triple, &args.namespace, &credential)"
