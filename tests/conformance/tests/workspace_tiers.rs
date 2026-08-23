@@ -14,13 +14,10 @@ const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
 const BUILD_AND_TEST_DOCS: &str = "docs/archive/build-and-test.md";
-const SPECIALIZATION_FIXTURES: [(&str, &str); 0] = [];
-const ROOT_DEFAULT_MEMBER_PATHS: [&str; 20] = [
+const ROOT_DEFAULT_MEMBER_PATHS: [&str; 18] = [
     "crates/authoring/model",
     "crates/catalog/model",
     "crates/data/entity-access",
-    "crates/execution/flow-engine",
-    "crates/execution/flow-invocation",
     "crates/execution/flow-model",
     "crates/execution/host",
     "crates/execution/router",
@@ -852,61 +849,6 @@ fn workspace_tier_inventory_matches_live_cargo_metadata() {
 }
 
 #[test]
-fn specialization_fixtures_are_classified_once_and_excluded_from_product_tiers() {
-    let root = repository_root();
-    let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
-    let roles: PackageRoleManifest = read_json(&root, PACKAGE_ROLES_MANIFEST);
-
-    for (name, manifest_path) in SPECIALIZATION_FIXTURES {
-        let matching = roles
-            .packages
-            .iter()
-            .filter(|package| package.name == name || package.manifest_path == manifest_path)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            matching.len(),
-            1,
-            "specialization fixture {name} at {manifest_path} must be classified exactly once"
-        );
-        let package = matching[0];
-        assert_eq!(package.name, name);
-        assert_eq!(package.manifest_path, manifest_path);
-        assert_eq!(package.workspace, COMPONENT_WORKSPACE);
-        assert_eq!(package.role, Role::Test);
-        assert_eq!(package.target_class, "guest");
-        assert_eq!(package.bounded_context, "proof");
-        assert!(!package.deployable);
-
-        for (tier_name, tier) in [
-            ("product_components", &manifest.tiers.product_components),
-            ("release", &manifest.tiers.release),
-        ] {
-            assert!(
-                !tier
-                    .component_packages
-                    .iter()
-                    .any(|package| package == name),
-                "fixture-only package {name} entered product tier {tier_name}"
-            );
-        }
-        for (tier_name, tier) in [
-            ("full_ci", &manifest.tiers.full_ci),
-            (
-                "deployed_system_proof",
-                &manifest.tiers.deployed_system_proof,
-            ),
-        ] {
-            assert!(
-                tier.component_packages
-                    .iter()
-                    .any(|package| package == name),
-                "specialization fixture {name} is absent from exhaustive tier {tier_name}"
-            );
-        }
-    }
-}
-
-#[test]
 fn workspace_tier_membership_matches_live_classification() {
     let root = repository_root();
     let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
@@ -1097,17 +1039,38 @@ fn bare_cargo_commands_select_exact_defaults_and_workspace_remains_exhaustive() 
         .iter()
         .map(|entry| (entry.working_directory.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
-    assert_eq!(workspace_names(&root_metadata).len(), 39);
-    assert_eq!(default_member_names(&root_metadata).len(), 20);
+    // Derived from the ratified path list, never restated as a second literal:
+    // cfcf90a6 deleted crates/execution/flow-engine and the flow-invocation
+    // package went with it, and both restated counts outlived the paths they
+    // counted (wamn-0h0g.15.137). The live workspace-member count is pinned
+    // against the manifest by `workspace_tier_inventory_matches_live_cargo_metadata`.
+    assert_eq!(
+        default_member_names(&root_metadata).len(),
+        ROOT_DEFAULT_MEMBER_PATHS.len()
+    );
 
-    for (working_directory, package_count) in [(".", 20), ("components", 6)] {
+    // The counts are MEASURED, never restated from a literal: comparing a
+    // hardcoded number against the manifest's own prose checks JSON against
+    // JSON and passes while both are wrong. `contains` is a substring test, so
+    // it also has to match a whole token — "6" is a substring of "16"
+    // (wamn-0h0g.15.137).
+    for (working_directory, package_count) in [
+        (".", default_member_names(&root_metadata).len()),
+        ("components", workspace_names(&component_metadata).len()),
+    ] {
         let entry = semantics
             .get(working_directory)
             .unwrap_or_else(|| panic!("missing bare Cargo semantics for {working_directory}"));
         assert_eq!(entry.commands, ["cargo build", "cargo check", "cargo test"]);
+        let stated = package_count.to_string();
         assert!(
-            entry.selected_packages.contains(&package_count.to_string()),
-            "{working_directory} bare semantics must state its live package count"
+            entry
+                .selected_packages
+                .split_whitespace()
+                .any(|token| token == stated),
+            "{working_directory} bare semantics must state its live package count {stated}, \
+             got {:?}",
+            entry.selected_packages
         );
         assert!(!entry.qualification.trim().is_empty());
     }

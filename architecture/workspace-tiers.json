@@ -230,8 +230,8 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "exactly 20 root default members",
-      "qualification": "cargo test selects each default member's default test targets; use --workspace --all-targets --no-fail-fast for all 39 root members and full-CI target coverage"
+      "selected_packages": "exactly 18 root default members",
+      "qualification": "cargo test selects each default member's default test targets; use --workspace --all-targets --no-fail-fast for all 36 root members and full-CI target coverage"
     },
     {
       "working_directory": "components",
@@ -240,7 +240,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 6 component workspace members",
+      "selected_packages": "all 7 component workspace members",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     }
   ],

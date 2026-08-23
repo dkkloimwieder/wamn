@@ -54,10 +54,14 @@ fn export_index_from_one_digest_does_not_resolve_against_another() {
 #[test]
 fn production_node_instances_keep_the_generated_typed_export_descriptor() {
     const DRIVER: &str = include_str!("../../../crates/execution/host/src/router_driver.rs");
+    // `split_once` on BOTH markers, never `split(..).next()`: that idiom yields
+    // the whole remaining file when the closing marker is gone, so the section
+    // silently grows to the end of the driver and the `forbidden` scan below
+    // starts reading unrelated code (wamn-0h0g.15.137).
     let node_instance = DRIVER
-        .split("struct NodeInstance {")
-        .nth(1)
-        .and_then(|source| source.split("impl Drop for NodeInstance").next())
+        .split_once("struct NodeInstance {")
+        .and_then(|(_, rest)| rest.split_once("impl Drop for NodeInstance"))
+        .map(|(section, _)| section)
         .expect("production NodeInstance section");
 
     for required in [
