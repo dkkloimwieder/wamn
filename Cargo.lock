@@ -2378,6 +2378,8 @@ dependencies = [
  "percent-encoding",
  "rand 0.9.4",
  "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -4308,9 +4310,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "opentelemetry",
+ "opentelemetry_sdk",
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
  "wamn-catalog",
  "wamn-control-registry",
  "wamn-event-wire",
@@ -4330,9 +4336,13 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "opentelemetry",
+ "opentelemetry_sdk",
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
  "wamn-event-wire",
  "wamn-execution-host",
  "wamn-run-state",

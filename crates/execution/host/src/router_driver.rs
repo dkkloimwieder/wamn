@@ -8,6 +8,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use opentelemetry::propagation::Extractor;
+use opentelemetry::trace::TraceContextExt as _;
+use tracing::Instrument as _;
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
     AdmittedComponent, AttachmentKind, ServingComponent, ServingManifest, ServingWiring,
 };
@@ -210,6 +214,76 @@ pub struct RouterDriverRequest {
     pub user_id: Option<String>,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
+}
+
+struct TraceHeaders<'a> {
+    traceparent: &'a str,
+    tracestate: Option<&'a str>,
+}
+
+impl Extractor for TraceHeaders<'_> {
+    fn get(&self, key: &str) -> Option<&str> {
+        if key.eq_ignore_ascii_case("traceparent") {
+            Some(self.traceparent)
+        } else if key.eq_ignore_ascii_case("tracestate") {
+            self.tracestate
+        } else {
+            None
+        }
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        match self.tracestate {
+            Some(_) => vec!["traceparent", "tracestate"],
+            None => vec!["traceparent"],
+        }
+    }
+}
+
+fn remote_trace_context(request: &RouterDriverRequest) -> Option<opentelemetry::Context> {
+    let traceparent = request.traceparent.as_deref()?;
+    let headers = TraceHeaders {
+        traceparent,
+        tracestate: request.tracestate.as_deref(),
+    };
+    let context =
+        opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(&headers));
+    if context.span().span_context().is_valid() {
+        Some(context)
+    } else {
+        None
+    }
+}
+
+fn component_invocation_span(
+    request: &RouterDriverRequest,
+    project: &str,
+    wiring_version: u32,
+    component_digest: &str,
+    call: &wamn_router::NodeCall,
+    remote_parent: Option<&opentelemetry::Context>,
+) -> tracing::Span {
+    let span = tracing::info_span!(
+        target: "wamn::router",
+        "wamn.component.invoke",
+        wamn.tenant = %request.tenant_id,
+        wamn.project = %project,
+        wamn.wiring_id = %request.wiring_id,
+        wamn.wiring_version = wiring_version,
+        wamn.component_digest = %component_digest,
+        wamn.node_id = %call.node,
+        wamn.input_port = tracing::field::Empty,
+    );
+    if let Some(input_port) = call.input_port.as_deref() {
+        span.record("wamn.input_port", input_port);
+    }
+    if let Some(parent) = remote_parent {
+        // A tracing subscriber without the OTel layer is the supported
+        // no-export mode. `set_parent` may then refuse; the span still records
+        // locally and no invocation is affected.
+        let _ = span.set_parent(parent.clone());
+    }
+    span
 }
 
 /// Exact immutable candidate selected by one durable management admission.
@@ -561,6 +635,10 @@ impl RouterDriver {
         active: ActiveWiring<CatalogFacts>,
         closure: ExecutionClosure<'_>,
     ) -> anyhow::Result<RouterDelivery> {
+        // Parse the ingress context once per delivery, not once per node on the
+        // router hot path. Queue delivery deliberately carries no remote
+        // context and inherits the executor's host-created queue root instead.
+        let remote_parent = remote_trace_context(&request);
         let wiring = Arc::clone(&active.wiring);
         let mut walk = wiring.start(Delivery {
             id: request.delivery_id.clone(),
@@ -588,8 +666,22 @@ impl RouterDriver {
                     tokio::time::sleep(Duration::from_millis(remaining)).await;
                 }
                 Step::Invoke(call) => {
+                    let component_digest = &active
+                        .facts
+                        .component(&call.component)
+                        .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?
+                        .component_digest;
+                    let span = component_invocation_span(
+                        &request,
+                        &self.config.project,
+                        active.version,
+                        component_digest,
+                        &call,
+                        remote_parent.as_ref(),
+                    );
                     let outcome = self
                         .invoke_node(&request, &active, &call, closure)
+                        .instrument(span)
                         .await
                         .with_context(|| format!("invoke wiring node {:?}", call.node))?;
                     if let Err(refusal) = wiring.apply(&mut walk, &call, outcome, self.now_ms()) {
@@ -1396,12 +1488,101 @@ fn lower_detail(detail: node_types::ErrorDetail) -> ErrorDetail {
 
 #[cfg(test)]
 mod tests {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use opentelemetry_sdk::trace::{
+        InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData,
+    };
+    use tracing_subscriber::layer::SubscriberExt as _;
     use wamn_catalog::{
         SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingRegistration,
         ServingRegistrationInput, ServingRelease,
     };
 
     use super::*;
+
+    const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
+    const PARENT_SPAN_ID: &str = "00f067aa0ba902b7";
+    const VALID_TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+    struct TraceHarness {
+        exporter: InMemorySpanExporter,
+        provider: SdkTracerProvider,
+        _guard: tracing::subscriber::DefaultGuard,
+    }
+
+    impl TraceHarness {
+        fn install() -> Self {
+            opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+            let exporter = InMemorySpanExporterBuilder::new().build();
+            let provider = SdkTracerProvider::builder()
+                .with_simple_exporter(exporter.clone())
+                .build();
+            let subscriber = tracing_subscriber::registry().with(
+                tracing_opentelemetry::layer().with_tracer(provider.tracer("router-span-test")),
+            );
+            let guard = tracing::subscriber::set_default(subscriber);
+            Self {
+                exporter,
+                provider,
+                _guard: guard,
+            }
+        }
+
+        fn spans(&self) -> Vec<SpanData> {
+            self.provider.force_flush().expect("test spans must flush");
+            self.exporter
+                .get_finished_spans()
+                .expect("test span exporter must remain readable")
+        }
+    }
+
+    fn driver_request(traceparent: Option<&str>) -> RouterDriverRequest {
+        RouterDriverRequest {
+            tenant_id: "tenant-a".to_owned(),
+            catalog_id: "orders".to_owned(),
+            environment: "prod".to_owned(),
+            wiring_id: "route-order".to_owned(),
+            wiring_version: 7,
+            delivery_id: "delivery-9".to_owned(),
+            payload: serde_json::json!({"id": 9}),
+            caller_attached: true,
+            resolution: WiringResolution::Preloaded,
+            role: None,
+            user_id: None,
+            traceparent: traceparent.map(str::to_owned),
+            tracestate: traceparent.map(|_| "vendor=value".to_owned()),
+        }
+    }
+
+    fn node_call() -> wamn_router::NodeCall {
+        wamn_router::NodeCall {
+            node: "load-order".to_owned(),
+            input_port: Some("request".to_owned()),
+            component: "entity".to_owned(),
+            config: serde_json::json!({}),
+            connection: None,
+            credential: None,
+            payload: serde_json::json!({"id": 9}),
+            attempt: 0,
+            occurrence: 0,
+            deadline_ms: Some(100),
+        }
+    }
+
+    fn span_named<'a>(spans: &'a [SpanData], name: &str) -> &'a SpanData {
+        spans
+            .iter()
+            .find(|span| span.name == name)
+            .unwrap_or_else(|| panic!("span {name:?} must be exported"))
+    }
+
+    fn attribute(span: &SpanData, key: &str) -> Option<String> {
+        span.attributes
+            .iter()
+            .find(|attribute| attribute.key.as_str() == key)
+            .map(|attribute| attribute.value.to_string())
+    }
 
     fn attachment(kind: AttachmentKind, wiring_id: &str) -> ServingAttachment {
         ServingAttachment {
@@ -1436,6 +1617,115 @@ mod tests {
         assert_eq!(refusal.kind(), CandidateExecutionRefusalKind::Binding);
         assert_eq!(refusal.refusal(), "candidate-binding-world-drift");
         assert_eq!(refusal.to_string(), "candidate-binding-world-drift");
+    }
+
+    #[test]
+    fn component_span_adopts_remote_traceparent_and_host_identity() {
+        let harness = TraceHarness::install();
+        let request = driver_request(Some(VALID_TRACEPARENT));
+        let parent = remote_trace_context(&request).expect("valid W3C parent must extract");
+        let span = component_invocation_span(
+            &request,
+            "project-a",
+            7,
+            "sha256:component",
+            &node_call(),
+            Some(&parent),
+        );
+        span.in_scope(|| {});
+        drop(span);
+
+        let spans = harness.spans();
+        let component = span_named(&spans, "wamn.component.invoke");
+        assert_eq!(component.span_context.trace_id().to_string(), TRACE_ID);
+        assert_eq!(component.parent_span_id.to_string(), PARENT_SPAN_ID);
+        assert_eq!(
+            attribute(component, "wamn.tenant").as_deref(),
+            Some("tenant-a")
+        );
+        assert_eq!(
+            attribute(component, "wamn.project").as_deref(),
+            Some("project-a")
+        );
+        assert_eq!(
+            attribute(component, "wamn.wiring_id").as_deref(),
+            Some("route-order")
+        );
+        assert_eq!(
+            attribute(component, "wamn.wiring_version").as_deref(),
+            Some("7")
+        );
+        assert_eq!(
+            attribute(component, "wamn.component_digest").as_deref(),
+            Some("sha256:component")
+        );
+        assert_eq!(
+            attribute(component, "wamn.node_id").as_deref(),
+            Some("load-order")
+        );
+        assert_eq!(
+            attribute(component, "wamn.input_port").as_deref(),
+            Some("request")
+        );
+    }
+
+    #[test]
+    fn queue_component_span_inherits_the_host_created_root() {
+        let harness = TraceHarness::install();
+        let request = driver_request(None);
+        let queue = tracing::info_span!(parent: None, "wamn.queue.delivery");
+        let queue_context = queue.context();
+        let queue_span_context = queue_context.span().span_context().clone();
+        queue.in_scope(|| {
+            let component = component_invocation_span(
+                &request,
+                "project-a",
+                7,
+                "sha256:component",
+                &node_call(),
+                None,
+            );
+            component.in_scope(|| {});
+        });
+        drop(queue);
+
+        let spans = harness.spans();
+        let root = span_named(&spans, "wamn.queue.delivery");
+        let component = span_named(&spans, "wamn.component.invoke");
+        assert_eq!(root.parent_span_id, opentelemetry::trace::SpanId::INVALID);
+        assert_eq!(
+            component.parent_span_id,
+            queue_span_context.span_id(),
+            "the queue invocation must remain a child of the executor root"
+        );
+        assert_eq!(
+            component.span_context.trace_id(),
+            root.span_context.trace_id()
+        );
+    }
+
+    #[test]
+    fn malformed_traceparent_is_ignored_without_suppressing_the_span() {
+        let harness = TraceHarness::install();
+        let request = driver_request(Some("not-a-traceparent"));
+        assert!(remote_trace_context(&request).is_none());
+        let span = component_invocation_span(
+            &request,
+            "project-a",
+            7,
+            "sha256:component",
+            &node_call(),
+            None,
+        );
+        span.in_scope(|| {});
+        drop(span);
+
+        let spans = harness.spans();
+        let component = span_named(&spans, "wamn.component.invoke");
+        assert_eq!(
+            component.parent_span_id,
+            opentelemetry::trace::SpanId::INVALID
+        );
     }
 
     #[test]

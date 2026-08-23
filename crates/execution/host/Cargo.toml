@@ -15,6 +15,12 @@ wash-runtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+opentelemetry = { workspace = true, features = ["trace"] }
+tracing-opentelemetry = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tracing-subscriber = { workspace = true }

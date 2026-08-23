@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
+use tracing::Instrument as _;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 use wamn_event_wire::Causation;
@@ -43,6 +44,7 @@ const IDLE_POLL_MS: u64 = 250;
 #[derive(Debug, Clone)]
 struct QueueScope {
     tenant_id: String,
+    project: String,
     catalog_id: String,
     environment: String,
 }
@@ -50,6 +52,26 @@ struct QueueScope {
 enum QueueDriverRequest {
     Released(RouterDriverRequest),
     Candidate(CandidateCaseRequest),
+}
+
+fn queue_delivery_span(
+    scope: &QueueScope,
+    run_id: &str,
+    wiring_id: &str,
+    wiring_version: u32,
+) -> tracing::Span {
+    tracing::info_span!(
+        target: "wamn::router",
+        parent: None,
+        "wamn.queue.delivery",
+        wamn.tenant = %scope.tenant_id,
+        wamn.project = %scope.project,
+        wamn.catalog_id = %scope.catalog_id,
+        wamn.environment = %scope.environment,
+        wamn.run_id = %run_id,
+        wamn.wiring_id = %wiring_id,
+        wamn.wiring_version = wiring_version,
+    )
 }
 
 #[derive(Debug, Args)]
@@ -142,6 +164,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     );
     let scope = QueueScope {
         tenant_id: release.manifest().release.tenant_id.clone(),
+        project: args.project.clone(),
         catalog_id: release.manifest().release.catalog_id.clone(),
         environment: release.manifest().release.environment.clone(),
     };
@@ -325,6 +348,7 @@ async fn drain_one(
         } => {
             let wiring_version = u32::try_from(wiring_version)
                 .context("claimed wiring version is not a positive u32")?;
+            let queue_span = queue_delivery_span(scope, &run_id, &wiring_id, wiring_version);
             let result_only = candidate.is_some();
             let request = match candidate {
                 Some(candidate) => QueueDriverRequest::Candidate(CandidateCaseRequest {
@@ -372,6 +396,7 @@ async fn drain_one(
                 result_only,
                 request,
             )
+            .instrument(queue_span)
             .await?;
             Ok(true)
         }
@@ -568,6 +593,9 @@ async fn commit_completion(
 #[cfg(test)]
 mod tests {
     use clap::{CommandFactory as _, Parser as _};
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::{InMemorySpanExporterBuilder, SdkTracerProvider};
+    use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
 
@@ -609,5 +637,56 @@ mod tests {
     fn cache_capacity_rejects_zero_and_defaults_to_1024() {
         assert!("0".parse::<WiringCacheCapacity>().is_err());
         assert_eq!(WiringCacheCapacity::default().get().get(), 1_024);
+    }
+
+    #[test]
+    fn queue_delivery_span_is_an_explicit_host_scoped_root() {
+        let exporter = InMemorySpanExporterBuilder::new().build();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("queue-span-test")));
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let scope = QueueScope {
+            tenant_id: "tenant-a".to_owned(),
+            project: "project-a".to_owned(),
+            catalog_id: "orders".to_owned(),
+            environment: "prod".to_owned(),
+        };
+
+        let ambient = tracing::info_span!("ambient-service-span");
+        ambient.in_scope(|| {
+            let queue = queue_delivery_span(&scope, "run-9", "route-order", 7);
+            queue.in_scope(|| {});
+        });
+        drop(ambient);
+        provider.force_flush().expect("test spans must flush");
+
+        let spans = exporter
+            .get_finished_spans()
+            .expect("test span exporter must remain readable");
+        let queue = spans
+            .iter()
+            .find(|span| span.name == "wamn.queue.delivery")
+            .expect("queue root must be exported");
+        assert!(
+            queue.parent_span_id == opentelemetry::trace::SpanId::INVALID,
+            "the queued automation path must re-root rather than inherit ambient work"
+        );
+        let attribute = |key: &str| {
+            queue
+                .attributes
+                .iter()
+                .find(|attribute| attribute.key.as_str() == key)
+                .map(|attribute| attribute.value.to_string())
+        };
+        assert_eq!(attribute("wamn.tenant").as_deref(), Some("tenant-a"));
+        assert_eq!(attribute("wamn.project").as_deref(), Some("project-a"));
+        assert_eq!(attribute("wamn.catalog_id").as_deref(), Some("orders"));
+        assert_eq!(attribute("wamn.environment").as_deref(), Some("prod"));
+        assert_eq!(attribute("wamn.run_id").as_deref(), Some("run-9"));
+        assert_eq!(attribute("wamn.wiring_id").as_deref(), Some("route-order"));
+        assert_eq!(attribute("wamn.wiring_version").as_deref(), Some("7"));
     }
 }
