@@ -460,7 +460,6 @@ dependencies = [
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-materializer",
- "wamn-run-state",
  "wit-bindgen 0.44.0",
 ]
 
@@ -805,19 +804,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "wamn-catalog"
-version = "0.1.0"
-dependencies = [
- "boon",
- "schemars",
- "serde",
- "serde_json",
- "sha2",
- "url",
- "wamn-flow",
-]
-
-[[package]]
 name = "wamn-event-reg"
 version = "0.1.0"
 dependencies = [
@@ -835,17 +821,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "wamn-flow"
-version = "0.1.0"
-dependencies = [
- "boon",
- "schemars",
- "serde",
- "serde_json",
- "wamn-schema-model",
+ "sha2",
 ]
 
 [[package]]
@@ -855,28 +831,8 @@ dependencies = [
  "jmespath",
  "serde",
  "serde_json",
- "wamn-catalog",
  "wamn-event-reg",
  "wamn-event-wire",
- "wamn-flow",
- "wamn-run-state",
-]
-
-[[package]]
-name = "wamn-pg-core"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
-name = "wamn-run-state"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "wamn-flow",
- "wamn-pg-core",
 ]
 
 [[package]]
