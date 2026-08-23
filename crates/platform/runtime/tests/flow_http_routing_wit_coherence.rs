@@ -18,6 +18,11 @@ const HOST_COPY: &str = include_str!("../wit/deps/wamn-flow-http-routing/package
 const HTTP_COPY: &str = include_str!(
     "../../../../components/ingress/flow-http/wit/deps/wamn-flow-http-routing/package.wit"
 );
+const HTTP_DELIVERY_COPY: &str = include_str!(
+    "../../../../components/ingress/flow-http/wit/deps/wamn-router-delivery/package.wit"
+);
+const HTTP_RANDOM_COPY: &str =
+    include_str!("../../../../components/ingress/flow-http/wit/deps/wasi-random/package.wit");
 const HOST_WORLD: &str = include_str!("../wit/world.wit");
 const HTTP_WORLD: &str = include_str!("../../../../components/ingress/flow-http/wit/world.wit");
 const PLUGIN: &str = include_str!("../src/plugins/flow_http_routing.rs");
@@ -124,19 +129,14 @@ fn route_definition_carries_exactly_the_fields_the_host_fills_and_the_guest_read
     // the guest narrows with `usize::try_from`, which is why the host answers
     // them with `u32::MAX` and not `u64::MAX`.
     const ROUTE_DEFINITION: &str = r#"attachment-id: string,
-    catalog-version: u64,
-    definition-hash: string,
     host: string,
     path: string,
     method: string,
-    enabled: bool,
     auth-policy: string,
     mappings: list<mapping>,
     input-schema: string,
-    idempotency-required: bool,
     body-limit: u64,
-    mapped-limit: u64,
-    deadline-override: option<u64>,"#;
+    mapped-limit: u64,"#;
 
     for copy in [HOST_COPY, HTTP_COPY] {
         assert_eq!(
@@ -147,7 +147,7 @@ fn route_definition_carries_exactly_the_fields_the_host_fills_and_the_guest_read
 }
 
 #[test]
-fn the_three_bound_functions_and_the_refusal_shape_are_unchanged() {
+fn the_two_bound_functions_and_the_refusal_shape_are_unchanged() {
     const AUTH_REJECTION: &str = r#"status: u16,
     code: string,"#;
 
@@ -162,9 +162,6 @@ fn the_three_bound_functions_and_the_refusal_shape_are_unchanged() {
             // signature that reached for the attachment itself would let the
             // guest choose its own policy.
             "authenticate: func(policy: string, headers: list<header>) -> result<string, auth-rejection>;",
-            // No parameters: the host cannot see the inbound socket, so there is
-            // nothing for a caller to pass that would make this answerable.
-            "caller-connected: func() -> bool;",
         ] {
             assert!(
                 copy.contains(signature),
@@ -173,6 +170,43 @@ fn the_three_bound_functions_and_the_refusal_shape_are_unchanged() {
         }
         assert_eq!(item_body(copy, "record auth-rejection {"), AUTH_REJECTION);
     }
+}
+
+#[test]
+fn the_http_guest_vendors_the_native_router_delivery_contract_byte_for_byte() {
+    let native_path =
+        repo_root().join("crates/execution/host/wit/deps/wamn-router-delivery/package.wit");
+    let native = fs::read_to_string(&native_path).unwrap_or_else(|error| {
+        panic!(
+            "native router-delivery contract {} reads: {error}",
+            native_path.display()
+        )
+    });
+    assert_eq!(
+        native, HTTP_DELIVERY_COPY,
+        "the flow-http guest must vendor the native wamn:router-delivery contract byte-for-byte"
+    );
+    assert_eq!(
+        HTTP_WORLD
+            .matches("import wamn:router-delivery/delivery@0.1.0;")
+            .count(),
+        1,
+        "the HTTP world imports the one native delivery interface"
+    );
+    assert!(
+        !HTTP_WORLD.contains("wamn:flow-invocation"),
+        "the inline HTTP guest must not retain the durable begin/wait import"
+    );
+    assert!(HTTP_RANDOM_COPY.starts_with("package wasi:random@0.2.12;\n"));
+    assert!(HTTP_RANDOM_COPY.contains("get-random-bytes: func(len: u64) -> list<u8>;"));
+    assert_eq!(
+        HTTP_WORLD
+            .matches("import wasi:random/random@0.2.12;")
+            .count(),
+        1,
+        "fresh delivery identity uses exactly the admitted WASI random interface"
+    );
+    assert!(!HTTP_WORLD.contains("wasi:random/insecure"));
 }
 
 #[test]
@@ -220,7 +254,6 @@ fn both_worlds_import_the_routing_interface_and_the_production_host_links_it() {
     assert!(HTTP_WORLD.contains("world flow-http {"));
     assert_eq!(HTTP_WORLD.matches(IMPORT).count(), 1);
 
-    // The WASH host, not the flowrunner in-process host: the plugin is only
-    // reachable from the process that runs the flow-http workload.
+    // The production host links the plugin for the flow-http workload.
     assert!(HOST.contains("FlowHttpRouting::new(release.clone())"));
 }

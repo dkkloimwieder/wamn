@@ -1,4 +1,4 @@
-//! WASI HTTP shell over authoritative routing/auth and invocation providers.
+//! WASI HTTP shell over authoritative routing, auth, and router delivery.
 
 wit_bindgen::generate!({
     world: "flow-http",
@@ -13,12 +13,10 @@ use wasi::http::types::{
 use wasi::io::streams::{InputStream, StreamError};
 
 use super::{
-    AdapterLimits, AdapterOutcome, Backend, BodyReadError, BodyReader, Cardinality, ClientLiveness,
-    Header, HttpResponse, Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition,
+    AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
+    DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryRequest, Emission, Header,
+    HttpResponse, Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition,
     handle_request,
-};
-use wamn_flow_invocation::{
-    Admitted, BeginResult, Failure, FlowError, InvokeRequest, InvokeResult, Rejection, Response,
 };
 
 struct Component;
@@ -29,25 +27,8 @@ impl Guest for Component {
         let body = request.consume().ok();
         let mut backend = GuestBackend;
         let mut body = WasiBody::new(body);
-        let mut liveness = WasiLiveness;
-        match handle_request(
-            &mut backend,
-            &mut body,
-            &mut liveness,
-            &head,
-            AdapterLimits::default(),
-        ) {
-            AdapterOutcome::Response(response) => send_response(response_out, response),
-            AdapterOutcome::Disconnected { .. } => {
-                send_response(
-                    response_out,
-                    HttpResponse {
-                        status: 499,
-                        body: Vec::new(),
-                    },
-                );
-            }
-        }
+        let response = handle_request(&mut backend, &mut body, &head, AdapterLimits::default());
+        send_response(response_out, response);
     }
 }
 
@@ -66,7 +47,7 @@ impl Backend for GuestBackend {
         routes.into_iter().map(route_definition).collect()
     }
 
-    fn authenticate(&mut self, policy: &str, headers: &[Header]) -> Result<String, Rejection> {
+    fn authenticate(&mut self, policy: &str, headers: &[Header]) -> Result<String, AuthRejection> {
         let headers = headers
             .iter()
             .map(|header| wamn::flow_http_routing::routing::Header {
@@ -75,83 +56,92 @@ impl Backend for GuestBackend {
             })
             .collect::<Vec<_>>();
         wamn::flow_http_routing::routing::authenticate(policy, &headers).map_err(|rejection| {
-            Rejection {
+            AuthRejection {
                 status: rejection.status,
                 code: rejection.code,
             }
         })
     }
 
-    fn begin(&mut self, request: InvokeRequest) -> Result<BeginResult, ProviderError> {
-        use wamn::flow_invocation::invocation;
+    fn new_delivery_id(&mut self) -> String {
+        const RANDOM_BYTES: u64 = 16;
+        hex(&wasi::random::random::get_random_bytes(RANDOM_BYTES))
+    }
 
-        let request = invocation::InvokeRequest {
-            attachment_id: request.attachment_id,
-            expected_catalog_version: request.expected_catalog_version,
-            expected_definition_hash: request.expected_definition_hash,
-            client_request_fingerprint: request.client_request_fingerprint,
+    fn deliver(&mut self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError> {
+        use wamn::router_delivery::delivery;
+
+        let request = delivery::DeliveryRequest {
+            source: delivery::Source::Attachment(request.attachment_id),
+            delivery_id: request.delivery_id,
             payload: request.payload,
-            idempotency_key: request.idempotency_key,
-            principal: request.principal,
-            deadline_override: request.deadline_override,
-            trace: request.trace.map(|trace| invocation::TraceContext {
+            caller: request.caller.map(|caller| delivery::CallerContext {
+                role: caller.role,
+                user_id: caller.user_id,
+            }),
+            trace: request.trace.map(|trace| delivery::TraceContext {
                 traceparent: trace.traceparent,
                 tracestate: trace.tracestate,
             }),
         };
-        // A typed host failure collapses into `ProviderError` (wamn-0h0g.15.40).
-        // The adapter's caller-facing answer is the same bounded 503 for every
-        // category, and the host has already logged which one it was; what the
-        // error channel buys here is that the failure *answers* at all instead
-        // of trapping this instance. A pre-run `rejection` stays what it always
-        // was — a decided outcome the caller is told verbatim.
-        Ok(
-            match invocation::begin(&request).map_err(|_| ProviderError)? {
-                invocation::BeginResult::Admitted(admitted) => BeginResult::Admitted(Admitted {
-                    run_id: admitted.run_id,
-                }),
-                invocation::BeginResult::Rejected(rejection) => BeginResult::Rejected(Rejection {
-                    status: rejection.status,
-                    code: rejection.code,
-                }),
-            },
-        )
-    }
-
-    fn wait(
-        &mut self,
-        run_id: &str,
-        timeout_ms: u32,
-    ) -> Result<Option<InvokeResult>, ProviderError> {
-        use wamn::flow_invocation::invocation;
-
-        Ok(invocation::wait(run_id, timeout_ms)
-            .map_err(|_| ProviderError)?
-            .map(|result| match result {
-                invocation::InvokeResult::Responded(response) => {
-                    InvokeResult::Responded(Response {
-                        run_id: response.run_id,
-                        body: response.body,
-                        status_hint: response.status_hint,
-                    })
-                }
-                invocation::InvokeResult::Failed(failure) => {
-                    InvokeResult::Failed(convert_failure(failure))
-                }
-            }))
+        delivery::deliver(&request)
+            .map(convert_delivery_outcome)
+            .map_err(convert_delivery_error)
     }
 }
 
-fn convert_failure(failure: wamn::flow_invocation::invocation::Failure) -> Failure {
-    Failure {
-        status: failure.status,
-        error: FlowError {
-            code: failure.error.code,
-            message: failure.error.message,
-            run_id: failure.error.run_id,
-            flow_id: failure.error.flow_id,
-            flow_version: failure.error.flow_version,
-        },
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn convert_delivery_outcome(
+    outcome: wamn::router_delivery::delivery::DeliveryOutcome,
+) -> DeliveryOutcome {
+    use wamn::router_delivery::delivery;
+
+    match outcome {
+        delivery::DeliveryOutcome::Respond(payload) => DeliveryOutcome::Respond(payload),
+        delivery::DeliveryOutcome::Emit(emission) => DeliveryOutcome::Emit(Emission {
+            event: emission.event,
+            dedup_id: emission.dedup_id,
+        }),
+        delivery::DeliveryOutcome::Discard => DeliveryOutcome::Discard,
+        delivery::DeliveryOutcome::Failed(failure) => DeliveryOutcome::Failed(DeliveryFailure {
+            kind: match failure.kind {
+                delivery::FailureKind::Terminal => DeliveryFailureKind::Terminal,
+                delivery::FailureKind::RetryExhausted => DeliveryFailureKind::RetryExhausted,
+                delivery::FailureKind::InvalidInput => DeliveryFailureKind::InvalidInput,
+                delivery::FailureKind::HopLimit => DeliveryFailureKind::HopLimit,
+                delivery::FailureKind::UnreleasedCaller => DeliveryFailureKind::UnreleasedCaller,
+                delivery::FailureKind::MissingDedupId => DeliveryFailureKind::MissingDedupId,
+                delivery::FailureKind::RespondWithoutCaller => {
+                    DeliveryFailureKind::RespondWithoutCaller
+                }
+                delivery::FailureKind::SecondVerdict => DeliveryFailureKind::SecondVerdict,
+            },
+            code: failure.code,
+            message: failure.message,
+        }),
+        delivery::DeliveryOutcome::Cancelled => DeliveryOutcome::Cancelled,
+    }
+}
+
+fn convert_delivery_error(error: wamn::router_delivery::delivery::DeliveryError) -> DeliveryError {
+    use wamn::router_delivery::delivery::DeliveryError as WireError;
+
+    match error {
+        WireError::SourceNotFound => DeliveryError::SourceNotFound,
+        WireError::InvalidRequest => DeliveryError::InvalidRequest,
+        WireError::InvalidPayload => DeliveryError::InvalidPayload,
+        WireError::WiringNotPreloaded => DeliveryError::WiringNotPreloaded,
+        WireError::ExecutionFailed => DeliveryError::ExecutionFailed,
     }
 }
 
@@ -165,12 +155,9 @@ fn route_definition(
     let mapped_limit = usize::try_from(route.mapped_limit).map_err(|_| ProviderError)?;
     Ok(RouteDefinition {
         attachment_id: route.attachment_id,
-        catalog_version: route.catalog_version,
-        definition_hash: route.definition_hash,
         host: route.host,
         path: route.path,
         method: route.method,
-        enabled: route.enabled,
         auth_policy: route.auth_policy,
         mappings: route
             .mappings
@@ -192,10 +179,8 @@ fn route_definition(
             })
             .collect(),
         input_schema,
-        idempotency_required: route.idempotency_required,
         body_limit,
         mapped_limit,
-        deadline_override: route.deadline_override,
     })
 }
 
@@ -233,14 +218,6 @@ impl BodyReader for WasiBody {
                 Err(BodyReadError)
             }
         }
-    }
-}
-
-struct WasiLiveness;
-
-impl ClientLiveness for WasiLiveness {
-    fn connected(&mut self) -> bool {
-        wamn::flow_http_routing::routing::caller_connected()
     }
 }
 

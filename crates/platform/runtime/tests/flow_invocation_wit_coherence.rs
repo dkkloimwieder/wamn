@@ -2,9 +2,6 @@
 
 const CONTRACT: &str = include_str!("../../../execution/flow-invocation/wit/package.wit");
 const HOST_COPY: &str = include_str!("../wit/deps/wamn-flow-invocation/package.wit");
-const HTTP_COPY: &str = include_str!(
-    "../../../../components/ingress/flow-http/wit/deps/wamn-flow-invocation/package.wit"
-);
 const WORLD: &str = include_str!("../wit/world.wit");
 const SERVICE: &str = include_str!("../src/flow_invocation.rs");
 const PLUGIN: &str = include_str!("../src/plugins/wamn_flow_invocation.rs");
@@ -113,7 +110,7 @@ fn deleted_vocabulary_in_live_wit_code_is_preserved() {
 #[test]
 fn every_flow_invocation_copy_shares_the_contract_code() {
     let contract = code_lines(CONTRACT);
-    for (name, copy) in [("runtime", HOST_COPY), ("HTTP", HTTP_COPY)] {
+    for (name, copy) in [("runtime", HOST_COPY)] {
         assert_eq!(
             code_lines(copy),
             contract,
@@ -141,17 +138,12 @@ fn host_copy_preserves_the_frozen_interface_surface() {
     ] {
         assert!(CONTRACT.contains(anchor), "contract missing {anchor}");
         assert!(HOST_COPY.contains(anchor), "host copy missing {anchor}");
-        assert!(HTTP_COPY.contains(anchor), "HTTP copy missing {anchor}");
     }
 }
 
 #[test]
 fn every_vendored_contract_refuses_deleted_vocabulary() {
-    for (name, source) in [
-        ("canonical", CONTRACT),
-        ("host", HOST_COPY),
-        ("HTTP", HTTP_COPY),
-    ] {
+    for (name, source) in [("canonical", CONTRACT), ("host", HOST_COPY)] {
         let code = without_wit_comments(source);
         for deleted in [
             "cancel:",
@@ -178,9 +170,9 @@ fn runtime_world_and_plugin_register_the_exact_import() {
 
 // wamn-0h0g.15.40: before the error channel existed the plugin converted every
 // host-side failure with `Error::msg(error.to_string())`, which is a wasm trap —
-// a transient store outage poisoned the flow-http instance and leaked the host's
-// error text to the guest. Both halves must stay gone: the trap conversion, and
-// any second place that decides an arm.
+// a transient store outage trapped an invocation guest and leaked the host's
+// error text. Both halves must stay gone: the trap conversion, and any second
+// place that decides an arm.
 #[test]
 fn host_failures_are_translated_once_and_never_trap_the_guest() {
     assert!(

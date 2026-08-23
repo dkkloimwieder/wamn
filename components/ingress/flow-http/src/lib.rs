@@ -1,12 +1,8 @@
-//! Thin HTTP adapter for the versioned callable-flow invocation contract.
-//!
-//! MVP outcome: M0 authenticated admission via the warm run-worker.
+//! Thin HTTP adapter from a released attachment to inline router delivery.
 
 use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sha2::{Digest as _, Sha256};
-use wamn_flow_invocation::{BeginResult, InvokeRequest, InvokeResult, Rejection, TraceContext};
 
 /// A transport header after lowercasing its name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,19 +54,93 @@ pub enum Cardinality {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteDefinition {
     pub attachment_id: String,
-    pub catalog_version: u64,
-    pub definition_hash: String,
     pub host: String,
     pub path: String,
     pub method: String,
-    pub enabled: bool,
     pub auth_policy: String,
     pub mappings: Vec<Mapping>,
     pub input_schema: Value,
-    pub idempotency_required: bool,
     pub body_limit: usize,
     pub mapped_limit: usize,
-    pub deadline_override: Option<u64>,
+}
+
+/// Authentication refusal returned by the selected route's policy owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthRejection {
+    pub status: u16,
+    pub code: String,
+}
+
+/// Authenticated caller facts forwarded to the trusted router bridge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallerContext {
+    pub role: Option<String>,
+    pub user_id: Option<String>,
+}
+
+/// Trace context forwarded unchanged to component execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceContext {
+    pub traceparent: String,
+    pub tracestate: Option<String>,
+}
+
+/// One attachment-originated request to the host-owned router bridge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryRequest {
+    pub attachment_id: String,
+    pub delivery_id: String,
+    pub payload: String,
+    pub caller: Option<CallerContext>,
+    pub trace: Option<TraceContext>,
+}
+
+/// Stable router failure classes preserved by the delivery bridge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryFailureKind {
+    Terminal,
+    RetryExhausted,
+    InvalidInput,
+    HopLimit,
+    UnreleasedCaller,
+    MissingDedupId,
+    RespondWithoutCaller,
+    SecondVerdict,
+}
+
+/// A routed failure with no retired node or flow coordinate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryFailure {
+    pub kind: DeliveryFailureKind,
+    pub code: Option<String>,
+    pub message: String,
+}
+
+/// A router emission returned to the HTTP boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Emission {
+    pub event: String,
+    pub dedup_id: String,
+}
+
+/// One terminal result from inline router execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliveryOutcome {
+    Respond(String),
+    Emit(Emission),
+    Discard,
+    Failed(DeliveryFailure),
+    Cancelled,
+}
+
+/// Host-side delivery refusal before a router outcome exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryError {
+    SourceNotFound,
+    InvalidRequest,
+    InvalidPayload,
+    WiringNotPreloaded,
+    ExecutionFailed,
 }
 
 /// A bounded HTTP response produced by the adapter.
@@ -85,35 +155,11 @@ struct ErrorEnvelope<T> {
     error: T,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "kebab-case")]
-struct ResponseWaitTimeout<'a> {
-    code: &'static str,
-    run_id: &'a str,
-    retry: &'static str,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "kebab-case")]
-struct EffectUncertain<'a> {
-    code: &'static str,
-    run_id: &'a str,
-}
-
-/// The caller disconnected after admission, so there is no response to write.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AdapterOutcome {
-    Response(HttpResponse),
-    Disconnected { run_id: String },
-}
-
-/// Adapter-owned finite waits and body ceilings.
+/// Adapter-owned body ceilings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdapterLimits {
     pub body_bytes: usize,
     pub mapped_bytes: usize,
-    pub wait_slice_ms: u32,
-    pub max_waits: u32,
 }
 
 impl Default for AdapterLimits {
@@ -121,8 +167,6 @@ impl Default for AdapterLimits {
         Self {
             body_bytes: 4 * 1024 * 1024,
             mapped_bytes: 4 * 1024 * 1024,
-            wait_slice_ms: 250,
-            max_waits: 120,
         }
     }
 }
@@ -149,33 +193,24 @@ impl std::fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
-/// Incremental request-body source. A read error never produces a run.
+/// Incremental request-body source. A read error never reaches the router.
 pub trait BodyReader {
     fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError>;
-}
-
-/// Connection state observed between bounded provider waits.
-pub trait ClientLiveness {
-    fn connected(&mut self) -> bool;
 }
 
 /// All external authority behind the thin adapter.
 ///
 /// Routing returns definitions, authentication applies the selected policy,
-/// and invocation is exactly the frozen begin/wait protocol.
+/// and delivery crosses the single host-owned router bridge.
 pub trait Backend {
     fn routes(
         &mut self,
         method: &str,
         authority: &str,
     ) -> Result<Vec<RouteDefinition>, ProviderError>;
-    fn authenticate(&mut self, policy: &str, headers: &[Header]) -> Result<String, Rejection>;
-    fn begin(&mut self, request: InvokeRequest) -> Result<BeginResult, ProviderError>;
-    fn wait(
-        &mut self,
-        run_id: &str,
-        timeout_ms: u32,
-    ) -> Result<Option<InvokeResult>, ProviderError>;
+    fn authenticate(&mut self, policy: &str, headers: &[Header]) -> Result<String, AuthRejection>;
+    fn new_delivery_id(&mut self) -> String;
+    fn deliver(&mut self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -188,29 +223,19 @@ struct MatchedRoute {
 pub fn handle_request(
     backend: &mut impl Backend,
     body: &mut impl BodyReader,
-    liveness: &mut impl ClientLiveness,
     head: &RequestHead,
     limits: AdapterLimits,
-) -> AdapterOutcome {
-    let result = try_handle(backend, body, liveness, head, limits);
-    match result {
-        Ok(outcome) => outcome,
-        Err(response) => AdapterOutcome::Response(response),
-    }
+) -> HttpResponse {
+    try_handle(backend, body, head, limits).unwrap_or_else(|response| response)
 }
 
 fn try_handle(
     backend: &mut impl Backend,
     body: &mut impl BodyReader,
-    liveness: &mut impl ClientLiveness,
     head: &RequestHead,
     limits: AdapterLimits,
-) -> Result<AdapterOutcome, HttpResponse> {
-    if limits.body_bytes == 0
-        || limits.mapped_bytes == 0
-        || limits.wait_slice_ms == 0
-        || limits.max_waits == 0
-    {
+) -> Result<HttpResponse, HttpResponse> {
+    if limits.body_bytes == 0 || limits.mapped_bytes == 0 {
         return Err(error_response(500, "invalid-adapter-limits"));
     }
     let method =
@@ -251,55 +276,21 @@ fn try_handle(
         return Err(error_response(413, "mapped-payload-too-large"));
     }
 
-    let idempotency_key = header_values(&head.headers, "idempotency-key")
-        .into_iter()
-        .next();
-    if matched.definition.idempotency_required && idempotency_key.is_none() {
-        return Err(error_response(400, "idempotency-key-required"));
-    }
     let trace = trace_context(&head.headers);
-    let fingerprint = request_fingerprint(
-        &method,
-        &authority,
-        &path,
-        &query,
-        header_values(&head.headers, "content-type")
-            .first()
-            .map(String::as_str),
-        &raw_body,
-    );
-    let begin = backend
-        .begin(InvokeRequest {
+    let delivery_id = backend.new_delivery_id();
+    let outcome = backend
+        .deliver(DeliveryRequest {
             attachment_id: matched.definition.attachment_id,
-            expected_catalog_version: matched.definition.catalog_version,
-            expected_definition_hash: matched.definition.definition_hash,
-            client_request_fingerprint: fingerprint,
+            delivery_id,
             payload,
-            idempotency_key,
-            principal,
-            deadline_override: matched.definition.deadline_override,
+            caller: Some(CallerContext {
+                role: None,
+                user_id: Some(principal),
+            }),
             trace,
         })
-        .map_err(|_| error_response(503, "invocation-provider-failed"))?;
-    let admitted = match begin {
-        BeginResult::Admitted(admitted) => admitted,
-        BeginResult::Rejected(rejection) => return Err(rejection_response(rejection)),
-    };
-
-    for _ in 0..limits.max_waits {
-        if !liveness.connected() {
-            return Ok(AdapterOutcome::Disconnected {
-                run_id: admitted.run_id,
-            });
-        }
-        if let Some(result) = backend
-            .wait(&admitted.run_id, limits.wait_slice_ms)
-            .map_err(|_| error_response(503, "wait-provider-failed"))?
-        {
-            return Ok(AdapterOutcome::Response(invoke_response(result)));
-        }
-    }
-    Err(response_wait_timeout(&admitted.run_id))
+        .map_err(delivery_error_response)?;
+    Ok(delivery_response(outcome))
 }
 
 fn normalize_method(method: &str) -> Option<String> {
@@ -608,41 +599,13 @@ fn validate_schema(schema: &Value, value: &Value) -> Result<(), ()> {
     let mut compiler = Compiler::new();
     compiler.set_default_draft(Draft::V2020_12);
     compiler
-        .add_resource("mem://flow-input.json", schema.clone())
+        .add_resource("mem://route-input.json", schema.clone())
         .map_err(|_| ())?;
     let mut schemas = Schemas::new();
     let index = compiler
-        .compile("mem://flow-input.json", &mut schemas)
+        .compile("mem://route-input.json", &mut schemas)
         .map_err(|_| ())?;
     schemas.validate(value, index).map_err(|_| ())
-}
-
-fn request_fingerprint(
-    method: &str,
-    authority: &str,
-    path: &str,
-    query: &[(String, String)],
-    content_type: Option<&str>,
-    body: &[u8],
-) -> String {
-    let mut digest = Sha256::new();
-    for value in [method, authority, path, content_type.unwrap_or("")] {
-        digest.update((value.len() as u64).to_be_bytes());
-        digest.update(value.as_bytes());
-    }
-    digest.update((query.len() as u64).to_be_bytes());
-    for (name, value) in query {
-        for item in [name, value] {
-            digest.update((item.len() as u64).to_be_bytes());
-            digest.update(item.as_bytes());
-        }
-    }
-    digest.update(Sha256::digest(body));
-    digest
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 fn trace_context(headers: &[Header]) -> Option<TraceContext> {
@@ -655,57 +618,79 @@ fn trace_context(headers: &[Header]) -> Option<TraceContext> {
         })
 }
 
-fn rejection_response(rejection: Rejection) -> HttpResponse {
+fn rejection_response(rejection: AuthRejection) -> HttpResponse {
     error_response(rejection.status, &rejection.code)
 }
 
-fn invoke_response(result: InvokeResult) -> HttpResponse {
-    match result {
-        InvokeResult::Responded(response) => HttpResponse {
-            status: response.status_hint.unwrap_or(200),
-            body: response.body.into_bytes(),
+fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
+    match outcome {
+        DeliveryOutcome::Respond(payload) => HttpResponse {
+            status: 200,
+            body: payload.into_bytes(),
         },
-        InvokeResult::Failed(failure) if failure.error.code == "effect-uncertain" => {
-            effect_uncertain_response(&failure.error.run_id)
+        DeliveryOutcome::Emit(_) => error_response(500, "http-route-emitted"),
+        DeliveryOutcome::Discard => error_response(500, "http-route-discarded"),
+        DeliveryOutcome::Failed(failure) => {
+            let status = if failure.kind == DeliveryFailureKind::InvalidInput {
+                400
+            } else {
+                500
+            };
+            detailed_error_response(
+                status,
+                failure
+                    .code
+                    .as_deref()
+                    .unwrap_or(failure_kind_code(failure.kind)),
+                Some(&failure.message),
+                None,
+            )
         }
-        InvokeResult::Failed(failure) => HttpResponse {
-            status: failure.status,
-            body: serde_json::to_vec(&json!({
-                "error": {
-                    "code": failure.error.code,
-                    "message": failure.error.message,
-                    "run-id": failure.error.run_id,
-                    "flow-id": failure.error.flow_id,
-                    "flow-version": failure.error.flow_version,
-                }
-            }))
-            .unwrap_or_default(),
-        },
+        DeliveryOutcome::Cancelled => error_response(503, "execution-cancelled"),
     }
 }
 
-fn response_wait_timeout(run_id: &str) -> HttpResponse {
-    HttpResponse {
-        status: 504,
-        body: serde_json::to_vec(&ErrorEnvelope {
-            error: ResponseWaitTimeout {
-                code: "response-wait-timeout",
-                run_id,
-                retry: "same-idempotency-key",
-            },
-        })
-        .unwrap_or_default(),
+fn delivery_error_response(error: DeliveryError) -> HttpResponse {
+    let (status, code) = match error {
+        DeliveryError::SourceNotFound => (404, "attachment-not-found"),
+        DeliveryError::InvalidRequest => (400, "delivery-invalid-request"),
+        DeliveryError::InvalidPayload => (400, "delivery-invalid-payload"),
+        DeliveryError::WiringNotPreloaded => (503, "wiring-not-preloaded"),
+        DeliveryError::ExecutionFailed => (503, "execution-failed"),
+    };
+    error_response(status, code)
+}
+
+fn failure_kind_code(kind: DeliveryFailureKind) -> &'static str {
+    match kind {
+        DeliveryFailureKind::Terminal => "terminal",
+        DeliveryFailureKind::RetryExhausted => "retry-exhausted",
+        DeliveryFailureKind::InvalidInput => "invalid-input",
+        DeliveryFailureKind::HopLimit => "hop-limit",
+        DeliveryFailureKind::UnreleasedCaller => "unreleased-caller",
+        DeliveryFailureKind::MissingDedupId => "missing-dedup-id",
+        DeliveryFailureKind::RespondWithoutCaller => "respond-without-caller",
+        DeliveryFailureKind::SecondVerdict => "second-verdict",
     }
 }
 
-fn effect_uncertain_response(run_id: &str) -> HttpResponse {
+fn detailed_error_response(
+    status: u16,
+    code: &str,
+    message: Option<&str>,
+    data: Option<Value>,
+) -> HttpResponse {
+    let mut error = Map::from_iter([("code".to_string(), Value::String(code.to_string()))]);
+    if let Some(message) = message {
+        error.insert("message".to_string(), Value::String(message.to_string()));
+    }
+    if let Some(data) = data {
+        error.insert("data".to_string(), data);
+    }
     HttpResponse {
-        status: 502,
+        status,
         body: serde_json::to_vec(&ErrorEnvelope {
-            error: EffectUncertain {
-                code: "effect-uncertain",
-                run_id,
-            },
+            error: Value::Object(error),
         })
         .unwrap_or_default(),
     }

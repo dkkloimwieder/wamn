@@ -1,32 +1,28 @@
 use std::collections::VecDeque;
 
 use serde_json::{Value, json};
-use wamn_flow_invocation::{
-    Admitted, BeginResult, Failure, FlowError, InvokeRequest, InvokeResult, Rejection, Response,
-};
 
 use flow_http::{
-    AdapterLimits, AdapterOutcome, Backend, BodyReadError, BodyReader, Cardinality, ClientLiveness,
-    Header, Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition, handle_request,
+    AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
+    DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryRequest, Emission, Header,
+    Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition, handle_request,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,
     Routes,
-    Begin,
-    Wait,
+    Deliver,
 }
 
 struct FakeBackend {
     routes: Vec<RouteDefinition>,
-    auth: Result<String, Rejection>,
-    begin: BeginResult,
-    waits: VecDeque<Option<InvokeResult>>,
+    auth: Result<String, AuthRejection>,
+    delivery: Result<DeliveryOutcome, DeliveryError>,
     fault: Fault,
     auth_policies: Vec<String>,
-    begins: Vec<InvokeRequest>,
-    wait_timeouts: Vec<u32>,
+    deliveries: Vec<DeliveryRequest>,
+    next_delivery_id: u64,
 }
 
 impl FakeBackend {
@@ -34,14 +30,11 @@ impl FakeBackend {
         Self {
             routes: vec![route],
             auth: Ok("principal:alice".to_string()),
-            begin: BeginResult::Admitted(Admitted {
-                run_id: "run-1".to_string(),
-            }),
-            waits: VecDeque::from([Some(responded(201, r#"{"ok":true}"#))]),
+            delivery: Ok(DeliveryOutcome::Respond(r#"{"ok":true}"#.to_string())),
             fault: Fault::None,
             auth_policies: Vec::new(),
-            begins: Vec::new(),
-            wait_timeouts: Vec::new(),
+            deliveries: Vec::new(),
+            next_delivery_id: 1,
         }
     }
 }
@@ -57,28 +50,26 @@ impl Backend for FakeBackend {
             .ok_or(ProviderError)
     }
 
-    fn authenticate(&mut self, policy: &str, _headers: &[Header]) -> Result<String, Rejection> {
+    fn authenticate(&mut self, policy: &str, _headers: &[Header]) -> Result<String, AuthRejection> {
         self.auth_policies.push(policy.to_string());
         self.auth.clone()
     }
 
-    fn begin(&mut self, request: InvokeRequest) -> Result<BeginResult, ProviderError> {
-        self.begins.push(request);
-        (self.fault != Fault::Begin)
-            .then(|| self.begin.clone())
-            .ok_or(ProviderError)
+    fn new_delivery_id(&mut self) -> String {
+        let id = self.next_delivery_id;
+        self.next_delivery_id = self
+            .next_delivery_id
+            .checked_add(1)
+            .expect("fixture delivery id space exhausted");
+        format!("{id:032x}")
     }
 
-    fn wait(
-        &mut self,
-        _run_id: &str,
-        timeout_ms: u32,
-    ) -> Result<Option<InvokeResult>, ProviderError> {
-        self.wait_timeouts.push(timeout_ms);
-        if self.fault == Fault::Wait {
-            return Err(ProviderError);
+    fn deliver(&mut self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError> {
+        self.deliveries.push(request);
+        if self.fault == Fault::Deliver {
+            return Err(DeliveryError::ExecutionFailed);
         }
-        Ok(self.waits.pop_front().unwrap_or(None))
+        self.delivery.clone()
     }
 }
 
@@ -108,33 +99,12 @@ impl BodyReader for Chunks {
     }
 }
 
-struct Liveness {
-    states: VecDeque<bool>,
-}
-
-impl Liveness {
-    fn connected() -> Self {
-        Self {
-            states: VecDeque::from([true]),
-        }
-    }
-}
-
-impl ClientLiveness for Liveness {
-    fn connected(&mut self) -> bool {
-        self.states.pop_front().unwrap_or(true)
-    }
-}
-
 fn route() -> RouteDefinition {
     RouteDefinition {
         attachment_id: "attachment-a".to_string(),
-        catalog_version: 7,
-        definition_hash: "definition-a".to_string(),
         host: "api.example.test".to_string(),
         path: "/receipts/{receipt}".to_string(),
         method: "POST".to_string(),
-        enabled: true,
         auth_policy: "jwt:receipts".to_string(),
         mappings: vec![
             Mapping {
@@ -177,10 +147,8 @@ fn route() -> RouteDefinition {
             },
             "additionalProperties": false
         }),
-        idempotency_required: true,
         body_limit: 1024,
         mapped_limit: 1024,
-        deadline_override: Some(5_000),
     }
 }
 
@@ -193,10 +161,6 @@ fn head() -> RequestHead {
             Header {
                 name: "x-store".to_string(),
                 value: "nyc".to_string(),
-            },
-            Header {
-                name: "idempotency-key".to_string(),
-                value: "key-1".to_string(),
             },
             Header {
                 name: "content-type".to_string(),
@@ -214,37 +178,12 @@ fn limits() -> AdapterLimits {
     AdapterLimits {
         body_bytes: 1024,
         mapped_bytes: 1024,
-        wait_slice_ms: 25,
-        max_waits: 3,
     }
 }
 
-fn responded(status: u16, body: &str) -> InvokeResult {
-    InvokeResult::Responded(Response {
-        run_id: "run-1".to_string(),
-        body: body.to_string(),
-        status_hint: Some(status),
-    })
-}
-
-fn failure(status: u16, code: &str) -> Failure {
-    Failure {
-        status,
-        error: FlowError {
-            code: code.to_string(),
-            message: Some("authored detail".to_string()),
-            run_id: "run-1".to_string(),
-            flow_id: "flow-a".to_string(),
-            flow_version: 3,
-        },
-    }
-}
-
-fn response(outcome: AdapterOutcome) -> flow_http::HttpResponse {
-    match outcome {
-        AdapterOutcome::Response(response) => response,
-        AdapterOutcome::Disconnected { run_id } => panic!("unexpected disconnect: {run_id}"),
-    }
+fn request(backend: &mut FakeBackend, head: &RequestHead, bytes: &[u8]) -> flow_http::HttpResponse {
+    let mut body = Chunks::json(&[bytes]);
+    handle_request(backend, &mut body, head, limits())
 }
 
 fn error_code(body: &[u8]) -> String {
@@ -257,7 +196,7 @@ fn error_code(body: &[u8]) -> String {
 }
 
 #[test]
-fn partial_body_selected_policy_mapping_and_begin_identity() {
+fn partial_body_selected_policy_mapping_and_attachment_delivery() {
     let mut wildcard = route();
     wildcard.attachment_id = "wildcard".to_string();
     wildcard.host = "*".to_string();
@@ -265,28 +204,30 @@ fn partial_body_selected_policy_mapping_and_begin_identity() {
     let mut backend = FakeBackend::new(route());
     backend.routes.insert(0, wildcard);
     let mut body = Chunks::json(&[br#"{"am"#, br#"ount":12.50}"#]);
-    let mut live = Liveness::connected();
 
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &head(),
-        limits(),
-    ));
+    let output = handle_request(&mut backend, &mut body, &head(), limits());
 
-    assert_eq!(output.status, 201);
+    assert_eq!(output.status, 200);
     assert_eq!(output.body, br#"{"ok":true}"#);
     assert_eq!(backend.auth_policies, ["jwt:receipts"]);
-    assert_eq!(backend.wait_timeouts, [25]);
     assert_eq!(body.reads, 3);
-    let request = &backend.begins[0];
+    let request = &backend.deliveries[0];
     assert_eq!(request.attachment_id, "attachment-a");
-    assert_eq!(request.expected_catalog_version, 7);
-    assert_eq!(request.expected_definition_hash, "definition-a");
-    assert_eq!(request.idempotency_key.as_deref(), Some("key-1"));
-    assert_eq!(request.principal, "principal:alice");
-    assert_eq!(request.deadline_override, Some(5_000));
+    assert_eq!(request.delivery_id.len(), 32);
+    assert_eq!(
+        request
+            .caller
+            .as_ref()
+            .and_then(|caller| caller.user_id.as_deref()),
+        Some("principal:alice")
+    );
+    assert_eq!(
+        request
+            .caller
+            .as_ref()
+            .and_then(|caller| caller.role.as_deref()),
+        None
+    );
     assert_eq!(
         request
             .trace
@@ -294,7 +235,6 @@ fn partial_body_selected_policy_mapping_and_begin_identity() {
             .map(|trace| trace.traceparent.as_str()),
         Some("00-abc-def-01")
     );
-    assert_eq!(request.client_request_fingerprint.len(), 64);
     assert_eq!(
         serde_json::from_str::<Value>(&request.payload).expect("mapped payload"),
         json!({
@@ -307,170 +247,61 @@ fn partial_body_selected_policy_mapping_and_begin_identity() {
 }
 
 #[test]
-fn route_precedence_is_static_then_param_then_catch_all_and_disabled_is_retained() {
+fn identical_requests_receive_distinct_delivery_ids() {
+    let mut backend = FakeBackend::new(route());
+
+    for _ in 0..2 {
+        let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+        assert_eq!(output.status, 200);
+    }
+
+    assert_ne!(
+        backend.deliveries[0].delivery_id, backend.deliveries[1].delivery_id,
+        "delivery identity is per request, not a deterministic payload fingerprint"
+    );
+}
+
+#[test]
+fn route_precedence_is_static_then_parameter_then_catch_all() {
     let mut static_route = route();
     static_route.path = "/receipts/special".to_string();
     static_route.attachment_id = "static".to_string();
-    static_route.enabled = false;
     static_route.mappings.clear();
     static_route.input_schema = json!({});
-    static_route.idempotency_required = false;
-    let mut param = static_route.clone();
-    param.path = "/receipts/{id}".to_string();
-    param.attachment_id = "param".to_string();
+    let mut parameter = static_route.clone();
+    parameter.path = "/receipts/{id}".to_string();
+    parameter.attachment_id = "parameter".to_string();
     let mut catch_all = static_route.clone();
     catch_all.path = "/receipts/{*rest}".to_string();
     catch_all.attachment_id = "catch".to_string();
     let mut backend = FakeBackend::new(catch_all);
-    backend.routes.extend([param, static_route]);
-    let mut request = head();
-    request.target = "/receipts/special".to_string();
-    request.headers.clear();
-    let mut body = Chunks::json(&[]);
-    let mut live = Liveness::connected();
+    backend.routes.extend([parameter, static_route]);
+    let mut request_head = head();
+    request_head.target = "/receipts/special".to_string();
+    request_head.headers.clear();
 
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &request,
-        limits(),
-    ));
+    let output = request(&mut backend, &request_head, b"");
 
-    assert_eq!(output.status, 201);
-    assert_eq!(backend.begins[0].attachment_id, "static");
+    assert_eq!(output.status, 200);
+    assert_eq!(backend.deliveries[0].attachment_id, "static");
 }
 
 #[test]
 fn encoded_slash_stays_in_one_path_segment_and_maps_decoded() {
     let mut backend = FakeBackend::new(route());
-    let mut request = head();
-    request.target = "/receipts/r%2fpart?tag=a".to_string();
-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-    let mut live = Liveness::connected();
+    let mut request_head = head();
+    request_head.target = "/receipts/r%2fpart?tag=a".to_string();
 
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &request,
-        limits(),
-    ));
+    let output = request(&mut backend, &request_head, br#"{"amount":1}"#);
 
-    assert_eq!(output.status, 201);
+    assert_eq!(output.status, 200);
     let payload =
-        serde_json::from_str::<Value>(&backend.begins[0].payload).expect("mapped payload");
+        serde_json::from_str::<Value>(&backend.deliveries[0].payload).expect("mapped payload");
     assert_eq!(payload["receipt"], "r/part");
 }
 
 #[test]
-fn every_typed_rejection_is_adapted_without_a_run() {
-    for (status, code) in [
-        (400, "invalid-input"),
-        (401, "unauthenticated"),
-        (403, "forbidden"),
-        (404, "attachment-not-found"),
-        // The refusal an operator's emergency-off actually produces
-        // (wamn-0h0g.15.71); the host emits it at 404 from both the
-        // pre-admission check and the admission transaction's own refusal.
-        (404, "attachment-disabled"),
-        (409, "idempotency-key-reused"),
-        (413, "payload-too-large"),
-        (409, "admission-retry"),
-        (409, "idempotency-scope-changed"),
-    ] {
-        if code == "admission-retry" {
-            assert_eq!(status, 409, "admission-retry is a conflict refusal");
-        }
-        let mut backend = FakeBackend::new(route());
-        backend.begin = BeginResult::Rejected(Rejection {
-            status,
-            code: code.to_string(),
-        });
-        let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-        let mut live = Liveness::connected();
-
-        let output = response(handle_request(
-            &mut backend,
-            &mut body,
-            &mut live,
-            &head(),
-            limits(),
-        ));
-
-        assert_eq!(
-            (output.status, error_code(&output.body)),
-            (status, code.to_string())
-        );
-        assert!(backend.wait_timeouts.is_empty());
-    }
-}
-
-#[test]
-fn all_stored_outcomes_are_adapted_exactly() {
-    let cases = [
-        (responded(202, r#"{"queued":true}"#), 202, None),
-        (
-            InvokeResult::Failed(failure(400, "authored-fail")),
-            400,
-            Some("authored-fail"),
-        ),
-        (
-            InvokeResult::Failed(failure(500, "depth-budget")),
-            500,
-            Some("depth-budget"),
-        ),
-        (
-            InvokeResult::Failed(failure(500, "dispatch-budget")),
-            500,
-            Some("dispatch-budget"),
-        ),
-    ];
-    for (result, status, code) in cases {
-        let mut backend = FakeBackend::new(route());
-        backend.waits = VecDeque::from([Some(result)]);
-        let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-        let mut live = Liveness::connected();
-
-        let output = response(handle_request(
-            &mut backend,
-            &mut body,
-            &mut live,
-            &head(),
-            limits(),
-        ));
-
-        assert_eq!(output.status, status);
-        if let Some(code) = code {
-            assert_eq!(error_code(&output.body), code);
-        }
-    }
-}
-
-#[test]
-fn effect_uncertain_has_the_fixed_non_committal_gateway_envelope() {
-    let mut backend = FakeBackend::new(route());
-    backend.waits = VecDeque::from([Some(InvokeResult::Failed(failure(500, "effect-uncertain")))]);
-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-    let mut live = Liveness::connected();
-
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &head(),
-        limits(),
-    ));
-
-    assert_eq!(output.status, 502);
-    assert_eq!(
-        output.body,
-        br#"{"error":{"code":"effect-uncertain","run-id":"run-1"}}"#
-    );
-}
-
-#[test]
-fn malformed_oversize_mapping_schema_and_auth_refusals_never_begin() {
+fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
     let cases = [
         ("malformed", br#"{"amount":"#.as_slice(), 1024, None),
         ("oversize", br#"{"amount":123}"#.as_slice(), 4, None),
@@ -484,7 +315,7 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_begin() {
             "auth",
             br#"{"amount":1}"#.as_slice(),
             1024,
-            Some(Rejection {
+            Some(AuthRejection {
                 status: 403,
                 code: "forbidden".to_string(),
             }),
@@ -498,18 +329,14 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_begin() {
             backend.auth = Err(rejection);
         }
         let mut body = Chunks::json(&[bytes]);
-        let mut live = Liveness::connected();
 
-        let output = response(handle_request(
-            &mut backend,
-            &mut body,
-            &mut live,
-            &head(),
-            limits(),
-        ));
+        let output = handle_request(&mut backend, &mut body, &head(), limits());
 
         assert!(matches!(output.status, 400 | 403 | 413), "{name}");
-        assert!(backend.begins.is_empty(), "{name} unexpectedly admitted");
+        assert!(
+            backend.deliveries.is_empty(),
+            "{name} unexpectedly delivered"
+        );
         if name == "auth" {
             assert_eq!(body.reads, 0, "auth must precede body reads");
         }
@@ -518,151 +345,125 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_begin() {
     let mut selected = route();
     selected.mappings[2].cardinality = Cardinality::One;
     let mut backend = FakeBackend::new(selected);
-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-    let mut live = Liveness::connected();
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &head(),
-        limits(),
-    ));
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
     assert_eq!(error_code(&output.body), "mapping-cardinality");
-    assert!(backend.begins.is_empty());
+    assert!(backend.deliveries.is_empty());
 }
 
 #[test]
-fn invalid_percent_encoding_and_missing_idempotency_key_never_begin() {
-    for mutate in [
-        |head: &mut RequestHead| head.target = "/receipts/r-1?tag=%GG".to_string(),
-        |head: &mut RequestHead| {
-            head.headers
-                .retain(|header| header.name != "idempotency-key");
-        },
-    ] {
-        let mut request = head();
-        mutate(&mut request);
+fn invalid_percent_encoding_and_payload_ceiling_refuse_before_delivery() {
+    let mut invalid = head();
+    invalid.target = "/receipts/r-1?tag=%GG".to_string();
+    let mut backend = FakeBackend::new(route());
+    let output = request(&mut backend, &invalid, br#"{"amount":1}"#);
+    assert_eq!(output.status, 400);
+    assert!(backend.deliveries.is_empty());
+
+    let mut selected = route();
+    selected.mapped_limit = 8;
+    let mut backend = FakeBackend::new(selected);
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+    assert_eq!(output.status, 413);
+    assert_eq!(error_code(&output.body), "mapped-payload-too-large");
+    assert!(backend.deliveries.is_empty());
+}
+
+#[test]
+fn every_router_outcome_is_mapped_exhaustively() {
+    let cases = [
+        (
+            DeliveryOutcome::Respond(r#"{"accepted":true}"#.to_string()),
+            200,
+            None,
+        ),
+        (
+            DeliveryOutcome::Failed(DeliveryFailure {
+                kind: DeliveryFailureKind::InvalidInput,
+                code: Some("authored-invalid".to_string()),
+                message: "bad input".to_string(),
+            }),
+            400,
+            Some("authored-invalid"),
+        ),
+        (
+            DeliveryOutcome::Failed(DeliveryFailure {
+                kind: DeliveryFailureKind::UnreleasedCaller,
+                code: None,
+                message: "no response terminal".to_string(),
+            }),
+            500,
+            Some("unreleased-caller"),
+        ),
+        (
+            DeliveryOutcome::Emit(Emission {
+                event: "{}".to_string(),
+                dedup_id: "d1".to_string(),
+            }),
+            500,
+            Some("http-route-emitted"),
+        ),
+        (DeliveryOutcome::Discard, 500, Some("http-route-discarded")),
+        (DeliveryOutcome::Cancelled, 503, Some("execution-cancelled")),
+    ];
+
+    for (outcome, status, code) in cases {
         let mut backend = FakeBackend::new(route());
-        let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-        let mut live = Liveness::connected();
-
-        let output = response(handle_request(
-            &mut backend,
-            &mut body,
-            &mut live,
-            &request,
-            limits(),
-        ));
-
-        assert_eq!(output.status, 400);
-        assert!(backend.begins.is_empty());
+        backend.delivery = Ok(outcome);
+        let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+        assert_eq!(output.status, status);
+        if let Some(code) = code {
+            assert_eq!(error_code(&output.body), code);
+        }
+        assert_eq!(backend.deliveries.len(), 1);
     }
 }
 
 #[test]
-fn pure_call_free_route_may_begin_without_an_idempotency_key() {
-    let mut selected = route();
-    selected.idempotency_required = false;
-    let mut backend = FakeBackend::new(selected);
-    let mut request = head();
-    request
-        .headers
-        .retain(|header| header.name != "idempotency-key");
-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-    let mut live = Liveness::connected();
-
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &request,
-        limits(),
-    ));
-
-    assert_eq!(output.status, 201);
-    assert_eq!(backend.begins.len(), 1);
-    assert_eq!(backend.begins[0].idempotency_key, None);
-}
-
-#[test]
-fn mapped_payload_ceiling_is_enforced_before_begin() {
-    let mut selected = route();
-    selected.mapped_limit = 8;
-    let mut backend = FakeBackend::new(selected);
-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-    let mut live = Liveness::connected();
-
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &head(),
-        limits(),
-    ));
-
-    assert_eq!(output.status, 413);
-    assert_eq!(error_code(&output.body), "mapped-payload-too-large");
-    assert!(backend.begins.is_empty());
-}
-
-#[test]
-fn wait_is_finite_and_disconnect_detaches_without_mutating_the_run() {
-    let mut backend = FakeBackend::new(route());
-    backend.waits = VecDeque::from([None, None, None]);
-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-    let mut live = Liveness::connected();
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &head(),
-        limits(),
-    ));
-    assert_eq!(output.status, 504);
-    assert_eq!(
-        output.body,
-        br#"{"error":{"code":"response-wait-timeout","run-id":"run-1","retry":"same-idempotency-key"}}"#
-    );
-    assert_eq!(backend.wait_timeouts, [25, 25, 25]);
-    assert_eq!(backend.begins.len(), 1);
-
-    let mut backend = FakeBackend::new(route());
-    backend.waits = VecDeque::from([None]);
-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-    let mut live = Liveness {
-        states: VecDeque::from([true, false, false]),
-    };
-    let output = handle_request(&mut backend, &mut body, &mut live, &head(), limits());
-    assert_eq!(
-        output,
-        AdapterOutcome::Disconnected {
-            run_id: "run-1".to_string()
-        }
-    );
-    assert_eq!(backend.wait_timeouts, [25]);
-    assert_eq!(backend.begins.len(), 1);
-}
-
-#[test]
-fn routing_body_and_invocation_provider_faults_are_bounded() {
-    for (fault, expected) in [
-        (Fault::Routes, "routing-provider-failed"),
-        (Fault::Begin, "invocation-provider-failed"),
-        (Fault::Wait, "wait-provider-failed"),
+fn every_bridge_refusal_has_a_bounded_http_answer() {
+    for (error, status, code) in [
+        (DeliveryError::SourceNotFound, 404, "attachment-not-found"),
+        (
+            DeliveryError::InvalidRequest,
+            400,
+            "delivery-invalid-request",
+        ),
+        (
+            DeliveryError::InvalidPayload,
+            400,
+            "delivery-invalid-payload",
+        ),
+        (
+            DeliveryError::WiringNotPreloaded,
+            503,
+            "wiring-not-preloaded",
+        ),
+        (DeliveryError::ExecutionFailed, 503, "execution-failed"),
     ] {
         let mut backend = FakeBackend::new(route());
+        backend.delivery = Err(error);
+        let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+        assert_eq!(
+            (output.status, error_code(&output.body)),
+            (status, code.to_string())
+        );
+    }
+}
+
+#[test]
+fn provider_and_body_faults_are_bounded() {
+    for fault in [Fault::Routes, Fault::Deliver] {
+        let mut backend = FakeBackend::new(route());
         backend.fault = fault;
-        let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-        let mut live = Liveness::connected();
-        let output = response(handle_request(
-            &mut backend,
-            &mut body,
-            &mut live,
-            &head(),
-            limits(),
-        ));
+        let output = request(&mut backend, &head(), br#"{"amount":1}"#);
         assert_eq!(output.status, 503);
-        assert_eq!(error_code(&output.body), expected);
+        assert_eq!(
+            error_code(&output.body),
+            if fault == Fault::Routes {
+                "routing-provider-failed"
+            } else {
+                "execution-failed"
+            }
+        );
     }
 
     let mut backend = FakeBackend::new(route());
@@ -670,14 +471,7 @@ fn routing_body_and_invocation_provider_faults_are_bounded() {
         chunks: VecDeque::from([Err(BodyReadError)]),
         reads: 0,
     };
-    let mut live = Liveness::connected();
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &head(),
-        limits(),
-    ));
+    let output = handle_request(&mut backend, &mut body, &head(), limits());
     assert_eq!(error_code(&output.body), "body-read-failed");
-    assert!(backend.begins.is_empty());
+    assert!(backend.deliveries.is_empty());
 }

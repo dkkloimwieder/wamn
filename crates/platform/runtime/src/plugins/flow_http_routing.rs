@@ -9,25 +9,12 @@
 //! a route table derived from it would be a second copy of immutable state on the
 //! hottest path in the system, so there is none.
 //!
-//! # Enablement is not here, by ruling
+//! # Fields the attachment projection cannot source
 //!
-//! Under ruling wamn-0h0g.13.52 the manifest carries the attachment but not its
-//! activation. Enablement stays a `catalog.active_attachments` predicate inside
-//! the admission transaction, which already holds a connection and already
-//! classifies a disabled attachment as the existing `inactive-definition` refusal
-//! by row absence ([`crate::flow_invocation`]). The interface's own contract
-//! agrees on the observable behaviour — it requires disabled definitions to be
-//! returned so a released admission can still be recovered after disablement — so
-//! nothing here filters on activation. What the ruling costs is the `enabled`
-//! boolean's ability to *distinguish*: with no carrier for it, it degenerates to a
-//! constant. See [`route_definition`].
-//!
-//! # Three fields the attachment projection cannot source
-//!
-//! `input-schema`, `idempotency-required` and the byte ceilings have no carrier in
-//! [`ServingAttachment`]. Each is answered with the value that leaves whichever
-//! authority *can* decide in charge, never with a guess; each is justified at its
-//! own field in [`route_definition`].
+//! `input-schema` and the byte ceilings have no carrier in [`ServingAttachment`].
+//! Each is answered with the value that leaves whichever authority *can* decide
+//! in charge, never with a guess; each is justified at its own field in
+//! [`route_definition`].
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -74,11 +61,7 @@ const ADAPTER_GOVERNED_BYTES: u64 = u32::MAX as u64;
 /// The one auth-source document this host can honour with no secret store.
 const NO_AUTHENTICATION_MODE: &str = "none";
 
-/// The ledger identity every caller of an unauthenticated route shares.
-///
-/// Admission digests the principal into the idempotency key, so a `none` route's
-/// callers share one ledger scope. That is inherent to exposing a route with no
-/// authentication, not an artefact of this plugin.
+/// The caller identity used by every unauthenticated route.
 const ANONYMOUS_PRINCIPAL: &str = "anonymous";
 
 /// 501, because the request is well formed and it is the *host* that lacks the
@@ -145,7 +128,6 @@ fn route_definitions(
     method: &str,
     authority: &str,
 ) -> Vec<RouteDefinition> {
-    let catalog_version = u64::from(manifest.release.catalog_version);
     manifest
         .attachments
         .iter()
@@ -154,7 +136,7 @@ fn route_definitions(
             // Decoded before it is matched, so a malformed attachment is reported
             // whenever this pod serves at all rather than only once some request
             // happens to name its route.
-            let definition = route_definition(attachment_id, attachment, catalog_version);
+            let definition = route_definition(attachment_id, attachment);
             if definition.is_none() {
                 tracing::warn!(
                     attachment_id = attachment_id.as_str(),
@@ -191,14 +173,12 @@ fn matches_request(definition: &RouteDefinition, method: &str, authority: &str) 
 /// carries no route this host can serve.
 ///
 /// The fields are read off the definition `Value` rather than through the
-/// authoring-side decoder, matching how [`crate::flow_invocation`] already reads
-/// `run-deadline-ms` off this same document. Keys this host does not serve are
-/// ignored rather than refused: the document's shape is owned by the exposure
-/// boundary, and a producer adding a field must not take a pod's routing offline.
+/// authoring-side decoder. Keys this host does not serve are ignored rather than
+/// refused: the document's shape is owned by the exposure boundary, and a
+/// producer adding a field must not take a pod's routing offline.
 fn route_definition(
     attachment_id: &str,
     attachment: &ServingAttachment,
-    catalog_version: u64,
 ) -> Option<RouteDefinition> {
     let route = attachment.definition.get("route")?;
     let mappings = match attachment.definition.get("mappings") {
@@ -211,38 +191,18 @@ fn route_definition(
     };
     Some(RouteDefinition {
         attachment_id: attachment_id.to_string(),
-        catalog_version,
-        definition_hash: attachment.definition_hash.clone(),
         host: route.get("host")?.as_str()?.to_string(),
         path: route.get("path")?.as_str()?.to_string(),
         method: route.get("method")?.as_str()?.to_string(),
-        // Not an activation claim: activation has no carrier in the manifest
-        // (ruling wamn-0h0g.13.52) and the interface requires disabled
-        // definitions to be returned anyway, so no honest value distinguishes.
-        // `true` is the one that keeps the admission transaction's
-        // `inactive-definition` refusal the only place a route is switched off; a
-        // constant `false` would invite a caller-side filter that silently 404s a
-        // live release.
-        enabled: true,
         auth_policy: attachment.auth_policy.to_string(),
         mappings,
-        // The entry input-schema guard lives in the execution plan's bytes, which
-        // only the flowrunner process pulls; this host mounts no plan source. An
-        // unconstraining schema is therefore the truthful answer — it claims no
-        // validation this host cannot perform — and the guest still refuses
-        // malformed JSON and enforces the mapping contract.
+        // The release currently carries no entry input-schema projection. An
+        // unconstraining schema is the truthful answer: it claims no validation
+        // this host cannot perform, while the guest still refuses malformed JSON
+        // and enforces the route's mapping contract.
         input_schema: UNCONSTRAINED_INPUT_SCHEMA.to_string(),
-        // Derived from the plan's own bytes inside admission, which refuses with
-        // the same 400 `idempotency-key-required` literal the adapter would have
-        // used. Claiming it here would only move a refusal the authority already
-        // makes, and would have to guess to do it.
-        idempotency_required: false,
         body_limit: ADAPTER_GOVERNED_BYTES,
         mapped_limit: ADAPTER_GOVERNED_BYTES,
-        // The attachment's deadlines are read from this same document inside
-        // admission. An override is the *caller's* lever to ask for less; the
-        // route has nothing to add that admission does not already hold.
-        deadline_override: None,
     })
 }
 
@@ -282,7 +242,7 @@ fn input_mapping(value: &Value) -> Option<Mapping> {
 /// nothing more than "an object" — and no secret store this host could verify a
 /// credential against. So an explicit no-authentication policy yields the
 /// anonymous principal and every other document is a typed refusal. Fail-closed:
-/// no unrecognized policy can admit a run.
+/// no unrecognized policy can reach router delivery.
 fn authenticate_policy(policy: &str) -> Result<String, AuthRejection> {
     let document = serde_json::from_str::<Value>(policy).ok();
     let mode = document
@@ -355,17 +315,6 @@ impl routing::Host for ActiveCtx<'_> {
     ) -> wash_runtime::wasmtime::Result<Result<String, AuthRejection>> {
         Ok(authenticate_policy(&policy))
     }
-
-    /// A host plugin cannot observe the inbound connection: the request is served
-    /// by the runtime's own `wasi:http` machinery and nothing in the plugin's
-    /// context reaches it. So this reports the only thing it can prove — that it
-    /// has seen no disconnect — rather than fabricating liveness. The cost is
-    /// bounded and visible: a caller who leaves mid-run is discovered when the
-    /// adapter's wait budget expires and answers `response-wait-timeout` instead
-    /// of short-circuiting to 499.
-    async fn caller_connected(&mut self) -> wash_runtime::wasmtime::Result<bool> {
-        Ok(true)
-    }
 }
 
 #[cfg(test)]
@@ -426,8 +375,7 @@ mod tests {
                 {"from": "body", "name": "amount", "to": "/amount"},
                 {"from": "path", "name": "order", "to": "/order", "optional": false},
                 {"from": "query", "name": "tag", "to": "/tags", "cardinality": "many"}
-            ],
-            "run-deadline-ms": 30000
+            ]
         })
     }
 
@@ -527,8 +475,6 @@ mod tests {
             panic!("exactly one attachment matches this request");
         };
         assert_eq!(definition.attachment_id, "orders");
-        assert_eq!(definition.catalog_version, u64::from(CATALOG_VERSION));
-        assert_eq!(definition.definition_hash, DEFINITION_HASH);
         assert_eq!(definition.host, "api.example.test");
         assert_eq!(definition.path, "/orders/{order}");
         assert_eq!(definition.method, "POST");
@@ -549,7 +495,7 @@ mod tests {
         );
     }
 
-    /// The fields with no carrier in the attachment projection. Each must leave
+    /// Fields with no carrier in the attachment projection. Each must leave
     /// the authority that can decide in charge — see [`route_definition`].
     #[test]
     fn the_fields_the_manifest_cannot_source_defer_to_their_real_authority() {
@@ -560,22 +506,11 @@ mod tests {
         let [definition] = served.as_slice() else {
             panic!("exactly one attachment matches this request");
         };
-        assert!(
-            definition.enabled,
-            "activation is the admission transaction's call, and the contract requires \
-             disabled definitions to be returned"
-        );
-        assert!(
-            !definition.idempotency_required,
-            "the key requirement is derived from plan bytes inside admission, which \
-             refuses with the same literal"
-        );
         assert_eq!(
             serde_json::from_str::<Value>(&definition.input_schema)
                 .expect("the guest parses this with serde_json and 503s if it cannot"),
             Value::Bool(true)
         );
-        assert_eq!(definition.deadline_override, None);
         for limit in [definition.body_limit, definition.mapped_limit] {
             assert!(
                 u32::try_from(limit).is_ok(),
@@ -650,8 +585,7 @@ mod tests {
             "id": "broken",
             "kind": "http",
             "source-id": "public",
-            "route": {"host": "api.example.test", "method": "POST"},
-            "run-deadline-ms": 30000
+            "route": {"host": "api.example.test", "method": "POST"}
         });
         let manifest = release_manifest(BTreeMap::from([
             (
@@ -710,11 +644,8 @@ mod tests {
             .routes("POST", "api.example.test")
             .expect("a welded release serves its own routes");
 
-        // Both halves came through the canonical round-trip the weld performs:
-        // the attachment out of the mounted document, the version out of its
-        // release header.
+        // The route came through the canonical round-trip the weld performs.
         assert_eq!(served_ids(&served), ["orders"]);
-        assert_eq!(served[0].catalog_version, u64::from(CATALOG_VERSION));
     }
 
     #[test]
