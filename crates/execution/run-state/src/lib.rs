@@ -33,8 +33,6 @@
 pub mod admission;
 /// Capture-independent effect-attempt generation facts.
 pub mod attempt;
-/// Node-level I/O capture and durable output projection.
-pub mod capture;
 /// The durability class a run was admitted under, and the crash-floor gate.
 pub mod durability;
 /// Shared strict credential document for the private native effect writer.
@@ -51,6 +49,8 @@ pub mod invocation_context;
 pub mod operator_action;
 /// Durable global queue, lease, timer, and terminal decisions and SQL.
 pub mod queue;
+/// The JSON payload redaction policy extracted from node I/O capture.
+pub mod redaction;
 /// Contract-owned helpers for checking repository stand-in schemas.
 #[cfg(feature = "test-util")]
 pub mod schema_drift;
@@ -60,10 +60,6 @@ mod status;
 /// Typed, queue-joined executor transitions.
 pub mod transitions;
 
-pub use capture::{
-    CaptureMode, Captured, NodeOutputProjection, OutputTooLarge, derive as derive_capture,
-    project_output,
-};
 pub use durability::{DURABLE_CLASS_SQL_PREDICATE, DurabilityClass};
 #[cfg(feature = "native")]
 pub use effect_writer::{

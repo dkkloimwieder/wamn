@@ -9,8 +9,6 @@
 
 use wamn_pg_core::Identifier;
 
-use crate::capture::CaptureMode;
-
 /// Validated schema containing the durable run-state tables and functions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RunStateSchema(Identifier);
@@ -58,14 +56,6 @@ impl AdmissionProducer {
         match self {
             Self::DraftRun => "scenario-draft",
             Self::TestCase => "test-case",
-        }
-    }
-
-    /// Return the capture value derived from this trusted producer.
-    pub const fn capture_mode(self) -> CaptureMode {
-        match self {
-            Self::DraftRun => CaptureMode::Full,
-            Self::TestCase => CaptureMode::Off,
         }
     }
 }
@@ -507,11 +497,6 @@ mod tests {
             AdmissionProducer::DraftRun.trigger_source(),
             "scenario-draft"
         );
-        assert_eq!(
-            AdmissionProducer::DraftRun.capture_mode(),
-            CaptureMode::Full
-        );
-        assert_eq!(AdmissionProducer::TestCase.capture_mode(), CaptureMode::Off);
     }
 
     #[test]

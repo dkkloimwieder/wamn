@@ -3,9 +3,7 @@
 //! The class is the runtime fact the crash floor is conditioned on. Both tiers
 //! ship in one image, so a Cargo feature cannot express it: the carrier is the
 //! per-run `wamn_run.runs.durability_class` column and the SOURCE is the
-//! env/org policy consulted at admission, never a caller parameter — the same
-//! authority rationale that keeps [`crate::CaptureMode`] off the admission
-//! parameter list.
+//! env/org policy consulted at admission, never a caller parameter.
 //!
 //! [`DurabilityClass::Standard`] is R2's default: at-least-once redelivery with
 //! plain lock-then-lease and NO claim-time effect classification.
