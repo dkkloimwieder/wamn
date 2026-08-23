@@ -12,6 +12,7 @@
 //! execution bundle is read from the source environment.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
@@ -216,6 +217,10 @@ pub struct PromoteArgs {
     #[arg(long)]
     pub artifact_base: String,
 
+    /// Projected `.dockerconfigjson` file carrying the target pull credential.
+    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
+    pub registry_auth_file: PathBuf,
+
     /// Use plain HTTP for exactly the registry in artifact-base.
     #[arg(long, default_value_t = false)]
     pub insecure_registry: bool,
@@ -277,7 +282,9 @@ pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
         args.insecure_registry,
         COMPONENT_FETCH_TIMEOUT,
     )
-    .context("configure component artifact source")?;
+    .context("configure component artifact source")?
+    .with_registry_auth_file(&args.registry_auth_file)
+    .context("load component registry pull credential")?;
     let artifact_source = ComponentArtifactSource::new(artifact_config);
     let catalog_version = i32::try_from(args.catalog_version)
         .context("source catalog version exceeds the PostgreSQL integer carrier")?;

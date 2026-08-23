@@ -25,6 +25,7 @@ use wamn_runtime::component_artifact::{
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
+use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 
 /// Bound each registry connect/read phase without adding a second deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -63,6 +64,10 @@ pub struct PushComponentArgs {
     /// digest; the admitted component digest derives the immutable tag.
     #[arg(long)]
     pub artifact_base: String,
+
+    /// Projected `.dockerconfigjson` file carrying the push credential.
+    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
+    pub registry_auth_file: PathBuf,
 
     /// Use plain HTTP for exactly the registry host in `--artifact-base`.
     #[arg(long, default_value_t = false)]
@@ -115,16 +120,19 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
         artifact.repository().to_owned(),
         artifact.tag().to_owned(),
     );
+    let registry_credentials =
+        read_registry_credentials(&args.registry_auth_file, artifact.registry())
+            .context("load component registry push credential")?;
     let config_bytes = component_artifact_config_bytes(&admitted);
 
     publish_and_verify(
         &reference,
         &args.artifact_base,
-        artifact.registry(),
         args.insecure_registry,
         &component_bytes,
         &config_bytes,
         &admitted,
+        &registry_credentials,
     )
     .await?;
 
@@ -136,14 +144,14 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
 async fn publish_and_verify(
     reference: &Reference,
     artifact_base: &str,
-    registry: &str,
     insecure: bool,
     component_bytes: &[u8],
     config_bytes: &[u8],
     component: &AdmittedComponent,
+    credentials: &RegistryCredentials,
 ) -> anyhow::Result<()> {
     let protocol = if insecure {
-        ClientProtocol::HttpsExcept(vec![registry.to_owned()])
+        ClientProtocol::HttpsExcept(vec![reference.resolve_registry().to_owned()])
     } else {
         ClientProtocol::Https
     };
@@ -153,7 +161,10 @@ async fn publish_and_verify(
         connect_timeout: Some(REGISTRY_IO_TIMEOUT),
         ..ClientConfig::default()
     });
-    let auth = RegistryAuth::Anonymous;
+    let auth = RegistryAuth::Basic(
+        credentials.username().to_owned(),
+        credentials.password().to_owned(),
+    );
     let layer = ImageLayer::new(
         component_bytes.to_vec(),
         COMPONENT_LAYER_MEDIA_TYPE.to_owned(),
@@ -182,7 +193,8 @@ async fn publish_and_verify(
     // proves the descriptor, config facts, and exact component body.
     let source_config =
         ComponentArtifactSourceConfig::new(artifact_base, insecure, REGISTRY_IO_TIMEOUT)
-            .context("configure published component verification source")?;
+            .context("configure published component verification source")?
+            .with_credentials(credentials.clone());
     ComponentArtifactSource::new(source_config)
         .pull_verified(component)
         .await
@@ -307,6 +319,8 @@ mod tests {
     async fn production_publisher_and_puller_round_trip_exact_bytes() {
         let artifact_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
             .expect("set WAMN_COMPONENT_ARTIFACT_BASE to a disposable HTTP registry/repository");
+        let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
+            .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
         let component_bytes = b"\0asm\r\0\x01\0";
         let engine = wamn_runtime::build_engine(&[]).expect("component admission engine builds");
         let component = validate_component_admission(
@@ -338,15 +352,20 @@ mod tests {
             artifact.tag().to_owned(),
         );
         let config_bytes = component_artifact_config_bytes(&component);
+        let credentials = read_registry_credentials(
+            PathBuf::from(registry_auth_file).as_path(),
+            artifact.registry(),
+        )
+        .expect("load live registry credential");
 
         publish_and_verify(
             &reference,
             &artifact_base,
-            artifact.registry(),
             true,
             component_bytes,
             &config_bytes,
             &component,
+            &credentials,
         )
         .await
         .expect("production publisher and puller agree");

@@ -22,6 +22,9 @@ use crate::component_artifact::{
     ComponentArtifactReferenceError, component_artifact_config_bytes,
     parse_component_artifact_base,
 };
+use crate::registry_credentials::{
+    RegistryCredentials, RegistryCredentialsError, read_registry_credentials,
+};
 
 /// Explicit, validated configuration for one component artifact repository.
 #[derive(Clone, PartialEq, Eq)]
@@ -29,6 +32,7 @@ pub struct ComponentArtifactSourceConfig {
     base: ComponentArtifactBase,
     insecure_registry: bool,
     fetch_timeout: Duration,
+    credentials: Option<RegistryCredentials>,
 }
 
 impl ComponentArtifactSourceConfig {
@@ -42,7 +46,23 @@ impl ComponentArtifactSourceConfig {
             base: parse_component_artifact_base(artifact_base)?,
             insecure_registry,
             fetch_timeout,
+            credentials: None,
         })
+    }
+
+    /// Authenticate pulls with one complete credential for this exact registry.
+    pub fn with_credentials(mut self, credentials: RegistryCredentials) -> Self {
+        self.credentials = Some(credentials);
+        self
+    }
+
+    /// Load this source's credential from a projected Docker config file.
+    pub fn with_registry_auth_file(
+        self,
+        path: &std::path::Path,
+    ) -> Result<Self, RegistryCredentialsError> {
+        let credentials = read_registry_credentials(path, self.base.registry())?;
+        Ok(self.with_credentials(credentials))
     }
 }
 
@@ -54,6 +74,7 @@ impl fmt::Debug for ComponentArtifactSourceConfig {
             .field("repository", &self.base.repository())
             .field("insecure_registry", &self.insecure_registry)
             .field("fetch_timeout", &self.fetch_timeout)
+            .field("authenticated", &self.credentials.is_some())
             .finish()
     }
 }
@@ -176,7 +197,14 @@ impl ComponentArtifactSource {
         Self {
             client,
             base: config.base,
-            auth: RegistryAuth::Anonymous,
+            auth: config
+                .credentials
+                .map_or(RegistryAuth::Anonymous, |credentials| {
+                    RegistryAuth::Basic(
+                        credentials.username().to_owned(),
+                        credentials.password().to_owned(),
+                    )
+                }),
         }
     }
 

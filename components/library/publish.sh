@@ -2,17 +2,18 @@
 set -eu
 
 usage() {
-  echo "usage: $0 TENANT_ID CATALOG_ID CATALOG_VERSION ARTIFACT_BASE SYSTEM_DATABASE_URL [--insecure-registry]" >&2
+  echo "usage: $0 TENANT_ID CATALOG_ID CATALOG_VERSION ARTIFACT_BASE REGISTRY_AUTH_FILE SYSTEM_DATABASE_URL [--insecure-registry]" >&2
   exit 64
 }
 
-[ "$#" -ge 5 ] && [ "$#" -le 6 ] || usage
+[ "$#" -ge 6 ] && [ "$#" -le 7 ] || usage
 tenant_id=$1
 catalog_id=$2
 catalog_version=$3
 artifact_base=$4
-system_database_url=$5
-registry_mode=${6-}
+registry_auth_file=$5
+system_database_url=$6
+registry_mode=${7-}
 
 case "$tenant_id" in
   '' | *[!A-Za-z0-9._-]*) usage ;;
@@ -65,6 +66,7 @@ cargo run --manifest-path "$repo_root/Cargo.toml" --locked -p wamn-ctl -- \
   --component-bytes "$component_target/transform.wasm" \
   --declaration "$scratch/transform.json" \
   --artifact-base "$artifact_base" \
+  --registry-auth-file "$registry_auth_file" \
   --system-database-url "$system_database_url" \
   --admit-platform-package wamn:node \
   "$@"
@@ -74,6 +76,7 @@ cargo run --manifest-path "$repo_root/Cargo.toml" --locked -p wamn-ctl -- \
   --component-bytes "$component_target/http_request.wasm" \
   --declaration "$scratch/http-request.json" \
   --artifact-base "$artifact_base" \
+  --registry-auth-file "$registry_auth_file" \
   --system-database-url "$system_database_url" \
   --admit-platform-package wamn:node \
   --admit-platform-package wamn:connection \

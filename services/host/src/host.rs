@@ -138,6 +138,10 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE")]
     pub component_artifact_base: Option<String>,
 
+    /// Projected `.dockerconfigjson` file for the component registry.
+    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
+    pub registry_auth_file: Option<PathBuf>,
+
     /// Mounted production credential-vault file for node capabilities.
     #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
     pub credentials_file: Option<PathBuf>,
@@ -264,11 +268,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .component_artifact_base
                 .as_deref()
                 .context("a serving host requires --component-artifact-base")?;
-            let source = ComponentArtifactSource::new(ComponentArtifactSourceConfig::new(
+            let registry_auth_file = args
+                .registry_auth_file
+                .as_deref()
+                .context("a serving host requires --registry-auth-file")?;
+            let source_config = ComponentArtifactSourceConfig::new(
                 artifact_base,
                 args.allow_insecure_registries,
                 Duration::from_secs(30),
-            )?);
+            )?
+            .with_registry_auth_file(registry_auth_file)
+            .context("load component registry pull credential")?;
+            let source = ComponentArtifactSource::new(source_config);
             let credentials = Arc::new(match &args.credentials_file {
                 Some(path) => WamnCredentials::from_file(path)?,
                 None => WamnCredentials::empty(),

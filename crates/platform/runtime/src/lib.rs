@@ -10,6 +10,7 @@ pub mod connection_generation;
 pub mod engine;
 pub mod memory_metrics;
 pub mod plugins;
+pub mod registry_credentials;
 pub mod release_manifest;
 pub mod wiring_doorbell;
 pub mod wiring_lowering;

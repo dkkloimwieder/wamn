@@ -132,11 +132,32 @@ runtime:
         - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
         # Per-host, per-route inline execution ceiling; excess requests shed with 429.
         - { name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT, value: "64" }
+        # One standard Docker config drives both pull consumers in this pod:
+        # wash-runtime reads DOCKER_CONFIG for WorkloadDeployment components,
+        # and the digest-verifying wamn:node source reads the exact file named
+        # by WAMN_REGISTRY_AUTH_FILE. Missing Secret => pod does not start;
+        # wrong/missing registry entry => serving startup refuses.
+        - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
+        - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
+        - name: WAMN_COMPONENT_ARTIFACT_BASE
+          value: registry.wamn-system.svc.cluster.local:5000/wamn/components
         # [l5i9.17] The data-plane (event-plane) NATS for the wamn:jetstream
         # plugin — the materializer Service workload's stream/doorbell path.
         # Absent, the plugin still links and returns connection-unavailable.
         - name: WAMN_EVT_NATS_URL
           value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+      volumes:
+        - name: registry-pull
+          secret:
+            secretName: wamn-registry-pull
+            optional: false
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+      volumeMounts:
+        - name: registry-pull
+          mountPath: /etc/wamn/registry
+          readOnly: true
       # [4.1b] Allow plain-HTTP OCI pulls so the host can pull locally-built
       # component images from the in-cluster registry (deploy/platform/registry.yaml).
       #

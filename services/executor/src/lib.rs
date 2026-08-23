@@ -74,6 +74,10 @@ pub struct ExecutorArgs {
     #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE")]
     pub component_artifact_base: String,
 
+    /// Projected `.dockerconfigjson` file for the component registry.
+    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
+    pub registry_auth_file: PathBuf,
+
     /// Permit HTTP only for the explicitly configured in-cluster registry.
     #[arg(long, default_value_t = false)]
     pub allow_insecure_registries: bool,
@@ -160,11 +164,14 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         .collect::<Result<Vec<_>, _>>()
         .context("parse --allowed-hosts")?
         .into();
-    let source = ComponentArtifactSource::new(ComponentArtifactSourceConfig::new(
+    let source_config = ComponentArtifactSourceConfig::new(
         &args.component_artifact_base,
         args.allow_insecure_registries,
         Duration::from_secs(30),
-    )?);
+    )?
+    .with_registry_auth_file(&args.registry_auth_file)
+    .context("load component registry pull credential")?;
+    let source = ComponentArtifactSource::new(source_config);
     let engine = Arc::new(build_engine(&[])?);
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let driver = RouterDriver::new(

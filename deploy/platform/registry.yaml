@@ -1,4 +1,4 @@
-# In-cluster OCI registry for locally-built wasm component images.
+# Development-only in-cluster OCI registry for WAMN platform artifacts.
 #
 # The runtime-operator pulls a WorkloadDeployment's components[].image via the
 # wasm-runtime's own OCI client (NOT containerd), so a `kind load`ed image is not
@@ -7,10 +7,24 @@
 # registry.wamn-system.svc.cluster.local:5000; the host must run with
 # `--allow-insecure-registries` to pull from it (deploy/infra/values-wamn.yaml).
 #
-# Push flow (from a machine with `wash`):
+# This registry is the fresh-namespace development posture. It deliberately
+# requires Basic authentication but remains plain HTTP, single-replica and
+# backed by one RWO claim. Production uses an HA, durable, TLS OCI service with
+# two externally scoped robot identities: pull-only per environment namespace
+# and push-only for the ctl publisher. Both component and release-manifest
+# repositories live behind that one registry authority; they do not get a
+# second transport or credential dialect.
+#
+# Instantiate deploy/platform/registry-credentials.example.yaml before this
+# manifest. The server Secret contains only bcrypt htpasswd lines. The pull and
+# push Secrets are standard kubernetes.io/dockerconfigjson documents; their
+# exact registry key must equal the authority the caller uses.
+#
+# Push flow (from a machine with `wash` and the push robot credential):
 #   kubectl -n wamn-system port-forward svc/registry 5000:5000 &
 #   wash push localhost:5000/wamn/materializer:dev \
-#     components/target/wasm32-wasip2/release/materializer.wasm --insecure
+#     components/target/wasm32-wasip2/release/materializer.wasm --insecure \
+#     --user "$WAMN_REGISTRY_PUSH_USER" --password "$WAMN_REGISTRY_PUSH_PASSWORD"
 # The registry addresses artifacts by repo path (hostname-independent), so
 # pushing via localhost:5000 and pulling via the Service DNS name at the SAME
 # repo path (wamn/materializer:dev) resolve to the same manifest/blobs.
@@ -97,9 +111,18 @@ spec:
           env:
             - name: REGISTRY_HTTP_ADDR
               value: "0.0.0.0:5000"
+            - name: REGISTRY_AUTH
+              value: htpasswd
+            - name: REGISTRY_AUTH_HTPASSWD_REALM
+              value: WAMN Registry
+            - name: REGISTRY_AUTH_HTPASSWD_PATH
+              value: /auth/htpasswd
           readinessProbe:
-            httpGet:
-              path: /v2/
+            # Authenticated /v2/ returns 401 to the kubelet, which has no
+            # secret interpolation for HTTP Basic headers. Listening is the
+            # registry process's readiness boundary; authenticated transfer is
+            # proved by the publisher/puller path.
+            tcpSocket:
               port: 5000
             initialDelaySeconds: 2
             periodSeconds: 3
@@ -109,10 +132,17 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/registry
+            - name: auth
+              mountPath: /auth
+              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: registry-data
+        - name: auth
+          secret:
+            secretName: wamn-registry-server-auth
+            optional: false
 ---
 apiVersion: v1
 kind: Service
