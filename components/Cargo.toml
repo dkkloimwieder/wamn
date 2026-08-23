@@ -18,7 +18,6 @@ wit-bindgen = { version = "0.44", default-features = false, features = ["macros"
 # Guest-owned path identities are independent of the native workspace contract.
 wamn-event-reg = { path = "../crates/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "../crates/events/wire", version = "0.1.0" }
-wamn-flow-invocation = { path = "../crates/execution/flow-invocation", version = "0.1.0" }
 wamn-materializer = { path = "../crates/events/materializer", version = "0.1.0" }
 wamn-run-state = { path = "../crates/execution/run-state", version = "0.1.0" }
 

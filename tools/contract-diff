@@ -31,14 +31,6 @@ readonly -a WAMN_AUTHORING=(
   test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
   -p wamn-authoring-model --test contract
 )
-readonly -a WAMN_FLOW_INVOCATION=(
-  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
-  -p wamn-flow-invocation --test contract --test wit_coherence
-)
-readonly -a WAMN_RUNTIME_INVOCATION=(
-  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
-  -p wamn-runtime --test flow_invocation_wit_coherence
-)
 # wamn-0h0g.15.120: wamn:flow-http-routing has no doc-of-record, only the two
 # vendored copies the host plugin and the flow-http guest each bind.
 readonly -a WAMN_RUNTIME_ROUTING=(
@@ -65,8 +57,6 @@ wamn_print_plan() {
 wamn_dry_run() {
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
   wamn_print_plan authoring "${WAMN_AUTHORING[@]}"
-  wamn_print_plan flow-invocation "${WAMN_FLOW_INVOCATION[@]}"
-  wamn_print_plan runtime-vendored-flow-invocation "${WAMN_RUNTIME_INVOCATION[@]}"
   wamn_print_plan runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
   wamn_print_plan flow-http "${WAMN_FLOW_HTTP[@]}"
   wamn_print_plan flow-schema "${WAMN_FLOW_SCHEMA[@]}"
@@ -102,8 +92,6 @@ case "$WAMN_COMMAND" in
     wamn_require_cargo
     cd -- "$WAMN_REPOSITORY_ROOT"
     wamn_run authoring "${WAMN_AUTHORING[@]}"
-    wamn_run flow-invocation "${WAMN_FLOW_INVOCATION[@]}"
-    wamn_run runtime-vendored-flow-invocation "${WAMN_RUNTIME_INVOCATION[@]}"
     wamn_run runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
     wamn_run flow-http "${WAMN_FLOW_HTTP[@]}"
     wamn_run flow-schema "${WAMN_FLOW_SCHEMA[@]}"

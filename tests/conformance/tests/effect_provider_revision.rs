@@ -1344,7 +1344,6 @@ fn locked_effect_provider_closure_matches_manifest() {
             "wamn-event-wire",
             "wamn-execution-host",
             "wamn-flow",
-            "wamn-flow-invocation",
             "wamn-pg-core",
             "wamn-router",
             "wamn-run-state",

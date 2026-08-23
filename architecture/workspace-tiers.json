@@ -35,7 +35,6 @@
         "wamn-execution-host",
         "wamn-executor",
         "wamn-flow",
-        "wamn-flow-invocation",
         "wamn-host",
         "wamn-materializer",
         "wamn-pg-core",
@@ -74,7 +73,6 @@
         "wamn-event-reg",
         "wamn-event-wire",
         "wamn-flow",
-        "wamn-flow-invocation",
         "wamn-project-state",
         "wamn-proof-conformance",
         "wamn-scenario-model",
@@ -100,7 +98,6 @@
         "wamn-execution-host",
         "wamn-executor",
         "wamn-flow",
-        "wamn-flow-invocation",
         "wamn-gate-harness",
         "wamn-gates",
         "wamn-host",
@@ -315,10 +312,6 @@
       {
         "package": "wamn-runner",
         "path": "crates/execution/flow-engine"
-      },
-      {
-        "package": "wamn-flow-invocation",
-        "path": "crates/execution/flow-invocation"
       },
       {
         "package": "wamn-flow",

@@ -46,7 +46,6 @@ pub mod effect_writer_credential;
 #[cfg(feature = "native")]
 mod effect_writer;
 /// Durable lookup and bounded-wait queries for flow invocation.
-pub mod invocation;
 /// Versioned identity shared by persisted admission and trusted effect calls.
 pub mod invocation_context;
 /// Operator resolution of an effect-uncertain run.

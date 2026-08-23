@@ -14,8 +14,7 @@
 //! clock and no DB — "siblings own those" — and a `LISTEN` connection is all
 //! four. The cache lives there because the compiled graph is that crate's type;
 //! the connection that rings it lives in the process that owns the pipeline,
-//! beside the only other `LISTEN` in the tree
-//! ([`flow_invocation`](crate::flow_invocation), `wamn_run_outcome`).
+//! beside the runtime's other database-backed host capabilities.
 //!
 //! # The reconnect obligation
 //!
@@ -31,8 +30,8 @@
 //!
 //! # Why it applies inline instead of broadcasting
 //!
-//! [`flow_invocation`](crate::flow_invocation) fans `wamn_run_outcome` out over
-//! a bounded `broadcast` channel, where a slow reader is reported as
+//! The retired invocation provider fanned run outcomes over a bounded
+//! `broadcast` channel, where a slow reader was reported as
 //! `RecvError::Lagged` and the hint is merely late — outcomes are re-polled
 //! anyway. A dropped doorbell is not late, it is a stale wiring served forever,
 //! so there is no queue here: the connection's own driver task applies each

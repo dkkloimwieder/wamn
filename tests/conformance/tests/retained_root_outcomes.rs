@@ -86,11 +86,6 @@ const RETAINED_ROOTS: &[(&str, &str, &str)] = &[
         CRASH_FLOOR,
     ),
     (
-        "wamn-flow-invocation",
-        "crates/execution/flow-invocation/src/lib.rs",
-        AUTHENTICATED_ADMISSION,
-    ),
-    (
         "wamn-gate-harness",
         "test-support/harness/src/lib.rs",
         PROOF_FLOOR,

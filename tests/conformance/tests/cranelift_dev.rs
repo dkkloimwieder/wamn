@@ -185,7 +185,7 @@ set -euo pipefail
         &root,
         &root,
         &directory,
-        &["cranelift", "--locked", "-p", "wamn-flow-invocation", "-vv"],
+        &["cranelift", "--locked", "-p", "wamn-router", "-vv"],
     );
     assert!(
         output.status.success(),
@@ -195,7 +195,7 @@ set -euo pipefail
     assert_eq!(
         fs::read_to_string(directory.path("cargo.log")).expect("read fake Cargo log"),
         format!(
-            "RUSTFLAGS={BACKEND_FLAG}\nARG=+nightly\nARG=build\nARG=--locked\nARG=-p\nARG=wamn-flow-invocation\nARG=-vv\n"
+            "RUSTFLAGS={BACKEND_FLAG}\nARG=+nightly\nARG=build\nARG=--locked\nARG=-p\nARG=wamn-router\nARG=-vv\n"
         )
     );
 

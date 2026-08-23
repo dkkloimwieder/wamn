@@ -7,7 +7,7 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL: &str = "tools/contract-diff";
-const LEG_COUNT: usize = 7;
+const LEG_COUNT: usize = 5;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -127,32 +127,6 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
             "--locked".into(),
             "--offline".into(),
             "-p".into(),
-            "wamn-flow-invocation".into(),
-            "--test".into(),
-            "contract".into(),
-            "--test".into(),
-            "wit_coherence".into(),
-        ],
-        vec![
-            root.clone(),
-            "test".into(),
-            "--manifest-path".into(),
-            root_manifest.clone(),
-            "--locked".into(),
-            "--offline".into(),
-            "-p".into(),
-            "wamn-runtime".into(),
-            "--test".into(),
-            "flow_invocation_wit_coherence".into(),
-        ],
-        vec![
-            root.clone(),
-            "test".into(),
-            "--manifest-path".into(),
-            root_manifest.clone(),
-            "--locked".into(),
-            "--offline".into(),
-            "-p".into(),
             "wamn-runtime".into(),
             "--test".into(),
             "flow_http_routing_wit_coherence".into(),
@@ -244,8 +218,6 @@ fn contract_diff_dry_run_prints_the_complete_plan_without_cargo() {
     assert_eq!(lines[0], format!("working-directory: {}", root.display()));
     for (line, label) in lines[1..].iter().zip([
         "authoring",
-        "flow-invocation",
-        "runtime-vendored-flow-invocation",
         "runtime-vendored-flow-http-routing",
         "flow-http",
         "flow-schema",

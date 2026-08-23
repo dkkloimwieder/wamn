@@ -41,8 +41,8 @@
 //! # Why resolved strings and not a plugin handle
 //!
 //! Each plugin holds its identity differently — `WamnPostgres` in `pub(super)`
-//! claim maps, `ConnectionHttp` in frozen `Box<str>` fields, `WamnJetstream` and
-//! `WamnFlowInvocation` in bind-time maps of their own. [`EffectIdentity`] takes
+//! claim maps, `ConnectionHttp` in frozen `Box<str>` fields, and `WamnJetstream`
+//! in its bind-time map. [`EffectIdentity`] takes
 //! the resolved `&str` triple so this module needs no access to any of them, and
 //! adding a surface here never widens a plugin's private claim API.
 //!
@@ -113,13 +113,6 @@ effect_histogram!(
     "wamn.jetstream.duration_ms",
     "wamn:jetstream effect latency in ms, by effect.operation"
 );
-effect_histogram!(
-    INVOCATION_DURATION_MS,
-    "wamn-flow-invocation",
-    "wamn.invocation.duration_ms",
-    "wamn:flow-invocation effect latency in ms, by effect.operation"
-);
-
 /// The `effect.operation` label the non-postgres surfaces record their duration
 /// under.
 ///

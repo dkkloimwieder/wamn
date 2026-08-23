@@ -1,6 +1,0 @@
-[package]
-name = "wamn-flow-invocation"
-description = "Pure Rust mirror of the versioned wamn:flow-invocation@0.1.0 begin and bounded-wait contract"
-version.workspace = true
-edition.workspace = true
-license.workspace = true

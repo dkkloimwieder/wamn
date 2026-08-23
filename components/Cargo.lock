@@ -204,8 +204,6 @@ dependencies = [
  "boon",
  "serde",
  "serde_json",
- "sha2",
- "wamn-flow-invocation",
  "wit-bindgen 0.44.0",
 ]
 
@@ -851,10 +849,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-flow-invocation"
-version = "0.1.0"
-
-[[package]]
 name = "wamn-materializer"
 version = "0.1.0"
 dependencies = [
@@ -881,7 +875,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "wamn-catalog",
  "wamn-flow",
  "wamn-pg-core",
 ]

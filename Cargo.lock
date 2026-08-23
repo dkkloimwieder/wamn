@@ -4339,10 +4339,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-flow-invocation"
-version = "0.1.0"
-
-[[package]]
 name = "wamn-gate-harness"
 version = "0.1.0"
 dependencies = [
@@ -4444,7 +4440,6 @@ dependencies = [
  "wamn-component-policy",
  "wamn-execution-host",
  "wamn-flow",
- "wamn-flow-invocation",
  "wamn-gate-harness",
  "wamn-run-state",
  "wamn-runtime",
@@ -4533,7 +4528,6 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "url",
- "wamn-catalog",
  "wamn-flow",
  "wamn-pg-core",
 ]
@@ -4570,7 +4564,6 @@ dependencies = [
  "wamn-control-registry",
  "wamn-event-wire",
  "wamn-flow",
- "wamn-flow-invocation",
  "wamn-pg-core",
  "wamn-router",
  "wamn-run-state",

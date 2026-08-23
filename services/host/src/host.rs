@@ -23,9 +23,7 @@ use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
-use wamn_runtime::plugins::{
-    FlowHttpRouting, WamnFlowInvocation, WamnJetstream, WamnLogging, WamnPostgres,
-};
+use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::{build_engine, spawn_epoch_ticker};
 
@@ -349,9 +347,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .with_doorbell(doorbell_client)
                 .with_release(release.clone()),
         ))?
-        .with_plugin(Arc::new(
-            WamnFlowInvocation::from_env().context("wamn:flow-invocation plugin init")?,
-        ))?
         // wamn-0h0g.15.96: READER 3 of the weld, and the first host-side
         // implementation of wamn:flow-http-routing. Routes come off the manifest's
         // attachment projection, so the serving path reads no project database.
@@ -391,7 +386,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let cluster_host = builder.build().context("failed to build cluster host")?;
     tracing::info!(
         router_delivery = router_driver.is_some(),
-        "wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-invocation, wamn:flow-http-routing)"
+        "wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing)"
     );
     // Whether this host carries a release is the first thing an operator needs from
     // the log: it decides whether the release-gated interfaces have a manifest to

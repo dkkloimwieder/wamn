@@ -8,7 +8,6 @@ pub mod component_artifact_source;
 pub mod connection_authority;
 pub mod connection_generation;
 pub mod engine;
-pub mod flow_invocation;
 pub mod memory_metrics;
 pub mod plugins;
 pub mod release_manifest;

@@ -3,8 +3,8 @@
 //! # What this proves, and why it is a source proof
 //!
 //! `wamn-0h0g.24.3` put a span over every effect this host performs for a guest:
-//! a DB call, an outbound HTTP request, a JetStream publish or ack, a flow
-//! invocation. The property worth defending is not "some span exists somewhere"
+//! a DB call, an outbound HTTP request, or a JetStream publish or ack. The
+//! property worth defending is not "some span exists somewhere"
 //! — it is that NO effect surface is left dark, which is a statement about the
 //! whole set of surfaces and cannot be observed by exercising one.
 //!
@@ -70,13 +70,11 @@ const SPAN_NAMES: &[(&str, &[&str])] = &[
     (POSTGRES, &["\"wamn.postgres\""]),
     (HTTP, &["\"wamn.http_effect\""]),
     (JETSTREAM, &["\"wamn.jetstream\""]),
-    (FLOW_INVOCATION, &["\"wamn.invocation\""]),
 ];
 
 const POSTGRES: &str = "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs";
 const HTTP: &str = "crates/platform/runtime/src/plugins/connection_http.rs";
 const JETSTREAM: &str = "crates/platform/runtime/src/plugins/wamn_jetstream.rs";
-const FLOW_INVOCATION: &str = "crates/platform/runtime/src/plugins/wamn_flow_invocation.rs";
 
 /// How one host-trait method treats the world outside the host.
 #[derive(Clone, Copy)]
@@ -154,11 +152,6 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     ),
     (JETSTREAM, "doorbell::Host", &[("ring", Surface::Effect)]),
     (JETSTREAM, "producer::Host", &[("publish", Surface::Effect)]),
-    (
-        FLOW_INVOCATION,
-        "invocation::Host",
-        &[("begin", Surface::Effect), ("wait", Surface::Effect)],
-    ),
 ];
 
 fn repository_root() -> PathBuf {

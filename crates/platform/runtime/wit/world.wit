@@ -13,11 +13,6 @@ world connection-http-plugin {
   import wamn:connection/http@0.1.0;
 }
 
-/// Production provider for the callable-flow invocation boundary.
-world flow-invocation-plugin {
-  import wamn:flow-invocation/invocation@0.1.0;
-}
-
 /// Host-side bindgen world for the trusted `wamn:runner/egress` channel
 /// (fqg.11): the compiled-in flowrunner supplies each run's resolved
 /// connection authority so the run-worker's outgoing handler can enforce it
