@@ -25,7 +25,9 @@ use wamn_run_state::FailKind;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::engine::{
+    DEFAULT_EPOCH_TICK, PoolSizing, build_engine_sized, spawn_epoch_ticker,
+};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
@@ -144,6 +146,12 @@ pub struct ExecutorArgs {
     /// Visibility timeout for one generation-fenced queue claim.
     #[arg(long, default_value_t = DEFAULT_LEASE_TTL_MS)]
     pub lease_ttl_ms: u64,
+
+    /// Pooling-allocator instance slots: the concurrent live instances this
+    /// executor admits. Spelled exactly as the host's, so one capacity posture
+    /// reads the same on both deployables (`services/host/src/host.rs`).
+    #[arg(long = "pool-slots", env = "WAMN_POOL_SLOTS", default_value_t = PoolSizing::default().slots)]
+    pub pool_slots: u32,
 }
 
 fn resolve_owner(arg: Option<String>) -> String {
@@ -241,7 +249,13 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     .with_ca_paths(&args.oci_ca_paths)
     .context("trust the configured OCI CA bundles for component pulls")?;
     let source = ComponentArtifactSource::new(source_config);
-    let engine = Arc::new(build_engine(&[])?);
+    let engine = Arc::new(build_engine_sized(
+        &[],
+        PoolSizing {
+            slots: args.pool_slots,
+            ..PoolSizing::default()
+        },
+    )?);
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let driver = Arc::new(RouterDriver::new(
         engine,

@@ -19,6 +19,39 @@ pub const MEMORY_CAP_BYTES: usize = 256 << 20;
 /// concurrency, not density.
 const POOL_SLOTS: u32 = 512;
 
+/// Pooling-allocator sizing for one host group.
+///
+/// Written key-shaped on purpose (`wamn-0h0g.17.3`): the resting answer is a
+/// first-class chart key pair, `runtime.pool.slots` and
+/// `runtime.pool.memoryCapBytes`, and the interim carrier is a per-host-group
+/// `extraArgs` CLI flag. Naming the fields after the eventual keys makes that
+/// migration a values rewire rather than a code change.
+///
+/// `memory_cap_bytes` has no flag yet, and that gap is deliberate rather than
+/// unfinished. The platform ceiling has a SECOND consumer: the fork's per-store
+/// ResourceLimiter reads `WAMN_MEMORY_CEILING_MB`, which
+/// [`advertise_memory_ceiling`] must set before the Tokio runtime exists — i.e.
+/// in each binary's `main`, ahead of argument parsing. Until that leg moves, a
+/// cap raised here would be re-clamped per store and the flag would silently do
+/// nothing upward, which is the exact invisible-red class the interim carrier
+/// was chosen to avoid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoolSizing {
+    /// Concurrent live instances this engine admits.
+    pub slots: u32,
+    /// Largest memory any one instance may hold.
+    pub memory_cap_bytes: usize,
+}
+
+impl Default for PoolSizing {
+    fn default() -> Self {
+        Self {
+            slots: POOL_SLOTS,
+            memory_cap_bytes: MEMORY_CAP_BYTES,
+        }
+    }
+}
+
 /// Default epoch tick period. One tick = one deadline unit, so a store
 /// deadline of N ticks caps guest execution at roughly N × 10 ms.
 pub const DEFAULT_EPOCH_TICK: Duration = Duration::from_millis(10);
@@ -58,12 +91,43 @@ pub fn build_engine_with_socket_policy(
     proposals: &[WasmProposal],
     socket_policy: SocketPolicy,
 ) -> anyhow::Result<Engine> {
+    build_engine_inner(proposals, socket_policy, PoolSizing::default())
+}
+
+/// Build the platform engine with this host group's pooling sizing.
+///
+/// Only the two serving deployables pass a sizing: `wamn-host` and the executor.
+/// Every other builder — component admission, benches, proofs — keeps the
+/// compiled defaults, because their subject is the artifact, not the capacity.
+pub fn build_engine_sized(
+    proposals: &[WasmProposal],
+    sizing: PoolSizing,
+) -> anyhow::Result<Engine> {
+    build_engine_inner(proposals, SocketPolicy::default(), sizing)
+}
+
+fn build_engine_inner(
+    proposals: &[WasmProposal],
+    socket_policy: SocketPolicy,
+    sizing: PoolSizing,
+) -> anyhow::Result<Engine> {
+    // Sizing is stringly configuration until the chart keys land, so a zero
+    // arrives here as a value rather than as a typo the parser could catch: a
+    // zero-slot pool admits no instance at all and a zero cap admits no memory.
+    anyhow::ensure!(
+        sizing.slots > 0,
+        "pooling allocator needs at least one slot"
+    );
+    anyhow::ensure!(
+        sizing.memory_cap_bytes > 0,
+        "pooling allocator needs a nonzero memory cap"
+    );
     let mut pooling = PoolingAllocationConfig::default();
-    pooling.max_memory_size(MEMORY_CAP_BYTES);
-    pooling.total_memories(POOL_SLOTS);
-    pooling.total_tables(POOL_SLOTS);
-    pooling.total_component_instances(POOL_SLOTS);
-    pooling.total_stacks(POOL_SLOTS);
+    pooling.max_memory_size(sizing.memory_cap_bytes);
+    pooling.total_memories(sizing.slots);
+    pooling.total_tables(sizing.slots);
+    pooling.total_component_instances(sizing.slots);
+    pooling.total_stacks(sizing.slots);
 
     let mut base = Config::new();
     base.epoch_interruption(true);

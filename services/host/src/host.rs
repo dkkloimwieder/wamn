@@ -22,10 +22,11 @@ use wamn_execution_host::{
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
+use wamn_runtime::engine::{PoolSizing, build_engine_sized};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
-use wamn_runtime::{build_engine, spawn_epoch_ticker};
+use wamn_runtime::spawn_epoch_ticker;
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -126,6 +127,17 @@ pub struct HostArgs {
     /// epoch deadlines never fire)
     #[arg(long = "epoch-tick-ms", default_value_t = 10)]
     pub epoch_tick_ms: u64,
+
+    /// Pooling-allocator instance slots for this host group: the concurrent
+    /// live instances this host admits. Slots are per live instance, not per
+    /// resident workload, so this bounds concurrency, not density.
+    ///
+    /// Carried per host group by `hostGroups[].extraArgs` until the chart gains
+    /// `runtime.pool.slots` (`wamn-0h0g.17.3`). A flag rather than an env entry
+    /// on purpose: clap refuses an unknown flag at startup, so a misspelling
+    /// crashloops the pod instead of deploying cleanly and doing nothing.
+    #[arg(long = "pool-slots", env = "WAMN_POOL_SLOTS", default_value_t = PoolSizing::default().slots)]
+    pub pool_slots: u32,
 
     /// Directory the digest-named release-manifest ConfigMap is projected into —
     /// normally `/etc/wamn/release-manifest`, the mount path
@@ -282,7 +294,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // shared execution-target doorbell subject) — no second connection.
     let doorbell_client = scheduler_nats_client.clone();
 
-    let engine = Arc::new(build_engine(&args.wasm_proposals)?);
+    let engine = Arc::new(build_engine_sized(
+        &args.wasm_proposals,
+        PoolSizing {
+            slots: args.pool_slots,
+            ..PoolSizing::default()
+        },
+    )?);
     if args.epoch_tick_ms > 0 {
         spawn_epoch_ticker(&engine, Duration::from_millis(args.epoch_tick_ms));
     }
