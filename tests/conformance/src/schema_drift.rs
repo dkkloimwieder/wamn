@@ -79,7 +79,7 @@ fn runs_stand_in() -> String {
     "CREATE TABLE wamn_run.runs (\
         tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
         flow_version int NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
-        environment text NOT NULL, execution_bundle_hash text NOT NULL, \
+        environment text NOT NULL, \
         attachment_id text, registration_id text, \
         event_source_run_id text, event_root_run_id text, event_depth int, \
         status text NOT NULL DEFAULT 'running' \
@@ -88,6 +88,8 @@ fn runs_stand_in() -> String {
         trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
         durability_class text NOT NULL DEFAULT 'standard' \
           CHECK (durability_class IN ('standard', 'durable')), \
+        wiring_id text, wiring_version int, wiring_hash text, gate_report_id text, \
+        binding_world_json jsonb, \
         release_version int, manifest_digest text, \
         input_json jsonb, result_json jsonb, state_json jsonb, \
         invocation_context jsonb NOT NULL DEFAULT '{}'::jsonb, \

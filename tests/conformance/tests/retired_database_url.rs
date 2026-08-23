@@ -4,7 +4,6 @@ const CLAIMS_SOURCE: &str =
     include_str!("../../../crates/platform/runtime/src/plugins/wamn_postgres/claims.rs");
 const POOL_SOURCE: &str =
     include_str!("../../../crates/platform/runtime/src/plugins/wamn_postgres/pool.rs");
-const FLOWBENCH_SOURCE: &str = include_str!("../../integration/src/flowbench.rs");
 const MATBENCH_SOURCE: &str = include_str!("../../integration/src/matbench.rs");
 
 #[test]
@@ -18,7 +17,6 @@ fn production_database_url_claims_stay_retired() {
             "wamn_postgres/claims.rs production source",
             claims_production,
         ),
-        ("flowbench.rs", FLOWBENCH_SOURCE),
         ("matbench.rs", MATBENCH_SOURCE),
     ] {
         assert!(
