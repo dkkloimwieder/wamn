@@ -136,6 +136,23 @@ pub fn select_finalized_test_report_sql() -> &'static str {
       WHERE tenant_id = $1 AND report_id = $2"
 }
 
+/// Read one reservation and its immutable report, if finalized.
+///
+/// The single statement gives the management query one database snapshot. It
+/// never follows the diagnostic run identities stored inside the report
+/// summary. The explicit tenant predicate keeps the query self-scoped, while
+/// the control-author credential's current-user policy remains the authority
+/// boundary that prevents a caller from widening it.
+pub fn select_test_report_projection_sql() -> &'static str {
+    "SELECT reservation.state, reservation.validated_draft_id, \
+            report.validated_draft_id, report.passed, report.summary \
+       FROM authoring_test_run_reservations AS reservation \
+       LEFT JOIN authoring_test_reports AS report \
+         ON report.tenant_id = reservation.tenant_id \
+        AND report.report_id = reservation.report_id \
+      WHERE reservation.tenant_id = $1 AND reservation.report_id = $2"
+}
+
 /// Finalize pending cases whose project runs were observed effect-uncertain.
 pub fn reconcile_effect_uncertain_test_cases_sql() -> &'static str {
     "UPDATE authoring_test_case_runs AS test_case \
@@ -700,6 +717,23 @@ mod tests {
         assert!(!insert_report.contains("bool_or("));
         assert!(finalize_reservation.contains("SET state = 'finalized'"));
         assert!(finalize_reservation.contains("AND state = 'pending'"));
+    }
+
+    #[test]
+    fn report_projection_is_one_tenant_scoped_control_store_snapshot() {
+        let sql = select_test_report_projection_sql();
+        assert!(sql.starts_with("SELECT reservation.state"));
+        assert!(sql.contains("FROM authoring_test_run_reservations AS reservation"));
+        assert!(sql.contains("LEFT JOIN authoring_test_reports AS report"));
+        assert!(sql.contains("report.tenant_id = reservation.tenant_id"));
+        assert!(sql.contains("report.report_id = reservation.report_id"));
+        assert!(sql.contains("WHERE reservation.tenant_id = $1 AND reservation.report_id = $2"));
+        for forbidden in ["runs", "flow", "plan", "execution_bundle", "app.tenant"] {
+            assert!(
+                !sql.contains(forbidden),
+                "report projection crossed into retired/project state via {forbidden}"
+            );
+        }
     }
 
     /// wamn-0h0g.15.170: the reconcile pins no resolution map, because the

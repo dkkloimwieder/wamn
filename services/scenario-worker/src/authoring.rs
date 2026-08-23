@@ -7,12 +7,14 @@
 use std::time::SystemTime;
 
 use anyhow::{Context as _, bail};
+use serde_json::Value;
 use tokio_postgres::{Client, GenericClient, NoTls, Transaction};
 
 use wamn_control_provision::parse_control_authoring_url;
 use wamn_schema_control::BareSchemaName;
 
 use crate::store::drafts;
+use crate::store::test_orchestration;
 
 /// Startup authority probe for the CONTROL database's author credential
 /// (wamn-0h0g.8.18).
@@ -407,6 +409,21 @@ pub enum SaveFlowDraftResult {
     RevisionConflict,
 }
 
+/// Control-store projection of one test report.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GetReportResult {
+    /// No reservation is visible in the backend's fixed tenant.
+    NotFound,
+    /// The reservation exists but its immutable report does not yet exist.
+    Pending { validated_draft_id: String },
+    /// The immutable report exists and agrees with its reservation identity.
+    Finalized {
+        validated_draft_id: String,
+        passed: bool,
+        summary: Value,
+    },
+}
+
 impl InternalAuthoringBackend {
     /// Save an incrementally editable flow document under optimistic revision control.
     pub async fn save_flow_draft(
@@ -416,6 +433,53 @@ impl InternalAuthoringBackend {
         self.require_tenant(&request.tenant_id)?;
         self.scope().await?;
         save_flow_draft(&self.authority, &self.client, request).await
+    }
+
+    /// Read one pending or finalized report from the fixed control-store scope.
+    pub async fn get_report(
+        &self,
+        tenant_id: &str,
+        report_id: &str,
+    ) -> anyhow::Result<GetReportResult> {
+        self.require_tenant(tenant_id)?;
+        validate_identity(report_id, "report-id")?;
+        self.scope().await?;
+        let row = self
+            .client
+            .query_opt(
+                test_orchestration::select_test_report_projection_sql(),
+                &[&tenant_id, &report_id],
+            )
+            .await
+            .context("read control-store test report")?;
+        let Some(row) = row else {
+            return Ok(GetReportResult::NotFound);
+        };
+        report_result(row.get(0), row.get(1), row.get(2), row.get(3), row.get(4))
+    }
+}
+
+fn report_result(
+    state: String,
+    reservation_validated_draft_id: String,
+    report_validated_draft_id: Option<String>,
+    passed: Option<bool>,
+    summary: Option<Value>,
+) -> anyhow::Result<GetReportResult> {
+    match (state.as_str(), report_validated_draft_id, passed, summary) {
+        ("pending", None, None, None) => Ok(GetReportResult::Pending {
+            validated_draft_id: reservation_validated_draft_id,
+        }),
+        ("finalized", Some(report_validated_draft_id), Some(passed), Some(summary))
+            if report_validated_draft_id == reservation_validated_draft_id =>
+        {
+            Ok(GetReportResult::Finalized {
+                validated_draft_id: reservation_validated_draft_id,
+                passed,
+                summary,
+            })
+        }
+        _ => bail!("control-store test report state is internally inconsistent"),
     }
 }
 
@@ -484,6 +548,55 @@ pub(crate) async fn save_flow_draft(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_projection_requires_one_complete_state_grain() {
+        assert_eq!(
+            report_result("pending".into(), "validated-1".into(), None, None, None).unwrap(),
+            GetReportResult::Pending {
+                validated_draft_id: "validated-1".into(),
+            }
+        );
+        assert_eq!(
+            report_result(
+                "finalized".into(),
+                "validated-1".into(),
+                Some("validated-1".into()),
+                Some(false),
+                Some(serde_json::json!({"cases": []})),
+            )
+            .unwrap(),
+            GetReportResult::Finalized {
+                validated_draft_id: "validated-1".into(),
+                passed: false,
+                summary: serde_json::json!({"cases": []}),
+            }
+        );
+
+        for corrupt in [
+            report_result(
+                "pending".into(),
+                "validated-1".into(),
+                Some("validated-1".into()),
+                Some(true),
+                Some(serde_json::json!({})),
+            ),
+            report_result("finalized".into(), "validated-1".into(), None, None, None),
+            report_result(
+                "finalized".into(),
+                "validated-1".into(),
+                Some("validated-other".into()),
+                Some(true),
+                Some(serde_json::json!({})),
+            ),
+            report_result("unknown".into(), "validated-1".into(), None, None, None),
+        ] {
+            assert!(
+                corrupt.is_err(),
+                "partial or mismatched report state was accepted"
+            );
+        }
+    }
 
     #[test]
     fn internal_adapter_carries_no_client_principal() {

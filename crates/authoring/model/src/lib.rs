@@ -595,7 +595,6 @@ pub enum ReportProjection {
         validated_draft: ValidatedDraftRef,
         passed: bool,
         summary: Value,
-        resolution_map: Value,
     },
 }
 

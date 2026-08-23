@@ -31,10 +31,12 @@ use tokio_postgres::{Client, GenericClient, NoTls};
 use tracing::Instrument as _;
 
 use wamn_authoring_model::{
-    AuthoringCommand, AuthoringDocument, AuthoringOutcome, AuthoringQuery, AuthoringQueryRequest,
-    AuthoringRequest, AuthoringRequestEnvelope, AuthoringResponse, AuthoringResponseEnvelope,
-    AuthoringSuccess, CommandRefusal, CommitProvenance, ContractDecodeErrorKind, DraftIdentity,
-    SCHEMA_VERSION, SafeUint64, SaveFlowDraftRefusal, decode_document,
+    AuthoringCommand, AuthoringDocument, AuthoringOutcome, AuthoringQuery, AuthoringQueryOutcome,
+    AuthoringQueryRequest, AuthoringQueryResponse, AuthoringQuerySuccess, AuthoringRequest,
+    AuthoringRequestEnvelope, AuthoringResponse, AuthoringResponseEnvelope, AuthoringSuccess,
+    CommandRefusal, CommitProvenance, ContractDecodeErrorKind, DraftIdentity, GetReportRefusal,
+    QueryRefusal, ReportProjection, SCHEMA_VERSION, SafeUint64, SaveFlowDraftRefusal,
+    ValidatedDraftRef, decode_document,
 };
 use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalKind, ProjectRole, authenticate_pat, project_roles,
@@ -43,7 +45,8 @@ use wamn_platform_identity::{
 use wamn_control_provision::parse_control_authoring_url;
 
 use crate::authoring::{
-    ControlAuthoringScope, InternalAuthoringBackend, SaveFlowDraft, SaveFlowDraftResult,
+    ControlAuthoringScope, GetReportResult, InternalAuthoringBackend, SaveFlowDraft,
+    SaveFlowDraftResult,
 };
 
 /// The append-only ledger row every authorized management command writes.
@@ -473,6 +476,20 @@ fn command_response_bytes(command_id: &str, outcome: AuthoringOutcome) -> anyhow
     .context("serialize exact authoring outcome envelope")
 }
 
+fn query_response_bytes(
+    query_id: &wamn_authoring_model::QueryId,
+    outcome: AuthoringQueryOutcome,
+) -> anyhow::Result<Vec<u8>> {
+    serde_json::to_vec(&AuthoringDocument::Response(Box::new(
+        AuthoringResponseEnvelope::Query(AuthoringQueryResponse {
+            schema_version: SCHEMA_VERSION.to_owned(),
+            query_id: query_id.clone(),
+            outcome,
+        }),
+    )))
+    .context("serialize exact authoring query outcome envelope")
+}
+
 /// Arguments for the authenticated management authoring listener.
 #[derive(Clone, Debug, clap::Args)]
 pub struct ManagementServeArgs {
@@ -546,7 +563,7 @@ impl ManagementServeArgs {
 struct Surface {
     identity: Client,
     backend: tokio::sync::Mutex<InternalAuthoringBackend>,
-    query_adapter: UnmountedAuthoringQueryAdapter,
+    query_adapter: AuthoringQueryAdapter,
     org: Box<str>,
     project: Box<str>,
     environment: Box<str>,
@@ -629,7 +646,7 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
     let surface = Arc::new(Surface {
         identity,
         backend: tokio::sync::Mutex::new(backend),
-        query_adapter: UnmountedAuthoringQueryAdapter,
+        query_adapter: AuthoringQueryAdapter,
         org: args.org.into_boxed_str(),
         project: args.project.into_boxed_str(),
         environment: args.environment.into_boxed_str(),
@@ -718,20 +735,22 @@ async fn authoring_command(
             dispatch_command(surface, &author, command).await
         }
         AuthoringRequestEnvelope::Query(query) => {
-            surface.query_adapter.dispatch_unmounted(query).await
+            surface.query_adapter.dispatch(surface, query).await
         }
     }
 }
 
-/// Explicit .7.3 query seam. Production mounting and storage reads belong to
-/// .7.4 and its operation owners, so this adapter can only emit correlation and
-/// report that the query is unmounted.
+/// Non-ledgered query adapter.
+///
+/// `get-report` reads only the fixed control-store scope. `read-draft` remains
+/// unmounted until its own operation owner supplies a handler.
 #[derive(Clone, Copy, Debug, Default)]
-struct UnmountedAuthoringQueryAdapter;
+struct AuthoringQueryAdapter;
 
-impl UnmountedAuthoringQueryAdapter {
-    async fn dispatch_unmounted(
+impl AuthoringQueryAdapter {
+    async fn dispatch(
         self,
+        surface: &Surface,
         request: &AuthoringQueryRequest,
     ) -> anyhow::Result<Response<Full<Bytes>>> {
         let span = tracing::info_span!(
@@ -739,10 +758,64 @@ impl UnmountedAuthoringQueryAdapter {
             query_id = %request.query_id,
             query = query_kind(&request.query),
         );
-        async { Ok(empty(StatusCode::NOT_IMPLEMENTED)) }
-            .instrument(span)
-            .await
+        async {
+            match &request.query {
+                AuthoringQuery::ReadDraft(_) => Ok(empty(StatusCode::NOT_IMPLEMENTED)),
+                AuthoringQuery::GetReport(input) => get_report(surface, request, input).await,
+            }
+        }
+        .instrument(span)
+        .await
     }
+}
+
+async fn get_report(
+    surface: &Surface,
+    request: &AuthoringQueryRequest,
+    input: &wamn_authoring_model::GetReport,
+) -> anyhow::Result<Response<Full<Bytes>>> {
+    let Some(scope) = surface.command_scope(&input.scope.project_id, &input.scope.environment)
+    else {
+        return Ok(authorization_denied());
+    };
+    if input.report_id.is_empty() {
+        return Ok(empty(StatusCode::BAD_REQUEST));
+    }
+
+    let backend = surface.backend.lock().await;
+    let result = backend
+        .get_report(&scope.tenant_id, &input.report_id)
+        .await?;
+    drop(backend);
+    let outcome = match result {
+        GetReportResult::NotFound => AuthoringQueryOutcome::Refused(QueryRefusal::GetReport(
+            GetReportRefusal::ReportNotFound {
+                report_id: input.report_id.clone(),
+            },
+        )),
+        GetReportResult::Pending { validated_draft_id } => {
+            AuthoringQueryOutcome::Completed(Box::new(AuthoringQuerySuccess::GetReport(
+                ReportProjection::Pending {
+                    report_id: input.report_id.clone(),
+                    validated_draft: ValidatedDraftRef { validated_draft_id },
+                },
+            )))
+        }
+        GetReportResult::Finalized {
+            validated_draft_id,
+            passed,
+            summary,
+        } => AuthoringQueryOutcome::Completed(Box::new(AuthoringQuerySuccess::GetReport(
+            ReportProjection::Finalized {
+                report_id: input.report_id.clone(),
+                validated_draft: ValidatedDraftRef { validated_draft_id },
+                passed,
+                summary,
+            },
+        ))),
+    };
+    let body = query_response_bytes(&request.query_id, outcome)?;
+    Ok(json_bytes(StatusCode::OK, body))
 }
 
 const fn query_kind(query: &AuthoringQuery) -> &'static str {
@@ -852,7 +925,7 @@ fn empty(status: StatusCode) -> Response<Full<Bytes>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_authoring_model::{AuthoringCommandKind, AuthoringScope, GetReport, QueryId};
+    use wamn_authoring_model::{AuthoringCommandKind, QueryId};
 
     /// The slice of this module between two top-level items, for the structural
     /// guards below.
@@ -1121,56 +1194,52 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn query_adapter_is_trace_only_and_unmounted() {
-        let request = AuthoringQueryRequest {
-            schema_version: SCHEMA_VERSION.to_owned(),
-            query_id: QueryId::try_from("query-1".to_owned()).unwrap(),
-            query: AuthoringQuery::GetReport(GetReport {
-                scope: AuthoringScope {
-                    project_id: "project-a".to_owned(),
-                    environment: "dev".to_owned(),
-                },
+    #[test]
+    fn get_report_is_mounted_as_a_non_ledgered_control_store_query() {
+        let query_id = QueryId::try_from("query-1".to_owned()).unwrap();
+        let outcome = AuthoringQueryOutcome::Completed(Box::new(AuthoringQuerySuccess::GetReport(
+            ReportProjection::Finalized {
                 report_id: "report-1".to_owned(),
-            }),
-        };
-        assert_eq!(query_kind(&request.query), "get-report");
-        let response = UnmountedAuthoringQueryAdapter
-            .dispatch_unmounted(&request)
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+                validated_draft: ValidatedDraftRef {
+                    validated_draft_id: "validated-1".to_owned(),
+                },
+                passed: false,
+                summary: serde_json::json!({"cases": []}),
+            },
+        )));
+        let value: serde_json::Value =
+            serde_json::from_slice(&query_response_bytes(&query_id, outcome).unwrap()).unwrap();
+        assert_eq!(value["body"]["query-id"], "query-1");
+        assert_eq!(
+            value["body"]["outcome"]["value"]["result"]["state"],
+            "finalized"
+        );
+        assert_eq!(value["body"]["outcome"]["value"]["result"]["passed"], false);
         assert!(
-            response
-                .into_body()
-                .collect()
-                .await
-                .unwrap()
-                .to_bytes()
-                .is_empty()
+            value["body"]["outcome"]["value"]["result"]
+                .get("resolution-map")
+                .is_none(),
+            "the query fabricated the retired resolution-map fact"
         );
 
         let source = include_str!("management.rs");
         let adapter = between(
             source,
-            "struct UnmountedAuthoringQueryAdapter;",
+            "struct AuthoringQueryAdapter;",
             "/// Dispatch one decoded command",
         );
         for required in ["authoring_query", "query_id", "query_kind"] {
             assert!(adapter.contains(required), "query trace omits {required}");
         }
-        for forbidden in [
-            "backend",
-            "record(",
-            "INSERT ",
-            "UPDATE ",
-            "DELETE ",
-            ".execute(",
-            ".query(",
-        ] {
+        assert!(
+            adapter.contains("AuthoringQuery::ReadDraft(_)") && adapter.contains("NOT_IMPLEMENTED")
+        );
+        assert!(adapter.contains("AuthoringQuery::GetReport(input)"));
+        assert!(adapter.contains("backend.get_report("));
+        for forbidden in ["record(", "INSERT ", "UPDATE ", "DELETE ", ".execute("] {
             assert!(
                 !adapter.contains(forbidden),
-                "unmounted query adapter gained {forbidden}"
+                "non-ledgered query adapter gained {forbidden}"
             );
         }
         let implementation = source.split("#[cfg(test)]").next().unwrap();

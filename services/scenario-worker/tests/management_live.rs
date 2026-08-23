@@ -256,19 +256,13 @@ fn unmounted_commands() -> Vec<(&'static str, String)> {
 
 fn unmounted_queries() -> Vec<(&'static str, String)> {
     let scope = serde_json::json!({"project-id": PROJECT, "environment": "dev"});
-    [
-        (
-            "read-draft",
-            serde_json::json!({
-                "scope": scope.clone(),
-                "draft": {"draft-id": "draft-unmounted", "revision": 1},
-            }),
-        ),
-        (
-            "get-report",
-            serde_json::json!({"scope": scope, "report-id": "report-unmounted"}),
-        ),
-    ]
+    [(
+        "read-draft",
+        serde_json::json!({
+            "scope": scope,
+            "draft": {"draft-id": "draft-unmounted", "revision": 1},
+        }),
+    )]
     .into_iter()
     .map(|(kind, input)| {
         let document = serde_json::json!({
@@ -282,6 +276,24 @@ fn unmounted_queries() -> Vec<(&'static str, String)> {
         (kind, document.to_string())
     })
     .collect()
+}
+
+fn get_report_document(query_id: &str, project: &str, report_id: &str) -> String {
+    serde_json::json!({
+        "document": "request",
+        "body": {
+            "schema-version": "0.1",
+            "query-id": query_id,
+            "query": {
+                "kind": "get-report",
+                "input": {
+                    "scope": {"project-id": project, "environment": ENVIRONMENT},
+                    "report-id": report_id,
+                },
+            },
+        },
+    })
+    .to_string()
 }
 
 fn legacy_get_run_query() -> String {
@@ -559,6 +571,54 @@ async fn authoring_durable_counts(admin: &Client) -> Vec<i64> {
     (0..row.len()).map(|index| row.get(index)).collect()
 }
 
+async fn insert_pending_report(
+    admin: &Client,
+    tenant_id: &str,
+    report_id: &str,
+    validated_draft_id: &str,
+) {
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SOURCE_SCHEMA}.authoring_test_run_reservations \
+                    (tenant_id, report_id, command_hash, validated_draft_id, catalog_id, \
+                     catalog_version, case_count, whole_deadline_at) \
+                 VALUES ($1, $2, 'sha256:' || repeat('0', 64), $3, 'catalog-a', 1, 1, \
+                         clock_timestamp() + interval '1 hour')"
+            ),
+            &[&tenant_id, &report_id, &validated_draft_id],
+        )
+        .await
+        .expect("insert one pending control-store report reservation");
+}
+
+async fn finalize_report(admin: &Client, report_id: &str, validated_draft_id: &str) {
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SOURCE_SCHEMA}.authoring_test_reports \
+                    (tenant_id, report_id, validated_draft_id, catalog_id, catalog_version, \
+                     passed, summary) \
+                 VALUES ($1, $2, $3, 'catalog-a', 1, false, \
+                         '{{\"cases\":[{{\"case-id\":\"case-a\",\"passed\":false}}]}}'::jsonb)"
+            ),
+            &[&TENANT, &report_id, &validated_draft_id],
+        )
+        .await
+        .expect("insert one immutable control-store report");
+    admin
+        .execute(
+            &format!(
+                "UPDATE {SOURCE_SCHEMA}.authoring_test_run_reservations \
+                    SET state = 'finalized', finalized_at = clock_timestamp() \
+                  WHERE tenant_id = $1 AND report_id = $2"
+            ),
+            &[&TENANT, &report_id],
+        )
+        .await
+        .expect("finalize the report reservation");
+}
+
 /// Read one exact draft revision through the canonical mutable-document store
 /// statement, so this gate cannot agree with the production read by accident.
 async fn draft_at_revision(admin: &Client, draft: &str, revision: i64) -> Option<(String, String)> {
@@ -745,10 +805,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
 
     // ---- the unmounted kinds are an absent route, not a product refusal -----
     // The operation-integration owner mounts the remaining four commands and
-    // two queries. This contract cut keeps each one absent.
-    // tree and mounted none of them: each either has no backend or has one whose
-    // trusted inputs no in-process producer supplies. Two properties have to
-    // hold while that is true.
+    // `read-draft`. Each either has no backend or has one whose trusted inputs
+    // no in-process producer supplies. Two properties have to hold while that
+    // is true.
     //
     // First, route selection happens after authorization, so naming an
     // unmounted kind is not a way to ask whether a route exists. Every
@@ -836,6 +895,127 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert!(
         ledger_rows(&admin).await.is_empty(),
         "a refusal was audited"
+    );
+
+    // ---- get-report reads only the scoped control report store ---------------
+    let get_missing = get_report_document("report-missing-query", PROJECT, "report-missing");
+    for (name, token) in &refusals {
+        let response = post("/authoring", token.as_deref(), &[], &get_missing).await;
+        assert_eq!(response.status, 403, "{name} probed get-report");
+        assert_eq!(response.body, AUTHORIZATION_DENIED);
+    }
+    let wrong_scope = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &get_report_document("wrong-scope-report", OTHER_PROJECT, "report-missing"),
+    )
+    .await;
+    assert_eq!(wrong_scope.status, 403);
+    assert_eq!(wrong_scope.body, AUTHORIZATION_DENIED);
+
+    let missing = post("/authoring", Some(alice.token()), &[], &get_missing).await;
+    assert_eq!(missing.status, 200, "{}", missing.body);
+    let missing_document: serde_json::Value = serde_json::from_str(&missing.body).unwrap();
+    assert_eq!(
+        missing_document["body"]["outcome"],
+        serde_json::json!({
+            "status": "refused",
+            "value": {
+                "query": "get-report",
+                "reason": {"kind": "report-not-found", "report-id": "report-missing"},
+            },
+        })
+    );
+
+    insert_pending_report(
+        &admin,
+        "foreign-management-tenant",
+        "report-foreign",
+        "validated-foreign",
+    )
+    .await;
+    let before_foreign_read = authoring_durable_counts(&admin).await;
+    let foreign = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &get_report_document("foreign-report", PROJECT, "report-foreign"),
+    )
+    .await;
+    assert_eq!(foreign.status, 200, "{}", foreign.body);
+    assert_eq!(
+        outcome(&foreign.body)["value"]["reason"],
+        serde_json::json!({"kind": "report-not-found", "report-id": "report-foreign"})
+    );
+    assert_eq!(
+        authoring_durable_counts(&admin).await,
+        before_foreign_read,
+        "cross-tenant get-report mutated control authoring state"
+    );
+
+    insert_pending_report(&admin, TENANT, "report-a", "validated-a").await;
+    let before_pending_read = authoring_durable_counts(&admin).await;
+    let pending = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &get_report_document("pending-report", PROJECT, "report-a"),
+    )
+    .await;
+    assert_eq!(pending.status, 200, "{}", pending.body);
+    let pending_document: serde_json::Value = serde_json::from_str(&pending.body).unwrap();
+    assert_eq!(pending_document["body"]["query-id"], "pending-report");
+    assert_eq!(
+        pending_document["body"]["outcome"]["value"]["result"],
+        serde_json::json!({
+            "state": "pending",
+            "report-id": "report-a",
+            "validated-draft": {"validated-draft-id": "validated-a"},
+        })
+    );
+    assert_eq!(
+        authoring_durable_counts(&admin).await,
+        before_pending_read,
+        "pending get-report mutated control authoring state"
+    );
+
+    finalize_report(&admin, "report-a", "validated-a").await;
+    let before_finalized_read = authoring_durable_counts(&admin).await;
+    let finalized = post(
+        "/authoring",
+        Some(bob.token()),
+        &[],
+        &get_report_document("finalized-report", PROJECT, "report-a"),
+    )
+    .await;
+    assert_eq!(finalized.status, 200, "{}", finalized.body);
+    let finalized_document: serde_json::Value = serde_json::from_str(&finalized.body).unwrap();
+    assert_eq!(
+        finalized_document["body"]["outcome"]["value"]["result"],
+        serde_json::json!({
+            "state": "finalized",
+            "report-id": "report-a",
+            "validated-draft": {"validated-draft-id": "validated-a"},
+            "passed": false,
+            "summary": {"cases": [{"case-id": "case-a", "passed": false}]},
+        })
+    );
+    assert!(
+        finalized_document
+            .to_string()
+            .find("resolution-map")
+            .is_none(),
+        "get-report fabricated the retired resolution map"
+    );
+    assert_eq!(
+        authoring_durable_counts(&admin).await,
+        before_finalized_read,
+        "finalized get-report mutated control authoring state"
+    );
+    assert!(
+        ledger_rows(&admin).await.is_empty(),
+        "a non-ledgered query appended a command audit row"
     );
 
     // ---- a valid human token reaches the command with trusted context --------

@@ -3,8 +3,8 @@ use wamn_authoring_model::{
     AuthoringDocument, AuthoringQueryKind, AuthoringQueryOutcome, AuthoringQueryResponse,
     AuthoringQuerySuccess, AuthoringResponseEnvelope, ContractDecodeErrorKind, DraftDocument,
     DraftIdentity, DraftRevisionRef, DraftRun, DraftRunCapture, MAX_QUERY_ID_BYTES,
-    MAX_TEST_SET_CASES, QueryId, ReadDraftRefusal, SAFE_INTEGER_MAX, SCHEMA_VERSION, SafeUint64,
-    decode_document,
+    MAX_TEST_SET_CASES, QueryId, ReadDraftRefusal, ReportProjection, SAFE_INTEGER_MAX,
+    SCHEMA_VERSION, SafeUint64, ValidatedDraftRef, decode_document,
 };
 
 fn scope() -> Value {
@@ -184,6 +184,33 @@ fn completed_query_is_operation_specific() {
     assert_eq!(
         value["body"]["outcome"]["value"]["result"]["definition"],
         "{draft"
+    );
+}
+
+#[test]
+fn finalized_report_projects_only_current_control_store_facts() {
+    let report = ReportProjection::Finalized {
+        report_id: "report-1".to_owned(),
+        validated_draft: ValidatedDraftRef {
+            validated_draft_id: "validated-1".to_owned(),
+        },
+        passed: true,
+        summary: json!({"cases": []}),
+    };
+    let value = serde_json::to_value(report).expect("report serializes");
+    assert_eq!(
+        value,
+        json!({
+            "state": "finalized",
+            "report-id": "report-1",
+            "validated-draft": {"validated-draft-id": "validated-1"},
+            "passed": true,
+            "summary": {"cases": []},
+        })
+    );
+    assert!(
+        !wamn_authoring_model::json_schema_string().contains("resolution-map"),
+        "the public schema retained a fact the control report no longer records"
     );
 }
 
