@@ -157,3 +157,124 @@ pub fn spawn_epoch_ticker(engine: &Engine, period: Duration) -> tokio::task::Joi
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use wash_runtime::wasmtime::{Instance, Module, Store};
+
+    use super::*;
+
+    const PAGE: usize = 64 * 1024;
+
+    /// Bracket a cap one page either side: the module at the cap is admitted and
+    /// the module one page over is refused.
+    ///
+    /// Only the pooling allocator enforces a per-memory cap at all — the
+    /// on-demand default admits both — so this pins the engine to the pooling
+    /// strategy AND to that exact ceiling. Dropping `with_pooling_config` fails
+    /// the second half; moving the ceiling fails one half or the other.
+    fn assert_memory_ceiling(engine: &Engine, cap_bytes: usize) {
+        assert_eq!(
+            cap_bytes % PAGE,
+            0,
+            "a pooling memory cap is a whole page count"
+        );
+        let pages = cap_bytes / PAGE;
+
+        let at_ceiling = wat::parse_str(format!("(module (memory {pages}))"))
+            .expect("encode a module at the ceiling");
+        Module::new(engine.inner(), &at_ceiling)
+            .expect("a memory of exactly the ceiling is admitted");
+
+        let over_ceiling = wat::parse_str(format!("(module (memory {}))", pages + 1))
+            .expect("encode a module one page over the ceiling");
+        let rejection = Module::new(engine.inner(), &over_ceiling)
+            .expect_err("one page over the ceiling is refused, which only pooling does");
+        assert!(
+            format!("{rejection:?}").contains("exceeds the limit"),
+            "the refusal is the allocator's memory limit, not another compile error: {rejection:?}"
+        );
+    }
+
+    /// wamn-8m4j: wamn-0h0g.17.13 deleted the only guard pinning
+    /// `PoolingAllocationConfig::max_memory_size` to the platform ceiling along
+    /// with the retired bespoke pool. Its subject is the SURVIVING native path,
+    /// so its removal was a real gap rather than corpse coverage.
+    #[test]
+    fn the_production_engine_pools_at_the_default_platform_ceiling() {
+        let engine = build_engine(&[]).expect("the production pooling engine");
+        assert_memory_ceiling(&engine, PoolSizing::default().memory_cap_bytes);
+    }
+
+    /// wamn-0h0g.17.3 made the sizing configuration, so the restored guard pins
+    /// the CONFIGURED value: an engine built with a different cap pools at that
+    /// cap, which is what makes the knob more than a field nobody reads.
+    #[test]
+    fn a_configured_memory_cap_moves_the_pooling_ceiling() {
+        let cap_bytes = 64 << 20;
+        assert_ne!(
+            cap_bytes,
+            PoolSizing::default().memory_cap_bytes,
+            "the configured cap must differ from the default or this proves nothing"
+        );
+        let engine = build_engine_sized(
+            &[],
+            PoolSizing {
+                slots: 4,
+                memory_cap_bytes: cap_bytes,
+            },
+        )
+        .expect("a resized pooling engine");
+        assert_memory_ceiling(&engine, cap_bytes);
+    }
+
+    /// The other half of the sizing: slots bound CONCURRENCY, so a one-slot
+    /// engine admits one live instance and refuses the second. Without this the
+    /// slot count could be dropped on the floor and only the cap would notice.
+    #[test]
+    fn configured_slots_bound_concurrent_live_instances() {
+        let engine = build_engine_sized(
+            &[],
+            PoolSizing {
+                slots: 1,
+                memory_cap_bytes: 1 << 20,
+            },
+        )
+        .expect("a one-slot pooling engine");
+        let wasm = wat::parse_str("(module (memory 1))").expect("encode a one-memory module");
+        let module = Module::new(engine.inner(), &wasm).expect("one page fits the configured cap");
+
+        let mut first = Store::new(engine.inner(), ());
+        Instance::new(&mut first, &module, &[]).expect("the first instance takes the only slot");
+        let mut second = Store::new(engine.inner(), ());
+        let exhausted = Instance::new(&mut second, &module, &[])
+            .expect_err("a second live instance exceeds the configured slot count");
+        assert!(
+            format!("{exhausted:?}").contains("limit of 1"),
+            "the refusal is the configured slot count, not another instantiation error: \
+             {exhausted:?}"
+        );
+    }
+
+    /// A zero arrives from stringly configuration as a value, not as a parse
+    /// error, and a zero-slot or zero-cap pool admits nothing at all.
+    #[test]
+    fn a_zero_sizing_refuses_to_build() {
+        for sizing in [
+            PoolSizing {
+                slots: 0,
+                ..PoolSizing::default()
+            },
+            PoolSizing {
+                memory_cap_bytes: 0,
+                ..PoolSizing::default()
+            },
+        ] {
+            let error = build_engine_sized(&[], sizing).expect_err("a zero sizing must refuse");
+            assert!(
+                format!("{error}").starts_with("pooling allocator needs"),
+                "the refusal must name the sizing it rejected: {error}"
+            );
+        }
+    }
+}
