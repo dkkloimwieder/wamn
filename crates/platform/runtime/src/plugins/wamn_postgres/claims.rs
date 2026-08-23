@@ -18,8 +18,8 @@ use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_sche
 use wamn_event_wire::Causation;
 
 use super::pool::{
-    CheckoutProbe, CredentialProvider, PoolLifecycle, ProjectConfig, ProjectPool,
-    StaticCredentialProvider, WamnPostgresConfig, destroy_connection,
+    CheckoutProbe, CredentialProvider, PlatformAsyncMessage, PlatformConnect, PoolLifecycle,
+    ProjectConfig, ProjectPool, StaticCredentialProvider, WamnPostgresConfig, destroy_connection,
     standard_conforming_strings_hook,
 };
 use super::resources::{run_execute, run_query};
@@ -35,6 +35,9 @@ pub struct WamnPostgres {
     /// Host-owned claim, authorization, and plan-supply project pools. Keeping a
     /// distinct cache makes cross-lifecycle session reuse unrepresentable.
     platform_pools: std::sync::RwLock<HashMap<String, Arc<ProjectPool>>>,
+    platform_messages: tokio::sync::mpsc::UnboundedSender<PlatformAsyncMessage>,
+    platform_message_receiver:
+        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<PlatformAsyncMessage>>>,
     /// component id → tenant claim.
     tenants: std::sync::RwLock<HashMap<String, String>>,
     /// component id → project id (which database). Absent ⇒ the default project.
@@ -487,10 +490,13 @@ impl WamnPostgres {
 
     /// Plugin over an explicit [`CredentialProvider`] (multi-project / tests).
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
+        let (platform_messages, platform_message_receiver) = tokio::sync::mpsc::unbounded_channel();
         Self {
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
+            platform_messages,
+            platform_message_receiver: std::sync::Mutex::new(Some(platform_message_receiver)),
             tenants: std::sync::RwLock::new(HashMap::new()),
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
@@ -523,18 +529,26 @@ impl WamnPostgres {
     }
 
     /// Build a deadpool pool for one project's connection config.
-    fn build_pool(cfg: &ProjectConfig, lifecycle: PoolLifecycle) -> anyhow::Result<Pool> {
+    fn build_pool(
+        cfg: &ProjectConfig,
+        lifecycle: PoolLifecycle,
+        platform_messages: &tokio::sync::mpsc::UnboundedSender<PlatformAsyncMessage>,
+    ) -> anyhow::Result<Pool> {
         let pg_config: tokio_postgres::Config = cfg
             .database_url
             .parse()
             .map_err(|e| anyhow::anyhow!("invalid database url: {e}"))?;
-        let mgr = Manager::from_config(
-            pg_config,
-            NoTls,
-            ManagerConfig {
-                recycling_method: RecyclingMethod::Fast,
-            },
-        );
+        let manager_config = ManagerConfig {
+            recycling_method: RecyclingMethod::Fast,
+        };
+        let mgr = match lifecycle {
+            PoolLifecycle::Guest => Manager::from_config(pg_config, NoTls, manager_config),
+            PoolLifecycle::Platform => Manager::from_connect(
+                pg_config,
+                PlatformConnect::new(platform_messages.clone()),
+                manager_config,
+            ),
+        };
         let timeout = std::time::Duration::from_millis(cfg.wait_timeout_ms);
         Ok(Pool::builder(mgr)
             .max_size(lifecycle.max_size(cfg))
@@ -590,7 +604,7 @@ impl WamnPostgres {
                 return Err(PgError::ConnectionUnavailable);
             }
         };
-        let pp = match Self::build_pool(&cfg, lifecycle) {
+        let pp = match Self::build_pool(&cfg, lifecycle, &self.platform_messages) {
             Ok(pool) => Arc::new(ProjectPool {
                 pool,
                 statement_timeout_ms: cfg.statement_timeout_ms,
@@ -616,6 +630,58 @@ impl WamnPostgres {
 
     fn ensure_platform_pool(&self, project: &str) -> Result<Arc<ProjectPool>, PgError> {
         self.ensure_pool(PoolLifecycle::Platform, project)
+    }
+
+    /// Take the one async-message stream driven by this instance's existing
+    /// platform pools. A second subscriber would be a second doorbell owner and
+    /// is refused before it can LISTEN.
+    pub(crate) fn take_platform_messages(
+        &self,
+    ) -> anyhow::Result<tokio::sync::mpsc::UnboundedReceiver<PlatformAsyncMessage>> {
+        self.platform_message_receiver
+            .lock()
+            .map_err(|_| anyhow::anyhow!("platform-message-receiver-lock-poisoned"))?
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("platform-message-receiver-already-taken"))
+    }
+
+    /// Hold one existing platform-pool connection in LISTEN for the wiring
+    /// doorbell. The returned object stays checked out for the subscription's
+    /// lifetime; no direct connection or second pool is created.
+    pub(crate) async fn checkout_wiring_listener(
+        &self,
+        project: &str,
+    ) -> anyhow::Result<(Object, i32)> {
+        let (connection, _) = self
+            .checkout_platform(project)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let backend_pid = async {
+            connection
+                .batch_execute(&format!(
+                    "LISTEN {}",
+                    wamn_catalog::WIRING_ACTIVATION_CHANNEL
+                ))
+                .await
+                .context("LISTEN wiring activation through platform pool")?;
+            connection
+                .query_one("SELECT pg_backend_pid()", &[])
+                .await
+                .context("read wiring doorbell backend id")?
+                .try_get(0)
+                .context("decode wiring doorbell backend id")
+        }
+        .await;
+        match backend_pid {
+            Ok(backend_pid) => Ok((connection, backend_pid)),
+            Err(error) => {
+                // LISTEN is session state. A half-constructed listener may not
+                // return to the general platform pool even when the socket is
+                // otherwise healthy.
+                self.destroy(connection);
+                Err(error)
+            }
+        }
     }
 
     /// Register the tenant claim for a component id. The bench harness calls

@@ -61,9 +61,9 @@ pub const INVOCATIONS_PER_INSTANCE: u64 = 1;
 /// Immutable reuse boundary: one pool per component digest.
 ///
 /// The digest is content-addressed, so a new component revision is a new key
-/// and cannot be served from the old pool. The value is host-derived (see
-/// `TrustedExecutionRuntimeRevision::flowrunner_component_digest`); this type
-/// carries it, it does not validate it.
+/// and cannot be served from the old pool. The production driver derives it
+/// from the release-attested component fact; this type carries it, it does not
+/// validate it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExecutionPoolKey {
     digest: Arc<str>,
@@ -337,6 +337,69 @@ where
             });
         }
         Ok(Some(lease))
+    }
+
+    /// Admit one freshly instantiated component directly as a checked-out
+    /// lease. This is the on-demand production path: the new store is never
+    /// briefly visible as an unbound idle instance another tenant could steal
+    /// between `insert` and `checkout`.
+    ///
+    /// `Ok(None)` is bounded capacity exhaustion. A bind refusal returns the
+    /// same typed failure as a warm checkout and the never-admitted instance is
+    /// dropped after its partial identity is revoked.
+    pub fn checkout_new(
+        &self,
+        key: ExecutionPoolKey,
+        mut instance: T,
+        identity: &T::Identity,
+    ) -> Result<Option<ExecutionLease<T>>, IdentityBindFailed<T::BindError>> {
+        let reserved_bytes = instance.reserved_bytes();
+        // Binding may acquire plugin-owned locks. Keep user-supplied trait code
+        // outside the pool's global state lock so unrelated digests are not
+        // serialized behind it.
+        if let Err(source) = instance.bind_identity(identity) {
+            instance.revoke_identity();
+            return Err(IdentityBindFailed {
+                digest: key.digest.clone(),
+                source,
+            });
+        }
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("execution pool lock poisoned");
+        let snapshot = &state.snapshot;
+        if snapshot.live_instances >= self.shared.limits.max_instances
+            || reserved_bytes
+                > self
+                    .shared
+                    .limits
+                    .max_reserved_bytes
+                    .saturating_sub(snapshot.reserved_bytes)
+        {
+            drop(state);
+            instance.revoke_identity();
+            return Ok(None);
+        }
+        let digest_generation = generation(&state.digest_generations, key.digest());
+        state.snapshot.live_instances += 1;
+        state.snapshot.checked_out_instances += 1;
+        state.snapshot.reserved_bytes += reserved_bytes;
+        state.snapshot.peak_checked_out_instances = state
+            .snapshot
+            .peak_checked_out_instances
+            .max(state.snapshot.checked_out_instances);
+        state.snapshot.inserted_instances += 1;
+        state.snapshot.checkouts += 1;
+        Ok(Some(ExecutionLease {
+            shared: self.shared.clone(),
+            key,
+            instance: Some(instance),
+            reserved_bytes,
+            invocations: 0,
+            digest_generation,
+        }))
     }
 
     /// Exclusively remove one matching instance from the idle set.

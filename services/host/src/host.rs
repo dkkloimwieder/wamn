@@ -15,6 +15,13 @@ use wash_runtime::host::http::{DynamicRouter, Ingress};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
+use wamn_execution_host::{
+    RouterDriver, RouterDriverConfig, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
+};
+use wamn_runtime::component_artifact_source::{
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
+};
+use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::{
     FlowHttpRouting, WamnFlowInvocation, WamnJetstream, WamnLogging, WamnPostgres,
 };
@@ -67,6 +74,11 @@ pub struct HostArgs {
     #[arg(long = "host-name")]
     pub host_name: Option<String>,
 
+    /// Stable node-acquisition owner. Never derived from `--host-name`, whose
+    /// chart value is a pod IP and is not a valid runner identity.
+    #[arg(long, env = "WAMN_RUNNER")]
+    pub runner: Option<String>,
+
     /// Environment advertised in heartbeats (chart passes the pod namespace)
     #[arg(long = "environment", env = "WASMCLOUD_HOST_ENVIRONMENT")]
     pub environment: Option<String>,
@@ -114,6 +126,34 @@ pub struct HostArgs {
     /// host template, which `wamn-0h0g.15.98` writes.
     #[arg(long = "release-manifest-root", env = "WAMN_RELEASE_MANIFEST_ROOT")]
     pub release_manifest_root: Option<PathBuf>,
+
+    /// Maximum resolved wirings retained by the one production router driver.
+    #[arg(
+        long = "wiring-cache-capacity",
+        env = WIRING_CACHE_CAPACITY_ENV,
+        default_value_t = WiringCacheCapacity::default()
+    )]
+    pub wiring_cache_capacity: WiringCacheCapacity,
+
+    /// Explicit registry/repository holding digest-addressed node components.
+    #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE")]
+    pub component_artifact_base: Option<String>,
+
+    /// Mounted production credential-vault file for node capabilities.
+    #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
+    pub credentials_file: Option<PathBuf>,
+
+    /// Project whose platform pool and component credentials this driver uses.
+    #[arg(long, env = "WAMN_PROJECT", default_value = "default")]
+    pub project: String,
+
+    /// Optional database search path installed at node checkout.
+    #[arg(long, env = "WAMN_SCHEMA")]
+    pub schema: Option<String>,
+
+    /// Production outbound ceiling for connection-backed HTTP effects.
+    #[arg(long, env = "WAMN_ALLOWED_HOSTS", value_delimiter = ',')]
+    pub allowed_hosts: Vec<String>,
 }
 
 /// Load and verify this process's release, or record that it carries none.
@@ -123,17 +163,14 @@ pub struct HostArgs {
 /// jetstream delivery gating (`wamn-0h0g.15.95`) take the loaded manifest from
 /// here by reference; nobody loads a second copy.
 ///
-/// # The absent-mount posture, and why it is the same rule as the executor's
+/// # The absent-mount posture
 ///
-/// `ExecutionHost`'s `load_plan_release` decided this for the flowrunner process,
-/// and it is decided identically here because `wamn-0h0g.15.101` requires one
-/// rule for both processes rather than one per host. The two absent-mount cases
-/// are told apart by the *argument*, never by inspecting a failure:
+/// The two absent-mount cases are told apart by the *argument*, never by
+/// inspecting a failure:
 ///
 /// - **No root passed.** This host was never given a release: nothing to mount
 ///   and nothing to refuse. It serves exactly as it did before the release model
-///   existed, which is what keeps the gateway, the S2..S6 paths, the gates and the
-///   benches running while `wamn-0h0g.15.98` is still mounting things.
+///   existed.
 /// - **Passed, but the mount is absent, unreadable or non-canonical.** This host
 ///   was told it serves a release and cannot. Startup fails and the pod never goes
 ///   ready — the only refusal worth making, since a host serving an unverified
@@ -150,13 +187,9 @@ pub struct HostArgs {
 /// collapsed the weld's error kinds to two, so "no mount" and "corrupt mount"
 /// both arrive as `ManifestUnreadable` and cannot be separated afterwards.
 ///
-/// # Why this host takes one knob where the executor takes four
-///
-/// The executor also pulls plan BYTES by digest, so it needs a registry base, an
-/// insecure-registry flag and a fetch timeout. This host's two readers serve
-/// `attachments` and `registrations`, both of which are already inside the
-/// verified manifest, so it fetches nothing. The registry knobs would be
-/// configuration for a pull that never happens.
+/// The node-component registry is deliberately a separate explicit argument.
+/// A manifest mount establishes release identity; it never implies where
+/// digest-addressed component bytes may be pulled from.
 fn load_release(manifest_root: Option<&Path>) -> anyhow::Result<Option<Arc<ReleaseManifestWeld>>> {
     let Some(manifest_root) = manifest_root else {
         return Ok(None);
@@ -168,11 +201,9 @@ fn load_release(manifest_root: Option<&Path>) -> anyhow::Result<Option<Arc<Relea
             error.kind()
         )
     })?;
-    // Shared by reference-count rather than by borrow: this process has two
-    // release-gated plugins (jetstream delivery gating, flow-http routing) and
-    // both are `Arc`-owned by the builder, so neither can hold a lifetime tied
-    // to `run`'s stack. One allocation, one manifest, two readers — the same
-    // handle shape `RunnerPlanSupply` already takes in the flowrunner host.
+    // Shared by reference-count rather than by borrow: every release-gated
+    // plugin and the router driver are `Arc`-owned, so none can hold a lifetime
+    // tied to `run`'s stack. One allocation remains the process's only manifest.
     Ok(Some(Arc::new(weld)))
 }
 
@@ -190,6 +221,20 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // opens a socket. The one-site-per-process guard in
     // tests/conformance/src/runtime_inventory.rs pins both facts across both hosts.
     let release = load_release(args.release_manifest_root.as_deref())?;
+    anyhow::ensure!(
+        release.is_none() || args.epoch_tick_ms > 0,
+        "a release-backed router requires --epoch-tick-ms greater than zero"
+    );
+    let router_owner = args
+        .runner
+        .clone()
+        .filter(|owner| !owner.is_empty())
+        .or_else(|| {
+            std::env::var("HOSTNAME")
+                .ok()
+                .filter(|owner| !owner.is_empty())
+        })
+        .unwrap_or_else(|| "wamn-host".to_owned());
 
     let scheduler_nats_client = connect_nats(
         args.scheduler_nats_url.clone(),
@@ -214,6 +259,45 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     let postgres = Arc::new(WamnPostgres::from_env().context("wamn:postgres plugin init")?);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
+    let _router_driver = match release.as_ref() {
+        Some(release) => {
+            let artifact_base = args
+                .component_artifact_base
+                .as_deref()
+                .context("a serving host requires --component-artifact-base")?;
+            let source = ComponentArtifactSource::new(ComponentArtifactSourceConfig::new(
+                artifact_base,
+                args.allow_insecure_registries,
+                Duration::from_secs(30),
+            )?);
+            let credentials = Arc::new(match &args.credentials_file {
+                Some(path) => WamnCredentials::from_file(path)?,
+                None => WamnCredentials::empty(),
+            });
+            let allowed_hosts = args
+                .allowed_hosts
+                .iter()
+                .map(|value| value.parse())
+                .collect::<Result<Vec<_>, _>>()?;
+            Some(RouterDriver::new(
+                Arc::clone(&engine),
+                Arc::clone(&postgres),
+                credentials,
+                Arc::clone(&logging),
+                allowed_hosts.into(),
+                Arc::clone(release),
+                source,
+                RouterDriverConfig {
+                    owner_prefix: router_owner,
+                    project: args.project.clone(),
+                    schema: args.schema.clone(),
+                    cache_capacity: args.wiring_cache_capacity,
+                    epoch_tick: Duration::from_millis(args.epoch_tick_ms),
+                },
+            )?)
+        }
+        None => None,
+    };
 
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,

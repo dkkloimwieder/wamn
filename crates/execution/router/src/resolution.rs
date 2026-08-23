@@ -24,10 +24,7 @@
 //!
 //! Bounded and deterministic: an entry-count LRU, evicting the least recently
 //! used entry when full, so a tenant enumerating wirings cannot grow the process
-//! without limit. Modelled on
-//! `crates/platform/runtime/src/plugins/runner_plan_supply.rs`'s
-//! `ResolutionPlanCache`, which never invalidates at all because a plan is keyed
-//! by its own content hash. A pointer is not content, so this cache does.
+//! without limit.
 //!
 //! ## Resolutions in flight
 //!
@@ -48,6 +45,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use opentelemetry::KeyValue;
@@ -55,20 +53,11 @@ use opentelemetry::metrics::Counter;
 
 use crate::wiring::Wiring;
 
-/// One `(environment, wiring)` activation pointer — the key
-/// `catalog.wiring_activation` is scoped by, minus the tenant and catalog.
-///
-/// **HAZARD: this key is NOT tenant-scoped.** It carried a claim that a serving
-/// process already fixes the tenant and catalog. That claim is false: the
-/// sibling plugin in the SAME process
-/// (`crates/platform/runtime/src/plugins/wamn_flow_invocation.rs`) takes
-/// tenant/catalog/environment PER WORKLOAD BIND, so one process serves many
-/// triples. Two tenants sharing an environment name and a wiring id would
-/// collide here, and the second would be served the first's graph. Keying
-/// decision owed — see `wamn-0h0g.12.138`. Do not wire a production driver
-/// against this path until it is ruled.
+/// One exact activation pointer from `catalog.wiring_activation`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Pointer {
+    tenant_id: Arc<str>,
+    catalog_id: Arc<str>,
     environment: Arc<str>,
     wiring_id: Arc<str>,
 }
@@ -81,11 +70,28 @@ struct EntryKey {
 }
 
 #[derive(Debug)]
-struct CacheState {
+struct CachedWiring<T> {
+    graph_hash: Arc<str>,
+    wiring: Arc<Wiring>,
+    facts: Arc<T>,
+}
+
+impl<T> Clone for CachedWiring<T> {
+    fn clone(&self) -> Self {
+        Self {
+            graph_hash: Arc::clone(&self.graph_hash),
+            wiring: Arc::clone(&self.wiring),
+            facts: Arc::clone(&self.facts),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CacheState<T> {
     /// The version each pointer currently resolves to.
     active: HashMap<Pointer, u32>,
     /// Compiled graphs by exact identity.
-    entries: HashMap<EntryKey, Arc<Wiring>>,
+    entries: HashMap<EntryKey, CachedWiring<T>>,
     least_to_most_recent: VecDeque<EntryKey>,
     /// Bumped by every invalidation, and by nothing else. A pointer write whose
     /// token carries an older generation is a read from before that
@@ -95,11 +101,25 @@ struct CacheState {
 
 /// The active wiring one resolution produced.
 #[derive(Debug, Clone)]
-pub struct ActiveWiring {
+pub struct ActiveWiring<T = ()> {
     /// The version the pointer named — what a delivery reports as its
     /// `wiring-version` and scopes an authored dedup key by.
     pub version: u32,
+    /// RFC 8785 digest of the immutable document this entry contains.
+    pub graph_hash: Arc<str>,
     pub wiring: Arc<Wiring>,
+    /// Host-owned immutable facts resolved in the same store snapshot as the
+    /// graph. The router never inspects them; carrying them here prevents a
+    /// second cache or a database read on a graph hit.
+    pub facts: Arc<T>,
+}
+
+/// Process-local cache lifecycle totals, used by bounded operational probes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WiringCacheSnapshot {
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
 }
 
 /// A miss's receipt: the cache generation the caller began resolving in.
@@ -117,17 +137,28 @@ pub struct ResolutionToken {
 /// What one lookup produced: the resident wiring, or the receipt to resolve
 /// under.
 #[derive(Debug, Clone)]
-pub enum Lookup {
+pub enum Lookup<T = ()> {
     /// Both the pointer and the graph it named were resident.
-    Hit(ActiveWiring),
+    Hit(ActiveWiring<T>),
     /// Nothing to serve. Read the store, then hand this token back to
     /// [`WiringCache::insert`] with what it said.
     Miss(ResolutionToken),
 }
 
-impl Lookup {
+/// Result of completing a cache miss under its [`ResolutionToken`].
+#[derive(Debug, Clone)]
+pub enum CacheInsert<T = ()> {
+    Installed(ActiveWiring<T>),
+    /// A doorbell invalidation overtook the store read; resolve again.
+    Overtaken,
+    /// The same immutable pointer/version is already resident under a
+    /// different graph hash. Nothing is activated.
+    HashMismatch,
+}
+
+impl<T> Lookup<T> {
     /// The resident wiring, if this lookup was a hit.
-    pub fn hit(self) -> Option<ActiveWiring> {
+    pub fn hit(self) -> Option<ActiveWiring<T>> {
         match self {
             Lookup::Hit(active) => Some(active),
             Lookup::Miss(_) => None,
@@ -149,26 +180,27 @@ impl Lookup {
 /// the token that miss handed out, [`WiringCache::invalidate`] when the
 /// activation pointer flips.
 ///
-/// **HAZARD: not tenant-scoped.** No entry point here takes a tenant — see
-/// [`Pointer`]. One shared instance in a multi-tenant process would cross-serve
-/// wirings. Keying decision owed — see `wamn-0h0g.12.138`. **No production
-/// process may construct one until that is ruled**; today none does, which is
-/// the only reason this is latent.
 #[derive(Debug)]
-pub struct WiringCache {
+pub struct WiringCache<T = ()> {
     max_entries: usize,
-    state: Mutex<CacheState>,
+    state: Mutex<CacheState<T>>,
     lookups: Counter<u64>,
+    evictions: Counter<u64>,
+    hit_total: AtomicU64,
+    miss_total: AtomicU64,
+    eviction_total: AtomicU64,
 }
 
-impl WiringCache {
+impl<T> WiringCache<T>
+where
+    T: Send + Sync + 'static,
+{
     /// A cache holding at most `max_entries` compiled wirings.
     ///
-    /// The bound is a constructor argument and NOTHING SETS IT FROM A CHART.
-    /// This said "(a chart value)"; no such knob exists, and every caller today
-    /// is a test. Stated plainly rather than aspirationally — `docs/PLAN/PLAN.md`
-    /// records the identical doc-comment-as-mechanism defect for pooling.
-    pub fn new(max_entries: NonZeroUsize) -> WiringCache {
+    /// The serving process supplies this from its shared wiring-cache capacity
+    /// setting. Zero cannot reach this boundary because the type excludes it.
+    pub fn new(max_entries: NonZeroUsize) -> WiringCache<T> {
+        let meter = opentelemetry::global::meter("wamn-router");
         WiringCache {
             max_entries: max_entries.get(),
             state: Mutex::new(CacheState {
@@ -183,13 +215,20 @@ impl WiringCache {
             // staying out of Postgres — is one query. Deliberately carries no
             // wiring or tenant attribute: those are unbounded, and this series
             // is read per replica.
-            lookups: opentelemetry::global::meter("wamn-router")
+            lookups: meter
                 .u64_counter("wamn.run.wiring.cache.lookups")
                 .with_description(
                     "wiring resolutions served from memory (hit) or sent to the \
                      env-hot store (miss)",
                 )
                 .build(),
+            evictions: meter
+                .u64_counter("wamn.run.wiring.cache.evictions")
+                .with_description("compiled wiring entries evicted from the bounded LRU")
+                .build(),
+            hit_total: AtomicU64::new(0),
+            miss_total: AtomicU64::new(0),
+            eviction_total: AtomicU64::new(0),
         }
     }
 
@@ -197,34 +236,79 @@ impl WiringCache {
     /// pointer and its graph are resident. A miss carries the
     /// [`ResolutionToken`] to read the store under and hand back to
     /// [`WiringCache::insert`].
-    pub fn get(&self, environment: &str, wiring_id: &str) -> Lookup {
+    pub fn get(
+        &self,
+        tenant_id: &str,
+        catalog_id: &str,
+        environment: &str,
+        wiring_id: &str,
+    ) -> Lookup<T> {
         let pointer = Pointer {
+            tenant_id: Arc::from(tenant_id),
+            catalog_id: Arc::from(catalog_id),
             environment: Arc::from(environment),
             wiring_id: Arc::from(wiring_id),
         };
         let mut state = self.state.lock().expect("wiring cache lock poisoned");
         let resolved = state.active.get(&pointer).copied().and_then(|version| {
             let key = EntryKey { pointer, version };
-            let wiring = state.entries.get(&key)?.clone();
+            let resident = state.entries.get(&key)?.clone();
             touch(&mut state.least_to_most_recent, &key);
-            Some(ActiveWiring { version, wiring })
+            Some(ActiveWiring {
+                version,
+                graph_hash: resident.graph_hash,
+                wiring: resident.wiring,
+                facts: resident.facts,
+            })
         });
         // Stamped under the SAME lock hold that found the miss, so no
         // invalidation can slip between deciding to read the store and the
         // generation the read is attributed to.
         let generation = state.generation;
         drop(state);
-        self.lookups.add(
-            1,
-            &[KeyValue::new(
-                "result",
-                if resolved.is_some() { "hit" } else { "miss" },
-            )],
-        );
+        self.record_lookup(resolved.is_some());
         match resolved {
             Some(active) => Lookup::Hit(active),
             None => Lookup::Miss(ResolutionToken { generation }),
         }
+    }
+
+    /// Read one immutable wiring version directly, without consulting or
+    /// changing the active pointer.
+    ///
+    /// Queued deliveries carry the exact version frozen at admission. A later
+    /// activation flip must have no bearing on this lookup; direct ingress uses
+    /// [`Self::get`] so it continues to follow the environment's hot pointer.
+    pub fn get_version(
+        &self,
+        tenant_id: &str,
+        catalog_id: &str,
+        environment: &str,
+        wiring_id: &str,
+        version: u32,
+    ) -> Option<ActiveWiring<T>> {
+        let key = EntryKey {
+            pointer: Pointer {
+                tenant_id: Arc::from(tenant_id),
+                catalog_id: Arc::from(catalog_id),
+                environment: Arc::from(environment),
+                wiring_id: Arc::from(wiring_id),
+            },
+            version,
+        };
+        let mut state = self.state.lock().expect("wiring cache lock poisoned");
+        let resident = state.entries.get(&key).cloned();
+        if resident.is_some() {
+            touch(&mut state.least_to_most_recent, &key);
+        }
+        drop(state);
+        self.record_lookup(resident.is_some());
+        resident.map(|resident| ActiveWiring {
+            version,
+            graph_hash: resident.graph_hash,
+            wiring: resident.wiring,
+            facts: resident.facts,
+        })
     }
 
     /// Record `version` as this pointer's active wiring and cache its graph,
@@ -242,45 +326,126 @@ impl WiringCache {
     /// would be serving a version the cache knows has moved.
     pub fn insert(
         &self,
+        tenant_id: &str,
+        catalog_id: &str,
         environment: &str,
         wiring_id: &str,
         version: u32,
+        graph_hash: impl Into<Arc<str>>,
         wiring: Wiring,
+        facts: T,
         token: ResolutionToken,
-    ) -> Option<Arc<Wiring>> {
+    ) -> CacheInsert<T> {
         let pointer = Pointer {
+            tenant_id: Arc::from(tenant_id),
+            catalog_id: Arc::from(catalog_id),
             environment: Arc::from(environment),
             wiring_id: Arc::from(wiring_id),
         };
+        let graph_hash = graph_hash.into();
         let key = EntryKey {
             pointer: pointer.clone(),
             version,
         };
         let mut state = self.state.lock().expect("wiring cache lock poisoned");
         if token.generation < state.generation {
-            return None;
+            return CacheInsert::Overtaken;
         }
-        state.active.insert(pointer, version);
         if let Some(resident) = state.entries.get(&key).cloned() {
+            if resident.graph_hash != graph_hash {
+                return CacheInsert::HashMismatch;
+            }
             touch(&mut state.least_to_most_recent, &key);
-            return Some(resident);
+            state.active.insert(pointer, version);
+            return CacheInsert::Installed(ActiveWiring {
+                version,
+                graph_hash: resident.graph_hash,
+                wiring: resident.wiring,
+                facts: resident.facts,
+            });
         }
         while state.entries.len() >= self.max_entries {
-            let evicted = state
-                .least_to_most_recent
-                .pop_front()
-                .expect("a full cache has an eviction key");
-            state.entries.remove(&evicted);
-            // A pointer left naming an evicted entry would read as a hit and
-            // find nothing; drop it so the next lookup is an honest miss.
-            if state.active.get(&evicted.pointer) == Some(&evicted.version) {
-                state.active.remove(&evicted.pointer);
-            }
+            self.evict_one(&mut state);
         }
         let wiring = Arc::new(wiring);
-        state.entries.insert(key.clone(), wiring.clone());
+        let facts = Arc::new(facts);
+        state.entries.insert(
+            key.clone(),
+            CachedWiring {
+                graph_hash: graph_hash.clone(),
+                wiring: wiring.clone(),
+                facts: facts.clone(),
+            },
+        );
         state.least_to_most_recent.push_back(key);
-        Some(wiring)
+        state.active.insert(pointer, version);
+        CacheInsert::Installed(ActiveWiring {
+            version,
+            graph_hash,
+            wiring,
+            facts,
+        })
+    }
+
+    /// Install one exact immutable version without activating its pointer.
+    ///
+    /// This completes [`Self::get_version`]. Pointer invalidation cannot
+    /// overtake an immutable-version read, so no resolution token participates.
+    /// A resident identity under different bytes is still refused.
+    pub fn insert_version(
+        &self,
+        tenant_id: &str,
+        catalog_id: &str,
+        environment: &str,
+        wiring_id: &str,
+        version: u32,
+        graph_hash: impl Into<Arc<str>>,
+        wiring: Wiring,
+        facts: T,
+    ) -> CacheInsert<T> {
+        let key = EntryKey {
+            pointer: Pointer {
+                tenant_id: Arc::from(tenant_id),
+                catalog_id: Arc::from(catalog_id),
+                environment: Arc::from(environment),
+                wiring_id: Arc::from(wiring_id),
+            },
+            version,
+        };
+        let graph_hash = graph_hash.into();
+        let mut state = self.state.lock().expect("wiring cache lock poisoned");
+        if let Some(resident) = state.entries.get(&key).cloned() {
+            if resident.graph_hash != graph_hash {
+                return CacheInsert::HashMismatch;
+            }
+            touch(&mut state.least_to_most_recent, &key);
+            return CacheInsert::Installed(ActiveWiring {
+                version,
+                graph_hash: resident.graph_hash,
+                wiring: resident.wiring,
+                facts: resident.facts,
+            });
+        }
+        while state.entries.len() >= self.max_entries {
+            self.evict_one(&mut state);
+        }
+        let wiring = Arc::new(wiring);
+        let facts = Arc::new(facts);
+        state.entries.insert(
+            key.clone(),
+            CachedWiring {
+                graph_hash: graph_hash.clone(),
+                wiring: Arc::clone(&wiring),
+                facts: Arc::clone(&facts),
+            },
+        );
+        state.least_to_most_recent.push_back(key);
+        CacheInsert::Installed(ActiveWiring {
+            version,
+            graph_hash,
+            wiring,
+            facts,
+        })
     }
 
     /// Forget which version this pointer resolves to, sending the next delivery
@@ -301,8 +466,16 @@ impl WiringCache {
     /// go stale, and keeping the entries is what makes a rollback flip an
     /// in-memory hit. A subscriber that RECONNECTED has missed an unknown set of
     /// flips and must call [`WiringCache::invalidate_all`] instead.
-    pub fn invalidate(&self, environment: &str, wiring_id: &str) -> bool {
+    pub fn invalidate(
+        &self,
+        tenant_id: &str,
+        catalog_id: &str,
+        environment: &str,
+        wiring_id: &str,
+    ) -> bool {
         let pointer = Pointer {
+            tenant_id: Arc::from(tenant_id),
+            catalog_id: Arc::from(catalog_id),
             environment: Arc::from(environment),
             wiring_id: Arc::from(wiring_id),
         };
@@ -352,6 +525,40 @@ impl WiringCache {
     /// Whether no graph is resident.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Monotonic lifecycle totals for this cache instance.
+    pub fn snapshot(&self) -> WiringCacheSnapshot {
+        WiringCacheSnapshot {
+            hits: self.hit_total.load(Ordering::Relaxed),
+            misses: self.miss_total.load(Ordering::Relaxed),
+            evictions: self.eviction_total.load(Ordering::Relaxed),
+        }
+    }
+
+    fn record_lookup(&self, hit: bool) {
+        self.lookups.add(
+            1,
+            &[KeyValue::new("result", if hit { "hit" } else { "miss" })],
+        );
+        if hit {
+            self.hit_total.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.miss_total.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn evict_one(&self, state: &mut CacheState<T>) {
+        let evicted = state
+            .least_to_most_recent
+            .pop_front()
+            .expect("a full cache has an eviction key");
+        state.entries.remove(&evicted);
+        self.evictions.add(1, &[]);
+        self.eviction_total.fetch_add(1, Ordering::Relaxed);
+        if state.active.get(&evicted.pointer) == Some(&evicted.version) {
+            state.active.remove(&evicted.pointer);
+        }
     }
 }
 

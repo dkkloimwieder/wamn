@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-execution-host = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-otel", "wasm_component_model_implements"] }
 anyhow = { workspace = true }

@@ -4,12 +4,105 @@
 //! teardown. The pool/claim METHODS live on `WamnPostgres` in `claims.rs`.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use deadpool_postgres::{Hook, HookError, Object, Pool};
+use tokio::sync::mpsc;
+use tokio_postgres::{AsyncMessage, Client, Config, Error, NoTls};
 
 use crate::engine::MAX_HOST_CALL_DURATION;
+
+/// Async traffic surfaced by connections created inside the existing platform
+/// pool. The wiring doorbell consumes only the backend it checked out and put
+/// into LISTEN; messages from ordinary platform checkouts are ignored by id.
+#[derive(Debug)]
+pub(crate) enum PlatformAsyncMessage {
+    Notification {
+        backend_pid: i32,
+        channel: String,
+        payload: String,
+    },
+    Disconnected {
+        backend_pid: i32,
+    },
+}
+
+/// The existing platform pool's connector, with async PostgreSQL messages kept
+/// visible instead of discarded by the generic connection driver.
+#[derive(Clone)]
+pub(crate) struct PlatformConnect {
+    messages: mpsc::UnboundedSender<PlatformAsyncMessage>,
+}
+
+impl PlatformConnect {
+    pub(crate) fn new(messages: mpsc::UnboundedSender<PlatformAsyncMessage>) -> Self {
+        Self { messages }
+    }
+}
+
+impl deadpool_postgres::Connect for PlatformConnect {
+    fn connect(
+        &self,
+        config: &Config,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(Client, tokio::task::JoinHandle<()>), Error>> + Send + '_>,
+    > {
+        let config = config.clone();
+        let messages = self.messages.clone();
+        Box::pin(async move {
+            let (client, mut connection) = config.connect(NoTls).await?;
+            let backend_pid = Arc::new(std::sync::atomic::AtomicI32::new(0));
+            let driver_pid = Arc::clone(&backend_pid);
+            let task = tokio::spawn(async move {
+                while let Some(message) =
+                    futures_util::future::poll_fn(|context| connection.poll_message(context)).await
+                {
+                    match message {
+                        Ok(AsyncMessage::Notification(notification)) => {
+                            let _ = messages.send(PlatformAsyncMessage::Notification {
+                                // `Notification::process_id` names the backend
+                                // that executed NOTIFY, not this connection.
+                                // Routing belongs to the listener connection
+                                // whose driver observed it.
+                                backend_pid: driver_pid.load(Ordering::Acquire),
+                                channel: notification.channel().to_owned(),
+                                payload: notification.payload().to_owned(),
+                            });
+                        }
+                        Ok(AsyncMessage::Notice(notice)) => {
+                            tracing::debug!(message = %notice, "wamn:postgres server notice");
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "wamn:postgres connection failed");
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                let _ = messages.send(PlatformAsyncMessage::Disconnected {
+                    backend_pid: driver_pid.load(Ordering::Acquire),
+                });
+            });
+            let pid: i32 = match client
+                .query_one("SELECT pg_backend_pid()", &[])
+                .await
+                .and_then(|row| row.try_get(0))
+            {
+                Ok(pid) => pid,
+                Err(error) => {
+                    task.abort();
+                    return Err(error);
+                }
+            };
+            backend_pid.store(pid, Ordering::Release);
+            Ok((client, task))
+        })
+    }
+}
 
 const DEFAULT_GUEST_POOL_MAX_SIZE: usize = 14;
 const DEFAULT_PLATFORM_POOL_MAX_SIZE: usize = 2;

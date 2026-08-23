@@ -50,6 +50,10 @@ mod pool;
 mod production_claim;
 mod resources;
 mod types;
+mod wiring_resolution;
+
+pub(crate) use pool::PlatformAsyncMessage;
+pub use wiring_resolution::{ACTIVE_WIRING_SQL, RELEASE_WIRING_SQL, ResolvedActiveWiring};
 
 pub use claims::{
     ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, SessionClaims, WamnPostgres,

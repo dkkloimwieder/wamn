@@ -4302,20 +4302,14 @@ name = "wamn-execution-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
- "hyper",
- "serde",
  "serde_json",
- "sha2 0.11.0",
  "tokio",
- "tracing",
  "wamn-catalog",
- "wamn-run-state",
+ "wamn-control-registry",
+ "wamn-router",
  "wamn-runtime",
  "wash-runtime",
  "wasmtime-wasi",
- "wasmtime-wasi-http",
- "wat",
 ]
 
 [[package]]
@@ -4323,16 +4317,11 @@ name = "wamn-executor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "clap",
- "futures-util",
- "opentelemetry",
  "tokio",
  "tracing",
- "wamn-control-registry",
  "wamn-execution-host",
  "wamn-runtime",
- "wamn-scheduler",
  "wash-runtime",
 ]
 
@@ -4385,6 +4374,7 @@ dependencies = [
  "clap",
  "tokio",
  "tracing",
+ "wamn-execution-host",
  "wamn-runtime",
  "wash-runtime",
 ]

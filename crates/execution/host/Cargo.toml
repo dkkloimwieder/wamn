@@ -1,29 +1,17 @@
 [package]
 name = "wamn-execution-host"
-description = "Shared native composition core for flowrunner execution artifacts."
+description = "Shared production router driver and component instance pool."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 wamn-catalog = { workspace = true }
-wamn-runtime = { workspace = true }
-wamn-run-state = { workspace = true }
+wamn-control-registry = { workspace = true }
+wamn-router = { workspace = true }
+wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wash-runtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
-wasmtime-wasi-http = { workspace = true }
 anyhow = { workspace = true }
-async-trait = { workspace = true }
-tracing = { workspace = true }
-hyper = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
-sha2 = { workspace = true }
-
-[build-dependencies]
-serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
-wat = "=1.252.0"

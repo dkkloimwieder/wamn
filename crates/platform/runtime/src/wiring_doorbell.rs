@@ -44,38 +44,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context as _, anyhow};
-use async_trait::async_trait;
-use tokio_postgres::{AsyncMessage, NoTls};
+#[cfg(test)]
+use anyhow::anyhow;
 use wamn_catalog::{WIRING_ACTIVATION_CHANNEL, WiringActivationNotice};
 use wamn_router::WiringCache;
 
-use crate::flow_invocation::AbortOnDrop;
+use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, PlatformAsyncMessage, WamnPostgres};
 
 /// How long a failed doorbell connection waits before reconnecting. Matches the
 /// outcome listener's delay: the same transport with the same failure mode.
 const DOORBELL_RECONNECT_DELAY: Duration = Duration::from_millis(250);
-
-/// The tenant and catalog THIS DOORBELL filters notices by.
-///
-/// `pg_notify` is per-DATABASE and tenants share a database under row-level
-/// security, so without this filter one tenant's flip would drop another
-/// tenant's identically-named pointer — not a stale serve, but a store read
-/// nobody asked for.
-///
-/// **HAZARD: this scope filters the DOORBELL, and does NOT scope the CACHE.**
-/// This doc previously justified [`WiringCache`]'s `(environment, wiring)`
-/// pointer key by asserting that a serving process is fixed to one tenant and
-/// catalog. That assertion is FALSE — the sibling plugin in this same process
-/// ([`flow_invocation`](crate::flow_invocation)'s registrations) is keyed per
-/// workload bind, so one process serves many triples. The cache itself takes no
-/// tenant at any entry point. Keying decision owed — see `wamn-0h0g.12.138`. Do
-/// not wire a production driver against this path until it is ruled.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DoorbellScope {
-    pub tenant_id: String,
-    pub catalog_id: String,
-}
 
 /// What one doorbell payload did to the cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,8 +63,6 @@ pub enum DoorbellEffect {
     /// The notice named a pointer this process was not holding — a wiring it has
     /// never served, or one already dropped.
     NotResident,
-    /// The notice named another tenant's or catalog's pointer.
-    OutOfScope,
     /// The payload is not the shape `catalog.notify_wiring_activation()` builds,
     /// so which pointer moved is unknowable. Treated as a missed flip: the whole
     /// cache goes, because guessing "none" would serve a stale version silently.
@@ -96,14 +72,16 @@ pub enum DoorbellEffect {
 /// The cache-side half of the subscriber: everything one connection does to the
 /// cache, with no transport in it, so it is provable without a database.
 #[derive(Debug)]
-pub struct WiringDoorbell {
-    cache: Arc<WiringCache>,
-    scope: DoorbellScope,
+pub struct WiringDoorbell<T = ()> {
+    cache: Arc<WiringCache<T>>,
 }
 
-impl WiringDoorbell {
-    pub fn new(cache: Arc<WiringCache>, scope: DoorbellScope) -> WiringDoorbell {
-        WiringDoorbell { cache, scope }
+impl<T> WiringDoorbell<T>
+where
+    T: Send + Sync + 'static,
+{
+    pub fn new(cache: Arc<WiringCache<T>>) -> WiringDoorbell<T> {
+        WiringDoorbell { cache }
     }
 
     /// A `LISTEN` has just been established. Drops every pointer and reports how
@@ -136,18 +114,20 @@ impl WiringDoorbell {
                 return DoorbellEffect::Unreadable;
             }
         };
-        if notice.tenant_id != self.scope.tenant_id || notice.catalog_id != self.scope.catalog_id {
-            return DoorbellEffect::OutOfScope;
-        }
         // `enabled` is deliberately not read: taking a wiring dark moves what the
         // read path serves exactly as an activation does, so it is as much an
         // invalidation. The hash is carried for the log — the pointer holds only
         // the hash, so `(wiring, definition-hash)` is the identity the re-read
         // is scoped by, and the version comes back with it.
-        let dropped = self
-            .cache
-            .invalidate(&notice.environment, &notice.wiring_id);
+        let dropped = self.cache.invalidate(
+            &notice.tenant_id,
+            &notice.catalog_id,
+            &notice.environment,
+            &notice.wiring_id,
+        );
         tracing::info!(
+            tenant_id = %notice.tenant_id,
+            catalog_id = %notice.catalog_id,
             environment = %notice.environment,
             wiring_id = %notice.wiring_id,
             enabled = notice.enabled,
@@ -163,85 +143,6 @@ impl WiringDoorbell {
     }
 }
 
-/// One attempt at holding a `LISTEN`, abstracted so the reconnect loop is
-/// provable without a database.
-#[async_trait]
-trait DoorbellConnector: Send + Sync {
-    /// Establish a `LISTEN`, call [`WiringDoorbell::listening`] once it is
-    /// established, then apply every delivered payload until the connection
-    /// fails or `shutdown` flips.
-    async fn listen(
-        &self,
-        doorbell: Arc<WiringDoorbell>,
-        shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> anyhow::Result<()>;
-}
-
-struct PostgresDoorbellConnector {
-    database_url: String,
-}
-
-#[async_trait]
-impl DoorbellConnector for PostgresDoorbellConnector {
-    async fn listen(
-        &self,
-        doorbell: Arc<WiringDoorbell>,
-        mut shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
-        let (client, mut connection) = tokio_postgres::connect(&self.database_url, NoTls)
-            .await
-            .context("connect wiring activation doorbell listener")?;
-        let applying = Arc::clone(&doorbell);
-        let mut driver = AbortOnDrop(tokio::spawn(async move {
-            while let Some(message) =
-                futures_util::future::poll_fn(|context| connection.poll_message(context)).await
-            {
-                match message {
-                    // Applied on the connection's own task, with nothing between
-                    // the socket and the cache: no channel to lag, and nothing
-                    // that can leave the cluster's async notify queue undrained.
-                    Ok(AsyncMessage::Notification(notification)) => {
-                        applying.rang(notification.payload());
-                    }
-                    Ok(_) => {}
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            Err(anyhow!(
-                "wiring activation doorbell LISTEN connection closed"
-            ))
-        }));
-        if let Err(error) = client.batch_execute(&listen_statement()).await {
-            driver.abort();
-            return Err(error).context("LISTEN wamn_wiring_activation");
-        }
-
-        // ORDER IS LOAD-BEARING. The pointers are dropped only once the LISTEN
-        // is established, so no flip can commit into a gap where it is neither
-        // delivered nor covered by the drop.
-        doorbell.listening();
-
-        let result = tokio::select! {
-            changed = shutdown.changed() => {
-                changed.map_err(|_| anyhow!("doorbell listener shutdown owner dropped"))?;
-                Ok(())
-            }
-            result = &mut driver.0 => {
-                result.context("join wiring activation doorbell connection")?
-            }
-        };
-        driver.abort();
-        drop(client);
-        result
-    }
-}
-
-/// The `LISTEN` this subscriber issues, built from the channel constant the
-/// emitter owns so the two can never drift apart.
-fn listen_statement() -> String {
-    format!("LISTEN {WIRING_ACTIVATION_CHANNEL}")
-}
-
 /// A running doorbell subscription. Reconnects on failure, and stops when
 /// dropped.
 pub struct WiringDoorbellListener {
@@ -252,69 +153,113 @@ pub struct WiringDoorbellListener {
 impl Drop for WiringDoorbellListener {
     fn drop(&mut self) {
         let _ = self.shutdown.send(true);
-        self.task.abort();
+        // Do not abort: the task owns a checked-out platform-pool object and
+        // must UNLISTEN before returning it. Dropping the JoinHandle detaches
+        // that short cleanup rather than cancelling it.
+        let _ = self.task.is_finished();
     }
 }
 
 impl WiringDoorbellListener {
-    /// Subscribe `cache` to the pointer-flip doorbell on `database_url`.
-    pub fn postgres(
-        database_url: String,
-        cache: Arc<WiringCache>,
-        scope: DoorbellScope,
-    ) -> WiringDoorbellListener {
-        Self::with_connector(
-            Arc::new(PostgresDoorbellConnector { database_url }),
-            Arc::new(WiringDoorbell::new(cache, scope)),
-            DOORBELL_RECONNECT_DELAY,
-        )
-    }
-
-    fn with_connector(
-        connector: Arc<dyn DoorbellConnector>,
-        doorbell: Arc<WiringDoorbell>,
-        reconnect_delay: Duration,
-    ) -> WiringDoorbellListener {
+    /// Subscribe `cache` through the existing platform pool. The listener owns
+    /// one checkout for its full LISTEN lifetime; construction refuses if this
+    /// `WamnPostgres` already supplied its one async-message receiver.
+    pub fn postgres<T>(
+        postgres: Arc<WamnPostgres>,
+        project: Option<String>,
+        cache: Arc<WiringCache<T>>,
+    ) -> anyhow::Result<WiringDoorbellListener>
+    where
+        T: Send + Sync + 'static,
+    {
+        let messages = postgres.take_platform_messages()?;
         let (shutdown, shutdown_receiver) = tokio::sync::watch::channel(false);
         let task = tokio::spawn(run_doorbell_listener(
-            connector,
-            doorbell,
+            postgres,
+            project.unwrap_or_else(|| DEFAULT_PROJECT.to_owned()),
+            Arc::new(WiringDoorbell::new(cache)),
+            messages,
             shutdown_receiver,
-            reconnect_delay,
         ));
-        WiringDoorbellListener { shutdown, task }
+        Ok(WiringDoorbellListener { shutdown, task })
     }
 }
 
-async fn run_doorbell_listener(
-    connector: Arc<dyn DoorbellConnector>,
-    doorbell: Arc<WiringDoorbell>,
+async fn run_doorbell_listener<T>(
+    postgres: Arc<WamnPostgres>,
+    project: String,
+    doorbell: Arc<WiringDoorbell<T>>,
+    mut messages: tokio::sync::mpsc::UnboundedReceiver<PlatformAsyncMessage>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
-    reconnect_delay: Duration,
-) {
+) where
+    T: Send + Sync + 'static,
+{
     loop {
         if *shutdown.borrow() {
             return;
         }
-        if let Err(error) = connector
-            .listen(Arc::clone(&doorbell), shutdown.clone())
-            .await
-        {
-            tracing::warn!(
-                error = %error,
-                "wiring activation doorbell LISTEN connection failed; reconnecting"
-            );
-        }
-        if *shutdown.borrow() {
-            return;
-        }
-        tokio::select! {
-            changed = shutdown.changed() => {
-                if changed.is_err() || *shutdown.borrow() {
-                    return;
+        let (connection, backend_pid) = match postgres.checkout_wiring_listener(&project).await {
+            Ok(listener) => listener,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "wiring activation platform-pool LISTEN failed; reconnecting"
+                );
+                tokio::select! {
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return;
+                        }
+                    }
+                    () = tokio::time::sleep(DOORBELL_RECONNECT_DELAY) => {}
+                }
+                continue;
+            }
+        };
+
+        // ORDER IS LOAD-BEARING. checkout_wiring_listener issued LISTEN before
+        // this whole-pointer drop, so no flip can commit into a gap where it is
+        // neither delivered nor covered by the drop.
+        doorbell.listening();
+        let disconnected = loop {
+            tokio::select! {
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        if let Err(error) = connection.batch_execute("UNLISTEN *").await {
+                            tracing::warn!(error = %error, "wiring doorbell UNLISTEN failed");
+                        }
+                        return;
+                    }
+                }
+                message = messages.recv() => match message {
+                    Some(PlatformAsyncMessage::Notification {
+                        backend_pid: message_pid,
+                        channel,
+                        payload,
+                    }) if message_pid == backend_pid && channel == WIRING_ACTIVATION_CHANNEL => {
+                        doorbell.rang(&payload);
+                    }
+                    Some(PlatformAsyncMessage::Disconnected { backend_pid: message_pid })
+                        if message_pid == backend_pid => break true,
+                    Some(_) => {}
+                    None => break true,
                 }
             }
-            () = tokio::time::sleep(reconnect_delay) => {}
+        };
+        drop(connection);
+        if disconnected {
+            tracing::warn!(
+                backend_pid,
+                "wiring activation platform-pool connection closed; reconnecting"
+            );
+            tokio::select! {
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        return;
+                    }
+                }
+                () = tokio::time::sleep(DOORBELL_RECONNECT_DELAY) => {}
+            }
         }
     }
 }

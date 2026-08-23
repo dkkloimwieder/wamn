@@ -1,11 +1,7 @@
-//! Production composition for the flow serving executor.
+//! Production construction of the shared router driver for queued delivery.
 //!
-//! MVP outcome: crash floor · M0 execution · flow composition.
-//!
-//! This service leaf selects only production credentials, clock, randomness,
-//! egress, and database adapters. It also owns the NATS doorbell, idle cadence,
-//! retry, and shutdown lifecycle around the shared execution host. Deterministic
-//! scenario capabilities live in the separate `wamn-scenario-worker` artifact.
+//! Queue claim/verdict adaptation is owned by `wamn-0h0g.19.6`. This leaf
+//! constructs the exact driver direct ingress uses and keeps it live.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,50 +9,27 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
-use futures_util::StreamExt as _;
-use opentelemetry::KeyValue;
-use opentelemetry::metrics::{Counter, Histogram};
-use tokio::sync::watch;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
-use wamn_control_registry::identifiers::{
-    ExecutionTargetId, doorbell_subject, mvp_execution_target_id,
-};
 use wamn_execution_host::{
-    DEFAULT_FLOWRUNNER_PATH, DriveOutcome, ExecutionHost, ExecutionIdentity, ReleaseSupply,
-    production_capabilities,
+    RouterDriver, RouterDriverConfig, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
+};
+use wamn_runtime::component_artifact_source::{
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
-use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
-use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::release_manifest::ReleaseManifestWeld;
 
-/// Production executor configuration.
 #[derive(Debug, Args)]
 pub struct ExecutorArgs {
-    /// Path to the compiled flowrunner component.
-    #[arg(long, default_value = DEFAULT_FLOWRUNNER_PATH)]
-    pub flowrunner: PathBuf,
-
     /// App database URL. Overrides WAMN_PG_URL and DATABASE_URL.
     #[arg(long)]
     pub database_url: Option<String>,
 
-    /// Tenant claim applied to the execution session.
-    #[arg(long, default_value = "default")]
-    pub tenant: String,
-
-    /// Opaque doorbell routing target. When omitted, the MVP placement adapter
-    /// assigns the validated tenant value.
-    #[arg(long, env = "WAMN_EXECUTION_TARGET_ID")]
-    pub execution_target_id: Option<ExecutionTargetId>,
-
-    /// Execution session search path.
-    #[arg(long)]
-    pub schema: Option<String>,
-
-    /// Stable, replica-unique lease owner.
+    /// Stable, replica-unique owner prefix for node acquisition claims.
     #[arg(long, env = "WAMN_RUNNER")]
     pub runner: Option<String>,
 
@@ -64,49 +37,37 @@ pub struct ExecutorArgs {
     #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
     pub credentials_file: Option<PathBuf>,
 
-    /// Project whose credentials this executor may resolve.
-    #[arg(long, env = "WAMN_PROJECT", default_value = wamn_postgres::DEFAULT_PROJECT)]
+    /// Project whose platform pool and node credentials this executor uses.
+    #[arg(long, env = "WAMN_PROJECT", default_value = "default")]
     pub project: String,
 
-    /// Production outbound HTTP allowlist. Empty denies all egress.
-    #[arg(
-        long = "allowed-hosts",
-        env = "WAMN_ALLOWED_HOSTS",
-        value_delimiter = ','
-    )]
+    /// Optional database search path installed at node checkout.
+    #[arg(long, env = "WAMN_SCHEMA")]
+    pub schema: Option<String>,
+
+    /// Production outbound ceiling for connection-backed HTTP effects.
+    #[arg(long, env = "WAMN_ALLOWED_HOSTS", value_delimiter = ',')]
     pub allowed_hosts: Vec<String>,
 
-    /// Directory the digest-named release-manifest ConfigMap is projected into.
-    ///
-    /// Passing it is what makes this process a serving one: the manifest is the
-    /// sole carrier of release identity. Omitted, the executor starts without a
-    /// release; passed and unusable, the executor refuses to start.
+    /// Directory containing the canonical format-2 serving manifest.
     #[arg(long, env = "WAMN_RELEASE_MANIFEST_ROOT")]
-    pub release_manifest_root: Option<PathBuf>,
+    pub release_manifest_root: PathBuf,
 
-    /// Lease TTL for a claimed run, in milliseconds.
-    #[arg(long, default_value_t = 30_000)]
-    pub lease_ttl_ms: u64,
+    /// Explicit registry/repository holding digest-addressed node components.
+    #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE")]
+    pub component_artifact_base: String,
 
-    /// Tightest idle poll interval, in milliseconds.
-    #[arg(long, default_value_t = wamn_scheduler::DEFAULT_MIN_INTERVAL_MS as u64)]
-    pub min_idle_ms: u64,
+    /// Permit HTTP only for the explicitly configured in-cluster registry.
+    #[arg(long, default_value_t = false)]
+    pub allow_insecure_registries: bool,
 
-    /// Widest idle poll interval, in milliseconds.
-    #[arg(long, default_value_t = wamn_scheduler::DEFAULT_MAX_INTERVAL_MS as u64)]
-    pub max_idle_ms: u64,
-
-    /// NATS URL for best-effort doorbell wakes.
-    #[arg(long, default_value = "nats://localhost:4222")]
-    pub nats_url: String,
-
-    /// Optional mTLS material for the doorbell NATS connection.
-    #[arg(long)]
-    pub nats_tls_ca: Option<PathBuf>,
-    #[arg(long)]
-    pub nats_tls_cert: Option<PathBuf>,
-    #[arg(long)]
-    pub nats_tls_key: Option<PathBuf>,
+    /// Maximum resolved wirings retained by the one production router driver.
+    #[arg(
+        long = "wiring-cache-capacity",
+        env = WIRING_CACHE_CAPACITY_ENV,
+        default_value_t = WiringCacheCapacity::default()
+    )]
+    pub wiring_cache_capacity: WiringCacheCapacity,
 }
 
 fn resolve_owner(arg: Option<String>) -> String {
@@ -116,190 +77,12 @@ fn resolve_owner(arg: Option<String>) -> String {
                 .ok()
                 .filter(|owner| !owner.is_empty())
         })
-        .unwrap_or_else(|| "wamn-runner".to_string())
+        .unwrap_or_else(|| "wamn-executor".to_owned())
 }
 
-fn resolve_execution_target_id(
-    configured: Option<ExecutionTargetId>,
-    tenant: &str,
-) -> anyhow::Result<ExecutionTargetId> {
-    match configured {
-        Some(target) => Ok(target),
-        None => mvp_execution_target_id(tenant)
-            .context("derive MVP execution target from tenant configuration"),
-    }
-}
-
-/// Map a guest or host terminalization to its bounded metric attribute.
-fn outcome_label(outcome: DriveOutcome) -> &'static str {
-    match outcome {
-        DriveOutcome::Guest(0) => "completed",
-        DriveOutcome::Guest(1) => "parked",
-        DriveOutcome::Guest(_) => "failed",
-        DriveOutcome::ClaimTerminalized { fail_kind, .. } => fail_kind.as_sql(),
-        DriveOutcome::InfrastructureFailure => "infrastructure-failure",
-    }
-}
-
-/// Production run-worker instruments and replica identity attributes.
-struct RunMetrics {
-    executions: Counter<u64>,
-    drive_ms: Histogram<f64>,
-    drain_failures: Counter<u64>,
-    tenant: String,
-    project: String,
-}
-
-impl RunMetrics {
-    fn register(tenant: &str, project: &str) -> Self {
-        let meter = opentelemetry::global::meter("wamn-run-worker");
-        Self {
-            executions: meter
-                .u64_counter("wamn.run.executions")
-                .with_description(
-                    "flow-run drives by terminal outcome (completed / parked / failed)",
-                )
-                .build(),
-            drive_ms: meter
-                .f64_histogram("wamn.run.drive.duration_ms")
-                .with_description(
-                    "wall time to claim and handle one run, including host-owned \
-                     non-execution terminalization",
-                )
-                .build(),
-            drain_failures: meter
-                .u64_counter("wamn.run.drain.failures")
-                .with_description(
-                    "drain turns that failed before any run was handled (claim refusal, \
-                     lost database)",
-                )
-                .build(),
-            tenant: tenant.to_string(),
-            project: project.to_string(),
-        }
-    }
-
-    /// This replica's bounded attribute pair, shared by every run instrument.
-    fn identity(&self) -> [KeyValue; 2] {
-        [
-            KeyValue::new("wamn.tenant", self.tenant.clone()),
-            KeyValue::new("wamn.project", self.project.clone()),
-        ]
-    }
-
-    /// A refused claim never reaches a drive observation, so `wamn.run.executions`
-    /// stays FLAT while one run head-of-line-blocks its tenant. This is the series
-    /// to alert on, and deliberately not another `outcome` bucket — that would
-    /// fold refusals into the counter dashboards derive the success ratio from.
-    fn record_drain_failure(&self) {
-        self.drain_failures.add(1, &self.identity());
-    }
-
-    fn record_drive(&self, elapsed: Duration, outcome: DriveOutcome) {
-        let base = self.identity();
-        self.drive_ms.record(elapsed.as_secs_f64() * 1000.0, &base);
-        self.executions.add(
-            1,
-            &[
-                KeyValue::new("wamn.tenant", self.tenant.clone()),
-                KeyValue::new("wamn.project", self.project.clone()),
-                KeyValue::new("outcome", outcome_label(outcome)),
-            ],
-        );
-    }
-}
-
-/// Drain continuously, waking on a doorbell, idle reconciliation, or shutdown.
-///
-/// Drain failures are non-fatal: the plugin pool can reconnect on the next
-/// call, while an in-flight run's lease remains reclaimable by another replica.
-async fn serve(
-    executor: &mut ExecutionHost,
-    nats: Option<async_nats::Client>,
-    subject: String,
-    cadence: wamn_scheduler::Cadence,
-    metrics: &RunMetrics,
-    mut shutdown: watch::Receiver<bool>,
-) -> anyhow::Result<()> {
-    let min = cadence.min();
-    let mut subscription = match &nats {
-        Some(client) => Some(client.subscribe(subject).await?),
-        None => None,
-    };
-    let mut idle = min;
-    loop {
-        let found_work = match executor
-            .drain_observing(|observation| {
-                metrics.record_drive(observation.elapsed, observation.outcome);
-                tracing::info!(
-                    run_id = observation.run_id,
-                    outcome = ?observation.outcome,
-                    "run-worker: handled a queue run"
-                );
-            })
-            .await
-        {
-            Ok(report) => {
-                if report.claimed > 0 {
-                    tracing::info!(
-                        claimed = report.claimed,
-                        completed = report.completed,
-                        parked = report.parked,
-                        failed = report.failed,
-                        "run-worker: drained"
-                    );
-                }
-                report.found_work()
-            }
-            Err(error) => {
-                if executor.is_disposed() {
-                    return Err(error)
-                        .context("run-worker execution instance was interrupted and disposed");
-                }
-                metrics.record_drain_failure();
-                tracing::warn!(
-                    error = %error,
-                    "run-worker: drain failed (retrying after backoff)"
-                );
-                false
-            }
-        };
-        idle = cadence.next_interval(idle, found_work);
-
-        tokio::select! {
-            hint = async {
-                match subscription.as_mut() {
-                    Some(subscription) => subscription.next().await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                if hint.is_none() {
-                    subscription = None;
-                    tracing::warn!(
-                        "run-worker: doorbell subscription closed; poll-backoff only"
-                    );
-                } else {
-                    idle = min;
-                }
-            }
-            _ = tokio::time::sleep(Duration::from_millis(idle as u64)) => {}
-            _ = shutdown.changed() => {
-                if *shutdown.borrow() {
-                    return Ok(());
-                }
-            }
-        }
-    }
-}
-
-/// Run the production serving executor until shutdown.
 pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
-    use wash_runtime::washlet::{NatsConnectionOptions, connect_nats};
-
     wash_runtime::init_crypto();
 
-    let cadence = wamn_scheduler::Cadence::new(args.min_idle_ms as i64, args.max_idle_ms as i64)
-        .context("invalid idle poll cadence (--min-idle-ms / --max-idle-ms)")?;
     let database_url = args
         .database_url
         .clone()
@@ -307,11 +90,15 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         .or_else(|| std::env::var("DATABASE_URL").ok())
         .context("no database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")?;
     let owner = resolve_owner(args.runner.clone());
-    let execution_target_id =
-        resolve_execution_target_id(args.execution_target_id.clone(), &args.tenant)?;
-    let guest = std::fs::read(&args.flowrunner)
-        .with_context(|| format!("read flowrunner component {}", args.flowrunner.display()))?;
-
+    let release = Arc::new(
+        ReleaseManifestWeld::load_from(&args.release_manifest_root).map_err(|error| {
+            anyhow::anyhow!(
+                "serving release manifest under {} is unusable ({:?}): {error}",
+                args.release_manifest_root.display(),
+                error.kind()
+            )
+        })?,
+    );
     let mut postgres_config = WamnPostgresConfig::from_env();
     postgres_config.database_url = Some(database_url);
     let postgres = Arc::new(WamnPostgres::new(postgres_config)?);
@@ -328,98 +115,60 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         .collect::<Result<Vec<_>, _>>()
         .context("parse --allowed-hosts")?
         .into();
-
-    let engine = build_engine(&[])?;
+    let source = ComponentArtifactSource::new(ComponentArtifactSourceConfig::new(
+        &args.component_artifact_base,
+        args.allow_insecure_registries,
+        Duration::from_secs(30),
+    )?);
+    let engine = Arc::new(build_engine(&[])?);
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
-    let mut executor = ExecutionHost::instantiate(
-        &engine,
-        &guest,
+    let driver = RouterDriver::new(
+        engine,
         postgres,
         credentials,
         logging,
-        ExecutionIdentity {
-            owner: &owner,
-            tenant: &args.tenant,
-            schema: args.schema.as_deref(),
-            project: &args.project,
+        allowed_hosts,
+        Arc::clone(&release),
+        source,
+        RouterDriverConfig {
+            owner_prefix: owner.clone(),
+            project: args.project.clone(),
+            schema: args.schema.clone(),
+            cache_capacity: args.wiring_cache_capacity,
+            epoch_tick: DEFAULT_EPOCH_TICK,
         },
-        production_capabilities(allowed_hosts, Arc::new(RunnerEgressPolicy::default())),
-        args.release_manifest_root
-            .as_deref()
-            .map(|manifest_root| ReleaseSupply { manifest_root }),
-        args.lease_ttl_ms,
-    )
-    .await?;
-
-    let nats_options = NatsConnectionOptions {
-        request_timeout: None,
-        tls_ca: args.nats_tls_ca.clone(),
-        tls_first: false,
-        tls_cert: args.nats_tls_cert.clone(),
-        tls_key: args.nats_tls_key.clone(),
-    };
-    let nats = match connect_nats(args.nats_url.clone(), nats_options).await {
-        Ok(client) => Some(client),
-        Err(error) => {
-            tracing::warn!(
-                url = %args.nats_url,
-                error = %error,
-                "executor: no NATS; poll reconciliation remains active"
-            );
-            None
-        }
-    };
-
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    tokio::spawn(async move {
-        let mut sigterm =
-            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                Ok(signal) => signal,
-                Err(error) => {
-                    tracing::warn!(error = %error, "executor: no SIGTERM handler; Ctrl-C only");
-                    let _ = tokio::signal::ctrl_c().await;
-                    let _ = shutdown_tx.send(true);
-                    return;
-                }
-            };
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = sigterm.recv() => {}
-        }
-        let _ = shutdown_tx.send(true);
-    });
+    )?;
 
     tracing::info!(
         runner = %owner,
-        tenant = %args.tenant,
-        execution_target_id = %execution_target_id,
-        schema = args.schema.as_deref().unwrap_or("<default>"),
-        lease_ttl_ms = args.lease_ttl_ms,
-        "executor up"
+        release_version = release.release().release_version,
+        manifest_digest = %release.release().manifest_digest,
+        wiring_cache_capacity = args.wiring_cache_capacity.get().get(),
+        "executor router driver ready; queued handoff awaits wamn-0h0g.19.6"
     );
-
-    let metrics = RunMetrics::register(&args.tenant, &args.project);
-    let result = serve(
-        &mut executor,
-        nats,
-        doorbell_subject(&execution_target_id),
-        cadence,
-        &metrics,
-        shutdown_rx,
-    )
-    .await;
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = sigterm.recv() => {}
+    }
+    let snapshot = driver.snapshot();
+    tracing::info!(
+        cache_hits = snapshot.wiring_cache.hits,
+        cache_evictions = snapshot.wiring_cache.evictions,
+        "executor router driver stopping"
+    );
     ticker.abort();
-    result
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory as _;
+
     use super::*;
 
     #[test]
-    fn production_cli_has_no_scenario_capability_switch() {
-        use clap::CommandFactory as _;
-
+    fn executor_cli_exposes_the_shared_cache_capacity() {
         #[derive(clap::Parser)]
         struct TestCli {
             #[command(flatten)]
@@ -427,100 +176,12 @@ mod tests {
         }
 
         let help = TestCli::command().render_long_help().to_string();
-        assert!(!help.contains("scenario"));
-        assert!(!help.contains("record"));
-        assert!(!help.contains("virtual"));
-        assert!(!help.contains("seed"));
+        assert!(help.contains("wiring-cache-capacity"));
     }
 
     #[test]
-    fn owner_prefers_explicit_value() {
-        assert_eq!(resolve_owner(Some("replica-7".into())), "replica-7");
-    }
-
-    #[test]
-    fn doorbell_subject_routes_by_target_not_tenant() {
-        let target = resolve_execution_target_id(
-            Some("worker-b".parse().expect("valid target")),
-            "tenant-a",
-        )
-        .expect("explicit target");
-        assert_eq!(doorbell_subject(&target), "wamn.doorbell.worker-b");
-    }
-
-    #[test]
-    fn omitted_executor_target_uses_the_mvp_adapter() {
-        let target = resolve_execution_target_id(None, "tenant-a").expect("tenant-safe target");
-        assert_eq!(target.as_str(), "tenant-a");
-    }
-
-    #[test]
-    fn idle_backoff_resets_on_work_and_expands_while_idle() {
-        let cadence = wamn_scheduler::Cadence::new(250, 30_000).unwrap();
-        let (min, max) = (cadence.min(), cadence.max());
-        assert_eq!(cadence.next_interval(min, true), min);
-        let first_idle = cadence.next_interval(min, false);
-        let second_idle = cadence.next_interval(first_idle, false);
-        assert!(first_idle > min && second_idle > first_idle && second_idle <= max);
-        assert_eq!(cadence.next_interval(first_idle, true), min);
-    }
-
-    #[test]
-    fn outcome_label_maps_guest_and_host_terminalization_to_bounded_buckets() {
-        assert_eq!(outcome_label(DriveOutcome::Guest(0)), "completed");
-        assert_eq!(outcome_label(DriveOutcome::Guest(1)), "parked");
-        assert_eq!(outcome_label(DriveOutcome::Guest(99)), "failed");
-        assert_eq!(
-            outcome_label(DriveOutcome::InfrastructureFailure),
-            "infrastructure-failure"
-        );
-    }
-
-    /// The refusal signal is its OWN instrument, recorded on the non-fatal drain
-    /// arm. `wamn.run.executions` is the terminal-outcome counter dashboards
-    /// divide by, so folding a failed turn into it would corrupt the ratio.
-    #[test]
-    fn a_failed_drain_turn_records_its_own_instrument_before_it_warns() {
-        let source = include_str!("lib.rs")
-            .split_once("#[cfg(test)]")
-            .expect("test module marker")
-            .0;
-        let before_warn = source
-            .split_once("run-worker: drain failed")
-            .expect("the non-fatal drain-failure arm")
-            .0;
-        assert!(before_warn.contains("metrics.record_drain_failure()"));
-        assert!(source.contains("u64_counter(\"wamn.run.drain.failures\")"));
-    }
-
-    #[test]
-    fn manifests_keep_lifecycle_dependencies_in_executor() {
-        let executor_manifest = include_str!("../Cargo.toml");
-        assert!(!executor_manifest.contains("../scenario-worker"));
-        for dependency in [
-            "async-nats",
-            "futures-util",
-            "opentelemetry",
-            "wamn-control-registry",
-            "wamn-scheduler",
-        ] {
-            assert!(
-                executor_manifest.contains(dependency),
-                "executor must own {dependency}"
-            );
-        }
-
-        let host_manifest = include_str!("../../../crates/execution/host/Cargo.toml");
-        for dependency in [
-            "async-nats",
-            "futures-util",
-            "opentelemetry",
-            "wamn-scheduler",
-        ] {
-            assert!(
-                !host_manifest.contains(dependency),
-                "shared execution host must not own {dependency}"
-            );
-        }
+    fn cache_capacity_rejects_zero_and_defaults_to_1024() {
+        assert!("0".parse::<WiringCacheCapacity>().is_err());
+        assert_eq!(WiringCacheCapacity::default().get().get(), 1_024);
     }
 }
