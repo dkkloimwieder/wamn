@@ -5256,6 +5256,19 @@ CREATE INDEX event_registrations_by_entity
             ),
             RELEASE_PUBLISHER_CHECK_DEF.to_string(),
         );
+        // The authoring retry ledger left `catalog-schema.sql` with
+        // wamn-0h0g.9.11.3 (805701ec) but still lands in the SAME `catalog`
+        // schema from `deploy/sql/control-portable-store.sql`, so a provisioned
+        // database observes it. Only the columns `authoring_retry_ledger_ready`
+        // names are modelled; the rest are never read by the reconciler.
+        obs.catalog_tables
+            .insert("authoring_command_audit".to_string());
+        obs.catalog_columns.insert(
+            "authoring_command_audit".to_string(),
+            ["request_hash".to_string(), "outcome_bytes".to_string()]
+                .into_iter()
+                .collect(),
+        );
         obs.catalog_checks.insert(
             (
                 "authoring_command_audit".to_string(),
@@ -5323,12 +5336,6 @@ CREATE INDEX event_registrations_by_entity
             "attempt_started_at".to_string(),
         ));
         for (table, column, ty, not_null) in [
-            ("node_runs", "frame_id", "bigint", true),
-            ("node_runs", "parent_frame_id", "bigint", false),
-            ("node_runs", "call_site_id", "text", false),
-            ("node_runs", "current_plan_hash", "text", true),
-            ("node_runs", "local_node_id", "text", true),
-            ("node_runs", "seq", "bigint", true),
             ("effect_attempts", "root_plan_hash", "text", true),
             ("effect_attempts", "current_plan_hash", "text", true),
             ("effect_attempts", "frame_id", "bigint", true),
@@ -5356,6 +5363,24 @@ CREATE INDEX event_registrations_by_entity
             let key = ("runs".to_string(), column.to_string());
             obs.non_nullable_columns.insert(key.clone());
             obs.column_types.insert(key, ty.to_string());
+        }
+        // The candidate-admission grain carriers (wamn-0h0g.8.5.1) are all
+        // NULLABLE at record: a legacy flow row leaves the wiring leg NULL and a
+        // component-era wiring row leaves the flow leg NULL, so only the pair
+        // CHECKs constrain them. `run_wiring_identity_contract_complete` reads
+        // every one of these types, so the record observation must carry them or
+        // the at-record schema plans its own cutover forever.
+        for (column, ty) in [
+            ("flow_id", "text"),
+            ("flow_version", "integer"),
+            ("wiring_id", "text"),
+            ("wiring_version", "integer"),
+            ("wiring_hash", "text"),
+            ("gate_report_id", "text"),
+            ("binding_world_json", "jsonb"),
+        ] {
+            obs.column_types
+                .insert(("runs".to_string(), column.to_string()), ty.to_string());
         }
         obs.indexes.insert(
             "runs_release".to_string(),
@@ -5524,16 +5549,20 @@ CREATE INDEX event_registrations_by_entity
             "connection_generations",
             "connection_bindings",
             "connection_generation_retention",
-            "draft_safe_connection_grants",
         ] {
             assert!(catalog.contains(&connection_table.to_string()));
         }
-        for authoring_table in [
+        // The project-authoring relations (`flow_drafts`, `validated_flow_drafts`,
+        // `draft_safe_connection_grants`, `authoring_command_audit`) left this
+        // file with wamn-0h0g.9.11.3 (805701ec) — `deploy/sql/control-portable-store.sql`
+        // owns them now and `control_portable_store` is their pin.
+        for retired_here in [
             "flow_drafts",
             "validated_flow_drafts",
+            "draft_safe_connection_grants",
             "authoring_command_audit",
         ] {
-            assert!(catalog.contains(&authoring_table.to_string()));
+            assert!(!catalog.contains(&retired_here.to_string()));
         }
         assert_eq!(
             catalog.len(),
@@ -5864,7 +5893,6 @@ CREATE INDEX event_registrations_by_entity
                 "effect_attempts_bulk_scope",
                 "run_queue_claimable",
                 "runs_event_root",
-                "runs_execution_bundle",
                 "runs_flow",
                 "runs_idempotency",
                 "runs_release",
@@ -5895,8 +5923,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            12,
-            "all twelve retained run-plane tables are at target"
+            7,
+            "all seven retained run-plane tables are at target"
         );
     }
 
@@ -6188,8 +6216,8 @@ CREATE INDEX event_registrations_by_entity
         for table in RETIRED_TEST_SET_REFERENCE_TABLES {
             legacy
                 .tables
-                .get_mut(table)
-                .expect("retained record table is observed")
+                .entry(table.to_string())
+                .or_default()
                 .insert(RETIRED_TEST_SET_REFERENCE_COLUMN.to_string());
         }
 
@@ -6242,7 +6270,7 @@ CREATE INDEX event_registrations_by_entity
             legacy
                 .tables
                 .get_mut(table)
-                .expect("retained record table is observed")
+                .expect("legacy table was inserted above")
                 .remove(RETIRED_TEST_SET_REFERENCE_COLUMN);
         }
         assert!(plan_run_plane(&schema("demo"), &legacy).is_noop());
@@ -6287,8 +6315,8 @@ CREATE INDEX event_registrations_by_entity
         let mut legacy = observation_at_record();
         legacy
             .catalog_columns
-            .get_mut("validated_flow_drafts")
-            .expect("record table exists")
+            .entry("validated_flow_drafts".to_string())
+            .or_default()
             .insert("suite_flow_version".to_string());
 
         let plan = plan_run_plane(&schema("demo"), &legacy);
@@ -6321,7 +6349,7 @@ CREATE INDEX event_registrations_by_entity
         legacy
             .catalog_columns
             .get_mut("validated_flow_drafts")
-            .expect("record table exists")
+            .expect("legacy table was inserted above")
             .remove("suite_flow_version");
         assert!(plan_run_plane(&schema("demo"), &legacy).is_noop());
     }
@@ -6483,15 +6511,20 @@ CREATE INDEX event_registrations_by_entity
 
     #[test]
     fn effective_indirect_or_owner_authority_never_plans_false_clean() {
+        // The project-authoring relations this once drifted (`flow_drafts`,
+        // `draft_safe_connection_grants`, `validated_flow_drafts`) left
+        // `AUTHORING_PRIVILEGE_SPECS` with wamn-0h0g.9.11.2 (38860fab). Each
+        // drift SHAPE — ownership, effective table privilege, effective column
+        // privilege — is re-pinned on a relation the reconciler still owns.
         let mut obs = observation_at_record();
         obs.authoring_table_owners.insert(
-            ("catalog".to_string(), "flow_drafts".to_string()),
+            ("catalog".to_string(), "flow_artifacts".to_string()),
             "wamn_app".to_string(),
         );
         obs.authoring_effective_table_privileges
             .entry((
                 "catalog".to_string(),
-                "draft_safe_connection_grants".to_string(),
+                "connection_bindings".to_string(),
                 "wamn_app".to_string(),
             ))
             .or_default()
@@ -6507,7 +6540,7 @@ CREATE INDEX event_registrations_by_entity
         obs.authoring_effective_column_privileges
             .entry((
                 "catalog".to_string(),
-                "validated_flow_drafts".to_string(),
+                "catalog_heads".to_string(),
                 "wamn_app".to_string(),
             ))
             .or_default()
@@ -6515,10 +6548,10 @@ CREATE INDEX event_registrations_by_entity
 
         let plan = plan_run_plane(&schema("demo"), &obs);
         for table in [
-            "flow_drafts",
-            "draft_safe_connection_grants",
+            "flow_artifacts",
+            "connection_bindings",
             "release_manifests",
-            "validated_flow_drafts",
+            "catalog_heads",
         ] {
             let repair = plan
                 .actions
@@ -6529,17 +6562,13 @@ CREATE INDEX event_registrations_by_entity
                 })
                 .expect("effective privilege drift is surfaced as an action");
             assert!(repair.sql.contains("has_table_privilege"));
+            assert!(repair.sql.contains("has_any_column_privilege"));
+            assert!(repair.sql.contains("relation.relowner"));
             assert!(
                 repair
                     .sql
                     .contains("authoring-effective-privilege-out-of-bounds")
             );
-            if table == "validated_flow_drafts" {
-                assert!(repair.sql.contains("has_any_column_privilege"));
-            }
-            if table == "flow_drafts" {
-                assert!(repair.sql.contains("relation.relowner"));
-            }
         }
     }
 
@@ -6674,17 +6703,22 @@ CREATE INDEX event_registrations_by_entity
         );
     }
 
+    /// Column-level authority ALONE — no direct grant, no table-level effective
+    /// privilege, no ownership — must still surface a repair. `demo.authoring_test_reports`
+    /// carried this proof until wamn-0h0g.9.11.2 (38860fab) removed it from
+    /// `AUTHORING_PRIVILEGE_SPECS`; `environment_policies` is the surviving
+    /// run-plane relation with a guest spec to hang it on.
     #[test]
-    fn guest_column_select_on_authoring_test_reports_never_plans_false_clean() {
+    fn guest_column_authority_alone_never_plans_false_clean() {
         let mut obs = observation_at_record();
         obs.authoring_effective_column_privileges
             .entry((
                 "demo".to_string(),
-                "authoring_test_reports".to_string(),
+                "environment_policies".to_string(),
                 "wamn_app".to_string(),
             ))
             .or_default()
-            .insert("SELECT".to_string());
+            .insert("UPDATE".to_string());
 
         let plan = plan_run_plane(&schema("demo"), &obs);
         let repair = plan
@@ -6692,15 +6726,21 @@ CREATE INDEX event_registrations_by_entity
             .iter()
             .find(|action| {
                 action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
-                    && action.target == "demo.authoring_test_reports"
+                    && action.target == "demo.environment_policies"
             })
-            .expect("column-level guest read authority must be surfaced");
+            .expect("column-level guest write authority must be surfaced");
         assert!(repair.sql.contains("DO $effective_acl$"));
         assert!(repair.sql.contains("pg_catalog.has_any_column_privilege"));
         assert!(
             repair
                 .sql
-                .contains("'wamn_app', '\"demo\".\"authoring_test_reports\"', 'SELECT'")
+                .contains("'wamn_app', '\"demo\".\"environment_policies\"', 'UPDATE'")
+        );
+        // Column authority alone must not trigger the direct-grant REVOKE arm.
+        assert!(
+            !repair.sql.contains("REVOKE ALL PRIVILEGES"),
+            "{}",
+            repair.sql
         );
         assert!(
             repair
@@ -7057,31 +7097,11 @@ CREATE INDEX event_registrations_by_entity
         assert!(!action.sql.contains("INSERT INTO "));
     }
 
-    #[test]
-    fn populated_current_ledgers_do_not_block_projection_only_cleanup() {
-        let mut obs = observation_at_record();
-        obs.tables
-            .get_mut("node_runs")
-            .expect("node table")
-            .insert("attempt_key".to_string());
-        obs.effect_ledger_rows = 3;
-
-        let plan = plan_run_plane(&schema("demo"), &obs);
-        let action = plan
-            .actions
-            .iter()
-            .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
-            .expect("projection cleanup action");
-        assert!(action.sql.contains("LOCK TABLE \"demo\".\"node_runs\""));
-        assert!(
-            !action
-                .sql
-                .contains("LOCK TABLE \"demo\".\"effect_attempts\"")
-        );
-        assert!(action.sql.contains("IF false THEN"));
-        assert!(action.sql.contains(r#"DROP COLUMN "attempt_key""#));
-        assert!(!action.sql.contains("ALTER TABLE \"demo\".effect_attempts"));
-    }
+    // `populated_current_ledgers_do_not_block_projection_only_cleanup` was
+    // retired here: its subject was the node-runs half of the effect-writer
+    // cutover, which wamn-0h0g.26.3.1 (204220e8) deleted along with the
+    // projection. An observed `node_runs` now plans one leading `RetireNodeRuns`
+    // and returns, so no effect-writer cutover can name it.
 
     #[test]
     fn dispatch_type_and_index_drift_is_replaced_by_empty_cutover() {
@@ -7156,21 +7176,12 @@ CREATE INDEX event_registrations_by_entity
         assert!(create_position < fk_position);
     }
 
-    #[test]
-    fn check_and_index_only_attempt_residue_still_retires() {
-        let mut obs = observation_at_record();
-        obs.checks.insert(
-            ("node_runs".to_string(), "node_runs_check3".to_string()),
-            "CHECK (true)".to_string(),
-        );
-
-        let action = plan_run_plane(&schema("demo"), &obs)
-            .actions
-            .into_iter()
-            .find(|action| action.kind == RunPlaneActionKind::DropExtraConstraint)
-            .expect("residual retired node check is dropped independently");
-        assert_eq!(action.target, "node_runs.node_runs_check3");
-    }
+    // `check_and_index_only_attempt_residue_still_retires` was retired here: the
+    // one surviving leg named a stray `node_runs` CHECK, and after
+    // wamn-0h0g.26.3.1 (204220e8) a CHECK on `node_runs` can only exist while the
+    // table does, which plans `RetireNodeRuns` and drops both together.
+    // `extra_record_check_is_removed_but_floor_check_is_untouched` keeps the
+    // independent-drop proof on a live record table.
 
     #[test]
     fn drifted_occurrence_key_is_replaced_by_frame_identity_cutover() {
@@ -7344,7 +7355,7 @@ CREATE INDEX event_registrations_by_entity
                 .actions
                 .iter()
                 .any(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover),
-            "current node_runs plus missing peer must not false-refuse: {:#?}",
+            "an absent peer must not false-refuse: {:#?}",
             plan.actions
         );
         assert!(plan.actions.iter().any(|action| {
@@ -7369,10 +7380,13 @@ CREATE INDEX event_registrations_by_entity
             clippy::type_complexity,
             reason = "the table-driven proof pairs each drift label with one noncapturing mutation"
         )]
-        let cases: [(&str, fn(&mut RunPlaneObservation)); 5] = [
+        // wamn-0h0g.26.3.1 (204220e8) retired the node-runs projection, so
+        // `effect_attempts` is the sole frame-identity target and every case
+        // below drifts it.
+        let cases: [(&str, fn(&mut RunPlaneObservation)); 4] = [
             ("wrong-type", |obs| {
                 obs.column_types.insert(
-                    ("node_runs".to_string(), "frame_id".to_string()),
+                    ("effect_attempts".to_string(), "frame_id".to_string()),
                     "integer".to_string(),
                 );
             }),
@@ -7382,26 +7396,16 @@ CREATE INDEX event_registrations_by_entity
                     "requirement_name".to_string(),
                 ));
             }),
-            ("wrong-node-pk", |obs| {
-                obs.indexes.insert(
-                    "node_runs_pkey".to_string(),
-                    "CREATE UNIQUE INDEX node_runs_pkey ON demo.node_runs USING btree (tenant_id, run_id, node_id, occurrence)".to_string(),
-                );
-            }),
             ("wrong-frame-check", |obs| {
                 obs.checks.insert(
                     (
-                        "node_runs".to_string(),
-                        "node_runs_frame_relation_check".to_string(),
+                        "effect_attempts".to_string(),
+                        "effect_attempts_frame_relation_check".to_string(),
                     ),
                     "CHECK (frame_id >= 0)".to_string(),
                 );
             }),
             ("legacy-node-id", |obs| {
-                obs.tables
-                    .get_mut("node_runs")
-                    .expect("node table")
-                    .insert("node_id".to_string());
                 obs.tables
                     .get_mut("effect_attempts")
                     .expect("attempt table")
@@ -7414,11 +7418,6 @@ CREATE INDEX event_registrations_by_entity
             mutate(&mut obs);
             let plan = plan_run_plane(&schema("demo"), &obs);
             let action = plan.actions.first().expect(case);
-            let node_target = matches!(
-                case,
-                "wrong-type" | "wrong-node-pk" | "wrong-frame-check" | "legacy-node-id"
-            );
-            let effect_target = matches!(case, "wrong-nullability" | "legacy-node-id");
             assert_eq!(
                 action.kind,
                 RunPlaneActionKind::FrameIdentityCutover,
@@ -7430,54 +7429,31 @@ CREATE INDEX event_registrations_by_entity
                 "{case}: {}",
                 action.sql
             );
-            assert_eq!(
-                action.sql.contains("LOCK TABLE \"demo\".node_runs"),
-                node_target,
-                "{case}: wrong node target: {}",
-                action.sql
-            );
-            assert_eq!(
+            assert!(
                 action.sql.contains("LOCK TABLE \"demo\".effect_attempts"),
-                effect_target,
                 "{case}: wrong effect target: {}",
                 action.sql
             );
-            assert_eq!(
-                action
-                    .sql
-                    .contains("ADD CONSTRAINT node_runs_frame_relation_check"),
-                node_target,
-                "{case}: wrong node repair: {}",
-                action.sql
-            );
-            assert_eq!(
+            assert!(
                 action
                     .sql
                     .contains("ADD CONSTRAINT effect_attempts_source_artifact_check"),
-                effect_target,
                 "{case}: wrong effect repair: {}",
                 action.sql
             );
             assert!(!plan.actions.iter().any(|planned| {
                 planned.kind == RunPlaneActionKind::AddColumn
-                    && matches!(
-                        planned.target.as_str(),
-                        "node_runs.frame_id" | "effect_attempts.requirement_name"
-                    )
+                    && planned.target == "effect_attempts.requirement_name"
             }));
             assert!(!plan.actions.iter().any(|planned| {
                 planned.kind == RunPlaneActionKind::RepairConstraint
-                    && matches!(
-                        planned.target.as_str(),
-                        "node_runs.node_runs_frame_relation_check"
-                            | "effect_attempts.effect_attempts_source_artifact_check"
-                    )
+                    && planned.target == "effect_attempts.effect_attempts_source_artifact_check"
             }));
             assert!(
-                !plan.extra_columns.iter().any(|(table, column)| matches!(
-                    table.as_str(),
-                    "node_runs" | "effect_attempts"
-                ) && column == "node_id"),
+                !plan
+                    .extra_columns
+                    .iter()
+                    .any(|(table, column)| table == "effect_attempts" && column == "node_id"),
                 "{case}: legacy node_id should be cutover-owned, not surfaced"
             );
         }
@@ -7896,35 +7872,11 @@ CREATE INDEX event_registrations_by_entity
         }));
     }
 
-    #[test]
-    fn cancelled_node_error_check_is_repaired() {
-        let mut obs = observation_at_record();
-        obs.checks.insert(
-            (
-                "node_runs".to_string(),
-                "node_runs_error_kind_check".to_string(),
-            ),
-            "CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text, 'cancelled'::text]))"
-                .to_string(),
-        );
-
-        let plan = plan_run_plane(&schema("demo"), &obs);
-        let repairs = plan
-            .actions
-            .iter()
-            .filter(|action| action.kind == RunPlaneActionKind::RepairConstraint)
-            .collect::<Vec<_>>();
-        assert_eq!(repairs.len(), 1, "only the node error CHECK: {repairs:#?}");
-        let repair = repairs[0];
-        assert_eq!(repair.target, "node_runs.node_runs_error_kind_check");
-        assert!(
-            repair
-                .sql
-                .contains("DROP CONSTRAINT \"node_runs_error_kind_check\"")
-        );
-        assert!(repair.sql.contains("'invalid-input'::text"));
-        assert!(!repair.sql.contains("'cancelled'::text"));
-    }
+    // `cancelled_node_error_check_is_repaired` was retired here: its subject was
+    // the `node_runs_error_kind_check` spec, which wamn-0h0g.26.3.1 (204220e8)
+    // deleted from `CHECK_SPECS` with the projection it constrained.
+    // `drifted_and_missing_checks_plan_exact_repairs` above keeps the
+    // drop-then-add repair proof on live record checks.
 
     /// The separate test-set store is gone: a draft's own `cases` are the only
     /// test source, so no relation, privilege, helper, or FK may name one.
@@ -8015,7 +7967,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            9
+            8
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairHelperFunction
@@ -8074,12 +8026,8 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
                 .count(),
-            21
+            12
         );
-        assert!(plan.actions.iter().any(|action| {
-            action.kind == RunPlaneActionKind::RepairTrigger
-                && action.target == "authoring_test_reports.authoring_test_reports_delete_immutable"
-        }));
     }
 
     #[test]
@@ -8348,7 +8296,10 @@ CREATE INDEX event_registrations_by_entity
         assert!(!out.contains("IF NOT EXISTS wamn_run"));
         // The prose mention of the wamn_run_store crate must survive verbatim.
         assert!(rewrite_schema(RUN_STATE_SQL, &schema).contains("wamn_run_store"));
-        assert!(rewrite_schema(RUN_STATE_SQL, &schema).contains("CREATE TABLE poc_f1.node_runs"));
+        assert!(
+            rewrite_schema(RUN_STATE_SQL, &schema)
+                .contains("CREATE TABLE poc_f1.operator_run_actions")
+        );
         assert!(
             !rewrite_schema(RUN_STATE_SQL, &schema)
                 .contains("SET search_path = pg_catalog, wamn_run")
@@ -8460,24 +8411,24 @@ CREATE INDEX event_registrations_by_entity
         let writer_columns = select_effect_writer_run_column_privileges_sql();
         assert!(writer_columns.contains("has_column_privilege"));
         assert!(writer_columns.contains("attribute.attnum > 0"));
-        assert!(select_authoring_table_privileges_sql().contains("draft_safe_connection_grants"));
         assert!(!select_authoring_table_privileges_sql().contains("authoring_report_reservations"));
-        // Every observation query must see the ledger, or the planner reads an
-        // empty privilege set and plans a repair that can never converge.
+        // Every observation query must see every relation the privilege
+        // reconciler owns, or the planner reads an empty privilege set and plans
+        // a repair that can never converge. Driven off the spec so a table added
+        // to the reconciler and forgotten in an observation fails here.
         for observation in [
             select_authoring_table_privileges_sql(),
             select_authoring_effective_table_privileges_sql(),
             select_authoring_effective_column_privileges_sql(),
             select_authoring_table_owners_sql(),
         ] {
-            assert!(
-                observation.contains("authoring_command_audit"),
-                "{observation}"
-            );
-            assert!(
-                observation.contains("authoring_test_reports"),
-                "{observation}"
-            );
+            for spec in AUTHORING_PRIVILEGE_SPECS {
+                assert!(
+                    observation.contains(spec.table),
+                    "{}: {observation}",
+                    spec.table
+                );
+            }
         }
         assert!(select_authoring_effective_table_privileges_sql().contains("has_table_privilege"));
         assert!(select_authoring_effective_table_privileges_sql().contains("release_manifests"));
@@ -8496,14 +8447,6 @@ CREATE INDEX event_registrations_by_entity
                 .contains("reject_immutable_authoring_report_change")
         );
         assert!(select_run_plane_helper_functions_sql().contains("guard_authoring_report_write"));
-        assert!(
-            select_run_plane_helper_functions_sql()
-                .contains("reject_immutable_authoring_test_orchestration_change")
-        );
-        assert!(
-            select_run_plane_helper_functions_sql()
-                .contains("guard_authoring_test_orchestration_write")
-        );
         assert!(
             select_run_plane_helper_functions_sql()
                 .contains("reject_immutable_operator_run_action_change")
