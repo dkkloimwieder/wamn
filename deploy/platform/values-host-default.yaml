@@ -146,6 +146,23 @@ runtime:
         # Absent, the plugin still links and returns connection-unavailable.
         - name: WAMN_EVT_NATS_URL
           value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+        # [wamn-0h0g.15.134] Belt and braces on per-run isolation. The fork
+        # clamps every component to InstancePolicy::Ephemeral at the single
+        # wire-decode point while this is set, whatever pool_size a manifest
+        # asks for (carried commit fc4d2b22,
+        # crates/wash-runtime/src/engine/instance_pool.rs:117-142). Reuse is
+        # already off three other ways — no manifest here sets poolSize, the
+        # fork decodes an absent/zero pool_size to Ephemeral, and
+        # tests/conformance/src/runtime_inventory.rs fails the build on a
+        # nonzero one — so this adds no behavior today. It makes the guarantee
+        # host-enforced rather than a manifest convention.
+        #
+        # Deliberately env-only, with no per-workload config: the point is that
+        # a manifest cannot override it. A hardening flag also fails closed, so
+        # a value that is set but unparseable disables pooling rather than
+        # silently allowing it — "true" is the parseable spelling of what that
+        # failure would do anyway.
+        - { name: WAMN_DISABLE_INSTANCE_POOLING, value: "true" }
       volumes:
         - name: registry-pull
           secret:
@@ -158,18 +175,30 @@ runtime:
         - name: registry-pull
           mountPath: /etc/wamn/registry
           readOnly: true
-      # [4.1b] Allow plain-HTTP OCI pulls so the host can pull locally-built
-      # component images from the in-cluster registry (deploy/platform/registry.yaml).
+      # [wamn-0h0g.15.155] Verify the in-cluster registry instead of dropping to
+      # plain HTTP. This replaces `extraArgs: [--allow-insecure-registries]`,
+      # which chart 2.7.0 argues against in exactly these terms (chart
+      # values.yaml:270-272): the flag "does not relax verification but replaces
+      # it: every registry drops to plain HTTP, so nothing is verified and
+      # credentials travel in the clear".
       #
-      # Chart 2.7.0 argues against this flag and offers `ociCaPaths` instead
-      # (chart values.yaml:258-273): the flag "does not relax verification but
-      # replaces it: every registry drops to plain HTTP, so nothing is verified
-      # and credentials travel in the clear". `ociCaPaths` is not usable while
-      # deploy/platform/registry.yaml serves plain HTTP with no certificate at
-      # all, so the flag stays and moving the in-cluster registry to TLS is
-      # tracked separately.
-      extraArgs:
-        - "--allow-insecure-registries"
+      # No bundle has to be distributed for this. The chart already mounts its
+      # own CA at /runtime-cert/ca.crt whenever `global.tls.enabled` — which is
+      # on here, since only `certificates.generate` is switched off — and the
+      # chart concatenates these entries onto the chart-wide `runtime.ociCaPaths`
+      # to render one `--oci-ca-path=` per path
+      # (templates/runtime/deployment.yaml:189-190).
+      #
+      # *** NOT ROLLABLE ON ITS OWN. *** Two things must be true first, and only
+      # one of them is:
+      #   * the host binary must accept `--oci-ca-path`, or every host Pod
+      #     crashloops on an unknown argument. DONE — services/host/src/host.rs
+      #     gained it in the commit immediately before this one;
+      #   * deploy/platform/registry.yaml must serve TLS from the same
+      #     `wasmcloud-ca`. NOT DONE — it still serves plain HTTP, so every pull
+      #     fails until wamn-0h0g.15.155 leg B lands. Apply that first.
+      ociCaPaths:
+        - "/runtime-cert/ca.crt"
       resources:
         requests:
           memory: "256Mi"

@@ -80,7 +80,16 @@ spec:
             - { name: WAMN_READINESS_BIND, value: "0.0.0.0:8089" }
           args:
             - --log-level=info
-            - --allow-insecure-registries
+            # [wamn-0h0g.15.155] Verify the in-cluster registry instead of
+            # dropping to plain HTTP, replacing --allow-insecure-registries.
+            # Unlike the host tier this Deployment is hand-written, not rendered
+            # by the runtime-operator chart, so nothing mounts /runtime-cert
+            # here and the CA is mounted explicitly below.
+            #
+            # *** NOT ROLLABLE UNTIL deploy/platform/registry.yaml SERVES TLS
+            # *** from this same CA (wamn-0h0g.15.155 leg B). It still serves
+            # plain HTTP, so pulls fail until that lands. Apply it first.
+            - --oci-ca-path=/etc/wamn/registry-ca/ca.crt
           ports:
             - name: readiness
               containerPort: 8089
@@ -101,6 +110,9 @@ spec:
             - name: registry-pull
               mountPath: /etc/wamn/registry
               readOnly: true
+            - name: registry-ca
+              mountPath: /etc/wamn/registry-ca
+              readOnly: true
           resources:
             requests: { cpu: "100m", memory: "256Mi" }
             limits: { memory: "4Gi" }
@@ -116,6 +128,18 @@ spec:
             items:
               - key: .dockerconfigjson
                 path: config.json
+        # The chart's own CA, which the operator release writes into this
+        # namespace as a `kubernetes.io/tls` Secret holding `tls.crt` and
+        # `tls.key` (charts/runtime-operator/templates/certificates.yaml:84-93).
+        # `items` projects the certificate ALONE: this pod needs the trust root
+        # to verify the registry, and must never hold the CA's private key.
+        - name: registry-ca
+          secret:
+            secretName: wasmcloud-ca
+            optional: false
+            items:
+              - key: tls.crt
+                path: ca.crt
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
