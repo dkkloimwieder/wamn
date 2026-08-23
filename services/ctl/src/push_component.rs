@@ -19,8 +19,7 @@ use tokio_postgres::{Client as PgClient, Config as PgConfig, NoTls};
 use wamn_catalog::{AdmittedComponent, ComponentDeclaration};
 use wamn_runtime::component_admission::validate_component_admission;
 use wamn_runtime::component_artifact::{
-    COMPONENT_CONFIG_MEDIA_TYPE, COMPONENT_LAYER_MEDIA_TYPE, component_artifact_config_bytes,
-    component_artifact_reference,
+    component_artifact_config_bytes, component_artifact_layout, component_artifact_reference,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -165,17 +164,7 @@ async fn publish_and_verify(
         credentials.username().to_owned(),
         credentials.password().to_owned(),
     );
-    let layer = ImageLayer::new(
-        component_bytes.to_vec(),
-        COMPONENT_LAYER_MEDIA_TYPE.to_owned(),
-        None,
-    );
-    let config = Config::new(
-        config_bytes.to_vec(),
-        COMPONENT_CONFIG_MEDIA_TYPE.to_owned(),
-        None,
-    );
-    let manifest = OciImageManifest::build(std::slice::from_ref(&layer), &config, None);
+    let (layer, config, manifest) = artifact_layout(component_bytes, config_bytes);
 
     client
         .push(
@@ -200,6 +189,25 @@ async fn publish_and_verify(
         .await
         .with_context(|| format!("verify published component artifact {reference}"))?;
     Ok(())
+}
+
+fn artifact_layout(
+    component_bytes: &[u8],
+    config_bytes: &[u8],
+) -> (ImageLayer, Config, OciImageManifest) {
+    let layout = component_artifact_layout(component_bytes, config_bytes);
+    let layer = ImageLayer::new(
+        layout.component_bytes().to_vec(),
+        layout.layer_media_type().to_owned(),
+        None,
+    );
+    let config = Config::new(
+        layout.config_bytes().to_vec(),
+        layout.config_media_type().to_owned(),
+        None,
+    );
+    let manifest = OciImageManifest::build(std::slice::from_ref(&layer), &config, None);
+    (layer, config, manifest)
 }
 
 async fn persist_admitted_component(
@@ -311,6 +319,57 @@ mod tests {
         assert_eq!(
             CLAIM_TENANT_SQL,
             "SELECT set_config('app.tenant', $1, true)"
+        );
+    }
+
+    #[test]
+    fn production_publisher_layout_matches_the_puller_contract() {
+        let component_bytes = b"component-bytes";
+        let config_bytes = b"config-bytes";
+        let expected = component_artifact_layout(component_bytes, config_bytes);
+        let (layer, config, manifest) = artifact_layout(component_bytes, config_bytes);
+        let digest = wamn_runtime::component_admission::component_digest(component_bytes);
+        let reference = component_artifact_reference("registry.example/wamn/components", &digest)
+            .expect("shared digest reference derives");
+
+        assert_eq!(
+            expected.layer_media_type(),
+            "application/vnd.wamn.component.v1+wasm"
+        );
+        assert_eq!(
+            expected.config_media_type(),
+            "application/vnd.wamn.component.config.v1+json"
+        );
+        assert_eq!(expected.manifest_schema_version(), 2);
+        assert_eq!(expected.layer_count(), 1);
+        assert_eq!(reference.tag(), digest.trim_start_matches("sha256:"));
+        assert_eq!(
+            reference.to_string(),
+            format!("registry.example/wamn/components:{}", reference.tag())
+        );
+        assert_eq!(&layer.data[..], expected.component_bytes());
+        assert_eq!(layer.media_type, expected.layer_media_type());
+        assert_eq!(&config.data[..], expected.config_bytes());
+        assert_eq!(config.media_type, expected.config_media_type());
+        assert_eq!(manifest.schema_version, expected.manifest_schema_version());
+        assert_eq!(manifest.layers.len(), expected.layer_count());
+        assert_eq!(manifest.layers[0].media_type, expected.layer_media_type());
+        assert_eq!(
+            manifest.layers[0].digest,
+            wamn_runtime::component_admission::component_digest(component_bytes)
+        );
+        assert_eq!(
+            manifest.layers[0].size,
+            i64::try_from(component_bytes.len()).expect("fixture size fits")
+        );
+        assert_eq!(manifest.config.media_type, expected.config_media_type());
+        assert_eq!(
+            manifest.config.digest,
+            wamn_runtime::component_admission::component_digest(config_bytes)
+        );
+        assert_eq!(
+            manifest.config.size,
+            i64::try_from(config_bytes.len()).expect("fixture size fits")
         );
     }
 

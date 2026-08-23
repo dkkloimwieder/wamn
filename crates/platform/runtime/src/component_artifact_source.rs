@@ -18,9 +18,8 @@ use wamn_catalog::AdmittedComponent;
 
 use crate::component_admission::component_digest;
 use crate::component_artifact::{
-    COMPONENT_CONFIG_MEDIA_TYPE, COMPONENT_LAYER_MEDIA_TYPE, ComponentArtifactBase,
-    ComponentArtifactReferenceError, component_artifact_config_bytes,
-    parse_component_artifact_base,
+    ComponentArtifactBase, ComponentArtifactReferenceError, component_artifact_config_bytes,
+    component_artifact_layout, parse_component_artifact_base,
 };
 use crate::registry_credentials::{
     RegistryCredentials, RegistryCredentialsError, read_registry_credentials,
@@ -313,14 +312,15 @@ fn verify_manifest<'a>(
     reference: &str,
 ) -> Result<VerifiedManifest<'a>, ComponentArtifactFetchError> {
     let refuse = |literal| ComponentArtifactFetchError::mismatched(reference, literal);
-    if manifest.schema_version != 2 {
+    let expected_layout = component_artifact_layout(&[], &[]);
+    if manifest.schema_version != expected_layout.manifest_schema_version() {
         return Err(refuse("component-artifact-manifest-schema-mismatch"));
     }
-    if manifest.layers.len() != 1 {
+    if manifest.layers.len() != expected_layout.layer_count() {
         return Err(refuse("component-artifact-layer-cardinality-mismatch"));
     }
     let component = &manifest.layers[0];
-    if component.media_type != COMPONENT_LAYER_MEDIA_TYPE {
+    if component.media_type != expected_layout.layer_media_type() {
         return Err(refuse("component-artifact-layer-media-type-mismatch"));
     }
     if component.digest != expected_component_digest {
@@ -331,7 +331,7 @@ fn verify_manifest<'a>(
     }
 
     let config = &manifest.config;
-    if config.media_type != COMPONENT_CONFIG_MEDIA_TYPE {
+    if config.media_type != expected_layout.config_media_type() {
         return Err(refuse("component-artifact-config-media-type-mismatch"));
     }
     if config.digest != expected_config_digest {
@@ -451,15 +451,16 @@ mod tests {
 
     fn manifest(component: &AdmittedComponent, component_size: i64) -> OciImageManifest {
         let config = component_artifact_config_bytes(component);
+        let layout = component_artifact_layout(&[], &config);
         OciImageManifest {
-            schema_version: 2,
+            schema_version: layout.manifest_schema_version(),
             config: descriptor(
-                COMPONENT_CONFIG_MEDIA_TYPE,
+                layout.config_media_type(),
                 &component_digest(&config),
                 i64::try_from(config.len()).expect("fixture config size fits"),
             ),
             layers: vec![descriptor(
-                COMPONENT_LAYER_MEDIA_TYPE,
+                layout.layer_media_type(),
                 &component.component_digest,
                 component_size,
             )],

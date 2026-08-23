@@ -17,6 +17,60 @@ pub const COMPONENT_CONFIG_MEDIA_TYPE: &str = "application/vnd.wamn.component.co
 /// Format version of [`ComponentArtifactConfig`].
 pub const COMPONENT_CONFIG_FORMAT_VERSION: &str = "0.1";
 
+/// Exact publisher/puller layout for one component artifact.
+///
+/// The layout owns no OCI-client types so callers cannot accidentally fork the
+/// wire contract through an upstream constructor. The publisher translates
+/// these facts into OCI descriptors; the puller verifies those same facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentArtifactLayout<'a> {
+    component_bytes: &'a [u8],
+    config_bytes: &'a [u8],
+}
+
+impl<'a> ComponentArtifactLayout<'a> {
+    /// Exact component bytes carried by the artifact's sole layer.
+    pub const fn component_bytes(&self) -> &'a [u8] {
+        self.component_bytes
+    }
+
+    /// Exact canonical admission-fact bytes carried by the config descriptor.
+    pub const fn config_bytes(&self) -> &'a [u8] {
+        self.config_bytes
+    }
+
+    /// OCI image-manifest schema version accepted by both transfer directions.
+    pub const fn manifest_schema_version(&self) -> u8 {
+        2
+    }
+
+    /// Exact number of component layers accepted by both transfer directions.
+    pub const fn layer_count(&self) -> usize {
+        1
+    }
+
+    /// Media type of the sole component layer.
+    pub const fn layer_media_type(&self) -> &'static str {
+        COMPONENT_LAYER_MEDIA_TYPE
+    }
+
+    /// Media type of the canonical admission-fact config.
+    pub const fn config_media_type(&self) -> &'static str {
+        COMPONENT_CONFIG_MEDIA_TYPE
+    }
+}
+
+/// Bind exact component and config bytes to the shared OCI layout contract.
+pub const fn component_artifact_layout<'a>(
+    component_bytes: &'a [u8],
+    config_bytes: &'a [u8],
+) -> ComponentArtifactLayout<'a> {
+    ComponentArtifactLayout {
+        component_bytes,
+        config_bytes,
+    }
+}
+
 /// Byte-derived admission facts carried beside the component layer.
 ///
 /// Catalog scope, names, operations, and typed declarations deliberately stay
@@ -269,6 +323,7 @@ mod tests {
 
     #[test]
     fn component_artifact_wire_literals_are_pinned() {
+        let layout = component_artifact_layout(b"component", b"config");
         assert_eq!(
             COMPONENT_LAYER_MEDIA_TYPE,
             "application/vnd.wamn.component.v1+wasm"
@@ -277,6 +332,12 @@ mod tests {
             COMPONENT_CONFIG_MEDIA_TYPE,
             "application/vnd.wamn.component.config.v1+json"
         );
+        assert_eq!(layout.manifest_schema_version(), 2);
+        assert_eq!(layout.layer_count(), 1);
+        assert_eq!(layout.component_bytes(), b"component");
+        assert_eq!(layout.config_bytes(), b"config");
+        assert_eq!(layout.layer_media_type(), COMPONENT_LAYER_MEDIA_TYPE);
+        assert_eq!(layout.config_media_type(), COMPONENT_CONFIG_MEDIA_TYPE);
     }
 
     #[test]
