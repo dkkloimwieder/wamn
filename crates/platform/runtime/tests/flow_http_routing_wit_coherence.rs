@@ -147,7 +147,7 @@ fn route_definition_carries_exactly_the_fields_the_host_fills_and_the_guest_read
 }
 
 #[test]
-fn the_two_bound_functions_and_the_refusal_shape_are_unchanged() {
+fn the_three_bound_functions_and_the_refusal_shape_are_unchanged() {
     const AUTH_REJECTION: &str = r#"status: u16,
     code: string,"#;
 
@@ -162,6 +162,9 @@ fn the_two_bound_functions_and_the_refusal_shape_are_unchanged() {
             // signature that reached for the attachment itself would let the
             // guest choose its own policy.
             "authenticate: func(policy: string, headers: list<header>) -> result<string, auth-rejection>;",
+            // None is capacity exhaustion, while a provider refusal remains a
+            // distinct error and cannot be misreported as 429.
+            "try-acquire: func(attachment-id: string) -> result<option<route-permit>, string>;",
         ] {
             assert!(
                 copy.contains(signature),
@@ -169,7 +172,9 @@ fn the_two_bound_functions_and_the_refusal_shape_are_unchanged() {
             );
         }
         assert_eq!(item_body(copy, "record auth-rejection {"), AUTH_REJECTION);
+        assert!(copy.contains("resource route-permit {}"));
     }
+    assert!(PLUGIN.contains("impl routing::HostRoutePermit for ActiveCtx<'_>"));
 }
 
 #[test]
@@ -255,5 +260,5 @@ fn both_worlds_import_the_routing_interface_and_the_production_host_links_it() {
     assert_eq!(HTTP_WORLD.matches(IMPORT).count(), 1);
 
     // The production host links the plugin for the flow-http workload.
-    assert!(HOST.contains("FlowHttpRouting::new(release.clone())"));
+    assert!(HOST.contains("FlowHttpRouting::from_env(release.clone())"));
 }

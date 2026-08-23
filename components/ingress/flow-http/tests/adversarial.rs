@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::{Value, json};
 
@@ -12,7 +14,16 @@ use flow_http::{
 enum Fault {
     None,
     Routes,
+    Permit,
     Deliver,
+}
+
+struct TestPermit(Arc<AtomicUsize>);
+
+impl Drop for TestPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 struct FakeBackend {
@@ -23,6 +34,9 @@ struct FakeBackend {
     auth_policies: Vec<String>,
     deliveries: Vec<DeliveryRequest>,
     next_delivery_id: u64,
+    permit_available: bool,
+    permits: Arc<AtomicUsize>,
+    acquired_routes: Vec<String>,
 }
 
 impl FakeBackend {
@@ -35,11 +49,16 @@ impl FakeBackend {
             auth_policies: Vec::new(),
             deliveries: Vec::new(),
             next_delivery_id: 1,
+            permit_available: true,
+            permits: Arc::new(AtomicUsize::new(0)),
+            acquired_routes: Vec::new(),
         }
     }
 }
 
 impl Backend for FakeBackend {
+    type RoutePermit = TestPermit;
+
     fn routes(
         &mut self,
         _method: &str,
@@ -53,6 +72,21 @@ impl Backend for FakeBackend {
     fn authenticate(&mut self, policy: &str, _headers: &[Header]) -> Result<String, AuthRejection> {
         self.auth_policies.push(policy.to_string());
         self.auth.clone()
+    }
+
+    fn try_acquire_route(
+        &mut self,
+        attachment_id: &str,
+    ) -> Result<Option<Self::RoutePermit>, ProviderError> {
+        self.acquired_routes.push(attachment_id.to_string());
+        if self.fault == Fault::Permit {
+            return Err(ProviderError);
+        }
+        if !self.permit_available {
+            return Ok(None);
+        }
+        self.permits.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(TestPermit(Arc::clone(&self.permits))))
     }
 
     fn new_delivery_id(&mut self) -> String {
@@ -262,6 +296,34 @@ fn identical_requests_receive_distinct_delivery_ids() {
 }
 
 #[test]
+fn saturated_selected_route_sheds_immediately_without_delivery() {
+    let mut backend = FakeBackend::new(route());
+    backend.permit_available = false;
+
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+
+    assert_eq!(output.status, 429);
+    assert_eq!(error_code(&output.body), "route-capacity-exhausted");
+    assert_eq!(backend.acquired_routes, ["attachment-a"]);
+    assert!(backend.deliveries.is_empty());
+    assert_eq!(
+        backend.next_delivery_id, 1,
+        "shed work mints no delivery id"
+    );
+}
+
+#[test]
+fn route_permit_is_released_after_a_typed_delivery_error() {
+    let mut backend = FakeBackend::new(route());
+    backend.delivery = Err(DeliveryError::ExecutionFailed);
+
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+
+    assert_eq!(output.status, 503);
+    assert_eq!(backend.permits.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn route_precedence_is_static_then_parameter_then_catch_all() {
     let mut static_route = route();
     static_route.path = "/receipts/special".to_string();
@@ -451,19 +513,16 @@ fn every_bridge_refusal_has_a_bounded_http_answer() {
 
 #[test]
 fn provider_and_body_faults_are_bounded() {
-    for fault in [Fault::Routes, Fault::Deliver] {
+    for (fault, code) in [
+        (Fault::Routes, "routing-provider-failed"),
+        (Fault::Permit, "route-limit-provider-failed"),
+        (Fault::Deliver, "execution-failed"),
+    ] {
         let mut backend = FakeBackend::new(route());
         backend.fault = fault;
         let output = request(&mut backend, &head(), br#"{"amount":1}"#);
         assert_eq!(output.status, 503);
-        assert_eq!(
-            error_code(&output.body),
-            if fault == Fault::Routes {
-                "routing-provider-failed"
-            } else {
-                "execution-failed"
-            }
-        );
+        assert_eq!(error_code(&output.body), code);
     }
 
     let mut backend = FakeBackend::new(route());

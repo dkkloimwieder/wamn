@@ -355,7 +355,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // wamn-0h0g.15.96: READER 3 of the weld, and the first host-side
         // implementation of wamn:flow-http-routing. Routes come off the manifest's
         // attachment projection, so the serving path reads no project database.
-        .with_plugin(Arc::new(FlowHttpRouting::new(release.clone())))?;
+        .with_plugin(Arc::new(
+            FlowHttpRouting::from_env(release.clone())
+                .context("wamn:flow-http-routing plugin init")?,
+        ))?;
 
     if let (Some(driver), Some(release)) = (&router_driver, &release) {
         builder = builder.with_plugin(Arc::new(RouterDeliveryBridge::new(

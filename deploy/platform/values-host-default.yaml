@@ -130,6 +130,8 @@ runtime:
         # Keep 2/16 connections reserved so guest-held sessions cannot starve host-owned work.
         - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
         - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
+        # Per-host, per-route inline execution ceiling; excess requests shed with 429.
+        - { name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT, value: "64" }
         # [l5i9.17] The data-plane (event-plane) NATS for the wamn:jetstream
         # plugin — the materializer Service workload's stream/doorbell path.
         # Absent, the plugin still links and returns connection-unavailable.

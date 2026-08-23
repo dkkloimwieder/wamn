@@ -1,14 +1,13 @@
-# Callable-flow HTTP ingress. This component owns only transport adaptation:
-# authoritative route/auth lookup and the versioned invocation provider remain
-# host capabilities. It imports no PostgreSQL, graph, or run-queue interface.
+# HTTP ingress. This component owns only transport adaptation: authoritative
+# route/auth lookup and inline router delivery remain host capabilities. It
+# imports no PostgreSQL, graph, or run-queue interface.
 #
 # Push the locked build artifact before applying:
 #   wash push localhost:5000/wamn/flow-http:dev /bench/flow-http.wasm \
 #     --insecure --allow-latest
 #
 # The host group must supply wamn:flow-http-routing@0.1.0 and
-# wamn:flow-invocation@0.1.0. The latter is implemented by the production
-# invocation service; neither capability grants direct run-state SQL.
+# wamn:router-delivery@0.1.0. Neither capability grants direct run-state SQL.
 ---
 apiVersion: v1
 kind: Service
@@ -64,9 +63,9 @@ spec:
           version: "0.1.0"
           interfaces: [routing]
         - namespace: wamn
-          package: flow-invocation
+          package: router-delivery
           version: "0.1.0"
-          interfaces: [invocation]
+          interfaces: [delivery]
       components:
         - name: flow-http
           image: registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev

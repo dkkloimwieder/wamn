@@ -16,14 +16,18 @@
 //! in charge, never with a guess; each is justified at its own field in
 //! [`route_definition`].
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::num::NonZeroUsize;
+use std::str::FromStr;
 use std::sync::Arc;
 
+use opentelemetry::KeyValue;
 use serde_json::Value;
 use wamn_catalog::{AttachmentKind, ServingAttachment, ServingManifest};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+use wash_runtime::wasmtime::component::Resource;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::release_manifest::ReleaseManifestWeld;
@@ -32,6 +36,9 @@ mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         world: "flow-http-routing-plugin",
         imports: { default: async | trappable | tracing },
+        with: {
+            "wamn:flow-http-routing/routing.route-permit": super::RoutePermit,
+        },
         wasmtime_crate: wash_runtime::wasmtime,
     });
 }
@@ -41,6 +48,178 @@ use bindings::wamn::flow_http_routing::routing::{
 };
 
 pub const FLOW_HTTP_ROUTING_ID: &str = "wamn-flow-http-routing";
+
+/// Per-route concurrency supplied to every host unless its chart overrides it.
+pub const DEFAULT_HTTP_ROUTE_IN_FLIGHT_LIMIT: usize = 64;
+
+/// Host environment key rendered by the platform chart.
+pub const HTTP_ROUTE_IN_FLIGHT_LIMIT_ENV: &str = "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT";
+
+const UNKNOWN_ROUTE_REFUSAL: &str = "http-route-not-in-release";
+const ROUTE_LABEL: &str = "wamn.attachment.id";
+
+/// A non-zero per-route concurrency ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteInFlightLimit(NonZeroUsize);
+
+impl RouteInFlightLimit {
+    fn get(self) -> usize {
+        self.0.get()
+    }
+}
+
+impl Default for RouteInFlightLimit {
+    fn default() -> Self {
+        Self(
+            NonZeroUsize::new(DEFAULT_HTTP_ROUTE_IN_FLIGHT_LIMIT)
+                .expect("the default HTTP route limit is non-zero"),
+        )
+    }
+}
+
+impl std::fmt::Display for RouteInFlightLimit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(formatter)
+    }
+}
+
+impl FromStr for RouteInFlightLimit {
+    type Err = InvalidRouteInFlightLimit;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        value
+            .parse::<NonZeroUsize>()
+            .map(Self)
+            .map_err(|_| InvalidRouteInFlightLimit)
+    }
+}
+
+/// The configured host route limit is zero, non-Unicode, or not a positive integer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidRouteInFlightLimit;
+
+impl std::fmt::Display for InvalidRouteInFlightLimit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("HTTP route in-flight limit must be a non-zero integer")
+    }
+}
+
+impl std::error::Error for InvalidRouteInFlightLimit {}
+
+#[derive(Debug, Default)]
+struct RouteState {
+    in_flight: usize,
+    shed: u64,
+}
+
+#[derive(Debug)]
+struct RouteLimiter {
+    limit: RouteInFlightLimit,
+    routes: std::sync::Mutex<HashMap<String, RouteState>>,
+}
+
+impl RouteLimiter {
+    fn new(limit: RouteInFlightLimit) -> Arc<Self> {
+        let limiter = Arc::new(Self {
+            limit,
+            routes: std::sync::Mutex::new(HashMap::new()),
+        });
+        Self::register_metrics(&limiter);
+        limiter
+    }
+
+    fn register_metrics(limiter: &Arc<Self>) {
+        let meter = opentelemetry::global::meter("wamn-flow-http");
+
+        let weak = Arc::downgrade(limiter);
+        let _ = meter
+            .u64_observable_gauge("wamn.http.route.in_flight")
+            .with_description("inline HTTP router deliveries currently in flight per attachment")
+            .with_callback(move |observer| {
+                let Some(limiter) = weak.upgrade() else {
+                    return;
+                };
+                if let Ok(routes) = limiter.routes.lock() {
+                    for (route, state) in routes.iter() {
+                        observer.observe(
+                            state.in_flight as u64,
+                            &[KeyValue::new(ROUTE_LABEL, route.clone())],
+                        );
+                    }
+                }
+            })
+            .build();
+
+        let weak = Arc::downgrade(limiter);
+        let _ = meter
+            .u64_observable_counter("wamn.http.route.shed")
+            .with_description("inline HTTP requests refused because their route was at capacity")
+            .with_callback(move |observer| {
+                let Some(limiter) = weak.upgrade() else {
+                    return;
+                };
+                if let Ok(routes) = limiter.routes.lock() {
+                    for (route, state) in routes.iter() {
+                        observer.observe(state.shed, &[KeyValue::new(ROUTE_LABEL, route.clone())]);
+                    }
+                }
+            })
+            .build();
+    }
+
+    fn try_acquire(self: &Arc<Self>, route: &str) -> Option<RoutePermit> {
+        let mut routes = self
+            .routes
+            .lock()
+            .expect("HTTP route limiter lock is not poisoned");
+        let state = routes.entry(route.to_string()).or_default();
+        if state.in_flight >= self.limit.get() {
+            state.shed = state.shed.saturating_add(1);
+            return None;
+        }
+        state.in_flight += 1;
+        Some(RoutePermit {
+            route: route.to_string(),
+            limiter: Arc::clone(self),
+        })
+    }
+
+    fn finish(&self, route: &str) {
+        let mut routes = self
+            .routes
+            .lock()
+            .expect("HTTP route limiter lock is not poisoned");
+        let state = routes
+            .get_mut(route)
+            .expect("a route permit belongs to a recorded route");
+        state.in_flight = state
+            .in_flight
+            .checked_sub(1)
+            .expect("a route permit releases exactly once");
+    }
+
+    #[cfg(test)]
+    fn snapshot(&self, route: &str) -> Option<(usize, u64)> {
+        let routes = self
+            .routes
+            .lock()
+            .expect("HTTP route limiter lock is not poisoned");
+        routes.get(route).map(|state| (state.in_flight, state.shed))
+    }
+}
+
+/// One admitted route slot. Dropping it is the only release operation.
+#[derive(Debug)]
+pub struct RoutePermit {
+    route: String,
+    limiter: Arc<RouteLimiter>,
+}
+
+impl Drop for RoutePermit {
+    fn drop(&mut self) {
+        self.limiter.finish(&self.route);
+    }
+}
 
 /// The authored spelling for "any authority", normalized by the exposure
 /// resolver and matched verbatim by the adapter.
@@ -91,6 +270,7 @@ pub struct FlowHttpRouting {
     /// made where it is visible, at the construction site in
     /// `services/host/src/host.rs`, not here behind an `Option`.
     release: Option<Arc<ReleaseManifestWeld>>,
+    limiter: Arc<RouteLimiter>,
 }
 
 /// Hand-written so a debug print names the release rather than dumping the whole
@@ -103,19 +283,47 @@ impl std::fmt::Debug for FlowHttpRouting {
                 "release",
                 &self.release.as_deref().map(|weld| weld.release()),
             )
+            .field("route_in_flight_limit", &self.limiter.limit)
             .finish_non_exhaustive()
     }
 }
 
 impl FlowHttpRouting {
-    /// Bind this plugin to the release the process already loaded.
-    pub fn new(release: Option<Arc<ReleaseManifestWeld>>) -> Self {
-        Self { release }
+    /// Bind this plugin to the release and per-route host ceiling.
+    pub fn new(
+        release: Option<Arc<ReleaseManifestWeld>>,
+        route_in_flight_limit: RouteInFlightLimit,
+    ) -> Self {
+        Self {
+            release,
+            limiter: RouteLimiter::new(route_in_flight_limit),
+        }
+    }
+
+    /// Read the chart-carried route ceiling, defaulting only when it is absent.
+    pub fn from_env(
+        release: Option<Arc<ReleaseManifestWeld>>,
+    ) -> Result<Self, InvalidRouteInFlightLimit> {
+        let limit = match std::env::var(HTTP_ROUTE_IN_FLIGHT_LIMIT_ENV) {
+            Ok(value) => value.parse()?,
+            Err(std::env::VarError::NotPresent) => RouteInFlightLimit::default(),
+            Err(std::env::VarError::NotUnicode(_)) => return Err(InvalidRouteInFlightLimit),
+        };
+        Ok(Self::new(release, limit))
     }
 
     fn routes(&self, method: &str, authority: &str) -> Result<Vec<RouteDefinition>, NoRelease> {
         let weld = self.release.as_ref().ok_or(NoRelease)?;
         Ok(route_definitions(weld.manifest(), method, authority))
+    }
+
+    fn carries_route(&self, attachment_id: &str) -> Result<bool, NoRelease> {
+        let weld = self.release.as_ref().ok_or(NoRelease)?;
+        Ok(weld
+            .manifest()
+            .attachments
+            .get(attachment_id)
+            .is_some_and(|attachment| carries_http_route(attachment.kind)))
     }
 }
 
@@ -314,6 +522,36 @@ impl routing::Host for ActiveCtx<'_> {
         _headers: Vec<Header>,
     ) -> wash_runtime::wasmtime::Result<Result<String, AuthRejection>> {
         Ok(authenticate_policy(&policy))
+    }
+
+    async fn try_acquire(
+        &mut self,
+        attachment_id: String,
+    ) -> wash_runtime::wasmtime::Result<Result<Option<Resource<RoutePermit>>, String>> {
+        let plugin = plugin_of(self)?;
+        match plugin.carries_route(&attachment_id) {
+            Ok(true) => {}
+            Ok(false) => return Ok(Err(UNKNOWN_ROUTE_REFUSAL.to_string())),
+            Err(error) => {
+                tracing::warn!(
+                    attachment_id,
+                    error = %error,
+                    "HTTP route permit refused without a serving release"
+                );
+                return Ok(Err(error.to_string()));
+            }
+        }
+        let Some(permit) = plugin.limiter.try_acquire(&attachment_id) else {
+            return Ok(Ok(None));
+        };
+        Ok(Ok(Some(self.table.push(permit)?)))
+    }
+}
+
+impl routing::HostRoutePermit for ActiveCtx<'_> {
+    async fn drop(&mut self, permit: Resource<RoutePermit>) -> wash_runtime::wasmtime::Result<()> {
+        self.table.delete(permit)?;
+        Ok(())
     }
 }
 
@@ -625,7 +863,7 @@ mod tests {
 
     #[test]
     fn a_process_without_a_release_refuses_instead_of_serving_an_empty_route_set() {
-        let plugin = FlowHttpRouting::new(None);
+        let plugin = FlowHttpRouting::new(None, RouteInFlightLimit::default());
 
         assert_eq!(
             plugin
@@ -638,7 +876,7 @@ mod tests {
     #[test]
     fn the_welded_manifest_is_the_only_source_the_plugin_reads() {
         let mount = Mount::holding(&one_http_route(), "welded");
-        let plugin = FlowHttpRouting::new(Some(mount.weld()));
+        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
 
         let served = plugin
             .routes("POST", "api.example.test")
@@ -668,5 +906,41 @@ mod tests {
             assert_eq!(rejection.status, UNSUPPORTED_POLICY_STATUS);
             assert_eq!(rejection.code, UNSUPPORTED_POLICY_CODE);
         }
+    }
+
+    #[test]
+    fn route_limit_is_nonzero_and_has_one_chart_default() {
+        assert_eq!(RouteInFlightLimit::default().get(), 64);
+        assert_eq!(
+            "2".parse::<RouteInFlightLimit>().map(|limit| limit.get()),
+            Ok(2)
+        );
+        for refused in ["", "0", "-1", "many"] {
+            assert_eq!(
+                refused.parse::<RouteInFlightLimit>(),
+                Err(InvalidRouteInFlightLimit)
+            );
+        }
+    }
+
+    #[test]
+    fn route_slots_are_independent_shed_without_queueing_and_release_on_drop() {
+        let limiter = RouteLimiter::new("2".parse().expect("fixture limit is valid"));
+        let first = limiter.try_acquire("orders").expect("first slot");
+        let second = limiter.try_acquire("orders").expect("second slot");
+        assert!(limiter.try_acquire("orders").is_none());
+        let other = limiter
+            .try_acquire("receipts")
+            .expect("another route has its own ceiling");
+
+        assert_eq!(limiter.snapshot("orders"), Some((2, 1)));
+        assert_eq!(limiter.snapshot("receipts"), Some((1, 0)));
+
+        drop(first);
+        assert_eq!(limiter.snapshot("orders"), Some((1, 1)));
+        drop(second);
+        drop(other);
+        assert_eq!(limiter.snapshot("orders"), Some((0, 1)));
+        assert_eq!(limiter.snapshot("receipts"), Some((0, 0)));
     }
 }

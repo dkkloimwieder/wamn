@@ -37,6 +37,8 @@ export!(Component);
 struct GuestBackend;
 
 impl Backend for GuestBackend {
+    type RoutePermit = wamn::flow_http_routing::routing::RoutePermit;
+
     fn routes(
         &mut self,
         method: &str,
@@ -61,6 +63,13 @@ impl Backend for GuestBackend {
                 code: rejection.code,
             }
         })
+    }
+
+    fn try_acquire_route(
+        &mut self,
+        attachment_id: &str,
+    ) -> Result<Option<Self::RoutePermit>, ProviderError> {
+        wamn::flow_http_routing::routing::try_acquire(attachment_id).map_err(|_| ProviderError)
     }
 
     fn new_delivery_id(&mut self) -> String {

@@ -203,12 +203,18 @@ pub trait BodyReader {
 /// Routing returns definitions, authentication applies the selected policy,
 /// and delivery crosses the single host-owned router bridge.
 pub trait Backend {
+    type RoutePermit;
+
     fn routes(
         &mut self,
         method: &str,
         authority: &str,
     ) -> Result<Vec<RouteDefinition>, ProviderError>;
     fn authenticate(&mut self, policy: &str, headers: &[Header]) -> Result<String, AuthRejection>;
+    fn try_acquire_route(
+        &mut self,
+        attachment_id: &str,
+    ) -> Result<Option<Self::RoutePermit>, ProviderError>;
     fn new_delivery_id(&mut self) -> String;
     fn deliver(&mut self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError>;
 }
@@ -276,11 +282,18 @@ fn try_handle(
         return Err(error_response(413, "mapped-payload-too-large"));
     }
 
+    let attachment_id = matched.definition.attachment_id;
+    let Some(_permit) = backend
+        .try_acquire_route(&attachment_id)
+        .map_err(|_| error_response(503, "route-limit-provider-failed"))?
+    else {
+        return Err(error_response(429, "route-capacity-exhausted"));
+    };
     let trace = trace_context(&head.headers);
     let delivery_id = backend.new_delivery_id();
     let outcome = backend
         .deliver(DeliveryRequest {
-            attachment_id: matched.definition.attachment_id,
+            attachment_id,
             delivery_id,
             payload,
             caller: Some(CallerContext {

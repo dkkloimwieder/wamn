@@ -46,9 +46,15 @@ interface routing {
     code: string,
   }
 
+  /// One admitted per-route slot. Dropping it releases the slot.
+  resource route-permit {}
+
   /// Return route definitions carried by this process's release.
   routes: func(method: string, authority: string) -> result<list<route-definition>, string>;
 
   /// Authenticate only after route selection has supplied the policy.
   authenticate: func(policy: string, headers: list<header>) -> result<string, auth-rejection>;
+
+  /// Acquire immediately or return none when this attachment is at capacity.
+  try-acquire: func(attachment-id: string) -> result<option<route-permit>, string>;
 }
