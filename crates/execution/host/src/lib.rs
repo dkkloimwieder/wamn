@@ -17,7 +17,8 @@ pub use readiness::{
 };
 pub use router_delivery::{ROUTER_DELIVERY_ID, RouterDeliveryBridge};
 pub use router_driver::{
-    DEFAULT_WIRING_CACHE_CAPACITY, PreloadedWiringMissing, RouterDelivery, RouterDriver,
-    RouterDriverConfig, RouterDriverRequest, RouterDriverSnapshot, WIRING_CACHE_CAPACITY_ENV,
-    WiringCacheCapacity, WiringResolution,
+    CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
+    CandidateWiringTarget, DEFAULT_WIRING_CACHE_CAPACITY, PreloadedWiringMissing, RouterDelivery,
+    RouterDriver, RouterDriverConfig, RouterDriverRequest, RouterDriverSnapshot,
+    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity, WiringResolution,
 };

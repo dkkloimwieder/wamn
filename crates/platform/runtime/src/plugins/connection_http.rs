@@ -30,7 +30,9 @@ use crate::plugins::effect_span::{
 use crate::release_manifest::ReleaseManifestWeld;
 
 use super::wamn_credentials::WamnCredentials;
-use super::wamn_postgres::{ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres};
+use super::wamn_postgres::{
+    CandidateBindingWorld, ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
+};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -54,6 +56,24 @@ pub struct ConnectionInvocation {
     pub node_id: String,
     pub occurrence: u32,
     pub component_digest: String,
+    pub closure: ConnectionExecutionClosure,
+}
+
+/// Host-owned authority closure for one component invocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionExecutionClosure {
+    /// A digest-verified serving manifest owns the component and wiring.
+    Released,
+    /// Private admission froze an exact candidate wiring and binding world.
+    Candidate {
+        catalog_id: String,
+        catalog_version: u32,
+        environment: String,
+        wiring_hash: String,
+        component: String,
+        interface_version: String,
+        binding_world: Arc<CandidateBindingWorld>,
+    },
 }
 
 /// The authorized floor interpretation: Kubernetes/the network enforces the
@@ -132,6 +152,30 @@ impl ConnectionHttp {
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
             "connection-http-invocation-invalid"
         );
+        if let ConnectionExecutionClosure::Candidate {
+            catalog_id,
+            catalog_version,
+            environment,
+            wiring_hash,
+            component,
+            interface_version,
+            ..
+        } = &invocation.closure
+        {
+            let graph = wiring_hash.strip_prefix("sha256:").unwrap_or_default();
+            anyhow::ensure!(
+                !catalog_id.is_empty()
+                    && *catalog_version > 0
+                    && !environment.is_empty()
+                    && !component.is_empty()
+                    && !interface_version.is_empty()
+                    && graph.len() == 64
+                    && graph
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+                "connection-http-candidate-closure-invalid"
+            );
+        }
         let mut bound = self
             .invocations
             .write()
@@ -174,16 +218,51 @@ impl ConnectionHttp {
             );
             ConnectionError::AuthorityDenied
         })?;
-        let release = self
-            .release
-            .as_deref()
-            .ok_or(ConnectionError::AttestationInvalid)?;
-        let manifest = release.manifest();
-        if manifest.release.tenant_id != self.tenant.as_ref() {
-            return Err(ConnectionError::AttestationInvalid);
-        }
-        let catalog_version = i32::try_from(manifest.release.catalog_version)
-            .map_err(|_| ConnectionError::AttestationInvalid)?;
+        let manifest = match &invocation.closure {
+            ConnectionExecutionClosure::Released => Some(
+                self.release
+                    .as_deref()
+                    .ok_or(ConnectionError::AttestationInvalid)?
+                    .manifest(),
+            ),
+            ConnectionExecutionClosure::Candidate { .. } => None,
+        };
+        let (catalog_id, catalog_version, environment, candidate_binding) =
+            match (&invocation.closure, manifest) {
+                (ConnectionExecutionClosure::Released, Some(manifest)) => {
+                    if manifest.release.tenant_id != self.tenant.as_ref() {
+                        return Err(ConnectionError::AttestationInvalid);
+                    }
+                    (
+                        manifest.release.catalog_id.as_str(),
+                        i32::try_from(manifest.release.catalog_version)
+                            .map_err(|_| ConnectionError::AttestationInvalid)?,
+                        manifest.release.environment.as_str(),
+                        None,
+                    )
+                }
+                (
+                    ConnectionExecutionClosure::Candidate {
+                        catalog_id,
+                        catalog_version,
+                        environment,
+                        binding_world,
+                        ..
+                    },
+                    None,
+                ) => (
+                    catalog_id.as_str(),
+                    i32::try_from(*catalog_version)
+                        .map_err(|_| ConnectionError::AttestationInvalid)?,
+                    environment.as_str(),
+                    Some(
+                        binding_world
+                            .binding(&invocation.component_digest, &request.requirement)
+                            .ok_or(ConnectionError::AttestationInvalid)?,
+                    ),
+                ),
+                _ => return Err(ConnectionError::AttestationInvalid),
+            };
         let wiring_version = i32::try_from(invocation.wiring_version)
             .map_err(|_| ConnectionError::AttestationInvalid)?;
         let snapshot = self
@@ -193,14 +272,15 @@ impl ConnectionHttp {
                 &self.project,
                 &self.tenant,
                 &ConnectionEffectLookup {
-                    catalog_id: &manifest.release.catalog_id,
+                    catalog_id,
                     catalog_version,
-                    environment: &manifest.release.environment,
+                    environment,
                     wiring_id: &invocation.wiring_id,
                     wiring_version,
                     node_id: &invocation.node_id,
                     component_digest: &invocation.component_digest,
                     store_alias: &request.requirement,
+                    candidate_binding,
                 },
             )
             .await
@@ -212,7 +292,19 @@ impl ConnectionHttp {
                 ConnectionError::Transport(AUTHORITY_SNAPSHOT_UNAVAILABLE.to_string())
             })?
             .ok_or(ConnectionError::AttestationInvalid)?;
-        authorize_release_closure(manifest, &invocation, &snapshot)?;
+        match (&invocation.closure, manifest) {
+            (ConnectionExecutionClosure::Released, Some(manifest)) => {
+                authorize_release_closure(manifest, &invocation, &snapshot)?;
+            }
+            (ConnectionExecutionClosure::Candidate { .. }, None) => {
+                authorize_candidate_closure(
+                    &invocation,
+                    &snapshot,
+                    candidate_binding.ok_or(ConnectionError::AttestationInvalid)?,
+                )?;
+            }
+            _ => return Err(ConnectionError::AttestationInvalid),
+        }
         authorize_snapshot(&snapshot)?;
 
         let definition = snapshot
@@ -317,6 +409,30 @@ fn authorize_release_closure(
     };
     if component.is_none_or(|component| !manifest.components.contains(&component))
         || !manifest.wirings.contains(&wiring)
+    {
+        return Err(ConnectionError::AttestationInvalid);
+    }
+    Ok(())
+}
+
+fn authorize_candidate_closure(
+    invocation: &ConnectionInvocation,
+    snapshot: &ConnectionEffectSnapshot,
+    binding: &super::wamn_postgres::CandidateConnectionBinding,
+) -> Result<(), ConnectionError> {
+    let ConnectionExecutionClosure::Candidate {
+        wiring_hash,
+        component,
+        interface_version,
+        ..
+    } = &invocation.closure
+    else {
+        return Err(ConnectionError::AttestationInvalid);
+    };
+    if snapshot.wiring_hash != *wiring_hash
+        || snapshot.component.as_deref() != Some(component.as_str())
+        || snapshot.interface_version.as_deref() != Some(interface_version.as_str())
+        || !binding.matches_snapshot(snapshot)
     {
         return Err(ConnectionError::AttestationInvalid);
     }
@@ -572,6 +688,7 @@ mod tests {
             node_id: "notify".to_string(),
             occurrence: 2,
             component_digest: digest('a'),
+            closure: ConnectionExecutionClosure::Released,
         }
     }
 
@@ -584,14 +701,17 @@ mod tests {
                 "requirement-type": "http",
                 "contract": HTTP_CONTRACT,
             })),
+            requirement_hash: Some(digest('d')),
             node_permitted: true,
             binding_active: true,
             binding_valid: true,
             instance_id: Some("manager".to_string()),
+            validation_hash: Some(digest('e')),
             requirement_type: Some("http".to_string()),
             contract: Some(HTTP_CONTRACT.to_string()),
             instance_enabled: true,
             active_generation: Some(7),
+            instance_revision: Some(2),
             generation: Some(7),
             definition: Some(serde_json::json!({})),
             definition_hash: Some(digest('c')),

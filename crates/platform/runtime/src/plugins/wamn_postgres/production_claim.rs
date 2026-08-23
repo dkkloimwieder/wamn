@@ -18,7 +18,7 @@ use wamn_run_state::transitions::{
 };
 use wamn_run_state::{DurabilityClass, EffectUncertainFailure, FailKind, RunStatus};
 
-use super::{ReleaseIdentity, WamnPostgres};
+use super::{CandidateBindingWorld, ReleaseIdentity, WamnPostgres};
 
 /// Stable category for a production-claim failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +89,9 @@ pub enum ProductionClaimResult {
         lease_generation: i64,
         wiring_id: String,
         wiring_version: i32,
-        caller_attached: bool,
+        router_caller_attached: bool,
+        durable_caller_attached: bool,
+        candidate: Option<ProductionCandidate>,
     },
     /// Claim-time classification removed the row without execution.
     Terminalized {
@@ -97,6 +99,15 @@ pub enum ProductionClaimResult {
         status: RunStatus,
         fail_kind: FailKind,
     },
+}
+
+/// Candidate-only authority frozen on the durable run at admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductionCandidate {
+    pub catalog_version: i32,
+    pub wiring_hash: String,
+    pub gate_report_id: String,
+    pub binding_world: CandidateBindingWorld,
 }
 
 /// Caller result stored before a queue run becomes terminal.
@@ -211,6 +222,35 @@ pub fn production_router_action(
     outcome: &Outcome,
     caller_attached: bool,
 ) -> Result<ProductionRouterAction, ProductionClaimError> {
+    production_router_action_with_mode(
+        outcome,
+        if caller_attached {
+            RouterResultMode::DurableCaller
+        } else {
+            RouterResultMode::Detached
+        },
+    )
+}
+
+/// Translate a management candidate response into the run result without
+/// fabricating a synchronous durable caller.
+pub fn production_router_result_action(
+    outcome: &Outcome,
+) -> Result<ProductionRouterAction, ProductionClaimError> {
+    production_router_action_with_mode(outcome, RouterResultMode::StoredResult)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouterResultMode {
+    Detached,
+    DurableCaller,
+    StoredResult,
+}
+
+fn production_router_action_with_mode(
+    outcome: &Outcome,
+    mode: RouterResultMode,
+) -> Result<ProductionRouterAction, ProductionClaimError> {
     if outcome.status == WalkStatus::Running {
         return Err(ProductionClaimError::new(
             ProductionClaimErrorKind::Contract,
@@ -234,20 +274,34 @@ pub fn production_router_action(
         );
     }
     match outcome.verdict.as_ref() {
-        Some(Verdict::Respond { .. }) => {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
-                "map router response",
-                "router-respond-node-attribution-missing",
-            ));
-        }
+        Some(Verdict::Respond { payload }) => match mode {
+            RouterResultMode::StoredResult => {
+                return Ok(ProductionRouterAction::Complete(
+                    ProductionCompletion::completed(payload.clone(), None),
+                ));
+            }
+            RouterResultMode::DurableCaller => {
+                return Err(ProductionClaimError::new(
+                    ProductionClaimErrorKind::Contract,
+                    "map router response",
+                    "router-respond-node-attribution-missing",
+                ));
+            }
+            RouterResultMode::Detached => {
+                return Err(ProductionClaimError::new(
+                    ProductionClaimErrorKind::Contract,
+                    "map router response",
+                    "router-response-without-result-owner",
+                ));
+            }
+        },
         Some(Verdict::Emit { event, dedup_id }) => {
             return Ok(ProductionRouterAction::Emit {
                 event: event.clone(),
                 dedup_id: dedup_id.clone(),
             });
         }
-        Some(Verdict::Discard) if !caller_attached => {
+        Some(Verdict::Discard) if mode != RouterResultMode::DurableCaller => {
             return Ok(ProductionRouterAction::Complete(
                 ProductionCompletion::completed(outcome.result.clone(), None),
             ));
@@ -303,7 +357,7 @@ pub fn production_router_action(
                 "error".to_owned(),
                 serde_json::Value::Object(error),
             )]));
-            let caller = caller_attached.then(|| {
+            let caller = (mode == RouterResultMode::DurableCaller).then(|| {
                 ProductionCallerOutcome::failed(body.clone(), 500, Some(failure.node.clone()))
             });
             Ok(ProductionRouterAction::Complete(
@@ -381,16 +435,29 @@ struct SelectedClaim {
     durability_class: DurabilityClass,
     wiring_id: String,
     wiring_version: i32,
-    caller_attached: bool,
+    router_caller_attached: bool,
+    durable_caller_attached: bool,
+    candidate: Option<ProductionCandidate>,
 }
 
 #[derive(Debug)]
 struct ExhaustedClaim {
     run_id: String,
     status: RunStatus,
-    root_flow_id: String,
-    flow_version: i32,
+    identity: ExhaustedExecutionIdentity,
     durability_class: DurabilityClass,
+}
+
+#[derive(Debug)]
+enum ExhaustedExecutionIdentity {
+    Flow {
+        flow_id: String,
+        flow_version: i32,
+    },
+    Wiring {
+        wiring_id: String,
+        wiring_version: i32,
+    },
 }
 
 impl WamnPostgres {
@@ -412,13 +479,15 @@ impl WamnPostgres {
     pub async fn claim_next_production(
         &self,
         component_id: &str,
+        catalog_id: &str,
+        environment: &str,
         lease_ttl_ms: i64,
     ) -> Result<ProductionClaimResult, ProductionClaimError> {
-        if lease_ttl_ms <= 0 {
+        if catalog_id.is_empty() || environment.is_empty() || lease_ttl_ms <= 0 {
             return Err(ProductionClaimError::new(
                 ProductionClaimErrorKind::Contract,
-                "validate lease TTL",
-                "lease TTL must be positive",
+                "validate queue scope",
+                "catalog, environment, and positive lease TTL are required",
             ));
         }
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
@@ -466,8 +535,15 @@ impl WamnPostgres {
             ));
         }
 
-        let result =
-            claim_in_transaction(&connection, &runner, lease_ttl_ms, release.as_ref()).await;
+        let result = claim_in_transaction(
+            &connection,
+            &runner,
+            catalog_id,
+            environment,
+            lease_ttl_ms,
+            release.as_ref(),
+        )
+        .await;
         match result {
             Ok(turn) => {
                 if let Err(error) = connection.batch_execute("COMMIT").await {
@@ -505,13 +581,15 @@ impl WamnPostgres {
     pub async fn reap_one_exhausted_production(
         &self,
         component_id: &str,
+        catalog_id: &str,
+        environment: &str,
         grace_ms: i64,
     ) -> Result<ProductionReapResult, ProductionClaimError> {
-        if grace_ms < 0 {
+        if catalog_id.is_empty() || environment.is_empty() || grace_ms < 0 {
             return Err(ProductionClaimError::new(
                 ProductionClaimErrorKind::Contract,
-                "validate janitor grace",
-                "janitor grace must not be negative",
+                "validate janitor scope",
+                "catalog, environment, and non-negative janitor grace are required",
             ));
         }
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
@@ -558,7 +636,7 @@ impl WamnPostgres {
             ));
         }
 
-        let result = reap_in_transaction(&connection, grace_ms).await;
+        let result = reap_in_transaction(&connection, catalog_id, environment, grace_ms).await;
         match result {
             Ok(result) => {
                 if let Err(error) = connection.batch_execute("COMMIT").await {
@@ -959,6 +1037,8 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionClai
 async fn claim_in_transaction(
     connection: &Object,
     runner: &str,
+    catalog_id: &str,
+    environment: &str,
     lease_ttl_ms: i64,
     release: Option<&ReleaseIdentity>,
 ) -> Result<ClaimTurn, ProductionClaimError> {
@@ -968,7 +1048,7 @@ async fn claim_in_transaction(
         .await
         .map_err(|error| storage("prepare production candidate", error))?;
     let Some(row) = connection
-        .query_opt(&select, &[])
+        .query_opt(&select, &[&catalog_id, &environment])
         .await
         .map_err(|error| storage("select production candidate", error))?
     else {
@@ -1060,6 +1140,7 @@ async fn claim_in_transaction(
     // A run that already recorded a DIFFERENT pair refuses here, in the
     // database (wamn-0h0g.15.55): the classifier's pre-effect reclaim is the
     // only path that may clear the pair, and it does so above.
+    let release = release.filter(|_| selected.candidate.is_none());
     let release_version: Option<i32> = release.map(|identity| identity.release_version);
     let manifest_digest: Option<&str> = release.map(|identity| identity.manifest_digest.as_str());
     // The grant is the one abortable write left in this transaction, so it runs
@@ -1108,12 +1189,16 @@ async fn claim_in_transaction(
         lease_generation,
         wiring_id: selected.wiring_id,
         wiring_version: selected.wiring_version,
-        caller_attached: selected.caller_attached,
+        router_caller_attached: selected.router_caller_attached,
+        durable_caller_attached: selected.durable_caller_attached,
+        candidate: selected.candidate,
     }))
 }
 
 async fn reap_in_transaction(
     connection: &Object,
+    catalog_id: &str,
+    environment: &str,
     grace_ms: i64,
 ) -> Result<ProductionReapResult, ProductionClaimError> {
     let select_sql = select_exhausted_production_sql();
@@ -1122,7 +1207,7 @@ async fn reap_in_transaction(
         .await
         .map_err(|error| storage("prepare exhausted candidate", error))?;
     let Some(row) = connection
-        .query_opt(&select, &[&grace_ms])
+        .query_opt(&select, &[&grace_ms, &catalog_id, &environment])
         .await
         .map_err(|error| storage("select exhausted candidate", error))?
     else {
@@ -1137,11 +1222,37 @@ async fn reap_in_transaction(
         )
     })?;
     let class_text: String = row_value(&row, 5, "exhausted run durability class")?;
+    let flow_id: Option<String> = row_value(&row, 3, "exhausted root flow id")?;
+    let flow_version: Option<i32> = row_value(&row, 4, "exhausted root flow version")?;
+    let wiring_id: Option<String> = row_value(&row, 6, "exhausted wiring id")?;
+    let wiring_version: Option<i32> = row_value(&row, 7, "exhausted wiring version")?;
+    let identity = match (flow_id, flow_version, wiring_id, wiring_version) {
+        (Some(flow_id), Some(flow_version), _, _) if !flow_id.is_empty() && flow_version > 0 => {
+            ExhaustedExecutionIdentity::Flow {
+                flow_id,
+                flow_version,
+            }
+        }
+        (None, None, Some(wiring_id), Some(wiring_version))
+            if !wiring_id.is_empty() && wiring_version > 0 =>
+        {
+            ExhaustedExecutionIdentity::Wiring {
+                wiring_id,
+                wiring_version,
+            }
+        }
+        _ => {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "decode exhausted candidate",
+                "run-execution-grain-corrupt",
+            ));
+        }
+    };
     let selected = ExhaustedClaim {
         run_id: row_value(&row, 1, "exhausted run id")?,
         status,
-        root_flow_id: row_value(&row, 3, "exhausted root flow id")?,
-        flow_version: row_value(&row, 4, "exhausted root flow version")?,
+        identity,
         durability_class: DurabilityClass::from_sql_or_default(&class_text),
     };
     if !matches!(selected.status, RunStatus::Dispatched | RunStatus::Running) {
@@ -1177,8 +1288,7 @@ async fn reap_in_transaction(
 
     let (body, body_hash) = generic_failure_outcome(
         "infrastructure-failure",
-        &selected.root_flow_id,
-        selected.flow_version,
+        &selected.identity,
         &selected.run_id,
     )?;
     let terminalize_sql = terminalize_exhausted_production_sql();
@@ -1285,25 +1395,30 @@ async fn terminalize_effect_uncertain(
 
 fn generic_failure_outcome(
     code: &str,
-    root_flow_id: &str,
-    flow_version: i32,
+    identity: &ExhaustedExecutionIdentity,
     run_id: &str,
 ) -> Result<(String, String), ProductionClaimError> {
-    let flow_version = u32::try_from(flow_version).map_err(|_| {
-        ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
-            "build generic failure outcome",
-            format!("invalid root flow version {flow_version}"),
-        )
-    })?;
-    let body = serde_json::json!({
-        "error": {
+    let coordinate = match identity {
+        ExhaustedExecutionIdentity::Flow {
+            flow_id,
+            flow_version,
+        } => serde_json::json!({
             "code": code,
-            "flow-id": root_flow_id,
+            "flow-id": flow_id,
             "flow-version": flow_version,
             "run-id": run_id,
-        }
-    });
+        }),
+        ExhaustedExecutionIdentity::Wiring {
+            wiring_id,
+            wiring_version,
+        } => serde_json::json!({
+            "code": code,
+            "wiring-id": wiring_id,
+            "wiring-version": wiring_version,
+            "run-id": run_id,
+        }),
+    };
+    let body = serde_json::json!({ "error": coordinate });
     let body_hash = wamn_flow::canonical_json_sha256(&body);
     let body_json = serde_json::to_string(&body).map_err(|error| {
         ProductionClaimError::new(
@@ -1331,7 +1446,14 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let class_text: String = row_value(row, 4, "durability class")?;
     let wiring_id: Option<String> = row_value(row, 5, "wiring id")?;
     let wiring_version: Option<i32> = row_value(row, 6, "wiring version")?;
-    let caller_attached: bool = row_value(row, 7, "caller attachment")?;
+    let router_caller_attached: bool = row_value(row, 7, "router caller attachment")?;
+    let durable_caller_attached: bool = row_value(row, 8, "durable caller attachment")?;
+    let flow_id: Option<String> = row_value(row, 9, "legacy flow id")?;
+    let flow_version: Option<i32> = row_value(row, 10, "legacy flow version")?;
+    let catalog_version: i32 = row_value(row, 11, "catalog version")?;
+    let wiring_hash: Option<String> = row_value(row, 12, "candidate wiring hash")?;
+    let gate_report_id: Option<String> = row_value(row, 13, "candidate gate report id")?;
+    let binding_world: Option<String> = row_value(row, 14, "candidate binding world")?;
     let payload_text: String = row_value(row, 3, "authoritative input")?;
     let payload = serde_json::from_str(&payload_text).map_err(|error| {
         ProductionClaimError::new(
@@ -1341,6 +1463,60 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         )
     })?;
     let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
+    let candidate = match (
+        flow_id,
+        flow_version,
+        wiring_hash,
+        gate_report_id,
+        binding_world,
+    ) {
+        (Some(flow_id), Some(flow_version), None, None, None)
+            if !flow_id.is_empty() && flow_version > 0 =>
+        {
+            None
+        }
+        (None, None, Some(wiring_hash), Some(gate_report_id), Some(binding_world))
+            if catalog_version > 0 && !wiring_hash.is_empty() && !gate_report_id.is_empty() =>
+        {
+            let binding_world = serde_json::from_str(&binding_world)
+                .map_err(|error| {
+                    ProductionClaimError::new(
+                        ProductionClaimErrorKind::Contract,
+                        "decode production candidate",
+                        format!("candidate-binding-world-json-invalid: {error}"),
+                    )
+                })
+                .and_then(|value| {
+                    CandidateBindingWorld::from_json(value).map_err(|error| {
+                        ProductionClaimError::new(
+                            ProductionClaimErrorKind::Contract,
+                            "decode production candidate",
+                            error.to_string(),
+                        )
+                    })
+                })?;
+            Some(ProductionCandidate {
+                catalog_version,
+                wiring_hash,
+                gate_report_id,
+                binding_world,
+            })
+        }
+        _ => {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "decode production candidate",
+                "run-execution-grain-corrupt",
+            ));
+        }
+    };
+    if candidate.is_some() && (!router_caller_attached || durable_caller_attached) {
+        return Err(ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "decode production candidate",
+            "candidate-caller-grain-corrupt",
+        ));
+    }
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
@@ -1349,7 +1525,9 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         durability_class: DurabilityClass::from_sql_or_default(&class_text),
         wiring_id,
         wiring_version,
-        caller_attached,
+        router_caller_attached,
+        durable_caller_attached,
+        candidate,
     })
 }
 
@@ -1454,7 +1632,11 @@ mod tests {
 
     #[test]
     fn generic_refusal_body_is_exact_and_message_free() {
-        let (json, hash) = generic_failure_outcome("foreign-revision", "root", 7, "run-1").unwrap();
+        let identity = ExhaustedExecutionIdentity::Flow {
+            flow_id: "root".to_owned(),
+            flow_version: 7,
+        };
+        let (json, hash) = generic_failure_outcome("foreign-revision", &identity, "run-1").unwrap();
         let body = serde_json::from_str::<serde_json::Value>(&json).unwrap();
         assert_eq!(
             body,
@@ -1469,15 +1651,62 @@ mod tests {
 
     #[test]
     fn janitor_failure_body_uses_host_jcs_not_database_json_text() {
+        let identity = ExhaustedExecutionIdentity::Flow {
+            flow_id: "root-flow".to_owned(),
+            flow_version: 19,
+        };
         let (json, hash) =
-            generic_failure_outcome("infrastructure-failure", "root-flow", 19, "run-exhausted")
-                .unwrap();
+            generic_failure_outcome("infrastructure-failure", &identity, "run-exhausted").unwrap();
         assert_eq!(
             json,
             r#"{"error":{"code":"infrastructure-failure","flow-id":"root-flow","flow-version":19,"run-id":"run-exhausted"}}"#
         );
         let body = serde_json::from_str(&json).unwrap();
         assert_eq!(hash, wamn_flow::canonical_json_sha256(&body));
+    }
+
+    #[test]
+    fn candidate_janitor_failure_body_names_the_frozen_wiring() {
+        let identity = ExhaustedExecutionIdentity::Wiring {
+            wiring_id: "candidate-orders".to_owned(),
+            wiring_version: 4,
+        };
+        let (json, _) =
+            generic_failure_outcome("infrastructure-failure", &identity, "case-report-7-0")
+                .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            serde_json::json!({
+                "error": {
+                    "code": "infrastructure-failure",
+                    "wiring-id": "candidate-orders",
+                    "wiring-version": 4,
+                    "run-id": "case-report-7-0"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn candidate_respond_is_stored_without_fabricating_a_durable_caller() {
+        let payload = serde_json::json!({"accepted": true});
+        let outcome = Outcome {
+            status: WalkStatus::Completed,
+            result: serde_json::Value::Null,
+            failure: None,
+            hops: 1,
+            verdict: Some(Verdict::Respond {
+                payload: payload.clone(),
+            }),
+        };
+        let ProductionRouterAction::Complete(completion) =
+            production_router_result_action(&outcome).expect("candidate response maps")
+        else {
+            panic!("candidate response must complete the run");
+        };
+        assert_eq!(completion.status, RunStatus::Completed);
+        assert_eq!(completion.result, payload);
+        assert!(completion.caller.is_none());
     }
 
     #[test]
@@ -1593,7 +1822,14 @@ mod tests {
             "r.durability_class",
             "r.wiring_id",
             "r.wiring_version",
-            "AS caller_attached",
+            "AS router_caller_attached",
+            "AS durable_caller_attached",
+            "r.flow_id",
+            "r.flow_version",
+            "r.catalog_version",
+            "r.wiring_hash",
+            "r.gate_report_id",
+            "r.binding_world_json::text",
         ]
         .into_iter()
         .enumerate()

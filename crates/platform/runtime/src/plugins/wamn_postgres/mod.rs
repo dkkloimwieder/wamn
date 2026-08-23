@@ -53,19 +53,24 @@ mod types;
 mod wiring_resolution;
 
 pub(crate) use pool::PlatformAsyncMessage;
-pub use wiring_resolution::{ACTIVE_WIRING_SQL, RELEASE_WIRING_SQL, ResolvedActiveWiring};
+pub use wiring_resolution::{
+    ACTIVE_WIRING_SQL, CANDIDATE_WIRING_SQL, CandidateWiringResolution, RELEASE_WIRING_SQL,
+    ResolvedActiveWiring,
+};
 
 pub use claims::{
-    ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, SessionClaims, WamnPostgres,
+    CandidateBindingWorld, CandidateConnectionBinding, ConnectionEffectLookup,
+    ConnectionEffectSnapshot, ReleaseIdentity, SessionClaims, WamnPostgres,
 };
 pub use pool::{
     CheckoutProbe, CredentialProvider, K8sSecretProvider, ProjectConfig, StaticCredentialProvider,
     WamnPostgresConfig,
 };
 pub use production_claim::{
-    ProductionCallerOutcome, ProductionClaimError, ProductionClaimErrorKind, ProductionClaimResult,
-    ProductionCompletion, ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
-    ProductionRouterAction, production_router_action,
+    ProductionCallerOutcome, ProductionCandidate, ProductionClaimError, ProductionClaimErrorKind,
+    ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
+    ProductionLeaseRenewal, ProductionReapResult, ProductionRouterAction, production_router_action,
+    production_router_result_action,
 };
 pub use resources::{PgCursor, PgTransaction};
 

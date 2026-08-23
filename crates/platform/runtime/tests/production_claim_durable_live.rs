@@ -30,11 +30,11 @@ use wamn_runtime::plugins::wamn_postgres::{ProductionClaimResult, ProductionReap
 mod common;
 
 use common::{
-    COMPONENT, EMPTY_HASH, POD_MANIFEST_DIGEST, POD_RELEASE_VERSION, RUNTIME_APPLICATION_NAME,
-    SCHEMA, TENANT, WIRING_ID, WIRING_VERSION, WRITER_LATCH, assert_callerless_terminal,
-    assert_prior_winner_terminal, effect_attempt, expire_effect_run, install_fixture,
-    install_prior_caller_winner, make_callerless, ready_run, release_record, seed_durable_run,
-    seed_live_effect_run, teardown, wait_for_advisory_wait,
+    CATALOG_ID, COMPONENT, EMPTY_HASH, ENVIRONMENT, POD_MANIFEST_DIGEST, POD_RELEASE_VERSION,
+    RUNTIME_APPLICATION_NAME, SCHEMA, TENANT, WIRING_ID, WIRING_VERSION, WRITER_LATCH,
+    assert_callerless_terminal, assert_prior_winner_terminal, effect_attempt, expire_effect_run,
+    install_fixture, install_prior_caller_winner, make_callerless, ready_run, release_record,
+    seed_durable_run, seed_live_effect_run, teardown, wait_for_advisory_wait,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -118,7 +118,11 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         .await?;
     let reaper = {
         let plugin = Arc::clone(plugin);
-        tokio::spawn(async move { plugin.reap_one_exhausted_production(COMPONENT, 0).await })
+        tokio::spawn(async move {
+            plugin
+                .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+                .await
+        })
     };
     wait_for_advisory_wait(admin, Some(RUNTIME_APPLICATION_NAME), None).await?;
     let unlocked: bool = admin
@@ -134,7 +138,9 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         }
     );
     assert_eq!(
-        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        plugin
+            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .await?,
         ProductionClaimResult::Terminalized {
             run_id: "effect-race".into(),
             status: RunStatus::EffectUncertain,
@@ -183,7 +189,9 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         .await?;
     expire_effect_run(admin, "effect-callerless").await?;
     assert_eq!(
-        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        plugin
+            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .await?,
         ProductionClaimResult::Terminalized {
             run_id: "effect-callerless".into(),
             status: RunStatus::EffectUncertain,
@@ -199,7 +207,9 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         .await?;
     expire_effect_run(admin, "effect-winner").await?;
     assert_eq!(
-        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        plugin
+            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .await?,
         ProductionClaimResult::Terminalized {
             run_id: "effect-winner".into(),
             status: RunStatus::EffectUncertain,
@@ -221,7 +231,11 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     // The claim is what records the pair, so the run is claimed first.
     seed_durable_run(admin, "effect-pin", "cat-main", 80).await?;
     assert_eq!(
-        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
+        ready_run(
+            plugin
+                .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+                .await?
+        ),
         "effect-pin"
     );
     let recorded = (

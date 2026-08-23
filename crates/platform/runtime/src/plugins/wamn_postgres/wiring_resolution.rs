@@ -12,7 +12,7 @@ use crate::wiring_lowering::{
     project_component_operation,
 };
 
-use super::WamnPostgres;
+use super::{CandidateBindingWorld, WamnPostgres};
 
 /// The single SQL snapshot behind a cache miss.
 pub const ACTIVE_WIRING_SQL: &str = "\
@@ -20,7 +20,8 @@ WITH selected AS MATERIALIZED ( \
     SELECT wiring.version, \
            wiring.gated_catalog_version, \
            wiring.graph_json, \
-           wiring.wiring_hash \
+           wiring.wiring_hash, \
+           wiring.gate_report_id \
       FROM catalog.wiring_activation AS active \
       JOIN catalog.catalog_heads AS head \
         ON head.tenant_id = active.tenant_id \
@@ -71,7 +72,7 @@ SELECT selected.version, \
                ) ORDER BY component.component, component.interface_version \
            ) FILTER (WHERE component.component IS NOT NULL), \
            '[]'::jsonb \
-       )::text AS components \
+       )::text AS components, selected.gate_report_id \
   FROM selected \
   LEFT JOIN catalog.component_library AS component \
    ON component.tenant_id = $1 \
@@ -85,7 +86,7 @@ SELECT selected.version, \
           AND definition ->> 'operation' = component.operation \
    ) \
  GROUP BY selected.version, selected.gated_catalog_version, \
-          selected.graph_json, selected.wiring_hash";
+          selected.graph_json, selected.wiring_hash, selected.gate_report_id";
 
 /// The immutable-version snapshot behind a queued delivery. Unlike
 /// [`ACTIVE_WIRING_SQL`], this deliberately does not consult the mutable
@@ -104,7 +105,7 @@ WITH release_scope AS MATERIALIZED ( \
              #>> '{release,environment}' = $3 \
 ), selected AS MATERIALIZED ( \
     SELECT wiring.version, wiring.gated_catalog_version, \
-           wiring.graph_json, wiring.wiring_hash, \
+           wiring.graph_json, wiring.wiring_hash, wiring.gate_report_id, \
            release_scope.catalog_version AS release_catalog_version \
       FROM release_scope \
       JOIN catalog.wirings AS wiring \
@@ -145,7 +146,7 @@ SELECT selected.version, selected.gated_catalog_version, \
                ) ORDER BY component.component, component.interface_version \
            ) FILTER (WHERE component.component IS NOT NULL), \
            '[]'::jsonb \
-       )::text AS components \
+       )::text AS components, selected.gate_report_id \
   FROM selected \
   LEFT JOIN catalog.release_components AS member \
     ON member.tenant_id = $1 \
@@ -159,7 +160,150 @@ SELECT selected.version, selected.gated_catalog_version, \
    AND component.catalog_version = member.catalog_version \
    AND component.component_digest = member.component_digest \
  GROUP BY selected.version, selected.gated_catalog_version, \
-          selected.graph_json, selected.wiring_hash";
+          selected.graph_json, selected.wiring_hash, selected.gate_report_id";
+
+/// Exact immutable candidate wiring selected by private management admission.
+///
+/// A candidate is neither the active environment pointer nor a member of the
+/// serving release carried by this executor. The run supplies every immutable
+/// coordinate that admission read from the same row.
+pub const CANDIDATE_WIRING_SQL: &str = "\
+WITH selected AS MATERIALIZED ( \
+    SELECT wiring.version, wiring.gated_catalog_version, \
+           wiring.graph_json, wiring.wiring_hash, wiring.gate_report_id \
+      FROM catalog.wirings AS wiring \
+     WHERE wiring.tenant_id = $1 \
+       AND wiring.catalog_id = $2 \
+       AND wiring.wiring_id = $4 \
+       AND wiring.version = $5 \
+       AND wiring.gated_catalog_version = $6 \
+       AND wiring.wiring_hash = $7 \
+       AND wiring.gate_report_id = $8 \
+       AND $3::text <> '' \
+), candidate_nodes AS MATERIALIZED ( \
+    SELECT node.key AS node_id, component.component_digest, \
+           component.component IS NOT NULL AS component_admitted \
+      FROM selected \
+      CROSS JOIN LATERAL jsonb_each( \
+        CASE WHEN jsonb_typeof(selected.graph_json -> 'nodes') = 'object' \
+             THEN selected.graph_json -> 'nodes' ELSE '{}'::jsonb END \
+      ) AS node \
+      LEFT JOIN catalog.component_library AS component \
+        ON component.tenant_id = $1 \
+       AND component.catalog_id = $2 \
+       AND component.catalog_version = selected.gated_catalog_version \
+       AND component.component = node.value ->> 'component' \
+       AND component.interface_version = node.value ->> 'interface-version' \
+       AND component.operation = node.value ->> 'operation' \
+), node_summary AS MATERIALIZED ( \
+    SELECT count(*) AS node_count, \
+           count(*) FILTER (WHERE NOT component_admitted) AS invalid_node_count \
+      FROM candidate_nodes \
+), requirements AS MATERIALIZED ( \
+    SELECT requirement.component_digest, requirement.store_alias, \
+           requirement.requirement_hash \
+      FROM (SELECT DISTINCT component_digest FROM candidate_nodes \
+             WHERE component_admitted) AS candidate_component \
+      JOIN catalog.connection_requirements AS requirement \
+        ON requirement.tenant_id = $1 \
+       AND requirement.artifact_hash IS NULL \
+       AND requirement.requirement_name IS NULL \
+       AND requirement.component_digest = candidate_component.component_digest \
+), resolved_requirements AS MATERIALIZED ( \
+    SELECT requirement.component_digest, requirement.store_alias, \
+           requirement.requirement_hash, binding.instance_id, \
+           instance.revision AS instance_revision, instance.requirement_type, \
+           instance.contract, binding.validation_hash, generation.generation, \
+           generation.definition_hash, generation.credential_set_handle \
+      FROM requirements AS requirement \
+      JOIN catalog.connection_bindings AS binding \
+        ON binding.tenant_id = $1 \
+       AND binding.catalog_id = $2 \
+       AND binding.catalog_version = $6 \
+       AND binding.artifact_hash IS NULL \
+       AND binding.requirement_name IS NULL \
+       AND binding.component_digest = requirement.component_digest \
+       AND binding.store_alias = requirement.store_alias \
+       AND binding.environment = $3 \
+       AND binding.binding_status = 'active' \
+       AND binding.validation_status = 'valid' \
+      JOIN catalog.connection_instances AS instance \
+        ON instance.tenant_id = binding.tenant_id \
+       AND instance.environment = binding.environment \
+       AND instance.instance_id = binding.instance_id \
+       AND instance.lifecycle_status = 'enabled' \
+       AND instance.active_generation IS NOT NULL \
+      JOIN catalog.connection_generations AS generation \
+        ON generation.tenant_id = instance.tenant_id \
+       AND generation.environment = instance.environment \
+       AND generation.instance_id = instance.instance_id \
+       AND generation.generation = instance.active_generation \
+), binding_world AS MATERIALIZED ( \
+    SELECT count(requirement.component_digest) AS requirement_count, \
+           count(resolved.component_digest) AS resolved_count, \
+           COALESCE(jsonb_agg( \
+             jsonb_build_object( \
+               'component-digest', resolved.component_digest, \
+               'store-alias', resolved.store_alias, \
+               'requirement-hash', resolved.requirement_hash, \
+               'instance-id', resolved.instance_id, \
+               'instance-revision', resolved.instance_revision, \
+               'requirement-type', resolved.requirement_type, \
+               'contract', resolved.contract, \
+               'validation-hash', resolved.validation_hash, \
+               'generation', resolved.generation, \
+               'definition-hash', resolved.definition_hash, \
+               'credential-set-handle', resolved.credential_set_handle \
+             ) ORDER BY resolved.component_digest, resolved.store_alias \
+           ) FILTER (WHERE resolved.component_digest IS NOT NULL), '[]'::jsonb) \
+             AS binding_world_json \
+      FROM requirements AS requirement \
+      LEFT JOIN resolved_requirements AS resolved \
+        USING (component_digest, store_alias) \
+) \
+SELECT selected.version, selected.gated_catalog_version, \
+       selected.graph_json::text, selected.wiring_hash, \
+       COALESCE( \
+           jsonb_agg( \
+               jsonb_build_object( \
+                   'scope', jsonb_build_object( \
+                       'tenant-id', $1::text, \
+                       'catalog-id', $2::text, \
+                       'catalog-version', component.catalog_version \
+                   ), \
+                   'component', component.component, \
+                   'interface-version', component.interface_version, \
+                   'operation', component.operation, \
+                   'component-digest', component.component_digest, \
+                   'imports', component.imports, \
+                   'imports-fingerprint', component.imports_fingerprint, \
+                   'input-ports', component.input_ports, \
+                   'output-ports', component.output_ports, \
+                   'parameters', component.parameters \
+               ) ORDER BY component.component, component.interface_version \
+           ) FILTER (WHERE component.component IS NOT NULL), \
+           '[]'::jsonb \
+       )::text AS components, selected.gate_report_id, \
+       node_summary.node_count, node_summary.invalid_node_count, \
+       binding_world.requirement_count, binding_world.resolved_count, \
+       binding_world.binding_world_json::text \
+  FROM selected CROSS JOIN node_summary CROSS JOIN binding_world \
+  LEFT JOIN catalog.component_library AS component \
+    ON component.tenant_id = $1 \
+   AND component.catalog_id = $2 \
+   AND component.catalog_version = selected.gated_catalog_version \
+   AND EXISTS ( \
+       SELECT 1 \
+         FROM jsonb_each(selected.graph_json -> 'nodes') AS node(node_id, definition) \
+        WHERE definition ->> 'component' = component.component \
+          AND definition ->> 'interface-version' = component.interface_version \
+          AND definition ->> 'operation' = component.operation \
+   ) \
+ GROUP BY selected.version, selected.gated_catalog_version, \
+          selected.graph_json, selected.wiring_hash, selected.gate_report_id, \
+          node_summary.node_count, node_summary.invalid_node_count, \
+          binding_world.requirement_count, binding_world.resolved_count, \
+          binding_world.binding_world_json";
 
 /// Prove that every component-grain requirement in the synchronous release
 /// closure has one exact usable environment binding.
@@ -206,6 +350,17 @@ pub struct ResolvedActiveWiring {
     pub graph_hash: Arc<str>,
     pub wiring: Wiring,
     pub components: Arc<[AdmittedComponent]>,
+    pub gate_report_id: Arc<str>,
+}
+
+/// Exact outcome of re-reading a frozen candidate before component execution.
+#[derive(Debug)]
+pub enum CandidateWiringResolution {
+    Resolved(ResolvedActiveWiring),
+    Missing,
+    InvalidDefinition,
+    BindingWorldUnavailable,
+    BindingWorldDrift,
 }
 
 impl ResolvedActiveWiring {
@@ -382,6 +537,129 @@ impl WamnPostgres {
         }
     }
 
+    /// Resolve one report-owned candidate without consulting activation or a
+    /// serving-manifest projection.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the complete persisted candidate coordinate is independently trusted"
+    )]
+    pub async fn resolve_candidate_wiring(
+        &self,
+        project: &str,
+        tenant_id: &str,
+        catalog_id: &str,
+        environment: &str,
+        catalog_version: u32,
+        wiring_id: &str,
+        wiring_version: u32,
+        wiring_hash: &str,
+        gate_report_id: &str,
+        expected_binding_world: &CandidateBindingWorld,
+    ) -> anyhow::Result<CandidateWiringResolution> {
+        anyhow::ensure!(catalog_version > 0, "candidate-catalog-version-zero");
+        anyhow::ensure!(wiring_version > 0, "candidate-wiring-version-zero");
+        anyhow::ensure!(!wiring_hash.is_empty(), "candidate-wiring-hash-empty");
+        anyhow::ensure!(!gate_report_id.is_empty(), "candidate-gate-report-id-empty");
+        let catalog_version = i32::try_from(catalog_version)
+            .context("candidate catalog version exceeds PostgreSQL int")?;
+        let wiring_version = i32::try_from(wiring_version)
+            .context("candidate wiring version exceeds PostgreSQL int")?;
+        let (connection, policy) = self
+            .checkout_platform(project)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &connection,
+                tenant_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(anyhow::anyhow!(error.to_string()));
+        }
+
+        let params: [&(dyn ToSql + Sync); 8] = [
+            &tenant_id,
+            &catalog_id,
+            &environment,
+            &wiring_id,
+            &wiring_version,
+            &catalog_version,
+            &wiring_hash,
+            &gate_report_id,
+        ];
+        let selected = connection
+            .query_opt(CANDIDATE_WIRING_SQL, &params)
+            .await
+            .context("query exact candidate wiring");
+        let result = match selected {
+            Ok(None) => Ok(CandidateWiringResolution::Missing),
+            Ok(Some(row)) => (|| -> anyhow::Result<CandidateWiringResolution> {
+                let node_count: i64 = row.try_get(6).context("decode candidate node count")?;
+                let invalid_node_count: i64 = row
+                    .try_get(7)
+                    .context("decode invalid candidate node count")?;
+                let requirement_count: i64 = row
+                    .try_get(8)
+                    .context("decode candidate requirement count")?;
+                let resolved_count: i64 = row
+                    .try_get(9)
+                    .context("decode resolved candidate requirement count")?;
+                let live_binding_world: String = row
+                    .try_get(10)
+                    .context("decode live candidate binding world")?;
+                if node_count == 0 || invalid_node_count != 0 {
+                    Ok(CandidateWiringResolution::InvalidDefinition)
+                } else if requirement_count != resolved_count {
+                    Ok(CandidateWiringResolution::BindingWorldUnavailable)
+                } else {
+                    let live_binding_world = serde_json::from_str(&live_binding_world)
+                        .context("parse live candidate binding world")
+                        .and_then(CandidateBindingWorld::from_json);
+                    match live_binding_world {
+                        Ok(live_binding_world) if &live_binding_world == expected_binding_world => {
+                            match decode_active_wiring(
+                                tenant_id,
+                                catalog_id,
+                                environment,
+                                wiring_id,
+                                &row,
+                            ) {
+                                Ok(resolved) => Ok(CandidateWiringResolution::Resolved(resolved)),
+                                Err(_) => Ok(CandidateWiringResolution::InvalidDefinition),
+                            }
+                        }
+                        Ok(_) => Ok(CandidateWiringResolution::BindingWorldDrift),
+                        Err(_) => Ok(CandidateWiringResolution::InvalidDefinition),
+                    }
+                }
+            })(),
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(resolved) => {
+                if let Err(error) = connection.batch_execute("COMMIT").await {
+                    self.destroy(connection);
+                    return Err(error).context("commit candidate wiring snapshot");
+                }
+                Ok(resolved)
+            }
+            Err(error) => {
+                if connection.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(connection);
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Check the exact component requirements selected by request readiness.
     ///
     /// An empty digest set is a background-only release and performs no store
@@ -492,6 +770,8 @@ fn decode_active_wiring(
     let components: Vec<AdmittedComponent> =
         serde_json::from_str(&components).context("parse active wiring component facts")?;
     let components = components_used_by_document(&document, components);
+    let gate_report_id: String = row.try_get(5).context("decode wiring gate report id")?;
+    anyhow::ensure!(!gate_report_id.is_empty(), "wiring-gate-report-id-empty");
     let scope = WiringScope {
         tenant_id,
         catalog_id,
@@ -518,6 +798,7 @@ fn decode_active_wiring(
         graph_hash: Arc::from(graph_hash),
         wiring,
         components: components.into(),
+        gate_report_id: gate_report_id.into(),
     })
 }
 
@@ -614,6 +895,31 @@ mod tests {
         assert!(RELEASE_WIRING_SQL.contains("release_manifest_v2_snapshots"));
         assert!(RELEASE_WIRING_SQL.contains("release_components"));
         assert!(!RELEASE_WIRING_SQL.contains("wiring_activation"));
+    }
+
+    #[test]
+    fn candidate_query_rederives_the_complete_binding_world_without_activation() {
+        for predicate in [
+            "wiring.gated_catalog_version = $6",
+            "wiring.wiring_hash = $7",
+            "wiring.gate_report_id = $8",
+            "binding.environment = $3",
+            "binding.binding_status = 'active'",
+            "binding.validation_status = 'valid'",
+            "instance.lifecycle_status = 'enabled'",
+            "generation.generation = instance.active_generation",
+            "ORDER BY resolved.component_digest, resolved.store_alias",
+            "binding_world.requirement_count",
+            "binding_world.resolved_count",
+            "binding_world.binding_world_json::text",
+        ] {
+            assert!(
+                CANDIDATE_WIRING_SQL.contains(predicate),
+                "missing candidate snapshot predicate {predicate:?}"
+            );
+        }
+        assert!(!CANDIDATE_WIRING_SQL.contains("wiring_activation"));
+        assert!(!CANDIDATE_WIRING_SQL.contains("release_components"));
     }
 
     #[test]

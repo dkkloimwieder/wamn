@@ -15,9 +15,11 @@ use clap::Args;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 use wamn_execution_host::{
-    RouterDriver, RouterDriverConfig, RouterDriverRequest, RouterReadinessProbe,
-    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity, WiringResolution,
+    CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
+    CandidateWiringTarget, RouterDriver, RouterDriverConfig, RouterDriverRequest,
+    RouterReadinessProbe, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity, WiringResolution,
 };
+use wamn_run_state::FailKind;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
@@ -27,7 +29,7 @@ use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
     ProductionReapResult, ProductionRouterAction, ReleaseIdentity, SessionClaims, WamnPostgres,
-    WamnPostgresConfig, production_router_action,
+    WamnPostgresConfig, production_router_action, production_router_result_action,
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 
@@ -41,6 +43,11 @@ struct QueueScope {
     tenant_id: String,
     catalog_id: String,
     environment: String,
+}
+
+enum QueueDriverRequest {
+    Released(RouterDriverRequest),
+    Candidate(CandidateCaseRequest),
 }
 
 #[derive(Debug, Args)]
@@ -258,7 +265,12 @@ async fn drain_one(
     lease_ttl_ms: i64,
 ) -> anyhow::Result<bool> {
     match postgres
-        .reap_one_exhausted_production(QUEUE_CLAIM_SCOPE, PRODUCTION_JANITOR_GRACE_MS)
+        .reap_one_exhausted_production(
+            QUEUE_CLAIM_SCOPE,
+            &scope.catalog_id,
+            &scope.environment,
+            PRODUCTION_JANITOR_GRACE_MS,
+        )
         .await?
     {
         ProductionReapResult::Reaped { run_id } => {
@@ -268,7 +280,12 @@ async fn drain_one(
     }
 
     match postgres
-        .claim_next_production(QUEUE_CLAIM_SCOPE, lease_ttl_ms)
+        .claim_next_production(
+            QUEUE_CLAIM_SCOPE,
+            &scope.catalog_id,
+            &scope.environment,
+            lease_ttl_ms,
+        )
         .await?
     {
         ProductionClaimResult::Empty => Ok(false),
@@ -291,24 +308,47 @@ async fn drain_one(
             lease_generation,
             wiring_id,
             wiring_version,
-            caller_attached,
+            router_caller_attached,
+            durable_caller_attached,
+            candidate,
         } => {
             let wiring_version = u32::try_from(wiring_version)
                 .context("claimed wiring version is not a positive u32")?;
-            let request = RouterDriverRequest {
-                tenant_id: scope.tenant_id.clone(),
-                catalog_id: scope.catalog_id.clone(),
-                environment: scope.environment.clone(),
-                wiring_id,
-                wiring_version,
-                delivery_id: run_id.clone(),
-                payload,
-                caller_attached,
-                resolution: WiringResolution::Frozen,
-                role: None,
-                user_id: None,
-                traceparent: None,
-                tracestate: None,
+            let result_only = candidate.is_some();
+            let request = match candidate {
+                Some(candidate) => QueueDriverRequest::Candidate(CandidateCaseRequest {
+                    target: CandidateWiringTarget {
+                        tenant_id: scope.tenant_id.clone(),
+                        catalog_id: scope.catalog_id.clone(),
+                        environment: scope.environment.clone(),
+                        catalog_version: u32::try_from(candidate.catalog_version)
+                            .context("candidate catalog version is not a positive u32")?,
+                        wiring_id,
+                        wiring_version,
+                        wiring_hash: candidate.wiring_hash,
+                        gate_report_id: candidate.gate_report_id,
+                    },
+                    binding_world: Arc::new(candidate.binding_world),
+                    delivery_id: run_id.clone(),
+                    payload,
+                    traceparent: None,
+                    tracestate: None,
+                }),
+                None => QueueDriverRequest::Released(RouterDriverRequest {
+                    tenant_id: scope.tenant_id.clone(),
+                    catalog_id: scope.catalog_id.clone(),
+                    environment: scope.environment.clone(),
+                    wiring_id,
+                    wiring_version,
+                    delivery_id: run_id.clone(),
+                    payload,
+                    caller_attached: router_caller_attached,
+                    resolution: WiringResolution::Frozen,
+                    role: None,
+                    user_id: None,
+                    traceparent: None,
+                    tracestate: None,
+                }),
             };
             drive_claim(
                 driver,
@@ -316,7 +356,8 @@ async fn drain_one(
                 &run_id,
                 lease_generation,
                 lease_ttl_ms,
-                caller_attached,
+                durable_caller_attached,
+                result_only,
                 request,
             )
             .await?;
@@ -335,10 +376,23 @@ async fn drive_claim(
     run_id: &str,
     lease_generation: i64,
     lease_ttl_ms: i64,
-    caller_attached: bool,
-    request: RouterDriverRequest,
+    durable_caller_attached: bool,
+    result_only: bool,
+    request: QueueDriverRequest,
 ) -> anyhow::Result<()> {
-    let execute = driver.execute(request);
+    let candidate_coordinate = match &request {
+        QueueDriverRequest::Released(_) => None,
+        QueueDriverRequest::Candidate(request) => Some((
+            request.target.wiring_id.clone(),
+            request.target.wiring_version,
+        )),
+    };
+    let execute = async {
+        match request {
+            QueueDriverRequest::Released(request) => driver.execute(request).await,
+            QueueDriverRequest::Candidate(request) => driver.execute_candidate(request).await,
+        }
+    };
     tokio::pin!(execute);
     let renew_every = Duration::from_millis(
         u64::try_from(lease_ttl_ms)
@@ -350,7 +404,7 @@ async fn drive_claim(
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let delivery = loop {
         tokio::select! {
-            delivery = &mut execute => break delivery?,
+            delivery = &mut execute => break delivery,
             _ = heartbeat.tick() => {
                 match postgres
                     .renew_production_lease(
@@ -371,20 +425,55 @@ async fn drive_claim(
         }
     };
 
-    match production_router_action(&delivery.outcome, caller_attached)? {
+    let delivery = match delivery {
+        Ok(delivery) => delivery,
+        Err(error) => {
+            let Some(refusal) = error.downcast_ref::<CandidateExecutionRefusal>() else {
+                return Err(error);
+            };
+            let Some((wiring_id, wiring_version)) = candidate_coordinate else {
+                return Err(error);
+            };
+            let fail_kind = match refusal.kind() {
+                CandidateExecutionRefusalKind::Identity => FailKind::ForeignRevision,
+                CandidateExecutionRefusalKind::Definition => FailKind::IncompatibleContract,
+                CandidateExecutionRefusalKind::Binding => FailKind::UnboundRequirement,
+                CandidateExecutionRefusalKind::Artifact => FailKind::HashInvalidBytes,
+            };
+            let result = serde_json::json!({
+                "error": {
+                    "code": refusal.refusal(),
+                    "run-id": run_id,
+                    "wiring-id": wiring_id,
+                    "wiring-version": wiring_version,
+                }
+            });
+            tracing::warn!(
+                run_id,
+                refusal = refusal.refusal(),
+                "candidate queue execution refused deterministic preflight"
+            );
+            commit_completion(
+                postgres,
+                run_id,
+                lease_generation,
+                &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::failed(
+                    result, fail_kind, None,
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    let action = if result_only {
+        production_router_result_action(&delivery.outcome)?
+    } else {
+        production_router_action(&delivery.outcome, durable_caller_attached)?
+    };
+    match action {
         ProductionRouterAction::Complete(completion) => {
-            let result = postgres
-                .complete_production(QUEUE_CLAIM_SCOPE, run_id, lease_generation, &completion)
-                .await?;
-            match result {
-                ProductionCompletionResult::Terminalized
-                | ProductionCompletionResult::AlreadyTerminal(_) => {
-                    tracing::info!(run_id, ?result, "executor completed queue run");
-                }
-                ProductionCompletionResult::FenceLost | ProductionCompletionResult::NotFound => {
-                    tracing::warn!(run_id, ?result, "executor completion did not own queue run");
-                }
-            }
+            commit_completion(postgres, run_id, lease_generation, &completion).await?;
         }
         ProductionRouterAction::Emit { dedup_id, .. } => {
             tracing::warn!(
@@ -398,6 +487,27 @@ async fn drive_claim(
                 run_id,
                 "router delivery cancelled; lease left for redelivery"
             );
+        }
+    }
+    Ok(())
+}
+
+async fn commit_completion(
+    postgres: &WamnPostgres,
+    run_id: &str,
+    lease_generation: i64,
+    completion: &wamn_runtime::plugins::wamn_postgres::ProductionCompletion,
+) -> anyhow::Result<()> {
+    let result = postgres
+        .complete_production(QUEUE_CLAIM_SCOPE, run_id, lease_generation, completion)
+        .await?;
+    match result {
+        ProductionCompletionResult::Terminalized
+        | ProductionCompletionResult::AlreadyTerminal(_) => {
+            tracing::info!(run_id, ?result, "executor completed queue run");
+        }
+        ProductionCompletionResult::FenceLost | ProductionCompletionResult::NotFound => {
+            tracing::warn!(run_id, ?result, "executor completion did not own queue run");
         }
     }
     Ok(())

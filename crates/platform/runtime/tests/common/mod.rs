@@ -28,6 +28,8 @@ use wamn_runtime::plugins::wamn_postgres::{
 
 pub const TENANT: &str = "claim-live";
 pub const COMPONENT: &str = "claim-live-runner";
+pub const CATALOG_ID: &str = "cat-main";
+pub const ENVIRONMENT: &str = "test";
 /// A second pod, carrying a DIFFERENT release — the rollout case.
 pub const ROLLED_COMPONENT: &str = "claim-live-runner-next";
 pub const SCHEMA: &str = "wamn_claim_live";

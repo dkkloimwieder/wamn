@@ -34,12 +34,12 @@ use wamn_runtime::plugins::wamn_postgres::{
 mod common;
 
 use common::{
-    COMPONENT, EMPTY_HASH, POD_MANIFEST_DIGEST, POD_RELEASE_VERSION, ROLLED_COMPONENT,
-    ROLLED_MANIFEST_DIGEST, ROLLED_RELEASE_VERSION, SCHEMA, TENANT, WIRING_ID, WIRING_VERSION,
-    assert_callerless_terminal, assert_prior_winner_terminal, assert_terminal_status_dequeued,
-    connect, expire_effect_run, install_fixture, install_prior_caller_winner, make_callerless,
-    queue_attempts, quote_literal, ready_run, release_record, seed_exhausted_run, seed_run,
-    teardown,
+    CATALOG_ID, COMPONENT, EMPTY_HASH, ENVIRONMENT, POD_MANIFEST_DIGEST, POD_RELEASE_VERSION,
+    ROLLED_COMPONENT, ROLLED_MANIFEST_DIGEST, ROLLED_RELEASE_VERSION, SCHEMA, TENANT, WIRING_ID,
+    WIRING_VERSION, assert_callerless_terminal, assert_prior_winner_terminal,
+    assert_terminal_status_dequeued, connect, expire_effect_run, install_fixture,
+    install_prior_caller_winner, make_callerless, queue_attempts, quote_literal, ready_run,
+    release_record, seed_exhausted_run, seed_run, teardown,
 };
 
 #[test]
@@ -80,7 +80,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let mut fifo = Vec::new();
     for _ in 0..3 {
         fifo.push(ready_run(
-            plugin.claim_next_production(COMPONENT, 30_000).await?,
+            plugin
+                .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+                .await?,
         ));
     }
     assert_eq!(fifo, ["fifo-a", "fifo-b", "fifo-c"]);
@@ -99,13 +101,21 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
         .await?;
     let locked = first_claimer
-        .query_one(&select_production_claim_sql(), &[])
+        .query_one(&select_production_claim_sql(), &[&CATALOG_ID, &ENVIRONMENT])
         .await?;
     assert_eq!(locked.get::<_, String>(0), "double-a");
-    let skipped = ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?);
+    let skipped = ready_run(
+        plugin
+            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .await?,
+    );
     assert_eq!(skipped, "double-b");
     first_claimer.batch_execute("ROLLBACK").await?;
-    let released = ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?);
+    let released = ready_run(
+        plugin
+            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .await?,
+    );
     let claimed = BTreeSet::from([skipped, released]);
     assert_eq!(
         claimed,
@@ -159,7 +169,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .await?
             .get::<_, String>(0),
     )?;
-    let pre_effect = plugin.claim_next_production(COMPONENT, 30_000).await?;
+    let pre_effect = plugin
+        .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+        .await?;
     let (run_id, payload, lease_generation, wiring_id, wiring_version) = match pre_effect {
         ProductionClaimResult::Ready {
             run_id,
@@ -241,7 +253,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         )
         .await?;
     assert_eq!(
-        plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
+        plugin
+            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor".into()
         }
@@ -279,7 +293,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
     seed_exhausted_run(admin, "janitor-callerless", 61).await?;
     make_callerless(admin, "janitor-callerless").await?;
     assert_eq!(
-        plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
+        plugin
+            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor-callerless".into()
         }
@@ -289,7 +305,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
     seed_exhausted_run(admin, "janitor-winner", 62).await?;
     let janitor_winner = install_prior_caller_winner(admin, "janitor-winner").await?;
     assert_eq!(
-        plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
+        plugin
+            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor-winner".into()
         }
@@ -340,7 +358,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ))
         .await?;
     let starved = plugin
-        .claim_next_production(COMPONENT, 30_000)
+        .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
         .await
         .expect_err("the probed grant refuses");
     assert_eq!(starved.kind(), ProductionClaimErrorKind::Storage);
@@ -361,7 +379,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ))
         .await?;
     assert_eq!(
-        plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
+        plugin
+            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .await?,
         ProductionReapResult::Reaped {
             run_id: "grant-refused".into()
         },
@@ -433,12 +453,16 @@ async fn production_claim_live() -> anyhow::Result<()> {
         1
     );
     assert_eq!(
-        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        plugin
+            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .await?,
         ProductionClaimResult::Empty,
         "the default class was let into the shelved crash floor by its ledger"
     );
     assert_eq!(
-        plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
+        plugin
+            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .await?,
         ProductionReapResult::Reaped {
             run_id: "standard-ledger".into()
         },
@@ -456,7 +480,11 @@ async fn production_claim_live() -> anyhow::Result<()> {
     seed_run(admin, "release-record", "cat-main", 70).await?;
     assert_eq!(release_record(admin, "release-record").await?, (None, None));
     assert_eq!(
-        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
+        ready_run(
+            plugin
+                .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+                .await?
+        ),
         "release-record"
     );
     let recorded = (
@@ -484,7 +512,11 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // observable pair is unchanged.
     expire_effect_run(admin, "release-record").await?;
     assert_eq!(
-        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
+        ready_run(
+            plugin
+                .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+                .await?
+        ),
         "release-record"
     );
     assert_eq!(release_record(admin, "release-record").await?, recorded);
@@ -498,7 +530,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             plugin
-                .claim_next_production(ROLLED_COMPONENT, 30_000)
+                .claim_next_production(ROLLED_COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"

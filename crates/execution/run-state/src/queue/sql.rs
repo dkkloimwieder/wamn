@@ -30,6 +30,9 @@ use crate::{RunStatus, sql as run_sql};
 /// classification that tells the router whether a caller is waiting. The
 /// release identity a claim records is NOT read here — it comes from the
 /// claiming pod, and the lease grant writes it.
+/// `$1` and `$2` are the host-carried catalog and environment scope; an
+/// executor never leases another scope's FIFO row merely because the tenant
+/// shares a project database.
 pub fn select_production_claim_sql() -> String {
     format!(
         "WITH authority AS MATERIALIZED ( \
@@ -44,6 +47,8 @@ pub fn select_production_claim_sql() -> String {
                 AND selected_run.run_id = q.run_id \
               WHERE (SELECT allowed FROM authority) \
                 AND q.tenant_id = current_setting('app.tenant', true) \
+                AND selected_run.catalog_id = $1 \
+                AND selected_run.environment = $2 \
                 AND q.available_at <= now() \
                 AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
                 AND ( \
@@ -63,8 +68,15 @@ pub fn select_production_claim_sql() -> String {
          SELECT candidate.run_id, candidate.had_prior_lease, r.status, \
                 ({execution_input})::text AS input_json, \
                 r.durability_class, r.wiring_id, r.wiring_version, \
+                COALESCE( \
+                    r.trigger_source IN ('http','internal','studio') \
+                    OR (r.flow_id IS NULL AND r.flow_version IS NULL \
+                        AND r.trigger_source IN ('scenario-draft','test-case')), false \
+                ) AS router_caller_attached, \
                 COALESCE(r.trigger_source IN ('http','internal','studio'), false) \
-                    AS caller_attached \
+                    AS durable_caller_attached, \
+                r.flow_id, r.flow_version, r.catalog_version, \
+                r.wiring_hash, r.gate_report_id, r.binding_world_json::text \
            FROM candidate \
            JOIN runs AS r \
              ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",
@@ -290,7 +302,8 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
 
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
-/// `$1` is the grace period in milliseconds. Effect evidence is deliberately
+/// `$1` is the grace period in milliseconds; `$2` and `$3` are the trusted
+/// catalog and environment scope. Effect evidence is deliberately
 /// not read in this statement: the host performs the same fresh-snapshot
 /// classification used by the ordinary production claimant after these locks
 /// are held, so a concurrent committed effect attempt cannot be missed. The
@@ -304,13 +317,16 @@ pub fn select_exhausted_production_sql() -> String {
          ) \
          SELECT q.tenant_id, q.run_id, selected_run.status, \
                 selected_run.flow_id, selected_run.flow_version, \
-                selected_run.durability_class \
+                selected_run.durability_class, selected_run.wiring_id, \
+                selected_run.wiring_version \
            FROM authority CROSS JOIN run_queue AS q \
            JOIN runs AS selected_run \
              ON selected_run.tenant_id = q.tenant_id \
             AND selected_run.run_id = q.run_id \
           WHERE authority.allowed \
             AND q.tenant_id = current_setting('app.tenant', true) \
+            AND selected_run.catalog_id = $2 \
+            AND selected_run.environment = $3 \
                 AND q.lease_expires_at IS NOT NULL \
                 AND q.lease_expires_at \
                     + ($1::bigint * interval '1 millisecond') <= now() \
@@ -326,17 +342,22 @@ pub fn select_exhausted_production_sql() -> String {
 
 /// Mark one already locked, effect-free exhausted run and dequeue it.
 ///
-/// Params: run id, exact generic caller body JSON, RFC 8785 body hash. Caller
+/// Params: run id, exact generic failure JSON, RFC 8785 body hash. Caller
 /// outcome compare-and-set semantics match claim refusals: callerless fields
-/// stay NULL and an existing released winner is preserved byte-for-byte.
+/// stay NULL and an existing released winner is preserved byte-for-byte. A
+/// component-era management run stores the same truthful failure as its result
+/// because it has no durable caller row for reconciliation to observe.
 pub fn terminalize_exhausted_production_sql() -> String {
     format!(
         "WITH authority AS MATERIALIZED ( \
              SELECT require_executor_platform_authority() AS allowed \
          ), \
          updated AS ( \
-             UPDATE runs AS r \
+            UPDATE runs AS r \
             SET status = '{infra}', \
+                result_json = CASE \
+                    WHEN {candidate_result} THEN $2::text::jsonb \
+                    ELSE r.result_json END, \
                 caller_outcome_kind = CASE \
                     WHEN {unreleased_attached} THEN 'failed' \
                     ELSE r.caller_outcome_kind END, \
@@ -372,6 +393,10 @@ pub fn terminalize_exhausted_production_sql() -> String {
         infra = RunStatus::InfrastructureFailure.as_sql(),
         dispatched = RunStatus::Dispatched.as_sql(),
         running = RunStatus::Running.as_sql(),
+        candidate_result = "r.flow_id IS NULL AND r.flow_version IS NULL \
+                            AND r.wiring_hash IS NOT NULL \
+                            AND r.gate_report_id IS NOT NULL \
+                            AND r.binding_world_json IS NOT NULL",
         unreleased_attached = "r.trigger_source IN ('http','internal','studio') \
                                AND r.caller_released_at IS NULL",
     )

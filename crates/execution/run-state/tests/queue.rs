@@ -206,6 +206,11 @@ fn global_fifo_uses_available_stream_run_tie_break() {
     assert!(sql.contains("AS MATERIALIZED"));
     assert!(sql.contains("FOR UPDATE OF selected_run, q SKIP LOCKED"));
     assert!(sql.contains("LIMIT 1"));
+    assert!(sql.contains("selected_run.catalog_id = $1"));
+    assert!(sql.contains("selected_run.environment = $2"));
+    assert!(sql.contains("AS router_caller_attached"));
+    assert!(sql.contains("AS durable_caller_attached"));
+    assert!(sql.contains("r.flow_id IS NULL AND r.flow_version IS NULL"));
 }
 
 #[test]
@@ -315,12 +320,16 @@ fn janitor_excludes_effect_attempts() {
     let select = select_exhausted_production_sql();
     assert!(select.contains("q.attempts >= q.max_attempts"));
     assert!(select.contains("FOR UPDATE OF selected_run, q SKIP LOCKED"));
+    assert!(select.contains("selected_run.catalog_id = $2"));
+    assert!(select.contains("selected_run.environment = $3"));
     assert!(!select.contains("effect_attempts"));
     let terminalize = terminalize_exhausted_production_sql();
     assert!(terminalize.contains("THEN $2::text::jsonb"));
     assert!(terminalize.contains("THEN $3"));
     assert!(terminalize.contains("THEN 500"));
     assert!(terminalize.contains("DELETE FROM run_queue"));
+    assert!(terminalize.contains("result_json = CASE"));
+    assert!(terminalize.contains("r.binding_world_json IS NOT NULL"));
     assert!(!terminalize.contains("sha256("));
     assert!(!terminalize.contains("jsonb::text"));
     assert!(!select.contains("partition_key"));

@@ -4327,9 +4327,11 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "serde_json",
  "tokio",
  "tracing",
  "wamn-execution-host",
+ "wamn-run-state",
  "wamn-runtime",
  "wash-runtime",
 ]

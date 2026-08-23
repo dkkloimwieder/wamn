@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use deadpool_postgres::{Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime, Timeouts};
+use serde::Deserialize;
 use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
 
@@ -145,6 +146,89 @@ pub struct ConnectionEffectLookup<'a> {
     pub node_id: &'a str,
     pub component_digest: &'a str,
     pub store_alias: &'a str,
+    pub candidate_binding: Option<&'a CandidateConnectionBinding>,
+}
+
+/// One DB-derived, non-secret connection fact frozen on a candidate run.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct CandidateConnectionBinding {
+    pub component_digest: String,
+    pub store_alias: String,
+    pub requirement_hash: String,
+    pub instance_id: String,
+    pub instance_revision: i64,
+    pub requirement_type: String,
+    pub contract: String,
+    pub validation_hash: String,
+    pub generation: i64,
+    pub definition_hash: String,
+    pub credential_set_handle: String,
+}
+
+impl CandidateConnectionBinding {
+    fn is_complete(&self) -> bool {
+        !self.component_digest.is_empty()
+            && !self.store_alias.is_empty()
+            && !self.requirement_hash.is_empty()
+            && !self.instance_id.is_empty()
+            && self.instance_revision >= 0
+            && !self.requirement_type.is_empty()
+            && !self.contract.is_empty()
+            && !self.validation_hash.is_empty()
+            && self.generation > 0
+            && !self.definition_hash.is_empty()
+            && !self.credential_set_handle.is_empty()
+    }
+
+    pub(crate) fn matches_snapshot(&self, snapshot: &ConnectionEffectSnapshot) -> bool {
+        snapshot.requirement_hash.as_deref() == Some(self.requirement_hash.as_str())
+            && snapshot.instance_id.as_deref() == Some(self.instance_id.as_str())
+            && snapshot.instance_revision == Some(self.instance_revision)
+            && snapshot.requirement_type.as_deref() == Some(self.requirement_type.as_str())
+            && snapshot.contract.as_deref() == Some(self.contract.as_str())
+            && snapshot.validation_hash.as_deref() == Some(self.validation_hash.as_str())
+            && snapshot.active_generation == Some(self.generation)
+            && snapshot.generation == Some(self.generation)
+            && snapshot.definition_hash.as_deref() == Some(self.definition_hash.as_str())
+            && snapshot.credential_handle.as_deref() == Some(self.credential_set_handle.as_str())
+    }
+}
+
+/// Canonically ordered binding world persisted by private candidate admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateBindingWorld(Arc<[CandidateConnectionBinding]>);
+
+impl CandidateBindingWorld {
+    /// Decode the exact persisted JSON boundary and reject partial, duplicate,
+    /// or non-canonical rows before any component executes.
+    pub fn from_json(value: serde_json::Value) -> anyhow::Result<Self> {
+        let bindings: Vec<CandidateConnectionBinding> =
+            serde_json::from_value(value).context("decode candidate binding world")?;
+        anyhow::ensure!(
+            bindings.iter().all(CandidateConnectionBinding::is_complete),
+            "candidate-binding-world-incomplete"
+        );
+        anyhow::ensure!(
+            bindings.windows(2).all(|pair| {
+                (&pair[0].component_digest, &pair[0].store_alias)
+                    < (&pair[1].component_digest, &pair[1].store_alias)
+            }),
+            "candidate-binding-world-not-canonical"
+        );
+        Ok(Self(bindings.into()))
+    }
+
+    /// Find the one frozen binding selected by a component store alias.
+    pub fn binding(
+        &self,
+        component_digest: &str,
+        store_alias: &str,
+    ) -> Option<&CandidateConnectionBinding> {
+        self.0.iter().find(|binding| {
+            binding.component_digest == component_digest && binding.store_alias == store_alias
+        })
+    }
 }
 
 /// One transactionally consistent set of admitted HTTP effect facts.
@@ -154,14 +238,17 @@ pub struct ConnectionEffectSnapshot {
     pub component: Option<String>,
     pub interface_version: Option<String>,
     pub requirement_json: Option<serde_json::Value>,
+    pub requirement_hash: Option<String>,
     pub node_permitted: bool,
     pub binding_active: bool,
     pub binding_valid: bool,
     pub instance_id: Option<String>,
+    pub validation_hash: Option<String>,
     pub requirement_type: Option<String>,
     pub contract: Option<String>,
     pub instance_enabled: bool,
     pub active_generation: Option<i64>,
+    pub instance_revision: Option<i64>,
     pub generation: Option<i64>,
     pub definition: Option<serde_json::Value>,
     pub definition_hash: Option<String>,
@@ -188,7 +275,7 @@ WITH selected_wiring AS MATERIALIZED ( \
        AND wiring.graph_json ->> 'version' = $6::text \
 ) \
 SELECT wiring.wiring_hash, component.component, component.interface_version, \
-       requirement.requirement_json::text, \
+       requirement.requirement_json::text, requirement.requirement_hash, \
        COALESCE( \
            node.value IS NOT NULL \
            AND node.value ->> 'component' = component.component \
@@ -197,8 +284,9 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
            false \
        ), \
        binding.binding_status = 'active', binding.validation_status = 'valid', \
-       instance.instance_id, instance.requirement_type, instance.contract, \
-       instance.lifecycle_status = 'enabled', instance.active_generation, \
+       instance.instance_id, binding.validation_hash, \
+       instance.requirement_type, instance.contract, \
+       instance.lifecycle_status = 'enabled', instance.active_generation, instance.revision, \
        generation.generation, generation.definition_json::text, generation.definition_hash, \
        generation.credential_set_handle \
   FROM selected_wiring AS wiring \
@@ -225,6 +313,7 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
    AND binding.component_digest = $8 \
    AND binding.store_alias = $9 \
    AND binding.environment = $4 \
+   AND ($10::text IS NULL OR binding.instance_id = $10) \
   LEFT JOIN catalog.connection_instances AS instance \
     ON instance.tenant_id = binding.tenant_id \
    AND instance.environment = binding.environment \
@@ -233,7 +322,8 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
     ON generation.tenant_id = instance.tenant_id \
    AND generation.environment = instance.environment \
    AND generation.instance_id = instance.instance_id \
-   AND generation.generation = instance.active_generation";
+   AND generation.generation = COALESCE($11::bigint, instance.active_generation) \
+   AND ($11::bigint IS NULL OR instance.active_generation = $11)";
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
@@ -1336,7 +1426,11 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
         let result: anyhow::Result<Option<ConnectionEffectSnapshot>> = async {
-            let params: [&(dyn ToSql + Sync); 9] = [
+            let candidate_instance = lookup
+                .candidate_binding
+                .map(|binding| binding.instance_id.as_str());
+            let candidate_generation = lookup.candidate_binding.map(|binding| binding.generation);
+            let params: [&(dyn ToSql + Sync); 11] = [
                 &tenant,
                 &lookup.catalog_id,
                 &lookup.catalog_version,
@@ -1346,6 +1440,8 @@ impl WamnPostgres {
                 &lookup.node_id,
                 &lookup.component_digest,
                 &lookup.store_alias,
+                &candidate_instance,
+                &candidate_generation,
             ];
             let row = conn
                 .query_opt(CONNECTION_EFFECT_SNAPSHOT_SQL, &params)
@@ -1368,18 +1464,21 @@ impl WamnPostgres {
                 component: row.try_get(1)?,
                 interface_version: row.try_get(2)?,
                 requirement_json: json(3)?,
-                node_permitted: row.try_get::<_, Option<bool>>(4)?.unwrap_or(false),
-                binding_active: row.try_get::<_, Option<bool>>(5)?.unwrap_or(false),
-                binding_valid: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
-                instance_id: row.try_get(7)?,
-                requirement_type: row.try_get(8)?,
-                contract: row.try_get(9)?,
-                instance_enabled: row.try_get::<_, Option<bool>>(10)?.unwrap_or(false),
-                active_generation: row.try_get(11)?,
-                generation: row.try_get(12)?,
-                definition: json(13)?,
-                definition_hash: row.try_get(14)?,
-                credential_handle: row.try_get(15)?,
+                requirement_hash: row.try_get(4)?,
+                node_permitted: row.try_get::<_, Option<bool>>(5)?.unwrap_or(false),
+                binding_active: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
+                binding_valid: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
+                instance_id: row.try_get(8)?,
+                validation_hash: row.try_get(9)?,
+                requirement_type: row.try_get(10)?,
+                contract: row.try_get(11)?,
+                instance_enabled: row.try_get::<_, Option<bool>>(12)?.unwrap_or(false),
+                active_generation: row.try_get(13)?,
+                instance_revision: row.try_get(14)?,
+                generation: row.try_get(15)?,
+                definition: json(16)?,
+                definition_hash: row.try_get(17)?,
+                credential_handle: row.try_get(18)?,
             };
             Ok(Some(snapshot))
         }
@@ -1606,6 +1705,50 @@ pub(super) enum OneShotResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn candidate_binding(component: &str, alias: &str) -> serde_json::Value {
+        serde_json::json!({
+            "component-digest": component,
+            "store-alias": alias,
+            "requirement-hash": "sha256:req",
+            "instance-id": "orders",
+            "instance-revision": 3,
+            "requirement-type": "http",
+            "contract": "wamn:connection/http@0.1.0",
+            "validation-hash": "sha256:validation",
+            "generation": 7,
+            "definition-hash": "sha256:definition",
+            "credential-set-handle": "orders-7"
+        })
+    }
+
+    #[test]
+    fn candidate_binding_world_requires_complete_canonical_unique_rows() {
+        let first = candidate_binding("sha256:a", "primary");
+        let second = candidate_binding("sha256:b", "primary");
+        let world =
+            CandidateBindingWorld::from_json(serde_json::json!([first.clone(), second.clone()]))
+                .expect("ordered complete world");
+        assert!(world.binding("sha256:a", "primary").is_some());
+        assert!(CandidateBindingWorld::from_json(serde_json::json!([second, first])).is_err());
+        let mut incomplete = candidate_binding("sha256:a", "primary");
+        incomplete
+            .as_object_mut()
+            .expect("fixture object")
+            .remove("generation");
+        assert!(CandidateBindingWorld::from_json(serde_json::json!([incomplete])).is_err());
+    }
+
+    #[test]
+    fn candidate_effect_snapshot_pins_instance_and_generation_without_fallback() {
+        for predicate in [
+            "($10::text IS NULL OR binding.instance_id = $10)",
+            "generation.generation = COALESCE($11::bigint, instance.active_generation)",
+            "($11::bigint IS NULL OR instance.active_generation = $11)",
+        ] {
+            assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(predicate));
+        }
+    }
 
     #[test]
     fn guest_and_host_owned_paths_are_pinned_to_distinct_pool_lifecycles() {
@@ -2531,6 +2674,7 @@ mod tests {
             node_id: "node",
             component_digest: "digest",
             store_alias: "manager",
+            candidate_binding: None,
         };
 
         // A stale ConnectionHttp still carrying the tenant its store was BUILT
@@ -2599,6 +2743,7 @@ mod tests {
             node_id: "node",
             component_digest: "digest",
             store_alias: "manager",
+            candidate_binding: None,
         };
 
         let unbound = pg

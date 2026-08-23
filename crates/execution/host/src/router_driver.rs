@@ -16,16 +16,18 @@ use wamn_router::{
     ActiveWiring, CacheInsert, Delivery, ErrorDetail, Lookup, NodeError, NodeOutcome, Outcome,
     RateLimitDetail, Step, WiringCache, WiringCacheSnapshot,
 };
-use wamn_runtime::component_artifact_source::ComponentArtifactSource;
+use wamn_runtime::component_artifact_source::{
+    ComponentArtifactFetchErrorKind, ComponentArtifactSource,
+};
 use wamn_runtime::engine::{MAX_HOST_CALL_DURATION, MEMORY_CAP_BYTES};
 use wamn_runtime::plugins::connection_http::{
-    self, CONNECTION_HTTP_ID, ConnectionHttp, ConnectionInvocation,
+    self, CONNECTION_HTTP_ID, ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
 };
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
-use wamn_runtime::plugins::wamn_postgres::ResolvedActiveWiring;
 use wamn_runtime::plugins::wamn_postgres::{
-    ReleaseIdentity, SessionClaims, WAMN_POSTGRES_ID, WamnPostgres,
+    CandidateBindingWorld, CandidateWiringResolution, ReleaseIdentity, ResolvedActiveWiring,
+    SessionClaims, WAMN_POSTGRES_ID, WamnPostgres,
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
@@ -150,6 +152,48 @@ impl fmt::Display for PreloadedWiringMissing {
 
 impl std::error::Error for PreloadedWiringMissing {}
 
+/// Stable host classification for a candidate fact that cannot be retried
+/// into correctness. Availability failures deliberately use their original
+/// error types and remain queue-retryable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CandidateExecutionRefusalKind {
+    Identity,
+    Definition,
+    Binding,
+    Artifact,
+}
+
+/// Typed deterministic refusal returned by candidate preflight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CandidateExecutionRefusal {
+    kind: CandidateExecutionRefusalKind,
+    refusal: &'static str,
+}
+
+impl CandidateExecutionRefusal {
+    fn new(kind: CandidateExecutionRefusalKind, refusal: &'static str) -> Self {
+        Self { kind, refusal }
+    }
+
+    /// Host-only class used by the queue persistence adapter.
+    pub fn kind(&self) -> CandidateExecutionRefusalKind {
+        self.kind
+    }
+
+    /// Frozen refusal literal persisted in the candidate run result.
+    pub fn refusal(&self) -> &'static str {
+        self.refusal
+    }
+}
+
+impl fmt::Display for CandidateExecutionRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.refusal)
+    }
+}
+
+impl std::error::Error for CandidateExecutionRefusal {}
+
 /// Trusted coordinates handed from an ingress admission owner to the driver.
 #[derive(Debug, Clone)]
 pub struct RouterDriverRequest {
@@ -164,6 +208,30 @@ pub struct RouterDriverRequest {
     pub resolution: WiringResolution,
     pub role: Option<String>,
     pub user_id: Option<String>,
+    pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
+}
+
+/// Exact immutable candidate selected by one durable management admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateWiringTarget {
+    pub tenant_id: String,
+    pub catalog_id: String,
+    pub environment: String,
+    pub catalog_version: u32,
+    pub wiring_id: String,
+    pub wiring_version: u32,
+    pub wiring_hash: String,
+    pub gate_report_id: String,
+}
+
+/// One queued candidate input executed through the production driver.
+#[derive(Debug, Clone)]
+pub struct CandidateCaseRequest {
+    pub target: CandidateWiringTarget,
+    pub binding_world: Arc<CandidateBindingWorld>,
+    pub delivery_id: String,
+    pub payload: serde_json::Value,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
 }
@@ -190,10 +258,11 @@ pub(crate) struct PreparedReleaseReadiness {
     pub(crate) component_digests: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct CatalogFacts {
     catalog_version: u32,
     components: Arc<[AdmittedComponent]>,
+    gate_report_id: Arc<str>,
 }
 
 impl CatalogFacts {
@@ -201,6 +270,7 @@ impl CatalogFacts {
         Self {
             catalog_version: resolved.catalog_version,
             components: Arc::clone(&resolved.components),
+            gate_report_id: Arc::clone(&resolved.gate_report_id),
         }
     }
 
@@ -209,6 +279,16 @@ impl CatalogFacts {
             .iter()
             .find(|component| component.component_digest == digest)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ExecutionClosure<'a> {
+    Released,
+    Candidate {
+        target: &'a CandidateWiringTarget,
+        binding_world: &'a Arc<CandidateBindingWorld>,
+        component_bytes: &'a BTreeMap<String, Vec<u8>>,
+    },
 }
 
 /// One router, cache, artifact source, and digest-keyed instance pool per
@@ -428,6 +508,59 @@ impl RouterDriver {
         self.validate_request_scope(&request)?;
         let active = self.resolve(&request).await?;
         self.validate_wiring_closure(&request, &active)?;
+        self.execute_resolved(request, active, ExecutionClosure::Released)
+            .await
+    }
+
+    /// Execute a DB-frozen candidate through the same router, invoker, and
+    /// digest-keyed instance pool as release-backed delivery.
+    pub async fn execute_candidate(
+        &self,
+        request: CandidateCaseRequest,
+    ) -> anyhow::Result<RouterDelivery> {
+        self.validate_candidate_target(&request.target)?;
+        let active = self
+            .resolve_candidate(&request.target, &request.binding_world)
+            .await?;
+        self.validate_candidate_closure(&request.target, &active)?;
+        let component_bytes = self.fetch_candidate_components(&active).await?;
+        let target = &request.target;
+        let driver_request = RouterDriverRequest {
+            tenant_id: target.tenant_id.clone(),
+            catalog_id: target.catalog_id.clone(),
+            environment: target.environment.clone(),
+            wiring_id: target.wiring_id.clone(),
+            wiring_version: target.wiring_version,
+            delivery_id: request.delivery_id,
+            payload: request.payload,
+            // A management case expects `respond` as a terminal result, but it
+            // has no synchronous durable caller. The queue adapter keeps those
+            // two facts separate when persisting the outcome.
+            caller_attached: true,
+            resolution: WiringResolution::Frozen,
+            role: None,
+            user_id: None,
+            traceparent: request.traceparent,
+            tracestate: request.tracestate,
+        };
+        self.execute_resolved(
+            driver_request,
+            active,
+            ExecutionClosure::Candidate {
+                target,
+                binding_world: &request.binding_world,
+                component_bytes: &component_bytes,
+            },
+        )
+        .await
+    }
+
+    async fn execute_resolved(
+        &self,
+        request: RouterDriverRequest,
+        active: ActiveWiring<CatalogFacts>,
+        closure: ExecutionClosure<'_>,
+    ) -> anyhow::Result<RouterDelivery> {
         let wiring = Arc::clone(&active.wiring);
         let mut walk = wiring.start(Delivery {
             id: request.delivery_id.clone(),
@@ -456,7 +589,7 @@ impl RouterDriver {
                 }
                 Step::Invoke(call) => {
                     let outcome = self
-                        .invoke_node(&request, &active, &call)
+                        .invoke_node(&request, &active, &call, closure)
                         .await
                         .with_context(|| format!("invoke wiring node {:?}", call.node))?;
                     if let Err(refusal) = wiring.apply(&mut walk, &call, outcome, self.now_ms()) {
@@ -466,6 +599,94 @@ impl RouterDriver {
                     }
                 }
             }
+        }
+    }
+
+    async fn resolve_candidate(
+        &self,
+        target: &CandidateWiringTarget,
+        expected_binding_world: &CandidateBindingWorld,
+    ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
+        let resolved = self
+            .postgres
+            .resolve_candidate_wiring(
+                &self.config.project,
+                &target.tenant_id,
+                &target.catalog_id,
+                &target.environment,
+                target.catalog_version,
+                &target.wiring_id,
+                target.wiring_version,
+                &target.wiring_hash,
+                &target.gate_report_id,
+                expected_binding_world,
+            )
+            .await?;
+        let resolved = match resolved {
+            CandidateWiringResolution::Resolved(resolved) => resolved,
+            CandidateWiringResolution::Missing => {
+                return Err(CandidateExecutionRefusal::new(
+                    CandidateExecutionRefusalKind::Identity,
+                    "candidate-wiring-not-found",
+                )
+                .into());
+            }
+            CandidateWiringResolution::InvalidDefinition => {
+                return Err(CandidateExecutionRefusal::new(
+                    CandidateExecutionRefusalKind::Definition,
+                    "candidate-definition-invalid",
+                )
+                .into());
+            }
+            CandidateWiringResolution::BindingWorldUnavailable => {
+                return Err(CandidateExecutionRefusal::new(
+                    CandidateExecutionRefusalKind::Binding,
+                    "candidate-binding-world-unavailable",
+                )
+                .into());
+            }
+            CandidateWiringResolution::BindingWorldDrift => {
+                return Err(CandidateExecutionRefusal::new(
+                    CandidateExecutionRefusalKind::Binding,
+                    "candidate-binding-world-drift",
+                )
+                .into());
+            }
+        };
+        let facts = CatalogFacts::from_resolved(&resolved);
+        if let Some(active) = self.cache.get_version(
+            &target.tenant_id,
+            &target.catalog_id,
+            &target.environment,
+            &target.wiring_id,
+            target.wiring_version,
+        ) {
+            if active.graph_hash != resolved.graph_hash || active.facts.as_ref() != &facts {
+                return Err(CandidateExecutionRefusal::new(
+                    CandidateExecutionRefusalKind::Identity,
+                    "candidate-wiring-immutable-hash-mismatch",
+                )
+                .into());
+            }
+            return Ok(active);
+        }
+        match self.cache.insert_version(
+            &target.tenant_id,
+            &target.catalog_id,
+            &target.environment,
+            &target.wiring_id,
+            resolved.version,
+            Arc::clone(&resolved.graph_hash),
+            resolved.wiring,
+            facts,
+        ) {
+            CacheInsert::Installed(active) => Ok(active),
+            CacheInsert::HashMismatch => Err(CandidateExecutionRefusal::new(
+                CandidateExecutionRefusalKind::Identity,
+                "candidate-wiring-immutable-hash-mismatch",
+            )
+            .into()),
+            CacheInsert::Overtaken => unreachable!("exact-version insert has no pointer token"),
         }
     }
 
@@ -612,6 +833,83 @@ impl RouterDriver {
         Ok(())
     }
 
+    fn validate_candidate_target(
+        &self,
+        target: &CandidateWiringTarget,
+    ) -> Result<(), CandidateExecutionRefusal> {
+        let release = &self.release.manifest().release;
+        if target.catalog_version == 0 || target.wiring_version == 0 {
+            return Err(CandidateExecutionRefusal::new(
+                CandidateExecutionRefusalKind::Identity,
+                "candidate-wiring-coordinate-incomplete",
+            ));
+        }
+        if release.tenant_id != target.tenant_id
+            || release.catalog_id != target.catalog_id
+            || release.environment != target.environment
+        {
+            return Err(CandidateExecutionRefusal::new(
+                CandidateExecutionRefusalKind::Identity,
+                "candidate-request-release-scope-mismatch",
+            ));
+        }
+        if target.wiring_hash.is_empty() || target.gate_report_id.is_empty() {
+            return Err(CandidateExecutionRefusal::new(
+                CandidateExecutionRefusalKind::Identity,
+                "candidate-wiring-coordinate-incomplete",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_candidate_closure(
+        &self,
+        target: &CandidateWiringTarget,
+        active: &ActiveWiring<CatalogFacts>,
+    ) -> Result<(), CandidateExecutionRefusal> {
+        if active.version != target.wiring_version
+            || active.graph_hash.as_ref() != target.wiring_hash
+            || active.facts.catalog_version != target.catalog_version
+            || active.facts.gate_report_id.as_ref() != target.gate_report_id
+            || active.facts.components.iter().any(|component| {
+                component.scope.tenant_id != target.tenant_id
+                    || component.scope.catalog_id != target.catalog_id
+                    || component.scope.catalog_version != target.catalog_version
+            })
+        {
+            return Err(CandidateExecutionRefusal::new(
+                CandidateExecutionRefusalKind::Definition,
+                "candidate-wiring-closure-mismatch",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn fetch_candidate_components(
+        &self,
+        active: &ActiveWiring<CatalogFacts>,
+    ) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
+        let mut bytes_by_digest = BTreeMap::new();
+        for component in active.facts.components.iter() {
+            match self.source.pull_verified(component).await {
+                Ok(bytes) => {
+                    bytes_by_digest.insert(component.component_digest.clone(), bytes);
+                }
+                Err(error) if error.kind() == ComponentArtifactFetchErrorKind::Unavailable => {
+                    return Err(error.into());
+                }
+                Err(error) => {
+                    return Err(CandidateExecutionRefusal::new(
+                        CandidateExecutionRefusalKind::Artifact,
+                        error.refusal(),
+                    )
+                    .into());
+                }
+            }
+        }
+        Ok(bytes_by_digest)
+    }
+
     fn validate_wiring_closure(
         &self,
         request: &RouterDriverRequest,
@@ -658,23 +956,46 @@ impl RouterDriver {
         request: &RouterDriverRequest,
         active: &ActiveWiring<CatalogFacts>,
         call: &wamn_router::NodeCall,
+        closure: ExecutionClosure<'_>,
     ) -> anyhow::Result<NodeOutcome> {
         let component = active
             .facts
             .component(&call.component)
             .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
-        let release_component = ServingComponent {
-            component: component.component.clone(),
-            interface_version: component.interface_version.clone(),
-            digest: component.component_digest.clone(),
+        if matches!(closure, ExecutionClosure::Released) {
+            let release_component = ServingComponent {
+                component: component.component.clone(),
+                interface_version: component.interface_version.clone(),
+                digest: component.component_digest.clone(),
+            };
+            anyhow::ensure!(
+                self.release
+                    .manifest()
+                    .components
+                    .contains(&release_component),
+                "component-not-in-carried-release"
+            );
+        }
+        let release = matches!(closure, ExecutionClosure::Released).then(|| ReleaseIdentity {
+            release_version: self.release.release().release_version,
+            manifest_digest: self.release.release().manifest_digest.clone(),
+        });
+        let connection_closure = match closure {
+            ExecutionClosure::Released => ConnectionExecutionClosure::Released,
+            ExecutionClosure::Candidate {
+                target,
+                binding_world,
+                ..
+            } => ConnectionExecutionClosure::Candidate {
+                catalog_id: target.catalog_id.clone(),
+                catalog_version: target.catalog_version,
+                environment: target.environment.clone(),
+                wiring_hash: target.wiring_hash.clone(),
+                component: component.component.clone(),
+                interface_version: component.interface_version.clone(),
+                binding_world: Arc::clone(binding_world),
+            },
         };
-        anyhow::ensure!(
-            self.release
-                .manifest()
-                .components
-                .contains(&release_component),
-            "component-not-in-carried-release"
-        );
         let acquisition = NodeAcquisition {
             claims: SessionClaims {
                 tenant: request.tenant_id.clone(),
@@ -683,10 +1004,7 @@ impl RouterDriver {
                 runner: Some(self.config.owner_prefix.clone()),
                 role: request.role.clone(),
                 user_id: request.user_id.clone(),
-                release: Some(ReleaseIdentity {
-                    release_version: self.release.release().release_version,
-                    manifest_digest: self.release.release().manifest_digest.clone(),
-                }),
+                release,
             },
             invocation: ConnectionInvocation {
                 wiring_id: request.wiring_id.clone(),
@@ -694,16 +1012,39 @@ impl RouterDriver {
                 node_id: call.node.clone(),
                 occurrence: call.occurrence,
                 component_digest: component.component_digest.clone(),
+                closure: connection_closure,
             },
         };
         let key = ExecutionPoolKey::new(component.component_digest.clone());
         let mut lease = match self.instances.checkout(&key, &acquisition)? {
             Some(lease) => lease,
             None => {
-                let bytes = self.source.pull_verified(component).await?;
+                let candidate_bytes = match closure {
+                    ExecutionClosure::Released => None,
+                    ExecutionClosure::Candidate {
+                        component_bytes, ..
+                    } => Some(
+                        component_bytes
+                            .get(&component.component_digest)
+                            .ok_or_else(|| {
+                                CandidateExecutionRefusal::new(
+                                    CandidateExecutionRefusalKind::Artifact,
+                                    "candidate-component-bytes-missing",
+                                )
+                            })?,
+                    ),
+                };
+                let pulled_bytes;
+                let bytes = match candidate_bytes {
+                    Some(bytes) => bytes.as_slice(),
+                    None => {
+                        pulled_bytes = self.source.pull_verified(component).await?;
+                        pulled_bytes.as_slice()
+                    }
+                };
                 let instance = NodeInstance::instantiate(
                     &self.engine,
-                    &bytes,
+                    bytes,
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.credentials),
                     Arc::clone(&self.logging),
@@ -1084,6 +1425,17 @@ mod tests {
         assert_eq!(bounded_node_deadline_ms(Some(17)), 17);
         assert_eq!(deadline_ticks(30, Duration::from_millis(7)), 5);
         assert_eq!(deadline_ticks(1, Duration::from_millis(10)), 1);
+    }
+
+    #[test]
+    fn candidate_refusal_preserves_class_and_frozen_literal() {
+        let refusal = CandidateExecutionRefusal::new(
+            CandidateExecutionRefusalKind::Binding,
+            "candidate-binding-world-drift",
+        );
+        assert_eq!(refusal.kind(), CandidateExecutionRefusalKind::Binding);
+        assert_eq!(refusal.refusal(), "candidate-binding-world-drift");
+        assert_eq!(refusal.to_string(), "candidate-binding-world-drift");
     }
 
     #[test]
