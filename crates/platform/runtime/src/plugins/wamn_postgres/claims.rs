@@ -3072,6 +3072,10 @@ mod tests {
         // connection-unavailable) and confirm it is the R18 post_create hook —
         // not an auth/other failure that ALSO maps to connection-unavailable. The
         // control above already ruled out server-down; this pins the cause.
+        // Only `PoolLifecycle::Platform` wires the async-message sender through
+        // `PlatformConnect`; a guest pool never sends on it.
+        let (platform_messages, _platform_message_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
         let pool = WamnPostgres::build_pool(
             &ProjectConfig {
                 database_url: url,
@@ -3082,6 +3086,7 @@ mod tests {
                 row_limit: 1_000,
             },
             PoolLifecycle::Guest,
+            &platform_messages,
         )
         .expect("pool builds (url parses; the hook runs at checkout, not build)");
         let raw_err = match pool.get().await {

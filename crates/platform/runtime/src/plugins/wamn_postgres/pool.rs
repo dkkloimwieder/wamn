@@ -462,14 +462,16 @@ mod tests {
         );
         assert_eq!(DEFAULT_PLATFORM_POOL_MAX_SIZE, 2);
 
-        for manifest in [
-            include_str!("../../../../../../deploy/platform/runner.yaml"),
-            include_str!("../../../../../../deploy/platform/values-host-default.yaml"),
-        ] {
-            assert!(manifest.contains("WAMN_PG_GUEST_POOL_MAX, value: \"14\""));
-            assert!(manifest.contains("WAMN_PG_PLATFORM_POOL_MAX, value: \"2\""));
-            assert!(manifest.contains("cannot starve"));
-        }
+        // `deploy/platform/runner.yaml` was the other pinned carrier until
+        // wamn-0h0g.26.7.2 (ea71c1c4) deleted it with the rest of the runner
+        // deployment. Its successor `deploy/platform/executor.yaml` carries the
+        // two budgets but not the starvation rationale, so it is not a
+        // substitute for this pin without a deploy-side change this lane does
+        // not own (wamn-0h0g.11.55.3).
+        let manifest = include_str!("../../../../../../deploy/platform/values-host-default.yaml");
+        assert!(manifest.contains("WAMN_PG_GUEST_POOL_MAX, value: \"14\""));
+        assert!(manifest.contains("WAMN_PG_PLATFORM_POOL_MAX, value: \"2\""));
+        assert!(manifest.contains("cannot starve"));
 
         let source = include_str!("pool.rs");
         assert!(!source.contains("num(\"WAMN_PG_POOL_MAX\""));

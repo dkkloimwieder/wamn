@@ -55,7 +55,6 @@ fn production_claim_run_state_stand_in_tracks_schema_of_record() {
         &[
             ("environment_policies", Need::AbsentByDesign),
             ("runs", Need::Required),
-            ("invocation_admissions", Need::AbsentByDesign),
             ("effect_attempts", Need::Required),
             ("effect_attempt_dispatches", Need::AbsentByDesign),
             ("effect_attempt_outcomes", Need::AbsentByDesign),

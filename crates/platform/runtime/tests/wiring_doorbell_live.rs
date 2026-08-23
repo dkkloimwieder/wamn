@@ -27,8 +27,9 @@ use std::time::Duration;
 use serde_json::Value;
 use tokio_postgres::NoTls;
 use wamn_catalog::{flip_activation, resolve_active_wiring};
-use wamn_router::{Wiring, WiringCache, WiringNode};
-use wamn_runtime::wiring_doorbell::{DoorbellScope, WiringDoorbellListener};
+use wamn_router::{CacheInsert, Wiring, WiringCache, WiringNode};
+use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
 
 const TENANT: &str = "t1";
 const CATALOG: &str = "shop";
@@ -157,6 +158,35 @@ async fn eventually(what: &str, predicate: impl Fn() -> bool) {
     .unwrap_or_else(|_| panic!("{what} did not happen"));
 }
 
+/// Complete one resolution under the token its miss handed out. A version is
+/// immutable, so its graph hash is a function of its identity; the cache refuses
+/// a second, different hash for the same version.
+fn install(
+    cache: &WiringCache,
+    wiring_id: &str,
+    version: u32,
+    graph: Wiring,
+    token: wamn_router::ResolutionToken,
+) {
+    assert!(
+        matches!(
+            cache.insert(
+                TENANT,
+                CATALOG,
+                ENVIRONMENT,
+                wiring_id,
+                version,
+                format!("sha256:{wiring_id}-v{version}"),
+                graph,
+                (),
+                token,
+            ),
+            CacheInsert::Installed(_)
+        ),
+        "no flip raced this resolution"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires WAMN_CATALOG_PG_URL and a throwaway PostgreSQL database"]
 async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
@@ -173,22 +203,30 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // gate knows the subscriber is on the wire before it flips anything, and it
     // is the reconnect obligation running on the very first connection.
     let sentinel = cache
-        .get(ENVIRONMENT, "sentinel")
+        .get(TENANT, CATALOG, ENVIRONMENT, "sentinel")
         .miss()
         .expect("a fresh cache holds nothing");
-    cache
-        .insert(ENVIRONMENT, "sentinel", 1, wiring("sentinel"), sentinel)
-        .expect("nothing can have invalidated before the subscriber exists");
-    let listener = WiringDoorbellListener::postgres(
-        url.clone(),
-        Arc::clone(&cache),
-        DoorbellScope {
-            tenant_id: TENANT.to_string(),
-            catalog_id: CATALOG.to_string(),
-        },
+    install(&cache, "sentinel", 1, wiring("sentinel"), sentinel);
+    // The subscriber rides the ordinary platform pool (wamn-0h0g.16.24), so the
+    // gate builds the same plugin production does rather than a private URL.
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some(url.clone()),
+            guest_pool_max_size: 2,
+            platform_pool_max_size: 2,
+            wait_timeout_ms: 5_000,
+            statement_timeout_ms: 10_000,
+            row_limit: 10_000,
+        })
+        .expect("build the platform pool the doorbell listens on"),
     );
+    let listener = WiringDoorbellListener::postgres(postgres, None, Arc::clone(&cache))
+        .expect("subscribe the doorbell through the platform pool");
     eventually("the doorbell established its LISTEN", || {
-        cache.get(ENVIRONMENT, "sentinel").hit().is_none()
+        cache
+            .get(TENANT, CATALOG, ENVIRONMENT, "sentinel")
+            .hit()
+            .is_none()
     })
     .await;
 
@@ -196,17 +234,15 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // to keep out of Postgres. The token is taken BEFORE the store read, which
     // is the only order that lets a flip during the read be detected.
     let token = cache
-        .get(ENVIRONMENT, WIRING)
+        .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
         .miss()
         .expect("the first delivery misses");
     let version = resolve(&url).await.expect("v1 is active");
     assert_eq!(version, 1);
-    cache
-        .insert(ENVIRONMENT, WIRING, version, wiring("v1"), token)
-        .expect("no flip raced the first resolution");
+    install(&cache, WIRING, version, wiring("v1"), token);
     assert_eq!(
         cache
-            .get(ENVIRONMENT, WIRING)
+            .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
             .hit()
             .expect("resident after the first resolution")
             .version,
@@ -217,21 +253,22 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // statement to that memory is the DDL trigger's pg_notify.
     flip(&url, &hash('b'), true);
     eventually("the doorbell invalidated the flipped pointer", || {
-        cache.get(ENVIRONMENT, WIRING).hit().is_none()
+        cache
+            .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+            .hit()
+            .is_none()
     })
     .await;
 
     let token = cache
-        .get(ENVIRONMENT, WIRING)
+        .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
         .miss()
         .expect("the flipped pointer was dropped");
     let version = resolve(&url).await.expect("v2 is active");
     assert_eq!(version, 2, "the store now serves the flipped version");
-    cache
-        .insert(ENVIRONMENT, WIRING, version, wiring("v2"), token)
-        .expect("no further flip raced the re-read");
+    install(&cache, WIRING, version, wiring("v2"), token);
     let served = cache
-        .get(ENVIRONMENT, WIRING)
+        .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
         .hit()
         .expect("the re-read repopulated the pointer");
     assert_eq!(served.version, 2);
@@ -241,24 +278,28 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // graph that was never evicted.
     flip(&url, &hash('a'), true);
     eventually("the doorbell invalidated the rolled-back pointer", || {
-        cache.get(ENVIRONMENT, WIRING).hit().is_none()
+        cache
+            .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+            .hit()
+            .is_none()
     })
     .await;
     assert_eq!(cache.len(), 3, "no graph was dropped by either flip");
     let token = cache
-        .get(ENVIRONMENT, WIRING)
+        .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
         .miss()
         .expect("the rolled-back pointer was dropped");
     assert_eq!(resolve(&url).await.expect("v1 is active again"), 1);
 
     // Taking the wiring dark is the same statement again, and is as much an
     // invalidation: the read path stops serving it entirely.
-    cache
-        .insert(ENVIRONMENT, WIRING, 1, wiring("v1"), token)
-        .expect("no flip raced the rollback re-read");
+    install(&cache, WIRING, 1, wiring("v1"), token);
     flip(&url, &hash('a'), false);
     eventually("the doorbell invalidated the darkened pointer", || {
-        cache.get(ENVIRONMENT, WIRING).hit().is_none()
+        cache
+            .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+            .hit()
+            .is_none()
     })
     .await;
     assert_eq!(

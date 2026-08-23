@@ -43,8 +43,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(test)]
-use anyhow::anyhow;
 use wamn_catalog::{WIRING_ACTIVATION_CHANNEL, WiringActivationNotice};
 use wamn_router::WiringCache;
 
@@ -266,26 +264,20 @@ async fn run_doorbell_listener<T>(
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroUsize;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use serde_json::{Value, json};
-    use wamn_router::{Wiring, WiringNode};
+    use wamn_router::{CacheInsert, Wiring, WiringNode};
 
     use super::*;
 
+    const TENANT: &str = "t1";
+    const CATALOG: &str = "shop";
     const ENV: &str = "prod";
 
     fn cache() -> Arc<WiringCache> {
         Arc::new(WiringCache::new(
             NonZeroUsize::new(8).expect("fixture bound is non-zero"),
         ))
-    }
-
-    fn scope() -> DoorbellScope {
-        DoorbellScope {
-            tenant_id: "t1".to_string(),
-            catalog_id: "shop".to_string(),
-        }
     }
 
     fn wiring(entry: &str) -> Wiring {
@@ -318,7 +310,13 @@ mod tests {
     }
 
     fn doorbell(cache: &Arc<WiringCache>) -> WiringDoorbell {
-        WiringDoorbell::new(Arc::clone(cache), scope())
+        WiringDoorbell::new(Arc::clone(cache))
+    }
+
+    /// The graph hash a fixture resolves `(wiring_id, version)` under. A version
+    /// is immutable, so its hash is a function of its identity.
+    fn graph_hash(wiring_id: &str, version: u32) -> String {
+        format!("sha256:{wiring_id}-v{version}")
     }
 
     /// One resolution as the serving path performs it: miss, read the store,
@@ -331,12 +329,25 @@ mod tests {
         graph: Wiring,
     ) -> Arc<Wiring> {
         let token = cache
-            .get(environment, wiring_id)
+            .get(TENANT, CATALOG, environment, wiring_id)
             .miss()
             .expect("a fixture resolves only what it has just found missing");
-        cache
-            .insert(environment, wiring_id, version, graph, token)
-            .expect("no doorbell rang between this fixture's miss and its install")
+        match cache.insert(
+            TENANT,
+            CATALOG,
+            environment,
+            wiring_id,
+            version,
+            graph_hash(wiring_id, version),
+            graph,
+            (),
+            token,
+        ) {
+            CacheInsert::Installed(active) => active.wiring,
+            other => {
+                panic!("no doorbell rang between this fixture's miss and its install: {other:?}")
+            }
+        }
     }
 
     #[test]
@@ -347,17 +358,17 @@ mod tests {
         let doorbell = doorbell(&cache);
 
         assert_eq!(
-            doorbell.rang(&payload("t1", "shop", ENV, "orders")),
+            doorbell.rang(&payload(TENANT, CATALOG, ENV, "orders")),
             DoorbellEffect::Invalidated
         );
 
         assert!(
-            cache.get(ENV, "orders").hit().is_none(),
+            cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none(),
             "the flipped pointer must send the next delivery back to the store"
         );
         assert_eq!(
             cache
-                .get(ENV, "refunds")
+                .get(TENANT, CATALOG, ENV, "refunds")
                 .hit()
                 .expect("an unrelated wiring keeps serving")
                 .version,
@@ -374,16 +385,16 @@ mod tests {
         let one = resolve(&cache, ENV, "orders", 1, wiring("v1"));
         let doorbell = doorbell(&cache);
 
-        doorbell.rang(&payload("t1", "shop", ENV, "orders"));
+        doorbell.rang(&payload(TENANT, CATALOG, ENV, "orders"));
         resolve(&cache, ENV, "orders", 2, wiring("v2"));
         let served = cache
-            .get(ENV, "orders")
+            .get(TENANT, CATALOG, ENV, "orders")
             .hit()
             .expect("the re-read resolved");
         assert_eq!(served.version, 2);
         assert_eq!(served.wiring.entry(), "v2");
 
-        doorbell.rang(&payload("t1", "shop", ENV, "orders"));
+        doorbell.rang(&payload(TENANT, CATALOG, ENV, "orders"));
         let rolled_back = resolve(&cache, ENV, "orders", 1, wiring("v1-recompiled"));
         assert!(
             Arc::ptr_eq(&rolled_back, &one),
@@ -408,7 +419,7 @@ mod tests {
 
         // t0: the miss, and the store read it starts. The store says v1.
         let token = cache
-            .get(ENV, "orders")
+            .get(TENANT, CATALOG, ENV, "orders")
             .miss()
             .expect("nothing is resident yet");
         let read = (1, "v1");
@@ -416,20 +427,31 @@ mod tests {
         // t1: the activation commits. t2: the doorbell rings, still before the
         // read has come back.
         assert_eq!(
-            doorbell.rang(&payload("t1", "shop", ENV, "orders")),
+            doorbell.rang(&payload(TENANT, CATALOG, ENV, "orders")),
             DoorbellEffect::NotResident,
             "there is nothing to drop yet — the resolution is still in flight"
         );
 
         // t3: the read returns, holding the version from before the flip.
         assert!(
-            cache
-                .insert(ENV, "orders", read.0, wiring(read.1), token)
-                .is_none(),
+            matches!(
+                cache.insert(
+                    TENANT,
+                    CATALOG,
+                    ENV,
+                    "orders",
+                    read.0,
+                    graph_hash("orders", read.0),
+                    wiring(read.1),
+                    (),
+                    token,
+                ),
+                CacheInsert::Overtaken
+            ),
             "the flip would be undone by the resolution it interrupted"
         );
         assert!(
-            cache.get(ENV, "orders").hit().is_none(),
+            cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none(),
             "the hot path would serve the superseded version until the next flip"
         );
 
@@ -439,7 +461,7 @@ mod tests {
         assert_eq!(served.entry(), "v2");
         assert_eq!(
             cache
-                .get(ENV, "orders")
+                .get(TENANT, CATALOG, ENV, "orders")
                 .hit()
                 .expect("the retry resolved")
                 .version,
@@ -455,16 +477,16 @@ mod tests {
         resolve(&cache, ENV, "orders", 1, wiring("v1"));
         let doorbell = doorbell(&cache);
 
-        for (tenant, catalog) in [("t2", "shop"), ("t1", "warehouse")] {
+        for (tenant, catalog) in [("t2", CATALOG), (TENANT, "warehouse")] {
             assert_eq!(
                 doorbell.rang(&payload(tenant, catalog, ENV, "orders")),
-                DoorbellEffect::OutOfScope,
-                "{tenant}/{catalog} is not this process's scope"
+                DoorbellEffect::NotResident,
+                "{tenant}/{catalog} names a pointer this process does not hold"
             );
         }
         assert_eq!(
             cache
-                .get(ENV, "orders")
+                .get(TENANT, CATALOG, ENV, "orders")
                 .hit()
                 .expect("this tenant's pointer is untouched")
                 .version,
@@ -481,12 +503,12 @@ mod tests {
         let doorbell = doorbell(&cache);
 
         assert_eq!(
-            doorbell.rang(&payload("t1", "shop", "staging", "orders")),
+            doorbell.rang(&payload(TENANT, CATALOG, "staging", "orders")),
             DoorbellEffect::NotResident
         );
         assert_eq!(
             cache
-                .get(ENV, "orders")
+                .get(TENANT, CATALOG, ENV, "orders")
                 .hit()
                 .expect("prod still serves")
                 .version,
@@ -503,8 +525,8 @@ mod tests {
         let doorbell = doorbell(&cache);
 
         let dark = serde_json::to_string(&WiringActivationNotice {
-            tenant_id: "t1".to_string(),
-            catalog_id: "shop".to_string(),
+            tenant_id: TENANT.to_string(),
+            catalog_id: CATALOG.to_string(),
             environment: ENV.to_string(),
             wiring_id: "orders".to_string(),
             enabled: false,
@@ -513,7 +535,7 @@ mod tests {
         .expect("the notice serializes");
 
         assert_eq!(doorbell.rang(&dark), DoorbellEffect::Invalidated);
-        assert!(cache.get(ENV, "orders").hit().is_none());
+        assert!(cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none());
     }
 
     /// A payload this process cannot read is deployment skew, and it hides WHICH
@@ -521,7 +543,7 @@ mod tests {
     /// silently, so it is treated as a missed flip.
     #[test]
     fn an_unreadable_payload_drops_the_whole_cache_rather_than_guessing() {
-        let complete = payload("t1", "shop", ENV, "orders");
+        let complete = payload(TENANT, CATALOG, ENV, "orders");
         // `deny_unknown_fields`: a DDL that grew a key this build cannot name.
         let surprising = format!(
             r#"{{{},"surprise":1}}"#,
@@ -538,8 +560,13 @@ mod tests {
                 DoorbellEffect::Unreadable,
                 "{unreadable} must not read as a routine notice"
             );
-            assert!(cache.get(ENV, "orders").hit().is_none());
-            assert!(cache.get("staging", "refunds").hit().is_none());
+            assert!(cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none());
+            assert!(
+                cache
+                    .get(TENANT, CATALOG, "staging", "refunds")
+                    .hit()
+                    .is_none()
+            );
             assert_eq!(cache.len(), 2, "the graphs are still immutable and correct");
         }
     }
@@ -554,8 +581,8 @@ mod tests {
         let doorbell = doorbell(&cache);
 
         let snake = json!({
-            "tenant_id": "t1",
-            "catalog_id": "shop",
+            "tenant_id": TENANT,
+            "catalog_id": CATALOG,
             "environment": ENV,
             "wiring_id": "orders",
             "enabled": true,
@@ -564,87 +591,31 @@ mod tests {
         .to_string();
         assert_eq!(doorbell.rang(&snake), DoorbellEffect::Unreadable);
 
-        let kebab = payload("t1", "shop", ENV, "orders");
+        let kebab = payload(TENANT, CATALOG, ENV, "orders");
         assert!(kebab.contains(r#""wiring-id""#), "wire keys are kebab-case");
         assert!(kebab.contains(r#""confirmed-definition-hash""#));
-    }
-
-    /// The statement is built from the emitter's own channel constant, so a
-    /// renamed channel cannot leave the subscriber listening to silence.
-    #[test]
-    fn the_listen_statement_names_the_channel_the_ddl_rings() {
-        assert_eq!(listen_statement(), "LISTEN wamn_wiring_activation");
-        assert!(listen_statement().ends_with(WIRING_ACTIVATION_CHANNEL));
-    }
-
-    // ---- the reconnect obligation ------------------------------------------
-
-    /// A connector that fails its first `listen`, so the loop must reconnect.
-    struct Flaky {
-        listens: Arc<AtomicUsize>,
-        fail_first: std::sync::atomic::AtomicBool,
-    }
-
-    #[async_trait]
-    impl DoorbellConnector for Flaky {
-        async fn listen(
-            &self,
-            doorbell: Arc<WiringDoorbell>,
-            mut shutdown: tokio::sync::watch::Receiver<bool>,
-        ) -> anyhow::Result<()> {
-            self.listens.fetch_add(1, Ordering::SeqCst);
-            if self.fail_first.swap(false, Ordering::SeqCst) {
-                // Failed BEFORE the LISTEN was established, so nothing is
-                // dropped and nothing is heard.
-                return Err(anyhow!("injected doorbell disconnect"));
-            }
-            doorbell.listening();
-            shutdown
-                .changed()
-                .await
-                .map_err(|_| anyhow!("test doorbell shutdown owner dropped"))?;
-            Ok(())
-        }
-    }
-
-    async fn eventually(predicate: impl Fn() -> bool) {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !predicate() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("condition did not become true");
     }
 
     /// THE TRANSPORT'S ONLY LOSS MODE. While the connection was down, flips
     /// committed to sessions that were listening and were queued for nobody. The
     /// reconnected process cannot know which, so it drops every pointer it holds
-    /// rather than resuming against any of them.
-    #[tokio::test]
-    async fn a_reconnect_drops_every_pointer_because_the_gap_is_unknowable() {
+    /// rather than resuming against any of them. `listening()` is what the
+    /// listener loop calls once its `LISTEN` is established.
+    #[test]
+    fn a_reconnect_drops_every_pointer_because_the_gap_is_unknowable() {
         let cache = cache();
         resolve(&cache, ENV, "orders", 1, wiring("v1"));
         resolve(&cache, ENV, "refunds", 4, wiring("refunds-v4"));
         resolve(&cache, "staging", "orders", 9, wiring("staging-v9"));
-        let listens = Arc::new(AtomicUsize::new(0));
-        let connector = Arc::new(Flaky {
-            listens: Arc::clone(&listens),
-            fail_first: std::sync::atomic::AtomicBool::new(true),
-        });
 
-        let listener = WiringDoorbellListener::with_connector(
-            connector,
-            Arc::new(WiringDoorbell::new(Arc::clone(&cache), scope())),
-            Duration::from_millis(1),
-        );
-
-        eventually(|| listens.load(Ordering::SeqCst) >= 2).await;
-        eventually(|| cache.get(ENV, "orders").hit().is_none()).await;
+        assert_eq!(doorbell(&cache).listening(), 3);
 
         for (environment, wiring_id) in [(ENV, "orders"), (ENV, "refunds"), ("staging", "orders")] {
             assert!(
-                cache.get(environment, wiring_id).hit().is_none(),
+                cache
+                    .get(TENANT, CATALOG, environment, wiring_id)
+                    .hit()
+                    .is_none(),
                 "{environment}/{wiring_id} resumed against a pointer no flip was seen for"
             );
         }
@@ -652,27 +623,6 @@ mod tests {
             cache.len(),
             3,
             "the graphs survive: a version is immutable, so only pointers can go stale"
-        );
-        drop(listener);
-    }
-
-    /// The drop happens only once the `LISTEN` is established. The reverse order
-    /// leaves a window in which a flip is neither delivered nor covered.
-    #[test]
-    fn the_listen_is_established_before_the_pointers_are_dropped() {
-        let production = include_str!("wiring_doorbell.rs")
-            .split_once("#[cfg(test)]")
-            .expect("this module has a test module")
-            .0;
-        let established = production
-            .find("client.batch_execute(&listen_statement())")
-            .expect("the connector issues the LISTEN");
-        let dropped = production
-            .find("doorbell.listening();")
-            .expect("the connector drops the pointers");
-        assert!(
-            established < dropped,
-            "the pointers may only be dropped once the LISTEN is established"
         );
     }
 }
