@@ -284,35 +284,78 @@ where
 
     /// Insert one clean, invocation-ready instance during prewarming.
     pub fn insert(&self, key: ExecutionPoolKey, instance: T) -> Result<(), PoolCapacityError> {
-        let reserved_bytes = instance.reserved_bytes();
+        self.insert_batch([(key, instance)])
+    }
+
+    /// Atomically insert a complete set of clean prewarmed instances.
+    ///
+    /// Readiness must never leave a partially resident release closure when a
+    /// later digest exceeds a pool bound. Every instance is constructed before
+    /// this call and all capacity checks run before the first insertion.
+    pub fn insert_batch(
+        &self,
+        instances: impl IntoIterator<Item = (ExecutionPoolKey, T)>,
+    ) -> Result<(), PoolCapacityError> {
+        let instances: Vec<_> = instances
+            .into_iter()
+            .map(|(key, instance)| {
+                let reserved_bytes = instance.reserved_bytes();
+                (key, instance, reserved_bytes)
+            })
+            .collect();
+        let added_instances = instances.len();
+        let added_bytes = instances
+            .iter()
+            .fold(0usize, |total, (_, _, bytes)| total.saturating_add(*bytes));
+        let mut added_per_digest = BTreeMap::new();
+        for (key, _, _) in &instances {
+            *added_per_digest.entry(key).or_insert(0usize) += 1;
+        }
         let mut state = self
             .shared
             .state
             .lock()
             .expect("execution pool lock poisoned");
         let snapshot = &state.snapshot;
-        if snapshot.live_instances >= self.shared.limits.max_instances
-            || reserved_bytes
+        if added_instances
+            > self
+                .shared
+                .limits
+                .max_instances
+                .saturating_sub(snapshot.live_instances)
+            || added_bytes
                 > self
                     .shared
                     .limits
                     .max_reserved_bytes
                     .saturating_sub(snapshot.reserved_bytes)
-            || state.idle.get(&key).map_or(0, VecDeque::len)
-                >= self.shared.limits.max_idle_per_digest
+            || added_per_digest.iter().any(|(key, added)| {
+                *added
+                    > self
+                        .shared
+                        .limits
+                        .max_idle_per_digest
+                        .saturating_sub(state.idle.get(*key).map_or(0, VecDeque::len))
+            })
         {
             return Err(PoolCapacityError);
         }
-        state.idle.entry(key).or_default().push_back(IdleInstance {
-            instance,
-            reserved_bytes,
-            invocations: 0,
-            idle_since: Instant::now(),
-        });
-        state.snapshot.live_instances += 1;
-        state.snapshot.idle_instances += 1;
-        state.snapshot.reserved_bytes += reserved_bytes;
-        state.snapshot.inserted_instances += 1;
+        let now = Instant::now();
+        for (key, instance, reserved_bytes) in instances {
+            state.idle.entry(key).or_default().push_back(IdleInstance {
+                instance,
+                reserved_bytes,
+                invocations: 0,
+                idle_since: now,
+            });
+        }
+        state.snapshot.live_instances += added_instances;
+        state.snapshot.idle_instances += added_instances;
+        state.snapshot.reserved_bytes += added_bytes;
+        state.snapshot.inserted_instances = state
+            .snapshot
+            .inserted_instances
+            .saturating_add(u64::try_from(added_instances).unwrap_or(u64::MAX));
         Ok(())
     }
 
@@ -979,6 +1022,33 @@ mod tests {
             .expect("second instance");
         assert_eq!(pool.insert(key, fixture(2)), Err(PoolCapacityError));
         assert_eq!(pool.snapshot().reserved_bytes, 2_048);
+    }
+
+    #[test]
+    fn prewarm_batch_is_all_or_nothing_at_the_capacity_boundary() {
+        let mut bounded = limits();
+        bounded.max_instances = 2;
+        bounded.max_reserved_bytes = 2_048;
+        let pool = ExecutionInstancePool::new(bounded).expect("valid pool limits");
+
+        assert_eq!(
+            pool.insert_batch([
+                (key("digest-a"), fixture(0)),
+                (key("digest-b"), fixture(1)),
+                (key("digest-c"), fixture(2)),
+            ]),
+            Err(PoolCapacityError)
+        );
+        assert_eq!(pool.snapshot(), ExecutionPoolSnapshot::empty());
+        assert!(checkout(&pool, &key("digest-a")).is_none());
+        assert!(checkout(&pool, &key("digest-b")).is_none());
+        assert!(checkout(&pool, &key("digest-c")).is_none());
+
+        pool.insert_batch([(key("digest-a"), fixture(0)), (key("digest-b"), fixture(1))])
+            .expect("the complete bounded batch fits");
+        assert_eq!(pool.snapshot().idle_instances, 2);
+        assert!(checkout(&pool, &key("digest-a")).is_some());
+        assert!(checkout(&pool, &key("digest-b")).is_some());
     }
 
     #[test]

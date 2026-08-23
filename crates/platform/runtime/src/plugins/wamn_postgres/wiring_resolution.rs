@@ -161,6 +161,43 @@ SELECT selected.version, selected.gated_catalog_version, \
  GROUP BY selected.version, selected.gated_catalog_version, \
           selected.graph_json, selected.wiring_hash";
 
+/// Prove that every component-grain requirement in the synchronous release
+/// closure has one exact usable environment binding.
+pub(crate) const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
+SELECT NOT EXISTS ( \
+    SELECT 1 \
+      FROM catalog.connection_requirements AS requirement \
+     WHERE requirement.tenant_id = $1 \
+       AND requirement.artifact_hash IS NULL \
+       AND requirement.requirement_name IS NULL \
+       AND requirement.component_digest = ANY($5::text[]) \
+       AND NOT EXISTS ( \
+           SELECT 1 \
+             FROM catalog.connection_bindings AS binding \
+             JOIN catalog.connection_instances AS instance \
+               ON instance.tenant_id = binding.tenant_id \
+              AND instance.environment = binding.environment \
+              AND instance.instance_id = binding.instance_id \
+             JOIN catalog.connection_generations AS generation \
+               ON generation.tenant_id = instance.tenant_id \
+              AND generation.environment = instance.environment \
+              AND generation.instance_id = instance.instance_id \
+              AND generation.generation = instance.active_generation \
+            WHERE binding.tenant_id = requirement.tenant_id \
+              AND binding.catalog_id = $2 \
+              AND binding.catalog_version = $3 \
+              AND binding.environment = $4 \
+              AND binding.artifact_hash IS NULL \
+              AND binding.requirement_name IS NULL \
+              AND binding.component_digest = requirement.component_digest \
+              AND binding.store_alias = requirement.store_alias \
+              AND binding.binding_status = 'active' \
+              AND binding.validation_status = 'valid' \
+              AND instance.lifecycle_status = 'enabled' \
+              AND instance.active_generation IS NOT NULL \
+       ) \
+)";
+
 /// A typed active wiring ready for the router and component source.
 #[derive(Debug, Clone)]
 pub struct ResolvedActiveWiring {
@@ -344,6 +381,83 @@ impl WamnPostgres {
             }
         }
     }
+
+    /// Check the exact component requirements selected by request readiness.
+    ///
+    /// An empty digest set is a background-only release and performs no store
+    /// call. Otherwise the check shares the driver's existing platform pool and
+    /// tenant claim; missing rows, unavailable storage and malformed results are
+    /// errors, while an ordinary unbound requirement is `Ok(false)`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the release scope and selected component set are independent trusted facts"
+    )]
+    pub async fn release_component_bindings_ready(
+        &self,
+        project: &str,
+        tenant_id: &str,
+        catalog_id: &str,
+        environment: &str,
+        catalog_version: u32,
+        component_digests: &[String],
+    ) -> anyhow::Result<bool> {
+        if component_digests.is_empty() {
+            return Ok(true);
+        }
+        anyhow::ensure!(catalog_version > 0, "release-catalog-version-zero");
+        let catalog_version = i32::try_from(catalog_version)
+            .context("release catalog version exceeds PostgreSQL int")?;
+        let component_digests = component_digests.to_vec();
+        let (connection, policy) = self
+            .checkout_platform(project)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &connection,
+                tenant_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(anyhow::anyhow!(error.to_string()));
+        }
+
+        let params: [&(dyn ToSql + Sync); 5] = [
+            &tenant_id,
+            &catalog_id,
+            &catalog_version,
+            &environment,
+            &component_digests,
+        ];
+        let result = connection
+            .query_one(RELEASE_COMPONENT_BINDINGS_READY_SQL, &params)
+            .await
+            .context("query synchronous release connection bindings")
+            .and_then(|row| row.try_get(0).context("decode release binding readiness"));
+
+        match result {
+            Ok(ready) => {
+                if let Err(error) = connection.batch_execute("COMMIT").await {
+                    self.destroy(connection);
+                    return Err(error).context("commit release binding readiness snapshot");
+                }
+                Ok(ready)
+            }
+            Err(error) => {
+                if connection.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(connection);
+                }
+                Err(error)
+            }
+        }
+    }
 }
 
 fn decode_active_wiring(
@@ -500,5 +614,30 @@ mod tests {
         assert!(RELEASE_WIRING_SQL.contains("release_manifest_v2_snapshots"));
         assert!(RELEASE_WIRING_SQL.contains("release_components"));
         assert!(!RELEASE_WIRING_SQL.contains("wiring_activation"));
+    }
+
+    #[test]
+    fn readiness_query_requires_the_exact_component_grain_and_live_binding() {
+        for predicate in [
+            "requirement.artifact_hash IS NULL",
+            "requirement.requirement_name IS NULL",
+            "requirement.component_digest = ANY($5::text[])",
+            "binding.catalog_id = $2",
+            "binding.catalog_version = $3",
+            "binding.environment = $4",
+            "binding.artifact_hash IS NULL",
+            "binding.requirement_name IS NULL",
+            "binding.component_digest = requirement.component_digest",
+            "binding.store_alias = requirement.store_alias",
+            "binding.binding_status = 'active'",
+            "binding.validation_status = 'valid'",
+            "instance.lifecycle_status = 'enabled'",
+            "generation.generation = instance.active_generation",
+        ] {
+            assert!(
+                RELEASE_COMPONENT_BINDINGS_READY_SQL.contains(predicate),
+                "missing readiness predicate {predicate:?}"
+            );
+        }
     }
 }

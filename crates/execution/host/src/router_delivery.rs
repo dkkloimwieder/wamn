@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
-use wamn_catalog::ServingManifest;
+use wamn_catalog::{AttachmentKind, ServingManifest};
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
@@ -94,7 +94,7 @@ impl RouterDeliveryBridge {
             delivery_id,
             payload,
             caller_attached: target.caller_attached,
-            resolution: WiringResolution::Preloaded,
+            resolution: target.resolution,
             role,
             user_id,
             traceparent,
@@ -174,6 +174,7 @@ struct ResolvedTarget {
     wiring_id: String,
     wiring_version: u32,
     caller_attached: bool,
+    resolution: WiringResolution,
 }
 
 fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<ResolvedTarget> {
@@ -186,6 +187,14 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                     wiring_id: attachment.wiring_id.clone(),
                     wiring_version: attachment.wiring_version,
                     caller_attached: true,
+                    resolution: if matches!(
+                        attachment.kind,
+                        AttachmentKind::Http | AttachmentKind::Internal | AttachmentKind::Studio
+                    ) {
+                        WiringResolution::Preloaded
+                    } else {
+                        WiringResolution::Frozen
+                    },
                 })
         }
         SourceRef::Registration(id) => {
@@ -196,6 +205,7 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                     wiring_id: registration.wiring_id.clone(),
                     wiring_version: registration.wiring_version,
                     caller_attached: false,
+                    resolution: WiringResolution::Frozen,
                 })
         }
     }
@@ -270,7 +280,9 @@ mod tests {
     const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1"}],"format-version":2,"registrations":{"orders-changed":{"entity":"orders","ops":["insert","update"],"wiring-id":"shipping","wiring-version":2}},"release":{"catalog-id":"manifest-mint-catalog","catalog-version":3,"environment":"prod","tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","wiring-id":"shipping","wiring-version":2}]}"#;
 
     fn manifest() -> ServingManifest {
-        ServingManifest::from_canonical_bytes(MANIFEST).expect("format-2 fixture is canonical")
+        ServingManifest::from_canonical_bytes(MANIFEST)
+            .expect("format-2 fixture is canonical")
+            .0
     }
 
     #[test]
@@ -281,6 +293,7 @@ mod tests {
                 wiring_id: "orders".into(),
                 wiring_version: 1,
                 caller_attached: true,
+                resolution: WiringResolution::Preloaded,
             })
         );
         assert_eq!(
@@ -289,6 +302,7 @@ mod tests {
                 wiring_id: "shipping".into(),
                 wiring_version: 2,
                 caller_attached: false,
+                resolution: WiringResolution::Frozen,
             })
         );
         assert_eq!(

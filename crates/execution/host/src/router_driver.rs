@@ -1,6 +1,6 @@
 //! The single production driver for direct and queued wiring delivery.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use wamn_catalog::{AdmittedComponent, ServingComponent, ServingWiring};
+use wamn_catalog::{
+    AdmittedComponent, AttachmentKind, ServingComponent, ServingManifest, ServingWiring,
+};
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_router::{
     ActiveWiring, CacheInsert, Delivery, ErrorDetail, Lookup, NodeError, NodeOutcome, Outcome,
@@ -181,6 +183,13 @@ pub struct RouterDriverSnapshot {
     pub instances: crate::ExecutionPoolSnapshot,
 }
 
+/// The synchronous release closure made resident by one readiness evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PreparedReleaseReadiness {
+    pub(crate) synchronous_wirings: usize,
+    pub(crate) component_digests: usize,
+}
+
 #[derive(Debug)]
 struct CatalogFacts {
     catalog_version: u32,
@@ -287,26 +296,43 @@ impl RouterDriver {
         }
     }
 
-    /// Resolve every immutable wiring in the welded release before ingress is
-    /// served.
+    /// Compatibility entry point for the host construction site.
     ///
-    /// The cache must hold the complete closure at once. Refusing startup when
-    /// the configured bound is smaller is what makes [`WiringResolution::Preloaded`]
-    /// a no-PostgreSQL request path rather than a best-effort warm cache.
+    /// The actual policy is probe-owned by [`crate::RouterReadinessProbe`]. The
+    /// later probe-transport cutover replaces this startup call without changing
+    /// what gets prepared.
     pub async fn preload_release_wirings(&self) -> anyhow::Result<()> {
+        self.prepare_synchronous_release().await.map(|_| ())
+    }
+
+    /// Prepare the exact release closure reachable from synchronous request
+    /// attachments.
+    ///
+    /// HTTP, internal and studio attachments participate. Cron attachments and
+    /// registrations are background delivery and therefore do not enlarge the
+    /// request readiness set. Every selected wiring is resolved through this
+    /// driver's one cache, every admitted component tuple is checked against the
+    /// welded manifest, all of its exact environment bindings are proven, and
+    /// one clean instance per digest is atomically inserted into this driver's
+    /// existing pool. No node handler is invoked.
+    pub(crate) async fn prepare_synchronous_release(
+        &self,
+    ) -> anyhow::Result<PreparedReleaseReadiness> {
         let manifest = self.release.manifest();
+        let targets = synchronous_wiring_targets(manifest);
         anyhow::ensure!(
-            manifest.wirings.len() <= self.config.cache_capacity.get().get(),
+            targets.len() <= self.config.cache_capacity.get().get(),
             "release-wiring-preload-exceeds-cache-capacity"
         );
-        for member in &manifest.wirings {
+        let mut components = BTreeMap::<String, AdmittedComponent>::new();
+        for (wiring_id, wiring_version) in &targets {
             let request = RouterDriverRequest {
                 tenant_id: manifest.release.tenant_id.clone(),
                 catalog_id: manifest.release.catalog_id.clone(),
                 environment: manifest.release.environment.clone(),
-                wiring_id: member.wiring_id.clone(),
-                wiring_version: member.wiring_version,
-                delivery_id: format!("preload:{}:{}", member.wiring_id, member.wiring_version),
+                wiring_id: wiring_id.clone(),
+                wiring_version: *wiring_version,
+                delivery_id: format!("preload:{wiring_id}:{wiring_version}"),
                 payload: serde_json::Value::Null,
                 caller_attached: false,
                 resolution: WiringResolution::Frozen,
@@ -316,14 +342,84 @@ impl RouterDriver {
                 tracestate: None,
             };
             let resolved = self.resolve_frozen(&request).await.with_context(|| {
-                format!(
-                    "preload release wiring {:?} version {}",
-                    member.wiring_id, member.wiring_version
-                )
+                format!("preload release wiring {wiring_id:?} version {wiring_version}")
             })?;
             self.validate_wiring_closure(&request, &resolved)?;
+            for component in resolved.facts.components.iter() {
+                self.validate_release_component(component)?;
+                if let Some(existing) =
+                    components.insert(component.component_digest.clone(), component.clone())
+                {
+                    anyhow::ensure!(
+                        existing == *component,
+                        "release-component-digest-fact-mismatch"
+                    );
+                }
+            }
         }
-        Ok(())
+
+        let component_digests = components.keys().cloned().collect::<Vec<_>>();
+        let bindings_ready = self
+            .postgres
+            .release_component_bindings_ready(
+                &self.config.project,
+                &manifest.release.tenant_id,
+                &manifest.release.catalog_id,
+                &manifest.release.environment,
+                manifest.release.catalog_version,
+                &component_digests,
+            )
+            .await
+            .context("verify synchronous release connection bindings")?;
+        anyhow::ensure!(bindings_ready, "release-component-requirement-unbound");
+
+        let component_count = components.len();
+        let mut verified = Vec::with_capacity(component_count);
+        for component in components.into_values() {
+            let bytes = self
+                .source
+                .pull_verified(&component)
+                .await
+                .with_context(|| {
+                    format!(
+                        "preload release component digest {:?}",
+                        component.component_digest
+                    )
+                })?;
+            verified.push((component, bytes));
+        }
+
+        let mut instances = Vec::with_capacity(component_count);
+        for (component, bytes) in verified {
+            let key = ExecutionPoolKey::new(component.component_digest.clone());
+            let instance = NodeInstance::instantiate(
+                &self.engine,
+                &bytes,
+                Arc::clone(&self.postgres),
+                Arc::clone(&self.credentials),
+                Arc::clone(&self.logging),
+                Arc::clone(&self.allowed_hosts),
+                Arc::clone(&self.release),
+                &self.config,
+                &manifest.release.tenant_id,
+                &component,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "pre-instantiate release component digest {:?}",
+                    component.component_digest
+                )
+            })?;
+            instances.push((key, instance));
+        }
+        self.instances
+            .insert_batch(instances)
+            .context("preload release component instances")?;
+        Ok(PreparedReleaseReadiness {
+            synchronous_wirings: targets.len(),
+            component_digests: component_count,
+        })
     }
 
     /// Execute one direct or queued delivery through the same router and node
@@ -537,6 +633,26 @@ impl RouterDriver {
         Ok(())
     }
 
+    fn validate_release_component(&self, component: &AdmittedComponent) -> anyhow::Result<()> {
+        let manifest = self.release.manifest();
+        anyhow::ensure!(
+            component.scope.tenant_id == manifest.release.tenant_id
+                && component.scope.catalog_id == manifest.release.catalog_id
+                && component.scope.catalog_version == manifest.release.catalog_version,
+            "release-component-scope-mismatch"
+        );
+        let expected = ServingComponent {
+            component: component.component.clone(),
+            interface_version: component.interface_version.clone(),
+            digest: component.component_digest.clone(),
+        };
+        anyhow::ensure!(
+            manifest.components.contains(&expected),
+            "component-not-in-carried-release"
+        );
+        Ok(())
+    }
+
     async fn invoke_node(
         &self,
         request: &RouterDriverRequest,
@@ -641,6 +757,22 @@ impl RouterDriver {
     fn now_ms(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
+}
+
+fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, u32)> {
+    manifest
+        .attachments
+        .values()
+        .filter(|attachment| synchronous_request_kind(attachment.kind))
+        .map(|attachment| (attachment.wiring_id.clone(), attachment.wiring_version))
+        .collect()
+}
+
+fn synchronous_request_kind(kind: AttachmentKind) -> bool {
+    matches!(
+        kind,
+        AttachmentKind::Http | AttachmentKind::Internal | AttachmentKind::Studio
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -923,7 +1055,24 @@ fn lower_detail(detail: node_types::ErrorDetail) -> ErrorDetail {
 
 #[cfg(test)]
 mod tests {
+    use wamn_catalog::{
+        SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingRegistration,
+        ServingRegistrationInput, ServingRelease,
+    };
+
     use super::*;
+
+    fn attachment(kind: AttachmentKind, wiring_id: &str) -> ServingAttachment {
+        ServingAttachment {
+            kind,
+            wiring_id: wiring_id.to_owned(),
+            wiring_version: 3,
+            definition_hash:
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            definition: serde_json::json!({}),
+            auth_policy: serde_json::json!({}),
+        }
+    }
 
     #[test]
     fn node_deadline_is_nonzero_and_host_bounded() {
@@ -935,5 +1084,56 @@ mod tests {
         assert_eq!(bounded_node_deadline_ms(Some(17)), 17);
         assert_eq!(deadline_ticks(30, Duration::from_millis(7)), 5);
         assert_eq!(deadline_ticks(1, Duration::from_millis(10)), 1);
+    }
+
+    #[test]
+    fn readiness_closure_contains_only_distinct_request_attachment_targets() {
+        let manifest = ServingManifest {
+            format_version: SERVING_MANIFEST_FORMAT_VERSION,
+            release: ServingRelease {
+                tenant_id: "tenant-a".to_owned(),
+                catalog_id: "orders".to_owned(),
+                catalog_version: 7,
+                environment: "prod".to_owned(),
+            },
+            components: BTreeSet::new(),
+            wirings: BTreeSet::new(),
+            attachments: BTreeMap::from([
+                (
+                    "http".to_owned(),
+                    attachment(AttachmentKind::Http, "request-wiring"),
+                ),
+                (
+                    "internal".to_owned(),
+                    attachment(AttachmentKind::Internal, "request-wiring"),
+                ),
+                (
+                    "studio".to_owned(),
+                    attachment(AttachmentKind::Studio, "studio-wiring"),
+                ),
+                (
+                    "cron".to_owned(),
+                    attachment(AttachmentKind::Cron, "background-wiring"),
+                ),
+            ]),
+            registrations: BTreeMap::from([(
+                "events".to_owned(),
+                ServingRegistration {
+                    wiring_id: "stream-wiring".to_owned(),
+                    wiring_version: 4,
+                    entity: "order".to_owned(),
+                    ops: BTreeSet::from(["created".to_owned()]),
+                    input: ServingRegistrationInput::Event,
+                },
+            )]),
+        };
+
+        assert_eq!(
+            synchronous_wiring_targets(&manifest),
+            BTreeSet::from([
+                ("request-wiring".to_owned(), 3),
+                ("studio-wiring".to_owned(), 3),
+            ])
+        );
     }
 }
