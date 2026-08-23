@@ -374,14 +374,6 @@ async fn seed_run_admission_facts(
     .await
     .expect("seed run-pin catalog");
     su.execute(
-        "INSERT INTO catalog.execution_bundles \
-           (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-         VALUES ($1,$2,'0.1',''::bytea,0)",
-        &[&tenant_id, &EMPTY_EXECUTION_BUNDLE_HASH],
-    )
-    .await
-    .expect("seed run-pin execution bundle");
-    su.execute(
         "INSERT INTO catalog.release_manifests \
            (tenant_id,catalog_id,catalog_version) \
          VALUES ($1,$2,$3)",
@@ -617,15 +609,15 @@ async fn seed_failure_detail_run(su: &Client, run_id: &str) {
         &format!(
             "INSERT INTO {SCHEMA}.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                environment,execution_bundle_hash,status,fail_kind,terminal_reason, \
+                environment,status,fail_kind,terminal_reason, \
                 caller_outcome_kind,caller_outcome_json,caller_http_status, \
                 caller_released_at,fail_node,fail_reason) \
-             VALUES ('failure-detail',$1,'f',1,'cat',1,'dev',$2,'failed','terminal', \
+             VALUES ('failure-detail',$1,'f',1,'cat',1,'dev','failed','terminal', \
                      'typed-caller-failure','failed', \
                      '{{\"class\":\"terminal\",\"detail\":\"typed-caller\"}}'::jsonb,500, \
                      now(),'deleted-plan-node','obsolete coordinate detail')"
         ),
-        &[&run_id, &EMPTY_EXECUTION_BUNDLE_HASH],
+        &[&run_id],
     )
     .await
     .expect("seed populated retired failure detail");
@@ -1677,8 +1669,8 @@ async fn frame_identity_cutover_leg(su: &Client) {
         su.batch_execute(&format!(
             "INSERT INTO {SCHEMA}.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-                execution_bundle_hash,status) \
-             VALUES ('t1',$${label}$$,'f',1,'frame-cat',1,'dev',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'running'); \
+                status) \
+             VALUES ('t1',$${label}$$,'f',1,'frame-cat',1,'dev','running'); \
              INSERT INTO {SCHEMA}.node_runs \
                (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
              VALUES ('t1',$${label}$$,0,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'n1',0,0,'success'); \
@@ -1883,8 +1875,8 @@ async fn frame_identity_cutover_leg(su: &Client) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status) \
-         VALUES ('t1','framed-current','f',1,'frame-cat',1,'dev',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'running'); \
+            status) \
+         VALUES ('t1','framed-current','f',1,'frame-cat',1,'dev','running'); \
          INSERT INTO {SCHEMA}.node_runs \
            (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
          VALUES ('t1','framed-current',0,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'n1',0,0,'success');"
@@ -1984,9 +1976,9 @@ async fn effect_writer_cutover_leg(su: &Client) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status) \
+            status) \
          VALUES ('t1','writer-projection','f',1,'writer-cat',1,'dev', \
-                 $${EMPTY_EXECUTION_BUNDLE_HASH}$$,'running'); \
+                 'running'); \
          INSERT INTO {SCHEMA}.node_runs \
            (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
          VALUES ('t1','writer-projection',0,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'n1',0,0,'success');"
@@ -2582,12 +2574,7 @@ async fn shared_runner_legacy_leg(su: &Client) {
         .expect("read refusal-preserved row counts");
     assert_eq!(counts.get::<_, i64>(0), 1);
     assert_eq!(counts.get::<_, i64>(1), 2);
-    for column in [
-        "catalog_id",
-        "catalog_version",
-        "environment",
-        "execution_bundle_hash",
-    ] {
+    for column in ["catalog_id", "catalog_version", "environment"] {
         assert!(
             !column_exists(su, "runs", column).await,
             "refusal leaves pin column {column} absent"
@@ -2608,10 +2595,10 @@ async fn child_run_cutover_leg(su: &Client) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-            environment,execution_bundle_hash,trigger_source, \
+            environment,trigger_source, \
             event_source_run_id,event_root_run_id,event_depth) \
          VALUES ('child-cutover','retained-run','f',1,'cat',1,'dev', \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}','event','source-run','event-root',3); \
+                 'event','source-run','event-root',3); \
          INSERT INTO {SCHEMA}.node_runs \
            (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,seq,status) \
          VALUES ('child-cutover','retained-run',0, \
@@ -2766,10 +2753,10 @@ async fn rerun_lineage_cutover_leg(su: &Client) {
            WHERE root_run_id IS NOT NULL; \
          INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-            environment,execution_bundle_hash,trigger_source,input_json,state_json,replay_of,root_run_id, \
+            environment,trigger_source,input_json,state_json,replay_of,root_run_id, \
             event_source_run_id,event_root_run_id,event_depth) \
          VALUES ('rerun-cutover','retained-run','f',1,'cat',1,'dev', \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}','event','{{\"payload\":7}}','{{\"cursor\":9}}', \
+                 'event','{{\"payload\":7}}','{{\"cursor\":9}}', \
                  'legacy-parent','legacy-root','event-source','event-root',4);"
     ))
     .await
@@ -2838,12 +2825,10 @@ async fn rerun_lineage_cutover_leg(su: &Client) {
                       AND pg_get_constraintdef(con.oid,true) LIKE '%event_source_run_id%' \
                       AND pg_get_constraintdef(con.oid,true) LIKE '%event_root_run_id%' \
                       AND pg_get_constraintdef(con.oid,true) LIKE '%event_depth%'), \
-                   has_column_privilege('wamn_app','{SCHEMA}.runs','event_source_run_id','INSERT') \
-                     AND NOT has_column_privilege('wamn_app','{SCHEMA}.runs','event_source_run_id','UPDATE') \
-                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_root_run_id','INSERT') \
-                     AND NOT has_column_privilege('wamn_app','{SCHEMA}.runs','event_root_run_id','UPDATE') \
-                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_depth','INSERT') \
-                     AND NOT has_column_privilege('wamn_app','{SCHEMA}.runs','event_depth','UPDATE')"
+                   NOT has_any_column_privilege('wamn_app','{SCHEMA}.runs','INSERT') \
+                     AND NOT has_any_column_privilege('wamn_app','{SCHEMA}.runs','UPDATE') \
+                     AND has_table_privilege('wamn_app','{SCHEMA}.runs','SELECT') \
+                     AND has_table_privilege('wamn_app','{SCHEMA}.runs','DELETE')"
             ),
             &[],
         )
@@ -2851,10 +2836,11 @@ async fn rerun_lineage_cutover_leg(su: &Client) {
         .expect("read retained event-lineage contract");
     assert!(retained_event_contract.get::<_, bool>(0));
     assert!(retained_event_contract.get::<_, bool>(1));
-    // Event lineage is INSERT-ONCE for the guest role (wamn-0h0g.12.40): the
-    // admission writes it and `runs_event_lineage_immutable` refuses every
-    // later change, so the app must hold INSERT and must NOT hold UPDATE. This
-    // used to demand both, asserting an authority the trigger forbids.
+    // The guest role writes no run column at all since wamn-0h0g.22.7
+    // (b1d42599): `wamn_app` holds table SELECT and DELETE and nothing else, so
+    // event lineage is unreachable to it by ACL as well as by the immutability
+    // trigger above. This used to demand column INSERT, an authority the
+    // reconciler now revokes.
     assert!(retained_event_contract.get::<_, bool>(2));
     assert!(
         reconcile_run_plane::reconcile(su, &schema(), false)
@@ -3102,9 +3088,8 @@ async fn partition_plane_cutover_leg(su: &Client) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-            environment,execution_bundle_hash) \
-         VALUES ('partition','retained-run','f',1,'cat',1,'dev', \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+            environment) \
+         VALUES ('partition','retained-run','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_queue \
            (tenant_id,run_id,partition_key,partition_policy,stream_seq) \
          VALUES ('partition','retained-run','serial','blocking',7);"
@@ -3215,9 +3200,8 @@ async fn partition_plane_active_lease_refusal_leg(su: &Client) {
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.runs \
                        (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                        environment,execution_bundle_hash) \
-                     VALUES ('leased','active-run','f',1,'cat',1,'dev', \
-                             '{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+                        environment) \
+                     VALUES ('leased','active-run','f',1,'cat',1,'dev'); \
                      INSERT INTO {SCHEMA}.run_queue \
                        (tenant_id,run_id,lease_owner,lease_expires_at) \
                      VALUES ('leased','active-run','worker','infinity');"
@@ -3289,9 +3273,8 @@ async fn partition_plane_unobservable_lease_refusal_leg(su: &Client) {
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.runs \
                        (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                        environment,execution_bundle_hash) \
-                     VALUES ('ambiguous','queue-run','f',1,'cat',1,'dev', \
-                             '{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+                        environment) \
+                     VALUES ('ambiguous','queue-run','f',1,'cat',1,'dev'); \
                      INSERT INTO {SCHEMA}.run_queue (tenant_id,run_id,partition_key) \
                      VALUES ('ambiguous','queue-run','serial'); \
                      ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner;"
@@ -3354,9 +3337,8 @@ async fn partition_plane_dead_letter_refusal_leg(su: &Client) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-            environment,execution_bundle_hash) \
-         VALUES ('dead-letter','failed-run','f',1,'cat',1,'dev', \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+            environment) \
+         VALUES ('dead-letter','failed-run','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_dead_letters \
            (tenant_id,run_id,partition_key,flow_id,reason) \
          VALUES ('dead-letter','failed-run','serial','f','legacy-history'); \
@@ -3489,8 +3471,8 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-              environment,execution_bundle_hash) \
-             VALUES ('t1','r-old','f',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+              environment) \
+             VALUES ('t1','r-old','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r-old');"
     ))
     .await
@@ -3560,9 +3542,8 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-            environment,execution_bundle_hash) \
-         VALUES ('t1','r-policy-durable','f',1,'cat',1,'dev', \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}')"
+            environment) \
+         VALUES ('t1','r-policy-durable','f',1,'cat',1,'dev')"
     ))
     .await
     .expect("admit a run under the projected durable policy");
@@ -3613,9 +3594,8 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-            environment,execution_bundle_hash) \
-         VALUES ('t1','r-policy-standard','f',1,'cat',1,'dev', \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}')"
+            environment) \
+         VALUES ('t1','r-policy-standard','f',1,'cat',1,'dev')"
     ))
     .await
     .expect("admit a run under the changed standard policy");
@@ -3765,8 +3745,8 @@ async fn queue_missing_leg(su: &Client) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-              environment,execution_bundle_hash) \
-             VALUES ('t1','r1','f',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+              environment) \
+             VALUES ('t1','r1','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
     ))
     .await
@@ -3908,8 +3888,8 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
          SELECT set_config('app.tenant', 't1', false); \
          INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-              environment,execution_bundle_hash) \
-             VALUES ('t1','r1','f',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+              environment) \
+             VALUES ('t1','r1','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
     ))
     .await
@@ -4268,9 +4248,9 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status) \
+            status) \
          VALUES ('t1','legacy-off','f',1,'capture',1,'dev', \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}','completed'); \
+                 'completed'); \
          INSERT INTO {SCHEMA}.node_runs \
            (tenant_id,run_id,current_plan_hash,local_node_id,seq,status,output_size) \
          VALUES ('t1','legacy-off','{EMPTY_EXECUTION_BUNDLE_HASH}','legacy-node',0,'success',321); \
@@ -4336,9 +4316,9 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-                    execution_bundle_hash,status,trigger_source,capture_mode) \
+                    status,trigger_source,capture_mode) \
                  VALUES ('t1','published-full','f',1,'capture',1,'dev', \
-                         '{EMPTY_EXECUTION_BUNDLE_HASH}','completed','http','full')"
+                         'completed','http','full')"
             ),
             &[],
         )
@@ -4349,9 +4329,9 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
         &format!(
             "INSERT INTO {SCHEMA}.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-                execution_bundle_hash,status,trigger_source,capture_mode) \
+                status,trigger_source,capture_mode) \
              VALUES ('t1','draft-full','f',1,'capture',1,'dev', \
-                     '{EMPTY_EXECUTION_BUNDLE_HASH}','completed','scenario-draft','full')"
+                     'completed','scenario-draft','full')"
         ),
         &[],
     )
@@ -4367,9 +4347,9 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-                    execution_bundle_hash,status,trigger_source) \
+                    status,trigger_source) \
                  VALUES ('t1','app-default-off','f',1,'capture',1,'dev', \
-                         '{EMPTY_EXECUTION_BUNDLE_HASH}','dispatched','test') \
+                         'dispatched','test') \
                  RETURNING capture_mode"
             ),
             &[],
@@ -4384,9 +4364,9 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-                    execution_bundle_hash,status,trigger_source,capture_mode) \
+                    status,trigger_source,capture_mode) \
                  VALUES ('t1','app-forged-full','f',1,'capture',1,'dev', \
-                         '{EMPTY_EXECUTION_BUNDLE_HASH}','dispatched','scenario-draft','full')"
+                         'dispatched','scenario-draft','full')"
             ),
             &[],
         )
@@ -5871,8 +5851,8 @@ async fn persisted_literal_check_drift_leg(su: &Client) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-              environment,execution_bundle_hash) \
-             VALUES ('t1','r-budget','f',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}');"
+              environment) \
+             VALUES ('t1','r-budget','f',1,'cat',1,'dev');"
     ))
     .await
     .expect("seed a run");
