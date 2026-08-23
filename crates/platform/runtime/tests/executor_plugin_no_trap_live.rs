@@ -327,8 +327,10 @@ fn logging_guest() -> String {
 (component
   ;; wamn-0h0g.15.53
   (import "wasi:logging/logging@0.1.0-draft" (instance $logging
+    (type $level' (enum "trace" "debug" "info" "warn" "error" "critical"))
+    (export "level" (type $level (eq $level')))
     (export "log" (func
-      (param "level" (enum "trace" "debug" "info" "warn" "error" "critical"))
+      (param "level" $level)
       (param "context" string)
       (param "message" string)))))
   (import "verdict" (func $verdict (param "code" u32)))
@@ -377,7 +379,6 @@ fn logging_guest() -> String {
 }
 
 #[tokio::test]
-#[ignore = "wamn-0h0g.15.133: the guest's imported-instance function type carries a COMPOUND result, which wasmtime 47 rejects as \"instance not valid to be used as import\"; a primitive result validates. The harness itself is proven by runner_egress, which passes."]
 async fn wamn_logging_absorbs_a_garbage_guest_context_without_trapping_the_guest() {
     let (logging, capture) =
         WamnLogging::new_with_capture(WamnLoggingConfig::default()).expect("logging plugin builds");
@@ -466,31 +467,40 @@ fn postgres_guest() -> String {
         r#"
 (component
   ;; wamn-0h0g.15.53
+  (import "wamn:postgres/types@0.1.0" (instance $types
+    (type $sql-value' (variant
+      (case "null")
+      (case "boolean" bool)
+      (case "int32" s32)
+      (case "int64" s64)
+      (case "float64" f64)
+      (case "text" string)
+      (case "bytes" (list u8))
+      (case "numeric" string)
+      (case "timestamptz" string)
+      (case "json" string)
+      (case "uuid" string)))
+    (export "sql-value" (type $sql-value (eq $sql-value')))
+    (type $pg-error' (variant
+      (case "serialization-failure")
+      (case "connection-unavailable")
+      (case "statement-timeout")
+      (case "row-limit-exceeded" u64)
+      (case "unique-violation" string)
+      (case "foreign-key-violation" string)
+      (case "check-violation" string)
+      (case "permission-denied")
+      (case "query-error" (tuple string string))))
+    (export "pg-error" (type $pg-error (eq $pg-error')))))
+  (alias export $types "sql-value" (type $sql-value))
+  (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/client@0.1.0" (instance $client
+    (export "sql-value" (type (eq $sql-value)))
+    (export "pg-error" (type (eq $pg-error)))
     (export "execute" (func
       (param "sql" string)
-      (param "params" (list (variant
-        (case "null")
-        (case "boolean" bool)
-        (case "int32" s32)
-        (case "int64" s64)
-        (case "float64" f64)
-        (case "text" string)
-        (case "bytes" (list u8))
-        (case "numeric" string)
-        (case "timestamptz" string)
-        (case "json" string)
-        (case "uuid" string))))
-      (result (result u64 (error (variant
-        (case "serialization-failure")
-        (case "connection-unavailable")
-        (case "statement-timeout")
-        (case "row-limit-exceeded" u64)
-        (case "unique-violation" string)
-        (case "foreign-key-violation" string)
-        (case "check-violation" string)
-        (case "permission-denied")
-        (case "query-error" (tuple string string))))))))))
+      (param "params" (list $sql-value))
+      (result (result u64 (error $pg-error)))))))
   (import "verdict" (func $verdict (param "code" u32)))
 {libc}
   (core func $execute-lowered
@@ -535,7 +545,6 @@ fn postgres_guest() -> String {
 }
 
 #[tokio::test]
-#[ignore = "wamn-0h0g.15.133: the guest's imported-instance function type carries a COMPOUND result, which wasmtime 47 rejects as \"instance not valid to be used as import\"; a primitive result validates. The harness itself is proven by runner_egress, which passes."]
 async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_not_a_trap() {
     let postgres = Arc::new(offline_postgres());
     postgres
@@ -584,42 +593,48 @@ fn http_effect_guest() -> String {
 (component
   ;; wamn-0h0g.15.53
   (import "wamn:runner/http-effect@0.1.0" (instance $effect
+    (type $invocation-context' (record
+      (field "version" string)
+      (field "run-id" string)
+      (field "root-plan-hash" string)
+      (field "current-plan-hash" string)
+      (field "frame-id" u64)
+      (field "local-node-id" string)
+      (field "occurrence" u32)
+      (field "source-artifact-hash" string)
+      (field "requirement-name" string)))
+    (export "invocation-context" (type $invocation-context (eq $invocation-context')))
+    (type $header' (record
+      (field "name" string)
+      (field "value" (list u8))))
+    (export "header" (type $header (eq $header')))
+    (type $relative-request' (record
+      (field "method" string)
+      (field "path-and-query" string)
+      (field "headers" (list $header))
+      (field "body" (option (list u8)))))
+    (export "relative-request" (type $relative-request (eq $relative-request')))
+    (type $response' (record
+      (field "status" u16)
+      (field "headers" (list $header))
+      (field "body" (list u8))))
+    (export "response" (type $response (eq $response')))
+    (type $effect-error' (variant
+      (case "invalid-context")
+      (case "undeclared-requirement")
+      (case "node-not-permitted")
+      (case "unbound")
+      (case "inactive-generation")
+      (case "incompatible")
+      (case "authority-denied")
+      (case "credential-unavailable")
+      (case "timeout")
+      (case "transport" string)))
+    (export "effect-error" (type $effect-error (eq $effect-error')))
     (export "send" (func
-      (param "context" (record
-        (field "version" string)
-        (field "run-id" string)
-        (field "root-plan-hash" string)
-        (field "current-plan-hash" string)
-        (field "frame-id" u64)
-        (field "local-node-id" string)
-        (field "occurrence" u32)
-        (field "source-artifact-hash" string)
-        (field "requirement-name" string)))
-      (param "request" (record
-        (field "method" string)
-        (field "path-and-query" string)
-        (field "headers" (list (record
-          (field "name" string)
-          (field "value" (list u8)))))
-        (field "body" (option (list u8)))))
-      (result (result
-        (record
-          (field "status" u16)
-          (field "headers" (list (record
-            (field "name" string)
-            (field "value" (list u8)))))
-          (field "body" (list u8)))
-        (error (variant
-          (case "invalid-context")
-          (case "undeclared-requirement")
-          (case "node-not-permitted")
-          (case "unbound")
-          (case "inactive-generation")
-          (case "incompatible")
-          (case "authority-denied")
-          (case "credential-unavailable")
-          (case "timeout")
-          (case "transport" string)))))))))
+      (param "context" $invocation-context)
+      (param "request" $relative-request)
+      (result (result $response (error $effect-error)))))))
   (import "verdict" (func $verdict (param "code" u32)))
 {libc}
   (core func $send-lowered
@@ -656,7 +671,6 @@ fn http_effect_guest() -> String {
 }
 
 #[tokio::test]
-#[ignore = "wamn-0h0g.15.133: the guest's imported-instance function type carries a COMPOUND result, which wasmtime 47 rejects as \"instance not valid to be used as import\"; a primitive result validates. The harness itself is proven by runner_egress, which passes."]
 async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
     let postgres = Arc::new(offline_postgres());
     // Empty is deny-all, but the refusal lands upstream of the egress check.
