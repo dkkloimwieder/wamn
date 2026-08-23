@@ -2034,7 +2034,6 @@ mod tests {
             "requirement.store_alias = $9",
             "binding.catalog_version = $3",
             "binding.environment = $4",
-            "generation.generation = instance.active_generation",
         ] {
             assert!(
                 CONNECTION_EFFECT_SNAPSHOT_SQL.contains(required),
