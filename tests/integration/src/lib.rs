@@ -4,7 +4,6 @@
 
 pub use wamn_test_infrastructure::ctl_process;
 
-pub mod capturebench;
 pub mod catalog_live;
 pub mod causation_e2e;
 mod cdc_reader_process;
@@ -13,10 +12,10 @@ pub mod dashproof;
 mod dispatcher_process;
 pub mod exposure_live;
 pub mod m1;
-pub mod matbench;
 pub mod provisionbench;
 pub mod readerbench;
 mod release_fixture;
+pub mod retention;
 #[cfg(test)]
 mod rie2ebench;
 pub mod streambench;

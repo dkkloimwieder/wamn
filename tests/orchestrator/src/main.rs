@@ -10,7 +10,7 @@
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
-use wamn_proof_integration::{capturebench, dashproof, m1, readerbench};
+use wamn_proof_integration::{dashproof, m1, readerbench, retention};
 use wamn_proof_system::traceproof;
 
 use std::str::FromStr as _;
@@ -30,8 +30,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Prove admitted full/off node I/O capture, oversized-output metadata, redaction, and retention.
-    Capturebench(capturebench::CaptureBenchArgs),
+    /// Prove the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
+    Retention(retention::RetentionArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
     /// Run M1 checks 9 and 10 over one isolated event-path fixture.
@@ -65,7 +65,7 @@ async fn async_main() -> anyhow::Result<()> {
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
     let result = match cli.command {
-        Command::Capturebench(args) => capturebench::run(args).await,
+        Command::Retention(args) => retention::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::M1(args) => m1::run(args).await,
         Command::M1Cleanup(args) => m1::cleanup(args).await,

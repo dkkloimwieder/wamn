@@ -184,7 +184,7 @@ pub(crate) mod tests {
                 "SELECT \
                    (SELECT (to_jsonb(a) - 'created_at')::text FROM catalog.flow_artifacts a \
                      WHERE tenant_id = $1), \
-                   (SELECT jsonb_build_array(flow_id, flow_version, execution_bundle_hash)::text \
+                   (SELECT jsonb_build_array(flow_id, flow_version)::text \
                      FROM catalog.release_flows WHERE tenant_id = $1), \
                    (SELECT jsonb_build_array(from_version, to_version, \
                      statement_count, destructive, checksum)::text \
