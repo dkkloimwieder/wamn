@@ -612,6 +612,7 @@ fn terminal_verdict(
         }),
         Terminal::Respond => Ok(Some(Verdict::Respond {
             payload: payload.clone(),
+            node_id: node.to_string(),
         })),
         Terminal::Emit => Ok(payload
             .get(DEDUP_ID_FIELD)

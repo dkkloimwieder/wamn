@@ -96,12 +96,34 @@ fn respond_answers_the_attached_caller_and_the_walk_carries_on() {
     assert_eq!(
         walk.verdict(),
         Some(&Verdict::Respond {
-            payload: json!({ "at": "a" })
+            payload: json!({ "at": "a" }),
+            node_id: "a".to_string(),
         })
     );
     // The post-respond node still moved the walk's result along; the caller's
     // answer did not move with it.
     assert_eq!(walk.result(), &json!({ "at": "audit" }));
+}
+
+#[test]
+fn respond_node_attribution_is_wiring_owned_not_guest_echoed() {
+    let w = wiring(
+        "terminal-owned",
+        vec![node("terminal-owned", Some(Terminal::Respond))],
+        vec![],
+    );
+    let mut walk = started(&w, true);
+    let forged = json!({"node-id": "guest-forged", "answer": 42});
+    let (_, status) = run(&w, &mut walk, |_| NodeOutcome::ok(forged.clone()));
+
+    assert_eq!(status, WalkStatus::Completed);
+    assert_eq!(
+        walk.verdict(),
+        Some(&Verdict::Respond {
+            payload: forged,
+            node_id: "terminal-owned".to_string(),
+        })
+    );
 }
 
 #[test]
@@ -155,10 +177,48 @@ fn a_second_terminal_node_is_rejected() {
     assert_eq!(
         walk.verdict(),
         Some(&Verdict::Respond {
-            payload: json!({ "at": "a" })
+            payload: json!({ "at": "a" }),
+            node_id: "a".to_string(),
         }),
         "the first verdict stands"
     );
+}
+
+#[test]
+fn first_respond_verdict_stands_when_later_work_fails_or_cancels() {
+    for cancelled in [false, true] {
+        let w = wiring(
+            "respond",
+            vec![
+                node("respond", Some(Terminal::Respond)),
+                node("later", None),
+            ],
+            vec![edge("respond", "later")],
+        );
+        let mut walk = started(&w, true);
+        let (_, status) = run(&w, &mut walk, |node| match node {
+            "respond" => says(node),
+            _ if cancelled => NodeOutcome::Cancelled,
+            _ => NodeOutcome::Error(NodeError::Terminal(ErrorDetail::msg("later failed"))),
+        });
+
+        assert_eq!(
+            status,
+            if cancelled {
+                WalkStatus::Cancelled
+            } else {
+                WalkStatus::Failed
+            }
+        );
+        assert_eq!(
+            walk.verdict(),
+            Some(&Verdict::Respond {
+                payload: json!({"at": "respond"}),
+                node_id: "respond".to_string(),
+            }),
+            "later terminal state must not replace the first response attribution"
+        );
+    }
 }
 
 // ---- emit -----------------------------------------------------------------

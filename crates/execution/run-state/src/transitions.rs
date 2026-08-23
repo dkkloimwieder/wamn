@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn caller_replay_identity_requires_exact_body_and_hash() {
+    fn caller_replay_identity_requires_exact_body_node_and_hash() {
         let stored = StoredCallerOutcome {
             kind: "responded".to_string(),
             body: json!({"a": 1, "b": 2}),
@@ -315,6 +315,13 @@ mod tests {
             &json!({"a": 9, "b": 2}),
             Some(200),
             Some("respond"),
+            "sha256:exact",
+        ));
+        assert!(!stored.exactly_matches(
+            "responded",
+            &json!({"a": 1, "b": 2}),
+            Some(200),
+            Some("another-respond"),
             "sha256:exact",
         ));
         assert!(!stored.exactly_matches(

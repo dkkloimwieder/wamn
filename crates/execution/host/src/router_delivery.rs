@@ -249,7 +249,7 @@ fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, DeliveryError> {
 
 fn lower_verdict(verdict: Verdict) -> Result<DeliveryOutcome, DeliveryError> {
     match verdict {
-        Verdict::Respond { payload } => serde_json::to_string(&payload)
+        Verdict::Respond { payload, .. } => serde_json::to_string(&payload)
             .map(DeliveryOutcome::Respond)
             .map_err(|_| DeliveryError::ExecutionFailed),
         Verdict::Emit { event, dedup_id } => serde_json::to_string(&event)
@@ -347,6 +347,7 @@ mod tests {
             hops: 2,
             verdict: Some(Verdict::Respond {
                 payload: serde_json::json!({"accepted": true}),
+                node_id: "respond".into(),
             }),
         };
 

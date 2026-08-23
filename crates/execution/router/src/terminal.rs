@@ -44,12 +44,14 @@ pub enum Terminal {
 /// carried out by the host that drove it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Verdict {
-    /// Answer the attached caller with `payload`. Recorded when a
-    /// [`Terminal::Respond`] node emits, which may be well before the frontier
-    /// empties: responding early and continuing to work is a wiring's
+    /// Answer the attached caller with `payload`. `node_id` is the exact wiring
+    /// node that declared [`Terminal::Respond`], copied from the host-owned walk
+    /// coordinate by `terminal_verdict`; it is never read from component output
+    /// or the delivery payload. The verdict may be recorded well before the
+    /// frontier empties: responding early and continuing to work is a wiring's
     /// prerogative, and the caller's answer is this payload, not whatever the
     /// last node happened to produce.
-    Respond { payload: Value },
+    Respond { payload: Value, node_id: String },
     /// Publish `event` into the boundary under `dedup_id`.
     Emit { event: Value, dedup_id: String },
     /// Nothing to answer and nothing to publish: the frontier emptied with no

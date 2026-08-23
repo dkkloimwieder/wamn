@@ -230,7 +230,13 @@ fn stored_respond_terminal_reaches_the_router_verdict() {
     let (status, verdict) = drive_stored_single_node(&document, true, output.clone());
 
     assert_eq!(status, WalkStatus::Completed);
-    assert_eq!(verdict, Some(Verdict::Respond { payload: output }));
+    assert_eq!(
+        verdict,
+        Some(Verdict::Respond {
+            payload: output,
+            node_id: "entry".to_owned(),
+        })
+    );
 }
 
 #[test]

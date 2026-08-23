@@ -136,7 +136,8 @@ fn a_second_terminal_fails_the_delivery_not_the_router() {
     assert_eq!(
         outcome.verdict,
         Some(Verdict::Respond {
-            payload: json!({"at": "first"})
+            payload: json!({"at": "first"}),
+            node_id: "first".to_string(),
         }),
         "the first verdict is the one this delivery recorded; the second is the defect"
     );

@@ -274,17 +274,17 @@ fn production_router_action_with_mode(
         );
     }
     match outcome.verdict.as_ref() {
-        Some(Verdict::Respond { payload }) => match mode {
+        Some(Verdict::Respond { payload, node_id }) => match mode {
             RouterResultMode::StoredResult => {
                 return Ok(ProductionRouterAction::Complete(
                     ProductionCompletion::completed(payload.clone(), None),
                 ));
             }
             RouterResultMode::DurableCaller => {
-                return Err(ProductionClaimError::new(
-                    ProductionClaimErrorKind::Contract,
-                    "map router response",
-                    "router-respond-node-attribution-missing",
+                let caller =
+                    ProductionCallerOutcome::responded(payload.clone(), 200, node_id.clone());
+                return Ok(ProductionRouterAction::Complete(
+                    ProductionCompletion::completed(payload.clone(), Some(caller)),
                 ));
             }
             RouterResultMode::Detached => {
@@ -1697,6 +1697,7 @@ mod tests {
             hops: 1,
             verdict: Some(Verdict::Respond {
                 payload: payload.clone(),
+                node_id: "candidate-respond".into(),
             }),
         };
         let ProductionRouterAction::Complete(completion) =
@@ -1707,6 +1708,70 @@ mod tests {
         assert_eq!(completion.status, RunStatus::Completed);
         assert_eq!(completion.result, payload);
         assert!(completion.caller.is_none());
+    }
+
+    #[test]
+    fn durable_respond_carries_the_host_terminal_node_through_completion() {
+        let payload = serde_json::json!({
+            "accepted": true,
+            "release-node-id": "guest-forged"
+        });
+        for status in [
+            WalkStatus::Completed,
+            WalkStatus::Failed,
+            WalkStatus::Cancelled,
+        ] {
+            let outcome = Outcome {
+                status,
+                result: serde_json::Value::Null,
+                failure: (status == WalkStatus::Failed).then(|| wamn_router::Failure {
+                    node: "later".into(),
+                    kind: RouterFailureKind::Terminal,
+                    detail: wamn_router::ErrorDetail::msg("later work failed"),
+                }),
+                hops: 2,
+                verdict: Some(Verdict::Respond {
+                    payload: payload.clone(),
+                    node_id: "wiring-terminal".into(),
+                }),
+            };
+            let ProductionRouterAction::Complete(completion) =
+                production_router_action(&outcome, true).expect("durable response maps")
+            else {
+                panic!("durable response must complete the queue run");
+            };
+
+            assert_eq!(completion.status, RunStatus::Completed);
+            assert_eq!(completion.result, payload);
+            let caller = completion.caller.expect("durable caller is released");
+            assert_eq!(caller.kind, "responded");
+            assert_eq!(caller.body, payload);
+            assert_eq!(caller.http_status, 200);
+            assert_eq!(caller.release_node_id.as_deref(), Some("wiring-terminal"));
+        }
+    }
+
+    #[test]
+    fn detached_respond_still_has_no_result_owner() {
+        let outcome = Outcome {
+            status: WalkStatus::Completed,
+            result: serde_json::Value::Null,
+            failure: None,
+            hops: 1,
+            verdict: Some(Verdict::Respond {
+                payload: serde_json::json!({"accepted": true}),
+                node_id: "respond".into(),
+            }),
+        };
+
+        let error = production_router_action(&outcome, false)
+            .expect_err("detached delivery cannot own a response");
+        assert_eq!(error.kind(), ProductionClaimErrorKind::Contract);
+        assert!(
+            error
+                .to_string()
+                .contains("router-response-without-result-owner")
+        );
     }
 
     #[test]
