@@ -245,7 +245,7 @@ pub fn resolve_exposure(
             "flow-artifact-hash": flow.artifact_hash,
             "resolved-source": source,
         });
-        let definition_hash = hex_sha256(
+        let definition_hash = prefixed_sha256(
             &serde_json::to_vec(&resolved_json)
                 .map_err(|_| error("exposure-serialization-failed", &attachment.id))?,
         );
@@ -440,9 +440,13 @@ fn error(code: &'static str, subject: &str) -> ExposureError {
     }
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
+fn prefixed_sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    let hex = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sha256:{hex}")
 }
 
 #[cfg(test)]
@@ -494,6 +498,13 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first[0].normalized_path.as_deref(), Some("/receipts"));
         assert_eq!(first[0].normalized_method.as_deref(), Some("POST"));
+        assert_eq!(first[0].definition_hash.len(), "sha256:".len() + 64);
+        assert!(
+            first[0]
+                .definition_hash
+                .strip_prefix("sha256:")
+                .is_some_and(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        );
     }
 
     #[test]

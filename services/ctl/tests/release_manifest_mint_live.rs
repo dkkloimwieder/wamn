@@ -9,14 +9,20 @@ use serde_json::json;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
-    AttachmentKind, ServingAttachment, ServingManifest, ServingRegistration,
-    ServingRegistrationInput, ServingWiring, WiringDocument, WiringEventOperation, WiringNode,
+    AttachmentKind, CatalogIdentityError, DefinitionHash, SERVING_MANIFEST_FORMAT_VERSION,
+    ServingAttachment, ServingManifest, ServingRegistration, ServingRegistrationInput,
+    ServingRelease, ServingWiring, WiringDocument, WiringEventOperation, WiringNode,
     WiringTerminal,
 };
 use wamn_ctl::publish_catalog::ensure_catalog_storage;
 use wamn_ctl::publish_release::{
     MintManifestErrorKind, MintReleaseManifest, RELEASE_MANIFEST_MINT_REFUSAL, ReleaseWiringTarget,
     mint_release_manifest,
+};
+use wamn_flow::EntryKind;
+use wamn_schema_control::{
+    Attachment as ExposureAttachment, AttachmentKind as ExposureAttachmentKind, ExposureRelease,
+    FlowExposure, HttpRoute, Source, SourceKind, resolve_exposure,
 };
 
 const TENANT: &str = "manifest-mint-tenant";
@@ -29,6 +35,96 @@ const WRONG_GRAPH: &str = "sha256:3333333333333333333333333333333333333333333333
 const DEFINITION: &str = "sha256:5555555555555555555555555555555555555555555555555555555555555555";
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
+
+#[test]
+fn resolved_exposure_hash_round_trips_through_serving_manifest_admission() {
+    let exposure = ExposureRelease {
+        sources: vec![Source {
+            id: "public".to_string(),
+            kind: SourceKind::Auth,
+            definition: json!({"mode": "none"}),
+        }],
+        attachments: vec![ExposureAttachment {
+            id: "orders-http".to_string(),
+            kind: ExposureAttachmentKind::Http,
+            flow_id: "orders".to_string(),
+            source_id: "public".to_string(),
+            route: Some(HttpRoute {
+                host: "api.example.test".to_string(),
+                path: "/orders".to_string(),
+                method: "POST".to_string(),
+            }),
+            mappings: Vec::new(),
+            run_deadline_ms: 30_000,
+            response_deadline_ms: Some(10_000),
+        }],
+    };
+    let resolved = resolve_exposure(
+        &exposure,
+        &[FlowExposure {
+            flow_id: "orders",
+            entry_kind: EntryKind::Request,
+            artifact_hash: COMPONENT_A,
+        }],
+    )
+    .expect("the exposure boundary resolves one attachment")
+    .pop()
+    .expect("one attachment was authored");
+    let admitted_hash = DefinitionHash::parse(resolved.definition_hash.clone())
+        .expect("the exposure mint uses the catalog digest spelling");
+    assert_eq!(admitted_hash.as_str(), resolved.definition_hash);
+
+    let manifest = ServingManifest {
+        format_version: SERVING_MANIFEST_FORMAT_VERSION,
+        release: ServingRelease {
+            tenant_id: TENANT.to_string(),
+            catalog_id: CATALOG.to_string(),
+            catalog_version: CATALOG_VERSION as u32,
+            environment: ENVIRONMENT.to_string(),
+        },
+        components: BTreeSet::new(),
+        wirings: BTreeSet::from([ServingWiring {
+            wiring_id: "orders".to_string(),
+            wiring_version: 1,
+            graph_hash: WRONG_GRAPH.to_string(),
+        }]),
+        attachments: BTreeMap::from([(
+            "orders-http".to_string(),
+            ServingAttachment {
+                kind: AttachmentKind::Http,
+                wiring_id: "orders".to_string(),
+                wiring_version: 1,
+                definition_hash: resolved.definition_hash.clone(),
+                definition: json!({"id": "orders-http", "kind": "http"}),
+                auth_policy: json!({"mode": "none"}),
+            },
+        )]),
+        registrations: BTreeMap::new(),
+    };
+    let (admitted, _) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
+        .expect("the serving-manifest boundary admits the minted definition hash");
+    assert_eq!(
+        admitted.attachments["orders-http"].definition_hash,
+        resolved.definition_hash
+    );
+
+    let mut bare_hash = manifest;
+    bare_hash
+        .attachments
+        .get_mut("orders-http")
+        .expect("fixture attachment")
+        .definition_hash = admitted_hash
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("admitted digest prefix")
+        .to_string();
+    assert_eq!(
+        ServingManifest::from_canonical_bytes(&bare_hash.canonical_bytes()),
+        Err(CatalogIdentityError::InvalidDigest {
+            field: "definition-hash"
+        })
+    );
+}
 
 #[test]
 fn release_membership_is_exact_wiring_to_admitted_digest() {
