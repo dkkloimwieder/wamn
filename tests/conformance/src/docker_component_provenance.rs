@@ -51,21 +51,6 @@ fn every_embedded_component_comes_from_the_locked_builder() {
         ),
         ("/component-output/flow_http.wasm", "/bench/flow-http.wasm"),
         (
-            "/component-output/flowrunner.wasm",
-            "/bench/flowrunner.wasm",
-        ),
-        (
-            "/component-output/flowrunner.wasm",
-            "/components/flowrunner.wasm",
-        ),
-        // wamn-0h0g.15.50: the MINTING pod carries the same locked-builder
-        // component at the same path, so the executor and the scenario-worker
-        // agree on the digest by construction.
-        (
-            "/component-output/flowrunner.wasm",
-            "/components/flowrunner.wasm",
-        ),
-        (
             "/component-output/materializer.wasm",
             "/bench/materializer.wasm",
         ),
@@ -95,36 +80,33 @@ fn every_embedded_component_comes_from_the_locked_builder() {
     expected.sort_unstable();
     assert_eq!(actual, expected, "embedded component inventory drifted");
 
-    let host_stage = DOCKERFILE
-        .split_once("FROM debian:trixie-slim AS host")
-        .expect("host stage exists")
-        .1
-        .split_once("FROM debian:trixie-slim AS ctl")
-        .expect("ctl follows host")
-        .0;
-    assert!(
-        !host_stage.contains("flowrunner.wasm"),
-        "admission-only host image must not carry execution bytes"
-    );
-
-    let run_worker_stage = DOCKERFILE
-        .split_once("FROM debian:trixie-slim AS run-worker")
-        .expect("run-worker stage exists")
-        .1
-        .split_once("FROM debian:trixie-slim AS scenario-worker")
-        .expect("scenario-worker follows run-worker")
-        .0;
-    assert!(run_worker_stage.contains(
-        "COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm"
-    ));
-
-    let gates_stage = DOCKERFILE
-        .split_once("FROM host AS gates")
-        .expect("gates stage exists")
-        .1;
-    assert!(gates_stage.contains(
-        "COPY --from=component-builder /component-output/flowrunner.wasm /bench/flowrunner.wasm"
-    ));
+    // ea71c1c4 (wamn-0h0g.26.7.2) deleted the last embedded execution guest, so
+    // every remaining component ships to the gates image alone. The service
+    // images carry native binaries only; a component COPY appearing in one is a
+    // regression, and `stage` fails closed when a stage name disappears.
+    for image_stage in [
+        "host",
+        "executor",
+        "ctl",
+        "dispatcher",
+        "scenario-worker",
+        "cdc-reader",
+        "waker",
+    ] {
+        assert!(
+            !stage(image_stage).contains(".wasm"),
+            "{image_stage} service image must not carry component bytes"
+        );
+    }
+    let gates_stage = stage("gates");
+    for (source, destination) in expected {
+        assert!(
+            gates_stage.contains(&format!(
+                "COPY --from=component-builder {source} {destination}"
+            )),
+            "gates image lost embedded component {destination}"
+        );
+    }
 
     assert!(DOCKERFILE.contains("FROM component-toolchain AS component-builder"));
     assert!(DOCKERFILE.contains("COPY components /build/components"));
@@ -144,7 +126,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
         (
             "executor",
             "wamn-executor",
-            "run-worker",
+            "executor",
             &["wamn-run-worker"][..],
         ),
         (
