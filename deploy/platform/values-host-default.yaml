@@ -199,6 +199,28 @@ runtime:
       #     fails until wamn-0h0g.15.155 leg B lands. Apply that first.
       ociCaPaths:
         - "/runtime-cert/ca.crt"
+      # [wamn-0h0g.17.3] THIS ENVIRONMENT'S POOLING CAPACITY, stated here rather
+      # than compiled in. Slots are per LIVE INSTANCE — stores are created per
+      # invocation — so this bounds concurrency, not resident density. 512 is the
+      # value that was hardcoded; naming it makes the capacity reviewable and
+      # changeable per host group.
+      #
+      # `extraArgs` is the interim carrier and the resting answer is a first-class
+      # chart key pair, `runtime.pool.slots` / `runtime.pool.memoryCapBytes`,
+      # absorbed by the next fork-chart touch. The chart passes each entry through
+      # verbatim into the container args (values.yaml:357 →
+      # templates/runtime/deployment.yaml:209-216).
+      #
+      # A FLAG RATHER THAN AN `env` ENTRY, and that is the whole reason this
+      # carrier was chosen: clap exits nonzero on an unknown flag, so `--pool-slot`
+      # crashloops the pod, while `WAMN_POOL_SLOT` would deploy cleanly and do
+      # nothing. The binary keeps `WAMN_POOL_SLOTS` too, so flags are a superset.
+      #
+      # The memory cap is deliberately NOT here: it is also read per store from
+      # WAMN_MEMORY_CEILING_MB, which the binary must set before its Tokio runtime
+      # exists, so a cap raised here alone would be silently re-clamped.
+      extraArgs:
+        - "--pool-slots=512"
       resources:
         requests:
           memory: "256Mi"
