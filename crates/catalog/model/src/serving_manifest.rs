@@ -94,6 +94,19 @@ pub struct ServingAttachment {
     pub auth_policy: Value,
 }
 
+/// The delivery grain frozen for one release registration.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServingRegistrationInput {
+    #[default]
+    Event,
+    Batch,
+}
+
+fn registration_input_is_event(input: &ServingRegistrationInput) -> bool {
+    *input == ServingRegistrationInput::Event
+}
+
 /// One event registration targeting an exact wiring identity and version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -102,6 +115,8 @@ pub struct ServingRegistration {
     pub wiring_version: u32,
     pub entity: String,
     pub ops: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "registration_input_is_event")]
+    pub input: ServingRegistrationInput,
 }
 
 /// The complete release document a serving process mounts.
@@ -397,6 +412,7 @@ mod tests {
             wiring_version: 2,
             entity: "orders".into(),
             ops: BTreeSet::from(["insert".to_string()]),
+            input: ServingRegistrationInput::Event,
         }
     }
 

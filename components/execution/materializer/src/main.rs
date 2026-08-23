@@ -1,36 +1,4 @@
-//! The Service-first materializer guest (EVT-MAT, D19 v3 §5 / l5i9.17) — the
-//! effect shell over the PURE `wamn-materializer` decision pipeline.
-//!
-//! MVP outcome: event spine (causation depth = loop guard).
-//!
-//! One sweep: read the tenant's registrations + each subscribed flow's ACTIVE
-//! graph identity through `wamn:postgres`; per serviceable
-//! registration bind a durable pull consumer on the org/env `EVT_` stream
-//! (subject-filtered to the registration's entity) and fetch a bounded batch;
-//! per delivered event run [`wamn_materializer::decide`] and map the verdict:
-//!
-//! - `Fire` → the shared callable-flow admission transaction: head lock, live
-//!   registration evidence check, scoped dedupe, run + available queue row.
-//!   Then ring the doorbell (best-effort, post-commit) and ack. A duplicate
-//!   admission is the exactly-once no-op and still acks.
-//! - `Skip` → ack (deterministic; the event stays on the stream for replay).
-//! - `Refuse` → **alertable**: a distinct `wamn::materializer` warn + counter,
-//!   then ack (a redelivery cannot change a deterministic refusal; nacking
-//!   would poison-loop).
-//! - Effect failures (PG down, publish/ack errors) → nack with delay: the
-//!   at-least-once redelivery retries the effect, and the deterministic
-//!   run id collapses any half-applied fire.
-//!
-//! A registration that cannot be SERVED — unparseable doc, missing/inactive/
-//! invalid flow, or a syntactically invalid condition — is HELD: no consumer is
-//! fetched, so its events stay on the stream (delayed, never lost — the
-//! dispatcher's invalid-flow posture) and every sweep warns. A root-`old`
-//! condition is NO LONGER held (l5i9.31): it is served, and an event that
-//! carries no old image is refused per event (`old-image-absent`, alertable).
-//!
-//! Identity is host-injected: DB claims + doorbell tenant ride `wamn.tenant`
-//! workload config; the guest env copy (`WAMN_MAT_TENANT`) only scopes the
-//! tenant GUARD comparison (RLS holds regardless of what the env claims).
+//! Durable JetStream registration delivery through the shared router bridge.
 
 wit_bindgen::generate!({
     world: "materializer",
@@ -38,60 +6,37 @@ wit_bindgen::generate!({
     generate_all,
 });
 
-use std::collections::HashMap;
+use std::fmt::Write as _;
 
-use wamn_event_reg::EventRegistration;
+use serde_json::Value;
+use wamn_event_reg::{EventRegistration, RegistrationInput};
 use wamn_event_wire::Envelope;
 use wamn_materializer::{
-    DecideError, FirePlan, FlowDeclaration, MAX_CAUSATION_DEPTH, RefuseReason, SkipReason, Verdict,
-    decide, event_execution_plan_is_valid, serviceable,
-    sql::{select_registrations_sql, select_release_flow_sql},
-    verified_source_event_id,
-};
-use wamn_run_state::admission::{
-    AdmissionProducer, AdmissionResult, AdmissionTransition, RunStateSchema, admission_transaction,
-    registration_evidence,
+    DecideError, MAX_CAUSATION_DEPTH, RefuseReason, SkipReason, Verdict, decide, serviceable,
+    sql::select_registrations_sql, verified_source_event_id,
 };
 
-use wamn::jetstream::consumer::{self, ConsumerConfig};
-use wamn::jetstream::doorbell;
+use wamn::jetstream::consumer::{self, ConsumerConfig, Message};
 use wamn::jetstream::types::Header;
 use wamn::postgres::client;
 use wamn::postgres::types::{PgError, SqlValue};
-
-// ---------------------------------------------------------------------------
-// Config (wasi:cli env — `localResources.environment` on the Service spec)
-// ---------------------------------------------------------------------------
+use wamn::router_delivery::delivery::{
+    self, DeliveryError, DeliveryOutcome, DeliveryRequest, Source,
+};
 
 struct Config {
-    /// Schema containing the run-state tables claimed by this project's runner.
-    run_schema: RunStateSchema,
-    /// The org/env `EVT_` stream this workload consumes (provisioned
-    /// out-of-band; recorded per project-env by enable-cdc-project-env).
     stream: String,
-    /// Subject segments (`evt.<org>.<project>.<env>.<entity>.<op>`).
     org: String,
     project: String,
     env: String,
-    /// The bound tenant — MUST equal the workload's `wamn.tenant` config (the
-    /// host-enforced DB claim); used here only for the tenant-guard compare.
     tenant: String,
-    /// Fetch batch bound per registration per sweep.
     batch: u32,
-    /// Long-poll window per fetch, ms (the idle sweep's natural pacing).
     fetch_ms: u64,
-    /// Idle sleep when NO registration is serviceable, ms.
     sweep_ms: u64,
-    /// Stop after N sweeps (0 = run forever). Gates set a finite count so the
-    /// service exits cleanly ("exited successfully" — no restart).
     max_sweeps: u64,
-    /// Causation depth ceiling (l5i9.1: 16).
     max_depth: u32,
-    /// Server ack-wait for the durable consumers, ms.
     ack_wait_ms: u64,
-    /// Redelivery delay for nacked (effect-failed) events, ms.
     nack_delay_ms: u64,
-    /// Optional counters report path (needs a volume mount / preopen).
     report_path: Option<String>,
 }
 
@@ -104,10 +49,8 @@ fn required(name: &str) -> Result<String, String> {
 }
 
 impl Config {
-    fn from_env() -> Result<Config, String> {
-        Ok(Config {
-            run_schema: RunStateSchema::new(env_or("WAMN_MAT_RUN_SCHEMA", "wamn_run"))
-                .map_err(|e| format!("WAMN_MAT_RUN_SCHEMA: {e}"))?,
+    fn from_env() -> Result<Self, String> {
+        Ok(Self {
             stream: required("WAMN_MAT_STREAM")?,
             org: required("WAMN_MAT_ORG")?,
             project: required("WAMN_MAT_PROJECT")?,
@@ -115,41 +58,36 @@ impl Config {
             tenant: required("WAMN_MAT_TENANT")?,
             batch: env_or("WAMN_MAT_BATCH", "64")
                 .parse()
-                .map_err(|e| format!("WAMN_MAT_BATCH: {e}"))?,
+                .map_err(|error| format!("WAMN_MAT_BATCH: {error}"))?,
             fetch_ms: env_or("WAMN_MAT_FETCH_MS", "5000")
                 .parse()
-                .map_err(|e| format!("WAMN_MAT_FETCH_MS: {e}"))?,
+                .map_err(|error| format!("WAMN_MAT_FETCH_MS: {error}"))?,
             sweep_ms: env_or("WAMN_MAT_SWEEP_MS", "10000")
                 .parse()
-                .map_err(|e| format!("WAMN_MAT_SWEEP_MS: {e}"))?,
+                .map_err(|error| format!("WAMN_MAT_SWEEP_MS: {error}"))?,
             max_sweeps: env_or("WAMN_MAT_MAX_SWEEPS", "0")
                 .parse()
-                .map_err(|e| format!("WAMN_MAT_MAX_SWEEPS: {e}"))?,
+                .map_err(|error| format!("WAMN_MAT_MAX_SWEEPS: {error}"))?,
             max_depth: env_or("WAMN_MAT_MAX_DEPTH", &MAX_CAUSATION_DEPTH.to_string())
                 .parse()
-                .map_err(|e| format!("WAMN_MAT_MAX_DEPTH: {e}"))?,
+                .map_err(|error| format!("WAMN_MAT_MAX_DEPTH: {error}"))?,
             ack_wait_ms: env_or("WAMN_MAT_ACK_WAIT_MS", "30000")
                 .parse()
-                .map_err(|e| format!("WAMN_MAT_ACK_WAIT_MS: {e}"))?,
+                .map_err(|error| format!("WAMN_MAT_ACK_WAIT_MS: {error}"))?,
             nack_delay_ms: env_or("WAMN_MAT_NACK_DELAY_MS", "5000")
                 .parse()
-                .map_err(|e| format!("WAMN_MAT_NACK_DELAY_MS: {e}"))?,
+                .map_err(|error| format!("WAMN_MAT_NACK_DELAY_MS: {error}"))?,
             report_path: std::env::var("WAMN_MAT_REPORT_PATH").ok(),
         })
     }
 }
 
-// ---------------------------------------------------------------------------
-// Counters — the alertable-refusal observability (v3 §4) + the gate's report
-// ---------------------------------------------------------------------------
-
 #[derive(Default)]
 struct Counters {
     sweeps: u64,
-    fired: u64,
-    /// Write-ahead lost to an earlier redelivery / racing replica — the
-    /// exactly-once no-op, counted to prove dedupe fired.
-    duplicate: u64,
+    deliveries: u64,
+    batches: u64,
+    acked: u64,
     skip_entity: u64,
     skip_op: u64,
     skip_foreign_tenant: u64,
@@ -158,96 +96,63 @@ struct Counters {
     refuse_tenant_unscopable: u64,
     refuse_old_image_absent: u64,
     refuse_condition_error: u64,
-    refuse_seq: u64,
     held_registrations: u64,
     poison: u64,
-    effect_retry: u64,
-    doorbell_failed: u64,
+    retry: u64,
+    emit_blocked: u64,
 }
 
 impl Counters {
     fn to_json(&self) -> String {
-        format!(
-            "{{\"sweeps\":{},\"fired\":{},\"duplicate\":{},\"skip-entity\":{},\"skip-op\":{},\
-             \"skip-foreign-tenant\":{},\"skip-condition-false\":{},\"refuse-depth\":{},\
-             \"refuse-tenant-unscopable\":{},\"refuse-old-image-absent\":{},\
-             \"refuse-condition-error\":{},\"refuse-seq\":{},\"held-registrations\":{},\
-             \"poison\":{},\"effect-retry\":{},\"doorbell-failed\":{}}}",
-            self.sweeps,
-            self.fired,
-            self.duplicate,
-            self.skip_entity,
-            self.skip_op,
-            self.skip_foreign_tenant,
-            self.skip_condition_false,
-            self.refuse_depth,
-            self.refuse_tenant_unscopable,
-            self.refuse_old_image_absent,
-            self.refuse_condition_error,
-            self.refuse_seq,
-            self.held_registrations,
-            self.poison,
-            self.effect_retry,
-            self.doorbell_failed,
-        )
+        serde_json::json!({
+            "sweeps": self.sweeps,
+            "deliveries": self.deliveries,
+            "batches": self.batches,
+            "acked": self.acked,
+            "skip-entity": self.skip_entity,
+            "skip-op": self.skip_op,
+            "skip-foreign-tenant": self.skip_foreign_tenant,
+            "skip-condition-false": self.skip_condition_false,
+            "refuse-depth": self.refuse_depth,
+            "refuse-tenant-unscopable": self.refuse_tenant_unscopable,
+            "refuse-old-image-absent": self.refuse_old_image_absent,
+            "refuse-condition-error": self.refuse_condition_error,
+            "held-registrations": self.held_registrations,
+            "poison": self.poison,
+            "retry": self.retry,
+            "emit-blocked": self.emit_blocked,
+        })
+        .to_string()
     }
 }
 
-// ---------------------------------------------------------------------------
-// SqlValue helpers + error naming (the flowrunner idiom)
-// ---------------------------------------------------------------------------
-
-fn text(s: impl Into<String>) -> SqlValue {
-    SqlValue::Text(s.into())
-}
-fn int32(v: i32) -> SqlValue {
-    SqlValue::Int32(v)
-}
-fn int64(v: i64) -> SqlValue {
-    SqlValue::Int64(v)
-}
-fn null() -> SqlValue {
-    SqlValue::Null
-}
-
-fn pg_name(e: &PgError) -> String {
-    match e {
+fn pg_name(error: &PgError) -> String {
+    match error {
         PgError::SerializationFailure => "serialization-failure".into(),
         PgError::ConnectionUnavailable => "connection-unavailable".into(),
         PgError::StatementTimeout => "statement-timeout".into(),
-        PgError::RowLimitExceeded(n) => format!("row-limit-exceeded({n})"),
-        PgError::UniqueViolation(c) => format!("unique-violation({c})"),
-        PgError::ForeignKeyViolation(c) => format!("foreign-key-violation({c})"),
-        PgError::CheckViolation(c) => format!("check-violation({c})"),
+        PgError::RowLimitExceeded(limit) => format!("row-limit-exceeded({limit})"),
+        PgError::UniqueViolation(constraint) => format!("unique-violation({constraint})"),
+        PgError::ForeignKeyViolation(constraint) => {
+            format!("foreign-key-violation({constraint})")
+        }
+        PgError::CheckViolation(constraint) => format!("check-violation({constraint})"),
         PgError::PermissionDenied => "permission-denied".into(),
-        PgError::QueryError((state, msg)) => format!("query-error({state}: {msg})"),
+        PgError::QueryError((state, message)) => format!("query-error({state}: {message})"),
     }
 }
 
-// ---------------------------------------------------------------------------
-// The sweep
-// ---------------------------------------------------------------------------
-
-/// One serviceable registration, ready to fetch: the parsed declaration pair
-/// plus the compiled condition (None = unconditional).
 struct Serving {
-    reg: EventRegistration,
-    flow: FlowDeclaration,
+    registration: EventRegistration,
     condition: Option<wamn_materializer::CompiledCondition>,
-    catalog_version: i32,
-    registration_document: String,
-    registration_hash: String,
 }
 
-/// A durable-consumer name from the registration identity. The charset is
-/// conservative ([A-Za-z0-9_-]; NATS reserves `.`/`*`/`>`/whitespace) and the
-/// identity triple keeps two registrations' floors independent.
 fn durable_name(tenant: &str, catalog_id: &str, registration_id: &str) -> String {
     let sanitize = |raw: &str| -> String {
         raw.chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                    c
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                    character
                 } else {
                     '_'
                 }
@@ -270,429 +175,390 @@ fn nats_message_ids(headers: &[Header]) -> Vec<&str> {
         .collect()
 }
 
-/// Load + pre-flight the tenant's registrations. Unserviceable ones are HELD
-/// (warned, not consumed). Canonical plans are read once per distinct flow.
-fn load_servings(cfg: &Config, counters: &mut Counters) -> Result<Vec<Serving>, String> {
-    let rs = client::query(&select_registrations_sql(), &[]).map_err(|e| pg_name(&e))?;
-    let mut flows: HashMap<(String, String), Option<(i32, FlowDeclaration)>> = HashMap::new();
-    let mut servings = Vec::new();
-    for row in &rs.rows {
+fn load_servings(counters: &mut Counters) -> Result<Vec<Serving>, String> {
+    let rows = client::query(&select_registrations_sql(), &[])
+        .map_err(|error| pg_name(&error))?
+        .rows;
+    let mut servings = Vec::with_capacity(rows.len());
+    for row in rows {
         let (
-            Some(SqlValue::Text(reg_id)),
+            Some(SqlValue::Text(registration_id)),
             Some(SqlValue::Text(catalog_id)),
-            Some(SqlValue::Text(flow_id)),
-            Some(doc),
-        ) = (row.first(), row.get(1), row.get(2), row.get(3))
+            Some(document),
+        ) = (row.first(), row.get(1), row.get(2))
         else {
             return Err("registration row shape".into());
         };
-        let doc = match doc {
-            SqlValue::Text(s) | SqlValue::Json(s) => s.as_str(),
-            other => return Err(format!("registration doc shape: {other:?}")),
+        let document = match document {
+            SqlValue::Text(document) | SqlValue::Json(document) => document,
+            other => return Err(format!("registration document shape: {other:?}")),
         };
-        let document: serde_json::Value = match serde_json::from_str(doc) {
-            Ok(document) => document,
-            Err(e) => {
+        let registration = match EventRegistration::from_json(document) {
+            Ok(registration) => registration,
+            Err(error) => {
                 counters.held_registrations += 1;
                 eprintln!(
-                    "wamn::materializer HELD registration {reg_id}: invalid JSON document ({e}) — events stay on the stream"
+                    "wamn::materializer HELD registration {registration_id}: invalid document ({error})"
                 );
                 continue;
             }
         };
-        let reg = match EventRegistration::from_json(doc) {
-            Ok(r) => r,
-            Err(e) => {
-                counters.held_registrations += 1;
-                eprintln!(
-                    "wamn::materializer HELD registration {reg_id}: unparseable document ({e}) — events stay on the stream"
-                );
-                continue;
-            }
-        };
-        if reg.registration_id != *reg_id
-            || reg.catalog_id != *catalog_id
-            || reg.flow_id != *flow_id
+        if registration.registration_id != *registration_id
+            || registration.catalog_id != *catalog_id
         {
             counters.held_registrations += 1;
             eprintln!(
-                "wamn::materializer HELD registration {reg_id}: trusted identity columns disagree with the document — events stay on the stream"
+                "wamn::materializer HELD registration {registration_id}: trusted identity columns disagree with its document"
             );
             continue;
         }
-        let (registration_document, registration_hash) = registration_evidence(&document);
-        let condition = match serviceable(&reg) {
-            Ok(c) => c,
-            Err(DecideError::UnserviceableCondition(why)) => {
+        let condition = match serviceable(&registration) {
+            Ok(condition) => condition,
+            Err(DecideError::UnserviceableCondition(reason)) => {
                 counters.held_registrations += 1;
                 eprintln!(
-                    "wamn::materializer HELD registration {reg_id}: condition not serviceable ({why:?}) — invalid JMESPath syntax (write-time validation backstop); events stay on the stream"
+                    "wamn::materializer HELD registration {registration_id}: condition is not serviceable ({reason:?})"
                 );
                 continue;
             }
         };
-        let flow_key = (catalog_id.clone(), flow_id.clone());
-        let decl = flows
-            .entry(flow_key)
-            .or_insert_with(|| load_flow(catalog_id, &cfg.env, flow_id))
-            .clone();
-        let Some((catalog_version, flow)) = decl else {
-            counters.held_registrations += 1;
-            eprintln!(
-                "wamn::materializer HELD registration {reg_id}: flow {flow_id} missing, inactive, or invalid — events stay on the stream"
-            );
-            continue;
-        };
         servings.push(Serving {
-            reg,
-            flow,
+            registration,
             condition,
-            catalog_version,
-            registration_document,
-            registration_hash,
         });
     }
     Ok(servings)
 }
 
-/// One subscribed flow declaration from the environment's applied release.
-fn load_flow(catalog_id: &str, environment: &str, flow_id: &str) -> Option<(i32, FlowDeclaration)> {
-    let rs = client::query(
-        &select_release_flow_sql(),
-        &[text(catalog_id), text(environment), text(flow_id)],
-    )
-    .map_err(|e| pg_name(&e))
-    .ok()?;
-    let row = rs.rows.first()?;
-    let catalog_version = match row.first() {
-        Some(SqlValue::Int32(v)) => *v,
-        Some(SqlValue::Int64(v)) => i32::try_from(*v).ok()?,
-        _ => return None,
-    };
-    let flow_version = match row.get(1) {
-        Some(SqlValue::Int32(v)) => *v,
-        Some(SqlValue::Int64(v)) => i32::try_from(*v).ok()?,
-        _ => return None,
-    };
-    let execution_bundle_hash = match row.get(2) {
-        Some(SqlValue::Text(value)) => value,
-        _ => return None,
-    };
-    let artifact_hash = match row.get(3) {
-        Some(SqlValue::Text(value)) => value,
-        _ => return None,
-    };
-    let exact_bytes = match row.get(4) {
-        Some(SqlValue::Bytes(value)) => value,
-        _ => return None,
-    };
-    if !event_execution_plan_is_valid(execution_bundle_hash, artifact_hash, exact_bytes) {
-        return None;
+struct PreparedMessage {
+    message: Message,
+    payload: Value,
+    stream_seq: u64,
+    source_event_id: String,
+}
+
+enum Preparation {
+    Deliver {
+        payload: Value,
+        stream_seq: u64,
+        source_event_id: String,
+    },
+    Ack,
+    Nack,
+    Term,
+}
+
+fn prepare_message(
+    config: &Config,
+    serving: &Serving,
+    message: &Message,
+    counters: &mut Counters,
+) -> Preparation {
+    let metadata = message.metadata();
+    if metadata.stream_seq == 0 {
+        counters.retry += 1;
+        eprintln!("wamn::materializer metadata parse failure — nack for redelivery");
+        return Preparation::Nack;
     }
-    Some((
-        catalog_version,
-        FlowDeclaration {
-            flow_id: flow_id.to_string(),
-            flow_version,
-        },
-    ))
-}
-
-/// Final event admission through the shared callable-flow transition.
-///
-/// Returns whether this caller created the run; a duplicate is the
-/// exactly-once no-op. Every typed drift/refusal rolls back and is retried from
-/// candidate resolution on redelivery.
-fn fire_txn(cfg: &Config, serving: &Serving, plan: &FirePlan) -> Result<bool, String> {
-    let recipe = admission_transaction(AdmissionTransition::CallableFlow {
-        schema: &cfg.run_schema,
-    });
-    let txn = client::begin().map_err(|e| pg_name(&e))?;
-    txn.query(
-        recipe.lock_head(),
-        &[text(&serving.reg.catalog_id), text(&cfg.env)],
-    )
-    .map_err(|e| pg_name(&e))?;
-    let admitted = txn
-        .query(
-            recipe.admit(),
-            &[
-                text(AdmissionProducer::Event.as_sql()),
-                text(&serving.reg.catalog_id),
-                text(&cfg.env),
-                int32(serving.catalog_version),
-                null(),
-                null(),
-                text(&plan.flow_id),
-                int32(plan.flow_version),
-                text(&plan.run_id),
-                text(&plan.input_json),
-                text(&plan.invocation_context_json),
-                text(concat!("materializer@", env!("CARGO_PKG_VERSION"))),
-                null(),
-                null(),
-                null(),
-                null(),
-                null(),
-                text(&serving.reg.registration_id),
-                int64(plan.stream_seq),
-                text(&serving.registration_document),
-                text(&serving.registration_hash),
-                text(&plan.source_run_id),
-                text(&plan.causation.root),
-                int32(i32::try_from(plan.causation.depth).expect("causation depth is bounded")),
-                // The ratified 25th operand is intentionally absent: Serving
-                // does not yet carry the registration-owned trusted wiring id,
-                // and this boundary must not infer it.
-            ],
-        )
-        .map_err(|e| pg_name(&e))?;
-    let row = admitted
-        .rows
-        .first()
-        .ok_or_else(|| "admission returned no result row".to_string())?;
-    let code = match row.first() {
-        Some(SqlValue::Text(code)) => code,
-        _ => return Err("admission result code shape".into()),
-    };
-    let run_id = match row.get(1) {
-        Some(SqlValue::Text(run_id)) => Some(run_id.clone()),
-        Some(SqlValue::Null) | None => None,
-        _ => return Err("admission run id shape".into()),
-    };
-    let result = AdmissionResult::from_parts(code, run_id)
-        .ok_or_else(|| format!("unknown admission result: {code}"))?;
-    let won = match result {
-        AdmissionResult::Admitted { .. } => true,
-        AdmissionResult::Duplicate { .. } => false,
-        refusal => return Err(format!("event admission refused: {refusal:?}")),
-    };
-    txn.commit().map_err(|e| pg_name(&e))?;
-    Ok(won)
-}
-
-/// Serve one registration for one sweep: bind its durable consumer, fetch a
-/// bounded batch, decide + effect each message.
-fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
-    let filter = format!(
-        "evt.{}.{}.{}.{}.>",
-        cfg.org,
-        cfg.project,
-        cfg.env,
-        wamn_event_wire::subject_token(s.reg.entity.as_str())
-    );
-    let bound = consumer::bind(&ConsumerConfig {
-        stream_name: cfg.stream.clone(),
-        durable: durable_name(&cfg.tenant, &s.reg.catalog_id, &s.reg.registration_id),
-        filter_subject: filter,
-        ack_wait_ms: cfg.ack_wait_ms,
-        max_deliver: 0,
-    });
-    let bound = match bound {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!(
-                "wamn::materializer bind failed for registration {} (stream {}): {e:?} — retrying next sweep",
-                s.reg.registration_id, cfg.stream
-            );
-            return;
-        }
-    };
-    let msgs = match bound.fetch(cfg.batch, cfg.fetch_ms) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!(
-                "wamn::materializer fetch failed for registration {}: {e:?} — retrying next sweep",
-                s.reg.registration_id
-            );
-            return;
-        }
-    };
-    for msg in msgs {
-        let meta = msg.metadata();
-        let body = msg.body();
-        let envelope: Envelope = match serde_json::from_slice(&body) {
-            Ok(e) => e,
-            Err(e) => {
-                // A malformed envelope can never fire deterministically —
-                // poison. Term stops redelivery; the bytes stay on the stream.
-                counters.poison += 1;
-                eprintln!(
-                    "wamn::materializer REFUSED (poison) stream_seq={}: envelope parse: {e}",
-                    meta.stream_seq
-                );
-                let _ = msg.term();
-                continue;
-            }
-        };
-        let headers = msg.headers();
-        let message_ids = nats_message_ids(&headers);
-        let Some(source_event_id) =
-            verified_source_event_id(&cfg.project, &cfg.env, &envelope, &message_ids)
-        else {
+    let body = message.body();
+    let envelope: Envelope = match serde_json::from_slice(&body) {
+        Ok(envelope) => envelope,
+        Err(error) => {
             counters.poison += 1;
             eprintln!(
-                "wamn::materializer REFUSED (poison) stream_seq={}: Nats-Msg-Id missing, duplicated, or inconsistent with envelope LSN",
-                meta.stream_seq
+                "wamn::materializer REFUSED poison stream_seq={}: envelope parse failed ({error})",
+                metadata.stream_seq
             );
-            let _ = msg.term();
-            continue;
-        };
-        if meta.stream_seq == 0 {
-            // JetStream seqs start at 1; a 0 is the metadata-parse fallback —
-            // transient, and the run id MUST NOT be minted from it.
-            counters.effect_retry += 1;
-            eprintln!("wamn::materializer metadata parse failure — nack for redelivery");
-            let _ = msg.nack(cfg.nack_delay_ms);
-            continue;
+            return Preparation::Term;
         }
-        match decide(
-            &s.reg,
-            &s.flow,
-            s.condition.as_ref(),
-            &envelope,
-            meta.stream_seq,
-            &source_event_id,
-            &cfg.tenant,
-            cfg.max_depth,
-        ) {
-            Verdict::Fire(plan) => match fire_txn(cfg, s, &plan) {
-                Ok(won) => {
-                    if won {
-                        counters.fired += 1;
-                        // Post-commit doorbell (best-effort: a lost hint only
-                        // raises latency — the run-worker sweep backstops).
-                        if let Err(e) = doorbell::ring(&plan.run_id) {
-                            counters.doorbell_failed += 1;
-                            eprintln!(
-                                "wamn::materializer doorbell failed for {}: {e:?} (wake degrades to the sweep)",
-                                plan.run_id
-                            );
-                        }
-                    } else {
-                        counters.duplicate += 1;
-                    }
-                    let _ = msg.ack();
-                }
-                Err(e) => {
-                    // Effect failure: the decision stands, the effect retries
-                    // on redelivery; the deterministic id absorbs any half.
-                    counters.effect_retry += 1;
-                    eprintln!(
-                        "wamn::materializer fire failed for {} ({e}) — nack for redelivery",
-                        plan.run_id
-                    );
-                    let _ = msg.nack(cfg.nack_delay_ms);
-                }
-            },
-            Verdict::Skip(reason) => {
-                match reason {
-                    SkipReason::EntityMismatch => counters.skip_entity += 1,
-                    SkipReason::OpMismatch => counters.skip_op += 1,
-                    SkipReason::ForeignTenant => counters.skip_foreign_tenant += 1,
-                    SkipReason::ConditionFalse => counters.skip_condition_false += 1,
-                }
-                let _ = msg.ack();
+    };
+    let headers = message.headers();
+    let message_ids = nats_message_ids(&headers);
+    let Some(source_event_id) =
+        verified_source_event_id(&config.project, &config.env, &envelope, &message_ids)
+    else {
+        counters.poison += 1;
+        eprintln!(
+            "wamn::materializer REFUSED poison stream_seq={}: Nats-Msg-Id is missing, duplicated, or inconsistent",
+            metadata.stream_seq
+        );
+        return Preparation::Term;
+    };
+    match decide(
+        &serving.registration,
+        serving.condition.as_ref(),
+        &envelope,
+        &config.tenant,
+        config.max_depth,
+    ) {
+        Verdict::Deliver(payload) => Preparation::Deliver {
+            payload,
+            stream_seq: metadata.stream_seq,
+            source_event_id: source_event_id.as_str().to_string(),
+        },
+        Verdict::Skip(reason) => {
+            match reason {
+                SkipReason::EntityMismatch => counters.skip_entity += 1,
+                SkipReason::OpMismatch => counters.skip_op += 1,
+                SkipReason::ForeignTenant => counters.skip_foreign_tenant += 1,
+                SkipReason::ConditionFalse => counters.skip_condition_false += 1,
             }
-            Verdict::Refuse(reason) => {
-                // v3 §4: refusals are a DISTINCT, alertable outcome.
-                match &reason {
-                    RefuseReason::DepthExceeded { parent } => {
-                        counters.refuse_depth += 1;
-                        eprintln!(
-                            "wamn::materializer REFUSED stream_seq={} flow={}: causation depth {}+1 exceeds {} (root {}) — loop bound",
-                            meta.stream_seq,
-                            s.flow.flow_id,
-                            parent.depth,
-                            cfg.max_depth,
-                            parent.root
-                        );
-                    }
-                    RefuseReason::TenantUnscopable => {
-                        counters.refuse_tenant_unscopable += 1;
-                        eprintln!(
-                            "wamn::materializer REFUSED stream_seq={} table={}: event not tenant-scopable (DELETE under REPLICA IDENTITY DEFAULT, or no tenant_id column)",
-                            meta.stream_seq, envelope.table
-                        );
-                    }
-                    RefuseReason::OldImageAbsent => {
-                        counters.refuse_old_image_absent += 1;
-                        eprintln!(
-                            "wamn::materializer REFUSED stream_seq={} table={}: condition reads old but the event carries no old image (REPLICA IDENTITY not FULL, or an op with no prior row) — cannot-evaluate, never condition-false (l5i9.31)",
-                            meta.stream_seq, envelope.table
-                        );
-                    }
-                    RefuseReason::ConditionError(e) => {
-                        counters.refuse_condition_error += 1;
-                        eprintln!(
-                            "wamn::materializer REFUSED stream_seq={}: condition evaluation failed ({e}) — never silently condition-false",
-                            meta.stream_seq
-                        );
-                    }
-                    RefuseReason::SeqOverflow(seq) => {
-                        counters.refuse_seq += 1;
-                        eprintln!("wamn::materializer REFUSED: stream_seq {seq} overflows BIGINT");
-                    }
-                }
-                let _ = msg.ack();
+            Preparation::Ack
+        }
+        Verdict::Refuse(reason) => {
+            match reason {
+                RefuseReason::DepthExceeded { .. } => counters.refuse_depth += 1,
+                RefuseReason::TenantUnscopable => counters.refuse_tenant_unscopable += 1,
+                RefuseReason::OldImageAbsent => counters.refuse_old_image_absent += 1,
+                RefuseReason::ConditionError(_) => counters.refuse_condition_error += 1,
+            }
+            eprintln!(
+                "wamn::materializer REFUSED registration={} stream_seq={} reason={reason:?}",
+                serving.registration.registration_id, metadata.stream_seq
+            );
+            Preparation::Ack
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryDisposition {
+    Ack,
+    Retry,
+}
+
+fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> DeliveryDisposition {
+    match result {
+        Ok(DeliveryOutcome::Respond(_) | DeliveryOutcome::Discard) => DeliveryDisposition::Ack,
+        Ok(DeliveryOutcome::Emit(_) | DeliveryOutcome::Failed(_) | DeliveryOutcome::Cancelled)
+        | Err(_) => DeliveryDisposition::Retry,
+    }
+}
+
+fn deliver(
+    registration_id: &str,
+    delivery_id: String,
+    payload: &Value,
+) -> Result<DeliveryOutcome, DeliveryError> {
+    let payload = serde_json::to_string(payload).map_err(|_| DeliveryError::InvalidPayload)?;
+    delivery::deliver(&DeliveryRequest {
+        source: Source::Registration(registration_id.to_string()),
+        delivery_id,
+        payload,
+        caller: None,
+        trace: None,
+    })
+}
+
+fn event_delivery_id(registration_id: &str, stream_seq: u64, source_event_id: &str) -> String {
+    format!("{registration_id}:event:{stream_seq}:{source_event_id}")
+}
+
+fn batch_delivery_id(registration_id: &str, messages: &[PreparedMessage]) -> String {
+    let mut delivery_id = format!("{registration_id}:batch");
+    for prepared in messages {
+        write!(delivery_id, ":{}", prepared.stream_seq).expect("write to String is infallible");
+    }
+    delivery_id
+}
+
+fn batch_payload(messages: &[PreparedMessage]) -> Value {
+    ordered_batch_payload(messages.iter().map(|prepared| &prepared.payload))
+}
+
+fn ordered_batch_payload<'a>(payloads: impl IntoIterator<Item = &'a Value>) -> Value {
+    Value::Array(payloads.into_iter().cloned().collect())
+}
+
+fn acknowledge(message: &Message, counters: &mut Counters) {
+    match message.ack() {
+        Ok(()) => counters.acked += 1,
+        Err(error) => {
+            counters.retry += 1;
+            eprintln!("wamn::materializer ack failed ({error:?}); server redelivery remains armed");
+        }
+    }
+}
+
+fn nack(message: &Message, config: &Config, counters: &mut Counters) {
+    counters.retry += 1;
+    if let Err(error) = message.nack(config.nack_delay_ms) {
+        eprintln!("wamn::materializer nack failed ({error:?}); ack-wait redelivery remains armed");
+    }
+}
+
+fn term(message: &Message) {
+    if let Err(error) = message.term() {
+        eprintln!("wamn::materializer term failed ({error:?}); poison may redeliver");
+    }
+}
+
+fn settle_delivery(
+    result: &Result<DeliveryOutcome, DeliveryError>,
+    messages: &[&Message],
+    config: &Config,
+    counters: &mut Counters,
+) {
+    match delivery_disposition(result) {
+        DeliveryDisposition::Ack => {
+            counters.deliveries += 1;
+            for message in messages {
+                acknowledge(message, counters);
+            }
+        }
+        DeliveryDisposition::Retry => {
+            if matches!(result, Ok(DeliveryOutcome::Emit(_))) {
+                counters.emit_blocked += 1;
+                eprintln!(
+                    "wamn::materializer emit has no explicit subject selector; nack without inferring entity/op from guest JSON"
+                );
+            } else {
+                eprintln!("wamn::materializer router delivery did not settle: {result:?}");
+            }
+            for message in messages {
+                nack(message, config, counters);
             }
         }
     }
 }
 
-fn write_report(cfg: &Config, counters: &Counters) {
-    if let Some(path) = &cfg.report_path
-        && let Err(e) = std::fs::write(path, counters.to_json())
+fn serve(config: &Config, serving: &Serving, counters: &mut Counters) {
+    let registration = &serving.registration;
+    let filter = format!(
+        "evt.{}.{}.{}.{}.>",
+        config.org,
+        config.project,
+        config.env,
+        wamn_event_wire::subject_token(registration.entity.as_str())
+    );
+    let consumer = match consumer::bind(&ConsumerConfig {
+        stream_name: config.stream.clone(),
+        durable: durable_name(
+            &config.tenant,
+            &registration.catalog_id,
+            &registration.registration_id,
+        ),
+        filter_subject: filter,
+        ack_wait_ms: config.ack_wait_ms,
+        max_deliver: 0,
+    }) {
+        Ok(consumer) => consumer,
+        Err(error) => {
+            eprintln!(
+                "wamn::materializer bind failed for registration {}: {error:?}",
+                registration.registration_id
+            );
+            return;
+        }
+    };
+    let messages = match consumer.fetch(config.batch, config.fetch_ms) {
+        Ok(messages) => messages,
+        Err(error) => {
+            eprintln!(
+                "wamn::materializer fetch failed for registration {}: {error:?}",
+                registration.registration_id
+            );
+            return;
+        }
+    };
+    let mut prepared = Vec::with_capacity(messages.len());
+    for message in messages {
+        match prepare_message(config, serving, &message, counters) {
+            Preparation::Deliver {
+                payload,
+                stream_seq,
+                source_event_id,
+            } => prepared.push(PreparedMessage {
+                message,
+                payload,
+                stream_seq,
+                source_event_id,
+            }),
+            Preparation::Ack => acknowledge(&message, counters),
+            Preparation::Nack => nack(&message, config, counters),
+            Preparation::Term => term(&message),
+        }
+    }
+    match registration.input {
+        RegistrationInput::Event => {
+            for prepared in prepared {
+                let delivery_id = event_delivery_id(
+                    &registration.registration_id,
+                    prepared.stream_seq,
+                    &prepared.source_event_id,
+                );
+                let result = deliver(
+                    &registration.registration_id,
+                    delivery_id,
+                    &prepared.payload,
+                );
+                settle_delivery(&result, &[&prepared.message], config, counters);
+            }
+        }
+        RegistrationInput::Batch if !prepared.is_empty() => {
+            counters.batches += 1;
+            let delivery_id = batch_delivery_id(&registration.registration_id, &prepared);
+            let payload = batch_payload(&prepared);
+            let result = deliver(&registration.registration_id, delivery_id, &payload);
+            let messages = prepared
+                .iter()
+                .map(|prepared| &prepared.message)
+                .collect::<Vec<_>>();
+            settle_delivery(&result, &messages, config, counters);
+        }
+        RegistrationInput::Batch => {}
+    }
+}
+
+fn write_report(config: &Config, counters: &Counters) {
+    if let Some(path) = &config.report_path
+        && let Err(error) = std::fs::write(path, counters.to_json())
     {
-        eprintln!("wamn::materializer report write failed ({path}): {e}");
+        eprintln!("wamn::materializer report write failed ({path}): {error}");
     }
 }
 
 fn main() {
-    let cfg = match Config::from_env() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("wamn::materializer config error: {e}");
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("wamn::materializer config error: {error}");
             std::process::exit(1);
         }
     };
     println!(
-        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* tenant={} run_schema={} batch={} fetch_ms={} max_sweeps={}",
-        cfg.stream,
-        cfg.org,
-        cfg.project,
-        cfg.env,
-        cfg.tenant,
-        cfg.run_schema.as_str(),
-        cfg.batch,
-        cfg.fetch_ms,
-        cfg.max_sweeps
+        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* tenant={} batch={} fetch_ms={} max_sweeps={}",
+        config.stream,
+        config.org,
+        config.project,
+        config.env,
+        config.tenant,
+        config.batch,
+        config.fetch_ms,
+        config.max_sweeps
     );
     let mut counters = Counters::default();
     loop {
         counters.sweeps += 1;
-        match load_servings(&cfg, &mut counters) {
+        match load_servings(&mut counters) {
+            Ok(servings) if servings.is_empty() => {
+                std::thread::sleep(std::time::Duration::from_millis(config.sweep_ms));
+            }
             Ok(servings) => {
-                if servings.is_empty() {
-                    // Nothing serviceable: pace the sweep (with consumers the
-                    // fetch long-poll is the pacing).
-                    std::thread::sleep(std::time::Duration::from_millis(cfg.sweep_ms));
-                } else {
-                    for s in &servings {
-                        serve(&cfg, s, &mut counters);
-                    }
+                for serving in &servings {
+                    serve(&config, serving, &mut counters);
                 }
             }
-            Err(e) => {
+            Err(error) => {
                 eprintln!(
-                    "wamn::materializer sweep failed ({e}) — retrying after {}ms",
-                    cfg.sweep_ms
+                    "wamn::materializer sweep failed ({error}); retrying after {}ms",
+                    config.sweep_ms
                 );
-                std::thread::sleep(std::time::Duration::from_millis(cfg.sweep_ms));
+                std::thread::sleep(std::time::Duration::from_millis(config.sweep_ms));
             }
         }
-        write_report(&cfg, &counters);
-        if cfg.max_sweeps > 0 && counters.sweeps >= cfg.max_sweeps {
+        write_report(&config, &counters);
+        if config.max_sweeps > 0 && counters.sweeps >= config.max_sweeps {
             println!(
                 "wamn::materializer done after {} sweeps: {}",
                 counters.sweeps,
@@ -706,6 +572,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn::router_delivery::delivery::{DeliveryFailure, FailureKind};
 
     fn envelope() -> Envelope {
         serde_json::from_value(serde_json::json!({
@@ -721,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn source_event_id_requires_one_case_insensitive_nats_message_id_header() {
+    fn source_event_id_requires_one_exact_header() {
         let matching = vec![Header {
             name: "nats-msg-id".into(),
             value: "app_dev:42".into(),
@@ -733,24 +600,47 @@ mod tests {
                 .as_str(),
             "app_dev:42"
         );
+        assert!(
+            verified_source_event_id("app", "dev", &envelope(), &[]).is_none(),
+            "a missing source id must remain poison"
+        );
+    }
 
-        let missing = Vec::<Header>::new();
-        assert!(
-            verified_source_event_id("app", "dev", &envelope(), &nats_message_ids(&missing))
-                .is_none()
-        );
-        let wrong = vec![Header {
-            name: "Nats-Msg-Id".into(),
-            value: "app_dev:41".into(),
-        }];
-        assert!(
-            verified_source_event_id("app", "dev", &envelope(), &nats_message_ids(&wrong))
-                .is_none()
-        );
-        let duplicate = vec![matching[0].clone(), matching[0].clone()];
-        assert!(
-            verified_source_event_id("app", "dev", &envelope(), &nats_message_ids(&duplicate))
-                .is_none()
+    #[test]
+    fn router_completion_matrix_never_acks_failure_cancel_error_or_emit() {
+        let failed = Ok(DeliveryOutcome::Failed(DeliveryFailure {
+            kind: FailureKind::InvalidInput,
+            code: None,
+            message: "bad event".into(),
+        }));
+        for result in [
+            failed,
+            Ok(DeliveryOutcome::Cancelled),
+            Ok(DeliveryOutcome::Emit(delivery::Emission {
+                event: "{}".into(),
+                dedup_id: "author-key".into(),
+            })),
+            Err(DeliveryError::ExecutionFailed),
+        ] {
+            assert_eq!(delivery_disposition(&result), DeliveryDisposition::Retry);
+        }
+        for result in [
+            Ok(DeliveryOutcome::Discard),
+            Ok(DeliveryOutcome::Respond("{}".into())),
+        ] {
+            assert_eq!(delivery_disposition(&result), DeliveryDisposition::Ack);
+        }
+    }
+
+    #[test]
+    fn batch_payload_preserves_fetch_order() {
+        let inputs = [
+            serde_json::json!({"event": "insert", "new": {"id": "first"}}),
+            serde_json::json!({"event": "update", "new": {"id": "second"}}),
+        ];
+        assert_eq!(
+            ordered_batch_payload(&inputs),
+            serde_json::json!([inputs[0], inputs[1]])
         );
     }
 }

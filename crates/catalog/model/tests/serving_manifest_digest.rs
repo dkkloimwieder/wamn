@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 use wamn_catalog::{
     AttachmentKind, ServingAttachment, ServingComponent, ServingManifest, ServingRegistration,
-    ServingRelease, ServingWiring,
+    ServingRegistrationInput, ServingRelease, ServingWiring,
 };
 
 mod mint_vector {
@@ -84,6 +84,7 @@ fn manifest() -> ServingManifest {
                 wiring_version: 2,
                 entity: "orders".into(),
                 ops: BTreeSet::from(["insert".into(), "update".into()]),
+                input: ServingRegistrationInput::Batch,
             },
         )]),
     )
@@ -178,7 +179,7 @@ fn every_manifest_field_is_pinned() {
     );
     assert_eq!(
         sorted_keys(&document["registrations"]["orders-changed"]),
-        ["entity", "ops", "wiring-id", "wiring-version"]
+        ["entity", "input", "ops", "wiring-id", "wiring-version"]
     );
 
     let text = String::from_utf8(manifest().canonical_bytes()).expect("manifest is UTF-8");
@@ -211,4 +212,12 @@ fn each_exact_target_reaches_the_digest() {
 
     assert_ne!(baseline.canonical_bytes(), retargeted.canonical_bytes());
     assert_ne!(baseline.digest(), retargeted.digest());
+
+    let mut regrained = manifest();
+    regrained
+        .registrations
+        .get_mut("orders-changed")
+        .expect("fixture registration")
+        .input = ServingRegistrationInput::Event;
+    assert_ne!(baseline.digest(), regrained.digest());
 }

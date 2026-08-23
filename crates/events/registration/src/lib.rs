@@ -4,10 +4,10 @@
 //!
 //! The **declaration surface** for the event plane's materializer (l5i9.17): an
 //! [`EventRegistration`] is a subscribing flow's "a registration, not code" —
-//! an entity id, an op set, and an optional condition. This crate models and
-//! validates that declaration; it is pure Rust (no DB, no clock, no wasm) and
-//! does not decode WAL, evaluate conditions, or enqueue runs — the materializer
-//! consumes what this crate stores.
+//! an entity id, an op set, event-or-batch delivery grain, and an optional
+//! condition. This crate models and validates that declaration; it is pure Rust
+//! (no DB, no clock, no wasm) and does not decode WAL or evaluate conditions —
+//! the materializer consumes what this crate stores.
 //!
 //! Registrations are stored as jsonb in `catalog.event_registrations`
 //! (deploy/sql/catalog-schema.sql), managed through the minimal CRUD surface in
@@ -19,7 +19,7 @@ mod model;
 mod oldref;
 mod validate;
 
-pub use model::{EventRegistration, SCHEMA_VERSION};
+pub use model::{EventRegistration, RegistrationInput, SCHEMA_VERSION};
 pub use oldref::{condition_references_old, references_old};
 pub use validate::validate;
 

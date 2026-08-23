@@ -1,62 +1,14 @@
-//! The per-event decision — one delivered envelope against one registration,
-//! producing exactly one [`Verdict`]: fire (with everything the enqueue
-//! needs), a normal skip, or an ALERTABLE refusal. The guest maps verdicts to
-//! effects: `Fire` → centralized callable-flow admission, doorbell after
-//! commit, then ack; `Skip`/`Refuse` → ack (the decision is
-//! deterministic — a redelivery cannot change it; events stay on the stream
-//! for replay regardless of ack). Refusals are counted + warned DISTINCTLY
-//! (v3 §4: "refusals are a distinct, alertable outcome").
+//! Pure selection of one fetched event for a registration delivery.
 
+use serde_json::Value;
 use wamn_event_reg::EventRegistration;
 use wamn_event_wire::{Causation, Envelope};
-use wamn_run_state::queue::mint_evt_run_id;
 
 use crate::condition::{CompiledCondition, ConditionOutcome, compile_condition};
 use crate::context::{event_context, tenant_of};
-use crate::input::evt_input_json;
+use crate::input::event_input;
 
-/// A subscribed flow's dispatch-relevant declaration, read from the flows
-/// registry (`graph_json` → `wamn_flow::Flow`) by the guest each sweep.
-#[derive(Debug, Clone)]
-pub struct FlowDeclaration {
-    pub flow_id: String,
-    pub flow_version: i32,
-}
-
-/// Everything the guest's fire transaction needs for one won firing.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FirePlan {
-    /// Deterministic over the full event admission scope.
-    pub run_id: String,
-    pub flow_id: String,
-    pub flow_version: i32,
-    /// The persisted author-visible event business input.
-    pub input_json: String,
-    /// Trusted producer metadata, separate from the author-visible input.
-    pub invocation_context_json: String,
-    /// The numeric stream position carried as the event admission sequence.
-    pub stream_seq: i64,
-    /// The child causation for trusted lineage persistence and logging.
-    pub causation: Causation,
-    /// Immediate causal source. Organic events self-root; chained events name
-    /// the trusted parent run carried by the CDC envelope.
-    pub source_run_id: String,
-}
-
-/// Mint an event run identity scoped to the live registration.
-///
-/// A flow may have multiple registrations consuming the same stream sequence;
-/// including the registration prevents their run primary keys from collapsing.
-pub fn mint_registered_evt_run_id(flow_id: &str, registration_id: &str, stream_seq: u64) -> String {
-    mint_evt_run_id(&format!("{flow_id}:{registration_id}"), stream_seq)
-}
-
-/// Derive the frozen source-event coordinate carried by `Nats-Msg-Id`.
-pub fn source_event_id(project: &str, environment: &str, envelope: &Envelope) -> String {
-    wamn_event_wire::msg_id(project, environment, envelope.lsn)
-}
-
-/// A source-event coordinate proven to match the one delivered NATS identity.
+/// A source-event coordinate proven to match the delivered NATS identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedSourceEventId(String);
 
@@ -66,594 +18,188 @@ impl VerifiedSourceEventId {
     }
 }
 
-/// Accept exactly one delivered `Nats-Msg-Id`, and only when it matches the
-/// coordinate derived from trusted subscription identity plus envelope LSN.
+/// Accept exactly one `Nats-Msg-Id` matching the envelope's source coordinate.
 pub fn verified_source_event_id(
     project: &str,
     environment: &str,
     envelope: &Envelope,
     message_ids: &[&str],
 ) -> Option<VerifiedSourceEventId> {
-    let expected = source_event_id(project, environment, envelope);
+    let expected = wamn_event_wire::msg_id(project, environment, envelope.lsn);
     match message_ids {
         [actual] if *actual == expected => Some(VerifiedSourceEventId(expected)),
         _ => None,
     }
 }
 
-/// Build the trusted invocation context for one event admission.
-pub fn event_invocation_context_json(
-    envelope: &Envelope,
-    stream_seq: u64,
-    source_event_id: &VerifiedSourceEventId,
-) -> String {
-    serde_json::to_string(&serde_json::json!({
-        "trigger": "event",
-        "entity": envelope.entity,
-        "table": envelope.table,
-        "seq": stream_seq,
-        "source-event-id": source_event_id.as_str(),
-    }))
-    .expect("event invocation context serializes")
-}
-
-/// Normal, non-alertable outcomes: the event is simply not this consumer's to
-/// fire. Ack and move on.
+/// Normal non-delivery outcomes owned by registration filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipReason {
-    /// The envelope's entity doesn't match the registration (defensive — the
-    /// durable consumer's subject filter should already scope this).
     EntityMismatch,
-    /// The envelope's op is not in the registration's op set (one durable
-    /// consumer fetches all ops of its entity; non-registered ops pass by).
     OpMismatch,
-    /// The event belongs to a different tenant — THAT tenant's own
-    /// materializer workload owns it (v1 binds one tenant per workload).
     ForeignTenant,
-    /// The condition evaluated falsy. The event stays on the stream — a
-    /// condition edit replays it (§5 hot-editability).
     ConditionFalse,
 }
 
-/// ALERTABLE refusals (v3 §4): deterministic decisions that an operator must
-/// see — counted distinctly and warned, then acked (a redelivery cannot
-/// change a deterministic verdict; nacking would poison-loop).
+/// Deterministic registration refusals that must remain operator-visible.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RefuseReason {
-    /// The causation chain hit the depth ceiling — the loop-bound firing.
-    /// Carries the parent stamp for the alert.
     DepthExceeded { parent: Causation },
-    /// The event cannot be tenant-scoped: a DELETE under REPLICA IDENTITY
-    /// DEFAULT (old image = key only) or a table with no `tenant_id` column.
-    /// Enqueuing it under the workload's tenant would be a cross-tenant leak.
-    /// Retires per entity as l5i9.31 flips it to FULL — a FULL delete's old
-    /// image carries `tenant_id`, so the delete becomes scopable.
     TenantUnscopable,
-    /// A condition reads the ROOT `old` image, but the delivered event carries
-    /// no old image at all (REPLICA IDENTITY DEFAULT, or an op with no prior
-    /// row) — the predicate is CANNOT-EVALUATE (l5i9.31). Alertable: either the
-    /// entity's REPLICA IDENTITY FULL is not yet reconciled, or the registration
-    /// subscribes an op (insert) that has no old image. NEVER condition-false.
     OldImageAbsent,
-    /// The condition failed to evaluate (never silently condition-false).
     ConditionError(String),
-    /// `stream_seq` doesn't fit the queue's BIGINT (practically unreachable;
-    /// refusing beats wrapping a claim key).
-    SeqOverflow(u64),
 }
 
-/// One event × one registration → exactly one verdict.
+/// One fetched event's registration decision.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Verdict {
-    Fire(Box<FirePlan>),
+    Deliver(Value),
     Skip(SkipReason),
     Refuse(RefuseReason),
 }
 
-/// Why a registration cannot be served at all (the guest HOLDS it: no
-/// consumer bound, events delayed — never lost — and a warning each sweep;
-/// the dispatcher's invalid-flow HOLD posture).
+/// Why a registration cannot be served in this sweep.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecideError {
-    /// Condition present but not serviceable (bad syntax — the write-time
-    /// validation backstop). A root-`old` condition is NO LONGER unserviceable
-    /// (l5i9.31): it compiles and is guarded per event.
     UnserviceableCondition(ConditionOutcome),
 }
 
-/// Pre-flight a registration for serving: compiles the condition (if any). Only
-/// invalid syntax is unserviceable now — a root-`old` condition compiles and is
-/// guarded per event ([`decide`], old-absent = cannot-evaluate). Call once per
-/// sweep per registration; the compiled condition is reused across the batch.
-pub fn serviceable(reg: &EventRegistration) -> Result<Option<CompiledCondition>, DecideError> {
-    match &reg.condition {
+/// Compile a registration's optional filter once per sweep.
+pub fn serviceable(
+    registration: &EventRegistration,
+) -> Result<Option<CompiledCondition>, DecideError> {
+    match &registration.condition {
         None => Ok(None),
-        Some(expr) => compile_condition(expr)
+        Some(expression) => compile_condition(expression)
             .map(Some)
             .map_err(DecideError::UnserviceableCondition),
     }
 }
 
-/// The child causation stamp for a run fired by `envelope`: organic writes
-/// (no stamp) root a fresh chain at depth 0; a stamped write extends its
-/// parent's chain (`root` carried, `depth + 1`). `Err` = over the ceiling —
-/// the alertable loop-bound refusal.
-pub fn child_causation(
-    envelope: &Envelope,
-    run_id: &str,
-    max_depth: u32,
-) -> Result<Causation, RefuseReason> {
-    match &envelope.causation {
-        None => Ok(Causation {
-            run: run_id.to_string(),
-            root: run_id.to_string(),
-            depth: 0,
-        }),
-        Some(parent) => {
-            let depth = parent.depth.saturating_add(1);
-            if depth > max_depth {
-                return Err(RefuseReason::DepthExceeded {
-                    parent: parent.clone(),
-                });
-            }
-            Ok(Causation {
-                run: run_id.to_string(),
-                root: parent.root.clone(),
-                depth,
-            })
-        }
-    }
-}
-
-/// Decide one delivered event against one registration. `tenant` is the
-/// workload's own bound tenant (host-injected claim; the guest reads its copy
-/// from config/env — the DB claims stay host-enforced regardless).
-/// `condition` is [`serviceable`]'s compile for THIS registration.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the pure decision boundary names every independently trusted input"
-)]
+/// Decide whether one envelope reaches the registration's wiring.
 pub fn decide(
-    reg: &EventRegistration,
-    flow: &FlowDeclaration,
+    registration: &EventRegistration,
     condition: Option<&CompiledCondition>,
     envelope: &Envelope,
-    stream_seq: u64,
-    source_event_id: &VerifiedSourceEventId,
     tenant: &str,
     max_depth: u32,
 ) -> Verdict {
-    // 1. Entity (defensive — the consumer's subject filter already scopes it;
-    //    rename-proof: the STABLE id, never the physical table).
-    if envelope.entity.as_deref() != Some(reg.entity.as_str()) {
+    if envelope.entity.as_deref() != Some(registration.entity.as_str()) {
         return Verdict::Skip(SkipReason::EntityMismatch);
     }
-    // 2. Op set.
-    if !reg.ops.contains(&envelope.op) {
+    if !registration.ops.contains(&envelope.op) {
         return Verdict::Skip(SkipReason::OpMismatch);
     }
-    // 3. Tenant guard — BEFORE any evaluation: an unscopable event must never
-    //    reach a fire, and a foreign tenant's event is not ours to judge.
     match tenant_of(envelope) {
         None => return Verdict::Refuse(RefuseReason::TenantUnscopable),
-        Some(t) if t != tenant => return Verdict::Skip(SkipReason::ForeignTenant),
+        Some(event_tenant) if event_tenant != tenant => {
+            return Verdict::Skip(SkipReason::ForeignTenant);
+        }
         Some(_) => {}
     }
-    // 4. Condition, over the event context. A predicate that reads the ROOT
-    //    `old` image cannot be evaluated when the event carries no old image
-    //    (REPLICA IDENTITY DEFAULT, or an op with no prior row): old-absent is
-    //    CANNOT-EVALUATE — an alertable refusal, NEVER condition-false (l5i9.31).
-    //    Evaluating an absent `old` as JMESPath `null` is the exact corruption
-    //    the contract forbids (`new.status != old.status` would fire spuriously).
-    let event_ctx = event_context(envelope);
-    if reg.condition.is_some() {
-        let Some(cond) = condition else {
-            // A condition-bearing registration reached decide with no compile —
-            // the serviceable() hold (invalid syntax) should have prevented
-            // this; refuse rather than fire unfiltered.
+    if registration.condition.is_some() {
+        let Some(condition) = condition else {
             return Verdict::Refuse(RefuseReason::ConditionError(
                 "condition present but not compiled".into(),
             ));
         };
-        if cond.references_old() && envelope.old.is_none() {
+        if condition.references_old() && envelope.old.is_none() {
             return Verdict::Refuse(RefuseReason::OldImageAbsent);
         }
-        match cond.matches(&event_ctx) {
+        match condition.matches(&event_context(envelope)) {
             Ok(true) => {}
             Ok(false) => return Verdict::Skip(SkipReason::ConditionFalse),
-            Err(e) => return Verdict::Refuse(RefuseReason::ConditionError(e)),
+            Err(error) => return Verdict::Refuse(RefuseReason::ConditionError(error)),
         }
     }
-    // 5. Numeric stream position (E4).
-    let Ok(seq_i64) = i64::try_from(stream_seq) else {
-        return Verdict::Refuse(RefuseReason::SeqOverflow(stream_seq));
-    };
-    // 6. Mint: run id, causation chain, input, and global-FIFO stream position.
-    let run_id = mint_registered_evt_run_id(&flow.flow_id, &reg.registration_id, stream_seq);
-    let child = match child_causation(envelope, &run_id, max_depth) {
-        Ok(c) => c,
-        Err(refuse) => return Verdict::Refuse(refuse),
-    };
-    let source_run_id = envelope
-        .causation
-        .as_ref()
-        .map_or_else(|| run_id.clone(), |parent| parent.run.clone());
-    let input_json = evt_input_json(envelope, stream_seq, &child);
-    let invocation_context_json =
-        event_invocation_context_json(envelope, stream_seq, source_event_id);
-    Verdict::Fire(Box::new(FirePlan {
-        run_id,
-        flow_id: flow.flow_id.clone(),
-        flow_version: flow.flow_version,
-        input_json,
-        invocation_context_json,
-        stream_seq: seq_i64,
-        causation: child,
-        source_run_id,
-    }))
+    if let Some(parent) = &envelope.causation
+        && parent.depth.saturating_add(1) > max_depth
+    {
+        return Verdict::Refuse(RefuseReason::DepthExceeded {
+            parent: parent.clone(),
+        });
+    }
+    Verdict::Deliver(event_input(envelope))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Value, json};
+    use serde_json::json;
+    use wamn_event_reg::RegistrationInput;
     use wamn_event_wire::Op;
 
-    fn envelope(op: Op, new: Value) -> Envelope {
-        Envelope {
-            op,
-            old: None,
-            new: Some(new.as_object().unwrap().clone()),
-            entity: Some("receipts".into()),
-            table: "receipts".into(),
-            lsn: 42,
-            txid: 7,
-            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            causation: None,
-        }
-    }
-
     fn registration(condition: Option<&str>) -> EventRegistration {
-        EventRegistration::from_json(
-            &json!({
-                "schema-version": "0.1",
-                "registration-id": "r1",
-                "catalog-id": "cat",
-                "flow-id": "f1",
-                "entity": "receipts",
-                "ops": ["insert", "update"],
-                "condition": condition,
-            })
-            .to_string(),
-        )
-        .expect("registration parses")
-    }
-
-    fn flow() -> FlowDeclaration {
-        FlowDeclaration {
-            flow_id: "f1".into(),
-            flow_version: 3,
+        EventRegistration {
+            schema_version: "0.1".into(),
+            registration_id: "r1".into(),
+            catalog_id: "cat".into(),
+            flow_id: "legacy-flow".into(),
+            entity: "receipts".into(),
+            ops: vec![Op::Insert, Op::Update],
+            input: RegistrationInput::Event,
+            condition: condition.map(str::to_owned),
         }
     }
 
-    fn fire(v: Verdict) -> FirePlan {
-        match v {
-            Verdict::Fire(plan) => *plan,
-            other => panic!("expected Fire, got {other:?}"),
-        }
-    }
-
-    fn decide(
-        reg: &EventRegistration,
-        flow: &FlowDeclaration,
-        condition: Option<&CompiledCondition>,
-        envelope: &Envelope,
-        stream_seq: u64,
-        tenant: &str,
-        max_depth: u32,
-    ) -> Verdict {
-        let expected = source_event_id("app", "dev", envelope);
-        let source_event_id =
-            verified_source_event_id("app", "dev", envelope, &[&expected]).unwrap();
-        super::decide(
-            reg,
-            flow,
-            condition,
-            envelope,
-            stream_seq,
-            &source_event_id,
-            tenant,
-            max_depth,
-        )
+    fn envelope() -> Envelope {
+        serde_json::from_value(json!({
+            "op": "insert",
+            "new": {"tenant_id": "t1", "status": "ready"},
+            "entity": "receipts",
+            "table": "receipts",
+            "lsn": 42,
+            "txid": 7,
+            "commit_ts": "2026-08-15T12:00:00Z"
+        }))
+        .unwrap()
     }
 
     #[test]
-    fn a_matching_insert_fires_with_the_e4_mint() {
-        let reg = registration(None);
-        let f = flow();
-        let env = envelope(Op::Insert, json!({"id": "7", "tenant_id": "t1"}));
-        let plan = fire(decide(&reg, &f, None, &env, 9, "t1", 16));
-        assert_eq!(plan.run_id, "f1:r1:evt:00000000000000000009");
-        assert_eq!(plan.stream_seq, 9);
-        // Organic write → fresh root at depth 0.
-        assert_eq!(plan.causation.depth, 0);
-        assert_eq!(plan.causation.root, plan.run_id);
-        assert_eq!(plan.source_run_id, plan.run_id);
-        let input: Value = serde_json::from_str(&plan.input_json).unwrap();
-        assert_eq!(input["event"], "insert");
-        assert_eq!(input["new"]["id"], "7");
-        assert!(input.get("causation").is_none());
+    fn matching_event_delivers_business_input_without_flow_or_run_identity() {
         assert_eq!(
-            serde_json::from_str::<Value>(&plan.invocation_context_json).unwrap(),
-            json!({
-                "trigger": "event",
-                "entity": "receipts",
-                "table": "receipts",
-                "seq": 9,
-                "source-event-id": "app_dev:42"
-            })
+            decide(&registration(None), None, &envelope(), "t1", 16),
+            Verdict::Deliver(json!({
+                "event": "insert",
+                "new": {"tenant_id": "t1", "status": "ready"}
+            }))
         );
     }
 
     #[test]
-    fn source_event_id_requires_one_exact_nats_message_id() {
-        let env = envelope(Op::Insert, json!({"tenant_id": "t1"}));
-        assert_eq!(source_event_id("app", "dev", &env), "app_dev:42");
-        assert_eq!(
-            verified_source_event_id("app", "dev", &env, &["app_dev:42"]),
-            Some(VerifiedSourceEventId("app_dev:42".into()))
-        );
-        assert_eq!(verified_source_event_id("app", "dev", &env, &[]), None);
-        assert_eq!(
-            verified_source_event_id("app", "dev", &env, &["app_dev:41"]),
-            None
-        );
-        assert_eq!(
-            verified_source_event_id("app", "dev", &env, &["app_dev:42", "app_dev:42"]),
-            None
-        );
-    }
-
-    #[test]
-    fn registration_identity_scopes_equal_stream_sequences() {
-        assert_ne!(
-            mint_registered_evt_run_id("f1", "r1", 9),
-            mint_registered_evt_run_id("f1", "r2", 9)
-        );
-    }
-
-    #[test]
-    fn entity_op_and_tenant_guards_skip() {
-        let reg = registration(None);
-        let f = flow();
-
-        let mut wrong_entity = envelope(Op::Insert, json!({"tenant_id": "t1"}));
-        wrong_entity.entity = Some("orders".into());
-        assert_eq!(
-            decide(&reg, &f, None, &wrong_entity, 1, "t1", 16),
-            Verdict::Skip(SkipReason::EntityMismatch)
-        );
-        // Unmapped (entity ABSENT) never matches an id-keyed registration,
-        // even when the TABLE name coincides — the rename-proof half of R9b.
-        let mut unmapped = envelope(Op::Insert, json!({"tenant_id": "t1"}));
-        unmapped.entity = None;
-        assert_eq!(
-            decide(&reg, &f, None, &unmapped, 1, "t1", 16),
-            Verdict::Skip(SkipReason::EntityMismatch)
-        );
-
-        let wrong_op = envelope(Op::Delete, json!({}));
-        assert_eq!(
-            decide(&reg, &f, None, &wrong_op, 1, "t1", 16),
-            Verdict::Skip(SkipReason::OpMismatch)
-        );
-
-        let foreign = envelope(Op::Insert, json!({"tenant_id": "t2"}));
-        assert_eq!(
-            decide(&reg, &f, None, &foreign, 1, "t1", 16),
-            Verdict::Skip(SkipReason::ForeignTenant),
-            "another tenant's event is a normal skip — its own workload owns it"
-        );
-    }
-
-    #[test]
-    fn unscopable_events_refuse_never_fire() {
-        // A DELETE under REPLICA IDENTITY DEFAULT: old = key only. Register
-        // the delete op so the guard (not the op filter) is what fires.
-        let reg = EventRegistration::from_json(
-            &json!({
-                "schema-version": "0.1", "registration-id": "r1", "catalog-id": "cat",
-                "flow-id": "f1", "entity": "receipts", "ops": ["delete"],
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let f = flow();
-        let del = Envelope {
-            op: Op::Delete,
-            old: Some(json!({"id": "7"}).as_object().unwrap().clone()),
-            new: None,
-            entity: Some("receipts".into()),
-            table: "receipts".into(),
-            lsn: 1,
-            txid: 1,
-            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            causation: None,
-        };
-        assert_eq!(
-            decide(&reg, &f, None, &del, 1, "t1", 16),
-            Verdict::Refuse(RefuseReason::TenantUnscopable)
-        );
-        // Same refusal for a table with no tenant_id column.
-        let no_tenant = envelope(Op::Insert, json!({"id": "7"}));
-        let reg2 = registration(None);
-        assert_eq!(
-            decide(&reg2, &f, None, &no_tenant, 1, "t1", 16),
-            Verdict::Refuse(RefuseReason::TenantUnscopable)
-        );
-    }
-
-    #[test]
-    fn condition_gates_the_fire_and_stays_replayable() {
-        let reg = registration(Some("new.status == 'received'"));
-        let cond = serviceable(&reg).unwrap();
-        let f = flow();
-        let hit = envelope(Op::Insert, json!({"tenant_id": "t1", "status": "received"}));
-        let miss = envelope(Op::Insert, json!({"tenant_id": "t1", "status": "draft"}));
+    fn condition_and_tenant_guards_still_filter_before_delivery() {
+        let registration = registration(Some("new.status == 'ready'"));
+        let condition = serviceable(&registration).unwrap().unwrap();
         assert!(matches!(
-            decide(&reg, &f, cond.as_ref(), &hit, 1, "t1", 16),
-            Verdict::Fire(_)
-        ));
-        assert_eq!(
-            decide(&reg, &f, cond.as_ref(), &miss, 2, "t1", 16),
-            Verdict::Skip(SkipReason::ConditionFalse)
-        );
-    }
-
-    #[test]
-    fn old_value_conditions_are_serviceable_and_guarded_per_event() {
-        // l5i9.31: a changed-to condition is now SERVICEABLE (no longer held).
-        let reg = registration(Some("new.status != old.status"));
-        let cond = serviceable(&reg).expect("old-ref is serviceable");
-        assert!(cond.is_some(), "condition compiles to Some");
-        let f = flow();
-
-        // Old image ABSENT (RI DEFAULT / an op with no prior row) → an alertable
-        // cannot-evaluate refusal, NOT condition-false, NOT a hold.
-        let no_old = envelope(Op::Update, json!({"tenant_id": "t1", "status": "shipped"}));
-        assert_eq!(
-            decide(&reg, &f, cond.as_ref(), &no_old, 1, "t1", 16),
-            Verdict::Refuse(RefuseReason::OldImageAbsent),
-            "old-absent is cannot-evaluate, never condition-false"
-        );
-
-        // Old image PRESENT (RI FULL) → the predicate evaluates — both outcomes.
-        let changed = Envelope {
-            op: Op::Update,
-            old: Some(json!({"status": "draft"}).as_object().unwrap().clone()),
-            new: Some(
-                json!({"tenant_id": "t1", "status": "shipped"})
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            ),
-            entity: Some("receipts".into()),
-            table: "receipts".into(),
-            lsn: 1,
-            txid: 1,
-            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            causation: None,
-        };
-        assert!(matches!(
-            decide(&reg, &f, cond.as_ref(), &changed, 2, "t1", 16),
-            Verdict::Fire(_)
-        ));
-        let mut unchanged = changed.clone();
-        unchanged.old = Some(json!({"status": "shipped"}).as_object().unwrap().clone());
-        assert_eq!(
-            decide(&reg, &f, cond.as_ref(), &unchanged, 3, "t1", 16),
-            Verdict::Skip(SkipReason::ConditionFalse),
-            "old-present + no change is a normal condition-false skip"
-        );
-    }
-
-    #[test]
-    fn delete_under_full_is_scopable_and_fires() {
-        // l5i9.31: with the entity at REPLICA IDENTITY FULL a DELETE's old image
-        // carries tenant_id, so the delete becomes scopable and fires — the
-        // EXPECTED-DELETE-RI divergence class retires for FULL entities.
-        let reg = EventRegistration::from_json(
-            &json!({
-                "schema-version": "0.1", "registration-id": "r1", "catalog-id": "cat",
-                "flow-id": "f1", "entity": "receipts", "ops": ["delete"],
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let f = flow();
-        let full_del = Envelope {
-            op: Op::Delete,
-            old: Some(
-                json!({"id": "7", "tenant_id": "t1"})
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            ),
-            new: None,
-            entity: Some("receipts".into()),
-            table: "receipts".into(),
-            lsn: 1,
-            txid: 1,
-            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            causation: None,
-        };
-        assert!(matches!(
-            decide(&reg, &f, None, &full_del, 1, "t1", 16),
-            Verdict::Fire(_)
-        ));
-        // A foreign tenant's FULL delete is a normal skip, never ours to fire.
-        let mut foreign = full_del.clone();
-        foreign.old = Some(
-            json!({"id": "7", "tenant_id": "t2"})
-                .as_object()
-                .unwrap()
-                .clone(),
-        );
-        assert_eq!(
-            decide(&reg, &f, None, &foreign, 2, "t1", 16),
+            decide(&registration, Some(&condition), &envelope(), "other", 16),
             Verdict::Skip(SkipReason::ForeignTenant)
-        );
+        ));
     }
 
     #[test]
-    fn causation_chain_extends_and_refuses_over_budget() {
-        let reg = registration(None);
-        let f = flow();
-        let mut env = envelope(Op::Insert, json!({"tenant_id": "t1"}));
-        env.causation = Some(Causation {
-            run: "f0:evt:00000000000000000001".into(),
-            root: "origin".into(),
-            depth: 3,
+    fn over_depth_event_refuses_without_minting_a_run() {
+        let mut envelope = envelope();
+        envelope.causation = Some(Causation {
+            run: "delivery".into(),
+            root: "root".into(),
+            depth: 16,
         });
-        let plan = fire(decide(&reg, &f, None, &env, 9, "t1", 16));
-        assert_eq!(plan.causation.depth, 4, "child depth = parent + 1");
-        assert_eq!(plan.causation.root, "origin", "the root carries");
-        assert_eq!(plan.causation.run, plan.run_id);
-        assert_eq!(
-            plan.source_run_id, "f0:evt:00000000000000000001",
-            "the immediate parent is retained separately from the child stamp"
-        );
-
-        // At the ceiling: parent 15 → child 16 fires; parent 16 → 17 refuses.
-        env.causation.as_mut().unwrap().depth = 15;
         assert!(matches!(
-            decide(&reg, &f, None, &env, 10, "t1", 16),
-            Verdict::Fire(_)
-        ));
-        env.causation.as_mut().unwrap().depth = 16;
-        assert!(matches!(
-            decide(&reg, &f, None, &env, 11, "t1", 16),
+            decide(&registration(None), None, &envelope, "t1", 16),
             Verdict::Refuse(RefuseReason::DepthExceeded { .. })
         ));
     }
 
     #[test]
-    fn redelivery_is_deterministic() {
-        // Same event, same registration → byte-identical plan (the ON CONFLICT
-        // dedupe upstream depends on the run_id; determinism is the property).
-        let reg = registration(None);
-        let f = flow();
-        let env = envelope(Op::Insert, json!({"tenant_id": "t1"}));
-        let a = fire(decide(&reg, &f, None, &env, 9, "t1", 16));
-        let b = fire(decide(&reg, &f, None, &env, 9, "t1", 16));
-        assert_eq!(a, b);
+    fn source_identity_requires_one_exact_header() {
+        let envelope = envelope();
+        let expected = wamn_event_wire::msg_id("app", "dev", envelope.lsn);
+        assert_eq!(
+            verified_source_event_id("app", "dev", &envelope, &[&expected])
+                .unwrap()
+                .as_str(),
+            expected
+        );
+        assert!(verified_source_event_id("app", "dev", &envelope, &[]).is_none());
     }
 }

@@ -42,6 +42,17 @@ use wamn_schema_model::EntityId;
 /// The registration-model **format** version.
 pub const SCHEMA_VERSION: &str = "0.1";
 
+/// Whether one pull fetch is delivered to the wiring event-by-event or as one batch.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RegistrationInput {
+    /// Invoke the registration wiring once for each admitted event.
+    #[default]
+    Event,
+    /// Invoke the registration wiring once with the fetch's ordered events.
+    Batch,
+}
+
 /// One event registration — a subscribing flow's declaration of the row events
 /// it wants and how they are filtered.
 ///
@@ -67,6 +78,9 @@ pub struct EventRegistration {
     /// The row ops that fire it. **Non-empty** — a registration matching no op is
     /// inert (rejected by [`validate`](crate::validate)).
     pub ops: Vec<Op>,
+    /// Delivery grain for one ordered pull fetch.
+    #[serde(default)]
+    pub input: RegistrationInput,
     /// Optional filter: a JMESPath **predicate** over the event context
     /// `{"op", "old", "new"}` (the envelope's op + column images), evaluated at
     /// the materializer. Absent = every op-matching event fires. A predicate

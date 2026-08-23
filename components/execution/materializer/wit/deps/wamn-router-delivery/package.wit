@@ -1,0 +1,77 @@
+package wamn:router-delivery@0.1.0;
+
+/// Host-owned delivery into the one production router driver.
+interface delivery {
+  /// The trusted release projection the host must resolve by identifier.
+  variant source {
+    attachment(string),
+    registration(string),
+  }
+
+  /// Caller context produced by a platform ingress adapter.
+  record caller-context {
+    role: option<string>,
+    user-id: option<string>,
+  }
+
+  /// W3C trace context propagated into component invocations.
+  record trace-context {
+    traceparent: string,
+    tracestate: option<string>,
+  }
+
+  /// One delivery. Wiring coordinates are deliberately absent: the host
+  /// re-derives them from the welded release and `source`.
+  record delivery-request {
+    source: source,
+    delivery-id: string,
+    payload: string,
+    caller: option<caller-context>,
+    trace: option<trace-context>,
+  }
+
+  /// The router's exhaustive terminal failure classes.
+  enum failure-kind {
+    terminal,
+    retry-exhausted,
+    invalid-input,
+    hop-limit,
+    unreleased-caller,
+    missing-dedup-id,
+    respond-without-caller,
+    second-verdict,
+  }
+
+  /// Caller-facing failure truth. Retired node coordinates do not cross this
+  /// boundary.
+  record delivery-failure {
+    kind: failure-kind,
+    code: option<string>,
+    message: string,
+  }
+
+  record emission {
+    event: string,
+    dedup-id: string,
+  }
+
+  /// The router's terminal disposition, preserved without string matching.
+  variant delivery-outcome {
+    respond(string),
+    emit(emission),
+    discard,
+    failed(delivery-failure),
+    cancelled,
+  }
+
+  /// Failures owned by the bridge rather than by the routed wiring.
+  enum delivery-error {
+    source-not-found,
+    invalid-request,
+    invalid-payload,
+    wiring-not-preloaded,
+    execution-failed,
+  }
+
+  deliver: func(request: delivery-request) -> result<delivery-outcome, delivery-error>;
+}

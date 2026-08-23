@@ -9,8 +9,8 @@ use serde_json::json;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
-    AttachmentKind, ServingAttachment, ServingManifest, ServingRegistration, ServingWiring,
-    WiringDocument, WiringNode, WiringTerminal,
+    AttachmentKind, ServingAttachment, ServingManifest, ServingRegistration,
+    ServingRegistrationInput, ServingWiring, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_ctl::publish_catalog::ensure_catalog_storage;
 use wamn_ctl::publish_release::{
@@ -255,6 +255,7 @@ fn registrations() -> BTreeMap<String, ServingRegistration> {
             wiring_version: 2,
             entity: "orders".to_string(),
             ops: BTreeSet::from(["insert".to_string(), "update".to_string()]),
+            input: ServingRegistrationInput::Batch,
         },
     )])
 }

@@ -883,7 +883,9 @@ impl producer::Host for ActiveCtx<'_> {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use wamn_catalog::{ServingRegistration, ServingRelease, ServingWiring};
+    use wamn_catalog::{
+        ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
+    };
 
     use super::*;
 
@@ -1011,6 +1013,7 @@ mod tests {
             wiring_version: 1,
             entity: entity.to_string(),
             ops: ops.iter().copied().map(String::from).collect(),
+            input: ServingRegistrationInput::Event,
         };
         ServingManifest::new(
             ServingRelease {

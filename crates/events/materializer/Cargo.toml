@@ -1,6 +1,6 @@
 [package]
 name = "wamn-materializer"
-description = "wamn CDC materializer decisions: the pure per-event registration match, tenant guard, causation budget, condition evaluation, and deterministic run/input mint. The Service guest supplies PostgreSQL and JetStream effects."
+description = "wamn CDC materializer decisions: pure registration matching, tenant guards, causation bounds, condition evaluation, and event-input projection."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,13 +11,6 @@ license.workspace = true
 wamn-event-wire = { workspace = true }
 # The declaration the materializer serves: EventRegistration (entity, ops, and condition).
 wamn-event-reg = { workspace = true }
-# EventInput and RowEvent are shared with the flow entry contract.
-wamn-flow = { workspace = true }
-# Verify release members against the canonical executable-plan bytes.
-wamn-catalog = { workspace = true }
-# The deterministic event run-id mint. Scheduling remains outside this
-# guest-safe materialization core.
-wamn-run-state = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 # Condition evaluation uses the codebase's one expression language.

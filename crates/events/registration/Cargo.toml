@@ -1,6 +1,6 @@
 [package]
 name = "wamn-event-reg"
-description = "wamn event registration model (EVT-REG, D19 v3 §5): a subscribing flow's declaration — entity id, ops, and condition — that the materializer consumes. Rename-proof by entity-id keying. Stored as jsonb in catalog.event_registrations."
+description = "wamn event registration model: a wiring subscription's entity, operations, condition, and event-or-batch input grain. Stored as jsonb in catalog.event_registrations."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

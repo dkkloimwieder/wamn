@@ -4,7 +4,7 @@
 //! Mutation-style discipline: each load-bearing validation rule fails a NAMED
 //! test (flip the rule and exactly one test goes red).
 
-use wamn_event_reg::{EventRegistration, Op, SCHEMA_VERSION, validate};
+use wamn_event_reg::{EventRegistration, Op, RegistrationInput, SCHEMA_VERSION, validate};
 use wamn_schema_model::Catalog;
 
 /// A two-entity catalog. The entity **id** `sales_orders` deliberately differs
@@ -36,6 +36,7 @@ fn reg() -> EventRegistration {
         flow_id: "notify".into(),
         entity: "sales_orders".into(),
         ops: vec![Op::Insert, Op::Update],
+        input: RegistrationInput::Event,
         condition: Some("new.status == 'shipped' && old.status != 'shipped'".into()),
     }
 }
@@ -151,15 +152,31 @@ fn frozen_wire_shape_is_the_exact_field_order_and_spellings() {
     let full = serde_json::to_string(&reg()).unwrap();
     assert_eq!(
         full,
-        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","catalog-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"],"condition":"new.status == 'shipped' && old.status != 'shipped'"}"#
+        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","catalog-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"],"input":"event","condition":"new.status == 'shipped' && old.status != 'shipped'"}"#
     );
     // Minimal: the optional condition is OMITTED (not null).
     let mut r = reg();
     r.condition = None;
     assert_eq!(
         serde_json::to_string(&r).unwrap(),
-        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","catalog-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"]}"#
+        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","catalog-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"],"input":"event"}"#
     );
+}
+
+#[test]
+fn input_is_closed_to_event_or_batch_and_legacy_rows_mean_event() {
+    let mut batch = reg();
+    batch.input = RegistrationInput::Batch;
+    assert!(batch.to_json().contains("\"input\": \"batch\""));
+
+    let legacy = r#"{"schema-version":"0.1","registration-id":"x","catalog-id":"shop","flow-id":"f","entity":"sales_orders","ops":["insert"]}"#;
+    assert_eq!(
+        EventRegistration::from_json(legacy).unwrap().input,
+        RegistrationInput::Event
+    );
+
+    let invalid = r#"{"schema-version":"0.1","registration-id":"x","catalog-id":"shop","flow-id":"f","entity":"sales_orders","ops":["insert"],"input":"stream"}"#;
+    assert!(EventRegistration::from_json(invalid).is_err());
 }
 
 #[test]
