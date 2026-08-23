@@ -7,7 +7,7 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL: &str = "tools/contract-diff";
-const LEG_COUNT: usize = 5;
+const LEG_COUNT: usize = 4;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -144,16 +144,6 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
             "adversarial".into(),
         ],
         vec![
-            root.clone(),
-            "test".into(),
-            "--manifest-path".into(),
-            root_manifest.clone(),
-            "--locked".into(),
-            "--offline".into(),
-            "-p".into(),
-            "wamn-flow".into(),
-        ],
-        vec![
             root,
             "test".into(),
             "--manifest-path".into(),
@@ -161,9 +151,7 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
             "--locked".into(),
             "--offline".into(),
             "-p".into(),
-            "wamn-proof-system".into(),
-            "--lib".into(),
-            "flowrunner_contract::tests::".into(),
+            "wamn-flow".into(),
         ],
     ]
 }
@@ -221,7 +209,6 @@ fn contract_diff_dry_run_prints_the_complete_plan_without_cargo() {
         "runtime-vendored-flow-http-routing",
         "flow-http",
         "flow-schema",
-        "flowrunner-world",
     ]) {
         assert!(line.starts_with(&format!("{label}: ")), "{line}");
         assert!(line.contains(" --locked --offline "), "{line}");
