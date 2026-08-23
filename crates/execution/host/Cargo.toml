@@ -14,5 +14,6 @@ wash-runtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+tracing = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 serde_json = { workspace = true }

@@ -4305,6 +4305,7 @@ dependencies = [
  "async-trait",
  "serde_json",
  "tokio",
+ "tracing",
  "wamn-catalog",
  "wamn-control-registry",
  "wamn-router",
@@ -4384,11 +4385,8 @@ dependencies = [
  "jmespath",
  "serde",
  "serde_json",
- "wamn-catalog",
  "wamn-event-reg",
  "wamn-event-wire",
- "wamn-flow",
- "wamn-run-state",
 ]
 
 [[package]]
