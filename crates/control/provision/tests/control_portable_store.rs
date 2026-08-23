@@ -201,14 +201,12 @@ fn current_database_connect_posture_is_single_scoped_and_used_by_every_measured_
             "services/scenario-worker/tests/management_live.rs",
             include_str!("../../../../services/scenario-worker/tests/management_live.rs"),
         ),
-        (
-            "services/ctl/src/publish_release.rs",
-            include_str!("../../../../services/ctl/src/publish_release.rs"),
-        ),
-        (
-            "services/ctl/tests/release_manifest_mint_live.rs",
-            include_str!("../../../../services/ctl/tests/release_manifest_mint_live.rs"),
-        ),
+        // wamn-0h0g.25.2 (e75e3ff4) took `services/ctl/src/publish_release.rs`
+        // and `services/ctl/tests/release_manifest_mint_live.rs` off this roster
+        // by taking the measurement off them: the verb is now pure production
+        // code with no test module or database client at all, and the mint gate
+        // no longer provisions the control store or touches CONNECT. A gate that
+        // does not measure a live database cannot contaminate one.
         (
             "services/ctl/tests/protected_relations_live.rs",
             include_str!("../../../../services/ctl/tests/protected_relations_live.rs"),
@@ -240,26 +238,12 @@ fn current_database_connect_posture_is_single_scoped_and_used_by_every_measured_
         );
     }
 
-    let release_gate = include_str!("../../../../services/ctl/tests/release_manifest_mint_live.rs")
-        .split("async fn establish_control_connect_posture")
-        .nth(1)
-        .expect("the contaminated-cluster gate owns the posture transaction")
-        .split("async fn provision_control_store")
-        .next()
-        .expect("the posture transaction has an end");
-    let begin = release_gate
-        .find("\"BEGIN;")
-        .expect("the deliberate contamination starts an explicit transaction");
-    let posture = release_gate
-        .find("{CURRENT_DATABASE_PUBLIC_CONNECT_SQL}")
-        .expect("the shared posture runs inside the contamination transaction");
-    let commit = release_gate
-        .find("COMMIT;")
-        .expect("the contamination transaction commits the converged posture");
-    assert!(
-        begin < posture && posture < commit,
-        "the contamination and posture split into observably separate transactions"
-    );
+    // The contaminate-then-converge proof that used to be read out of
+    // `release_manifest_mint_live.rs` here now belongs entirely to
+    // `current_database_connect_posture_kills_remove_and_sibling_scope_mutants_on_postgres`
+    // below, which contaminates the current database inside one explicit
+    // transaction, applies the posture TWICE, and additionally proves the
+    // sibling database keeps its own PUBLIC CONNECT.
 }
 
 /// The artifact text with comment lines removed, so a statement scan cannot be
