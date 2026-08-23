@@ -761,58 +761,56 @@ mod tests {
         let manifest = manifest();
         let invocation = invocation();
         let snapshot = snapshot();
-        assert_eq!(
-            authorize_release_closure(&manifest, &invocation, &snapshot),
-            Ok(())
-        );
+        authorize_release_closure(&manifest, &invocation, &snapshot)
+            .expect("the fixture closure is exactly the released one");
 
         let mut wrong_digest = invocation.clone();
         wrong_digest.component_digest = digest('d');
-        assert_eq!(
+        assert!(matches!(
             authorize_release_closure(&manifest, &wrong_digest, &snapshot),
             Err(ConnectionError::AttestationInvalid)
-        );
+        ));
 
         let mut wrong_wiring_hash = snapshot;
         wrong_wiring_hash.wiring_hash = digest('e');
-        assert_eq!(
+        assert!(matches!(
             authorize_release_closure(&manifest, &invocation, &wrong_wiring_hash),
             Err(ConnectionError::AttestationInvalid)
-        );
+        ));
     }
 
     #[test]
     fn component_grain_snapshot_refuses_each_missing_authority_layer() {
         let valid = snapshot();
-        assert_eq!(authorize_snapshot(&valid), Ok(()));
+        authorize_snapshot(&valid).expect("the fixture snapshot carries every authority layer");
 
         let mut missing_node = valid.clone();
         missing_node.node_permitted = false;
-        assert_eq!(
+        assert!(matches!(
             authorize_snapshot(&missing_node),
             Err(ConnectionError::AttestationInvalid)
-        );
+        ));
 
         let mut inactive_binding = valid.clone();
         inactive_binding.binding_active = false;
-        assert_eq!(
+        assert!(matches!(
             authorize_snapshot(&inactive_binding),
             Err(ConnectionError::Unbound)
-        );
+        ));
 
         let mut stale_generation = valid.clone();
         stale_generation.generation = Some(6);
-        assert_eq!(
+        assert!(matches!(
             authorize_snapshot(&stale_generation),
             Err(ConnectionError::CredentialUnavailable)
-        );
+        ));
 
         let mut wrong_contract = valid;
         wrong_contract.contract = Some("wamn:connection/postgres@0.1.0".to_string());
-        assert_eq!(
+        assert!(matches!(
             authorize_snapshot(&wrong_contract),
             Err(ConnectionError::Incompatible)
-        );
+        ));
     }
 
     #[test]
