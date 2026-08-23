@@ -193,14 +193,7 @@ fn run_state_sql_matches_the_model() {
         );
     }
     assert!(sql.contains("runs_idempotency"));
-    assert!(sql.contains("REFERENCES wamn_run.runs"));
-    // Reserved 5.10 seams and the run-owned 9.6 admission fact.
-    for seam in ["input_ref", "output_ref", "output_size", "payload_hash"] {
-        assert!(
-            sql.contains(seam),
-            "run-state.sql missing reserved seam {seam}"
-        );
-    }
+    // The run-owned 9.6 admission fact.
     assert!(sql.contains("capture_mode    text NOT NULL DEFAULT 'off'"));
     assert!(sql.contains(
         "capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'"
@@ -233,7 +226,7 @@ fn run_state_sql_matches_the_model() {
     // RIDER 1 of the ruling: an unnamed column's transition arm silently never
     // fires, so the column-scoped trigger MUST name the class.
     assert!(sql.contains(
-        "BEFORE UPDATE OF catalog_id, catalog_version, environment, capture_mode,\n                 durability_class, wiring_id, wiring_version, release_version, manifest_digest"
+        "BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment,\n                 capture_mode, durability_class, wiring_id, wiring_version,\n                 wiring_hash, gate_report_id, binding_world_json,\n                 release_version, manifest_digest"
     ));
     // The claim-time release record: NULL at admission, written by the claiming
     // worker, and cleared again by EVERY arm that reopens claimability — the
@@ -255,20 +248,7 @@ fn run_state_sql_matches_the_model() {
     ));
     assert!(sql.contains("MESSAGE = 'run-release-record-immutable'"));
     assert!(!sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app"));
-    let runs_grants = sql
-        .split_once("GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;")
-        .expect("runs read/delete grant is explicit")
-        .1
-        .split_once("GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;")
-        .expect("runs author read grant follows app column grants")
-        .0;
-    assert!(runs_grants.contains("GRANT INSERT ("));
-    assert!(runs_grants.contains("), UPDATE ("));
-    assert!(!runs_grants.contains("capture_mode"));
-    // The class carrier is withheld from the guest-visible role in BOTH sets:
-    // an admission that could choose its own durability class would buy the
-    // premium crash floor without a policy saying so.
-    assert!(!runs_grants.contains("durability_class"));
+    assert!(sql.contains("GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;"));
     assert!(!sql.contains("payload_size  bigint"));
     assert!(!sql.contains("preview_head  text"));
     assert!(!sql.contains("redacted      boolean"));

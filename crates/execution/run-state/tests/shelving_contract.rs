@@ -102,8 +102,8 @@ fn the_terminal_vocabulary_is_class_independent() {
         .1;
     for required in [
         "pub const DEDUP_ID_FIELD: &str = \"dedup-id\";",
-        "Respond { payload: Value }",
-        "Emit { event: Value, dedup_id: String }",
+        "Respond { payload: Value, node_id: String },",
+        "Emit {\n        event: Value,\n        dedup_id: String,\n        entity: String,\n        operation: Op,\n    },",
         "Discard,",
     ] {
         assert!(
