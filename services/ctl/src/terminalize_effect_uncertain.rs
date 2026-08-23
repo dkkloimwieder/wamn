@@ -1,15 +1,12 @@
 //! Project-admin terminalization of one effect-uncertain run.
 
-use std::collections::BTreeSet;
-
 use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::{Client, NoTls, Transaction, error::SqlState};
 use wamn_run_state::operator_action::{
     OperatorActionBasis, OperatorTerminalizeResult, insert_operator_action_sql,
-    lock_operator_actions_sql, lock_operator_effect_attempts_sql, lock_operator_node_facts_sql,
-    lock_operator_queue_fact_sql, lock_operator_run_sql, terminalize_operator_node_sql,
-    terminalize_operator_run_sql,
+    lock_operator_actions_sql, lock_operator_effect_attempts_sql, lock_operator_queue_fact_sql,
+    lock_operator_run_sql, terminalize_operator_run_sql,
 };
 use wamn_schema_control::BareSchemaName;
 
@@ -53,13 +50,6 @@ pub struct TerminalizeEffectUncertain<'a> {
     pub basis: OperatorActionBasis,
     pub evidence_ref: &'a str,
     pub correlation_id: &'a str,
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct OccurrenceKey {
-    frame_id: i64,
-    local_node_id: String,
-    occurrence: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -233,12 +223,6 @@ async fn terminalize_in_transaction(
     let run_status: String = run.get(0);
     let fail_kind: Option<String> = run.get(1);
 
-    let node_rows = transaction
-        .query(
-            lock_operator_node_facts_sql(),
-            &[&request.tenant, &request.run],
-        )
-        .await?;
     let attempt_rows = transaction
         .query(
             lock_operator_effect_attempts_sql(),
@@ -261,40 +245,6 @@ async fn terminalize_in_transaction(
         return Ok(OperatorTerminalizeResult::RunStateInvariant);
     }
 
-    let attempts = attempt_rows
-        .into_iter()
-        .map(|row| OccurrenceKey {
-            frame_id: row.get(0),
-            local_node_id: row.get(1),
-            occurrence: row.get(2),
-        })
-        .collect::<BTreeSet<_>>();
-    let candidates = node_rows
-        .into_iter()
-        .filter_map(|row| {
-            let key = OccurrenceKey {
-                frame_id: row.get(0),
-                local_node_id: row.get(1),
-                occurrence: row.get(2),
-            };
-            let status: String = row.get(3);
-            (status == "started" && attempts.contains(&key)).then_some(key)
-        })
-        .collect::<Vec<_>>();
-    if candidates.len() > 1 {
-        return Ok(OperatorTerminalizeResult::RunStateInvariant);
-    }
-    let candidate = candidates.first();
-    let (frame_id, local_node_id, occurrence, node_status) =
-        candidate.map_or((None, None, None, None), |candidate| {
-            (
-                Some(candidate.frame_id),
-                Some(candidate.local_node_id.as_str()),
-                Some(candidate.occurrence),
-                Some("started"),
-            )
-        });
-
     transaction
         .query_one(
             insert_operator_action_sql(),
@@ -305,30 +255,9 @@ async fn terminalize_in_transaction(
                 &request.basis.as_str(),
                 &request.evidence_ref,
                 &principal,
-                &frame_id,
-                &local_node_id,
-                &occurrence,
-                &node_status,
             ],
         )
         .await?;
-    if let Some(candidate) = candidate {
-        let updated = transaction
-            .execute(
-                terminalize_operator_node_sql(),
-                &[
-                    &request.tenant,
-                    &request.run,
-                    &candidate.frame_id,
-                    &candidate.local_node_id,
-                    &candidate.occurrence,
-                ],
-            )
-            .await?;
-        if updated != 1 {
-            return Ok(OperatorTerminalizeResult::RunStateInvariant);
-        }
-    }
     let updated = transaction
         .execute(
             terminalize_operator_run_sql(),

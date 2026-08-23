@@ -63,9 +63,6 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'dev','0.1','applied'); \
-             INSERT INTO catalog.execution_bundles \
-               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-             VALUES ('t1','{HASH}','0.1',''::bytea,0); \
              INSERT INTO catalog.release_manifests \
                (tenant_id,catalog_id,catalog_version) \
              VALUES ('t1','cat',1);"
@@ -81,11 +78,11 @@ async fn seed_run(client: &Client, run: &str, status: &str, fail_kind: Option<&s
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                    environment,execution_bundle_hash,status,capture_mode,input_json, \
+                    environment,status,capture_mode,input_json, \
                     result_json,state_json,caller_outcome_kind,caller_outcome_json, \
                     caller_release_node_id,caller_outcome_hash,caller_released_at,fail_kind, \
                     trigger_source) \
-                 VALUES ('t1',$1,'flow',1,'cat',1,'dev','{HASH}',$2,'full', \
+                 VALUES ('t1',$1,'flow',1,'cat',1,'dev',$2,'full', \
                          '{{\"secret\":\"scrubbed\"}}', '{{\"result\":1}}', \
                          '{{\"pc\":7}}','failed','{{\"caller\":true}}','release-node', \
                          'sha256:caller','2026-01-01 UTC',$3,'scenario-draft')"
@@ -111,22 +108,6 @@ async fn seed_attempt(client: &Client, run: &str, node: &str, occurrence: i32) {
         )
         .await
         .expect("seed immutable attempt");
-}
-
-async fn seed_started_node(client: &Client, run: &str, node: &str, occurrence: i32) {
-    client
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.node_runs \
-                   (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq, \
-                    status,input_json,output_json,output_size,payload_hash) \
-                 VALUES ('t1',$1,0,'{HASH}',$2,$3::int,$3::bigint,'started', \
-                         '{{\"in\":1}}','{{\"out\":2}}',9,'sha256:payload')"
-            ),
-            &[&run, &node, &occurrence],
-        )
-        .await
-        .expect("seed started node");
 }
 
 fn request<'a>(
@@ -280,18 +261,17 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
 
     seed_run(
         &client,
-        "one-node",
+        "one-attempt",
         "effect-uncertain",
         Some("effect-uncertain"),
     )
     .await;
-    seed_started_node(&client, "one-node", "effect", 0).await;
-    seed_attempt(&client, "one-node", "effect", 0).await;
+    seed_attempt(&client, "one-attempt", "effect", 0).await;
     let run_before: String = client
         .query_one(
             &format!(
                 "SELECT (to_jsonb(r) - ARRAY['status','terminal_reason','updated_at']::text[])::text \
-                   FROM {SCHEMA}.runs r WHERE tenant_id='t1' AND run_id='one-node'"
+                   FROM {SCHEMA}.runs r WHERE tenant_id='t1' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -302,7 +282,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
         .query_one(
             &format!(
                 "SELECT to_jsonb(a)::text FROM {SCHEMA}.effect_attempts a \
-                  WHERE tenant_id='t1' AND run_id='one-node'"
+                  WHERE tenant_id='t1' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -314,10 +294,10 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
         terminalize_effect_uncertain::terminalize(
             &mut client,
             &schema,
-            &request("one-node", "corr-one"),
+            &request("one-attempt", "corr-one"),
         )
         .await
-        .expect("terminalize one node"),
+        .expect("terminalize one attempt"),
         OperatorTerminalizeResult::Terminalized
     );
     let run_after = client
@@ -325,7 +305,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
             &format!(
                 "SELECT status,fail_kind,terminal_reason, \
                         (to_jsonb(r) - ARRAY['status','terminal_reason','updated_at']::text[])::text \
-                   FROM {SCHEMA}.runs r WHERE tenant_id='t1' AND run_id='one-node'"
+                   FROM {SCHEMA}.runs r WHERE tenant_id='t1' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -345,7 +325,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
         .query_one(
             &format!(
                 "SELECT to_jsonb(a)::text FROM {SCHEMA}.effect_attempts a \
-                  WHERE tenant_id='t1' AND run_id='one-node'"
+                  WHERE tenant_id='t1' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -353,40 +333,6 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
         .expect("read preserved attempt evidence")
         .get(0);
     assert_eq!(attempt_after, attempt_before);
-    let node = client
-        .query_one(
-            &format!(
-                "SELECT status,error_kind,error_detail->>'code',ended_at IS NOT NULL, \
-                        input_json::text,output_json::text,output_size,payload_hash \
-                   FROM {SCHEMA}.node_runs WHERE tenant_id='t1' AND run_id='one-node'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read terminal node");
-    assert_eq!(node.get::<_, String>(0), "error");
-    assert_eq!(
-        node.get::<_, Option<String>>(1).as_deref(),
-        Some("terminal")
-    );
-    assert_eq!(
-        node.get::<_, Option<String>>(2).as_deref(),
-        Some("effect-uncertain")
-    );
-    assert!(node.get::<_, bool>(3));
-    assert_eq!(
-        node.get::<_, Option<String>>(4).as_deref(),
-        Some("{\"in\": 1}")
-    );
-    assert_eq!(
-        node.get::<_, Option<String>>(5).as_deref(),
-        Some("{\"out\": 2}")
-    );
-    assert_eq!(node.get::<_, Option<i64>>(6), Some(9));
-    assert_eq!(
-        node.get::<_, Option<String>>(7).as_deref(),
-        Some("sha256:payload")
-    );
 
     let action = client
         .query_one(
@@ -396,7 +342,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
                         prior_started_node_local_node_id,prior_started_node_occurrence, \
                         prior_started_node_status \
                    FROM {SCHEMA}.operator_run_actions \
-                  WHERE tenant_id='t1' AND run_id='one-node'"
+                  WHERE tenant_id='t1' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -409,22 +355,18 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
     assert!(action.get::<_, bool>(4));
     assert_eq!(action.get::<_, String>(5), "database-role");
     assert_eq!(action.get::<_, String>(6), "effect-uncertain");
-    assert_eq!(action.get::<_, Option<i64>>(7), Some(0));
-    assert_eq!(
-        action.get::<_, Option<String>>(8).as_deref(),
-        Some("effect")
-    );
-    assert_eq!(action.get::<_, Option<i32>>(9), Some(0));
-    assert_eq!(
-        action.get::<_, Option<String>>(10).as_deref(),
-        Some("started")
-    );
+    // wamn-0h0g.26.3.3: the prior-node columns are retained and written NULL.
+    // Nothing reconstructs node coordinates from the dropped `node_runs`.
+    assert_eq!(action.get::<_, Option<i64>>(7), None);
+    assert_eq!(action.get::<_, Option<String>>(8), None);
+    assert_eq!(action.get::<_, Option<i32>>(9), None);
+    assert_eq!(action.get::<_, Option<String>>(10), None);
 
     assert_eq!(
         terminalize_effect_uncertain::terminalize(
             &mut client,
             &schema,
-            &request("one-node", "corr-one"),
+            &request("one-attempt", "corr-one"),
         )
         .await
         .expect("identical retry"),
@@ -434,69 +376,98 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
         terminalize_effect_uncertain::terminalize(
             &mut client,
             &schema,
-            &request("one-node", "different-correlation"),
+            &request("one-attempt", "different-correlation"),
         )
         .await
         .expect("divergent run reuse"),
         OperatorTerminalizeResult::CorrelationConflict
     );
 
+    // A retried effect leaves several immutable attempts. Eligibility is now
+    // attempt EXISTENCE, so the shape the retired node-cardinality rule refused
+    // terminalizes.
     seed_run(
         &client,
-        "zero-node",
-        "effect-uncertain",
-        Some("effect-uncertain"),
-    )
-    .await;
-    seed_attempt(&client, "zero-node", "effect", 0).await;
-    assert_eq!(
-        terminalize_effect_uncertain::terminalize(
-            &mut client,
-            &schema,
-            &request("zero-node", "corr-zero"),
-        )
-        .await
-        .expect("zero-node terminalization"),
-        OperatorTerminalizeResult::Terminalized
-    );
-
-    seed_run(
-        &client,
-        "two-node",
+        "two-attempts",
         "effect-uncertain",
         Some("effect-uncertain"),
     )
     .await;
     for (node, occurrence) in [("effect-a", 0), ("effect-b", 1)] {
-        seed_started_node(&client, "two-node", node, occurrence).await;
-        seed_attempt(&client, "two-node", node, occurrence).await;
+        seed_attempt(&client, "two-attempts", node, occurrence).await;
     }
     assert_eq!(
         terminalize_effect_uncertain::terminalize(
             &mut client,
             &schema,
-            &request("two-node", "corr-two"),
+            &request("two-attempts", "corr-two"),
         )
         .await
-        .expect("cardinality refusal"),
+        .expect("multi-attempt terminalization"),
+        OperatorTerminalizeResult::Terminalized
+    );
+
+    seed_run(
+        &client,
+        "no-attempt",
+        "effect-uncertain",
+        Some("effect-uncertain"),
+    )
+    .await;
+    assert_eq!(
+        terminalize_effect_uncertain::terminalize(
+            &mut client,
+            &schema,
+            &request("no-attempt", "corr-none"),
+        )
+        .await
+        .expect("attempt-existence refusal"),
         OperatorTerminalizeResult::RunStateInvariant
     );
     let unchanged_row = client
         .query_one(
             &format!(
                 "SELECT status,(SELECT count(*) FROM {SCHEMA}.operator_run_actions \
-                  WHERE run_id='two-node') FROM {SCHEMA}.runs \
-                  WHERE tenant_id='t1' AND run_id='two-node'"
+                  WHERE run_id='no-attempt') FROM {SCHEMA}.runs \
+                  WHERE tenant_id='t1' AND run_id='no-attempt'"
             ),
             &[],
         )
         .await
-        .expect("cardinality refusal is atomic");
+        .expect("attempt-existence refusal is atomic");
     let unchanged = (
         unchanged_row.get::<_, String>(0),
         unchanged_row.get::<_, i64>(1),
     );
     assert_eq!(unchanged, ("effect-uncertain".to_string(), 0));
+
+    // Queue absence is the last surviving eligibility fact: a still-queued run
+    // is not the operator's to terminalize.
+    seed_run(
+        &client,
+        "queued",
+        "effect-uncertain",
+        Some("effect-uncertain"),
+    )
+    .await;
+    seed_attempt(&client, "queued", "effect", 0).await;
+    client
+        .execute(
+            &format!("INSERT INTO {SCHEMA}.run_queue (tenant_id,run_id) VALUES ('t1',$1)"),
+            &[&"queued"],
+        )
+        .await
+        .expect("seed queue eligibility fact");
+    assert_eq!(
+        terminalize_effect_uncertain::terminalize(
+            &mut client,
+            &schema,
+            &request("queued", "corr-queued"),
+        )
+        .await
+        .expect("queue-absence refusal"),
+        OperatorTerminalizeResult::RunStateInvariant
+    );
 
     for role in ["wamn_app", "wamn_scenario_author", "wamn_effect_writer"] {
         let privileges: Vec<bool> = client
@@ -518,10 +489,10 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
     for verb in ["UPDATE", "DELETE"] {
         let sql = if verb == "UPDATE" {
             format!(
-                "UPDATE {SCHEMA}.operator_run_actions SET evidence_ref=evidence_ref WHERE run_id='one-node'"
+                "UPDATE {SCHEMA}.operator_run_actions SET evidence_ref=evidence_ref WHERE run_id='one-attempt'"
             )
         } else {
-            format!("DELETE FROM {SCHEMA}.operator_run_actions WHERE run_id='one-node'")
+            format!("DELETE FROM {SCHEMA}.operator_run_actions WHERE run_id='one-attempt'")
         };
         let error = client
             .execute(&sql, &[])

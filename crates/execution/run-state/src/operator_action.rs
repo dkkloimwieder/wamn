@@ -110,13 +110,6 @@ pub fn lock_operator_run_sql() -> &'static str {
       WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE"
 }
 
-/// Lock every node projection belonging to the run.
-pub fn lock_operator_node_facts_sql() -> &'static str {
-    "SELECT frame_id, local_node_id, occurrence, status \
-       FROM node_runs WHERE tenant_id = $1 AND run_id = $2 \
-      ORDER BY frame_id, local_node_id, occurrence FOR UPDATE"
-}
-
 /// Lock every immutable effect attempt belonging to the run.
 pub fn lock_operator_effect_attempts_sql() -> &'static str {
     "SELECT frame_id, local_node_id, occurrence \
@@ -130,7 +123,13 @@ pub fn lock_operator_queue_fact_sql() -> &'static str {
       WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE"
 }
 
-/// Append the immutable action before terminal projections are changed.
+/// Append the immutable action before the terminal run projection is changed.
+///
+/// The prior-node columns are retained for history written before `node_runs`
+/// was dropped and are written NULL: there is no longer a node projection to
+/// attribute, and reconstructing one from deleted coordinates would fabricate
+/// evidence. The all-NULL arm of `operator_run_actions_prior_node_check`
+/// admits this shape.
 pub fn insert_operator_action_sql() -> &'static str {
     "INSERT INTO operator_run_actions (\
          tenant_id, correlation_id, run_id, action_kind, basis, evidence_ref, \
@@ -138,20 +137,8 @@ pub fn insert_operator_action_sql() -> &'static str {
          prior_started_node_local_node_id, prior_started_node_occurrence, \
          prior_started_node_status) \
      VALUES ($1, $2, $3, 'terminalize-effect-uncertain', $4, $5, \
-             $6, 'database-role', 'effect-uncertain', $7, $8, $9, $10) \
+             $6, 'database-role', 'effect-uncertain', NULL, NULL, NULL, NULL) \
      RETURNING action_id::text"
-}
-
-/// Mark the one optional started-node projection terminally failed.
-pub fn terminalize_operator_node_sql() -> &'static str {
-    "UPDATE node_runs \
-        SET status = 'error', error_kind = 'terminal', \
-            error_detail = jsonb_build_object(\
-                'code', 'effect-uncertain', \
-                'message', 'operator terminalized unresolved effect'), \
-            ended_at = now() \
-      WHERE tenant_id = $1 AND run_id = $2 AND frame_id = $3 \
-        AND local_node_id = $4 AND occurrence = $5 AND status = 'started'"
 }
 
 /// Terminalize the run without rewriting its evidence or caller outcome.
@@ -211,7 +198,6 @@ mod tests {
     #[test]
     fn transaction_statements_pin_load_bearing_order_and_guards() {
         assert!(lock_operator_run_sql().ends_with("FOR UPDATE"));
-        assert!(lock_operator_node_facts_sql().ends_with("FOR UPDATE"));
         assert!(lock_operator_effect_attempts_sql().ends_with("FOR UPDATE"));
         assert!(lock_operator_queue_fact_sql().ends_with("FOR UPDATE"));
         assert!(lock_operator_actions_sql().contains("correlation_id = $2 OR run_id = $3"));
@@ -220,13 +206,15 @@ mod tests {
         assert!(insert.contains("'terminalize-effect-uncertain'"));
         assert!(insert.contains("'database-role'"));
         assert!(insert.contains("'effect-uncertain'"));
-
-        let node = terminalize_operator_node_sql();
-        assert!(node.contains("status = 'started'"));
-        assert!(node.contains("error_kind = 'terminal'"));
-        assert!(node.contains("frame_id = $3"));
-        assert!(node.contains("local_node_id = $4"));
-        assert!(node.contains("occurrence = $5"));
+        for retained in [
+            "prior_started_node_frame_id",
+            "prior_started_node_local_node_id",
+            "prior_started_node_occurrence",
+            "prior_started_node_status",
+        ] {
+            assert!(insert.contains(retained), "action drops {retained}");
+        }
+        assert!(insert.contains("'effect-uncertain', NULL, NULL, NULL, NULL)"));
 
         let run = terminalize_operator_run_sql();
         assert!(run.contains("status = 'effect-uncertain'"));
