@@ -77,6 +77,23 @@ spec:
                   key: url
             - { name: WAMN_PROJECT, value: demo }
             - { name: WAMN_SCHEMA, value: wamn_runner_demo }
+            # Keep 2/16 connections reserved so guest-held sessions cannot starve
+            # host-owned work. The split is the point: a guest that opens and
+            # holds every session it is allowed to still leaves the queue claim,
+            # lease renewal and completion path two connections of their own, so
+            # a busy or misbehaving component degrades throughput instead of
+            # wedging the executor's own bookkeeping. 14 + 2 is the compiled
+            # default (crates/platform/runtime/src/plugins/wamn_postgres/pool.rs);
+            # written out here so the reserve is reviewable per deployment.
+            #
+            # [wamn-xu49] THIS RATIONALE IS PROSE, NOT A PIN. The guard
+            # `shipping_manifests_pin_the_split_budget_and_its_starvation_rationale`
+            # reads only values-host-default.yaml — `deploy/platform/runner.yaml`
+            # was its second carrier until ea71c1c4 deleted it, and this file
+            # never inherited that half. Adding this file to the guard is a
+            # pool.rs change, which this lane does not own; until then the
+            # split-budget pin is deliberately single-manifest and the host tier
+            # is the manifest it pins.
             - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
             - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
             # The release repository is deliberately its own base: a release
