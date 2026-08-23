@@ -63,7 +63,9 @@ pub use pool::{
     WamnPostgresConfig,
 };
 pub use production_claim::{
-    ProductionClaimError, ProductionClaimErrorKind, ProductionClaimResult, ProductionReapResult,
+    ProductionCallerOutcome, ProductionClaimError, ProductionClaimErrorKind, ProductionClaimResult,
+    ProductionCompletion, ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
+    ProductionRouterAction, production_router_action,
 };
 pub use resources::{PgCursor, PgTransaction};
 

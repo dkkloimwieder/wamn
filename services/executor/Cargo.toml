@@ -1,6 +1,6 @@
 [package]
 name = "wamn-executor"
-description = "Production serving executor for queued flow runs."
+description = "Production serving executor for queued wiring deliveries."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

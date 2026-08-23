@@ -1,6 +1,6 @@
 //! Durable global FIFO queue, lease, timer, and reclaim state.
 //!
-//! The dispatch half of the flow runner: a `FOR UPDATE SKIP LOCKED` run queue in
+//! The queued-delivery spine: a `FOR UPDATE SKIP LOCKED` run queue in
 //! Postgres (durability), NATS-core fire-and-forget doorbells (latency), and
 //! run-claim leases that reclaim a dead replica's work (scaling). Where the run
 //! history records persist *what happened* while this module governs *what
@@ -35,9 +35,9 @@
 //! this module owns only their durable SQL boundary. (Row events are no longer a
 //! dispatcher concern: the D19 v3 event plane — CDC reader → JetStream →
 //! materializer — delivers them; the outbox path was torn down at l5i9.19.)
-//! The host-only Postgres adapter composes the transaction; the flowrunner guest
-//! receives only the already-claimed `(run-id, payload)` pair.
-//! Does **not** own: the engine walk / retry (5.2 — the claimed run drives it);
+//! The host-only Postgres adapter composes the transaction and hands the exact
+//! frozen wiring identity plus payload to the router driver.
+//! Does **not** own: the router walk / retry (the claimed run drives it);
 //! the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
 //! and reuses the reserved `dispatched`/`infrastructure-failure` statuses via
 //! [`crate::RunStatus`]); the payload byte store (5.10).
@@ -74,8 +74,8 @@ pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{Millis, QueueEntry};
 pub use sql::{
     advance_claim_attempts_sql, clear_pre_effect_state_sql, enqueue_evt_sql, enqueue_sql,
-    grant_production_claim_sql, park_sql, parked_due_sql, select_claim_effect_attempt_sql,
-    select_exhausted_production_sql, select_production_claim_sql, serialize_effect_intent_sql,
-    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
-    write_ahead_triggered_run_sql,
+    grant_production_claim_sql, park_sql, parked_due_sql, renew_production_lease_sql,
+    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
+    serialize_effect_intent_sql, terminalize_effect_uncertain_claim_sql,
+    terminalize_exhausted_production_sql, write_ahead_triggered_run_sql,
 };

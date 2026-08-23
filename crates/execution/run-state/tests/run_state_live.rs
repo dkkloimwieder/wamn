@@ -117,11 +117,6 @@ fn run_state_live() {
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'prod','0.1','draft'); \
-             INSERT INTO catalog.execution_bundles \
-               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-             VALUES ('t1', \
-               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-               '0.1',decode('7b7d','hex'),2); \
              INSERT INTO catalog.release_manifests \
                (tenant_id,catalog_id,catalog_version) \
              VALUES ('t1','cat',1);"
@@ -166,10 +161,9 @@ fn run_state_live() {
          VALUES ('t1','prod','standard'); \
          INSERT INTO wamn_run.runs \
            (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
-            execution_bundle_hash, attachment_id, status) \
+            wiring_id, wiring_version, attachment_id, status) \
          VALUES ('t1', 'release-1', 'f', 1, 'cat', 1, 'prod', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'http-a', 'running'); \
+           'fixture-wiring', 1, 'http-a', 'running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, lease_owner, lease_expires_at, lease_generation) \
          VALUES ('t1', 'release-1', 'worker-a', now() + interval '1 minute', 1);",
@@ -207,10 +201,10 @@ fn run_state_live() {
 
     let terminal_script = format!(
         "{} PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text) AS {}; \
+           (text,text,text,bigint,text,text,text,text) AS {}; \
          CREATE TEMP TABLE terminal AS \
            EXECUTE terminal_stmt('release-1','release-1','worker-a',1, \
-                                 'completed','frontier-exhausted','{{\"done\":true}}'); \
+                                 'completed','frontier-exhausted','{{\"done\":true}}',NULL); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM terminal) = 'terminalized', 'run terminalized'; \
            ASSERT (SELECT status FROM runs WHERE run_id='release-1') = 'completed', \
@@ -230,24 +224,20 @@ fn run_state_live() {
         &url,
         "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,attachment_id,status,trigger_source) VALUES \
+            wiring_id,wiring_version,attachment_id,status,trigger_source) VALUES \
            ('t1','terminal-cron','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'cron-a','running','cron'), \
+            'fixture-wiring',1,'cron-a','running','cron'), \
            ('t1','terminal-event','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'event-a','running','event'), \
+            'fixture-wiring',1,'event-a','running','event'), \
            ('t1','terminal-http-open','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'http-open','running','http'); \
+            'fixture-wiring',1,'http-open','running','http'); \
          INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,attachment_id,status,trigger_source, \
+            wiring_id,wiring_version,attachment_id,status,trigger_source, \
             caller_outcome_kind,caller_outcome_json,caller_http_status,caller_release_node_id, \
             caller_outcome_hash,caller_released_at) VALUES \
            ('t1','terminal-http-released','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'http-released','running','http', \
+            'fixture-wiring',1,'http-released','running','http', \
             'responded','{}',200,'respond','sha256:released',now()); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
@@ -258,19 +248,19 @@ fn run_state_live() {
     );
     let source_terminal_script = format!(
         "{} PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text) AS {}; \
+           (text,text,text,bigint,text,text,text,text) AS {}; \
          CREATE TEMP TABLE cron_terminal AS \
            EXECUTE terminal_stmt('terminal-cron','terminal-cron','worker-source',1, \
-                                 'completed','frontier-exhausted','{{}}'); \
+                                 'completed','frontier-exhausted','{{}}',NULL); \
          CREATE TEMP TABLE event_terminal AS \
            EXECUTE terminal_stmt('terminal-event','terminal-event','worker-source',1, \
-                                 'completed','frontier-exhausted','{{}}'); \
+                                 'completed','frontier-exhausted','{{}}',NULL); \
          CREATE TEMP TABLE http_open_terminal AS \
            EXECUTE terminal_stmt('terminal-http-open','terminal-http-open','worker-source',1, \
-                                 'completed','frontier-exhausted','{{}}'); \
+                                 'completed','frontier-exhausted','{{}}',NULL); \
          CREATE TEMP TABLE http_released_terminal AS \
            EXECUTE terminal_stmt('terminal-http-released','terminal-http-released', \
-                                 'worker-source',1,'completed','frontier-exhausted','{{}}'); \
+                                 'worker-source',1,'completed','frontier-exhausted','{{}}',NULL); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM cron_terminal) = 'terminalized', \
                   'attached cron has no caller to release'; \
@@ -312,10 +302,9 @@ fn run_state_live() {
         &url,
         "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,attachment_id,status) \
+            wiring_id,wiring_version,attachment_id,status) \
          VALUES ('t1','race-1','f',1,'cat',1,'prod', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'http-race','running'); \
+           'fixture-wiring',1,'http-race','running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','race-1','stale-worker',now()+interval '1 minute',7);",
@@ -358,13 +347,11 @@ fn run_state_live() {
         &url,
         "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status) VALUES \
+            wiring_id,wiring_version,status) VALUES \
            ('t1','admit-1','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'running'), \
+            'fixture-wiring',1,'running'), \
            ('t1','admit-2','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'running'); \
+            'fixture-wiring',1,'running'); \
          INSERT INTO wamn_run.invocation_admissions \
            (tenant_id,catalog_id,environment,attachment_id,definition_hash, \
             principal_digest,client_key_digest,client_request_fingerprint, \
@@ -394,10 +381,9 @@ fn run_state_live() {
         &url,
         "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,attachment_id,status) \
+            wiring_id,wiring_version,attachment_id,status) \
          VALUES ('t1','fault-1','f',1,'cat',1,'prod', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'http-fault','running'); \
+           'fixture-wiring',1,'http-fault','running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','fault-1','worker-f',now()+interval '1 minute',9);",
@@ -406,11 +392,11 @@ fn run_state_live() {
         "{} PREPARE release_stmt \
            (text,text,text,bigint,text,text,int,text,text) AS {}; \
          PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text) AS {}; \
+           (text,text,text,bigint,text,text,text,text) AS {}; \
          EXECUTE release_stmt('fault-1','fault-1','worker-f',9, \
                               'failed','{{\"error\":{{\"code\":\"boom\"}}}}',500,NULL,'sha256:fault'); \
          EXECUTE terminal_stmt('fault-1','fault-1','worker-f',9, \
-                               'failed','node-failed','null'); \
+                               'failed','node-failed','null','terminal'); \
          SELECT 1/0; COMMIT;",
         app_preamble(),
         release,
@@ -447,21 +433,18 @@ fn run_state_live() {
         &url,
         "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status,durability_class) VALUES \
+            wiring_id,wiring_version,status,durability_class) VALUES \
            ('t1','record-claim','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'dispatched','standard'), \
+            'fixture-wiring',1,'dispatched','standard'), \
            ('t1','record-unpaired','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'running','standard'); \
+            'fixture-wiring',1,'running','standard'); \
          UPDATE wamn_run.environment_policies SET durability_class='durable' \
           WHERE tenant_id='t1'; \
          INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status,durability_class) VALUES \
+            wiring_id,wiring_version,status,durability_class) VALUES \
            ('t1','record-effect','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'dispatched','durable'); \
+            'fixture-wiring',1,'dispatched','durable'); \
          UPDATE wamn_run.environment_policies SET durability_class='standard' \
           WHERE tenant_id='t1'; \
          INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES \
@@ -525,7 +508,7 @@ fn run_state_live() {
 
     // Erasure is the park/wake arm, and it is conditional: a runnable, effect-free
     // run may reopen its claimability, but a terminal run keeps the audit link to
-    // the plan hashes it executed.
+    // the release closure it executed.
     let erasure_script = format!(
         "{} \
          UPDATE runs SET release_version = NULL, manifest_digest = NULL \
@@ -609,10 +592,9 @@ fn run_state_live() {
         &url,
         "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status,durability_class) VALUES \
+            wiring_id,wiring_version,status,durability_class) VALUES \
            ('t1','record-standard-effect','f',1,'cat',1,'prod', \
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-            'running','standard'); \
+            'fixture-wiring',1,'running','standard'); \
          UPDATE wamn_run.runs SET release_version = 4, manifest_digest = \
            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
           WHERE run_id = 'record-standard-effect'; \
@@ -696,10 +678,9 @@ fn run_state_live() {
            BEGIN \
              INSERT INTO wamn_run.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                environment,execution_bundle_hash,status,durability_class) \
+                environment,wiring_id,wiring_version,status,durability_class) \
              VALUES ('t1','record-unruled-class','f',1,'cat',1,'prod', \
-               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-               'running','premium'); \
+               'fixture-wiring',1,'running','premium'); \
              ASSERT false, 'the class CHECK admitted an unruled literal'; \
            EXCEPTION WHEN check_violation THEN NULL; \
            END; \

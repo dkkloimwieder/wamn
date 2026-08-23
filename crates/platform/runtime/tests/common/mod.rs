@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_run_state::{
@@ -33,16 +32,16 @@ pub const COMPONENT: &str = "claim-live-runner";
 pub const ROLLED_COMPONENT: &str = "claim-live-runner-next";
 pub const SCHEMA: &str = "wamn_claim_live";
 /// The release the claiming pod carries. Deliberately distinct from every
-/// catalog version this fixture publishes, so a recorded pair that matched the
-/// admitted or the republished release instead of the pod would be visible.
+/// admitted catalog version in this fixture, so a record copied from the run
+/// instead of the claiming pod would be visible.
 pub const POD_RELEASE_VERSION: i32 = 7;
 pub const POD_MANIFEST_DIGEST: &str =
     "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 pub const ROLLED_RELEASE_VERSION: i32 = 8;
 pub const ROLLED_MANIFEST_DIGEST: &str =
     "sha256:2222222222222222222222222222222222222222222222222222222222222222";
-pub const RELEASE_ARTIFACT: &str =
-    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub const WIRING_ID: &str = "claim-live-wiring";
+pub const WIRING_VERSION: i32 = 1;
 pub const EMPTY_HASH: &str =
     "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 pub const WRITER_PASSWORD: &str =
@@ -58,10 +57,6 @@ pub async fn connect(url: &str) -> anyhow::Result<Client> {
         }
     });
     Ok(client)
-}
-
-pub fn digest(bytes: &[u8]) -> String {
-    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 pub fn quote_identifier(identifier: &str) -> String {
@@ -99,70 +94,12 @@ pub fn effect_attempt(
     }
 }
 
-pub fn plan_bytes(root_artifact_hash: &str) -> (String, Vec<u8>) {
-    let guard = json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object"
-    });
-    let body = json!({
-        "header": {
-            "format-version": "0.1",
-            "plan-compiler-revision": "0.1",
-            "runtime-revision": {
-                "flowrunner-component-digest": format!("sha256:{}", "c".repeat(64)),
-                "effect-provider-revision": format!("sha256:{}", "d".repeat(64)),
-                "host-effect-contract-version": "0.1"
-            },
-            "root-artifact-hash": root_artifact_hash
-        },
-        "body": {
-            "entry-instruction": "request",
-            "nodes": [
-                {
-                    "local-node-id": "request",
-                    "source-node-id": "request",
-                    "type": "request",
-                    "config": {"input-schema": guard.clone()},
-                    "effect-policy": "pure"
-                },
-                {
-                    "local-node-id": "respond",
-                    "source-node-id": "respond",
-                    "type": "respond",
-                    "config": {"status": 200},
-                    "effect-policy": "pure"
-                }
-            ],
-            "edges": [{
-                "source": "request",
-                "source-port": "main",
-                "destination": "respond",
-                "fan-out-ordinal": 0
-            }],
-            "root-terminal-behavior": {"kind": "respond", "responders": ["respond"]},
-            "entry-input-schema-guard": guard.clone(),
-            "callable-contract": {
-                "version": "0.1",
-                "input-schema-hash": wamn_flow::canonical_json_sha256(&guard),
-                "return-contract": "untyped-json-body",
-                "effect-ceiling": "effectful"
-            },
-            "source-map": [
-                {"local-node-id": "request", "source-node-id": "request"},
-                {"local-node-id": "respond", "source-node-id": "respond"}
-            ]
-        }
-    });
-    let bytes = serde_json::to_vec(&body).expect("plan fixture serializes");
-    (digest(&bytes), bytes)
-}
-
 pub fn run_state_stand_in_ddl() -> String {
     format!(
         "CREATE TABLE {SCHEMA}.runs ( \
            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
            flow_version int NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
-           environment text NOT NULL, execution_bundle_hash text NOT NULL, \
+           environment text NOT NULL, \
            attachment_id text, registration_id text, \
            event_source_run_id text, event_root_run_id text, event_depth int, \
            status text NOT NULL \
@@ -171,6 +108,7 @@ pub fn run_state_stand_in_ddl() -> String {
            trigger_source text, capture_mode text, \
            durability_class text NOT NULL DEFAULT 'standard' \
              CHECK (durability_class IN ('standard', 'durable')), \
+           wiring_id text, wiring_version int, \
            release_version int, manifest_digest text, \
            input_json jsonb NOT NULL DEFAULT '{{}}', result_json jsonb, state_json jsonb, \
            invocation_context jsonb NOT NULL DEFAULT '{{}}', \
@@ -187,6 +125,10 @@ pub fn run_state_stand_in_ddl() -> String {
              OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL \
                  AND release_version > 0 \
                  AND manifest_digest ~ '^sha256:[0-9a-f]{{64}}$')), \
+           CONSTRAINT runs_wiring_identity_check CHECK ( \
+             (wiring_id IS NULL AND wiring_version IS NULL) \
+             OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL \
+                 AND wiring_id <> '' AND wiring_version > 0)), \
            PRIMARY KEY (tenant_id, run_id)); \
          CREATE TABLE {SCHEMA}.effect_attempts ( \
            tenant_id text NOT NULL, attempt_id uuid NOT NULL DEFAULT gen_random_uuid(), \
@@ -220,8 +162,10 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
                  IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id \
                     OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version \
                     OR NEW.environment IS DISTINCT FROM OLD.environment \
-                    OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash \
-                    OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN \
+                    OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode \
+                    OR NEW.durability_class IS DISTINCT FROM OLD.durability_class \
+                    OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id \
+                    OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version THEN \
                    RAISE EXCEPTION USING ERRCODE = '55000', \
                      MESSAGE = 'run-admission-pin-immutable'; \
                  END IF; \
@@ -246,7 +190,7 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
                END $guard$; \
              CREATE TRIGGER runs_admission_pins_immutable \
                BEFORE UPDATE OF catalog_id, catalog_version, environment, \
-                                execution_bundle_hash, capture_mode, \
+                                capture_mode, durability_class, wiring_id, wiring_version, \
                                 release_version, manifest_digest \
                ON {SCHEMA}.runs FOR EACH ROW \
                EXECUTE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable(); \
@@ -258,16 +202,6 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
                max_attempts int NOT NULL DEFAULT 3, enqueued_at timestamptz NOT NULL DEFAULT now(), \
                PRIMARY KEY (tenant_id, run_id), \
                FOREIGN KEY (tenant_id, run_id) REFERENCES {SCHEMA}.runs); \
-             CREATE TABLE catalog.execution_bundles ( \
-               tenant_id text NOT NULL, execution_bundle_hash text NOT NULL, exact_bytes bytea NOT NULL, \
-               PRIMARY KEY (tenant_id, execution_bundle_hash)); \
-             CREATE TABLE catalog.release_flows ( \
-               tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
-               flow_id text NOT NULL, flow_version int NOT NULL, execution_bundle_hash text NOT NULL, \
-               PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id)); \
-             CREATE TABLE catalog.flow_artifacts ( \
-               tenant_id text NOT NULL, flow_id text NOT NULL, flow_version int NOT NULL, \
-               artifact_hash text NOT NULL, PRIMARY KEY (tenant_id, flow_id, flow_version)); \
              CREATE TABLE catalog.connection_bindings ( \
                tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
                environment text NOT NULL, artifact_hash text NOT NULL, requirement_name text NOT NULL, \
@@ -423,56 +357,14 @@ pub async fn wait_for_advisory_wait(
     )
 }
 
-pub async fn seed_release(
-    client: &Client,
-    catalog_id: &str,
-    bundle_hash: &str,
-    exact_bytes: &[u8],
-) -> anyhow::Result<()> {
-    client
-        .execute(
-            "INSERT INTO catalog.execution_bundles \
-               (tenant_id,execution_bundle_hash,exact_bytes) VALUES ($1,$2,$3) \
-             ON CONFLICT DO NOTHING",
-            &[&TENANT, &bundle_hash, &exact_bytes],
-        )
-        .await?;
-    client
-        .execute(
-            "INSERT INTO catalog.flow_artifacts \
-               (tenant_id,flow_id,flow_version,artifact_hash) VALUES ($1,'root',1,$2) \
-             ON CONFLICT DO NOTHING",
-            &[&TENANT, &RELEASE_ARTIFACT],
-        )
-        .await?;
-    client
-        .execute(
-            "INSERT INTO catalog.release_flows \
-               (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) \
-             VALUES ($1,$2,1,'root',1,$3)",
-            &[&TENANT, &catalog_id, &bundle_hash],
-        )
-        .await?;
-    Ok(())
-}
-
 /// Seed an admitted, queued run on the DEFAULT `standard` class.
 pub async fn seed_run(
     client: &Client,
     run_id: &str,
     catalog_id: &str,
-    bundle_hash: &str,
     stream_seq: i64,
 ) -> anyhow::Result<()> {
-    seed_run_of_class(
-        client,
-        run_id,
-        catalog_id,
-        bundle_hash,
-        stream_seq,
-        "standard",
-    )
-    .await
+    seed_run_of_class(client, run_id, catalog_id, stream_seq, "standard").await
 }
 
 /// Seed an admitted, queued run on the PREMIUM `durable` class.
@@ -486,25 +378,15 @@ pub async fn seed_durable_run(
     client: &Client,
     run_id: &str,
     catalog_id: &str,
-    bundle_hash: &str,
     stream_seq: i64,
 ) -> anyhow::Result<()> {
-    seed_run_of_class(
-        client,
-        run_id,
-        catalog_id,
-        bundle_hash,
-        stream_seq,
-        "durable",
-    )
-    .await
+    seed_run_of_class(client, run_id, catalog_id, stream_seq, "durable").await
 }
 
 async fn seed_run_of_class(
     client: &Client,
     run_id: &str,
     catalog_id: &str,
-    bundle_hash: &str,
     stream_seq: i64,
     durability_class: &str,
 ) -> anyhow::Result<()> {
@@ -513,16 +395,17 @@ async fn seed_run_of_class(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
-                    environment,execution_bundle_hash,input_json,trigger_source, \
+                    environment,wiring_id,wiring_version,input_json,trigger_source, \
                     durability_class) \
-                 VALUES ($1,$2,'root',1,'dispatched',$3,1,'test',$4,'{{\"input\":true}}','http', \
-                         $5)"
+                 VALUES ($1,$2,'root',1,'dispatched',$3,1,'test',$4,$5, \
+                         '{{\"input\":true}}','http',$6)"
             ),
             &[
                 &TENANT,
                 &run_id,
                 &catalog_id,
-                &bundle_hash,
+                &WIRING_ID,
+                &WIRING_VERSION,
                 &durability_class,
             ],
         )
@@ -551,10 +434,9 @@ async fn seed_run_of_class(
 pub async fn seed_live_effect_run(
     client: &Client,
     run_id: &str,
-    bundle_hash: &str,
     stream_seq: i64,
 ) -> anyhow::Result<()> {
-    seed_durable_run(client, run_id, "cat-main", bundle_hash, stream_seq).await?;
+    seed_durable_run(client, run_id, "cat-main", stream_seq).await?;
     client
         .execute(
             &format!(
@@ -589,10 +471,9 @@ pub async fn expire_effect_run(client: &Client, run_id: &str) -> anyhow::Result<
 pub async fn seed_exhausted_run(
     client: &Client,
     run_id: &str,
-    bundle_hash: &str,
     stream_seq: i64,
 ) -> anyhow::Result<()> {
-    seed_run(client, run_id, "cat-main", bundle_hash, stream_seq).await?;
+    seed_run(client, run_id, "cat-main", stream_seq).await?;
     client
         .execute(
             &format!(
@@ -758,12 +639,9 @@ pub struct LiveFixture {
     pub plugin: Arc<WamnPostgres>,
     pub writer: EffectWriterClient,
     pub writer_role: String,
-    /// The published `cat-main` bundle hash both suites seed runs against.
-    pub release_hash: String,
 }
 
-/// Install the schema, the private effect writer, the pod identities and the
-/// one published release.
+/// Install the schema, the private effect writer, and the pod identities.
 ///
 /// Both suites call this and neither may vary it: a spine that proved the queue
 /// against a different schema than the shelved floor would prove nothing about
@@ -799,15 +677,11 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
         wamn_catalog::ManifestDigest::parse(ROLLED_MANIFEST_DIGEST)?,
     )?;
 
-    let (release_hash, release_bytes) = plan_bytes(RELEASE_ARTIFACT);
-    seed_release(&admin, "cat-main", &release_hash, &release_bytes).await?;
-
     Ok(LiveFixture {
         admin,
         plugin,
         writer,
         writer_role,
-        release_hash,
     })
 }
 

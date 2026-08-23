@@ -233,7 +233,7 @@ fn run_state_sql_matches_the_model() {
     // RIDER 1 of the ruling: an unnamed column's transition arm silently never
     // fires, so the column-scoped trigger MUST name the class.
     assert!(sql.contains(
-        "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,\n                 durability_class, release_version, manifest_digest"
+        "BEFORE UPDATE OF catalog_id, catalog_version, environment, capture_mode,\n                 durability_class, wiring_id, wiring_version, release_version, manifest_digest"
     ));
     // The claim-time release record: NULL at admission, written by the claiming
     // worker, and cleared again by EVERY arm that reopens claimability — the
@@ -358,17 +358,9 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL,\n\
            PRIMARY KEY (tenant_id, catalog_id, catalog_version)\n\
          );\n\
-         CREATE TABLE catalog.execution_bundles (\n\
-           tenant_id text NOT NULL, execution_bundle_hash text NOT NULL,\n\
-           PRIMARY KEY (tenant_id, execution_bundle_hash)\n\
-         );\n\
          INSERT INTO catalog.release_manifests VALUES\n\
            ('t1','run-state-fixture',1), ('t2','run-state-fixture',1),\n\
-           ('t3','run-state-fixture',1);\n\
-         INSERT INTO catalog.execution_bundles VALUES\n\
-           ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'),\n\
-           ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'),\n\
-           ('t3','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');\n",
+           ('t3','run-state-fixture',1);\n",
     );
     script.push_str(&ddl);
     script.push('\n');
@@ -383,14 +375,12 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     script.push_str(
         "INSERT INTO wamn_run.runs (\
            tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
-           execution_bundle_hash, status, idempotency_key\
+           wiring_id, wiring_version, status, idempotency_key\
          ) VALUES\
            ('t1','run-a','f',1,'run-state-fixture',1,'test',\
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
-            'running','k-a'),\
+            'fixture-wiring',1,'running','k-a'),\
            ('t2','run-b','f',1,'run-state-fixture',1,'test',\
-            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
-            'running','k-b');\n",
+            'fixture-wiring',1,'running','k-b');\n",
     );
     // As wamn_app under tenant t1: sees only t1's run.
     script.push_str(
@@ -416,19 +406,17 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            BEGIN \
              INSERT INTO wamn_run.runs (\
                tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
-               execution_bundle_hash, idempotency_key\
+               wiring_id, wiring_version, idempotency_key\
              ) VALUES ('t1','run-a2','f',1,'run-state-fixture',1,'test',\
-               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
-               'k-a'); \
+               'fixture-wiring',1,'k-a'); \
              ASSERT false, 'duplicate idempotency key must be rejected'; \
            EXCEPTION WHEN unique_violation THEN NULL; END; \
          END $$;\n\
          INSERT INTO wamn_run.runs (\
            tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
-           execution_bundle_hash, idempotency_key\
+           wiring_id, wiring_version, idempotency_key\
          ) VALUES ('t3','run-c','f',1,'run-state-fixture',1,'test',\
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
-           'k-a');\n",
+           'fixture-wiring',1,'k-a');\n",
     );
     // Terminal run history remains deletable.
     script.push_str(

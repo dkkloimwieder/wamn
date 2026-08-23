@@ -28,7 +28,6 @@ const RUN_INSERT_COLUMNS: &[&str] = &[
     "event_depth",
     "event_root_run_id",
     "event_source_run_id",
-    "execution_bundle_hash",
     "flow_id",
     "flow_version",
     "idempotency_key",
@@ -42,6 +41,8 @@ const RUN_INSERT_COLUMNS: &[&str] = &[
     "status",
     "tenant_id",
     "trigger_source",
+    "wiring_id",
+    "wiring_version",
 ];
 
 /// Columns `wamn_app` may UPDATE on `runs` — the claim, park, release, and
@@ -72,7 +73,6 @@ const RUN_COLUMNS: &[&str] = &[
     "catalog_id",
     "catalog_version",
     "environment",
-    "execution_bundle_hash",
     "attachment_id",
     "registration_id",
     "event_source_run_id",
@@ -82,6 +82,8 @@ const RUN_COLUMNS: &[&str] = &[
     "trigger_source",
     "capture_mode",
     "durability_class",
+    "wiring_id",
+    "wiring_version",
     "release_version",
     "manifest_digest",
     "input_json",
@@ -120,8 +122,6 @@ const ADMISSION_COLUMNS: &[&str] = &[
     "run_id",
     "created_at",
 ];
-
-const EMPTY_HASH: &str = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 
 fn psql(url: &str, script: &str) -> Output {
     let mut child = Command::new("psql")
@@ -197,9 +197,6 @@ fn install(url: &str) {
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'prod','0.1','draft'); \
-             INSERT INTO catalog.execution_bundles \
-               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-             VALUES ('t1','{EMPTY_HASH}','0.1',decode('7b7d','hex'),2); \
              INSERT INTO catalog.release_manifests (tenant_id,catalog_id,catalog_version) \
              VALUES ('t1','cat',1);"
         ),
@@ -383,10 +380,11 @@ fn app_run_writes_are_confined_to_the_ratified_column_sets() {
         &format!(
             "{} INSERT INTO runs \
                (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
-                environment, execution_bundle_hash, attachment_id, status, trigger_source, \
+                environment, wiring_id, wiring_version, attachment_id, status, trigger_source, \
                 input_json, invocation_context, admission_context_version, platform_revision, \
                 idempotency_key, response_deadline_at, run_deadline_at) \
-             VALUES ('t1','r1','f',1,'cat',1,'prod','{EMPTY_HASH}','http-a','dispatched','http', \
+             VALUES ('t1','r1','f',1,'cat',1,'prod','fixture-wiring',1, \
+                     'http-a','dispatched','http', \
                      '{{}}'::jsonb,'{{}}'::jsonb,'0.1','rev','k1', \
                      now() + interval '1 hour', now() + interval '1 hour'); \
              DO $probe$ BEGIN \
@@ -419,20 +417,20 @@ fn app_run_writes_are_confined_to_the_ratified_column_sets() {
         (
             "insert-capture_mode",
             "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, catalog_id, \
-               catalog_version, environment, execution_bundle_hash, status, capture_mode) \
-             VALUES ('t1','r2','f',1,'cat',1,'prod','{EMPTY_HASH}','dispatched','off')",
+               catalog_version, environment, wiring_id, wiring_version, status, capture_mode) \
+             VALUES ('t1','r2','f',1,'cat',1,'prod','fixture-wiring',1,'dispatched','off')",
         ),
         (
             "insert-fail_kind",
             "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, catalog_id, \
-               catalog_version, environment, execution_bundle_hash, status, fail_kind) \
-             VALUES ('t1','r3','f',1,'cat',1,'prod','{EMPTY_HASH}','dispatched','terminal')",
+               catalog_version, environment, wiring_id, wiring_version, status, fail_kind) \
+             VALUES ('t1','r3','f',1,'cat',1,'prod','fixture-wiring',1,'dispatched','terminal')",
         ),
         (
             "insert-created_at",
             "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, catalog_id, \
-               catalog_version, environment, execution_bundle_hash, status, created_at) \
-             VALUES ('t1','r4','f',1,'cat',1,'prod','{EMPTY_HASH}','dispatched',now())",
+               catalog_version, environment, wiring_id, wiring_version, status, created_at) \
+             VALUES ('t1','r4','f',1,'cat',1,'prod','fixture-wiring',1,'dispatched',now())",
         ),
         (
             "update-trigger_source",
@@ -455,7 +453,6 @@ fn app_run_writes_are_confined_to_the_ratified_column_sets() {
             "UPDATE runs SET tenant_id='t1' WHERE run_id='r1'",
         ),
     ] {
-        let statement = statement.replace("{EMPTY_HASH}", EMPTY_HASH);
         let refused = success(
             &url,
             &format!(
@@ -519,8 +516,9 @@ fn admission_ledger_is_append_only_and_still_key_share_lockable() {
         &format!(
             "{} INSERT INTO runs \
                (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
-                environment, execution_bundle_hash, attachment_id, status, trigger_source) \
-             VALUES ('t1','a1','f',1,'cat',1,'prod','{EMPTY_HASH}','http-a','dispatched','http'); \
+                environment, wiring_id, wiring_version, attachment_id, status, trigger_source) \
+             VALUES ('t1','a1','f',1,'cat',1,'prod','fixture-wiring',1, \
+                     'http-a','dispatched','http'); \
              INSERT INTO invocation_admissions \
                (tenant_id, catalog_id, environment, attachment_id, definition_hash, \
                 principal_digest, client_key_digest, client_request_fingerprint, \

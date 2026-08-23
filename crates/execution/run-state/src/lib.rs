@@ -7,12 +7,11 @@
 //! parameterized SQL; Postgres, clocks, and
 //! doorbells remain adapter effects.
 //!
-//! Like [`wamn_runner`], this crate's default guest-safe graph is **pure**: no DB,
-//! no wasm, no clock. The non-default `native` feature contains the private
-//! effect-writer adapter. The crate maps the engine's execution taxonomy to
-//! storage literals ([`RunStatus`]); the driver
-//! (`components/execution/flowrunner`) supplies the `wamn:postgres` effects
-//! against the schema in `deploy/sql/run-state.sql`.
+//! This crate's default graph is **pure**: no DB, no wasm, no clock. The
+//! non-default `native` feature contains the private effect-writer adapter. The
+//! crate maps execution outcomes to storage literals ([`RunStatus`]); the
+//! host-owned executor adapter supplies the `wamn:postgres` effects against the
+//! schema in `deploy/sql/run-state.sql`.
 //!
 //! Admission and enqueue producers compose the transaction API exposed by this
 //! crate while owning their database transactions.
@@ -55,8 +54,7 @@ pub mod queue;
 /// Contract-owned helpers for checking repository stand-in schemas.
 #[cfg(feature = "test-util")]
 pub mod schema_drift;
-/// Run-state SQL text builders (SR2): the single source both guests and
-/// host drivers execute.
+/// Run-state SQL text builders (SR2): the single source adapters execute.
 pub mod sql;
 mod status;
 /// Typed, queue-joined executor transitions.

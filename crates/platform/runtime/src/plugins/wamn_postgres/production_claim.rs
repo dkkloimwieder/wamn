@@ -5,11 +5,16 @@ use std::fmt::{Display, Formatter};
 use deadpool_postgres::Object;
 use tokio_postgres::Row;
 use tokio_postgres::types::FromSql;
+use wamn_router::{FailureKind as RouterFailureKind, Outcome, Verdict, WalkStatus};
 use wamn_run_state::queue::{
     ProductionClaimClass, advance_claim_attempts_sql, classify_production_claim,
-    clear_pre_effect_state_sql, grant_production_claim_sql, select_claim_effect_attempt_sql,
-    select_exhausted_production_sql, select_production_claim_sql, serialize_effect_intent_sql,
-    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
+    clear_pre_effect_state_sql, grant_production_claim_sql, renew_production_lease_sql,
+    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
+    serialize_effect_intent_sql, terminalize_effect_uncertain_claim_sql,
+    terminalize_exhausted_production_sql,
+};
+use wamn_run_state::transitions::{
+    CallerReleaseResult, TerminalizeResult, release_caller_sql, terminalize_sql,
 };
 use wamn_run_state::{DurabilityClass, EffectUncertainFailure, FailKind, RunStatus};
 
@@ -77,13 +82,14 @@ impl std::error::Error for ProductionClaimError {}
 pub enum ProductionClaimResult {
     /// No eligible row was visible to this tenant.
     Empty,
-    /// A fresh lease committed for guest execution.
+    /// A fresh lease committed for router execution.
     Ready {
         run_id: String,
-        payload: String,
+        payload: serde_json::Value,
         lease_generation: i64,
         wiring_id: String,
         wiring_version: i32,
+        caller_attached: bool,
     },
     /// Claim-time classification removed the row without execution.
     Terminalized {
@@ -91,6 +97,248 @@ pub enum ProductionClaimResult {
         status: RunStatus,
         fail_kind: FailKind,
     },
+}
+
+/// Caller result stored before a queue run becomes terminal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProductionCallerOutcome {
+    kind: &'static str,
+    body: serde_json::Value,
+    http_status: u16,
+    release_node_id: Option<String>,
+}
+
+impl ProductionCallerOutcome {
+    /// A router `respond` verdict and its exact wiring node coordinate.
+    pub fn responded(
+        body: serde_json::Value,
+        http_status: u16,
+        release_node_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: "responded",
+            body,
+            http_status,
+            release_node_id: Some(release_node_id.into()),
+        }
+    }
+
+    /// A router failure returned to an attached caller.
+    pub fn failed(
+        body: serde_json::Value,
+        http_status: u16,
+        release_node_id: Option<String>,
+    ) -> Self {
+        Self {
+            kind: "failed",
+            body,
+            http_status,
+            release_node_id,
+        }
+    }
+}
+
+/// Storage-shaped terminal fact derived from one router outcome.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProductionCompletion {
+    status: RunStatus,
+    terminal_reason: &'static str,
+    result: serde_json::Value,
+    fail_kind: Option<FailKind>,
+    caller: Option<ProductionCallerOutcome>,
+}
+
+impl ProductionCompletion {
+    /// A completed router walk, optionally carrying a caller response.
+    pub fn completed(result: serde_json::Value, caller: Option<ProductionCallerOutcome>) -> Self {
+        Self {
+            status: RunStatus::Completed,
+            terminal_reason: "router-completed",
+            result,
+            fail_kind: None,
+            caller,
+        }
+    }
+
+    /// A failed router walk and its persisted failure class.
+    pub fn failed(
+        result: serde_json::Value,
+        fail_kind: FailKind,
+        caller: Option<ProductionCallerOutcome>,
+    ) -> Self {
+        Self {
+            status: RunStatus::Failed,
+            terminal_reason: "router-failed",
+            result,
+            fail_kind: Some(fail_kind),
+            caller,
+        }
+    }
+}
+
+/// Result of committing a router outcome under the exact queue fence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionCompletionResult {
+    Terminalized,
+    AlreadyTerminal(RunStatus),
+    FenceLost,
+    NotFound,
+}
+
+/// Result of one generation-fenced lease heartbeat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionLeaseRenewal {
+    Renewed,
+    FenceLost,
+}
+
+/// Boundary work selected from a terminal router outcome.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProductionRouterAction {
+    /// Commit the run/caller result through the existing fenced transition.
+    Complete(ProductionCompletion),
+    /// The emit publisher/admission join is owned by `wamn-0h0g.19.8`.
+    Emit {
+        event: serde_json::Value,
+        dedup_id: String,
+    },
+    /// Cancellation is not a failure verdict; leave the lease to redelivery.
+    Cancelled,
+}
+
+/// Translate the router taxonomy exactly once at the run-store boundary.
+pub fn production_router_action(
+    outcome: &Outcome,
+    caller_attached: bool,
+) -> Result<ProductionRouterAction, ProductionClaimError> {
+    if outcome.status == WalkStatus::Running {
+        return Err(ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "map router outcome",
+            "router-returned-running-outcome",
+        ));
+    }
+
+    // A verdict may be recorded before the frontier empties. It is the owning
+    // boundary truth even when later background work fails or cancels; that
+    // later status is observability, not permission to suppress the first
+    // caller response or publish.
+    if outcome.verdict.is_some()
+        && matches!(outcome.status, WalkStatus::Failed | WalkStatus::Cancelled)
+    {
+        tracing::warn!(
+            status = ?outcome.status,
+            failure_kind = ?outcome.failure.as_ref().map(|failure| failure.kind),
+            failure_node = outcome.failure.as_ref().map(|failure| failure.node.as_str()),
+            "router first verdict stood after a later frontier outcome"
+        );
+    }
+    match outcome.verdict.as_ref() {
+        Some(Verdict::Respond { .. }) => {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "map router response",
+                "router-respond-node-attribution-missing",
+            ));
+        }
+        Some(Verdict::Emit { event, dedup_id }) => {
+            return Ok(ProductionRouterAction::Emit {
+                event: event.clone(),
+                dedup_id: dedup_id.clone(),
+            });
+        }
+        Some(Verdict::Discard) if !caller_attached => {
+            return Ok(ProductionRouterAction::Complete(
+                ProductionCompletion::completed(outcome.result.clone(), None),
+            ));
+        }
+        Some(Verdict::Discard) => {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "map router discard",
+                "router-discard-with-caller",
+            ));
+        }
+        None => {}
+    }
+
+    match outcome.status {
+        WalkStatus::Completed => Err(ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "map completed router outcome",
+            "router-completed-without-verdict",
+        )),
+        WalkStatus::Failed => {
+            let failure = outcome.failure.as_ref().ok_or_else(|| {
+                ProductionClaimError::new(
+                    ProductionClaimErrorKind::Contract,
+                    "map failed router outcome",
+                    "router-failed-without-failure",
+                )
+            })?;
+            let fail_kind = persisted_router_failure(failure.kind);
+            let code = failure
+                .detail
+                .code
+                .as_deref()
+                .unwrap_or_else(|| router_failure_code(failure.kind));
+            let mut error = serde_json::Map::from_iter([
+                (
+                    "code".to_owned(),
+                    serde_json::Value::String(code.to_owned()),
+                ),
+                (
+                    "message".to_owned(),
+                    serde_json::Value::String(failure.detail.message.clone()),
+                ),
+                (
+                    "node".to_owned(),
+                    serde_json::Value::String(failure.node.clone()),
+                ),
+            ]);
+            if let Some(data) = failure.detail.data.as_ref() {
+                error.insert("data".to_owned(), data.clone());
+            }
+            let body = serde_json::Value::Object(serde_json::Map::from_iter([(
+                "error".to_owned(),
+                serde_json::Value::Object(error),
+            )]));
+            let caller = caller_attached.then(|| {
+                ProductionCallerOutcome::failed(body.clone(), 500, Some(failure.node.clone()))
+            });
+            Ok(ProductionRouterAction::Complete(
+                ProductionCompletion::failed(body, fail_kind, caller),
+            ))
+        }
+        WalkStatus::Cancelled => Ok(ProductionRouterAction::Cancelled),
+        WalkStatus::Running => unreachable!("running outcomes were refused above"),
+    }
+}
+
+fn persisted_router_failure(kind: RouterFailureKind) -> FailKind {
+    match kind {
+        RouterFailureKind::RetryExhausted => FailKind::RetryExhausted,
+        RouterFailureKind::InvalidInput => FailKind::InvalidInput,
+        RouterFailureKind::HopLimit => FailKind::RunawayBudget,
+        RouterFailureKind::Terminal
+        | RouterFailureKind::UnreleasedCaller
+        | RouterFailureKind::MissingDedupId
+        | RouterFailureKind::RespondWithoutCaller
+        | RouterFailureKind::SecondVerdict => FailKind::Terminal,
+    }
+}
+
+fn router_failure_code(kind: RouterFailureKind) -> &'static str {
+    match kind {
+        RouterFailureKind::Terminal => "terminal",
+        RouterFailureKind::RetryExhausted => "retry-exhausted",
+        RouterFailureKind::InvalidInput => "invalid-input",
+        RouterFailureKind::HopLimit => "hop-limit",
+        RouterFailureKind::UnreleasedCaller => "unreleased-caller",
+        RouterFailureKind::MissingDedupId => "missing-dedup-id",
+        RouterFailureKind::RespondWithoutCaller => "respond-without-caller",
+        RouterFailureKind::SecondVerdict => "second-verdict",
+    }
 }
 
 /// Result of one host-owned crash-budget janitor turn.
@@ -126,13 +374,14 @@ struct SelectedClaim {
     run_id: String,
     had_prior_lease: bool,
     status: RunStatus,
-    payload: String,
+    payload: serde_json::Value,
     /// The class the run was admitted under, read off the row this turn already
     /// locked. Everything the crash floor does in this transaction is gated on
     /// it (wamn-0h0g.20.2).
     durability_class: DurabilityClass,
     wiring_id: String,
     wiring_version: i32,
+    caller_attached: bool,
 }
 
 #[derive(Debug)]
@@ -149,8 +398,8 @@ impl WamnPostgres {
     ///
     /// Tenant, project, schema, lease owner, and the carried release identity
     /// come only from host-injected component identity. A `Ready` result is
-    /// returned only after COMMIT, so the guest's separate plan-supply
-    /// transactions can observe the committed lease.
+    /// returned only after COMMIT, so router execution never starts under an
+    /// uncommitted lease.
     ///
     /// The lease grant also records this pod's `(release version, manifest
     /// digest)` onto the run, write-once per claim attempt. A component with no
@@ -335,6 +584,376 @@ impl WamnPostgres {
             }
         }
     }
+
+    /// Extend one claimed run's lease under its exact generation fence.
+    pub async fn renew_production_lease(
+        &self,
+        component_id: &str,
+        run_id: &str,
+        lease_generation: i64,
+        lease_ttl_ms: i64,
+    ) -> Result<ProductionLeaseRenewal, ProductionClaimError> {
+        if lease_generation <= 0 || lease_ttl_ms <= 0 {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "validate production lease renewal",
+                "lease generation and TTL must be positive",
+            ));
+        }
+        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Identity,
+                "resolve renewal tenant",
+                "component has no host-injected tenant",
+            )
+        })?;
+        let runner = self.runner_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Identity,
+                "resolve renewal runner",
+                "component has no host-injected runner",
+            )
+        })?;
+        let project = self.project_for(component_id);
+        let schema = self.schema_for(component_id);
+        let (connection, policy) = self.checkout_platform(&project).await.map_err(|error| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Storage,
+                "checkout renewal connection",
+                format!("{error:?}"),
+            )
+        })?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &connection,
+                &tenant,
+                schema.as_deref(),
+                Some(&runner),
+                None,
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Storage,
+                "begin renewal transaction",
+                format!("{error:?}"),
+            ));
+        }
+        let result =
+            renew_in_transaction(&connection, run_id, &runner, lease_generation, lease_ttl_ms)
+                .await;
+        finish_queue_transaction(self, connection, result, "commit production renewal").await
+    }
+
+    /// Persist one router terminal outcome and dequeue under the claim fence.
+    ///
+    /// Caller release and run terminalization share one transaction. An exact
+    /// caller replay is accepted; a different winner refuses without changing
+    /// the run. `FenceLost` is terminal for this executor turn.
+    pub async fn complete_production(
+        &self,
+        component_id: &str,
+        run_id: &str,
+        lease_generation: i64,
+        completion: &ProductionCompletion,
+    ) -> Result<ProductionCompletionResult, ProductionClaimError> {
+        if lease_generation <= 0 {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "validate production completion",
+                "lease generation must be positive",
+            ));
+        }
+        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Identity,
+                "resolve completion tenant",
+                "component has no host-injected tenant",
+            )
+        })?;
+        let runner = self.runner_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Identity,
+                "resolve completion runner",
+                "component has no host-injected runner",
+            )
+        })?;
+        let project = self.project_for(component_id);
+        let schema = self.schema_for(component_id);
+        let (connection, policy) = self.checkout_platform(&project).await.map_err(|error| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Storage,
+                "checkout completion connection",
+                format!("{error:?}"),
+            )
+        })?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &connection,
+                &tenant,
+                schema.as_deref(),
+                Some(&runner),
+                None,
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorKind::Storage,
+                "begin completion transaction",
+                format!("{error:?}"),
+            ));
+        }
+        let result =
+            complete_in_transaction(&connection, run_id, &runner, lease_generation, completion)
+                .await;
+        finish_queue_transaction(self, connection, result, "commit production completion").await
+    }
+}
+
+async fn finish_queue_transaction<T>(
+    postgres: &WamnPostgres,
+    connection: Object,
+    result: Result<T, ProductionClaimError>,
+    commit_operation: &'static str,
+) -> Result<T, ProductionClaimError> {
+    match result {
+        Ok(value) => {
+            if let Err(error) = connection.batch_execute("COMMIT").await {
+                postgres.destroy(connection);
+                return Err(storage(commit_operation, error));
+            }
+            Ok(value)
+        }
+        Err(error) => {
+            if let Err(rollback_error) = connection.batch_execute("ROLLBACK").await {
+                tracing::warn!(
+                    error = %rollback_error,
+                    operation = error.operation(),
+                    "production queue rollback failed; destroying connection"
+                );
+                postgres.destroy(connection);
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn renew_in_transaction(
+    connection: &Object,
+    run_id: &str,
+    runner: &str,
+    lease_generation: i64,
+    lease_ttl_ms: i64,
+) -> Result<ProductionLeaseRenewal, ProductionClaimError> {
+    let sql = renew_production_lease_sql();
+    let statement = connection
+        .prepare_cached(&sql)
+        .await
+        .map_err(|error| storage("prepare production lease renewal", error))?;
+    let renewed = connection
+        .query_opt(
+            &statement,
+            &[&run_id, &runner, &lease_generation, &lease_ttl_ms],
+        )
+        .await
+        .map_err(|error| storage("renew production lease", error))?;
+    Ok(if renewed.is_some() {
+        ProductionLeaseRenewal::Renewed
+    } else {
+        ProductionLeaseRenewal::FenceLost
+    })
+}
+
+async fn complete_in_transaction(
+    connection: &Object,
+    run_id: &str,
+    runner: &str,
+    lease_generation: i64,
+    completion: &ProductionCompletion,
+) -> Result<ProductionCompletionResult, ProductionClaimError> {
+    if let Some(caller) = completion.caller.as_ref() {
+        let body_json = serde_json::to_string(&caller.body).map_err(|error| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "serialize production caller outcome",
+                error.to_string(),
+            )
+        })?;
+        let hash = wamn_flow::canonical_json_sha256(&caller.body);
+        let http_status = i32::from(caller.http_status);
+        let release_node_id = caller.release_node_id.as_deref();
+        let sql = release_caller_sql();
+        let statement = connection
+            .prepare_cached(&sql)
+            .await
+            .map_err(|error| storage("prepare production caller release", error))?;
+        let row = connection
+            .query_one(
+                &statement,
+                &[
+                    &run_id,
+                    &run_id,
+                    &runner,
+                    &lease_generation,
+                    &caller.kind,
+                    &body_json,
+                    &http_status,
+                    &release_node_id,
+                    &hash,
+                ],
+            )
+            .await
+            .map_err(|error| storage("release production caller", error))?;
+        let release = decode_caller_release(&row)?;
+        match release {
+            CallerReleaseResult::Released => {}
+            CallerReleaseResult::AlreadyReleased(stored)
+                if stored.exactly_matches(
+                    caller.kind,
+                    &caller.body,
+                    Some(caller.http_status),
+                    release_node_id,
+                    &hash,
+                ) => {}
+            CallerReleaseResult::AlreadyReleased(_) => {
+                return Err(ProductionClaimError::new(
+                    ProductionClaimErrorKind::Contract,
+                    "release production caller",
+                    "production-caller-outcome-conflict",
+                ));
+            }
+            CallerReleaseResult::RunTerminal(status) => {
+                return Ok(ProductionCompletionResult::AlreadyTerminal(status));
+            }
+            CallerReleaseResult::FenceLost => {
+                return Ok(ProductionCompletionResult::FenceLost);
+            }
+            CallerReleaseResult::NotFound => {
+                return Ok(ProductionCompletionResult::NotFound);
+            }
+            CallerReleaseResult::CrossRunAuthority => {
+                return Err(ProductionClaimError::new(
+                    ProductionClaimErrorKind::Contract,
+                    "release production caller",
+                    "production-cross-run-authority",
+                ));
+            }
+        }
+    }
+
+    let result_json = serde_json::to_string(&completion.result).map_err(|error| {
+        ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "serialize production result",
+            error.to_string(),
+        )
+    })?;
+    let fail_kind = completion.fail_kind.map(FailKind::as_sql);
+    let sql = terminalize_sql();
+    let statement = connection
+        .prepare_cached(&sql)
+        .await
+        .map_err(|error| storage("prepare production terminalization", error))?;
+    let row = connection
+        .query_one(
+            &statement,
+            &[
+                &run_id,
+                &run_id,
+                &runner,
+                &lease_generation,
+                &completion.status.as_sql(),
+                &completion.terminal_reason,
+                &result_json,
+                &fail_kind,
+            ],
+        )
+        .await
+        .map_err(|error| storage("terminalize production run", error))?;
+    match decode_terminalization(&row)? {
+        TerminalizeResult::Terminalized => Ok(ProductionCompletionResult::Terminalized),
+        TerminalizeResult::RunTerminal(status) => {
+            Ok(ProductionCompletionResult::AlreadyTerminal(status))
+        }
+        TerminalizeResult::FenceLost => Ok(ProductionCompletionResult::FenceLost),
+        TerminalizeResult::NotFound => Ok(ProductionCompletionResult::NotFound),
+        TerminalizeResult::CallerUnreleased => Err(ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "terminalize production run",
+            "production-caller-unreleased",
+        )),
+        TerminalizeResult::CrossRunAuthority => Err(ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "terminalize production run",
+            "production-cross-run-authority",
+        )),
+    }
+}
+
+fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionClaimError> {
+    let code: String = row_value(row, 0, "caller release result")?;
+    let status: Option<String> = row_value(row, 1, "caller release run status")?;
+    let kind: Option<String> = row_value(row, 2, "caller outcome kind")?;
+    let body_text: Option<String> = row_value(row, 3, "caller outcome body")?;
+    let body = body_text
+        .map(|body| serde_json::from_str(&body))
+        .transpose()
+        .map_err(|error| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "decode production caller outcome",
+                error.to_string(),
+            )
+        })?;
+    let http_status: Option<i32> = row_value(row, 4, "caller outcome HTTP status")?;
+    let http_status = http_status
+        .map(u16::try_from)
+        .transpose()
+        .map_err(|error| {
+            ProductionClaimError::new(
+                ProductionClaimErrorKind::Contract,
+                "decode production caller outcome",
+                error.to_string(),
+            )
+        })?;
+    let release_node_id = row_value(row, 5, "caller release node")?;
+    let hash = row_value(row, 6, "caller outcome hash")?;
+    CallerReleaseResult::from_parts(
+        &code,
+        status.as_deref().unwrap_or_default(),
+        kind,
+        body,
+        http_status,
+        release_node_id,
+        hash,
+    )
+    .ok_or_else(|| {
+        ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "decode production caller release",
+            format!("unknown or incomplete result {code:?}"),
+        )
+    })
+}
+
+fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionClaimError> {
+    let code: String = row_value(row, 0, "terminalization result")?;
+    let status: Option<String> = row_value(row, 1, "terminalization run status")?;
+    TerminalizeResult::from_parts(&code, status.as_deref().unwrap_or_default()).ok_or_else(|| {
+        ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "decode production terminalization",
+            format!("unknown or incomplete result {code:?}"),
+        )
+    })
 }
 
 async fn claim_in_transaction(
@@ -489,6 +1108,7 @@ async fn claim_in_transaction(
         lease_generation,
         wiring_id: selected.wiring_id,
         wiring_version: selected.wiring_version,
+        caller_attached: selected.caller_attached,
     }))
 }
 
@@ -711,15 +1331,25 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let class_text: String = row_value(row, 4, "durability class")?;
     let wiring_id: Option<String> = row_value(row, 5, "wiring id")?;
     let wiring_version: Option<i32> = row_value(row, 6, "wiring version")?;
+    let caller_attached: bool = row_value(row, 7, "caller attachment")?;
+    let payload_text: String = row_value(row, 3, "authoritative input")?;
+    let payload = serde_json::from_str(&payload_text).map_err(|error| {
+        ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "decode production candidate",
+            format!("authoritative input: {error}"),
+        )
+    })?;
     let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
         status,
-        payload: row_value(row, 3, "authoritative input")?,
+        payload,
         durability_class: DurabilityClass::from_sql_or_default(&class_text),
         wiring_id,
         wiring_version,
+        caller_attached,
     })
 }
 
@@ -958,12 +1588,12 @@ mod tests {
         for (index, column) in [
             "candidate.run_id",
             "candidate.had_prior_lease",
-            "candidate.lease_owner",
-            "candidate.lease_expires_at::text",
-            "candidate.lease_generation",
             "r.status",
             "AS input_json",
             "r.durability_class",
+            "r.wiring_id",
+            "r.wiring_version",
+            "AS caller_attached",
         ]
         .into_iter()
         .enumerate()
@@ -973,6 +1603,115 @@ mod tests {
             });
             cursor += offset + column.len();
         }
+        assert!(!projection.contains("execution_bundle_hash"));
+    }
+
+    #[test]
+    fn lease_renewal_is_generation_fenced_and_uses_a_fresh_clock() {
+        let sql = renew_production_lease_sql();
+        assert!(sql.contains("q.lease_owner = $2"));
+        assert!(sql.contains("q.lease_generation = $3"));
+        assert!(sql.contains("statement_timestamp()"));
+        assert!(sql.contains("q.lease_expires_at > statement_timestamp()"));
+        assert!(!sql.contains("execution_bundle_hash"));
+    }
+
+    #[test]
+    fn router_failure_maps_once_to_run_and_caller_truth() {
+        let outcome = Outcome {
+            status: WalkStatus::Failed,
+            result: serde_json::Value::Null,
+            failure: Some(wamn_router::Failure {
+                node: "validate".into(),
+                kind: RouterFailureKind::InvalidInput,
+                detail: wamn_router::ErrorDetail::coded("bad-order", "order is malformed"),
+            }),
+            hops: 1,
+            verdict: None,
+        };
+        let ProductionRouterAction::Complete(completion) =
+            production_router_action(&outcome, true).expect("failed walk maps")
+        else {
+            panic!("failed walk must complete the run");
+        };
+        assert_eq!(completion.status, RunStatus::Failed);
+        assert_eq!(completion.fail_kind, Some(FailKind::InvalidInput));
+        assert_eq!(completion.result["error"]["code"], "bad-order");
+        assert_eq!(completion.result["error"]["node"], "validate");
+        let caller = completion.caller.expect("attached caller gets failure");
+        assert_eq!(caller.kind, "failed");
+        assert_eq!(caller.release_node_id.as_deref(), Some("validate"));
+    }
+
+    #[test]
+    fn callerless_discard_completes_without_caller_projection() {
+        let outcome = Outcome {
+            status: WalkStatus::Completed,
+            result: serde_json::json!({"ok": true}),
+            failure: None,
+            hops: 1,
+            verdict: Some(Verdict::Discard),
+        };
+        let ProductionRouterAction::Complete(completion) =
+            production_router_action(&outcome, false).expect("discard maps")
+        else {
+            panic!("discard must complete the run");
+        };
+        assert_eq!(completion.status, RunStatus::Completed);
+        assert_eq!(completion.fail_kind, None);
+        assert_eq!(completion.caller, None);
+    }
+
+    #[test]
+    fn first_emit_verdict_wins_over_later_frontier_failure_or_cancellation() {
+        for status in [WalkStatus::Failed, WalkStatus::Cancelled] {
+            let outcome = Outcome {
+                status,
+                result: serde_json::Value::Null,
+                failure: (status == WalkStatus::Failed).then(|| wamn_router::Failure {
+                    node: "later".into(),
+                    kind: RouterFailureKind::SecondVerdict,
+                    detail: wamn_router::ErrorDetail::coded(
+                        "second-verdict",
+                        "later frontier reached another terminal",
+                    ),
+                }),
+                hops: 2,
+                verdict: Some(Verdict::Emit {
+                    event: serde_json::json!({"order": 42}),
+                    dedup_id: "wiring-1:7:first:d1".into(),
+                }),
+            };
+
+            assert_eq!(
+                production_router_action(&outcome, false).expect("first verdict maps"),
+                ProductionRouterAction::Emit {
+                    event: serde_json::json!({"order": 42}),
+                    dedup_id: "wiring-1:7:first:d1".into(),
+                },
+                "later {status:?} must not suppress the first emit verdict"
+            );
+        }
+    }
+
+    #[test]
+    fn running_outcome_is_refused_even_if_it_carries_a_verdict() {
+        let outcome = Outcome {
+            status: WalkStatus::Running,
+            result: serde_json::Value::Null,
+            failure: None,
+            hops: 1,
+            verdict: Some(Verdict::Discard),
+        };
+
+        let error = production_router_action(&outcome, false)
+            .expect_err("an in-progress router result is not a queue terminal");
+        assert_eq!(error.kind(), ProductionClaimErrorKind::Contract);
+        assert!(
+            error
+                .to_string()
+                .contains("router-returned-running-outcome")
+        );
     }
 
     #[test]

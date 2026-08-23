@@ -1,8 +1,7 @@
 -- Run-state storage schema (5.7). The production `runs` table persists one row
 -- per execution. This is the durable, queryable record behind run history and
--- at-least-once execution. The pure engine
--- (crates/execution/flow-engine, 5.2) is a single-shot in-memory reducer; these
--- tables are the facts the driver (components/execution/flowrunner) writes.
+-- at-least-once execution. The router is a single-shot in-memory walk; these
+-- tables are the facts its host-owned production driver writes.
 --
 -- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql, the
 -- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 gate
@@ -160,8 +159,8 @@ $$;
 -- A trigger cannot see WHICH statement is updating the row, so the erasure arm
 -- does not try to name its caller; it encodes the property that makes the
 -- erasure safe. Two legs remain, and each defends a distinct thing:
---   * STILL RUNNABLE. A terminal run keeps the audit link to the plan hashes it
---     finished under. Nothing reopens a terminal run's claimability, so nothing
+--   * STILL RUNNABLE. A terminal run keeps the audit link to the release closure
+--     it finished under. Nothing reopens a terminal run's claimability, so nothing
 --     needs to erase it.
 --   * NO IMMUTABLE EFFECT ATTEMPT, ON A `durable` RUN. An attributed effect
 --     names the release that fired it, and that link is never rewritten out
@@ -328,8 +327,7 @@ CREATE TABLE wamn_run.runs (
     -- once per claim attempt, enforced by `guard_run_admission_pins_immutable`.
     -- Both are NULL on the admitted row and move together. `release_version`
     -- is the release (catalog) version; `manifest_digest` is the RFC 8785
-    -- digest of that release's serving manifest, and therefore the audit link
-    -- from the run to the plan hashes it executed.
+    -- digest of that release's component/interface/wiring serving closure.
     release_version int,
     manifest_digest text,
     input_json      jsonb,

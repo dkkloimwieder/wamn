@@ -34,9 +34,9 @@ use wamn_run_state::queue::{
     claim_state, classify_production_claim, clear_pre_effect_state_sql, enqueue_evt_sql,
     enqueue_sql, grant_production_claim_sql, janitor_verdict_with_attempt, lease_deadline,
     lease_live, mint_evt_run_id, park_sql, parked_due_sql, plan_claim, production_claim_state,
-    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
-    serialize_effect_intent_sql, should_renew, terminalize_effect_uncertain_claim_sql,
-    terminalize_exhausted_production_sql,
+    renew_production_lease_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
+    select_production_claim_sql, serialize_effect_intent_sql, should_renew,
+    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
 };
 
 #[test]
@@ -220,7 +220,9 @@ fn the_class_gate_and_the_release_record_guard_move_together() {
 
     // The class itself is an admission pin: the column-scoped trigger must NAME
     // it or its transition arm never fires (wamn-0h0g.20.1 rider 1).
-    assert!(RUN_STATE_DDL.contains("execution_bundle_hash, capture_mode,\n                 durability_class, release_version, manifest_digest"));
+    assert!(RUN_STATE_DDL.contains(
+        "capture_mode,\n                 durability_class, wiring_id, wiring_version, release_version, manifest_digest"
+    ));
     assert!(guard.contains("NEW.durability_class IS DISTINCT FROM OLD.durability_class"));
 }
 
@@ -412,6 +414,10 @@ fn lease_and_park_arithmetic_remains_stable() {
     assert!(lease_live(1_249, Some(1_250)));
     assert!(!lease_live(1_250, Some(1_250)));
     assert!(should_renew(1_200, 1_250, 100));
+    let renew = renew_production_lease_sql();
+    assert!(renew.contains("lease_owner = $2"));
+    assert!(renew.contains("lease_generation = $3"));
+    assert!(renew.contains("lease_expires_at > statement_timestamp()"));
     let park = park_sql();
     assert!(park.contains("lease_owner = NULL, lease_expires_at = NULL"));
 }

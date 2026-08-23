@@ -43,8 +43,9 @@ pub fn enqueue_evt_sql() -> String {
 ///
 /// The projection is exactly what the host composer decodes: the run id, prior
 /// lease evidence, the status it validates, the authoritative input it hands
-/// the guest, the durability class it gates the rest of the turn on, and the
-/// immutable wiring pair admission froze. The
+/// the router, the durability class it gates the rest of the turn on, and the
+/// immutable wiring pair admission froze, plus the existing trigger-source
+/// classification that tells the router whether a caller is waiting. The
 /// release identity a claim records is NOT read here — it comes from the
 /// claiming pod, and the lease grant writes it.
 pub fn select_production_claim_sql() -> String {
@@ -75,7 +76,9 @@ pub fn select_production_claim_sql() -> String {
          ) \
          SELECT candidate.run_id, candidate.had_prior_lease, r.status, \
                 ({execution_input})::text AS input_json, \
-                r.durability_class, r.wiring_id, r.wiring_version \
+                r.durability_class, r.wiring_id, r.wiring_version, \
+                COALESCE(r.trigger_source IN ('http','internal','studio'), false) \
+                    AS caller_attached \
            FROM candidate \
            JOIN runs AS r \
              ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",
@@ -213,6 +216,24 @@ pub fn grant_production_claim_sql() -> String {
         running = RunStatus::Running.as_sql(),
         dispatched = RunStatus::Dispatched.as_sql(),
     )
+}
+
+/// Extend one live production lease under its exact owner/generation fence.
+///
+/// Params: run id, host-injected lease owner, lease generation, TTL
+/// milliseconds. A missing row is the complete fence-lost result: the caller
+/// must stop the in-flight router walk without another run-store access.
+pub fn renew_production_lease_sql() -> String {
+    "UPDATE run_queue AS q \
+        SET lease_expires_at = statement_timestamp() \
+            + ($4::bigint * interval '1 millisecond') \
+      WHERE q.tenant_id = current_setting('app.tenant', true) \
+        AND q.run_id = $1 \
+        AND q.lease_owner = $2 \
+        AND q.lease_generation = $3 \
+        AND q.lease_expires_at > statement_timestamp() \
+      RETURNING q.lease_expires_at"
+        .to_string()
 }
 
 /// Store exact effect uncertainty and dequeue without granting execution.

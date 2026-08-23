@@ -141,17 +141,14 @@ async fn native_effect_writer_live() {
             "INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('tenant-live-a','writer-catalog',1,'test','0.1','draft'); \
-             INSERT INTO catalog.execution_bundles \
-               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-             VALUES ('tenant-live-a','{EMPTY_HASH}','0.1',decode('7b7d','hex'),2); \
              INSERT INTO catalog.release_manifests \
                (tenant_id,catalog_id,catalog_version) \
              VALUES ('tenant-live-a','writer-catalog',1); \
              INSERT INTO wamn_run.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                environment,execution_bundle_hash,status) \
+                environment,wiring_id,wiring_version,status) \
              VALUES ('tenant-live-a','writer-run','root',1,'writer-catalog',1, \
-                     'test','{EMPTY_HASH}','running'); \
+                     'test','writer-wiring',1,'running'); \
              INSERT INTO wamn_run.run_queue \
                (tenant_id,run_id,lease_owner,lease_expires_at) \
              VALUES ('tenant-live-a','writer-run','writer-live','2099-01-01');"

@@ -31,10 +31,10 @@ mod common;
 
 use common::{
     COMPONENT, EMPTY_HASH, POD_MANIFEST_DIGEST, POD_RELEASE_VERSION, RUNTIME_APPLICATION_NAME,
-    SCHEMA, TENANT, WRITER_LATCH, assert_callerless_terminal, assert_prior_winner_terminal,
-    effect_attempt, expire_effect_run, install_fixture, install_prior_caller_winner,
-    make_callerless, ready_run, release_record, seed_durable_run, seed_live_effect_run, teardown,
-    wait_for_advisory_wait,
+    SCHEMA, TENANT, WIRING_ID, WIRING_VERSION, WRITER_LATCH, assert_callerless_terminal,
+    assert_prior_winner_terminal, effect_attempt, expire_effect_run, install_fixture,
+    install_prior_caller_winner, make_callerless, ready_run, release_record, seed_durable_run,
+    seed_live_effect_run, teardown, wait_for_advisory_wait,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -50,7 +50,6 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     let plugin = &fixture.plugin;
     let writer = &fixture.writer;
     let writer_role = fixture.writer_role.clone();
-    let release_hash = fixture.release_hash.clone();
 
     // A writer that fenced and validated while the lease was live may commit
     // after the lease expires. The reaper holds the row lock, waits on the same
@@ -67,11 +66,11 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
-                    environment,execution_bundle_hash,trigger_source,durability_class) \
-                 VALUES ($1,'effect-race','root',1,'running','cat-main',1,'test',$2,'http', \
+                    environment,wiring_id,wiring_version,trigger_source,durability_class) \
+                 VALUES ($1,'effect-race','root',1,'running','cat-main',1,'test',$2,$3,'http', \
                          'durable')"
             ),
-            &[&TENANT, &release_hash],
+            &[&TENANT, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     admin
@@ -177,7 +176,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         .expect_err("a new coordinate cannot begin after terminalization");
     assert_eq!(inactive_new.kind(), EffectWriterErrorKind::RunNotRunnable);
 
-    seed_live_effect_run(admin, "effect-callerless", &release_hash, 51).await?;
+    seed_live_effect_run(admin, "effect-callerless", 51).await?;
     make_callerless(admin, "effect-callerless").await?;
     writer
         .begin_attempt(effect_attempt("effect-callerless", "effect-node"))
@@ -193,7 +192,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     );
     assert_callerless_terminal(admin, "effect-callerless", "effect-uncertain").await?;
 
-    seed_live_effect_run(admin, "effect-winner", &release_hash, 52).await?;
+    seed_live_effect_run(admin, "effect-winner", 52).await?;
     let effect_winner = install_prior_caller_winner(admin, "effect-winner").await?;
     writer
         .begin_attempt(effect_attempt("effect-winner", "effect-node"))
@@ -220,7 +219,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     // (`crates/execution/run-state/src/queue/sql.rs`, `park_sql`).
     //
     // The claim is what records the pair, so the run is claimed first.
-    seed_durable_run(admin, "effect-pin", "cat-main", &release_hash, 80).await?;
+    seed_durable_run(admin, "effect-pin", "cat-main", 80).await?;
     assert_eq!(
         ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
         "effect-pin"

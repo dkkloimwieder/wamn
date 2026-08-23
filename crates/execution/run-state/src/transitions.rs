@@ -42,7 +42,6 @@ authority AS ( \
              ELSE 'ready' \
            END AS result_code, \
            r.tenant_id, r.run_id, r.status, \
-           r.execution_bundle_hash, \
            r.caller_outcome_kind, r.caller_outcome_json, \
            r.caller_http_status, r.caller_release_node_id, \
            r.caller_outcome_hash, r.caller_released_at, r.run_deadline_at \
@@ -141,6 +140,8 @@ pub fn release_caller_sql() -> String {
         "{FENCED_PREFIX}, \
          classified AS ( \
              SELECT CASE \
+                      WHEN a.result_code = 'run-terminal' \
+                       AND a.caller_released_at IS NOT NULL THEN 'already-released' \
                       WHEN a.result_code <> 'ready' THEN a.result_code \
                       WHEN a.caller_released_at IS NOT NULL THEN 'already-released' \
                       ELSE 'ready' \
@@ -214,7 +215,7 @@ impl TerminalizeResult {
 /// Take the first durable terminal result and remove its queue row atomically.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// terminal status, terminal reason, result JSON text.
+/// terminal status, terminal reason, result JSON text, failure kind.
 /// Completing a caller-attached run before caller release is a typed refusal.
 pub fn terminalize_sql() -> String {
     format!(
@@ -235,7 +236,7 @@ pub fn terminalize_sql() -> String {
          terminalized AS ( \
              UPDATE runs AS r \
                 SET status = $5, terminal_reason = $6, \
-                    result_json = $7::text::jsonb, updated_at = now() \
+                    result_json = $7::text::jsonb, fail_kind = $8, updated_at = now() \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
@@ -335,6 +336,15 @@ mod tests {
     }
 
     #[test]
+    fn terminal_caller_replay_still_returns_the_stored_cas_winner() {
+        let release = release_caller_sql();
+        assert!(release.contains(
+            "WHEN a.result_code = 'run-terminal' \
+                       AND a.caller_released_at IS NOT NULL THEN 'already-released'"
+        ));
+    }
+
+    #[test]
     fn duplicate_admission_constraint_is_a_typed_refusal() {
         let ddl = include_str!("../../../../deploy/sql/run-state.sql");
         assert!(ddl.contains("CONSTRAINT invocation_admissions_identity UNIQUE"));
@@ -375,6 +385,8 @@ mod tests {
         assert!(!terminal.contains("run_dead_letters"));
         assert!(!terminal.contains("partition_key"));
         assert!(!terminal.contains("partition_policy"));
+        assert!(terminal.contains("fail_kind = $8"));
+        assert!(!terminal.contains("execution_bundle_hash"));
     }
 
     #[test]

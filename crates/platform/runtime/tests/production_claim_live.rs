@@ -35,9 +35,9 @@ mod common;
 
 use common::{
     COMPONENT, EMPTY_HASH, POD_MANIFEST_DIGEST, POD_RELEASE_VERSION, ROLLED_COMPONENT,
-    ROLLED_MANIFEST_DIGEST, ROLLED_RELEASE_VERSION, SCHEMA, TENANT, assert_callerless_terminal,
-    assert_prior_winner_terminal, assert_terminal_status_dequeued, connect, digest,
-    expire_effect_run, install_fixture, install_prior_caller_winner, make_callerless,
+    ROLLED_MANIFEST_DIGEST, ROLLED_RELEASE_VERSION, SCHEMA, TENANT, WIRING_ID, WIRING_VERSION,
+    assert_callerless_terminal, assert_prior_winner_terminal, assert_terminal_status_dequeued,
+    connect, expire_effect_run, install_fixture, install_prior_caller_winner, make_callerless,
     queue_attempts, quote_literal, ready_run, release_record, seed_exhausted_run, seed_run,
     teardown,
 };
@@ -72,11 +72,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let fixture = install_fixture(&url).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
-    let release_hash = fixture.release_hash.clone();
 
     // Exact global FIFO: stream sequence, then run id, breaks equal timestamps.
     for (run_id, stream_seq) in [("fifo-c", 2), ("fifo-b", 1), ("fifo-a", 1)] {
-        seed_run(admin, run_id, "cat-main", &release_hash, stream_seq).await?;
+        seed_run(admin, run_id, "cat-main", stream_seq).await?;
     }
     let mut fifo = Vec::new();
     for _ in 0..3 {
@@ -88,8 +87,8 @@ async fn production_claim_live() -> anyhow::Result<()> {
 
     // A second claimer skips the exact FIFO head while the first claimer holds
     // its production row locks, then the rolled-back head remains claimable.
-    seed_run(admin, "double-a", "cat-main", &release_hash, 10).await?;
-    seed_run(admin, "double-b", "cat-main", &release_hash, 11).await?;
+    seed_run(admin, "double-a", "cat-main", 10).await?;
+    seed_run(admin, "double-b", "cat-main", 11).await?;
     let first_claimer = connect(&url).await?;
     first_claimer
         .batch_execute(&format!(
@@ -124,16 +123,16 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
-                    environment,execution_bundle_hash,input_json,state_json,invocation_context, \
+                    environment,wiring_id,wiring_version,input_json,state_json,invocation_context, \
                     trigger_source,event_source_run_id,event_root_run_id,event_depth, \
                     admission_context_version,platform_revision,capture_mode,idempotency_key, \
                     response_deadline_at,run_deadline_at) \
-                 VALUES ($1,'pre-effect','root',1,'running','cat-main',1,'test',$2, \
+                 VALUES ($1,'pre-effect','root',1,'running','cat-main',1,'test',$2,$3, \
                     '{{\"input\":7}}','{{\"cursor\":9}}','{{\"source\":{{\"case\":\"a\"}}}}', \
                     'event','source-run','root-run',3,'0.1','platform-a','full','idem-a', \
                     '2030-01-01','2030-01-02')"
             ),
-            &[&TENANT, &release_hash],
+            &[&TENANT, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     admin
@@ -161,19 +160,23 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .get::<_, String>(0),
     )?;
     let pre_effect = plugin.claim_next_production(COMPONENT, 30_000).await?;
-    let (run_id, payload, lease_generation) = match pre_effect {
+    let (run_id, payload, lease_generation, wiring_id, wiring_version) = match pre_effect {
         ProductionClaimResult::Ready {
             run_id,
             payload,
             lease_generation,
+            wiring_id,
+            wiring_version,
             ..
-        } => (run_id, payload, lease_generation),
+        } => (run_id, payload, lease_generation, wiring_id, wiring_version),
         other => panic!("expected pre-effect retry to execute, got {other:?}"),
     };
     assert_eq!(run_id, "pre-effect");
     assert_eq!(lease_generation, 5);
+    assert_eq!(wiring_id, WIRING_ID);
+    assert_eq!(wiring_version, WIRING_VERSION);
     assert_eq!(
-        serde_json::from_str::<Value>(&payload)?,
+        payload,
         json!({
             "input": 7,
             "causation": {"run": "pre-effect", "root": "root-run", "depth": 3}
@@ -220,10 +223,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
-                    environment,execution_bundle_hash,trigger_source) \
-                 VALUES ($1,'janitor','root',1,'running','cat-main',1,'test',$2,'http')"
+                    environment,wiring_id,wiring_version,trigger_source) \
+                 VALUES ($1,'janitor','root',1,'running','cat-main',1,'test',$2,$3,'http')"
             ),
-            &[&TENANT, &release_hash],
+            &[&TENANT, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     admin
@@ -273,7 +276,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert!(janitor.get::<_, bool>(5));
     assert!(!janitor.get::<_, bool>(6));
 
-    seed_exhausted_run(admin, "janitor-callerless", &release_hash, 61).await?;
+    seed_exhausted_run(admin, "janitor-callerless", 61).await?;
     make_callerless(admin, "janitor-callerless").await?;
     assert_eq!(
         plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
@@ -283,7 +286,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_callerless_terminal(admin, "janitor-callerless", "infrastructure-failure").await?;
 
-    seed_exhausted_run(admin, "janitor-winner", &release_hash, 62).await?;
+    seed_exhausted_run(admin, "janitor-winner", 62).await?;
     let janitor_winner = install_prior_caller_winner(admin, "janitor-winner").await?;
     assert_eq!(
         plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
@@ -308,7 +311,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // tenant forever. The advance now runs before the grant's subtransaction,
     // so a refusal still counts as crash evidence. A probe trigger stands in
     // for any database guard that can refuse the grant.
-    seed_run(admin, "grant-refused", "cat-main", &release_hash, 65).await?;
+    seed_run(admin, "grant-refused", "cat-main", 65).await?;
     admin
         .execute(
             &format!(
@@ -389,7 +392,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // Nothing else in this file is downstream of the row: it is dequeued by the
     // reap, and the ledger row it leaves behind is correlated by `run_id` in
     // every statement that reads one.
-    seed_exhausted_run(admin, "standard-ledger", &release_hash, 66).await?;
+    seed_exhausted_run(admin, "standard-ledger", 66).await?;
     admin
         .execute(
             &format!(
@@ -446,21 +449,12 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // ---- the claim-time release record (wamn-0h0g.15.11, carrying the two
     // surviving proof legs of the superseded wamn-0h0g.4.14) -----------------
     //
-    // MID-RUN REPUBLISH INVISIBILITY. The run is admitted under catalog version
-    // 1; a republish then lands version 2 between admission and claim. The pair
-    // the claim records is the CLAIMING POD's (version 7), so it matches neither
-    // the admitted release nor the republished one, and the run's own admission
-    // identity is untouched.
-    seed_run(admin, "release-record", "cat-main", &release_hash, 70).await?;
+    // CLAIM-TIME POD IDENTITY IS INDEPENDENT OF ADMISSION IDENTITY. The run is
+    // admitted under catalog version 1, while the pair the claim records is the
+    // CLAIMING POD's version 7 manifest. The claim must not rewrite the run's
+    // own immutable admission identity.
+    seed_run(admin, "release-record", "cat-main", 70).await?;
     assert_eq!(release_record(admin, "release-record").await?, (None, None));
-    admin
-        .execute(
-            "INSERT INTO catalog.release_flows \
-               (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) \
-             VALUES ($1,'cat-main',2,'root',1,$2)",
-            &[&TENANT, &release_hash],
-        )
-        .await?;
     assert_eq!(
         ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
         "release-record"
@@ -482,7 +476,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .await?
             .get::<_, i32>(0),
         1,
-        "a republish must not move the run's admitted release either"
+        "claim-time release recording must not move the admitted catalog version"
     );
 
     // SAME-RELEASE RE-CLAIM. The classifier's pre-effect reclaim clears the
@@ -566,7 +560,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(release_record(admin, "release-record").await?, rerecorded);
 
     // A TERMINAL STATUS STILL DOES REFUSE IT: a finished run keeps the audit
-    // link to the plan hashes it ran, on every class.
+    // link to the release closure it ran, on every class.
     admin
         .execute(
             &format!(
@@ -585,7 +579,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &[&TENANT],
         )
         .await
-        .expect_err("a terminal run keeps the audit link to the plan hashes it ran");
+        .expect_err("a terminal run keeps the audit link to its release closure");
     assert_eq!(
         terminal
             .as_db_error()
@@ -613,7 +607,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // forever: a released lease is not crash evidence, so the refusal spent no
     // budget, the janitor could never reap the run, and it stayed its tenant's
     // FIFO head.
-    seed_run(admin, "park-wake", "cat-main", &release_hash, 71).await?;
+    seed_run(admin, "park-wake", "cat-main", 71).await?;
     assert_eq!(
         ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
         "park-wake"
@@ -660,30 +654,6 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &[&TENANT],
         )
         .await?;
-
-    // WHERE THE FIVE RESOLUTION FAIL KINDS WENT (wamn-0h0g.15.67). Until
-    // wamn-0h0g.15.10 the claim resolved the run's release here and a bundle whose
-    // bytes did not hash to their name was terminalized `hash-invalid-bytes`
-    // before any lease was granted. Resolution left the claim with that commit, so
-    // `unresolvable-name`, `hash-invalid-bytes`, `foreign-revision`,
-    // `incompatible-contract` and `unbound-requirement` have no producer anywhere
-    // in the tree — deliberately, not by omission: the claim is
-    // lock/classify/lease and reads no catalog at all. Hash-at-transfer
-    // verification lives on the supply path now
-    // (`plugins::runner_plan_supply`'s `insert_verified`), refuses as
-    // `SupplyError::HashMismatch`, and is proven live in
-    // `tests/oci_plan_source_live.rs`.
-    //
-    // So this claims a run whose named bundle was never published to the catalog
-    // at all, and it must LEASE. That is the deleted assertion restored inverted,
-    // which is the point of keeping it: a reintroduced claim-time verification
-    // fails right here rather than silently re-pinning runs to a release.
-    let unpublished = digest(b"a bundle no catalog row carries");
-    seed_run(admin, "unpublished", "cat-main", &unpublished, 72).await?;
-    assert_eq!(
-        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
-        "unpublished"
-    );
 
     teardown(fixture).await
 }
