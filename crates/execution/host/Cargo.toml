@@ -1,6 +1,6 @@
 [package]
 name = "wamn-execution-host"
-description = "Shared production router driver and component instance pool."
+description = "Shared production router driver."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -45,11 +45,6 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component, Linker};
 
-use crate::{
-    ExecutionInstancePool, ExecutionPoolKey, ExecutionPoolLimits, INVOCATIONS_PER_INSTANCE,
-    InvocationDisposition, ReusableExecutionInstance,
-};
-
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         path: "../router/wit",
@@ -319,11 +314,10 @@ pub struct RouterDelivery {
     pub outcome: Outcome,
 }
 
-/// Read-only lifecycle totals for the two bounded driver stores.
+/// Read-only lifecycle totals for the bounded driver store.
 #[derive(Debug, Clone)]
 pub struct RouterDriverSnapshot {
     pub wiring_cache: WiringCacheSnapshot,
-    pub instances: crate::ExecutionPoolSnapshot,
 }
 
 /// The synchronous release closure made resident by one readiness evaluation.
@@ -366,8 +360,8 @@ enum ExecutionClosure<'a> {
     },
 }
 
-/// One router, cache, artifact source, and digest-keyed instance pool per
-/// serving process. Both process leaves construct this exact type.
+/// One router, cache, and artifact source per serving process. Both process
+/// leaves construct this exact type.
 pub struct RouterDriver {
     engine: Arc<Engine>,
     postgres: Arc<WamnPostgres>,
@@ -378,7 +372,6 @@ pub struct RouterDriver {
     source: ComponentArtifactSource,
     config: RouterDriverConfig,
     cache: Arc<WiringCache<CatalogFacts>>,
-    instances: ExecutionInstancePool<NodeInstance>,
     _doorbell: WiringDoorbellListener,
     started: Instant,
 }
@@ -389,7 +382,6 @@ impl fmt::Debug for RouterDriver {
             .debug_struct("RouterDriver")
             .field("config", &self.config)
             .field("cache", &self.cache.snapshot())
-            .field("instances", &self.instances.snapshot())
             .finish_non_exhaustive()
     }
 }
@@ -421,13 +413,6 @@ impl RouterDriver {
             Some(config.project.clone()),
             Arc::clone(&cache),
         )?;
-        let instances = ExecutionInstancePool::new(ExecutionPoolLimits {
-            max_instances: 512,
-            max_reserved_bytes: MEMORY_CAP_BYTES.saturating_mul(512),
-            max_idle_per_digest: 8,
-            max_invocations_per_instance: INVOCATIONS_PER_INSTANCE,
-            max_idle_age: Duration::from_secs(60),
-        })?;
         Ok(Self {
             engine,
             postgres,
@@ -438,7 +423,6 @@ impl RouterDriver {
             source,
             config,
             cache,
-            instances,
             _doorbell: doorbell,
             started: Instant::now(),
         })
@@ -447,7 +431,6 @@ impl RouterDriver {
     pub fn snapshot(&self) -> RouterDriverSnapshot {
         RouterDriverSnapshot {
             wiring_cache: self.cache.snapshot(),
-            instances: self.instances.snapshot(),
         }
     }
 
@@ -468,8 +451,8 @@ impl RouterDriver {
     /// request readiness set. Every selected wiring is resolved through this
     /// driver's one cache, every admitted component tuple is checked against the
     /// welded manifest, all of its exact environment bindings are proven, and
-    /// one clean instance per digest is atomically inserted into this driver's
-    /// existing pool. No node handler is invoked.
+    /// one clean instance per digest is instantiated and dropped to prove the
+    /// closure is servable. No node handler is invoked.
     pub(crate) async fn prepare_synchronous_release(
         &self,
     ) -> anyhow::Result<PreparedReleaseReadiness> {
@@ -544,10 +527,8 @@ impl RouterDriver {
             verified.push((component, bytes));
         }
 
-        let mut instances = Vec::with_capacity(component_count);
         for (component, bytes) in verified {
-            let key = ExecutionPoolKey::new(component.component_digest.clone());
-            let instance = NodeInstance::instantiate(
+            NodeInstance::instantiate(
                 &self.engine,
                 &bytes,
                 Arc::clone(&self.postgres),
@@ -566,11 +547,7 @@ impl RouterDriver {
                     component.component_digest
                 )
             })?;
-            instances.push((key, instance));
         }
-        self.instances
-            .insert_batch(instances)
-            .context("preload release component instances")?;
         Ok(PreparedReleaseReadiness {
             synchronous_wirings: targets.len(),
             component_digests: component_count,
@@ -587,8 +564,8 @@ impl RouterDriver {
             .await
     }
 
-    /// Execute a DB-frozen candidate through the same router, invoker, and
-    /// digest-keyed instance pool as release-backed delivery.
+    /// Execute a DB-frozen candidate through the same router and invoker as
+    /// release-backed delivery.
     pub async fn execute_candidate(
         &self,
         request: CandidateCaseRequest,
@@ -1111,51 +1088,45 @@ impl RouterDriver {
                 closure: connection_closure,
             },
         };
-        let key = ExecutionPoolKey::new(component.component_digest.clone());
-        let mut lease = match self.instances.checkout(&key, &acquisition)? {
-            Some(lease) => lease,
+        let candidate_bytes = match closure {
+            ExecutionClosure::Released => None,
+            ExecutionClosure::Candidate {
+                component_bytes, ..
+            } => Some(
+                component_bytes
+                    .get(&component.component_digest)
+                    .ok_or_else(|| {
+                        CandidateExecutionRefusal::new(
+                            CandidateExecutionRefusalKind::Artifact,
+                            "candidate-component-bytes-missing",
+                        )
+                    })?,
+            ),
+        };
+        let pulled_bytes;
+        let bytes = match candidate_bytes {
+            Some(bytes) => bytes.as_slice(),
             None => {
-                let candidate_bytes = match closure {
-                    ExecutionClosure::Released => None,
-                    ExecutionClosure::Candidate {
-                        component_bytes, ..
-                    } => Some(
-                        component_bytes
-                            .get(&component.component_digest)
-                            .ok_or_else(|| {
-                                CandidateExecutionRefusal::new(
-                                    CandidateExecutionRefusalKind::Artifact,
-                                    "candidate-component-bytes-missing",
-                                )
-                            })?,
-                    ),
-                };
-                let pulled_bytes;
-                let bytes = match candidate_bytes {
-                    Some(bytes) => bytes.as_slice(),
-                    None => {
-                        pulled_bytes = self.source.pull_verified(component).await?;
-                        pulled_bytes.as_slice()
-                    }
-                };
-                let instance = NodeInstance::instantiate(
-                    &self.engine,
-                    bytes,
-                    Arc::clone(&self.postgres),
-                    Arc::clone(&self.credentials),
-                    Arc::clone(&self.logging),
-                    Arc::clone(&self.allowed_hosts),
-                    Arc::clone(&self.release),
-                    &self.config,
-                    &request.tenant_id,
-                    component,
-                )
-                .await?;
-                self.instances
-                    .checkout_new(key, instance, &acquisition)?
-                    .ok_or_else(|| anyhow::anyhow!("component-instance-pool-capacity"))?
+                pulled_bytes = self.source.pull_verified(component).await?;
+                pulled_bytes.as_slice()
             }
         };
+        let mut instance = NodeInstance::instantiate(
+            &self.engine,
+            bytes,
+            Arc::clone(&self.postgres),
+            Arc::clone(&self.credentials),
+            Arc::clone(&self.logging),
+            Arc::clone(&self.allowed_hosts),
+            Arc::clone(&self.release),
+            &self.config,
+            &request.tenant_id,
+            component,
+        )
+        .await?;
+        instance
+            .bind_identity(&acquisition)
+            .with_context(|| format!("bind identity to {} instance", component.component_digest))?;
         let deadline_ms = bounded_node_deadline_ms(call.deadline_ms);
         let context = node_types::NodeContext {
             wiring_id: request.wiring_id.clone(),
@@ -1170,25 +1141,12 @@ impl RouterDriver {
             config: serde_json::to_string(&call.config).context("encode node config")?,
         };
         let input = serde_json::to_string(&call.payload).context("encode node input")?;
-        let invoked = lease
-            .instance_mut()
+        // The instance is destroyed at the end of this invocation either way;
+        // its `Drop` clears the identity it was bound to before it goes.
+        instance
             .run(&context, &input, deadline_ms)
-            .await;
-        match invoked {
-            Ok(outcome) => {
-                let disposition = if matches!(&outcome, Err(node_types::NodeError::Cancelled)) {
-                    InvocationDisposition::Cancelled
-                } else {
-                    InvocationDisposition::Reusable
-                };
-                lease.finish(disposition)?;
-                lower_node_outcome(outcome)
-            }
-            Err(error) => {
-                lease.finish(InvocationDisposition::Trap)?;
-                Err(error)
-            }
-        }
+            .await
+            .and_then(lower_node_outcome)
     }
 
     fn now_ms(&self) -> u64 {
@@ -1217,32 +1175,6 @@ struct NodeAcquisition {
     claims: SessionClaims,
     invocation: ConnectionInvocation,
 }
-
-#[derive(Debug)]
-struct NodeIdentityBindError(anyhow::Error);
-
-impl fmt::Display for NodeIdentityBindError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-impl std::error::Error for NodeIdentityBindError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct NodeResetUnavailable;
-
-impl fmt::Display for NodeResetUnavailable {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("node instance cannot prove guest-memory reset")
-    }
-}
-
-impl std::error::Error for NodeResetUnavailable {}
 
 struct NodeInstance {
     store: Store<SharedCtx>,
@@ -1345,7 +1277,7 @@ impl NodeInstance {
         // Linker setup is not an identity bind. In particular WamnLogging's
         // plugin hook seeds even an empty claim. Clear every registry before
         // component instantiation so start functions cannot exercise tenant
-        // authority; pool checkout is the sole identity installation point.
+        // authority; `bind_identity` is the sole identity installation point.
         postgres.revoke_session_claims(&scope);
         logging.clear_claim(&scope);
         connection_http.revoke_invocation(&scope);
@@ -1389,21 +1321,16 @@ impl NodeInstance {
             .await
             .map_err(|error| anyhow::anyhow!("wamn:node handler.run trapped: {error}"))
     }
-}
 
-impl ReusableExecutionInstance for NodeInstance {
-    type Identity = NodeAcquisition;
-    type BindError = NodeIdentityBindError;
-    type ResetError = NodeResetUnavailable;
-
-    fn reserved_bytes(&self) -> usize {
-        MEMORY_CAP_BYTES
-    }
-
-    fn bind_identity(&mut self, identity: &Self::Identity) -> Result<(), Self::BindError> {
+    /// Bind EVERY identity-derived registry entry of this instance.
+    ///
+    /// Called once, before the guest runs, so no instance is ever invoked under
+    /// an identity other than the one acquiring it. An element that is
+    /// identity-derived and not bound here is a cross-tenant leak channel; add
+    /// it to [`revoke_identity`](Self::revoke_identity) in the same change.
+    fn bind_identity(&mut self, identity: &NodeAcquisition) -> anyhow::Result<()> {
         self.postgres
-            .bind_session_claims(&self.scope, &identity.claims)
-            .map_err(NodeIdentityBindError)?;
+            .bind_session_claims(&self.scope, &identity.claims)?;
         self.logging.set_claim(
             &self.scope,
             &identity.claims.tenant,
@@ -1419,19 +1346,26 @@ impl ReusableExecutionInstance for NodeInstance {
         {
             self.logging.clear_claim(&self.scope);
             self.postgres.revoke_session_claims(&self.scope);
-            return Err(NodeIdentityBindError(error));
+            return Err(error);
         }
         Ok(())
     }
 
+    /// Clear every element [`bind_identity`](Self::bind_identity) installed.
+    ///
+    /// Each call is a scope-keyed removal that `instantiate` already makes with
+    /// nothing bound, so this is safe on an unbound instance and runs from
+    /// `Drop` on every path that ends an invocation, cancellation included.
     fn revoke_identity(&mut self) {
         self.connection_http.revoke_invocation(&self.scope);
         self.logging.clear_claim(&self.scope);
         self.postgres.revoke_session_claims(&self.scope);
     }
+}
 
-    fn reset_invocation_state(&mut self) -> Result<(), Self::ResetError> {
-        Err(NodeResetUnavailable)
+impl Drop for NodeInstance {
+    fn drop(&mut self) {
+        self.revoke_identity();
     }
 }
 

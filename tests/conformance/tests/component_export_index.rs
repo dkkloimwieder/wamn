@@ -1,4 +1,4 @@
-//! Cross-component fencing proof for the digest-keyed node instance pool
+//! Cross-component fencing proof for the driver's node instances
 //! (wamn-0h0g.17.8).
 //!
 //! The production driver stores the generated `bindings::Node` descriptor in
@@ -57,11 +57,7 @@ fn production_node_instances_keep_the_generated_typed_export_descriptor() {
     let node_instance = DRIVER
         .split("struct NodeInstance {")
         .nth(1)
-        .and_then(|source| {
-            source
-                .split("impl ReusableExecutionInstance for NodeInstance")
-                .next()
-        })
+        .and_then(|source| source.split("impl Drop for NodeInstance").next())
         .expect("production NodeInstance section");
 
     for required in [
@@ -81,8 +77,4 @@ fn production_node_instances_keep_the_generated_typed_export_descriptor() {
             "NodeInstance added a name-keyed export path at {forbidden:?}"
         );
     }
-    assert!(
-        DRIVER.contains("ExecutionPoolKey::new(component.component_digest.clone())"),
-        "the node instance pool stopped deriving its key from the admitted component digest"
-    );
 }

@@ -1,16 +1,9 @@
-//! Shared production router driver and digest-keyed component instance pool.
+//! Shared production router driver.
 
-mod pool;
 mod readiness;
 mod router_delivery;
 mod router_driver;
 
-pub use pool::{
-    ExecutionInstancePool, ExecutionLease, ExecutionPoolKey, ExecutionPoolLimits,
-    ExecutionPoolSnapshot, INVOCATIONS_PER_INSTANCE, IdentityBindFailed,
-    InvalidExecutionPoolLimits, InvocationDisposition, PoolCapacityError, PoolCleanupError,
-    RetirementReason, ReusableExecutionInstance,
-};
 pub use readiness::{
     RELEASE_READINESS_CHECK_FAILED, RELEASE_READINESS_INVALIDATED, RouterReadinessProbe,
     RouterReadinessSnapshot, RouterReadinessStatus,

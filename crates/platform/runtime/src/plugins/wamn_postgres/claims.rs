@@ -2778,21 +2778,19 @@ mod tests {
         )
     }
 
-    /// wamn-0h0g.17.7 — two tenants bound through the checkout seam, INTERLEAVED,
-    /// each seeing only its own rows under real RLS.
+    /// wamn-0h0g.17.7 — two tenants bound through the acquisition seam,
+    /// INTERLEAVED, each seeing only its own rows under real RLS.
     ///
-    /// [`WamnPostgres::bind_session_claims`] is exactly what
-    /// `ExecutionInstancePool::checkout` calls, and `app.tenant` is exactly what
-    /// the tenant policy gates on, so this is the row-level half of the seam's
-    /// acceptance: `tests/conformance/tests/execution_pool_checkout_identity.rs`
-    /// proves two concurrent checkouts on ONE digest pool bind two different
-    /// claim sets, and this proves that two such claim sets admit two disjoint
-    /// row sets on a server that cannot be talked out of it — the probe role is
-    /// NOSUPERUSER NOBYPASSRLS.
+    /// [`WamnPostgres::bind_session_claims`] is exactly what the router driver
+    /// calls on the instance serving one invocation, and `app.tenant` is exactly
+    /// what the tenant policy gates on, so this is the row-level half of the
+    /// seam's acceptance: two such claim sets admit two disjoint row sets on a
+    /// server that cannot be talked out of it — the probe role is NOSUPERUSER
+    /// NOBYPASSRLS.
     ///
     /// The interleaving is what makes it adversarial: A reads, B reads, A reads
-    /// again. An implementation holding one claim per pool rather than one per
-    /// acquisition passes the first two reads and fails the third.
+    /// again. An implementation holding one claim per component rather than one
+    /// per acquisition passes the first two reads and fails the third.
     #[tokio::test]
     async fn live_interleaved_bound_scopes_each_see_only_their_own_rows() {
         const TENANT_A: &str = "seam-live-a";
