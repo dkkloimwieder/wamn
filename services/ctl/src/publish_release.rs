@@ -93,6 +93,14 @@ INSERT INTO catalog.release_manifest_v2_snapshots \
        (tenant_id, catalog_id, catalog_version, manifest_digest, canonical_bytes) \
 VALUES ($1, $2, $3, $4, $5)";
 
+// A publisher reads a frozen row outside any freeze, so it must not carry the
+// mint's FOR SHARE: row locking needs UPDATE, DELETE, or TRUNCATE on the table,
+// and the schema grants the serving role SELECT alone.
+const READ_RELEASE_SNAPSHOT_SQL: &str = "\
+SELECT canonical_bytes \
+  FROM catalog.release_manifest_v2_snapshots \
+ WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3";
+
 /// One exact wiring version included in a release closure.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ReleaseWiringTarget {
@@ -414,6 +422,31 @@ pub async fn mint_release_manifest(
         digest,
         canonical_bytes,
     })
+}
+
+/// Read the exact canonical bytes one minted release froze, if it is minted.
+///
+/// Only the bytes are returned: the frozen digest is `sha256(canonical_bytes)`
+/// by table constraint, and the publisher re-derives release identity from the
+/// bytes it is about to push rather than trusting a second carrier.
+pub async fn read_release_snapshot(
+    transaction: &Transaction<'_>,
+    tenant_id: &str,
+    catalog_id: &str,
+    catalog_version: i32,
+) -> Result<Option<Vec<u8>>, MintManifestError> {
+    transaction
+        .query_one(CLAIM_TENANT_SQL, &[&tenant_id])
+        .await
+        .map_err(|error| storage("claim the release tenant", error))?;
+    let snapshot = transaction
+        .query_opt(
+            READ_RELEASE_SNAPSHOT_SQL,
+            &[&tenant_id, &catalog_id, &catalog_version],
+        )
+        .await
+        .map_err(|error| storage("read the frozen v2 manifest snapshot", error))?;
+    Ok(snapshot.map(|row| row.get(0)))
 }
 
 async fn load_component_facts(

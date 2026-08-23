@@ -1,9 +1,13 @@
 //! Live proof that serving-manifest v2 is minted from current catalog facts.
 //!
 //! Set `WAMN_RELEASE_MANIFEST_MINT_PG_URL` to a disposable PostgreSQL 18
-//! database. The test drops and recreates its `catalog` schema.
+//! database. The live tests drop and recreate its `catalog` schema, so each one
+//! holds the shared control live-database lock for the whole of its run.
+
+mod support;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use tokio_postgres::error::SqlState;
@@ -16,8 +20,11 @@ use wamn_catalog::{
 };
 use wamn_ctl::publish_catalog::ensure_catalog_storage;
 use wamn_ctl::publish_release::{
-    MintManifestErrorKind, MintReleaseManifest, RELEASE_MANIFEST_MINT_REFUSAL, ReleaseWiringTarget,
-    mint_release_manifest,
+    MintManifestErrorKind, MintReleaseManifest, PublishReleaseArgs, RELEASE_MANIFEST_MINT_REFUSAL,
+    ReleaseWiringTarget, mint_release_manifest,
+};
+use wamn_ctl::push_release_manifest::{
+    PushReleaseManifestArgs, ReleaseManifestPublishDisposition, publish_release_manifest,
 };
 use wamn_flow::EntryKind;
 use wamn_schema_control::{
@@ -361,6 +368,7 @@ fn registrations() -> BTreeMap<String, ServingRegistration> {
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18 URL in WAMN_RELEASE_MANIFEST_MINT_PG_URL"]
 async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
+    let _lock = support::lock();
     let url = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL")
         .expect("WAMN_RELEASE_MANIFEST_MINT_PG_URL names a disposable PostgreSQL 18 database");
     let (mut admin, task) = connect(&url).await;
@@ -600,6 +608,133 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
     assert_eq!(refusal.kind(), MintManifestErrorKind::ClosureConflict);
     transaction.rollback().await.expect("close the refusal");
 
+    drop(admin);
+    let _ = task.await;
+}
+
+/// Write one hand-authored interim document and return its path.
+fn write_document<T: serde::Serialize>(directory: &Path, name: &str, document: &T) -> PathBuf {
+    let path = directory.join(name);
+    std::fs::write(
+        &path,
+        serde_json::to_vec(document).expect("interim document serializes"),
+    )
+    .expect("write the interim release document");
+    path
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable PostgreSQL 18 URL in WAMN_RELEASE_MANIFEST_MINT_PG_URL plus a \
+            disposable repository in WAMN_RELEASE_MANIFEST_ARTIFACT_BASE and its \
+            WAMN_REGISTRY_AUTH_FILE credential"]
+async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
+    let _lock = support::lock();
+    let url = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL")
+        .expect("WAMN_RELEASE_MANIFEST_MINT_PG_URL names a disposable PostgreSQL 18 database");
+    let artifact_base = std::env::var("WAMN_RELEASE_MANIFEST_ARTIFACT_BASE")
+        .expect("set WAMN_RELEASE_MANIFEST_ARTIFACT_BASE to a disposable repository");
+    let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
+        .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
+
+    let (admin, task) = connect(&url).await;
+    provision(&admin).await;
+    seed_release(&admin, CATALOG_VERSION, "applied").await;
+    seed_component(&admin, "http-request", COMPONENT_A).await;
+    seed_component(&admin, "transform", COMPONENT_B).await;
+    let orders = wiring("orders", 1, "http-request", WiringTerminal::Respond);
+    let shipping = wiring(
+        "shipping",
+        2,
+        "transform",
+        WiringTerminal::emit("orders", WiringEventOperation::Insert),
+    );
+    seed_wiring(&admin, &orders, orders.wiring_hash().as_str()).await;
+    seed_wiring(&admin, &shipping, shipping.wiring_hash().as_str()).await;
+
+    let documents =
+        std::env::temp_dir().join(format!("wamn-publish-release-{}", std::process::id()));
+    std::fs::create_dir_all(&documents).expect("create the interim document directory");
+    let attachments_path = write_document(&documents, "attachments.json", &attachments());
+    let registrations_path = write_document(&documents, "registrations.json", &registrations());
+
+    // The first release in this environment is minted by the CLI verb alone:
+    // no hand SQL, no Rust test calling the mint, no source release to promote.
+    wamn_ctl::publish_release::run(PublishReleaseArgs {
+        database_url: url.clone(),
+        tenant: TENANT.to_string(),
+        catalog_id: CATALOG.to_string(),
+        catalog_version: CATALOG_VERSION as u32,
+        wirings: targets().into_iter().collect(),
+        attachments: attachments_path,
+        registrations: registrations_path,
+    })
+    .await
+    .expect("the interim publish verb mints a first release");
+
+    let frozen = admin
+        .query_one(
+            "SELECT manifest_digest, canonical_bytes \
+             FROM catalog.release_manifest_v2_snapshots \
+             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+            &[&TENANT, &CATALOG, &CATALOG_VERSION],
+        )
+        .await
+        .expect("the CLI mint froze one v2 snapshot");
+    let frozen_digest: String = frozen.get(0);
+    let frozen_bytes: Vec<u8> = frozen.get(1);
+    let (manifest, digest) = ServingManifest::from_canonical_bytes(&frozen_bytes)
+        .expect("the frozen snapshot is a canonical v2 manifest");
+    assert_eq!(digest.as_str(), frozen_digest);
+    assert_eq!(manifest.release.environment, ENVIRONMENT);
+    assert_eq!(manifest.attachments, attachments());
+    assert_eq!(manifest.registrations, registrations());
+
+    // The bridge: the push verb reads those exact bytes out of the snapshot row
+    // rather than being handed a file a human copied out of PostgreSQL. It runs
+    // on the least-privileged production connection, whose forced row-level
+    // security reveals the snapshot only under the claimed tenant.
+    admin
+        .batch_execute("ALTER ROLE wamn_app LOGIN PASSWORD 'release-reader'")
+        .await
+        .expect("give the app role a live-test password");
+    let mut reader_url = url::Url::parse(&url).expect("the live database URL parses");
+    reader_url
+        .set_username("wamn_app")
+        .expect("name the app role");
+    reader_url
+        .set_password(Some("release-reader"))
+        .expect("carry the app role password");
+
+    wamn_ctl::push_release_manifest::run(PushReleaseManifestArgs {
+        manifest: None,
+        database_url: Some(reader_url.to_string()),
+        tenant: Some(TENANT.to_string()),
+        catalog_id: Some(CATALOG.to_string()),
+        catalog_version: Some(CATALOG_VERSION as u32),
+        artifact_base: artifact_base.clone(),
+        registry_auth_file: PathBuf::from(&registry_auth_file),
+        insecure_registry: true,
+    })
+    .await
+    .expect("the snapshot bridge publishes the minted release");
+
+    // AlreadyPresent is returned only after the tag named by the frozen digest
+    // is pulled back and its layout, config, and body proved byte-exact.
+    let published = publish_release_manifest(
+        &frozen_bytes,
+        &artifact_base,
+        true,
+        Path::new(&registry_auth_file),
+    )
+    .await
+    .expect("the published artifact reads back");
+    assert_eq!(published.digest.as_str(), frozen_digest);
+    assert_eq!(
+        published.disposition,
+        ReleaseManifestPublishDisposition::AlreadyPresent
+    );
+
+    std::fs::remove_dir_all(&documents).expect("remove the interim document directory");
     drop(admin);
     let _ = task.await;
 }

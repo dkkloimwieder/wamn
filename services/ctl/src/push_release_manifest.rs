@@ -3,6 +3,11 @@
 //! The manifest's RFC 8785 SHA-256 identity derives its immutable OCI tag. An
 //! exact retry pulls and verifies the existing artifact and performs no push.
 //! A tag holding any other layout or bytes refuses instead of being replaced.
+//!
+//! The bytes come from a file or, given a release coordinate, straight from the
+//! `catalog.release_manifest_v2_snapshots` row the mint froze. The snapshot
+//! source exists so that publishing a minted release never depends on a human
+//! copying canonical bytes out of PostgreSQL byte-exactly.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -15,12 +20,15 @@ use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
+use tokio_postgres::{Client as PgClient, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest};
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs, release_manifest_artifact_layout,
     release_manifest_artifact_reference, verify_release_manifest_artifact_layout,
 };
+
+use crate::publish_release::read_release_snapshot;
 
 /// Bound each registry connect/read phase without adding a deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -134,8 +142,29 @@ pub struct PublishedReleaseManifest {
 #[derive(Debug, Args)]
 pub struct PushReleaseManifestArgs {
     /// File containing the exact canonical format-2 ServingManifest JSON.
-    #[arg(long)]
-    pub manifest: PathBuf,
+    #[arg(
+        long,
+        required_unless_present = "database_url",
+        conflicts_with = "database_url"
+    )]
+    pub manifest: Option<PathBuf>,
+
+    /// Owner URL to the database holding the minted release snapshot, published
+    /// instead of a file. Requires the release coordinate that names it.
+    #[arg(long, requires_all = ["tenant", "catalog_id", "catalog_version"])]
+    pub database_url: Option<String>,
+
+    /// Tenant claim carried by the minted release snapshot.
+    #[arg(long, requires = "database_url")]
+    pub tenant: Option<String>,
+
+    /// Catalog identity of the minted release snapshot.
+    #[arg(long, requires = "database_url")]
+    pub catalog_id: Option<String>,
+
+    /// Exact catalog version of the minted release snapshot.
+    #[arg(long, requires = "database_url")]
+    pub catalog_version: Option<u32>,
 
     /// Explicit `<registry>/<repository>` base for release manifests.
     #[arg(long)]
@@ -150,10 +179,9 @@ pub struct PushReleaseManifestArgs {
     pub insecure_registry: bool,
 }
 
-/// Publish one canonical release-manifest file and print its content digest.
+/// Publish one canonical release manifest and print its content digest.
 pub async fn run(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
-    let canonical_bytes = std::fs::read(&args.manifest)
-        .with_context(|| format!("read serving manifest {}", args.manifest.display()))?;
+    let canonical_bytes = canonical_release_bytes(&args).await?;
     let published = publish_release_manifest(
         &canonical_bytes,
         &args.artifact_base,
@@ -163,6 +191,76 @@ pub async fn run(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
     .await?;
     println!("{}", published.digest);
     Ok(())
+}
+
+/// Read the bytes to publish from a file, or from the release that minted them.
+async fn canonical_release_bytes(args: &PushReleaseManifestArgs) -> anyhow::Result<Vec<u8>> {
+    let Some(database_url) = args.database_url.as_deref() else {
+        let manifest = args
+            .manifest
+            .as_deref()
+            .expect("clap requires one release-bytes source");
+        return std::fs::read(manifest)
+            .with_context(|| format!("read serving manifest {}", manifest.display()));
+    };
+    let tenant = args
+        .tenant
+        .as_deref()
+        .expect("clap requires the snapshot tenant");
+    let catalog_id = args
+        .catalog_id
+        .as_deref()
+        .expect("clap requires the snapshot catalog");
+    let catalog_version = args
+        .catalog_version
+        .expect("clap requires the snapshot catalog version");
+    let catalog_version = i32::try_from(catalog_version)
+        .context("catalog-version exceeds the PostgreSQL integer carrier")?;
+
+    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
+        .await
+        .context("connect to the release snapshot database")?;
+    let connection_task = tokio::spawn(connection);
+    let read = select_snapshot(&mut client, tenant, catalog_id, catalog_version).await;
+    match read {
+        Ok(canonical_bytes) => {
+            drop(client);
+            connection_task
+                .await
+                .context("join the release snapshot connection")?
+                .context("drive the release snapshot connection")?;
+            Ok(canonical_bytes)
+        }
+        Err(error) => {
+            connection_task.abort();
+            Err(error)
+        }
+    }
+}
+
+async fn select_snapshot(
+    client: &mut PgClient,
+    tenant: &str,
+    catalog_id: &str,
+    catalog_version: i32,
+) -> anyhow::Result<Vec<u8>> {
+    let transaction = client
+        .transaction()
+        .await
+        .context("begin the release snapshot read")?;
+    let snapshot = read_release_snapshot(&transaction, tenant, catalog_id, catalog_version)
+        .await
+        .context("read the minted release snapshot")?;
+    transaction
+        .commit()
+        .await
+        .context("close the release snapshot read")?;
+    snapshot.with_context(|| {
+        format!(
+            "tenant {tenant:?} catalog {catalog_id:?} version {catalog_version} \
+             has no minted v2 release snapshot"
+        )
+    })
 }
 
 /// Publish canonical v2 bytes or prove that their exact artifact already exists.
@@ -372,9 +470,31 @@ fn conflict(reference: &Reference, refusal: &'static str) -> ReleaseManifestPubl
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser as _;
     use wamn_runtime::release_manifest_artifact::RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE;
 
     use super::*;
+
+    /// Host command for the flattened argument surface under test.
+    #[derive(Debug, clap::Parser)]
+    struct PushProbe {
+        #[command(flatten)]
+        args: PushReleaseManifestArgs,
+    }
+
+    const DESTINATION: [&str; 4] = [
+        "--artifact-base",
+        "registry.example/wamn/releases",
+        "--registry-auth-file",
+        "auth.json",
+    ];
+
+    fn parse(source: &[&str]) -> Result<PushReleaseManifestArgs, clap::Error> {
+        let mut argv = vec!["push-release-manifest"];
+        argv.extend_from_slice(source);
+        argv.extend_from_slice(&DESTINATION);
+        PushProbe::try_parse_from(argv).map(|probe| probe.args)
+    }
 
     const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1"}],"format-version":2,"registrations":{},"release":{"catalog-id":"orders","catalog-version":1,"environment":"prod","tenant-id":"tenant-a"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","wiring-id":"orders","wiring-version":1}]}"#;
 
@@ -384,6 +504,64 @@ mod tests {
             "wamn/releases".to_owned(),
             "a".repeat(64),
         )
+    }
+
+    #[test]
+    fn a_release_publishes_from_a_file_or_from_its_minted_snapshot() {
+        let file = parse(&["--manifest", "manifest.json"]).expect("the file source parses");
+        assert_eq!(file.manifest.as_deref(), Some(Path::new("manifest.json")));
+        assert_eq!(file.database_url, None);
+
+        let snapshot = parse(&[
+            "--database-url",
+            "postgres://release.invalid/env",
+            "--tenant",
+            "tenant-a",
+            "--catalog-id",
+            "orders",
+            "--catalog-version",
+            "3",
+        ])
+        .expect("the minted-snapshot source parses");
+        assert_eq!(snapshot.manifest, None);
+        assert_eq!(snapshot.tenant.as_deref(), Some("tenant-a"));
+        assert_eq!(snapshot.catalog_id.as_deref(), Some("orders"));
+        assert_eq!(snapshot.catalog_version, Some(3));
+    }
+
+    #[test]
+    fn exactly_one_complete_release_bytes_source_is_admitted() {
+        let refusals: [Vec<&str>; 4] = [
+            // Neither source names the bytes to publish.
+            vec![],
+            // Both sources name them.
+            vec![
+                "--manifest",
+                "manifest.json",
+                "--database-url",
+                "postgres://release.invalid/env",
+                "--tenant",
+                "tenant-a",
+                "--catalog-id",
+                "orders",
+                "--catalog-version",
+                "3",
+            ],
+            // The snapshot source is missing part of its release coordinate.
+            vec![
+                "--database-url",
+                "postgres://release.invalid/env",
+                "--tenant",
+                "tenant-a",
+                "--catalog-id",
+                "orders",
+            ],
+            // A release coordinate is named without the database holding it.
+            vec!["--manifest", "manifest.json", "--tenant", "tenant-a"],
+        ];
+        for refused in refusals {
+            assert!(parse(&refused).is_err(), "accepted {refused:?}");
+        }
     }
 
     #[test]
