@@ -171,7 +171,7 @@ kubectl -n wamn-system rollout status deploy/hostgroup-default
 
 # 3. apply the manifests / gate Jobs for the subsystem under test
 #    (see docs/archive/build-and-test.md for the exact per-bead steps)
-kubectl -n wamn-system apply -f deploy/<subsystem>-job.yaml
+kubectl -n wamn-system apply -f deploy/gates/<subsystem>-job.yaml
 kubectl -n wamn-system logs -f job/<subsystem>
 ```
 
