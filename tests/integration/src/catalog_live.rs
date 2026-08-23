@@ -151,32 +151,10 @@ pub(crate) mod tests {
                 &[&tenant, &"catalog", &1_i32],
             )
             .await?;
-        let execution_bundle_bytes = br#"{}"#;
-        let execution_bundle_hash = wamn_catalog::execution_bundle_hash(execution_bundle_bytes);
-        client
-            .execute(
-                "INSERT INTO catalog.execution_bundles \
-                   (tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_length) \
-                 VALUES ($1, $2, '0.1', $3, octet_length($3::bytea)) \
-                 ON CONFLICT (tenant_id, execution_bundle_hash) DO NOTHING",
-                &[
-                    &tenant,
-                    &execution_bundle_hash,
-                    &execution_bundle_bytes.as_slice(),
-                ],
-            )
-            .await?;
         client
             .execute(
                 wamn_schema_control::sql::insert_release_flow_sql(),
-                &[
-                    &tenant,
-                    &"catalog",
-                    &1_i32,
-                    &"flow",
-                    &1_i32,
-                    &execution_bundle_hash,
-                ],
+                &[&tenant, &"catalog", &1_i32, &"flow", &1_i32],
             )
             .await?;
         client

@@ -127,6 +127,7 @@ fn registration_json(
         flow_id: flow_id.to_string(),
         entity: wamn_schema_model::EntityId::from(ENTITY),
         ops,
+        input: wamn_event_reg::RegistrationInput::default(),
         condition: condition.map(str::to_string),
     }
     .to_json()

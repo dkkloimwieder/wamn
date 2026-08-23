@@ -457,45 +457,10 @@ fn registration_json(resources: &GateResources) -> String {
         flow_id: resources.flow_id.clone(),
         entity: wamn_schema_model::EntityId::from(resources.entity_id.as_str()),
         ops: vec![Op::Insert, Op::Delete],
+        input: wamn_event_reg::RegistrationInput::default(),
         condition: None,
     }
     .to_json()
-}
-
-fn execution_plan_fixture() -> anyhow::Result<(Vec<u8>, String)> {
-    let entry = wamn_catalog::ExecutionNodeId::new("event")?;
-    let plan = wamn_catalog::ExecutionPlanV2::new(
-        wamn_catalog::ExecutionRuntimeRevision {
-            flowrunner_component_digest:
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
-            effect_provider_revision:
-                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
-            host_effect_contract_version: wamn_catalog::HOST_EFFECT_CONTRACT_VERSION.into(),
-        },
-        ARTIFACT_HASH,
-        wamn_catalog::ExecutionPlanBody {
-            entry_instruction: entry.clone(),
-            nodes: vec![wamn_catalog::ExecutionPlanNode {
-                local_node_id: entry.clone(),
-                source_node_id: "event".into(),
-                node_type: "event".into(),
-                config: serde_json::json!({}),
-                effect_policy: wamn_catalog::ExecutionEffectPolicy::Pure,
-                source_connection_requirement: None,
-            }],
-            edges: vec![],
-            root_terminal_behavior: wamn_catalog::RootTerminalBehavior::FrontierExhaustion,
-            entry_input_schema_guard: serde_json::Value::Bool(true),
-            callable_contract: None,
-            source_map: vec![wamn_catalog::ExecutionSourceMapEntry {
-                local_node_id: entry,
-                source_node_id: "event".into(),
-            }],
-        },
-    )?;
-    let exact_bytes = serde_json::to_vec(&plan)?;
-    let bundle_hash = wamn_catalog::execution_bundle_hash(&exact_bytes);
-    Ok((exact_bytes, bundle_hash))
 }
 
 fn role_url(admin_url: &str, resources: &GateResources) -> anyhow::Result<String> {
@@ -941,7 +906,6 @@ async fn setup_project(
 
     let graph = flow_json(resources);
     let registration = registration_json(resources);
-    let (execution_plan, bundle_hash) = execution_plan_fixture()?;
     let transaction = admin.transaction().await?;
     transaction
         .execute(
@@ -973,28 +937,10 @@ async fn setup_project(
         .await?;
     transaction
         .execute(
-            "INSERT INTO catalog.execution_bundles \
-           (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-         VALUES ($1,$2,'0.1',$3,$4)",
-            &[
-                &resources.tenant,
-                &bundle_hash,
-                &execution_plan,
-                &(execution_plan.len() as i32),
-            ],
-        )
-        .await?;
-    transaction
-        .execute(
             "INSERT INTO catalog.release_flows \
-           (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) \
-         VALUES ($1,$2,1,$3,1,$4)",
-            &[
-                &resources.tenant,
-                &resources.catalog_id,
-                &resources.flow_id,
-                &bundle_hash,
-            ],
+           (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
+         VALUES ($1,$2,1,$3,1)",
+            &[&resources.tenant, &resources.catalog_id, &resources.flow_id],
         )
         .await?;
     transaction
@@ -1019,23 +965,24 @@ async fn setup_project(
             ],
         )
         .await?;
-    transaction.execute(
-        "INSERT INTO wamn_run.runs \
+    transaction
+        .execute(
+            "INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status,trigger_source,event_source_run_id,event_root_run_id,event_depth) \
+            status,trigger_source,event_source_run_id,event_root_run_id,event_depth) \
          VALUES \
-           ($1,$2,$3,1,$4,1,$5,$6,'completed','event',$2,$2,0), \
-           ($1,$7,$3,1,$4,1,$5,$6,'completed','event',$2,$2,1)",
-        &[
-            &resources.tenant,
-            &resources.root_run_id,
-            &resources.flow_id,
-            &resources.catalog_id,
-            &resources.env,
-            &bundle_hash,
-            &resources.source_run_id,
-        ],
-    ).await?;
+           ($1,$2,$3,1,$4,1,$5,'completed','event',$2,$2,0), \
+           ($1,$6,$3,1,$4,1,$5,'completed','event',$2,$2,1)",
+            &[
+                &resources.tenant,
+                &resources.root_run_id,
+                &resources.flow_id,
+                &resources.catalog_id,
+                &resources.env,
+                &resources.source_run_id,
+            ],
+        )
+        .await?;
     transaction.commit().await?;
 
     // Capture starts after all fixture writes; only the matching tenant commit is observable.

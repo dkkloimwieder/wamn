@@ -4,9 +4,6 @@
 
 pub use wamn_test_infrastructure::ctl_process;
 
-#[cfg(test)]
-use wamn_run_state::schema_drift;
-
 pub mod capturebench;
 pub mod catalog_live;
 pub mod causation_e2e;
