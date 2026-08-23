@@ -1,5 +1,6 @@
 # wamn images (SR1 pattern: one build, one final stage per artifact; SR9 split).
 #   docker build --target host       -t wamn-host:dev       .  # washlet ONLY
+#   docker build --target executor   -t wamn-executor:dev   .  # router queue executor
 #   docker build --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
 #   docker build --target dispatcher -t wamn-dispatcher:dev .  # trigger dispatcher
 #   docker build --target scenario-worker -t wamn-scenario-worker:dev . # authoring management
@@ -40,6 +41,12 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-host
+
+FROM root-recipe AS cook-executor
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-executor
 
 FROM root-recipe AS cook-scenario-worker
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
@@ -88,6 +95,14 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
     cargo build --locked --release -p wamn-host \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host
+
+FROM cook-executor AS build-executor
+COPY --from=root-source /build /build
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+    cargo build --locked --release -p wamn-executor \
+ && install -D -m 0755 target/release/wamn-run-worker /native-output/wamn-run-worker
 
 FROM cook-scenario-worker AS build-scenario-worker
 COPY --from=root-source /build /build
@@ -171,6 +186,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build-host /native-output/wamn-host /usr/local/bin/wamn-host
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
+
+# ---- component+wiring router queue executor --------------------------------
+FROM debian:trixie-slim AS executor
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build-executor /native-output/wamn-run-worker /usr/local/bin/wamn-run-worker
+ENV HOME=/tmp
+ENTRYPOINT ["/usr/local/bin/wamn-run-worker"]
 
 # ---- ctl image: the one-shot control-plane verbs (SR9) ----------------------
 # NOTE pg_dump/pg_restore are NOT installed (parity with the pre-split image);

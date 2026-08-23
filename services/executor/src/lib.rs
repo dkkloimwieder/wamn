@@ -3,6 +3,9 @@
 //! Queue claim/verdict adaptation is owned by `wamn-0h0g.19.6`. This leaf
 //! constructs the exact driver direct ingress uses and keeps it live.
 
+mod readiness;
+
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,8 +15,8 @@ use clap::Args;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 use wamn_execution_host::{
-    RouterDriver, RouterDriverConfig, RouterDriverRequest, WIRING_CACHE_CAPACITY_ENV,
-    WiringCacheCapacity, WiringResolution,
+    RouterDriver, RouterDriverConfig, RouterDriverRequest, RouterReadinessProbe,
+    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity, WiringResolution,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -81,6 +84,10 @@ pub struct ExecutorArgs {
     /// Permit HTTP only for the explicitly configured in-cluster registry.
     #[arg(long, default_value_t = false)]
     pub allow_insecure_registries: bool,
+
+    /// Private status-only HTTP listener for the Kubernetes readiness probe.
+    #[arg(long, env = "WAMN_READINESS_BIND", default_value = readiness::DEFAULT_BIND)]
+    pub readiness_bind: SocketAddr,
 
     /// Maximum resolved wirings retained by the one production router driver.
     #[arg(
@@ -174,7 +181,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     let source = ComponentArtifactSource::new(source_config);
     let engine = Arc::new(build_engine(&[])?);
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
-    let driver = RouterDriver::new(
+    let driver = Arc::new(RouterDriver::new(
         engine,
         Arc::clone(&postgres),
         credentials,
@@ -189,7 +196,9 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             cache_capacity: args.wiring_cache_capacity,
             epoch_tick: DEFAULT_EPOCH_TICK,
         },
-    )?;
+    )?);
+    let readiness_probe = Arc::new(RouterReadinessProbe::new(Arc::clone(&driver)));
+    let readiness_listener = readiness::bind(args.readiness_bind).await?;
 
     tracing::info!(
         runner = %owner,
@@ -203,10 +212,13 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         "executor router queue driver ready"
     );
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let serving = serve_queue(&driver, &postgres, &scope, lease_ttl_ms);
+    let serving = serve_queue(driver.as_ref(), &postgres, &scope, lease_ttl_ms);
+    let readiness = readiness::serve(readiness_listener, readiness_probe);
     tokio::pin!(serving);
+    tokio::pin!(readiness);
     let result = tokio::select! {
         result = &mut serving => result,
+        result = &mut readiness => result,
         _ = tokio::signal::ctrl_c() => Ok(()),
         _ = sigterm.recv() => Ok(()),
     };
@@ -393,7 +405,7 @@ async fn drive_claim(
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory as _;
+    use clap::{CommandFactory as _, Parser as _};
 
     use super::*;
 
@@ -407,6 +419,28 @@ mod tests {
 
         let help = TestCli::command().render_long_help().to_string();
         assert!(help.contains("wiring-cache-capacity"));
+        assert!(help.contains("readiness-bind"));
+    }
+
+    #[test]
+    fn readiness_bind_has_one_fixed_default_port() {
+        #[derive(clap::Parser)]
+        struct TestCli {
+            #[command(flatten)]
+            args: ExecutorArgs,
+        }
+
+        let cli = TestCli::try_parse_from([
+            "wamn-executor",
+            "--release-manifest-root",
+            "/release",
+            "--component-artifact-base",
+            "registry.invalid/wamn/components",
+            "--registry-auth-file",
+            "/registry/config.json",
+        ])
+        .expect("complete executor arguments parse");
+        assert_eq!(cli.args.readiness_bind.to_string(), readiness::DEFAULT_BIND);
     }
 
     #[test]

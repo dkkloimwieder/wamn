@@ -1,5 +1,5 @@
 # Scale-to-zero wake actuator (wamn-fqg.12, POC-F3) — a tiny always-on service
-# that scales a PARKED runner Deployment 0 -> 1 when the dispatcher rings its
+# that scales a PARKED executor Deployment 0 -> 1 when the dispatcher rings its
 # doorbell. Runs the wamn-waker binary (its own SR9 image target).
 #
 #   kubectl -n wamn-system apply -f deploy/platform/waker.yaml
@@ -11,7 +11,7 @@
 # automountServiceAccountToken: false), KEDA is not installed (a third-party
 # infra install is an owner decision), and the dispatcher already re-hints every
 # currently-due unleased queue row on every sweep (wamn_run_state::queue::parked_due_sql)
-# — so a doorbell lost while the runner is at 0 self-heals on the next sweep, and
+# — so a doorbell lost while the executor is at 0 self-heals on the next sweep, and
 # THAT re-hint is the waker's retry path. The waker has no polling loop of its own.
 #
 # SCALE-UP ONLY: idle -> 0 (scale-down) automation is out of scope and tracked as
@@ -87,7 +87,7 @@ spec:
         # The operator NATS uses mTLS (verify_and_map). Reuse the runtime cert the
         # host groups connect with so the doorbell subject is permitted — the
         # dispatcher pattern. Same residual credential-scope note as the
-        # dispatcher/runner (the CN maps to an allow-all-subjects user; a scoped
+        # dispatcher/executor (the CN maps to an allow-all-subjects user; a scoped
         # subscribe-only identity is the long-term shape).
         - name: runtime-cert
           secret:
@@ -113,9 +113,9 @@ spec:
             - "--nats-tls-key"
             - "/runtime-cert/tls.key"
             # <doorbell-tenant>=<Deployment>: the tenant the dispatcher publishes
-            # (wamn.doorbell.demo-tenant) mapped to the runner Deployment to wake.
+            # (wamn.doorbell.demo-tenant) mapped to the executor Deployment to wake.
             - "--wake"
-            - "demo-tenant=runner"
+            - "demo-tenant=executor"
           resources:
             # Mirror the dispatcher (a modest reactive service; no CPU limit — the
             # S2 CFS lesson — so a wake patch is never throttled).

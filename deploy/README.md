@@ -10,10 +10,10 @@ lifecycle tiers because pre-tier provisioning runs before any tier exists.
   NATS, development observability inputs (Tempo/otel/MinIO), kind config, and
   the runtime-operator's own Helm values (`values-wamn.yaml`).
 - **`platform/`** — long-lived production/platform manifests the control plane
-  or an operator owns: dispatcher, production executor (`runner`), registry, wamn-sysdb,
-  credential `*.example` Secrets, the shared postgres fixture, runner
-  NetworkPolicy + environment connection-policy example, and the per-environment
-  runtime-operator host-tier Helm values (`values-host-*.yaml`).
+  or an operator owns: dispatcher, the component+wiring router executor,
+  registry, wamn-sysdb, credential `*.example` Secrets, the shared postgres
+  fixture, and the per-environment runtime-operator host-tier Helm values
+  (`values-host-*.yaml`).
 - **`gates/`** — gate/bench Job manifests (`*-job.yaml`) and their support
   Deployments (`serve-echo`, `egress-escape`). Applied per gate run, deleted
   after.
