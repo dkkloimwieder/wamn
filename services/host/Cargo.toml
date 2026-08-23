@@ -12,5 +12,12 @@ wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-o
 anyhow = { workspace = true }
 async-nats = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
+# wamn-1fhk: the RouterDeliveryBridge's meter is INJECTED, not taken from
+# `opentelemetry::global` inside the bridge, so that a test can own its own
+# provider and read back exactly the series one bridge emitted. Production is the
+# side that has no second provider to own, so the process-global meter is handed
+# in at the one construction site here — which is why this dep edge belongs to
+# the host and not to the bridge's crate.
+opentelemetry = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tracing = { workspace = true }

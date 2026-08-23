@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
+use opentelemetry::global;
 use wash_runtime::engine::WasmProposal;
 use wash_runtime::host::HostConfig;
 use wash_runtime::host::http::{DynamicRouter, Ingress};
@@ -16,8 +17,8 @@ use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
 use wamn_execution_host::{
-    RouterDeliveryBridge, RouterDriver, RouterDriverConfig, WIRING_CACHE_CAPACITY_ENV,
-    WiringCacheCapacity,
+    ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
+    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -459,12 +460,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ))?;
 
     if let (Some(driver), Some(release)) = (&router_driver, &release) {
-        builder = builder.with_plugin(Arc::new(RouterDeliveryBridge::new(
-            Arc::clone(driver),
-            Arc::clone(release),
-            Arc::clone(&jetstream),
-            &args.project,
-        )?))?;
+        builder = builder.with_plugin(Arc::new(
+            RouterDeliveryBridge::new(
+                Arc::clone(driver),
+                Arc::clone(release),
+                Arc::clone(&jetstream),
+                &args.project,
+            )?
+            // The bridge defaults to no meter so a test can own its own provider
+            // and read back exactly the series one bridge emitted. Production has
+            // no second provider to own, so it takes the process-global one that
+            // `initialize_observability` installs — a no-op meter when no OTEL_
+            // variable is set. Without this call both `wamn.router.delivery`
+            // series exist and stay permanently silent (wamn-1fhk).
+            .with_metrics(&global::meter(ROUTER_DELIVERY_ID)),
+        ))?;
     }
 
     if let Some(host_name) = &args.host_name {

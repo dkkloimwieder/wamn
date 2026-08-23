@@ -92,6 +92,20 @@ const RELEASE_IDENTITY_SOURCE_SITES: [(&str, &str); 2] = [
     ("services/executor/src/lib.rs", "release.release()"),
 ];
 
+/// The host's one `RouterDeliveryBridge` opts into its meter.
+///
+/// wamn-0h0g.24.4 shipped `wamn.router.delivery.attempts` and
+/// `wamn.router.delivery.errors`, but the bridge's `new` defaults its meter to
+/// `None` so a test can own its own provider — which means the series exist and
+/// stay permanently silent until the construction site opts in. `host::run`
+/// needs NATS and a release weld, so there is no runtime proof to take; this
+/// pins the wiring as raw text, the way the weld sites above are pinned.
+///
+/// `with_metrics` exists on no other type in this file's reach, so counting the
+/// call alone is enough — the builder is `#[must_use]` and consumed straight
+/// into the plugin, so it cannot be called on anything else or dropped.
+const METERED_DELIVERY_BRIDGE: (&str, &str) = ("services/host/src/host.rs", ".with_metrics(");
+
 /// The two struck config keys, and every file that could plausibly re-read them.
 ///
 /// Spelled here rather than imported so the guard fails if the constants are
@@ -1019,6 +1033,16 @@ fn one_release_manifest_weld_construction_site_per_host_process() {
         validate_weld_precedes_bind(&source, entry, bind, path)
             .unwrap_or_else(|error| panic!("{error}"));
     }
+}
+
+#[test]
+fn the_host_router_delivery_bridge_is_metered() {
+    let (path, marker) = METERED_DELIVERY_BRIDGE;
+    let source = host_source(&repository_root(), path);
+    let production = production_half(&source, path).unwrap_or_else(|error| panic!("{error}"));
+    validate_one(production, marker, path).unwrap_or_else(|error| {
+        panic!("{error}. Without it both wamn.router.delivery series stay silent")
+    });
 }
 
 #[test]
