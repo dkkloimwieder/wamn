@@ -1,12 +1,12 @@
-//! Live-apply gate for the project-env DATABASE OWNERSHIP floor (R9) and the
-//! cluster-wide PUBLIC `CONNECT` floor.
+//! Live-apply gate for the project-env DATABASE OWNERSHIP floor (R9) and its
+//! database-scoped `CONNECT` grants.
 //!
 //! Set `WAMN_PROVISION_PG_URL` to a **superuser** URL of a throwaway Postgres
 //! (`CREATE DATABASE` / `CREATE ROLE` need it, exactly as the CNPG cluster
 //! superuser does in production) — the same variable `tests/provision.rs` uses,
 //! so one container serves both. Skipped cleanly when unset.
 //!
-//! Two proofs, both driving the REAL builders:
+//! Two proofs, both driving the REAL project-database builders:
 //!
 //! 1. **ownership** — a project-env database's `datdba` is `wamn_db_owner`, and
 //!    specifically NOT `wamn_app` (the role guest-authored SQL executes as) and
@@ -14,15 +14,17 @@
 //!    `CREATE`, no `TEMPORARY`, and zero owned objects anywhere in the cluster.
 //!    `wamn_db_owner` itself cannot log in and holds no membership in either
 //!    direction — it holds title and nothing else.
-//! 2. **the `template1` route** — after the floor runs, `PUBLIC` holds no
-//!    `CONNECT` on `template1` (which a `NOT datistemplate` filter skipped while
-//!    `template1` stayed connectable), and `template0` is untouched.
+//! 2. **database-scoped privilege reach** — `PUBLIC` loses `CONNECT` on both
+//!    project databases, while a test-owned sibling canary keeps it. This gate
+//!    therefore cannot change the cluster-wide database ACL floor out from
+//!    under another gate.
 //!
-//! The databases are created superuser-owned and then converged with the REAL
-//! [`sql::set_database_owner_sql`], so this exercises the RECONCILE path an
-//! already-provisioned environment takes — not just the fresh-CR path. **Two**
-//! databases are provisioned on purpose: the cross-database "wamn_app owns
-//! nothing" sweep passes trivially against one.
+//! The two target databases are created superuser-owned and then converged with
+//! the REAL [`sql::set_database_owner_sql`], so this exercises the RECONCILE
+//! path an already-provisioned environment takes — not just the fresh-CR path.
+//! **Two** targets are provisioned on purpose: the cross-database "wamn_app owns
+//! nothing" sweep passes trivially against one. A third database is only an
+//! untouched ACL canary and remains superuser-owned.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -57,10 +59,10 @@ fn run_ok(url: &str, script: &str) {
 }
 
 #[test]
-fn project_env_databases_are_owned_by_the_title_role_and_template1_is_closed() {
+fn project_env_database_ownership_and_connect_are_scoped() {
     let Ok(url) = std::env::var("WAMN_PROVISION_PG_URL") else {
         eprintln!(
-            "skipping project_env_databases_are_owned_by_the_title_role_and_template1_is_closed \
+            "skipping project_env_database_ownership_and_connect_are_scoped \
              (set WAMN_PROVISION_PG_URL to run)"
         );
         return;
@@ -70,15 +72,21 @@ fn project_env_databases_are_owned_by_the_title_role_and_template1_is_closed() {
     // below vacuous (a loop over one row proves nothing about the cluster).
     let first = project_env_database_name("acme", "ownership", "dev", "k3m9x2p7");
     let second = project_env_database_name("acme", "ownership", "prod", "q80zdw41");
+    // A sibling database makes the privilege-reach assertion non-vacuous. The
+    // test creates and drops it, but never runs a project privilege builder
+    // against it.
+    let canary = project_env_database_name("acme", "ownership", "canary", "v6n1br4c");
 
     // Clean slate — a leftover healthy role would satisfy the idempotent guard
     // and mask a mutated builder (the M2 gate-blind-spot lesson).
     run_ok(
         &url,
         &format!(
-            "{drop_first};\n{drop_second};\nDROP ROLE IF EXISTS \"{DB_OWNER_ROLE}\";\n",
+            "{drop_first};\n{drop_second};\n{drop_canary};\n\
+             DROP ROLE IF EXISTS \"{DB_OWNER_ROLE}\";\n",
             drop_first = sql::drop_database_named_sql(&first),
             drop_second = sql::drop_database_named_sql(&second),
+            drop_canary = sql::drop_database_named_sql(&canary),
         ),
     );
 
@@ -95,10 +103,11 @@ fn project_env_databases_are_owned_by_the_title_role_and_template1_is_closed() {
     // A second apply must be a clean no-op (advisory-locked create-or-harden).
     run_ok(&url, sql::ensure_db_owner_role_sql());
 
-    // Both databases are born SUPERUSER-owned, then converged by the real
-    // builder: this is the already-provisioned reconcile path, and it is the
-    // half a fresh-CR-only change would leave undone.
-    for database in [&first, &second] {
+    // All three databases are born SUPERUSER-owned. The two targets are then
+    // converged by the real builder below: this is the already-provisioned
+    // reconcile path, and it is the half a fresh-CR-only change would leave
+    // undone. The canary stays superuser-owned.
+    for database in [&first, &second, &canary] {
         run_ok(&url, &sql::create_database_named_sql(database));
     }
     run_ok(
@@ -109,6 +118,24 @@ fn project_env_databases_are_owned_by_the_title_role_and_template1_is_closed() {
                       <> '{DB_OWNER_ROLE}', \
                  'the databases must start mis-owned, or the convergence proof is vacuous'; \
              END $$;\n"
+        ),
+    );
+
+    // Seed a positive sibling ACL BEFORE running either target batch. Keeping
+    // this canary intact proves those batches do not invoke the cluster-wide
+    // floor builder.
+    run_ok(
+        &url,
+        &format!(
+            "GRANT CONNECT ON DATABASE \"{canary}\" TO PUBLIC;\n\
+             DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM pg_database d \
+                     CROSS JOIN LATERAL \
+                       aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl \
+                    WHERE d.datname = '{canary}' \
+                      AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT') = 1, \
+             'the sibling seed must really be in place, or the scope proof is vacuous'; \
+         END $$;\n"
         ),
     );
 
@@ -128,28 +155,6 @@ fn project_env_databases_are_owned_by_the_title_role_and_template1_is_closed() {
         // Replay: the whole batch is convergent, not one-shot.
         run_ok(&url, &privilege_sql(database));
     }
-
-    // Restore PostgreSQL's DEFAULT PUBLIC CONNECT on template1 before running
-    // the floor, and assert it took. The floor is convergent, so on a cluster a
-    // previous run already converged the revoke is a no-op and every assertion
-    // below passes against a template-filtered builder too — this seed is what
-    // makes the floor actually do work on every run (the M2 gate-blind-spot
-    // lesson: a healthy leftover masks a mutated builder).
-    run_ok(
-        &url,
-        "GRANT CONNECT ON DATABASE template1 TO PUBLIC;\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM pg_database d \
-                     CROSS JOIN LATERAL \
-                       aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl \
-                    WHERE d.datname = 'template1' \
-                      AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT') = 1, \
-             'the template1 seed must really be in place, or the floor proves nothing'; \
-         END $$;\n",
-    );
-
-    // The cluster-wide PUBLIC CONNECT floor.
-    run_ok(&url, sql::revoke_public_connect_floor_sql());
 
     run_ok(
         &url,
@@ -211,55 +216,36 @@ DO $$ BEGIN
   ASSERT (SELECT rolpassword IS NULL FROM pg_authid WHERE rolname = '{DB_OWNER_ROLE}'),
     'the title role has no password — nothing authenticates as it, nothing rotates';
 
-  -- 5. The template1 route is closed, and template0 is untouched. template0
-  --    KEEPS its PUBLIC CONNECT aclitem (datallowconn = false makes it inert),
-  --    so this pair is a real discrimination, not two ways of saying "clean".
+  -- 5. PUBLIC loses CONNECT on exactly the two project databases whose scoped
+  --    privilege batches ran.
   ASSERT (SELECT count(*) FROM pg_database d
             CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl
-           WHERE d.datname = 'template1'
+           WHERE d.datname IN ('{first}', '{second}')
              AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT') = 0,
-    'PUBLIC holds no CONNECT on template1 after the floor';
+    'PUBLIC holds no CONNECT on either project database';
+  -- The sibling is connectable and still grants PUBLIC CONNECT. A call to the
+  -- cluster-wide floor from this test would revoke it and fail this assertion.
   ASSERT (SELECT count(*) FROM pg_database d
             CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl
-           WHERE d.datname = 'template0'
+           WHERE d.datname = '{canary}'
              AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT') = 1,
-    'template0 is untouched (datallowconn = false already makes it unreachable)';
-  ASSERT (SELECT NOT datallowconn FROM pg_database WHERE datname = 'template0'),
-    'template0 is unconnectable, which is why the floor may skip it';
-  ASSERT (SELECT datallowconn FROM pg_database WHERE datname = 'template1'),
-    'template1 IS connectable — that is exactly why the template filter was wrong';
+    'the sibling database keeps PUBLIC CONNECT';
+  ASSERT (SELECT datallowconn FROM pg_database WHERE datname = '{canary}'),
+    'the sibling canary is connectable, so the scope discrimination is real';
 END $$;
 "#
         ),
     );
 
-    // The read-only proof builder agrees: nothing connectable grants PUBLIC
-    // CONNECT any more. An empty result is the pass.
-    let out = psql(
-        &url,
-        &format!(
-            "SELECT count(*) FROM ({}) AS leaks;\n",
-            sql::public_connect_databases_sql()
-        ),
-    );
-    assert!(
-        out.status.success(),
-        "public-connect proof failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains('0'),
-        "public_connect_databases_sql still reports a database granting PUBLIC CONNECT: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-
-    // Teardown: self-contained; never touches shared databases.
+    // Teardown: self-contained; never touches shared database ACLs.
     run_ok(
         &url,
         &format!(
-            "{drop_first};\n{drop_second};\nDROP ROLE IF EXISTS \"{DB_OWNER_ROLE}\";\n",
+            "{drop_first};\n{drop_second};\n{drop_canary};\n\
+             DROP ROLE IF EXISTS \"{DB_OWNER_ROLE}\";\n",
             drop_first = sql::drop_database_named_sql(&first),
             drop_second = sql::drop_database_named_sql(&second),
+            drop_canary = sql::drop_database_named_sql(&canary),
         ),
     );
 }
