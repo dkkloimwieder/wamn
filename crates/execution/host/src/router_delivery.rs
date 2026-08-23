@@ -4,6 +4,8 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Meter};
 use wamn_catalog::{AttachmentKind, ServingManifest};
 use wamn_event_wire::Causation;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
@@ -33,11 +35,29 @@ use bindings::wamn::router_delivery::delivery::{
 /// Host-plugin identity for the one guest-to-router bridge.
 pub const ROUTER_DELIVERY_ID: &str = "wamn-router-delivery";
 
+// The two series this bridge owns. Both are dashboard contracts that no grep
+// from a chart can find, because the Prometheus exporter turns the dots into
+// underscores and appends `_total` to a monotonic counter. Pinned by
+// `the_bridge_pins_its_two_series_and_records_on_every_driver_outcome`.
+const DELIVERY_ATTEMPTS: &str = "wamn.router.delivery.attempts";
+const DELIVERY_ERRORS: &str = "wamn.router.delivery.errors";
+
+// Attribute keys. `wamn.source.kind` plus `wamn.source.id` rather than the two
+// mutually exclusive keys the older instruments use (`wamn.attachment.id`,
+// `wamn.registration`), because one counter covers both ingress kinds and an
+// always-empty second key would double the series for nothing.
+const SOURCE_KIND: &str = "wamn.source.kind";
+const SOURCE_ID: &str = "wamn.source.id";
+const WIRING_ID: &str = "wamn.wiring.id";
+const WIRING_VERSION: &str = "wamn.wiring.version";
+const DELIVERY_ERROR: &str = "wamn.delivery.error";
+
 /// The one bridge shared by attachment and registration ingress.
 pub struct RouterDeliveryBridge {
     driver: Arc<RouterDriver>,
     release: Arc<ReleaseManifestWeld>,
     jetstream: Arc<WamnJetstream>,
+    metrics: Option<DeliveryMetrics>,
 }
 
 impl RouterDeliveryBridge {
@@ -58,7 +78,23 @@ impl RouterDeliveryBridge {
             driver,
             release,
             jetstream,
+            metrics: None,
         })
+    }
+
+    /// Count every delivery on the supplied meter. The meter is injected rather
+    /// than taken from `opentelemetry::global`, so a test owns its own provider
+    /// and reads back exactly the series one bridge emitted.
+    #[must_use]
+    pub fn with_metrics(mut self, meter: &Meter) -> Self {
+        self.metrics = Some(DeliveryMetrics::new(meter));
+        self
+    }
+
+    fn record(&self, attributes: &[KeyValue], class: DeliveryClass) {
+        if let Some(metrics) = &self.metrics {
+            metrics.record(attributes, class);
+        }
     }
 
     async fn deliver(&self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError> {
@@ -123,15 +159,24 @@ impl RouterDeliveryBridge {
             traceparent,
             tracestate,
         };
+        // The last point that still holds every dimension: the request moves
+        // into the driver on the next line.
+        let attributes = match &self.metrics {
+            Some(_) => delivery_attributes(source, &request.wiring_id, request.wiring_version),
+            None => Vec::new(),
+        };
         match self.driver.execute(request).await {
             Ok(delivery) => {
+                self.record(&attributes, DeliveryClass::Delivered);
                 self.publish_emit(&delivery.outcome, causation).await?;
                 lower_outcome(delivery.outcome)
             }
             Err(error) if error.downcast_ref::<PreloadedWiringMissing>().is_some() => {
+                self.record(&attributes, DeliveryClass::WiringNotPreloaded);
                 Err(DeliveryError::WiringNotPreloaded)
             }
             Err(error) => {
+                self.record(&attributes, DeliveryClass::ExecutionFailed);
                 tracing::warn!(error = %error, "router delivery execution failed");
                 Err(DeliveryError::ExecutionFailed)
             }
@@ -294,6 +339,84 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
     }
 }
 
+/// How the router driver answered one delivery. The three variants are the
+/// three arms of the driver match in [`RouterDeliveryBridge::deliver`]; the
+/// bridge classifies nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryClass {
+    Delivered,
+    WiringNotPreloaded,
+    ExecutionFailed,
+}
+
+impl DeliveryClass {
+    /// The `wamn.delivery.error` value, or `None` for the one delivered class.
+    fn error(self) -> Option<&'static str> {
+        match self {
+            DeliveryClass::Delivered => None,
+            DeliveryClass::WiringNotPreloaded => Some("wiring-not-preloaded"),
+            DeliveryClass::ExecutionFailed => Some("execution-failed"),
+        }
+    }
+}
+
+/// The bridge's throughput and error counters.
+struct DeliveryMetrics {
+    attempts: Counter<u64>,
+    errors: Counter<u64>,
+}
+
+impl DeliveryMetrics {
+    fn new(meter: &Meter) -> Self {
+        Self {
+            attempts: meter
+                .u64_counter(DELIVERY_ATTEMPTS)
+                .with_description("deliveries dispatched to the router driver, per wiring source")
+                .build(),
+            errors: meter
+                .u64_counter(DELIVERY_ERRORS)
+                .with_description("deliveries the router driver refused, per wiring source")
+                .build(),
+        }
+    }
+
+    /// Every delivery counts as an attempt; a refusal also counts once against
+    /// the error series under its own label, so the delivered rate is the
+    /// difference and needs no third instrument.
+    fn record(&self, attributes: &[KeyValue], class: DeliveryClass) {
+        self.attempts.add(1, attributes);
+        let Some(error) = class.error() else {
+            return;
+        };
+        let mut attributes = attributes.to_vec();
+        attributes.push(KeyValue::new(DELIVERY_ERROR, error));
+        self.errors.add(1, &attributes);
+    }
+}
+
+/// The dimensions `deliver` already holds. Every value is read off the welded
+/// serving manifest, which `resolve_target` refuses to look past, so the series
+/// count is fixed for the life of the process at one per manifest attachment
+/// and registration. `wamn.wiring.version` is unbounded across releases but
+/// constant within a process, so it churns at the release rate, not the
+/// delivery rate.
+fn delivery_attributes(
+    source: SourceRef<'_>,
+    wiring_id: &str,
+    wiring_version: u32,
+) -> Vec<KeyValue> {
+    let (kind, id) = match source {
+        SourceRef::Attachment(id) => ("attachment", id),
+        SourceRef::Registration(id) => ("registration", id),
+    };
+    vec![
+        KeyValue::new(SOURCE_KIND, kind),
+        KeyValue::new(SOURCE_ID, id.to_owned()),
+        KeyValue::new(WIRING_ID, wiring_id.to_owned()),
+        KeyValue::new(WIRING_VERSION, i64::from(wiring_version)),
+    ]
+}
+
 fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, DeliveryError> {
     if matches!(outcome.status, WalkStatus::Running) {
         return Err(DeliveryError::ExecutionFailed);
@@ -359,8 +482,12 @@ fn lower_failure_kind(kind: FailureKind) -> WireFailureKind {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use opentelemetry::metrics::MeterProvider as _;
+    use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
     use wamn_router::{ErrorDetail, Failure};
+
+    use super::*;
 
     const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1"}],"format-version":2,"registrations":{"orders-changed":{"entity":"orders","ops":["insert","update"],"wiring-id":"shipping","wiring-version":2}},"release":{"catalog-id":"manifest-mint-catalog","catalog-version":3,"environment":"prod","tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","wiring-id":"shipping","wiring-version":2}]}"#;
 
@@ -479,5 +606,205 @@ mod tests {
             panic!("a later failure must not replace the first terminal verdict")
         };
         assert_eq!(payload, r#"{"accepted":true}"#);
+    }
+
+    // ---- the instruments ---------------------------------------------------
+
+    /// One meter over an in-memory exporter. The provider is owned by the test,
+    /// not by `opentelemetry::global`, so each test reads back exactly the
+    /// series its own recorder emitted.
+    struct MetricHarness {
+        exporter: InMemoryMetricExporter,
+        provider: SdkMeterProvider,
+    }
+
+    impl MetricHarness {
+        fn install() -> Self {
+            let exporter = InMemoryMetricExporter::default();
+            let provider = SdkMeterProvider::builder()
+                .with_reader(PeriodicReader::builder(exporter.clone()).build())
+                .build();
+            Self { exporter, provider }
+        }
+
+        fn metrics(&self) -> DeliveryMetrics {
+            DeliveryMetrics::new(&self.provider.meter("router-delivery-test"))
+        }
+
+        /// Every `(name, sorted attributes, value)` the exporter holds, sorted,
+        /// so an assertion names the whole emitted surface and a series that
+        /// should not exist cannot hide.
+        fn series(&self) -> Vec<(String, Vec<(String, String)>, u64)> {
+            self.provider
+                .force_flush()
+                .expect("test metrics must flush");
+            let mut series = Vec::new();
+            for resource in self
+                .exporter
+                .get_finished_metrics()
+                .expect("test metric exporter must remain readable")
+            {
+                for scope in resource.scope_metrics() {
+                    for metric in scope.metrics() {
+                        let AggregatedMetrics::U64(MetricData::Sum(sum)) = metric.data() else {
+                            panic!("{} must stay a u64 sum", metric.name())
+                        };
+                        for point in sum.data_points() {
+                            let mut attributes: Vec<(String, String)> = point
+                                .attributes()
+                                .map(|kv| (kv.key.to_string(), kv.value.to_string()))
+                                .collect();
+                            attributes.sort();
+                            series.push((metric.name().to_owned(), attributes, point.value()));
+                        }
+                    }
+                }
+            }
+            series.sort();
+            series
+        }
+    }
+
+    fn labels(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        let mut labels: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect();
+        labels.sort();
+        labels
+    }
+
+    /// The dimensions are the manifest's own: `resolve_target` refuses an id the
+    /// manifest does not name, so nothing outside the manifest can become a
+    /// label and the series count is fixed for the process.
+    #[test]
+    fn a_delivery_is_labelled_by_its_source_kind_id_and_wiring_release() {
+        let manifest = manifest();
+        let attachment = resolve_target(&manifest, SourceRef::Attachment("orders-http"))
+            .expect("the fixture names this attachment");
+        assert_eq!(
+            delivery_attributes(
+                SourceRef::Attachment("orders-http"),
+                &attachment.wiring_id,
+                attachment.wiring_version,
+            ),
+            vec![
+                KeyValue::new(SOURCE_KIND, "attachment"),
+                KeyValue::new(SOURCE_ID, "orders-http"),
+                KeyValue::new(WIRING_ID, "orders"),
+                KeyValue::new(WIRING_VERSION, 1_i64),
+            ]
+        );
+
+        let registration = resolve_target(&manifest, SourceRef::Registration("orders-changed"))
+            .expect("the fixture names this registration");
+        assert_eq!(
+            delivery_attributes(
+                SourceRef::Registration("orders-changed"),
+                &registration.wiring_id,
+                registration.wiring_version,
+            ),
+            vec![
+                KeyValue::new(SOURCE_KIND, "registration"),
+                KeyValue::new(SOURCE_ID, "orders-changed"),
+                KeyValue::new(WIRING_ID, "shipping"),
+                KeyValue::new(WIRING_VERSION, 2_i64),
+            ]
+        );
+    }
+
+    /// A delivered run raises the throughput series and nothing else. If the
+    /// error series appeared here, every dashboard's error rate would read 100%.
+    #[test]
+    fn a_delivered_run_counts_once_and_raises_no_error_series() {
+        let harness = MetricHarness::install();
+        let attributes = delivery_attributes(SourceRef::Attachment("orders-http"), "orders", 1);
+
+        harness
+            .metrics()
+            .record(&attributes, DeliveryClass::Delivered);
+
+        assert_eq!(
+            harness.series(),
+            vec![(
+                "wamn.router.delivery.attempts".to_owned(),
+                labels(&[
+                    ("wamn.source.kind", "attachment"),
+                    ("wamn.source.id", "orders-http"),
+                    ("wamn.wiring.id", "orders"),
+                    ("wamn.wiring.version", "1"),
+                ]),
+                1,
+            )]
+        );
+    }
+
+    /// Both driver refusals count as attempts and both raise the error series,
+    /// under labels that tell a missing preloaded wiring apart from any other
+    /// execution failure — the one distinction the error series exists for.
+    #[test]
+    fn each_driver_refusal_counts_as_an_attempt_and_a_named_error() {
+        let harness = MetricHarness::install();
+        let metrics = harness.metrics();
+        let attributes =
+            delivery_attributes(SourceRef::Registration("orders-changed"), "shipping", 2);
+
+        metrics.record(&attributes, DeliveryClass::WiringNotPreloaded);
+        metrics.record(&attributes, DeliveryClass::ExecutionFailed);
+
+        let base = [
+            ("wamn.source.kind", "registration"),
+            ("wamn.source.id", "orders-changed"),
+            ("wamn.wiring.id", "shipping"),
+            ("wamn.wiring.version", "2"),
+        ];
+        let with_error = |error: &str| {
+            let mut pairs = base.to_vec();
+            pairs.push(("wamn.delivery.error", error));
+            labels(&pairs)
+        };
+
+        assert_eq!(
+            harness.series(),
+            vec![
+                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 2,),
+                (
+                    "wamn.router.delivery.errors".to_owned(),
+                    with_error("execution-failed"),
+                    1,
+                ),
+                (
+                    "wamn.router.delivery.errors".to_owned(),
+                    with_error("wiring-not-preloaded"),
+                    1,
+                ),
+            ]
+        );
+    }
+
+    /// The two series are dashboard contracts the Prometheus exporter renames,
+    /// and the driver match is the only site that can raise them — a driver
+    /// arm that stops recording would emit nothing and fail no other test,
+    /// because the driver itself needs an engine and a database to run. Pinned
+    /// the way `crates/execution/router` pins its cache-hit series.
+    #[test]
+    fn the_bridge_pins_its_two_series_and_records_on_every_driver_outcome() {
+        let source = include_str!("router_delivery.rs");
+        for name in [
+            "wamn.router.delivery.attempts",
+            "wamn.router.delivery.errors",
+        ] {
+            assert!(source.contains(name), "the {name} series was renamed");
+        }
+        for class in [
+            "DeliveryClass::Delivered",
+            "DeliveryClass::WiringNotPreloaded",
+            "DeliveryClass::ExecutionFailed",
+        ] {
+            assert!(
+                source.contains(&format!("self.record(&attributes, {class})")),
+                "the driver arm recording {class} disappeared"
+            );
+        }
     }
 }
