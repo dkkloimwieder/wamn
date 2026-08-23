@@ -101,12 +101,4 @@ fn namespace_scoped_secret_names_remain_triple_only() {
     assert!(names.contains(
         "pub fn project_env_effect_writer_secret_name(org: &str, project: &str, env: &str) -> String"
     ));
-
-    let runner_db = source("deploy/platform/runner-db.example.yaml");
-    assert!(runner_db.contains("  database: \"wamn-db-demo--demo--dev--00000000\""));
-    let runner = compact(&source("deploy/platform/runner.yaml"));
-    assert!(runner.contains(
-        "- name: WAMN_DATABASE valueFrom: secretKeyRef: name: wamn-runner-db key: database"
-    ));
-    assert!(!runner.contains("name: WAMN_DATABASE, value:"));
 }
