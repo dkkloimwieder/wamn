@@ -2624,6 +2624,11 @@ fn wiring_identity_cutover_sql(schema: &BareSchemaName) -> String {
     let target = schema.quoted();
     format!(
         r#"LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE;
+-- The carriers are ADDED in their own statement. PostgreSQL analyses every
+-- subcommand of one ALTER TABLE against the PRE-EXISTING relation, so an
+-- `ALTER COLUMN` beside the `ADD COLUMN` that creates it fails with 42703
+-- `column "wiring_id" does not exist` — on exactly the legacy schemas this
+-- cutover exists to upgrade, and never on one that already has them.
 ALTER TABLE {target}.runs
     ADD COLUMN IF NOT EXISTS flow_id text,
     ADD COLUMN IF NOT EXISTS flow_version integer,
@@ -2631,7 +2636,8 @@ ALTER TABLE {target}.runs
     ADD COLUMN IF NOT EXISTS wiring_version integer,
     ADD COLUMN IF NOT EXISTS wiring_hash text,
     ADD COLUMN IF NOT EXISTS gate_report_id text,
-    ADD COLUMN IF NOT EXISTS binding_world_json jsonb,
+    ADD COLUMN IF NOT EXISTS binding_world_json jsonb;
+ALTER TABLE {target}.runs
     ALTER COLUMN flow_id TYPE text USING flow_id::text,
     ALTER COLUMN flow_version TYPE integer USING flow_version::integer,
     ALTER COLUMN wiring_id TYPE text USING wiring_id::text,

@@ -9,7 +9,7 @@
 //! execution-pin cutover has one separate test entry:
 //!
 //! - **shared-runner legacy** (wamn-l5i9.73): the deployed fixture's old
-//!   runs/node_runs/run_queue shape gains canonical admission/causation
+//!   runs/run_queue shape gains canonical admission/causation
 //!   columns, CHECKs, helper functions, and lineage trigger without losing its
 //!   compatible history. The materializer catalog-head lock and immutable
 //!   lineage are exercised, then a second reconcile is a no-op.
@@ -751,6 +751,7 @@ async fn run_plane_reconcile_live() {
         return;
     };
     let su = connect(&url).await;
+    node_runs_retirement_leg(&su).await;
     shared_runner_legacy_leg(&su).await;
     frame_identity_cutover_leg(&su).await;
     effect_writer_cutover_leg(&su).await;
@@ -1442,31 +1443,21 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
          END $temporary$; \
          CREATE SCHEMA {SCHEMA} AUTHORIZATION rp_owner_no_bypass; \
          SET ROLE rp_owner_no_bypass; \
-         CREATE TABLE {SCHEMA}.node_runs ( \
+         CREATE TABLE {SCHEMA}.runs ( \
            tenant_id text NOT NULL, run_id text NOT NULL, \
-           frame_id bigint NOT NULL DEFAULT 0, parent_frame_id bigint, call_site_id text, \
-           current_plan_hash text NOT NULL, local_node_id text NOT NULL, \
-           occurrence int NOT NULL, seq int NOT NULL, attempt int NOT NULL, \
-           status text NOT NULL, selected_recovery_class text, recovery_class text, \
-           generation_fact_kind text, connection_generation text, \
-           credential_generation text, attempt_started_at timestamptz, \
-           attempt_dispatched_at timestamptz, attempt_deadline_at timestamptz, \
-           attempt_input_ref text, attempt_key text, \
-           PRIMARY KEY (tenant_id,run_id,frame_id,local_node_id,occurrence)); \
-         ALTER TABLE {SCHEMA}.node_runs ENABLE ROW LEVEL SECURITY; \
-         ALTER TABLE {SCHEMA}.node_runs FORCE ROW LEVEL SECURITY; \
-         CREATE POLICY node_runs_tenant ON {SCHEMA}.node_runs \
+           flow_id text NOT NULL, flow_version int NOT NULL, \
+           status text NOT NULL, \
+           created_at timestamptz NOT NULL DEFAULT now(), \
+           PRIMARY KEY (tenant_id,run_id)); \
+         ALTER TABLE {SCHEMA}.runs ENABLE ROW LEVEL SECURITY; \
+         ALTER TABLE {SCHEMA}.runs FORCE ROW LEVEL SECURITY; \
+         CREATE POLICY runs_tenant ON {SCHEMA}.runs \
            USING (tenant_id = NULLIF(current_setting('app.tenant',true),'')) \
            WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant',true),'')); \
          RESET ROLE; \
-         INSERT INTO {SCHEMA}.node_runs \
-           (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,attempt,status, \
-            selected_recovery_class,recovery_class,generation_fact_kind, \
-            attempt_started_at,attempt_dispatched_at,attempt_deadline_at, \
-            attempt_input_ref) VALUES \
-           ('hidden','legacy',0,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','effect',0,0,0,'started','never-replay', \
-           'never-replay','not-required',now(),now(),now()+interval '1 minute', \
-            'sha256:hidden'); \
+         INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,status) VALUES \
+           ('hidden','legacy','f',1,'running'); \
          SET ROLE rp_owner_no_bypass; \
          CREATE TEMP TABLE pg_roles \
              (rolname text, rolsuper boolean, rolbypassrls boolean); \
@@ -1495,14 +1486,14 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
     .expect("restore superuser after owner refusal");
 
     assert_eq!(
-        su.query_one(&format!("SELECT count(*) FROM {SCHEMA}.node_runs"), &[])
+        su.query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
             .await
             .expect("hidden legacy row remains")
             .get::<_, i64>(0),
         1
     );
     assert!(
-        !column_exists(su, "node_runs", "current_effect_attempt_id").await,
+        !column_exists(su, "runs", "capture_mode").await,
         "refusal performs no schema mutation"
     );
     assert!(
@@ -1520,11 +1511,11 @@ async fn retired_shape_schema_snapshot(su: &Client) -> String {
                               ORDER BY c.relname,p.conname) \
                FROM pg_constraint p JOIN pg_class c ON c.oid=p.conrelid \
               WHERE p.connamespace=to_regnamespace($1::text) \
-                AND c.relname IN ('node_runs','effect_attempts')), '[]'::jsonb), \
+                AND c.relname = 'effect_attempts'), '[]'::jsonb), \
            'indexes', COALESCE(( \
              SELECT jsonb_agg(jsonb_build_array(indexname,indexdef) ORDER BY indexname) \
                FROM pg_indexes WHERE schemaname=$1 \
-                AND tablename IN ('node_runs','effect_attempts')), '[]'::jsonb), \
+                AND tablename = 'effect_attempts'), '[]'::jsonb), \
            'columns', COALESCE(( \
              SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attnotnull, \
                                                 pg_get_expr(d.adbin,d.adrelid)) \
@@ -1532,7 +1523,7 @@ async fn retired_shape_schema_snapshot(su: &Client) -> String {
                FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid \
                LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum \
               WHERE c.relnamespace=to_regnamespace($1::text) \
-                AND c.relname IN ('node_runs','effect_attempts') \
+                AND c.relname = 'effect_attempts' \
                 AND a.attnum > 0 AND NOT a.attisdropped), '[]'::jsonb))::text",
         &[&SCHEMA],
     )
@@ -1541,29 +1532,11 @@ async fn retired_shape_schema_snapshot(su: &Client) -> String {
     .get(0)
 }
 
-async fn create_old_frame_identity_tables(su: &Client, node: bool, effect: bool, populated: bool) {
+async fn create_old_frame_identity_tables(su: &Client, effect: bool, populated: bool) {
     reset(su).await;
     su.batch_execute(&format!("CREATE SCHEMA {SCHEMA};"))
         .await
         .expect("create frame-cutover schema");
-    if node {
-        su.batch_execute(&format!(
-            "CREATE TABLE {SCHEMA}.node_runs ( \
-               tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
-               occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, status text NOT NULL, \
-               PRIMARY KEY (tenant_id,run_id,node_id,occurrence));"
-        ))
-        .await
-        .expect("create old node_runs");
-        if populated {
-            su.batch_execute(&format!(
-                "INSERT INTO {SCHEMA}.node_runs(tenant_id,run_id,node_id,occurrence,seq,status) \
-                 VALUES ('t1','r1','n1',0,0,'success');"
-            ))
-            .await
-            .expect("seed old node_runs");
-        }
-    }
     if effect {
         su.batch_execute(&format!(
             "CREATE TABLE {SCHEMA}.effect_attempts ( \
@@ -1593,12 +1566,9 @@ async fn create_old_frame_identity_tables(su: &Client, node: bool, effect: bool,
 }
 
 async fn frame_identity_cutover_leg(su: &Client) {
-    for (label, node, effect) in [
-        ("both-present", true, true),
-        ("node-only", true, false),
-        ("effect-only", false, true),
-    ] {
-        create_old_frame_identity_tables(su, node, effect, true).await;
+    {
+        let label = "effect-only";
+        create_old_frame_identity_tables(su, true, true).await;
         su.batch_execute("GRANT wamn_scenario_author TO wamn_app")
             .await
             .expect("seed role-membership mutation sentinel");
@@ -1606,13 +1576,8 @@ async fn frame_identity_cutover_leg(su: &Client) {
         let error = reconcile_run_plane::reconcile(su, &schema(), true)
             .await
             .expect_err("populated legacy identity must refuse before DDL");
-        let expected_refusal = if effect {
-            "effect-writer-cutover-requires-empty-ledger"
-        } else {
-            "frame-identity-cutover-requires-empty-node-and-effect-facts"
-        };
         assert!(
-            format!("{error:#}").contains(expected_refusal),
+            format!("{error:#}").contains("effect-writer-cutover-requires-empty-ledger"),
             "{label}: wrong refusal: {error:#}"
         );
         assert_eq!(
@@ -1634,26 +1599,32 @@ async fn frame_identity_cutover_leg(su: &Client) {
         );
     }
 
+    // Late frame-identity drift on a CURRENT, populated schema. Since
+    // wamn-0h0g.26.3.1 (204220e8) `effect_attempts` is the only frame-identity
+    // target, so each case drifts it: the relation CHECK, the occurrence
+    // identity, and a resurrected legacy `node_id` carrier.
     for (label, drift_sql) in [
         (
             "drifted-frame-check",
             format!(
-                "ALTER TABLE {SCHEMA}.node_runs \
-                   DROP CONSTRAINT node_runs_frame_relation_check, \
-                   ADD CONSTRAINT node_runs_frame_relation_check CHECK (frame_id >= 0);"
+                "ALTER TABLE {SCHEMA}.effect_attempts \
+                   DROP CONSTRAINT effect_attempts_frame_relation_check, \
+                   ADD CONSTRAINT effect_attempts_frame_relation_check CHECK (frame_id >= 0);"
             ),
         ),
         (
-            "drifted-frame-pk",
+            "drifted-occurrence-key",
             format!(
-                "ALTER TABLE {SCHEMA}.node_runs DROP CONSTRAINT node_runs_pkey, \
-                   ADD PRIMARY KEY (tenant_id,run_id,local_node_id,occurrence);"
+                "ALTER TABLE {SCHEMA}.effect_attempts \
+                   DROP CONSTRAINT effect_attempts_occurrence_key, \
+                   ADD CONSTRAINT effect_attempts_occurrence_key \
+                     UNIQUE (tenant_id,run_id,local_node_id,occurrence);"
             ),
         ),
         (
             "retained-legacy-node-id",
             format!(
-                "ALTER TABLE {SCHEMA}.node_runs \
+                "ALTER TABLE {SCHEMA}.effect_attempts \
                    ADD COLUMN node_id text NOT NULL DEFAULT 'legacy';"
             ),
         ),
@@ -1671,9 +1642,14 @@ async fn frame_identity_cutover_leg(su: &Client) {
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
                 status) \
              VALUES ('t1',$${label}$$,'f',1,'frame-cat',1,'dev','running'); \
-             INSERT INTO {SCHEMA}.node_runs \
-               (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
-             VALUES ('t1',$${label}$$,0,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'n1',0,0,'success'); \
+             INSERT INTO {SCHEMA}.effect_attempts \
+               (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+                local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
+                generation_fact_kind,attempt_deadline_at,attempt_input_ref) \
+             VALUES ('t1','00000000-0000-0000-0000-000000000413',$${label}$$, \
+                     $${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
+                     'n',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,0, \
+                     'not-required','2099-01-02 UTC','sha256:input'); \
              {drift_sql}"
         ))
         .await
@@ -1683,8 +1659,7 @@ async fn frame_identity_cutover_leg(su: &Client) {
             .await
             .expect_err("populated late frame identity drift must refuse before DDL");
         assert!(
-            format!("{error:#}")
-                .contains("frame-identity-cutover-requires-empty-node-and-effect-facts"),
+            format!("{error:#}").contains("requires-empty"),
             "{label}: wrong refusal: {error:#}"
         );
         assert_eq!(
@@ -1694,7 +1669,7 @@ async fn frame_identity_cutover_leg(su: &Client) {
         );
     }
 
-    create_old_frame_identity_tables(su, true, true, false).await;
+    create_old_frame_identity_tables(su, true, false).await;
     let plan = reconcile_run_plane::reconcile(su, &schema(), true)
         .await
         .expect("empty old frame identity cutover succeeds");
@@ -1706,7 +1681,7 @@ async fn frame_identity_cutover_leg(su: &Client) {
     let old_identity_residue: i64 = su
         .query_one(
             "SELECT count(*) FROM information_schema.columns \
-              WHERE table_schema=$1 AND table_name IN ('node_runs','effect_attempts') \
+              WHERE table_schema=$1 AND table_name='effect_attempts' \
                 AND column_name='node_id'",
             &[&SCHEMA],
         )
@@ -1876,16 +1851,13 @@ async fn frame_identity_cutover_leg(su: &Client) {
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
             status) \
-         VALUES ('t1','framed-current','f',1,'frame-cat',1,'dev','running'); \
-         INSERT INTO {SCHEMA}.node_runs \
-           (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
-         VALUES ('t1','framed-current',0,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'n1',0,0,'success');"
+         VALUES ('t1','framed-current','f',1,'frame-cat',1,'dev','running');"
     ))
     .await
-    .expect("seed current populated node target");
+    .expect("seed a current populated run");
     let plan = reconcile_run_plane::reconcile(su, &schema(), true)
         .await
-        .expect("current populated node target creates missing effect peer");
+        .expect("an absent effect peer is recreated without a frame refusal");
     assert!(
         !plan
             .actions
@@ -1911,7 +1883,7 @@ async fn effect_writer_schema_snapshot(su: &Client) -> String {
                               ORDER BY table_name,ordinal_position) \
                FROM information_schema.columns \
               WHERE table_schema=$1 AND table_name IN \
-                    ('node_runs','effect_attempts','effect_attempt_dispatches','effect_attempt_outcomes')), \
+                    ('effect_attempts','effect_attempt_dispatches','effect_attempt_outcomes')), \
              '[]'::jsonb), \
            'constraints', COALESCE(( \
              SELECT jsonb_agg(jsonb_build_array(c.relname,p.conname, \
@@ -1920,7 +1892,7 @@ async fn effect_writer_schema_snapshot(su: &Client) -> String {
                FROM pg_constraint p JOIN pg_class c ON c.oid=p.conrelid \
               WHERE p.connamespace=to_regnamespace($1::text) \
                 AND c.relname IN \
-                    ('node_runs','effect_attempts','effect_attempt_dispatches','effect_attempt_outcomes')), \
+                    ('effect_attempts','effect_attempt_dispatches','effect_attempt_outcomes')), \
              '[]'::jsonb))::text",
         &[&SCHEMA],
     )
@@ -1931,25 +1903,7 @@ async fn effect_writer_schema_snapshot(su: &Client) -> String {
 
 async fn install_empty_incompatible_effect_writer_shape(su: &Client) {
     su.batch_execute(&format!(
-        "ALTER TABLE {SCHEMA}.node_runs \
-             ADD COLUMN current_effect_attempt_id uuid, \
-             ADD COLUMN attempt int, \
-             ADD COLUMN selected_recovery_class text, \
-             ADD COLUMN recovery_class text, \
-             ADD COLUMN generation_fact_kind text, \
-             ADD COLUMN connection_generation text, \
-             ADD COLUMN credential_generation text, \
-             ADD COLUMN attempt_started_at timestamptz, \
-             ADD COLUMN attempt_dispatched_at timestamptz, \
-             ADD COLUMN attempt_deadline_at timestamptz, \
-             ADD COLUMN attempt_input_ref text, \
-             ADD COLUMN attempt_key text, \
-             ADD CONSTRAINT node_runs_current_effect_attempt_fk \
-               FOREIGN KEY (tenant_id,current_effect_attempt_id) \
-               REFERENCES {SCHEMA}.effect_attempts (tenant_id,attempt_id), \
-             ADD CONSTRAINT node_runs_selected_recovery_class_check \
-               CHECK (selected_recovery_class IS NULL OR selected_recovery_class <> ''); \
-         ALTER TABLE {SCHEMA}.effect_attempt_dispatches \
+        "ALTER TABLE {SCHEMA}.effect_attempt_dispatches \
              DROP CONSTRAINT effect_attempt_dispatches_attempt_fk, \
              DROP CONSTRAINT effect_attempt_dispatches_occurrence_key, \
              DROP COLUMN run_id, DROP COLUMN frame_id, \
@@ -1978,13 +1932,10 @@ async fn effect_writer_cutover_leg(su: &Client) {
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
             status) \
          VALUES ('t1','writer-projection','f',1,'writer-cat',1,'dev', \
-                 'running'); \
-         INSERT INTO {SCHEMA}.node_runs \
-           (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
-         VALUES ('t1','writer-projection',0,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'n1',0,0,'success');"
+                 'running');"
     ))
     .await
-    .expect("seed mutable projection retained across writer cutover");
+    .expect("seed the run the writer cutover reconciles around");
     install_empty_incompatible_effect_writer_shape(su).await;
 
     su.batch_execute("ALTER ROLE wamn_effect_writer LOGIN")
@@ -2006,24 +1957,6 @@ async fn effect_writer_cutover_leg(su: &Client) {
     su.batch_execute("ALTER ROLE wamn_effect_writer NOLOGIN")
         .await
         .expect("restore stable writer role");
-    su.batch_execute("ALTER ROLE wamn_run_projection_writer LOGIN")
-        .await
-        .expect("make stable projection role invalid");
-    let error = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("invalid stable projection role refuses before empty cutover");
-    let postgres: tokio_postgres::Error = error.downcast().expect("projection role refusal");
-    let database = postgres
-        .as_db_error()
-        .expect("typed projection role refusal");
-    assert_eq!(database.code().code(), "42501");
-    assert_eq!(
-        database.message(),
-        "run-projection-writer-role-out-of-bounds"
-    );
-    su.batch_execute("ALTER ROLE wamn_run_projection_writer NOLOGIN")
-        .await
-        .expect("restore stable projection role");
 
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
@@ -2035,13 +1968,8 @@ async fn effect_writer_cutover_leg(su: &Client) {
         .expect("effect writer cutover action");
     assert_eq!(
         action.sql.matches("LOCK TABLE").count(),
-        4,
-        "the mutable projection and three incompatible ledgers are locked"
-    );
-    assert!(
-        action
-            .sql
-            .contains(&format!("LOCK TABLE \"{SCHEMA}\".\"node_runs\""))
+        3,
+        "the three incompatible ledgers are locked"
     );
     let preflight = action
         .sql
@@ -2059,31 +1987,6 @@ async fn effect_writer_cutover_leg(su: &Client) {
     assert!(!action.sql.contains("UPDATE "));
     assert!(!action.sql.contains("INSERT INTO "));
 
-    for column in [
-        "current_effect_attempt_id",
-        "attempt",
-        "selected_recovery_class",
-        "recovery_class",
-        "generation_fact_kind",
-        "connection_generation",
-        "credential_generation",
-        "attempt_started_at",
-        "attempt_dispatched_at",
-        "attempt_deadline_at",
-        "attempt_input_ref",
-        "attempt_key",
-    ] {
-        assert!(
-            !column_exists(su, "node_runs", column).await,
-            "retired node projection column {column} survived"
-        );
-    }
-    let retained_projection_rows: i64 = su
-        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.node_runs"), &[])
-        .await
-        .expect("read retained mutable projection")
-        .get(0);
-    assert_eq!(retained_projection_rows, 1);
     assert!(!column_exists(su, "effect_attempts", "attempt_key").await);
     for column in ["run_id", "frame_id", "local_node_id", "occurrence"] {
         assert!(
@@ -2137,10 +2040,7 @@ async fn effect_writer_cutover_leg(su: &Client) {
          GRANT UPDATE (status) ON {SCHEMA}.runs TO wamn_effect_writer; \
          ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner; \
          REVOKE SELECT (lease_expires_at) ON {SCHEMA}.run_queue FROM wamn_effect_writer; \
-         GRANT SELECT (lease_generation) ON {SCHEMA}.run_queue TO wamn_effect_writer; \
-         GRANT UPDATE ON {SCHEMA}.node_runs TO wamn_app; \
-         REVOKE DELETE ON {SCHEMA}.node_runs FROM wamn_run_projection_writer; \
-         GRANT SELECT ON {SCHEMA}.node_runs TO wamn_effect_writer;"
+         GRANT SELECT (lease_generation) ON {SCHEMA}.run_queue TO wamn_effect_writer;"
     ))
     .await
     .expect("install schema/table/column ACL drift");
@@ -2154,10 +2054,6 @@ async fn effect_writer_cutover_leg(su: &Client) {
     assert!(repair.actions.iter().any(|action| {
         action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
             && action.target == format!("{SCHEMA}.effect_attempts")
-    }));
-    assert!(repair.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
-            && action.target == format!("{SCHEMA}.node_runs")
     }));
     for table in ["runs", "run_queue"] {
         assert!(repair.actions.iter().any(|action| {
@@ -2229,68 +2125,19 @@ async fn effect_writer_cutover_leg(su: &Client) {
     assert!(run_reads.get::<_, bool>(5));
     assert!(run_reads.get::<_, bool>(6));
     assert!(!run_reads.get::<_, bool>(7));
-    let projection_acl = su
-        .query_one(
-            &format!(
-                "SELECT \
-                    has_table_privilege('wamn_app','{SCHEMA}.node_runs','SELECT'), \
-                    has_any_column_privilege('wamn_app','{SCHEMA}.node_runs','INSERT,UPDATE,REFERENCES') \
-                      OR has_table_privilege('wamn_app','{SCHEMA}.node_runs','DELETE'), \
-                    has_table_privilege('wamn_run_projection_writer','{SCHEMA}.node_runs','SELECT,INSERT,UPDATE,DELETE'), \
-                    has_table_privilege('wamn_run_projection_writer','{SCHEMA}.node_runs','TRUNCATE,REFERENCES,TRIGGER'), \
-                    has_table_privilege('wamn_effect_writer','{SCHEMA}.node_runs','SELECT,INSERT,UPDATE,DELETE')"
-            ),
-            &[],
-        )
-        .await
-        .expect("read exact run-projection ACL boundary");
-    assert!(projection_acl.get::<_, bool>(0));
-    assert!(!projection_acl.get::<_, bool>(1));
-    assert!(projection_acl.get::<_, bool>(2));
-    assert!(!projection_acl.get::<_, bool>(3));
-    assert!(!projection_acl.get::<_, bool>(4));
-
-    su.batch_execute(&format!(
+    // wamn-0h0g.26.3.1 (204220e8) retired the node-runs projection, and with it
+    // the retired projection's ACL target and every rogue-projection-authority
+    // path this leg used to close. `wamn_projection_rogue_member` survives only
+    // as the transitive-membership witness the generation contract below needs.
+    su.batch_execute(
         "DO $roles$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_projection_rogue_direct') THEN \
-             CREATE ROLE wamn_projection_rogue_direct NOLOGIN; \
-           END IF; \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_projection_rogue_column') THEN \
-             CREATE ROLE wamn_projection_rogue_column NOLOGIN; \
-           END IF; \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_projection_rogue_member') THEN \
              CREATE ROLE wamn_projection_rogue_member NOLOGIN INHERIT; \
            END IF; \
-         END $roles$; \
-         GRANT INSERT ON {SCHEMA}.node_runs TO wamn_projection_rogue_direct; \
-         GRANT UPDATE (status) ON {SCHEMA}.node_runs TO wamn_projection_rogue_column; \
-         GRANT wamn_projection_rogue_column TO wamn_projection_rogue_member;"
-    ))
+         END $roles$;",
+    )
     .await
-    .expect("install rogue direct and inherited-column authority");
-    let rogue_repair = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("revoke every directly granted rogue projection path");
-    assert!(rogue_repair.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
-            && action.target == format!("{SCHEMA}.node_runs")
-    }));
-    let rogue_direct_closed: bool = su
-        .query_one(
-            &format!(
-                "SELECT NOT has_table_privilege('wamn_projection_rogue_direct', \
-                           '{SCHEMA}.node_runs','INSERT') \
-                    AND NOT has_column_privilege('wamn_projection_rogue_column', \
-                           '{SCHEMA}.node_runs','status','UPDATE') \
-                    AND NOT has_column_privilege('wamn_projection_rogue_member', \
-                           '{SCHEMA}.node_runs','status','UPDATE')"
-            ),
-            &[],
-        )
-        .await
-        .expect("read closed rogue direct projection authority")
-        .get(0);
-    assert!(rogue_direct_closed);
+    .expect("install the transitive-membership witness");
 
     let generation = "wamn_effect_writer_0000000000000000000000000000000000000000_a";
     su.batch_execute(&format!(
@@ -2300,7 +2147,7 @@ async fn effect_writer_cutover_leg(su: &Client) {
                INHERIT NOREPLICATION NOBYPASSRLS; \
            END IF; \
          END $generation$; \
-         GRANT wamn_effect_writer, wamn_run_projection_writer TO {generation}; \
+         GRANT wamn_effect_writer TO {generation}; \
          GRANT {generation} TO wamn_projection_rogue_member;"
     ))
     .await
@@ -2314,10 +2161,7 @@ async fn effect_writer_cutover_leg(su: &Client) {
     );
     assert!(
         su.query_one(
-            &format!(
-                "SELECT has_table_privilege('wamn_projection_rogue_member', \
-                                             '{SCHEMA}.node_runs','UPDATE')"
-            ),
+            &format!("SELECT pg_has_role('wamn_projection_rogue_member','{generation}','MEMBER')"),
             &[],
         )
         .await
@@ -2327,8 +2171,7 @@ async fn effect_writer_cutover_leg(su: &Client) {
     );
     su.batch_execute(&format!(
         "REVOKE {generation} FROM wamn_projection_rogue_member; \
-         REVOKE wamn_effect_writer, wamn_run_projection_writer FROM {generation}; \
-         REVOKE wamn_projection_rogue_column FROM wamn_projection_rogue_member;"
+         REVOKE wamn_effect_writer FROM {generation};"
     ))
     .await
     .expect("remove disposable rogue memberships");
@@ -2381,10 +2224,10 @@ async fn effect_writer_cutover_leg(su: &Client) {
     .expect("remove disposable connected generation impostor authority");
     let clean = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect("projection ACL converges after authority removal");
+        .expect("the writer ACL converges after authority removal");
     assert!(!clean.actions.iter().any(|action| {
         action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
-            && action.target == format!("{SCHEMA}.node_runs")
+            && action.target == format!("{SCHEMA}.effect_attempts")
     }));
 }
 
@@ -2486,6 +2329,100 @@ async fn effect_writer_populated_refusal_leg(su: &Client) {
     }
 }
 
+/// wamn-0h0g.26.3.1 (204220e8) retired the node-runs projection. A schema
+/// provisioned before it still carries the relation, so the reconciler plans
+/// ONE `RetireNodeRuns` action, executes it before role bootstrap, and returns
+/// — every other repair waits for the next pass. Without this leg the arm has
+/// no live watcher.
+async fn node_runs_retirement_leg(su: &Client) {
+    reset(su).await;
+    let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog for node-runs retirement");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply current run-state for node-runs retirement");
+    su.batch_execute(&format!(
+        "CREATE TABLE {SCHEMA}.node_runs ( \
+           tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
+           occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, status text NOT NULL, \
+           PRIMARY KEY (tenant_id,run_id,node_id,occurrence)); \
+         INSERT INTO {SCHEMA}.node_runs(tenant_id,run_id,node_id,occurrence,seq,status) \
+           VALUES ('t1','r1','n1',0,0,'success'); \
+         GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_run_projection_writer; \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {SCHEMA}.node_runs \
+           TO wamn_run_projection_writer; \
+         GRANT SELECT ON {SCHEMA}.runs TO wamn_run_projection_writer;"
+    ))
+    .await
+    .expect("install a surviving node-runs projection");
+
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("a surviving projection retires");
+    assert_eq!(
+        plan.actions
+            .iter()
+            .map(|action| action.kind)
+            .collect::<Vec<_>>(),
+        vec![RunPlaneActionKind::RetireNodeRuns],
+        "retirement is a one-action plan: {:#?}",
+        plan.actions
+    );
+    assert!(
+        !table_exists(su, SCHEMA, "node_runs").await,
+        "populated projection rows are discarded with their relation"
+    );
+    let projection_authority: bool = su
+        .query_one(
+            &format!(
+                "SELECT has_schema_privilege('wamn_run_projection_writer','{SCHEMA}','USAGE')"
+            ),
+            &[],
+        )
+        .await
+        .expect("read retired projection-writer authority")
+        .get(0);
+    assert!(
+        !projection_authority,
+        "the projection writer keeps schema authority after its relation is gone"
+    );
+    let projection_table_authority: bool = su
+        .query_one(
+            &format!(
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class AS relation \
+                   CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl \
+                   JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee \
+                  WHERE relation.relnamespace = to_regnamespace('{SCHEMA}') \
+                    AND grantee.rolname = 'wamn_run_projection_writer')"
+            ),
+            &[],
+        )
+        .await
+        .expect("read retired projection-writer table authority")
+        .get(0);
+    // The grant on the SURVIVING `runs` is what makes this observable: dropping
+    // node_runs takes its own ACL with it, so only a grant on a relation that
+    // outlives the projection can witness the `ON ALL TABLES` revoke.
+    assert!(
+        !projection_table_authority,
+        "the projection writer keeps a table grant somewhere in the schema"
+    );
+
+    // The next pass sees an ordinary schema and reaches everything the
+    // one-action plan deferred.
+    assert!(
+        !reconcile_run_plane::reconcile(su, &schema, true)
+            .await
+            .expect("the pass after retirement proceeds")
+            .actions
+            .iter()
+            .any(|action| action.kind == RunPlaneActionKind::RetireNodeRuns),
+        "retirement is idempotent"
+    );
+}
+
 async fn shared_runner_legacy_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
@@ -2502,18 +2439,6 @@ async fn shared_runner_legacy_leg(su: &Client) {
              ('terminal','retry-exhausted','invalid-input','runaway-budget')), \
            created_at timestamptz NOT NULL DEFAULT now(), \
            updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (tenant_id,run_id)); \
-         CREATE TABLE {SCHEMA}.node_runs (tenant_id text NOT NULL CHECK (tenant_id <> ''), \
-           run_id text NOT NULL,node_id text NOT NULL,occurrence int NOT NULL DEFAULT 0, \
-           seq int NOT NULL,attempt int NOT NULL DEFAULT 0,status text NOT NULL CHECK \
-             (status IN ('running','success','error')),output_port text,output_json jsonb, \
-           input_json jsonb,error_kind text CHECK (error_kind IN \
-             ('retryable','rate-limited','terminal','invalid-input','cancelled')),error_detail jsonb, \
-           input_ref text,output_ref text,preview_head text,payload_size bigint, \
-           payload_hash text,capture_mode text,redacted boolean NOT NULL DEFAULT false, \
-           started_at timestamptz NOT NULL DEFAULT now(),ended_at timestamptz, \
-           PRIMARY KEY(tenant_id,run_id,node_id,occurrence),FOREIGN KEY(tenant_id,run_id) \
-             REFERENCES {SCHEMA}.runs(tenant_id,run_id) ON DELETE CASCADE); \
-         CREATE INDEX node_runs_seq ON {SCHEMA}.node_runs(tenant_id,run_id,seq); \
          CREATE TABLE {SCHEMA}.run_queue (tenant_id text NOT NULL CHECK (tenant_id <> ''), \
            run_id text NOT NULL,partition_key text,partition_policy text NOT NULL DEFAULT 'blocking' \
              CHECK(partition_policy IN ('blocking','leapfrog')),priority int NOT NULL DEFAULT 0, \
@@ -2541,49 +2466,56 @@ async fn shared_runner_legacy_leg(su: &Client) {
         .expect("apply catalog schema");
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs(tenant_id,run_id,flow_id,flow_version,status) \
-           VALUES ('t1','history-run','f',1,'completed'); \
-         INSERT INTO {SCHEMA}.node_runs(tenant_id,run_id,node_id,occurrence,seq,status) \
-           VALUES ('t1','history-run','n1',0,0,'success'), \
-                  ('t1','history-run','n2',0,1,'success');"
+           VALUES ('t1','history-run','f',1,'completed');"
     ))
     .await
     .expect("seed compatible shared history");
 
     let error = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect_err("populated shared-runner legacy fixture must refuse pin cutover");
+        .expect_err("populated shared-runner legacy fixture must refuse the pin carriers");
     let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
     let database = postgres
         .as_db_error()
-        .expect("shared-runner cutover is a database refusal");
-    assert_eq!(database.code().code(), "55000");
-    assert_eq!(
-        database.message(),
-        "execution-pin-cutover-requires-empty-run-and-release-membership"
+        .expect("shared-runner refusal is a database refusal");
+    // The bespoke `execution-pin-cutover-requires-empty-run-and-release-membership`
+    // refusal no longer exists anywhere in the tree. The RULE it enforced does:
+    // the admission pins are NOT NULL in the record, so PostgreSQL itself
+    // refuses the ADD against populated legacy rows rather than let the
+    // reconciler fabricate provenance for them. That is the documented
+    // contract — "a legacy row that violates the canonical contract aborts
+    // reconciliation rather than being rewritten or deleted".
+    assert_eq!(database.code().code(), "23502");
+    assert!(
+        database.message().contains("catalog_id") && database.message().contains("runs"),
+        "the refusal names the pin carrier it could not fabricate: {}",
+        database.message()
     );
 
-    let counts = su
+    // What the refusal must preserve is the HISTORY and the absence of
+    // fabricated provenance. It is NOT a pre-mutation refusal: only
+    // `PRE_ROLE_BOOTSTRAP_ACTIONS` run ahead of everything else, and creating a
+    // missing record table is not one of them, so earlier actions in the same
+    // pass legitimately land before this one aborts.
+    let retained = su
         .query_one(
-            &format!(
-                "SELECT (SELECT count(*) FROM {SCHEMA}.runs), \
-                        (SELECT count(*) FROM {SCHEMA}.node_runs)"
-            ),
+            &format!("SELECT count(*), min(flow_id), min(status) FROM {SCHEMA}.runs"),
             &[],
         )
         .await
-        .expect("read refusal-preserved row counts");
-    assert_eq!(counts.get::<_, i64>(0), 1);
-    assert_eq!(counts.get::<_, i64>(1), 2);
+        .expect("read the refusal-preserved legacy history");
+    assert_eq!(retained.get::<_, i64>(0), 1);
+    assert_eq!(retained.get::<_, Option<String>>(1).as_deref(), Some("f"));
+    assert_eq!(
+        retained.get::<_, Option<String>>(2).as_deref(),
+        Some("completed")
+    );
     for column in ["catalog_id", "catalog_version", "environment"] {
         assert!(
             !column_exists(su, "runs", column).await,
             "refusal leaves pin column {column} absent"
         );
     }
-    assert!(
-        !table_exists(su, SCHEMA, "effect_attempts").await,
-        "refusal occurs before unrelated run-plane DDL"
-    );
 }
 
 /// Retired child/wait state is removed only when every durable row is ordinary.
@@ -2598,14 +2530,10 @@ async fn child_run_cutover_leg(su: &Client) {
             environment,trigger_source, \
             event_source_run_id,event_root_run_id,event_depth) \
          VALUES ('child-cutover','retained-run','f',1,'cat',1,'dev', \
-                 'event','source-run','event-root',3); \
-         INSERT INTO {SCHEMA}.node_runs \
-           (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,seq,status) \
-         VALUES ('child-cutover','retained-run',0, \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}','root-node',0,'success');"
+                 'event','source-run','event-root',3);"
     ))
     .await
-    .expect("seed retained ordinary run and frame facts");
+    .expect("seed retained ordinary run");
 
     let plan = reconcile_run_plane::reconcile(su, &schema(), true)
         .await
@@ -2644,10 +2572,8 @@ async fn child_run_cutover_leg(su: &Client) {
     let retained = su
         .query_one(
             &format!(
-                "SELECT r.trigger_source, r.event_source_run_id, r.event_root_run_id, r.event_depth, \
-                        n.frame_id \
+                "SELECT r.trigger_source, r.event_source_run_id, r.event_root_run_id, r.event_depth \
                    FROM {SCHEMA}.runs AS r \
-                   JOIN {SCHEMA}.node_runs AS n USING (tenant_id,run_id) \
                   WHERE r.tenant_id='child-cutover' AND r.run_id='retained-run'"
             ),
             &[],
@@ -2667,7 +2593,6 @@ async fn child_run_cutover_leg(su: &Client) {
         Some("event-root")
     );
     assert_eq!(retained.get::<_, Option<i32>>(3), Some(3));
-    assert_eq!(retained.get::<_, i64>(4), 0);
     assert!(
         reconcile_run_plane::reconcile(su, &schema(), false)
             .await
@@ -3411,7 +3336,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         .await
         .expect("apply catalog-schema");
 
-    // Current-era runs/node_runs/flows (the drift was queue-side)…
+    // Current-era runs/flows (the drift was queue-side)…
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
@@ -3830,21 +3755,32 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         .expect("from-zero reconcile applies");
     assert!(!plan.is_noop());
 
+    // Exactly the run-plane record: `run-state.sql` + `run-queue.sql`. The three
+    // authoring-test relations left this roster with wamn-0h0g.9.11.2
+    // (38860fab) — `deploy/sql/control-portable-store.sql` provisions them into
+    // the same schema, and this verb never applies that file.
     for t in [
         "runs",
-        "node_runs",
+        "environment_policies",
         "effect_attempts",
         "effect_attempt_dispatches",
         "effect_attempt_outcomes",
         "operator_run_actions",
-        "authoring_test_run_reservations",
-        "authoring_test_case_runs",
-        "authoring_test_reports",
         "run_queue",
     ] {
         assert!(
             table_exists(su, SCHEMA, t).await,
             "run-plane table {t} provisioned"
+        );
+    }
+    for t in [
+        "authoring_test_run_reservations",
+        "authoring_test_case_runs",
+        "authoring_test_reports",
+    ] {
+        assert!(
+            !table_exists(su, SCHEMA, t).await,
+            "the portable store's relation {t} is not this verb's to provision"
         );
     }
     for column in [
@@ -3869,6 +3805,10 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         table_exists(su, "catalog", "event_registrations").await,
         "catalog schema provisioned"
     );
+    // The project-authoring relations left `catalog-schema.sql` with
+    // wamn-0h0g.9.11.3 (805701ec); `deploy/sql/control-portable-store.sql` owns
+    // them and `control_portable_store` pins them. This verb applies the
+    // catalog record only, so from-zero must NOT produce them.
     for table in [
         "flow_drafts",
         "validated_flow_drafts",
@@ -3876,35 +3816,61 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         "authoring_command_audit",
     ] {
         assert!(
-            table_exists(su, "catalog", table).await,
-            "catalog authoring table {table} provisioned"
+            !table_exists(su, "catalog", table).await,
+            "the portable store's relation catalog.{table} is not this verb's to provision"
         );
     }
 
     // Functional smoke as the runtime role: the sections' grants + RLS hold.
+    // wamn-0h0g.22.7 (b1d42599) took every run-plane WRITE away from
+    // `wamn_app` — table SELECT and DELETE on `runs`, nothing at all on
+    // `run_queue` — so the row is seeded as superuser and the guest role is
+    // proven to READ under RLS and to be REFUSED on write.
     seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
-        "SET ROLE wamn_app; \
-         SELECT set_config('app.tenant', 't1', false); \
-         INSERT INTO {SCHEMA}.runs \
+        "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
               environment) \
              VALUES ('t1','r1','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
     ))
     .await
-    .expect("wamn_app can write its tenant's run-plane rows");
+    .expect("seed a tenant run-plane row");
+    su.batch_execute("SET ROLE wamn_app; SELECT set_config('app.tenant', 't1', false);")
+        .await
+        .expect("assume the runtime role");
+    for refused in [
+        format!(
+            "INSERT INTO {SCHEMA}.runs \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment) \
+             VALUES ('t1','r2','f',1,'cat',1,'dev')"
+        ),
+        format!("INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1','r2')"),
+    ] {
+        let denied = su
+            .batch_execute(&refused)
+            .await
+            .expect_err("the runtime role writes no run-plane row");
+        assert_db_code(denied, "42501", "runtime-role write refusal");
+    }
+    // `runs` is the only run-plane relation the guest role can still read;
+    // wamn-0h0g.22.7 (b1d42599) left it nothing at all on `run_queue`.
     let visible: i64 = su
-        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.run_queue"), &[])
+        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
         .await
         .expect("tenant read")
         .get(0);
     assert_eq!(visible, 1, "own tenant sees its row");
+    let queue_denied = su
+        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.run_queue"), &[])
+        .await
+        .expect_err("the runtime role cannot read the queue at all");
+    assert_db_code(queue_denied, "42501", "runtime-role queue read refusal");
     su.batch_execute("SELECT set_config('app.tenant', 't2', false)")
         .await
         .expect("switch tenant");
     let foreign: i64 = su
-        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.run_queue"), &[])
+        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
         .await
         .expect("foreign read")
         .get(0);
@@ -4251,18 +4217,10 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
             status) \
          VALUES ('t1','legacy-off','f',1,'capture',1,'dev', \
                  'completed'); \
-         INSERT INTO {SCHEMA}.node_runs \
-           (tenant_id,run_id,current_plan_hash,local_node_id,seq,status,output_size) \
-         VALUES ('t1','legacy-off','{EMPTY_EXECUTION_BUNDLE_HASH}','legacy-node',0,'success',321); \
          DROP TRIGGER runs_admission_pins_immutable ON {SCHEMA}.runs; \
          ALTER TABLE {SCHEMA}.runs \
            DROP CONSTRAINT runs_capture_mode_source_check, \
-           DROP COLUMN capture_mode; \
-         ALTER TABLE {SCHEMA}.node_runs RENAME COLUMN output_size TO payload_size; \
-         ALTER TABLE {SCHEMA}.node_runs \
-           ADD COLUMN preview_head text, \
-           ADD COLUMN capture_mode text, \
-           ADD COLUMN redacted boolean NOT NULL DEFAULT false;"
+           DROP COLUMN capture_mode;"
     ))
     .await
     .expect("build populated pre-capture carrier schema");
@@ -4282,26 +4240,6 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
         .expect("read legacy defaulted mode")
         .get(0);
     assert_eq!(mode, "off");
-    for column in ["preview_head", "capture_mode", "redacted"] {
-        assert!(
-            !column_exists(su, "node_runs", column).await,
-            "retired node capture column {column} removed"
-        );
-    }
-    assert!(column_exists(su, "node_runs", "output_size").await);
-    assert!(!column_exists(su, "node_runs", "payload_size").await);
-    let preserved_size: i64 = su
-        .query_one(
-            &format!(
-                "SELECT output_size FROM {SCHEMA}.node_runs \
-                 WHERE run_id='legacy-off' AND local_node_id='legacy-node'"
-            ),
-            &[],
-        )
-        .await
-        .expect("legacy output size was preserved by rename")
-        .get(0);
-    assert_eq!(preserved_size, 321);
 
     let immutable = su
         .execute(
@@ -4338,73 +4276,49 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     .await
     .expect("canonical direct draft may carry full");
 
+    // wamn-0h0g.22.7 (b1d42599) replaced the capture-mode COLUMN confinement
+    // with a whole-relation one: `wamn_app` holds table SELECT and DELETE on
+    // `runs` and no write of any shape. The admission that used to prove the
+    // `off` default moved to the private management path, so what this leg
+    // still proves live is the confinement the reconciler restores.
     let app = connect_as(url, "wamn_app", "wamn_app").await;
     app.batch_execute("SELECT set_config('app.tenant','t1',false)")
         .await
         .expect("enter application tenant for capture authority probes");
-    let default_mode: String = app
-        .query_one(
-            &format!(
+    for (label, refused) in [
+        (
+            "admission",
+            format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
                     status,trigger_source) \
-                 VALUES ('t1','app-default-off','f',1,'capture',1,'dev', \
-                         'dispatched','test') \
-                 RETURNING capture_mode"
+                 VALUES ('t1','app-forged','f',1,'capture',1,'dev','dispatched','test')"
             ),
+        ),
+        (
+            "capture-mode update",
+            format!("UPDATE {SCHEMA}.runs SET capture_mode='full' WHERE run_id='draft-full'"),
+        ),
+        (
+            "ordinary update",
+            format!("UPDATE {SCHEMA}.runs SET status='running' WHERE run_id='draft-full'"),
+        ),
+    ] {
+        let denied = app
+            .execute(&refused, &[])
+            .await
+            .expect_err(&format!("{label} must be refused"));
+        assert_db_code(denied, "42501", label);
+    }
+    let readable: i64 = app
+        .query_one(
+            &format!("SELECT count(*) FROM {SCHEMA}.runs WHERE run_id='draft-full'"),
             &[],
         )
         .await
-        .expect("application admission may omit capture mode and take the safe default")
+        .expect("the application role retains its tenant read")
         .get(0);
-    assert_eq!(default_mode, "off");
-
-    let explicit_capture = app
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-                    status,trigger_source,capture_mode) \
-                 VALUES ('t1','app-forged-full','f',1,'capture',1,'dev', \
-                         'dispatched','scenario-draft','full')"
-            ),
-            &[],
-        )
-        .await
-        .expect_err("application role cannot name capture mode during admission");
-    assert_db_code(
-        explicit_capture,
-        "42501",
-        "application capture-mode insert refusal",
-    );
-
-    let capture_update = app
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs SET capture_mode='off' \
-                 WHERE run_id='app-default-off'"
-            ),
-            &[],
-        )
-        .await
-        .expect_err("application role cannot update capture mode after admission");
-    assert_db_code(
-        capture_update,
-        "42501",
-        "application capture-mode update refusal",
-    );
-
-    let ordinary_update = app
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs SET status='running', updated_at=now() \
-                 WHERE run_id='app-default-off'"
-            ),
-            &[],
-        )
-        .await
-        .expect("application role retains ordinary run-state update authority");
-    assert_eq!(ordinary_update, 1);
+    assert_eq!(readable, 1);
 
     let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
@@ -5833,19 +5747,16 @@ async fn persisted_literal_check_drift_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
-    // Regress the run failure vocabulary and restore the retired node-error
-    // cancellation literal to model the two predecessor constraints.
+    // Regress the run failure vocabulary to the predecessor constraint. The
+    // node-error vocabulary that stood beside it left CHECK_SPECS with the
+    // projection (wamn-0h0g.26.3.1, 204220e8).
     su.batch_execute(&format!(
         "ALTER TABLE {SCHEMA}.runs DROP CONSTRAINT runs_fail_kind_check; \
          ALTER TABLE {SCHEMA}.runs ADD CONSTRAINT runs_fail_kind_check \
-             CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input')); \
-         ALTER TABLE {SCHEMA}.node_runs DROP CONSTRAINT node_runs_error_kind_check; \
-         ALTER TABLE {SCHEMA}.node_runs ADD CONSTRAINT node_runs_error_kind_check \
-             CHECK (error_kind IN \
-               ('retryable','rate-limited','terminal','invalid-input','cancelled'));"
+             CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input'));"
     ))
     .await
-    .expect("regress persisted literal CHECKs");
+    .expect("regress the persisted failure vocabulary");
     // A run whose runaway verdict we will try to record.
     seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
@@ -5883,14 +5794,6 @@ async fn persisted_literal_check_drift_leg(su: &Client) {
         "the fail_kind CHECK repair is planned: {:#?}",
         plan.actions
     );
-    assert!(
-        plan.actions
-            .iter()
-            .any(|a| a.kind == RunPlaneActionKind::RepairConstraint
-                && a.target == "node_runs.node_runs_error_kind_check"),
-        "the node error CHECK repair is planned: {:#?}",
-        plan.actions
-    );
 
     // (i) the canonical constraint def now admits 'runaway-budget'.
     let def: String = su
@@ -5908,29 +5811,6 @@ async fn persisted_literal_check_drift_leg(su: &Client) {
     assert!(
         def.contains("runaway-budget"),
         "reconciled CHECK admits runaway-budget: {def}"
-    );
-
-    let node_error_def: String = su
-        .query_one(
-            "SELECT pg_get_constraintdef(con.oid) FROM pg_constraint con \
-             JOIN pg_class c ON c.oid = con.conrelid \
-             JOIN pg_namespace n ON n.oid = c.relnamespace \
-             WHERE n.nspname = $1 AND c.relname = 'node_runs' \
-               AND con.conname = 'node_runs_error_kind_check'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("read node error constraintdef")
-        .get(0);
-    for literal in ["retryable", "rate-limited", "terminal", "invalid-input"] {
-        assert!(
-            node_error_def.contains(&format!("'{literal}'::text")),
-            "reconciled node error CHECK contains {literal}: {node_error_def}"
-        );
-    }
-    assert!(
-        !node_error_def.contains("cancelled"),
-        "reconciled node error CHECK removes cancelled: {node_error_def}"
     );
 
     // (ii) the runaway `mark_failed` UPDATE now SUCCEEDS — the verdict lands.
