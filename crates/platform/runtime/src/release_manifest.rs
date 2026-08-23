@@ -210,7 +210,7 @@ mod tests {
     use std::path::PathBuf;
 
     use wamn_catalog::{
-        ServingComponent, ServingRelease, ServingWiring,
+        ArtifactHash, DefinitionHash, ServingComponent, ServingRelease, ServingWiring,
         UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };
 
@@ -232,12 +232,13 @@ mod tests {
             BTreeSet::from([ServingComponent {
                 component: "transform".into(),
                 interface_version: "0.1".into(),
-                digest: COMPONENT.into(),
+                digest: ArtifactHash::parse(COMPONENT).expect("fixture artifact hash is canonical"),
             }]),
             BTreeSet::from([ServingWiring {
                 wiring_id: "orders".into(),
                 wiring_version: 2,
-                graph_hash: GRAPH.into(),
+                graph_hash: DefinitionHash::parse(GRAPH)
+                    .expect("fixture definition hash is canonical"),
             }]),
             BTreeMap::new(),
             BTreeMap::new(),

@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use wamn_catalog::{
-    AttachmentKind, ServingAttachment, ServingComponent, ServingManifest, ServingRegistration,
-    ServingRegistrationInput, ServingRelease, ServingWiring,
+    ArtifactHash, AttachmentKind, DefinitionHash, ServingAttachment, ServingComponent,
+    ServingManifest, ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
 };
 
 mod mint_vector {
@@ -17,6 +17,14 @@ const COMPONENT_B: &str = "sha256:2222222222222222222222222222222222222222222222
 const GRAPH_A: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
 const GRAPH_B: &str = "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 const DEFINITION: &str = "sha256:5555555555555555555555555555555555555555555555555555555555555555";
+
+fn artifact_hash(value: &str) -> ArtifactHash {
+    ArtifactHash::parse(value).expect("fixture artifact hash is canonical")
+}
+
+fn definition_hash(value: &str) -> DefinitionHash {
+    DefinitionHash::parse(value).expect("fixture definition hash is canonical")
+}
 
 fn release() -> ServingRelease {
     ServingRelease {
@@ -32,12 +40,12 @@ fn components() -> BTreeSet<ServingComponent> {
         ServingComponent {
             component: "transform".into(),
             interface_version: "0.1".into(),
-            digest: COMPONENT_B.into(),
+            digest: artifact_hash(COMPONENT_B),
         },
         ServingComponent {
             component: "http-request".into(),
             interface_version: "0.1".into(),
-            digest: COMPONENT_A.into(),
+            digest: artifact_hash(COMPONENT_A),
         },
     ])
 }
@@ -47,12 +55,12 @@ fn wirings() -> BTreeSet<ServingWiring> {
         ServingWiring {
             wiring_id: "shipping".into(),
             wiring_version: 2,
-            graph_hash: GRAPH_B.into(),
+            graph_hash: definition_hash(GRAPH_B),
         },
         ServingWiring {
             wiring_id: "orders".into(),
             wiring_version: 1,
-            graph_hash: GRAPH_A.into(),
+            graph_hash: definition_hash(GRAPH_A),
         },
     ])
 }
@@ -68,7 +76,7 @@ fn manifest() -> ServingManifest {
                 kind: AttachmentKind::Http,
                 wiring_id: "orders".into(),
                 wiring_version: 1,
-                definition_hash: DEFINITION.into(),
+                definition_hash: definition_hash(DEFINITION),
                 definition: json!({
                     "id": "orders-http",
                     "kind": "http",
@@ -116,6 +124,29 @@ fn the_format_two_preimage_and_digest_are_pinned() {
     let raw = <sha2::Sha256 as sha2::Digest>::digest(mint_vector::CANONICAL_BYTES);
     let hex: String = raw.iter().map(|byte| format!("{byte:02x}")).collect();
     assert_eq!(digest.as_str(), format!("sha256:{hex}"));
+}
+
+#[test]
+fn every_manifest_hash_validates_during_deserialization() {
+    let invalid = "sha256:not-a-canonical-digest";
+
+    let mut component_document = serde_json::to_value(manifest()).expect("manifest serializes");
+    component_document["components"][0]["digest"] = json!(invalid);
+    let component_error = serde_json::from_value::<ServingManifest>(component_document)
+        .expect_err("an invalid artifact hash must be refused while decoding");
+    assert!(component_error.to_string().contains("artifact-hash"));
+
+    let mut wiring_document = serde_json::to_value(manifest()).expect("manifest serializes");
+    wiring_document["wirings"][0]["graph-hash"] = json!(invalid);
+    let wiring_error = serde_json::from_value::<ServingManifest>(wiring_document)
+        .expect_err("an invalid wiring definition hash must be refused while decoding");
+    assert!(wiring_error.to_string().contains("definition-hash"));
+
+    let mut attachment_document = serde_json::to_value(manifest()).expect("manifest serializes");
+    attachment_document["attachments"]["orders-http"]["definition-hash"] = json!(invalid);
+    let attachment_error = serde_json::from_value::<ServingManifest>(attachment_document)
+        .expect_err("an invalid attachment definition hash must be refused while decoding");
+    assert!(attachment_error.to_string().contains("definition-hash"));
 }
 
 #[test]

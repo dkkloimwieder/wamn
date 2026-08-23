@@ -23,10 +23,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::de::DeserializeOwned;
 use tokio_postgres::Transaction;
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentParameter, AdmittedComponentPort, ComponentCatalogScope,
-    ManifestDigest, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
-    ServingManifest, ServingRegistration, ServingRelease, ServingWiring, WiringDocument,
-    validate_wiring_compatibility,
+    AdmittedComponent, AdmittedComponentParameter, AdmittedComponentPort, ArtifactHash,
+    ComponentCatalogScope, ManifestDigest, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
+    ServingComponent, ServingManifest, ServingRegistration, ServingRelease, ServingWiring,
+    WiringDocument, validate_wiring_compatibility,
 };
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
@@ -460,7 +460,7 @@ async fn resolve_current_closure(
         wirings.insert(ServingWiring {
             wiring_id: target.wiring_id.clone(),
             wiring_version: target.wiring_version,
-            graph_hash: stored_hash,
+            graph_hash: derived_hash,
         });
         for node in document.nodes.values() {
             let fact = component_facts
@@ -471,10 +471,20 @@ async fn resolve_current_closure(
                         && fact.operation == node.operation
                 })
                 .expect("the semantic gate resolved every wiring node");
+            let digest = ArtifactHash::parse(fact.component_digest.clone()).map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::Component,
+                    format!(
+                        "component {:?} interface {:?} stores a non-canonical artifact hash",
+                        fact.component, fact.interface_version
+                    ),
+                    error,
+                )
+            })?;
             components.insert(ServingComponent {
                 component: fact.component.clone(),
                 interface_version: fact.interface_version.clone(),
-                digest: fact.component_digest.clone(),
+                digest,
             });
             membership.insert(ReleaseComponentMembership {
                 wiring_id: target.wiring_id.clone(),

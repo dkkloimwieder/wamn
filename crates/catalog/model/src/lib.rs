@@ -279,6 +279,16 @@ impl DefinitionHash {
     }
 }
 
+impl<'de> Deserialize<'de> for DefinitionHash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(value).map_err(serde::de::Error::custom)
+    }
+}
+
 impl fmt::Display for DefinitionHash {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
@@ -291,9 +301,26 @@ impl fmt::Display for DefinitionHash {
 pub struct ArtifactHash(String);
 
 impl ArtifactHash {
+    /// Parse a canonical SHA-256 artifact-content digest.
+    pub fn parse(value: impl Into<String>) -> Result<Self, CatalogIdentityError> {
+        let value = value.into();
+        validate_digest(&value, "artifact-hash")?;
+        Ok(Self(value))
+    }
+
     /// The `sha256:<hex>` representation.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ArtifactHash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -310,14 +337,13 @@ impl fmt::Display for ArtifactHash {
 /// content by [`ServingManifest::from_canonical_bytes`]. From there it travels
 /// further than any other hash in the system — through the claim-time run
 /// recording, effect-authority equality, and the deployment attestation, across
-/// two host processes and four manifest readers. Other catalog hashes it could
-/// be mistaken for (`component-digest`, `wiring-hash`, `definition-hash`) are
-/// bare `String`s, so the type is what keeps them apart.
+/// two host processes and four manifest readers. Its distinct type keeps it
+/// apart from the manifest's [`ArtifactHash`] and [`DefinitionHash`] members.
 ///
-/// Like [`DefinitionHash`] and [`ArtifactHash`] it derives `Serialize` but *not*
-/// `Deserialize`: a derived `Deserialize` would bypass [`Self::parse`] at exactly
-/// the boundary where validation matters, which is the reasoning
-/// [`ServingRelease`] already records for not reusing `ReleaseId` on the wire.
+/// Unlike the manifest-carried [`DefinitionHash`] and [`ArtifactHash`], it has
+/// no `Deserialize`: a carrier must not assert this derived identity. The only
+/// admitting boundary computes it from verified canonical bytes through
+/// [`ServingManifest::from_canonical_bytes`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct ManifestDigest(String);

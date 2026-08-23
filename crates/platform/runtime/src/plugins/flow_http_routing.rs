@@ -562,7 +562,8 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingRelease, ServingWiring,
+        ArtifactHash, DefinitionHash, RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingRelease,
+        ServingWiring,
     };
 
     use super::*;
@@ -578,7 +579,7 @@ mod tests {
         BTreeSet::from([ServingComponent {
             component: "http-request".into(),
             interface_version: "0.1".into(),
-            digest: COMPONENT.into(),
+            digest: ArtifactHash::parse(COMPONENT).expect("fixture artifact hash is canonical"),
         }])
     }
 
@@ -586,7 +587,7 @@ mod tests {
         BTreeSet::from([ServingWiring {
             wiring_id: "orders".into(),
             wiring_version: 1,
-            graph_hash: GRAPH.into(),
+            graph_hash: DefinitionHash::parse(GRAPH).expect("fixture definition hash is canonical"),
         }])
     }
 
@@ -595,7 +596,8 @@ mod tests {
             kind,
             wiring_id: "orders".into(),
             wiring_version: 1,
-            definition_hash: DEFINITION_HASH.into(),
+            definition_hash: DefinitionHash::parse(DEFINITION_HASH)
+                .expect("fixture definition hash is canonical"),
             definition,
             auth_policy: json!({"mode": "none"}),
         }

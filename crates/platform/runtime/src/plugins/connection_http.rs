@@ -12,7 +12,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tracing::Instrument as _;
-use wamn_catalog::{ServingComponent, ServingManifest, ServingWiring};
+use wamn_catalog::{
+    ArtifactHash, DefinitionHash, ServingComponent, ServingManifest, ServingWiring,
+};
 use wamn_flow::node_contract::normalize_portable_http_target;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -397,15 +399,22 @@ fn authorize_release_closure(
         .component
         .as_ref()
         .zip(snapshot.interface_version.as_ref())
-        .map(|(component, interface_version)| ServingComponent {
-            component: component.clone(),
-            interface_version: interface_version.clone(),
-            digest: invocation.component_digest.clone(),
-        });
+        .map(
+            |(component, interface_version)| -> Result<_, ConnectionError> {
+                Ok(ServingComponent {
+                    component: component.clone(),
+                    interface_version: interface_version.clone(),
+                    digest: ArtifactHash::parse(invocation.component_digest.clone())
+                        .map_err(|_| ConnectionError::AttestationInvalid)?,
+                })
+            },
+        )
+        .transpose()?;
     let wiring = ServingWiring {
         wiring_id: invocation.wiring_id.clone(),
         wiring_version: invocation.wiring_version,
-        graph_hash: snapshot.wiring_hash.clone(),
+        graph_hash: DefinitionHash::parse(snapshot.wiring_hash.clone())
+            .map_err(|_| ConnectionError::AttestationInvalid)?,
     };
     if component.is_none_or(|component| !manifest.components.contains(&component))
         || !manifest.wirings.contains(&wiring)
@@ -733,12 +742,14 @@ mod tests {
             components: BTreeSet::from([ServingComponent {
                 component: snapshot.component.expect("component"),
                 interface_version: snapshot.interface_version.expect("interface version"),
-                digest: invocation.component_digest,
+                digest: ArtifactHash::parse(invocation.component_digest)
+                    .expect("fixture artifact hash is canonical"),
             }]),
             wirings: BTreeSet::from([ServingWiring {
                 wiring_id: invocation.wiring_id,
                 wiring_version: invocation.wiring_version,
-                graph_hash: snapshot.wiring_hash,
+                graph_hash: DefinitionHash::parse(snapshot.wiring_hash)
+                    .expect("fixture definition hash is canonical"),
             }]),
             attachments: BTreeMap::new(),
             registrations: BTreeMap::new(),

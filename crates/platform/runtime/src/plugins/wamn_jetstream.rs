@@ -1540,7 +1540,8 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
+        DefinitionHash, ServingRegistration, ServingRegistrationInput, ServingRelease,
+        ServingWiring,
     };
 
     use super::*;
@@ -1791,9 +1792,10 @@ mod tests {
             BTreeSet::from([ServingWiring {
                 wiring_id: "event-handler".into(),
                 wiring_version: 1,
-                graph_hash:
-                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                        .into(),
+                graph_hash: DefinitionHash::parse(
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                )
+                .expect("fixture definition hash is canonical"),
             }]),
             BTreeMap::new(),
             BTreeMap::from([("r1".to_string(), registration)]),

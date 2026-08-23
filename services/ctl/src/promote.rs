@@ -598,7 +598,7 @@ fn select_manifest_components(
                     )
                 })?;
             ensure!(
-                fact.component_digest == member.digest,
+                fact.component_digest == member.digest.as_str(),
                 "source component {:?} interface {:?} has digest {:?}, not released digest {:?}",
                 member.component,
                 member.interface_version,
@@ -645,7 +645,7 @@ async fn load_source_wirings(
         let source_gate_report_id: String = row.get(2);
         let graph_json: String = row.get(3);
         ensure!(
-            gated_catalog_version == catalog_version && wiring_hash == member.graph_hash,
+            gated_catalog_version == catalog_version && wiring_hash == member.graph_hash.as_str(),
             "source wiring {:?} version {} does not match its released identity",
             member.wiring_id,
             member.wiring_version

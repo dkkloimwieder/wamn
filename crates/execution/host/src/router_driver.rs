@@ -13,7 +13,8 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, AttachmentKind, ServingComponent, ServingManifest, ServingWiring,
+    AdmittedComponent, ArtifactHash, AttachmentKind, DefinitionHash, ServingComponent,
+    ServingManifest, ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_router::{
@@ -1010,7 +1011,8 @@ impl RouterDriver {
         let expected = ServingWiring {
             wiring_id: request.wiring_id.clone(),
             wiring_version: request.wiring_version,
-            graph_hash: active.graph_hash.to_string(),
+            graph_hash: DefinitionHash::parse(active.graph_hash.as_ref())
+                .context("active wiring carries a non-canonical definition hash")?,
         };
         anyhow::ensure!(
             self.release.manifest().wirings.contains(&expected),
@@ -1034,7 +1036,8 @@ impl RouterDriver {
         let expected = ServingComponent {
             component: component.component.clone(),
             interface_version: component.interface_version.clone(),
-            digest: component.component_digest.clone(),
+            digest: ArtifactHash::parse(component.component_digest.clone())
+                .context("component fact carries a non-canonical artifact hash")?,
         };
         anyhow::ensure!(
             manifest.components.contains(&expected),
@@ -1058,7 +1061,8 @@ impl RouterDriver {
             let release_component = ServingComponent {
                 component: component.component.clone(),
                 interface_version: component.interface_version.clone(),
-                digest: component.component_digest.clone(),
+                digest: ArtifactHash::parse(component.component_digest.clone())
+                    .context("component fact carries a non-canonical artifact hash")?,
             };
             anyhow::ensure!(
                 self.release
@@ -1589,8 +1593,10 @@ mod tests {
             kind,
             wiring_id: wiring_id.to_owned(),
             wiring_version: 3,
-            definition_hash:
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            definition_hash: DefinitionHash::parse(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .expect("fixture definition hash is canonical"),
             definition: serde_json::json!({}),
             auth_policy: serde_json::json!({}),
         }

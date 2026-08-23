@@ -86,7 +86,8 @@ fn resolved_exposure_hash_round_trips_through_serving_manifest_admission() {
         wirings: BTreeSet::from([ServingWiring {
             wiring_id: "orders".to_string(),
             wiring_version: 1,
-            graph_hash: WRONG_GRAPH.to_string(),
+            graph_hash: DefinitionHash::parse(WRONG_GRAPH)
+                .expect("fixture definition hash is canonical"),
         }]),
         attachments: BTreeMap::from([(
             "orders-http".to_string(),
@@ -94,7 +95,7 @@ fn resolved_exposure_hash_round_trips_through_serving_manifest_admission() {
                 kind: AttachmentKind::Http,
                 wiring_id: "orders".to_string(),
                 wiring_version: 1,
-                definition_hash: resolved.definition_hash.clone(),
+                definition_hash: admitted_hash.clone(),
                 definition: json!({"id": "orders-http", "kind": "http"}),
                 auth_policy: json!({"mode": "none"}),
             },
@@ -104,26 +105,25 @@ fn resolved_exposure_hash_round_trips_through_serving_manifest_admission() {
     let (admitted, _) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
         .expect("the serving-manifest boundary admits the minted definition hash");
     assert_eq!(
-        admitted.attachments["orders-http"].definition_hash,
+        admitted.attachments["orders-http"].definition_hash.as_str(),
         resolved.definition_hash
     );
 
-    let mut bare_hash = manifest;
-    bare_hash
-        .attachments
-        .get_mut("orders-http")
-        .expect("fixture attachment")
-        .definition_hash = admitted_hash
-        .as_str()
-        .strip_prefix("sha256:")
-        .expect("admitted digest prefix")
-        .to_string();
-    assert_eq!(
-        ServingManifest::from_canonical_bytes(&bare_hash.canonical_bytes()),
-        Err(CatalogIdentityError::InvalidDigest {
-            field: "definition-hash"
-        })
+    let mut bare_document = serde_json::to_value(manifest).expect("manifest serializes");
+    bare_document["attachments"]["orders-http"]["definition-hash"] = json!(
+        admitted_hash
+            .as_str()
+            .strip_prefix("sha256:")
+            .expect("admitted digest prefix")
     );
+    let bare_bytes = wamn_flow::canonical_json_bytes(&bare_document);
+    let error = ServingManifest::from_canonical_bytes(&bare_bytes)
+        .expect_err("a bare definition hash cannot deserialize into the manifest");
+    assert!(matches!(
+        error,
+        CatalogIdentityError::InvalidDefinition { ref message }
+            if message.contains("definition-hash")
+    ));
 }
 
 #[test]
@@ -333,7 +333,8 @@ fn attachments() -> BTreeMap<String, ServingAttachment> {
             kind: AttachmentKind::Http,
             wiring_id: "orders".to_string(),
             wiring_version: 1,
-            definition_hash: DEFINITION.to_string(),
+            definition_hash: DefinitionHash::parse(DEFINITION)
+                .expect("fixture definition hash is canonical"),
             definition: json!({
                 "id": "orders-http",
                 "kind": "http",
@@ -374,10 +375,10 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
         "transform",
         WiringTerminal::emit("orders", WiringEventOperation::Insert),
     );
-    let orders_hash = orders.wiring_hash().to_string();
-    let shipping_hash = shipping.wiring_hash().to_string();
-    seed_wiring(&admin, &orders, &orders_hash).await;
-    seed_wiring(&admin, &shipping, &shipping_hash).await;
+    let orders_hash = orders.wiring_hash();
+    let shipping_hash = shipping.wiring_hash();
+    seed_wiring(&admin, &orders, orders_hash.as_str()).await;
+    seed_wiring(&admin, &shipping, shipping_hash.as_str()).await;
 
     let corrupt = wiring(
         "corrupt",

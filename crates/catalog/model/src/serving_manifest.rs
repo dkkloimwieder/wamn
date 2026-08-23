@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AttachmentKind, CatalogIdentityError, HASH_PREFIX, ManifestDigest, validate_digest,
-    validate_text,
+    ArtifactHash, AttachmentKind, CatalogIdentityError, DefinitionHash, HASH_PREFIX,
+    ManifestDigest, validate_digest, validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
@@ -70,7 +70,7 @@ pub struct ServingRelease {
 pub struct ServingComponent {
     pub component: String,
     pub interface_version: String,
-    pub digest: String,
+    pub digest: ArtifactHash,
 }
 
 /// One immutable wiring definition in the release closure.
@@ -79,7 +79,7 @@ pub struct ServingComponent {
 pub struct ServingWiring {
     pub wiring_id: String,
     pub wiring_version: u32,
-    pub graph_hash: String,
+    pub graph_hash: DefinitionHash,
 }
 
 /// One release attachment targeting an exact wiring identity and version.
@@ -89,7 +89,7 @@ pub struct ServingAttachment {
     pub kind: AttachmentKind,
     pub wiring_id: String,
     pub wiring_version: u32,
-    pub definition_hash: String,
+    pub definition_hash: DefinitionHash,
     pub definition: Value,
     pub auth_policy: Value,
 }
@@ -219,7 +219,6 @@ impl ServingManifest {
         for component in &self.components {
             validate_text(&component.component, "component")?;
             validate_text(&component.interface_version, "interface-version")?;
-            validate_digest(&component.digest, "component-digest")?;
         }
 
         let mut targets = BTreeSet::new();
@@ -230,7 +229,6 @@ impl ServingManifest {
                     field: "wiring-version",
                 });
             }
-            validate_digest(&wiring.graph_hash, "graph-hash")?;
             if !targets.insert((wiring.wiring_id.as_str(), wiring.wiring_version)) {
                 return invalid("a wiring identity-version pair occurs more than once");
             }
@@ -239,7 +237,6 @@ impl ServingManifest {
         for (attachment_id, attachment) in &self.attachments {
             validate_text(attachment_id, "attachment-id")?;
             validate_wiring_target(&targets, &attachment.wiring_id, attachment.wiring_version)?;
-            validate_digest(&attachment.definition_hash, "definition-hash")?;
             if !attachment.definition.is_object() || !attachment.auth_policy.is_object() {
                 return invalid("attachment definition and resolved source must be JSON objects");
             }
@@ -352,6 +349,14 @@ mod tests {
     const DEFINITION: &str =
         "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
+    fn artifact_hash(value: &str) -> ArtifactHash {
+        ArtifactHash::parse(value).expect("fixture artifact hash is canonical")
+    }
+
+    fn definition_hash(value: &str) -> DefinitionHash {
+        DefinitionHash::parse(value).expect("fixture definition hash is canonical")
+    }
+
     fn release() -> ServingRelease {
         ServingRelease {
             tenant_id: "t1".into(),
@@ -366,12 +371,12 @@ mod tests {
             ServingComponent {
                 component: "transform".into(),
                 interface_version: "0.1".into(),
-                digest: COMPONENT_B.into(),
+                digest: artifact_hash(COMPONENT_B),
             },
             ServingComponent {
                 component: "http-request".into(),
                 interface_version: "0.1".into(),
-                digest: COMPONENT_A.into(),
+                digest: artifact_hash(COMPONENT_A),
             },
         ])
     }
@@ -381,12 +386,12 @@ mod tests {
             ServingWiring {
                 wiring_id: "shipping".into(),
                 wiring_version: 2,
-                graph_hash: GRAPH_B.into(),
+                graph_hash: definition_hash(GRAPH_B),
             },
             ServingWiring {
                 wiring_id: "orders".into(),
                 wiring_version: 3,
-                graph_hash: GRAPH_A.into(),
+                graph_hash: definition_hash(GRAPH_A),
             },
         ])
     }
@@ -396,7 +401,7 @@ mod tests {
             kind: AttachmentKind::Http,
             wiring_id: "orders".into(),
             wiring_version: 3,
-            definition_hash: DEFINITION.into(),
+            definition_hash: definition_hash(DEFINITION),
             definition: serde_json::json!({
                 "id": "orders",
                 "kind": "http",
