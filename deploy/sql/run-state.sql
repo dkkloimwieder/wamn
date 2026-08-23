@@ -194,13 +194,18 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
+    IF NEW.flow_id IS DISTINCT FROM OLD.flow_id
+       OR NEW.flow_version IS DISTINCT FROM OLD.flow_version
+       OR NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
        OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
        OR NEW.durability_class IS DISTINCT FROM OLD.durability_class
        OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
-       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version THEN
+       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version
+       OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
+       OR NEW.gate_report_id IS DISTINCT FROM OLD.gate_report_id
+       OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -287,8 +292,11 @@ GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_scenario_author;
 CREATE TABLE wamn_run.runs (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     run_id          text NOT NULL,
-    flow_id         text NOT NULL,
-    flow_version    int  NOT NULL,
+    -- Nullable legacy execution grain. New admissions leave both NULL and
+    -- carry the complete component-era wiring grain below; no migration
+    -- fabricates component provenance for historical flow rows.
+    flow_id         text,
+    flow_version    int,
     catalog_id      text NOT NULL,
     catalog_version int NOT NULL,
     environment     text NOT NULL,
@@ -323,6 +331,12 @@ CREATE TABLE wamn_run.runs (
     -- post-drain cutover; admission never backfills them.
     wiring_id       text,
     wiring_version  int,
+    wiring_hash     text,
+    gate_report_id  text,
+    -- Canonically ordered, non-secret requirement/binding/generation facts
+    -- derived by private management admission. Array order is
+    -- (component-digest, store-alias); callers never author this value.
+    binding_world_json jsonb,
     -- The claim-time release record. A run is NOT version-pinned at admission:
     -- it executes under the release its CLAIMING pod carries, and the worker
     -- writes that pod's own release identity here when it takes the lease,
@@ -401,6 +415,25 @@ CREATE TABLE wamn_run.runs (
       OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
           AND wiring_id <> '' AND wiring_version > 0)
     ),
+    -- Exactly one complete historical or component-era execution grain. The
+    -- explicit IS NOT NULL arms keep PostgreSQL CHECK's NULL truth value from
+    -- admitting a half-record. Existing flow rows stay truthful; they are not
+    -- backfilled with an identity that was never recorded.
+    CONSTRAINT runs_execution_grain_check CHECK (
+      (flow_id IS NOT NULL AND flow_version IS NOT NULL
+       AND flow_id <> '' AND flow_version > 0
+       AND wiring_hash IS NULL AND gate_report_id IS NULL
+       AND binding_world_json IS NULL)
+      OR
+      (flow_id IS NULL AND flow_version IS NULL
+       AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL
+       AND wiring_id <> '' AND wiring_version > 0
+       AND wiring_hash IS NOT NULL
+       AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+       AND gate_report_id IS NOT NULL AND gate_report_id <> ''
+       AND binding_world_json IS NOT NULL
+       AND jsonb_typeof(binding_world_json) = 'array')
+    ),
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk
         FOREIGN KEY (tenant_id, catalog_id, catalog_version)
@@ -438,8 +471,10 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- The guard is column-scoped, so the claim-time record columns must be named
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF catalog_id, catalog_version, environment, capture_mode,
-                 durability_class, wiring_id, wiring_version, release_version, manifest_digest
+BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment,
+                 capture_mode, durability_class, wiring_id, wiring_version,
+                 wiring_hash, gate_report_id, binding_world_json,
+                 release_version, manifest_digest
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only
