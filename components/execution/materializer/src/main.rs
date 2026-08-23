@@ -37,6 +37,7 @@ struct Config {
     max_depth: u32,
     ack_wait_ms: u64,
     nack_delay_ms: u64,
+    max_deliver: u32,
     report_path: Option<String>,
 }
 
@@ -50,6 +51,12 @@ fn required(name: &str) -> Result<String, String> {
 
 impl Config {
     fn from_env() -> Result<Self, String> {
+        let max_deliver = env_or("WAMN_MAT_MAX_DELIVER", "5")
+            .parse::<u32>()
+            .map_err(|error| format!("WAMN_MAT_MAX_DELIVER: {error}"))?;
+        if max_deliver == 0 {
+            return Err("WAMN_MAT_MAX_DELIVER must be non-zero".into());
+        }
         Ok(Self {
             stream: required("WAMN_MAT_STREAM")?,
             org: required("WAMN_MAT_ORG")?,
@@ -77,6 +84,7 @@ impl Config {
             nack_delay_ms: env_or("WAMN_MAT_NACK_DELAY_MS", "5000")
                 .parse()
                 .map_err(|error| format!("WAMN_MAT_NACK_DELAY_MS: {error}"))?,
+            max_deliver,
             report_path: std::env::var("WAMN_MAT_REPORT_PATH").ok(),
         })
     }
@@ -100,6 +108,8 @@ struct Counters {
     poison: u64,
     retry: u64,
     emit_blocked: u64,
+    dead_lettered: u64,
+    dead_letter_retry: u64,
 }
 
 impl Counters {
@@ -121,6 +131,8 @@ impl Counters {
             "poison": self.poison,
             "retry": self.retry,
             "emit-blocked": self.emit_blocked,
+            "dead-lettered": self.dead_lettered,
+            "dead-letter-retry": self.dead_letter_retry,
         })
         .to_string()
     }
@@ -245,7 +257,7 @@ enum Preparation {
     },
     Ack,
     Nack,
-    Term,
+    DeadLetter(&'static str),
 }
 
 fn prepare_message(
@@ -269,7 +281,7 @@ fn prepare_message(
                 "wamn::materializer REFUSED poison stream_seq={}: envelope parse failed ({error})",
                 metadata.stream_seq
             );
-            return Preparation::Term;
+            return Preparation::DeadLetter("poison-invalid-envelope");
         }
     };
     let headers = message.headers();
@@ -282,7 +294,7 @@ fn prepare_message(
             "wamn::materializer REFUSED poison stream_seq={}: Nats-Msg-Id is missing, duplicated, or inconsistent",
             metadata.stream_seq
         );
-        return Preparation::Term;
+        return Preparation::DeadLetter("poison-source-id");
     };
     match decide(
         &serving.registration,
@@ -306,17 +318,29 @@ fn prepare_message(
             Preparation::Ack
         }
         Verdict::Refuse(reason) => {
-            match reason {
-                RefuseReason::DepthExceeded { .. } => counters.refuse_depth += 1,
-                RefuseReason::TenantUnscopable => counters.refuse_tenant_unscopable += 1,
-                RefuseReason::OldImageAbsent => counters.refuse_old_image_absent += 1,
-                RefuseReason::ConditionError(_) => counters.refuse_condition_error += 1,
-            }
+            let literal = match reason {
+                RefuseReason::DepthExceeded { .. } => {
+                    counters.refuse_depth += 1;
+                    "registration-depth-exceeded"
+                }
+                RefuseReason::TenantUnscopable => {
+                    counters.refuse_tenant_unscopable += 1;
+                    "registration-tenant-unscopable"
+                }
+                RefuseReason::OldImageAbsent => {
+                    counters.refuse_old_image_absent += 1;
+                    "registration-old-image-absent"
+                }
+                RefuseReason::ConditionError(_) => {
+                    counters.refuse_condition_error += 1;
+                    "registration-condition-error"
+                }
+            };
             eprintln!(
                 "wamn::materializer REFUSED registration={} stream_seq={} reason={reason:?}",
                 serving.registration.registration_id, metadata.stream_seq
             );
-            Preparation::Ack
+            Preparation::DeadLetter(literal)
         }
     }
 }
@@ -325,14 +349,42 @@ fn prepare_message(
 enum DeliveryDisposition {
     Ack,
     Retry,
+    DeadLetter(&'static str),
 }
 
 fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> DeliveryDisposition {
     match result {
         Ok(DeliveryOutcome::Respond(_) | DeliveryOutcome::Discard) => DeliveryDisposition::Ack,
-        Ok(DeliveryOutcome::Emit(_) | DeliveryOutcome::Failed(_) | DeliveryOutcome::Cancelled)
-        | Err(_) => DeliveryDisposition::Retry,
+        Ok(DeliveryOutcome::Failed(failure)) => {
+            DeliveryDisposition::DeadLetter(match failure.kind {
+                delivery::FailureKind::Terminal => "router-terminal",
+                delivery::FailureKind::RetryExhausted => "router-retry-exhausted",
+                delivery::FailureKind::InvalidInput => "router-invalid-input",
+                delivery::FailureKind::HopLimit => "router-hop-limit",
+                delivery::FailureKind::UnreleasedCaller => "router-unreleased-caller",
+                delivery::FailureKind::MissingDedupId => "router-missing-dedup-id",
+                delivery::FailureKind::RespondWithoutCaller => "router-respond-without-caller",
+                delivery::FailureKind::SecondVerdict => "router-second-verdict",
+            })
+        }
+        Err(
+            DeliveryError::SourceNotFound
+            | DeliveryError::InvalidRequest
+            | DeliveryError::InvalidPayload,
+        ) => DeliveryDisposition::DeadLetter("router-deterministic-refusal"),
+        Ok(DeliveryOutcome::Emit(_) | DeliveryOutcome::Cancelled)
+        | Err(DeliveryError::WiringNotPreloaded | DeliveryError::ExecutionFailed) => {
+            DeliveryDisposition::Retry
+        }
     }
+}
+
+fn execution_budget_exhausted_before_delivery(delivered: u64, max_deliver: u32) -> bool {
+    delivered > u64::from(max_deliver)
+}
+
+fn execution_budget_exhausted_after_failure(delivered: u64, max_deliver: u32) -> bool {
+    delivered >= u64::from(max_deliver)
 }
 
 fn deliver(
@@ -393,6 +445,22 @@ fn term(message: &Message) {
     }
 }
 
+fn dead_letter(message: &Message, reason: &'static str, config: &Config, counters: &mut Counters) {
+    match message.dead_letter(reason) {
+        Ok(()) => {
+            counters.dead_lettered += 1;
+            term(message);
+        }
+        Err(error) => {
+            counters.dead_letter_retry += 1;
+            eprintln!(
+                "wamn::materializer dead-letter publish failed reason={reason} ({error:?}); nack for retry"
+            );
+            nack(message, config, counters);
+        }
+    }
+}
+
 fn settle_delivery(
     result: &Result<DeliveryOutcome, DeliveryError>,
     messages: &[&Message],
@@ -416,7 +484,19 @@ fn settle_delivery(
                 eprintln!("wamn::materializer router delivery did not settle: {result:?}");
             }
             for message in messages {
-                nack(message, config, counters);
+                if execution_budget_exhausted_after_failure(
+                    message.metadata().delivered,
+                    config.max_deliver,
+                ) {
+                    dead_letter(message, "redelivery-budget-exhausted", config, counters);
+                } else {
+                    nack(message, config, counters);
+                }
+            }
+        }
+        DeliveryDisposition::DeadLetter(reason) => {
+            for message in messages {
+                dead_letter(message, reason, config, counters);
             }
         }
     }
@@ -431,17 +511,23 @@ fn serve(config: &Config, serving: &Serving, counters: &mut Counters) {
         config.env,
         wamn_event_wire::subject_token(registration.entity.as_str())
     );
-    let consumer = match consumer::bind(&ConsumerConfig {
-        stream_name: config.stream.clone(),
-        durable: durable_name(
-            &config.tenant,
-            &registration.catalog_id,
-            &registration.registration_id,
-        ),
-        filter_subject: filter,
-        ack_wait_ms: config.ack_wait_ms,
-        max_deliver: 0,
-    }) {
+    let consumer = match consumer::bind_registration(
+        &registration.catalog_id,
+        &registration.registration_id,
+        &ConsumerConfig {
+            stream_name: config.stream.clone(),
+            durable: durable_name(
+                &config.tenant,
+                &registration.catalog_id,
+                &registration.registration_id,
+            ),
+            filter_subject: filter,
+            ack_wait_ms: config.ack_wait_ms,
+            // Router execution is bounded below. Transport redelivery remains
+            // armed so a failed DLQ publication can retry without re-executing.
+            max_deliver: 0,
+        },
+    ) {
         Ok(consumer) => consumer,
         Err(error) => {
             eprintln!(
@@ -476,9 +562,26 @@ fn serve(config: &Config, serving: &Serving, counters: &mut Counters) {
             }),
             Preparation::Ack => acknowledge(&message, counters),
             Preparation::Nack => nack(&message, config, counters),
-            Preparation::Term => term(&message),
+            Preparation::DeadLetter(reason) => dead_letter(&message, reason, config, counters),
         }
     }
+    let mut within_budget = Vec::with_capacity(prepared.len());
+    for prepared in prepared {
+        if execution_budget_exhausted_before_delivery(
+            prepared.message.metadata().delivered,
+            config.max_deliver,
+        ) {
+            dead_letter(
+                &prepared.message,
+                "redelivery-budget-exhausted",
+                config,
+                counters,
+            );
+        } else {
+            within_budget.push(prepared);
+        }
+    }
+    let prepared = within_budget;
     match registration.input {
         RegistrationInput::Event => {
             for prepared in prepared {
@@ -527,7 +630,7 @@ fn main() {
         }
     };
     println!(
-        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* tenant={} batch={} fetch_ms={} max_sweeps={}",
+        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* tenant={} batch={} fetch_ms={} max_deliver={} max_sweeps={}",
         config.stream,
         config.org,
         config.project,
@@ -535,6 +638,7 @@ fn main() {
         config.tenant,
         config.batch,
         config.fetch_ms,
+        config.max_deliver,
         config.max_sweeps
     );
     let mut counters = Counters::default();
@@ -607,14 +711,17 @@ mod tests {
     }
 
     #[test]
-    fn router_completion_matrix_never_acks_failure_cancel_error_or_emit() {
+    fn router_completion_matrix_separates_deterministic_poison_from_retry() {
         let failed = Ok(DeliveryOutcome::Failed(DeliveryFailure {
             kind: FailureKind::InvalidInput,
             code: None,
             message: "bad event".into(),
         }));
+        assert_eq!(
+            delivery_disposition(&failed),
+            DeliveryDisposition::DeadLetter("router-invalid-input")
+        );
         for result in [
-            failed,
             Ok(DeliveryOutcome::Cancelled),
             Ok(DeliveryOutcome::Emit(delivery::Emission {
                 event: "{}".into(),
@@ -623,6 +730,16 @@ mod tests {
             Err(DeliveryError::ExecutionFailed),
         ] {
             assert_eq!(delivery_disposition(&result), DeliveryDisposition::Retry);
+        }
+        for result in [
+            Err(DeliveryError::SourceNotFound),
+            Err(DeliveryError::InvalidRequest),
+            Err(DeliveryError::InvalidPayload),
+        ] {
+            assert_eq!(
+                delivery_disposition(&result),
+                DeliveryDisposition::DeadLetter("router-deterministic-refusal")
+            );
         }
         for result in [
             Ok(DeliveryOutcome::Discard),
@@ -642,5 +759,12 @@ mod tests {
             ordered_batch_payload(&inputs),
             serde_json::json!([inputs[0], inputs[1]])
         );
+    }
+
+    #[test]
+    fn post_budget_redelivery_is_dlq_only() {
+        assert!(!execution_budget_exhausted_before_delivery(5, 5));
+        assert!(execution_budget_exhausted_after_failure(5, 5));
+        assert!(execution_budget_exhausted_before_delivery(6, 5));
     }
 }

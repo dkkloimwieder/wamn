@@ -4220,8 +4220,10 @@ name = "wamn-ctl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "chrono",
  "clap",
+ "futures-util",
  "hex",
  "oci-client",
  "ring",
@@ -4235,6 +4237,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-event-wire",
  "wamn-flow",
  "wamn-platform-identity",
  "wamn-run-state",

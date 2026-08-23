@@ -24,6 +24,7 @@ const OPS_VERBS: &[&str] = &[
     "copy-project-env",
     "prune-run-history",
     "impact-report",
+    "dead-letters",
 ];
 
 fn help(binary: &str) -> String {

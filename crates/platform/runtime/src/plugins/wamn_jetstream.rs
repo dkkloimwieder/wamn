@@ -1,8 +1,7 @@
 //! `wamn:jetstream` host plugin (E10).
 //!
-//! Contract source of truth: docs/archive/contracts/wamn-jetstream.wit (mirrored byte-identical
-//! into `wit/deps/wamn-jetstream/package.wit`; drift-guarded by
-//! `tests/jetstream_wit_coherence.rs`).
+//! Built contract: `wit/deps/wamn-jetstream/package.wit`; guest-vendored copies
+//! are drift-guarded by `tests/jetstream_wit_coherence.rs`.
 //!
 //! WHY THIS EXISTS. The only messaging WIT the pinned wasmCloud fork carries is
 //! `wasmcloud:messaging@0.2.0` — core NATS with no ack/nack/term, no durable
@@ -25,8 +24,9 @@
 //!   weld, `wamn-0h0g.15.95`): a durable consumer binds only over subjects some
 //!   registration of the release sources, so an event whose registration
 //!   identity is not the release's never reaches a component.
-//!   [`WamnJetstream::with_release`] draws the line the gate stops at —
-//!   publication and the doorbell hint are NOT release-gated.
+//!   Generic event publication and the doorbell hint are not release-gated.
+//!   The reserved `dlq.*` namespace is host-only: exact registration bind ties
+//!   a fetched message to its release identity before dead-letter publication.
 //! - A publish waits for the server ack (async-nats: send future, then the
 //!   server-ack future) — the returned `publish-ack` is the only delivery truth.
 //! - The `doorbell.ring` wake hint (l5i9.17) publishes on the CONTROL-plane
@@ -41,20 +41,25 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_nats::HeaderMap;
+use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::Context;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
-use async_nats::jetstream::consumer::{AckPolicy, Consumer};
+use async_nats::jetstream::consumer::{AckPolicy, Config as StoredConsumerConfig, Consumer};
 use async_nats::jetstream::context::{GetStreamError, GetStreamErrorKind};
 use async_nats::jetstream::message::AckKind;
 use async_nats::jetstream::publish::PublishAck as NatsPublishAck;
-use futures_util::StreamExt as _;
+use futures_util::{StreamExt as _, TryStreamExt as _};
+use opentelemetry::KeyValue;
 use tokio::sync::Mutex;
 use tracing::Instrument as _;
 use wamn_catalog::ServingManifest;
 use wamn_control_registry::identifiers::{
     ExecutionTargetId, doorbell_subject, mvp_execution_target_id,
 };
-use wamn_event_wire::subject_token;
+use wamn_event_wire::{
+    DEAD_LETTER_STREAM, DeadLetter, DeadLetterHeader, dead_letter_message_id, dead_letter_subject,
+    subject_token,
+};
 
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -148,6 +153,8 @@ pub struct WamnJetstream {
     /// release-manifest weld. `None` ⇒ this process carries no release; see
     /// [`WamnJetstream::with_release`].
     release: Option<Arc<ReleaseManifestWeld>>,
+    /// Last server-observed depth of each registration DLQ subject.
+    dlq_depth: Arc<DeadLetterDepth>,
 }
 
 /// One component's bind-time tenant/project claim.
@@ -155,6 +162,72 @@ pub struct WamnJetstream {
 struct JetstreamClaim {
     tenant: Box<str>,
     project: Box<str>,
+}
+
+#[derive(Clone, Debug)]
+struct DeadLetterIdentity {
+    tenant: Box<str>,
+    environment: Box<str>,
+    catalog_id: Box<str>,
+    registration_id: Box<str>,
+    subject: Box<str>,
+}
+
+#[derive(Clone, Debug)]
+struct DeadLetterDepthSample {
+    identity: DeadLetterIdentity,
+    depth: u64,
+}
+
+#[derive(Debug, Default)]
+struct DeadLetterDepth {
+    by_subject: std::sync::Mutex<HashMap<Box<str>, DeadLetterDepthSample>>,
+}
+
+impl DeadLetterDepth {
+    fn register(depth: &Arc<Self>) {
+        let weak = Arc::downgrade(depth);
+        let _ = opentelemetry::global::meter("wamn-jetstream")
+            .u64_observable_gauge("wamn.jetstream.dlq.depth")
+            .with_description("retained dead-letter messages for one release registration")
+            .with_callback(move |observer| {
+                let Some(depth) = weak.upgrade() else {
+                    return;
+                };
+                if let Ok(samples) = depth.by_subject.lock() {
+                    for sample in samples.values() {
+                        observer.observe(
+                            sample.depth,
+                            &[
+                                KeyValue::new("wamn.tenant", sample.identity.tenant.to_string()),
+                                KeyValue::new(
+                                    "wamn.environment",
+                                    sample.identity.environment.to_string(),
+                                ),
+                                KeyValue::new(
+                                    "wamn.catalog",
+                                    sample.identity.catalog_id.to_string(),
+                                ),
+                                KeyValue::new(
+                                    "wamn.registration",
+                                    sample.identity.registration_id.to_string(),
+                                ),
+                            ],
+                        );
+                    }
+                }
+            })
+            .build();
+    }
+
+    fn update(&self, identity: DeadLetterIdentity, depth: u64) {
+        if let Ok(mut samples) = self.by_subject.lock() {
+            samples.insert(
+                identity.subject.clone(),
+                DeadLetterDepthSample { identity, depth },
+            );
+        }
+    }
 }
 
 /// The span one `wamn:jetstream` effect opens, enriched from the component's
@@ -177,6 +250,8 @@ fn js_span(claim: &JetstreamClaim, component_id: &str, operation: &'static str) 
 
 impl WamnJetstream {
     pub fn new(cfg: WamnJetstreamConfig) -> Self {
+        let dlq_depth = Arc::new(DeadLetterDepth::default());
+        DeadLetterDepth::register(&dlq_depth);
         Self {
             nats_url: cfg.nats_url,
             ctx: Mutex::new(None),
@@ -184,6 +259,7 @@ impl WamnJetstream {
             execution_targets: std::sync::RwLock::new(HashMap::new()),
             claims: std::sync::RwLock::new(HashMap::new()),
             release: None,
+            dlq_depth,
         }
     }
 
@@ -214,12 +290,10 @@ impl WamnJetstream {
     /// decide that an event belongs to one, and delivering it anyway would hand
     /// the identity back to the guest sweep this gate took it from.
     ///
-    /// The gate stops at consumption. `producer::publish` and `doorbell::ring`
-    /// keep working on a release-less host, because neither carries a
-    /// registration identity there is anything to check: a publish names a
-    /// subject the stream itself covers or rejects, and the doorbell is a wake
-    /// hint already scoped by the workload's trusted tenant config. Gating them
-    /// would refuse work whose identity was never the manifest's to hold.
+    /// Generic `producer::publish` and `doorbell::ring` keep working on a
+    /// release-less host. The reserved `dlq.*` namespace is the exception:
+    /// generic publication cannot name it, and `message.dead-letter` exists only
+    /// after an exact release-registration bind.
     pub fn with_release(mut self, release: Option<Arc<ReleaseManifestWeld>>) -> Self {
         self.release = release;
         self
@@ -372,12 +446,14 @@ impl HostPlugin for WamnJetstream {
 /// returned message resources).
 pub struct JsConsumer {
     consumer: Consumer<PullConfig>,
+    dead_letter: Option<DeadLetterIdentity>,
 }
 
 /// Host side of a `wamn:jetstream/consumer.message`. Holds the delivered message;
 /// ack/nack/term send the disposition back to the server.
 pub struct JsMessage {
     msg: async_nats::jetstream::Message,
+    dead_letter: Option<DeadLetterIdentity>,
 }
 
 // ---------------------------------------------------------------------------
@@ -460,6 +536,8 @@ fn map_get_stream_err(stream: &str, e: &GetStreamError) -> JsError {
 /// register. Stable prose, because it is what an operator greps and what tells
 /// a held registration apart from a transient `connection-unavailable`.
 const UNREGISTERED_SOURCE: &str = "unregistered-source";
+const RESERVED_DEAD_LETTER_SUBJECT: &str = "reserved-dead-letter-subject";
+const CONSUMER_CONFIG_DRIFT: &str = "registration-consumer-config-drift";
 
 /// The `(entity, op)` tail of one event subject — the whole of a registration's
 /// identity that a subject can carry.
@@ -531,6 +609,161 @@ fn bind_refusal(release: Option<&ServingManifest>, filter_subject: &str) -> Opti
     None
 }
 
+fn exact_registration_identity(
+    release: Option<&ServingManifest>,
+    catalog_id: &str,
+    registration_id: &str,
+    filter_subject: &str,
+) -> Result<DeadLetterIdentity, String> {
+    let manifest = release.ok_or_else(|| {
+        format!(
+            "{UNREGISTERED_SOURCE}: this host carries no release, so registration \
+            {registration_id:?} cannot be resolved"
+        )
+    })?;
+    if manifest.release.catalog_id != catalog_id {
+        return Err(format!(
+            "{UNREGISTERED_SOURCE}: release catalog {:?} does not match requested catalog {catalog_id:?}",
+            manifest.release.catalog_id
+        ));
+    }
+    let registration = manifest.registrations.get(registration_id).ok_or_else(|| {
+        format!(
+            "{UNREGISTERED_SOURCE}: release {} of catalog {:?} has no registration \
+                 {registration_id:?}",
+            manifest.release.catalog_version, manifest.release.catalog_id
+        )
+    })?;
+    let (entity, op) = subject_source(filter_subject).ok_or_else(|| {
+        format!(
+            "{UNREGISTERED_SOURCE}: filter subject {filter_subject:?} does not name one entity \
+             and op"
+        )
+    })?;
+    let any_op = op == ">" || op == "*";
+    if subject_token(&registration.entity) != entity || (!any_op && !registration.ops.contains(op))
+    {
+        return Err(format!(
+            "{UNREGISTERED_SOURCE}: registration {registration_id:?} does not source entity \
+             {entity:?} op {op:?}"
+        ));
+    }
+
+    let subject = dead_letter_subject(
+        &manifest.release.tenant_id,
+        &manifest.release.environment,
+        &manifest.release.catalog_id,
+        registration_id,
+    );
+    Ok(DeadLetterIdentity {
+        tenant: manifest.release.tenant_id.clone().into_boxed_str(),
+        environment: manifest.release.environment.clone().into_boxed_str(),
+        catalog_id: manifest.release.catalog_id.clone().into_boxed_str(),
+        registration_id: registration_id.into(),
+        subject: subject.into_boxed_str(),
+    })
+}
+
+fn is_reserved_dead_letter_subject(subject: &str) -> bool {
+    subject == "dlq" || subject.starts_with("dlq.")
+}
+
+fn exact_consumer_config_drift(
+    requested: &consumer::ConsumerConfig,
+    stored: &StoredConsumerConfig,
+) -> bool {
+    let expected_max_deliver = if requested.max_deliver == 0 {
+        -1
+    } else {
+        i64::from(requested.max_deliver)
+    };
+    stored.ack_policy != AckPolicy::Explicit
+        || stored.filter_subject != requested.filter_subject
+        || stored.max_deliver != expected_max_deliver
+        || (requested.ack_wait_ms > 0
+            && stored.ack_wait != Duration::from_millis(requested.ack_wait_ms))
+}
+
+async fn bind_consumer(
+    plugin: &WamnJetstream,
+    config: &consumer::ConsumerConfig,
+    registration: Option<(&str, &str)>,
+) -> Result<JsConsumer, JsError> {
+    let dead_letter = match registration {
+        Some((catalog_id, registration_id)) => Some(
+            exact_registration_identity(
+                plugin.serving_manifest(),
+                catalog_id,
+                registration_id,
+                &config.filter_subject,
+            )
+            .map_err(JsError::Other)?,
+        ),
+        None => {
+            if let Some(refusal) = bind_refusal(plugin.serving_manifest(), &config.filter_subject) {
+                return Err(JsError::Other(refusal));
+            }
+            None
+        }
+    };
+    let ctx = plugin.ensure_ctx().await?;
+    let stream = ctx
+        .get_stream(&config.stream_name)
+        .await
+        .map_err(|error| map_get_stream_err(&config.stream_name, &error))?;
+    let pull = PullConfig {
+        durable_name: Some(config.durable.clone()),
+        ack_policy: AckPolicy::Explicit,
+        filter_subject: config.filter_subject.clone(),
+        ack_wait: Duration::from_millis(config.ack_wait_ms),
+        max_deliver: if config.max_deliver == 0 {
+            -1
+        } else {
+            i64::from(config.max_deliver)
+        },
+        ..Default::default()
+    };
+    let consumer = stream
+        .get_or_create_consumer(&config.durable, pull)
+        .await
+        .map_err(|error| JsError::Other(format!("bind consumer: {error}")))?;
+    if registration.is_some() {
+        let stored = &consumer.cached_info().config;
+        if exact_consumer_config_drift(config, stored) {
+            return Err(JsError::Other(format!(
+                "{CONSUMER_CONFIG_DRIFT}: durable {:?} does not match its exact bounded registration config",
+                config.durable
+            )));
+        }
+    }
+    Ok(JsConsumer {
+        consumer,
+        dead_letter,
+    })
+}
+
+async fn dead_letter_subject_depth(ctx: &Context, subject: &str) -> Result<u64, String> {
+    let stream = ctx
+        .get_stream(DEAD_LETTER_STREAM)
+        .await
+        .map_err(|error| format!("get {DEAD_LETTER_STREAM}: {error}"))?;
+    let mut subjects = stream
+        .info_with_subjects(subject)
+        .await
+        .map_err(|error| format!("read {DEAD_LETTER_STREAM} subject state: {error}"))?;
+    let mut depth = 0_u64;
+    while let Some((stored_subject, count)) = subjects
+        .try_next()
+        .await
+        .map_err(|error| format!("read {DEAD_LETTER_STREAM} subject page: {error}"))?
+    {
+        if stored_subject == subject {
+            depth = depth.saturating_add(count as u64);
+        }
+    }
+    Ok(depth)
+}
+
 // ---------------------------------------------------------------------------
 // Host trait impls
 // ---------------------------------------------------------------------------
@@ -552,48 +785,7 @@ impl consumer::Host for ActiveCtx<'_> {
         // The whole bind — the release gate and all three round trips — runs
         // inside the span, so a refusal is attributed to the same effect the
         // successful bind would have been.
-        let bound = async {
-            // THE RELEASE GATE, and the only place it is applied. Every message
-            // resource a guest can reach came from a consumer bound here, so
-            // refusing the bind refuses delivery for that whole registration
-            // before one event is handed over — which is what "before reaching
-            // any component" means. Filtering per delivered message instead would
-            // make the host take over the ack disposition the WIT deliberately
-            // leaves to the guest.
-            if let Some(refusal) = bind_refusal(plugin.serving_manifest(), &config.filter_subject) {
-                tracing::warn!(
-                    target: "wamn::jetstream",
-                    durable = %config.durable,
-                    filter_subject = %config.filter_subject,
-                    refusal = %refusal,
-                    "consumer bind refused: the serving release does not register this source"
-                );
-                return Err(JsError::Other(refusal));
-            }
-            let ctx = plugin.ensure_ctx().await?;
-            let stream = ctx
-                .get_stream(&config.stream_name)
-                .await
-                .map_err(|e| map_get_stream_err(&config.stream_name, &e))?;
-            let pull = PullConfig {
-                durable_name: Some(config.durable.clone()),
-                ack_policy: AckPolicy::Explicit,
-                filter_subject: config.filter_subject.clone(),
-                ack_wait: Duration::from_millis(config.ack_wait_ms),
-                max_deliver: if config.max_deliver == 0 {
-                    -1
-                } else {
-                    i64::from(config.max_deliver)
-                },
-                ..Default::default()
-            };
-            stream
-                .get_or_create_consumer(&config.durable, pull)
-                .await
-                .map_err(|e| JsError::Other(format!("bind consumer: {e}")))
-        }
-        .instrument(span)
-        .await;
+        let bound = bind_consumer(&plugin, &config, None).instrument(span).await;
         record_effect_ms(
             &JETSTREAM_DURATION_MS,
             EFFECT_OPERATION,
@@ -605,7 +797,45 @@ impl consumer::Host for ActiveCtx<'_> {
             Ok(c) => c,
             Err(e) => return Ok(Err(e)),
         };
-        Ok(Ok(self.table.push(JsConsumer { consumer: bound })?))
+        Ok(Ok(self.table.push(bound)?))
+    }
+
+    async fn bind_registration(
+        &mut self,
+        catalog_id: String,
+        registration_id: String,
+        config: consumer::ConsumerConfig,
+    ) -> wash_runtime::wasmtime::Result<Result<Resource<JsConsumer>, JsError>> {
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let claim = plugin.claim_for(&component_id);
+        let span = js_span(&claim, &component_id, "bind-registration");
+        let started = std::time::Instant::now();
+        let bound = bind_consumer(&plugin, &config, Some((&catalog_id, &registration_id)))
+            .instrument(span)
+            .await;
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "bind-registration",
+            &claim.project,
+            started.elapsed(),
+        );
+        let bound = match bound {
+            Ok(consumer) => consumer,
+            Err(error) => {
+                tracing::warn!(
+                    target: "wamn::jetstream",
+                    registration_id,
+                    durable = %config.durable,
+                    filter_subject = %config.filter_subject,
+                    refusal = ?error,
+                    "exact registration consumer bind refused"
+                );
+                return Ok(Err(error));
+            }
+        };
+        Ok(Ok(self.table.push(bound)?))
     }
 }
 
@@ -618,7 +848,9 @@ impl consumer::HostDurableConsumer for ActiveCtx<'_> {
     ) -> wash_runtime::wasmtime::Result<Result<Vec<Resource<JsMessage>>, JsError>> {
         // Clone the consumer out so the table borrow does not span the push of
         // the message resources below (Consumer is a cheap Arc-backed handle).
-        let consumer = self.table.get(&rep)?.consumer.clone();
+        let bound = self.table.get(&rep)?;
+        let consumer = bound.consumer.clone();
+        let dead_letter = bound.dead_letter.clone();
         let plugin = plugin_of(self)?;
         let component_id = self.component_id.to_string();
         let claim = plugin.claim_for(&component_id);
@@ -638,7 +870,10 @@ impl consumer::HostDurableConsumer for ActiveCtx<'_> {
             let mut pulled = Vec::new();
             while let Some(item) = batch.next().await {
                 match item {
-                    Ok(msg) => pulled.push(JsMessage { msg }),
+                    Ok(msg) => pulled.push(JsMessage {
+                        msg,
+                        dead_letter: dead_letter.clone(),
+                    }),
                     // Boxed dyn error — stringify (map_err with anyhow!, not .context).
                     Err(e) => return Err(JsError::Other(format!("fetch message: {e}"))),
                 }
@@ -658,6 +893,25 @@ impl consumer::HostDurableConsumer for ActiveCtx<'_> {
             Ok(p) => p,
             Err(e) => return Ok(Err(e)),
         };
+        if let Some(identity) = dead_letter.as_ref() {
+            match plugin.ensure_ctx().await {
+                Ok(ctx) => match dead_letter_subject_depth(&ctx, &identity.subject).await {
+                    Ok(depth) => plugin.dlq_depth.update(identity.clone(), depth),
+                    Err(error) => tracing::warn!(
+                        target: "wamn::jetstream",
+                        subject = %identity.subject,
+                        error,
+                        "dead-letter depth refresh after fetch failed"
+                    ),
+                },
+                Err(error) => tracing::warn!(
+                    target: "wamn::jetstream",
+                    subject = %identity.subject,
+                    error = ?error,
+                    "dead-letter depth refresh could not resolve JetStream"
+                ),
+            }
+        }
 
         let mut handles = Vec::with_capacity(pulled.len());
         for m in pulled {
@@ -786,6 +1040,100 @@ impl consumer::HostMessage for ActiveCtx<'_> {
         Ok(result)
     }
 
+    async fn dead_letter(
+        &mut self,
+        rep: Resource<JsMessage>,
+        reason: String,
+    ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
+        let message = self.table.get(&rep)?;
+        let msg = message.msg.clone();
+        let Some(identity) = message.dead_letter.clone() else {
+            return Ok(Err(JsError::PublishRejected(format!(
+                "{UNREGISTERED_SOURCE}: message was not fetched through bind-registration"
+            ))));
+        };
+        let info = match msg.info() {
+            Ok(info) => info,
+            Err(error) => {
+                return Ok(Err(JsError::Other(format!(
+                    "dead-letter source metadata: {error}"
+                ))));
+            }
+        };
+        let dead_letter = DeadLetter {
+            format_version: 1,
+            reason,
+            source_stream: info.stream.to_string(),
+            source_stream_sequence: info.stream_sequence,
+            delivered: u64::try_from(info.delivered).unwrap_or(0),
+            original_subject: msg.subject.to_string(),
+            headers: from_header_map(msg.headers.as_ref())
+                .into_iter()
+                .map(|header| DeadLetterHeader {
+                    name: header.name,
+                    value: header.value,
+                })
+                .collect(),
+            body: msg.payload.to_vec(),
+        };
+        let body = match serde_json::to_vec(&dead_letter) {
+            Ok(body) => body,
+            Err(error) => {
+                return Ok(Err(JsError::Other(format!(
+                    "serialize dead-letter record: {error}"
+                ))));
+            }
+        };
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let claim = plugin.claim_for(&component_id);
+        let span = js_span(&claim, &component_id, "dead-letter");
+        let started = std::time::Instant::now();
+        let source_stream_sequence = dead_letter.source_stream_sequence;
+        let result = async {
+            let ctx = plugin.ensure_ctx().await?;
+            let mut headers = HeaderMap::new();
+            let message_id = dead_letter_message_id(
+                &identity.subject,
+                &dead_letter.source_stream,
+                source_stream_sequence,
+            );
+            headers.insert(NATS_MESSAGE_ID, message_id.as_str());
+            let ack = ctx
+                .publish_with_headers(identity.subject.to_string(), headers, body.into())
+                .await
+                .map_err(|error| JsError::PublishRejected(error.to_string()))?
+                .await
+                .map_err(|error| JsError::PublishRejected(error.to_string()))?;
+            if ack.stream != DEAD_LETTER_STREAM {
+                return Err(JsError::PublishRejected(format!(
+                    "dead-letter subject was stored in unexpected stream {:?}",
+                    ack.stream
+                )));
+            }
+            match dead_letter_subject_depth(&ctx, &identity.subject).await {
+                Ok(depth) => plugin.dlq_depth.update(identity.clone(), depth),
+                Err(error) => tracing::warn!(
+                    target: "wamn::jetstream",
+                    subject = %identity.subject,
+                    error,
+                    "dead-letter stored but depth refresh failed"
+                ),
+            }
+            Ok(())
+        }
+        .instrument(span)
+        .await;
+        record_effect_ms(
+            &JETSTREAM_DURATION_MS,
+            EFFECT_OPERATION,
+            "dead-letter",
+            &claim.project,
+            started.elapsed(),
+        );
+        Ok(result)
+    }
+
     async fn drop(&mut self, rep: Resource<JsMessage>) -> wash_runtime::wasmtime::Result<()> {
         // Dropping without an explicit ack/nack/term leaves the message to
         // redeliver after ack-wait (at-least-once).
@@ -853,6 +1201,11 @@ impl producer::Host for ActiveCtx<'_> {
         let span = js_span(&claim, &component_id, "publish");
         let started = std::time::Instant::now();
         let result = async {
+            if is_reserved_dead_letter_subject(&subject) {
+                return Err(JsError::PublishRejected(format!(
+                    "{RESERVED_DEAD_LETTER_SUBJECT}: use a bound message's dead-letter method"
+                )));
+            }
             let ctx = plugin.ensure_ctx().await?;
             let map = to_header_map(&headers);
             // Two awaits: the send future, then the server-ack future. The awaited
@@ -1090,6 +1443,91 @@ mod tests {
         let dotted = release_registering("a.b", &["insert"]);
         let dotted_filter = format!("evt.acme.proj.prod.{}.>", subject_token("a.b"));
         assert_eq!(bind_refusal(Some(&dotted), &dotted_filter), None);
+    }
+
+    #[test]
+    fn exact_registration_bind_mints_the_host_owned_dlq_identity() {
+        let manifest = release_registering("receipts", &["insert"]);
+        let identity = exact_registration_identity(
+            Some(&manifest),
+            "cat",
+            "r1",
+            "evt.acme.proj.prod.receipts.>",
+        )
+        .expect("exact release registration admits");
+        assert_eq!(identity.subject.as_ref(), "dlq.t1.prod.cat.r1");
+        assert_eq!(identity.registration_id.as_ref(), "r1");
+
+        assert!(
+            exact_registration_identity(
+                Some(&manifest),
+                "cat",
+                "r2",
+                "evt.acme.proj.prod.receipts.>"
+            )
+            .unwrap_err()
+            .starts_with(UNREGISTERED_SOURCE)
+        );
+        assert!(
+            exact_registration_identity(
+                Some(&manifest),
+                "cat",
+                "r1",
+                "evt.acme.proj.prod.orders.>"
+            )
+            .is_err(),
+            "a real registration id cannot bless another registration's source"
+        );
+        assert!(
+            exact_registration_identity(
+                Some(&manifest),
+                "other-catalog",
+                "r1",
+                "evt.acme.proj.prod.receipts.>"
+            )
+            .is_err(),
+            "registration ids are catalog-scoped and must not collide across releases"
+        );
+    }
+
+    #[test]
+    fn generic_publish_cannot_name_the_reserved_dlq_namespace() {
+        for subject in ["dlq", "dlq.t1.prod.cat.r1"] {
+            assert!(is_reserved_dead_letter_subject(subject));
+        }
+        assert!(!is_reserved_dead_letter_subject(
+            "evt.acme.proj.prod.receipts.insert"
+        ));
+    }
+
+    #[test]
+    fn exact_registration_consumer_keeps_transport_redelivery_armed() {
+        let requested = consumer::ConsumerConfig {
+            stream_name: "EVT_acme_prod".into(),
+            durable: "mat_t1_cat_r1".into(),
+            filter_subject: "evt.acme.proj.prod.receipts.>".into(),
+            ack_wait_ms: 30_000,
+            // Router execution is bounded by the materializer. Transport stays
+            // armed so a failed DLQ publish can retry without re-running it.
+            max_deliver: 0,
+        };
+        let matching = StoredConsumerConfig {
+            ack_policy: AckPolicy::Explicit,
+            filter_subject: requested.filter_subject.clone(),
+            ack_wait: Duration::from_millis(requested.ack_wait_ms),
+            max_deliver: -1,
+            ..Default::default()
+        };
+        assert!(!exact_consumer_config_drift(&requested, &matching));
+
+        let prematurely_stopped = StoredConsumerConfig {
+            max_deliver: 5,
+            ..matching
+        };
+        assert!(
+            exact_consumer_config_drift(&requested, &prematurely_stopped),
+            "the server must not stop redelivery before a failed DLQ write can recover"
+        );
     }
 
     // -----------------------------------------------------------------------

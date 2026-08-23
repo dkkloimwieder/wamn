@@ -4,7 +4,8 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    copy_project_env, dump_project_env, impact_report, prune_run_history, restore_project_env,
+    copy_project_env, dead_letters, dump_project_env, impact_report, prune_run_history,
+    restore_project_env,
 };
 
 #[derive(Parser)]
@@ -30,6 +31,8 @@ enum Command {
     PruneRunHistory(prune_run_history::PruneRunHistoryArgs),
     /// Report the schema-change impact of a target catalog.
     ImpactReport(impact_report::ImpactReportArgs),
+    /// Read or replay one registration's capped dead-letter subject.
+    DeadLetters(dead_letters::DeadLettersArgs),
 }
 
 #[tokio::main]
@@ -50,5 +53,6 @@ async fn main() -> anyhow::Result<()> {
         Command::CopyProjectEnv(args) => copy_project_env::run(args).await,
         Command::PruneRunHistory(args) => prune_run_history::run(args).await,
         Command::ImpactReport(args) => impact_report::run(args).await,
+        Command::DeadLetters(args) => dead_letters::run(args).await,
     }
 }

@@ -19,7 +19,9 @@ package wamn:jetstream@0.1.0;
 /// - Streams are provisioned out-of-band (per-org `EVT_<org>_<env>` streams,
 ///   D19 §5). A guest binds a durable consumer by name and publishes to a
 ///   subject; it CANNOT create, configure, or delete a stream through this
-///   interface.
+///   interface. Generic publication refuses the reserved `dlq.*` namespace;
+///   only a message fetched through an exact registration bind can dead-letter,
+///   and the host derives that destination.
 /// - A publish waits for the server ack: the returned `publish-ack` is the only
 ///   delivery truth (async-nats: send future, then server-ack future).
 ///
@@ -130,11 +132,21 @@ interface consumer {
     /// Terminate — stop redelivering this message regardless of `max-deliver`
     /// (a poison message the consumer will never successfully process).
     term: func() -> result<_, js-error>;
+    /// Publish this message and its refusal reason to the host-derived,
+    /// per-registration dead-letter subject. Available only on messages fetched
+    /// through `bind-registration`; the guest never supplies the DLQ subject.
+    /// Success means JetStream acknowledged durable storage.
+    dead-letter: func(reason: string) -> result<_, js-error>;
   }
 
   /// Bind (or rebind) a durable pull consumer over an existing stream. Idempotent
   /// on the durable name: rebinding an existing durable returns a handle to it.
   bind: func(config: consumer-config) -> result<durable-consumer, js-error>;
+
+  /// Bind a release registration exactly. The host verifies the catalog and
+  /// registration ids against the serving manifest and ties every fetched
+  /// message to that identity for host-derived dead-letter publication.
+  bind-registration: func(catalog-id: string, registration-id: string, config: consumer-config) -> result<durable-consumer, js-error>;
 }
 
 /// Post-commit wake hint — the l5i9.17 doorbell takeover. The dispatcher rings

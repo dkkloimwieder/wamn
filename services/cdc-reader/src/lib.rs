@@ -83,7 +83,11 @@ use pg_walstream::{
 use tokio_postgres::NoTls;
 
 use wamn_control_registry::sql::select_event_reader_sql;
-use wamn_event_wire::{Causation, Envelope, Op, msg_id, stream_subjects, subject};
+use wamn_event_wire::{
+    Causation, DEAD_LETTER_MAX_AGE_SECONDS, DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION,
+    DEAD_LETTER_STREAM, DEAD_LETTER_STREAM_SUBJECTS, Envelope, Op, msg_id, stream_subjects,
+    subject,
+};
 use wamn_pg_core::quote_ident;
 
 #[derive(Debug, Args)]
@@ -533,6 +537,54 @@ fn stream_config_drift(
     drift
 }
 
+fn dead_letter_stream_config_drift(
+    want_replicas: usize,
+    got: &jetstream::stream::Config,
+) -> Vec<String> {
+    let mut drift = Vec::new();
+    if got.num_replicas != want_replicas {
+        drift.push(format!(
+            "num_replicas: want {want_replicas}, stream has {}",
+            got.num_replicas
+        ));
+    }
+    if got.storage != jetstream::stream::StorageType::File {
+        drift.push(format!("storage: want File, stream has {:?}", got.storage));
+    }
+    if got.retention != jetstream::stream::RetentionPolicy::Limits {
+        drift.push(format!(
+            "retention: want Limits, stream has {:?}",
+            got.retention
+        ));
+    }
+    if got.max_messages_per_subject != DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION {
+        drift.push(format!(
+            "max_messages_per_subject: want {DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION}, stream has {}",
+            got.max_messages_per_subject
+        ));
+    }
+    let want_age = Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS);
+    if got.max_age != want_age {
+        drift.push(format!(
+            "max_age: want {want_age:?}, stream has {:?}",
+            got.max_age
+        ));
+    }
+    if got.duplicate_window != want_age {
+        drift.push(format!(
+            "duplicate_window: want {want_age:?}, stream has {:?}",
+            got.duplicate_window
+        ));
+    }
+    if got.subjects.as_slice() != [DEAD_LETTER_STREAM_SUBJECTS] {
+        drift.push(format!(
+            "subjects: want [{DEAD_LETTER_STREAM_SUBJECTS:?}], stream has {:?}",
+            got.subjects
+        ));
+    }
+    drift
+}
+
 async fn open_session(
     args: &EventReaderArgs,
     reg: &Registration,
@@ -633,6 +685,30 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
              stream or re-provision (matches the never-creates-the-slot posture).",
             reg.stream,
             drift.join("; ")
+        );
+    }
+
+    let dead_letters = js
+        .get_or_create_stream(jetstream::stream::Config {
+            name: DEAD_LETTER_STREAM.to_string(),
+            subjects: vec![DEAD_LETTER_STREAM_SUBJECTS.to_string()],
+            storage: jetstream::stream::StorageType::File,
+            num_replicas: args.stream_replicas,
+            retention: jetstream::stream::RetentionPolicy::Limits,
+            max_messages_per_subject: DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION,
+            max_age: Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS),
+            duplicate_window: Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS),
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("get-or-create stream {DEAD_LETTER_STREAM}: {error}"))?;
+    let dead_letter_drift =
+        dead_letter_stream_config_drift(args.stream_replicas, &dead_letters.cached_info().config);
+    if !dead_letter_drift.is_empty() {
+        bail!(
+            "dead-letter stream {DEAD_LETTER_STREAM} has drifted config the reader will not \
+             silently accept: {}",
+            dead_letter_drift.join("; ")
         );
     }
 
@@ -1809,6 +1885,34 @@ mod tests {
         assert!(
             d.iter().any(|m| m.contains("storage")),
             "storage drift must report: {d:?}"
+        );
+    }
+
+    #[test]
+    fn dead_letter_stream_drift_pins_the_per_registration_cap() {
+        use jetstream::stream::{Config, RetentionPolicy, StorageType};
+        let matching = Config {
+            subjects: vec![DEAD_LETTER_STREAM_SUBJECTS.into()],
+            num_replicas: 3,
+            storage: StorageType::File,
+            retention: RetentionPolicy::Limits,
+            max_messages_per_subject: DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION,
+            max_age: Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS),
+            duplicate_window: Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS),
+            ..Default::default()
+        };
+        assert!(dead_letter_stream_config_drift(3, &matching).is_empty());
+
+        let uncapped = Config {
+            max_messages_per_subject: -1,
+            ..matching
+        };
+        let drift = dead_letter_stream_config_drift(3, &uncapped);
+        assert!(
+            drift
+                .iter()
+                .any(|item| item.contains("max_messages_per_subject")),
+            "an unbounded per-registration DLQ must be refused: {drift:?}"
         );
     }
 

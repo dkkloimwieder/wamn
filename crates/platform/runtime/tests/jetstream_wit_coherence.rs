@@ -1,9 +1,5 @@
-//! Drift guard tying the `wamn:jetstream@0.1.0` doc-of-record
-//! (`docs/archive/contracts/wamn-jetstream.wit`) to the built copy the host bindgen compiles
-//! (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit`). The
-//! `wamn:postgres` committed-contract precedent: editing one copy
-//! without the other fails a named test instead of shipping skew. The two are
-//! kept BYTE-IDENTICAL (like `docs/archive/contracts/wamn-postgres.wit` and its vendored copy).
+//! Drift guard tying the `wamn:jetstream@0.1.0` built host contract to every
+//! guest-vendored copy. Archived provenance is deliberately not a live input.
 
 use std::fs;
 use std::path::Path;
@@ -13,36 +9,18 @@ fn root() -> &'static Path {
 }
 
 #[test]
-fn docs_wit_matches_built_copy() {
-    let docs =
-        fs::read_to_string(root().join("../../../docs/archive/contracts/wamn-jetstream.wit"))
-            .expect("docs/archive/contracts/wamn-jetstream.wit reads");
+fn component_copies_match_the_built_contract() {
+    // Every guest that binds wamn:jetstream vendors its OWN byte-identical copy
+    // of the contract under wit/deps. The materializer carries one; editing the
+    // host contract without re-vendoring it fails here.
     let built = fs::read_to_string(root().join("wit/deps/wamn-jetstream/package.wit"))
         .expect("wit/deps/wamn-jetstream/package.wit reads");
-    assert_eq!(
-        docs, built,
-        "docs/archive/contracts/wamn-jetstream.wit and the built wit/deps copy drifted — they must \
-         stay byte-identical (edit both, or neither)"
-    );
-}
-
-#[test]
-fn component_copies_match_docs() {
-    // Every guest that binds wamn:jetstream vendors its OWN byte-identical copy
-    // of the contract under wit/deps (wit-bindgen resolves from there, not from
-    // docs). The materializer (l5i9.17, consumer + doorbell) carries one; editing
-    // docs without re-vendoring it fails HERE rather than
-    // shipping a guest built against a stale contract.
-    let docs =
-        fs::read_to_string(root().join("../../../docs/archive/contracts/wamn-jetstream.wit"))
-            .expect("docs/archive/contracts/wamn-jetstream.wit reads");
     let copy = "../../../components/execution/materializer/wit/deps/wamn-jetstream/package.wit";
     let vendored =
         fs::read_to_string(root().join(copy)).unwrap_or_else(|e| panic!("{copy} reads: {e}"));
     assert_eq!(
-        docs, vendored,
-        "{copy} drifted from docs/archive/contracts/wamn-jetstream.wit — the vendored guest \
-         copy must stay byte-identical (edit both, or neither)"
+        built, vendored,
+        "{copy} drifted from the host's built wamn:jetstream contract"
     );
 }
 
@@ -50,9 +28,8 @@ fn component_copies_match_docs() {
 fn contract_declares_the_mvp_surface() {
     // The materializer (l5i9.17) binds exactly these; a rename/removal of any
     // load-bearing line is a breaking change that must move the plugin too.
-    let docs =
-        fs::read_to_string(root().join("../../../docs/archive/contracts/wamn-jetstream.wit"))
-            .expect("docs/archive/contracts/wamn-jetstream.wit reads");
+    let built = fs::read_to_string(root().join("wit/deps/wamn-jetstream/package.wit"))
+        .expect("wit/deps/wamn-jetstream/package.wit reads");
     for needle in [
         "package wamn:jetstream@0.1.0;",
         "record consumer-config {",
@@ -64,6 +41,8 @@ fn contract_declares_the_mvp_surface() {
         "ack: func() -> result<_, js-error>;",
         "nack: func(delay-ms: u64) -> result<_, js-error>;",
         "term: func() -> result<_, js-error>;",
+        "dead-letter: func(reason: string) -> result<_, js-error>;",
+        "bind-registration: func(catalog-id: string, registration-id: string, config: consumer-config) -> result<durable-consumer, js-error>;",
         "stream-seq: u64,",
         "delivered: u64,",
         "publish: func(subject: string, headers: list<header>, body: list<u8>) -> result<publish-ack, js-error>;",
@@ -72,7 +51,7 @@ fn contract_declares_the_mvp_surface() {
         "ring: func(run-id: string) -> result<_, js-error>;",
     ] {
         assert!(
-            docs.contains(needle),
+            built.contains(needle),
             "wamn:jetstream contract is missing the MVP line: {needle:?}"
         );
     }

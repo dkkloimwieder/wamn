@@ -8,6 +8,9 @@ license.workspace = true
 [features]
 default = []
 ops = [
+    "dep:async-nats",
+    "dep:futures-util",
+    "dep:wamn-event-wire",
     "wamn-control-provision/ops",
     "wamn-schema-control/ops",
 ]
@@ -44,6 +47,9 @@ tracing = { workspace = true }
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 oci-client = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream"], optional = true }
+futures-util = { workspace = true, optional = true }
+wamn-event-wire = { workspace = true, optional = true }
 # 4.1b publish-catalog: catalog snapshot model + the 3.2 tenant-floor DDL.
 wamn-schema-model = { workspace = true }
 wamn-schema-compiler = { workspace = true }
