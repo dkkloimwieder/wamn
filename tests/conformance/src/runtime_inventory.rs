@@ -16,8 +16,13 @@ const ALLOWED_WASH_RUNTIME_FEATURES: [&str; 5] = [
     "wasm_component_model_implements",
 ];
 const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
+/// The one production store the execution host creates, and the file that holds
+/// it. `18ba72b6` deleted the host plan-supply path this used to name, leaving
+/// `crates/execution/host/src/lib.rs` a module-declaration file; the surviving
+/// store is the router driver's, created per invocation.
 const EXECUTION_HOST_STORE_CONSTRUCTOR: &str =
-    "let mut store = Store::new(raw, SharedCtx::new(ctx));";
+    "let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));";
+const EXECUTION_HOST_STORE_FILE: &str = "crates/execution/host/src/router_driver.rs";
 
 /// The release-manifest weld construction call, deliberately truncated before the
 /// `(` so it matches `load` and `load_from` alike — the guard counts
@@ -32,17 +37,18 @@ const RELEASE_WELD_CONSTRUCTION: &str = "ReleaseManifestWeld::load";
 /// `(file, the text that reaches the weld, the first bind-capable text it must
 /// precede)`.
 ///
-/// wamn-0h0g.15.101 rules one weld instance PER PROCESS: the flowrunner
-/// in-process host serves plan supply and effect authority, the wash host serves
-/// flow-http routing and jetstream delivery. Separate processes cannot share one
-/// object, so each constructs exactly once — and must do so before anything binds
-/// a component, because under ruling wamn-0h0g.15.102 the loaded manifest is the
-/// sole carrier of the `(release version, manifest digest)` pair a claim records.
-/// A component that bound first would have no pair.
+/// wamn-0h0g.15.101 rules one weld instance PER PROCESS: the wash host serves
+/// flow-http routing and jetstream delivery, the executor serves the durable
+/// queue. Separate processes cannot share one object, so each constructs exactly
+/// once — and must do so before anything binds a component, because under ruling
+/// wamn-0h0g.15.102 the verified manifest is the sole carrier of the
+/// `(release version, manifest digest)` pair a claim records. A component that
+/// bound first would have no pair.
 ///
-/// The wash host calls the weld directly; the execution host reaches it through
-/// `load_plan_release`, so the position that matters there is that call, not the
-/// function's definition.
+/// The second process used to be the in-process flowrunner host, reached through
+/// `load_plan_release`; `18ba72b6` deleted host plan supply and that symbol with
+/// it, so this entry named a function that existed nowhere and the guard proved
+/// nothing (wamn-nguw). Both surviving processes call the weld directly.
 const HOST_WELD_SITES: [(&str, &str, &str); 2] = [
     (
         "services/host/src/host.rs",
@@ -50,30 +56,41 @@ const HOST_WELD_SITES: [(&str, &str, &str); 2] = [
         "ClusterHostBuilder::default()",
     ),
     (
-        "crates/execution/host/src/lib.rs",
-        "let (effect_authority_weld, plan_release) = load_plan_release(",
-        "WasmtimeComponent::new(",
+        "services/executor/src/lib.rs",
+        "let release = load_release(",
+        "RouterDriver::new(",
     ),
 ];
 
-/// The one production call that hands the claim path its release pair.
+/// The production construction of a claim's release pair.
 ///
 /// wamn-0h0g.15.103 struck the per-workload config keys that used to assert this
-/// pair at bind time, leaving the mounted manifest as its sole carrier. A second
-/// injection site would restore the dual-representation bug the ruling closed: two
-/// carriers with nothing reconciling them, so a pod could stamp one release onto a
-/// run while resolving plans against another.
-const RELEASE_IDENTITY_INJECTION: &str = "plugin.set_release_identity(";
-
-/// The file the injection lives in, and the text that must precede it.
+/// pair at bind time, leaving the verified manifest as its sole carrier. The old
+/// guard pinned ONE `plugin.set_release_identity(` call in one file; production
+/// no longer has one such site, and `WamnPostgres::set_release_identity` is a
+/// pass-through that builds the struct from its own parameters rather than a
+/// source of the pair.
 ///
-/// The pair is read off the weld, so the weld has to exist first. Pinning the
-/// ORDER rather than only the count is what stops the injection drifting above
-/// `load_plan_release` onto some other source of the pair.
-const RELEASE_IDENTITY_INJECTION_SITE: (&str, &str) = (
-    "crates/execution/host/src/lib.rs",
-    "let (effect_authority_weld, plan_release) = load_plan_release(",
-);
+/// So the invariant that survives is not the COUNT but the SOURCE: wherever
+/// production builds a `ReleaseIdentity`, both halves are read off the weld. A
+/// site that invented either half from anywhere else would restore the
+/// dual-representation bug the ruling closed — two carriers with nothing
+/// reconciling them, so a pod could stamp one release onto a run while resolving
+/// plans against another.
+const RELEASE_IDENTITY_CONSTRUCTION: &str = "ReleaseIdentity {";
+
+/// The two production sites that build the pair, and the weld expression each
+/// one must read both halves off.
+///
+/// The per-run site is shared by both host processes through `RouterDriver`; the
+/// executor's is its queue-claim session scope. Two sites, one source.
+const RELEASE_IDENTITY_SOURCE_SITES: [(&str, &str); 2] = [
+    (
+        "crates/execution/host/src/router_driver.rs",
+        "self.release.release()",
+    ),
+    ("services/executor/src/lib.rs", "release.release()"),
+];
 
 /// The two struck config keys, and every file that could plausibly re-read them.
 ///
@@ -85,7 +102,7 @@ const STRUCK_RELEASE_IDENTITY_KEYS: [&str; 2] = ["wamn.release-version", "wamn.m
 /// the plugin whose bind path used to read them.
 const STRUCK_KEY_SITES: [&str; 3] = [
     "crates/platform/runtime/src/plugins/wamn_postgres/mod.rs",
-    "crates/execution/host/src/lib.rs",
+    "services/executor/src/lib.rs",
     "services/host/src/host.rs",
 ];
 
@@ -305,23 +322,36 @@ fn validate_weld_precedes_bind(
     }
 }
 
-fn validate_release_identity_injection(source: &str, weld: &str, seam: &str) -> Result<(), String> {
+/// Every half of a production `ReleaseIdentity` is read off the weld.
+///
+/// The literal's body is taken as the text between `ReleaseIdentity {` and the
+/// next `}` — every production construction is a flat struct literal of two
+/// scalar fields, so no nesting can hide inside it — and both field
+/// initializers must name `weld`, the expression that reaches this file's weld.
+fn validate_release_identity_from_weld(source: &str, weld: &str, seam: &str) -> Result<(), String> {
     let production = production_half(source, seam)?;
-    validate_one(production, RELEASE_IDENTITY_INJECTION, seam)?;
-    let injected_at = production
-        .find(RELEASE_IDENTITY_INJECTION)
-        .expect("the counted injection must locate");
-    let Some(weld_at) = production.find(weld) else {
-        return Err(format!("{seam} must reach its weld through `{weld}`"));
+    validate_one(production, RELEASE_IDENTITY_CONSTRUCTION, seam)?;
+    let opened = production
+        .find(RELEASE_IDENTITY_CONSTRUCTION)
+        .expect("the counted construction must locate")
+        + RELEASE_IDENTITY_CONSTRUCTION.len();
+    let Some(closed) = production[opened..].find('}').map(|end| opened + end) else {
+        return Err(format!(
+            "{seam} must close its `{RELEASE_IDENTITY_CONSTRUCTION}` literal"
+        ));
     };
-    if weld_at < injected_at {
-        Ok(())
-    } else {
-        Err(format!(
-            "{seam} must reach `{weld}` before `{RELEASE_IDENTITY_INJECTION}`; a pair injected \
-             first came from somewhere other than the verified manifest"
-        ))
+    let body = &production[opened..closed];
+    for field in ["release_version", "manifest_digest"] {
+        let initializer = format!("{field}: {weld}.{field}");
+        if !body.contains(&initializer) {
+            return Err(format!(
+                "{seam} must initialize `{field}` as `{initializer}`; a pair read from \
+                 anywhere but the weld is a second carrier of the release identity the \
+                 verified manifest was made sole owner of (wamn-0h0g.15.102)"
+            ));
+        }
     }
+    Ok(())
 }
 
 fn validate_no_struck_key(source: &str, seam: &str) -> Result<(), String> {
@@ -391,7 +421,7 @@ fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
         "nonzero pool_size must remain the warm-store activation seam"
     );
 
-    let execution_path = root.join("crates/execution/host/src/lib.rs");
+    let execution_path = root.join(EXECUTION_HOST_STORE_FILE);
     let execution = fs::read_to_string(&execution_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", execution_path.display()));
     validate_execution_host_store_constructor(&execution).unwrap_or_else(|error| panic!("{error}"));
@@ -992,11 +1022,13 @@ fn one_release_manifest_weld_construction_site_per_host_process() {
 }
 
 #[test]
-fn one_release_identity_injection_reaches_the_pair_through_the_weld() {
-    let (path, weld) = RELEASE_IDENTITY_INJECTION_SITE;
-    let source = host_source(&repository_root(), path);
-    validate_release_identity_injection(&source, weld, path)
-        .unwrap_or_else(|error| panic!("{error}"));
+fn every_production_release_identity_is_read_off_the_weld() {
+    let root = repository_root();
+    for (path, weld) in RELEASE_IDENTITY_SOURCE_SITES {
+        let source = host_source(&root, path);
+        validate_release_identity_from_weld(&source, weld, path)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
 }
 
 #[test]
@@ -1008,17 +1040,30 @@ fn the_struck_release_identity_config_keys_do_not_return() {
     }
 }
 
+/// The fixture the mutants below are cut from: one flat construction whose two
+/// halves both come off `release.release()`.
+fn welded_release_identity() -> String {
+    format!(
+        "let release = load_release(base, digest)?;\n\
+         let identity = {RELEASE_IDENTITY_CONSTRUCTION}\n\
+         \x20   release_version: release.release().release_version,\n\
+         \x20   manifest_digest: release.release().manifest_digest.clone(),\n\
+         }};\n"
+    )
+}
+
 #[test]
-fn release_identity_inventory_rejects_a_removed_or_duplicated_injection() {
-    let welded =
-        "let (effect_authority_weld, plan_release) = load_plan_release(release)?.unzip();\n";
-    for source in [
-        String::new(),
-        format!("{welded}{RELEASE_IDENTITY_INJECTION}\n{RELEASE_IDENTITY_INJECTION}\n"),
-    ] {
-        let error =
-            validate_release_identity_injection(&source, RELEASE_IDENTITY_INJECTION_SITE.1, "seam")
-                .expect_err("a missing or duplicated injection must be rejected");
+fn release_identity_inventory_accepts_the_welded_shape() {
+    validate_release_identity_from_weld(&welded_release_identity(), "release.release()", "seam")
+        .expect("both halves read off the weld must pass");
+}
+
+#[test]
+fn release_identity_inventory_rejects_a_removed_or_duplicated_construction() {
+    let duplicated = format!("{}{}", welded_release_identity(), welded_release_identity());
+    for source in [String::new(), duplicated] {
+        let error = validate_release_identity_from_weld(&source, "release.release()", "seam")
+            .expect_err("a missing or duplicated construction must be rejected");
         assert!(
             error.contains("exactly one"),
             "the refusal must name the count it required: {error}"
@@ -1027,17 +1072,19 @@ fn release_identity_inventory_rejects_a_removed_or_duplicated_injection() {
 }
 
 #[test]
-fn release_identity_inventory_rejects_an_injection_above_the_weld() {
-    let inverted = format!(
-        "{RELEASE_IDENTITY_INJECTION}\nlet (effect_authority_weld, plan_release) = load_plan_release(release)?.unzip();\n"
-    );
-    let error =
-        validate_release_identity_injection(&inverted, RELEASE_IDENTITY_INJECTION_SITE.1, "seam")
-            .expect_err("a pair injected before the weld must be rejected");
-    assert!(
-        error.contains("came from somewhere other than the verified manifest"),
-        "the refusal must name why order matters: {error}"
-    );
+fn release_identity_inventory_rejects_a_half_read_from_elsewhere() {
+    for stolen in ["release_version", "manifest_digest"] {
+        let mutant = welded_release_identity().replace(
+            &format!("{stolen}: release.release()."),
+            &format!("{stolen}: config.get("),
+        );
+        let error = validate_release_identity_from_weld(&mutant, "release.release()", "seam")
+            .expect_err("a half read from anywhere but the weld must be rejected");
+        assert!(
+            error.contains("second carrier"),
+            "the refusal must name why a second source matters: {error}"
+        );
+    }
 }
 
 #[test]
