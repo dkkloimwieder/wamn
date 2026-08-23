@@ -48,11 +48,10 @@ fn stand_in_guard_rejects_column_named_only_by_an_index() {
 // ---------------------------------------------------------------------------
 
 /// Every table `run-state.sql` ships, all Required.
-fn all_run_state_required() -> [(&'static str, Need); 7] {
+fn all_run_state_required() -> [(&'static str, Need); 6] {
     [
         ("environment_policies", Need::Required),
         ("runs", Need::Required),
-        ("invocation_admissions", Need::Required),
         ("effect_attempts", Need::Required),
         ("effect_attempt_dispatches", Need::Required),
         ("effect_attempt_outcomes", Need::Required),
@@ -62,7 +61,7 @@ fn all_run_state_required() -> [(&'static str, Need); 7] {
 
 /// `runs` Required, every other shipped table absent — the shape of a gate that
 /// materializes only the run row.
-fn runs_only_spec() -> [(&'static str, Need); 7] {
+fn runs_only_spec() -> [(&'static str, Need); 6] {
     let mut spec = all_run_state_required();
     for (table, need) in &mut spec {
         if *table != "runs" {

@@ -4,9 +4,9 @@
 //! Postgres (durability), NATS-core fire-and-forget doorbells (latency), and
 //! run-claim leases that reclaim a dead replica's work (scaling). Where the run
 //! history records persist *what happened* while this module governs *what
-//! runs next and who runs it*: the write-ahead enqueue, the one-row production claim, lease
-//! renewal, the janitor that gives up on an abandoned run, and the reconciliation
-//! sweep that backstops a lost doorbell hint.
+//! runs next and who runs it*: the one-row production claim, lease renewal, the
+//! janitor that gives up on an abandoned run, and the reconciliation sweep that
+//! backstops a lost doorbell hint.
 //!
 //! Like the rest of `wamn-run-state`, this
 //! crate is **pure**: no DB, no NATS, no clock. Every decision is a function of
@@ -73,9 +73,8 @@ pub use janitor::{JanitorVerdict, janitor_verdict, janitor_verdict_with_attempt,
 pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{Millis, QueueEntry};
 pub use sql::{
-    advance_claim_attempts_sql, clear_pre_effect_state_sql, enqueue_evt_sql, enqueue_sql,
-    grant_production_claim_sql, park_sql, parked_due_sql, renew_production_lease_sql,
-    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
-    serialize_effect_intent_sql, terminalize_effect_uncertain_claim_sql,
-    terminalize_exhausted_production_sql, write_ahead_triggered_run_sql,
+    advance_claim_attempts_sql, clear_pre_effect_state_sql, grant_production_claim_sql,
+    parked_due_sql, renew_production_lease_sql, select_claim_effect_attempt_sql,
+    select_exhausted_production_sql, select_production_claim_sql, serialize_effect_intent_sql,
+    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
 };

@@ -31,12 +31,12 @@ use serde_json::json;
 use wamn_run_state::DurabilityClass;
 use wamn_run_state::queue::{
     ClaimState, JanitorVerdict, ProductionClaimClass, QueueEntry, advance_claim_attempts_sql,
-    claim_state, classify_production_claim, clear_pre_effect_state_sql, enqueue_evt_sql,
-    enqueue_sql, grant_production_claim_sql, janitor_verdict_with_attempt, lease_deadline,
-    lease_live, mint_evt_run_id, park_sql, parked_due_sql, plan_claim, production_claim_state,
-    renew_production_lease_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
-    select_production_claim_sql, serialize_effect_intent_sql, should_renew,
-    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
+    claim_state, classify_production_claim, clear_pre_effect_state_sql, grant_production_claim_sql,
+    janitor_verdict_with_attempt, lease_deadline, lease_live, mint_evt_run_id, parked_due_sql,
+    plan_claim, production_claim_state, renew_production_lease_sql,
+    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
+    serialize_effect_intent_sql, should_renew, terminalize_effect_uncertain_claim_sql,
+    terminalize_exhausted_production_sql,
 };
 
 #[test]
@@ -159,8 +159,7 @@ fn the_default_class_never_classifies_expired_with_attempt() {
 #[test]
 fn the_class_gate_carries_one_sql_literal_at_every_gated_statement() {
     // One spelling, one place to audit. `select_production_claim_sql` gates its
-    // eligibility disjunct; `park_sql` gates the release-record erasure it
-    // shares with `guard_run_admission_pins_immutable`.
+    // eligibility disjunct.
     let predicate = "durability_class = 'durable'";
     let candidate = select_production_claim_sql();
     assert_eq!(
@@ -173,10 +172,6 @@ fn the_class_gate_carries_one_sql_literal_at_every_gated_statement() {
     // relation, no second lookup.
     assert_eq!(candidate.matches("JOIN runs").count(), 2);
 
-    let park = park_sql();
-    assert_eq!(park.matches(predicate).count(), 1);
-    assert!(park.contains(&format!("AND r.{predicate}")));
-
     // The class rides both host-decoded projections.
     assert!(candidate.contains("r.durability_class"));
     let exhausted = select_exhausted_production_sql();
@@ -187,43 +182,6 @@ fn the_class_gate_carries_one_sql_literal_at_every_gated_statement() {
             "claim reads the frozen run carrier only: {claim}"
         );
     }
-}
-
-#[test]
-fn the_class_gate_and_the_release_record_guard_move_together() {
-    // A HALF-APPLIED gate is the wamn-0h0g.15.82 bug resurrected: gate only the
-    // park and the database guard refuses the erasure the park attempts; gate
-    // only the guard and a `standard` run keeps a release record across a park,
-    // so a waking pod on a different release refuses at the grant, spends no
-    // crash budget, and owns its tenant's FIFO head forever.
-    const RUN_STATE_DDL: &str = include_str!("../../../../deploy/sql/run-state.sql");
-    let park = park_sql();
-    let predicate = "durability_class = 'durable'";
-
-    assert!(park.contains("AND NOT EXISTS"));
-    assert!(park.contains("FROM effect_attempts AS effect"));
-    assert!(park.contains(&format!("AND r.{predicate}")));
-
-    let guard_start = RUN_STATE_DDL
-        .find("CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()")
-        .expect("the release-record guard is the park's counterpart");
-    let guard_end = RUN_STATE_DDL[guard_start..]
-        .find("CREATE TABLE wamn_run.runs")
-        .expect("the guard precedes the table it guards")
-        + guard_start;
-    let guard = &RUN_STATE_DDL[guard_start..guard_end];
-    assert!(guard.contains("FROM wamn_run.effect_attempts AS effect"));
-    assert!(
-        guard.contains(&format!("AND OLD.{predicate}")),
-        "the guard's effect-attempt leg is not class-gated in lockstep with park_sql"
-    );
-
-    // The class itself is an admission pin: the column-scoped trigger must NAME
-    // it or its transition arm never fires (wamn-0h0g.20.1 rider 1).
-    assert!(RUN_STATE_DDL.contains(
-        "capture_mode,\n                 durability_class, wiring_id, wiring_version, release_version, manifest_digest"
-    ));
-    assert!(guard.contains("NEW.durability_class IS DISTINCT FROM OLD.durability_class"));
 }
 
 #[test]
@@ -394,22 +352,7 @@ fn dispatcher_reconciliation_mirrors_claim_eligibility_and_order() {
 }
 
 #[test]
-fn enqueue_builders_have_global_argument_shapes() {
-    let enqueue = enqueue_sql();
-    assert!(enqueue.contains("(tenant_id, run_id, priority, available_at)"));
-    assert!(enqueue.contains("$3::bigint"));
-    assert!(!enqueue.contains("$4"));
-    assert!(!enqueue.contains("partition_"));
-
-    let event = enqueue_evt_sql();
-    assert!(event.contains("priority, available_at, stream_seq"));
-    assert!(event.contains("$4"));
-    assert!(!event.contains("$5"));
-    assert!(!event.contains("partition_"));
-}
-
-#[test]
-fn lease_and_park_arithmetic_remains_stable() {
+fn lease_arithmetic_remains_stable() {
     assert_eq!(lease_deadline(1_000, 250), 1_250);
     assert!(lease_live(1_249, Some(1_250)));
     assert!(!lease_live(1_250, Some(1_250)));
@@ -418,41 +361,6 @@ fn lease_and_park_arithmetic_remains_stable() {
     assert!(renew.contains("lease_owner = $2"));
     assert!(renew.contains("lease_generation = $3"));
     assert!(renew.contains("lease_expires_at > statement_timestamp()"));
-    let park = park_sql();
-    assert!(park.contains("lease_owner = NULL, lease_expires_at = NULL"));
-}
-
-#[test]
-fn park_clears_the_release_record_of_the_claim_it_releases() {
-    // Releasing the lease REOPENS claimability, and the record names the claim
-    // currently executing the run (wamn-0h0g.13.55). Without the clear, the
-    // wake classifies `Ordinary` — `had_prior_lease` is `lease_expires_at IS
-    // NOT NULL` — no arm resets, and a pod on a different release refuses at
-    // the guard while spending no crash budget: the run is then unreapable AND
-    // permanently its tenant's FIFO head (wamn-0h0g.15.82).
-    let park = park_sql();
-    assert!(park.contains("UPDATE runs AS r"));
-    assert!(park.contains("SET release_version = NULL, manifest_digest = NULL"));
-    assert!(park.contains("lease_owner = NULL, lease_expires_at = NULL"));
-
-    // The one run that KEEPS its record: an attributed effect names the release
-    // that fired it, and that run is terminalized `effect-uncertain` by its
-    // next claim rather than re-executed under a second release. The database
-    // guard refuses that erasure, so this predicate is also what keeps the park
-    // from aborting on it.
-    assert!(park.contains("AND NOT EXISTS"));
-    assert!(park.contains("FROM effect_attempts AS effect"));
-
-    // A park changes visibility, the lease, and the record — nothing else.
-    for untouched in [
-        "state_json",
-        "status =",
-        "SET attempts",
-        "lease_generation",
-        "DELETE FROM",
-    ] {
-        assert!(!park.contains(untouched), "park must not touch {untouched}");
-    }
 }
 
 #[test]

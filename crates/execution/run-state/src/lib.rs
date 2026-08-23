@@ -13,8 +13,8 @@
 //! host-owned executor adapter supplies the `wamn:postgres` effects against the
 //! schema in `deploy/sql/run-state.sql`.
 //!
-//! Admission and enqueue producers compose the transaction API exposed by this
-//! crate while owning their database transactions.
+//! Private management admission composes the one surviving admission
+//! transaction; hot HTTP and stream ingress execute through the router.
 //!
 //! ## SR12 — what the pure tests cover, and what they cannot
 //!
@@ -29,7 +29,7 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
-/// The single producer-shaped callable-flow admission transition.
+/// The private management admission transaction.
 pub mod admission;
 /// Capture-independent effect-attempt generation facts.
 pub mod attempt;

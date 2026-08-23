@@ -21,9 +21,8 @@
 /// id's LEXICAL order equals the numeric stream order — the E4 belt. The
 /// braces: `run_id` is a TEXT column and external consumers key on
 /// `${run.id}`; without padding `f1:evt:10` sorts before `f1:evt:9`. The
-/// suspenders are the `stream_seq` BIGINT that [`crate::queue::enqueue_evt_sql`]
-/// carries ahead of `run_id` in the global claim key
-/// `(available_at, stream_seq, run_id)`.
+/// suspenders are the `stream_seq` BIGINT carried ahead of `run_id` in the
+/// global claim key `(available_at, stream_seq, run_id)`.
 pub fn mint_evt_run_id(flow_id: &str, stream_seq: u64) -> String {
     format!("{flow_id}:evt:{stream_seq:020}")
 }

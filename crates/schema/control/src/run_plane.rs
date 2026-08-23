@@ -250,12 +250,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Table,
     },
     CheckSpec {
-        table: "invocation_admissions",
-        name: "invocation_admissions_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
         table: "effect_attempts",
         name: "effect_attempts_tenant_check",
         definition: "CHECK (tenant_id <> ''::text)",
@@ -473,7 +467,9 @@ const CHECK_SPECS: &[CheckSpec] = &[
     },
 ];
 
-const LOCK_CATALOG_HEAD_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(p_tenant_id text, p_catalog_id text, p_environment text)\n RETURNS integer\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'catalog'\nAS $function$\nDECLARE\n    applied_version int;\nBEGIN\n    SELECT head.applied_catalog_version INTO applied_version\n    FROM catalog.catalog_heads AS head\n    WHERE p_tenant_id = NULLIF(current_setting('app.tenant', true), '')\n      AND head.tenant_id = p_tenant_id\n      AND head.catalog_id = p_catalog_id\n      AND head.environment = p_environment\n    FOR SHARE OF head;\n    RETURN applied_version;\nEND\n$function$\n";
+const REQUIRE_EXECUTOR_PLATFORM_AUTHORITY_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.require_executor_platform_authority()\n RETURNS boolean\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NOT EXISTS (\n        SELECT 1\n          FROM pg_catalog.pg_roles AS authority\n         WHERE authority.rolname = 'wamn_executor_platform'\n           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')\n    ) THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '42501',\n            MESSAGE = 'executor-platform-authority-required';\n    END IF;\n    RETURN true;\nEND\n$function$\n";
+
+const REQUIRE_MANAGEMENT_ADMISSION_AUTHORITY_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.require_management_admission_authority()\n RETURNS boolean\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NOT EXISTS (\n        SELECT 1\n          FROM pg_catalog.pg_roles AS authority\n         WHERE authority.rolname = 'wamn_management_admitter'\n           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')\n    ) THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '42501',\n            MESSAGE = 'management-admission-authority-required';\n    END IF;\n    RETURN true;\nEND\n$function$\n";
 
 const PIN_RUN_DURABILITY_CLASS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.pin_run_durability_class()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    projected_environment text;\n    projected_class text;\nBEGIN\n    SELECT policy.expected_environment, policy.durability_class\n      INTO projected_environment, projected_class\n      FROM wamn_run.environment_policies AS policy\n     WHERE policy.tenant_id = NEW.tenant_id;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'environment-policy-not-converged';\n    END IF;\n    IF NEW.environment IS DISTINCT FROM projected_environment THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'environment-policy-environment-mismatch';\n    END IF;\n    NEW.durability_class := projected_class;\n    RETURN NEW;\nEND\n$function$\n";
 
@@ -491,33 +487,45 @@ const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_
 const RUNS_PIN_DURABILITY_CLASS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_pin_durability_class BEFORE INSERT ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.pin_run_durability_class()";
 const RUNS_TERMINAL_DELETE_ONLY_TRIGGER_DEF: &str = "CREATE TRIGGER runs_terminal_delete_only BEFORE DELETE ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete()";
 
-const LOCK_CATALOG_HEAD_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(
-    p_tenant_id text,
-    p_catalog_id text,
-    p_environment text
-)
-RETURNS int
+const REQUIRE_EXECUTOR_PLATFORM_AUTHORITY_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.require_executor_platform_authority()
+RETURNS boolean
 LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, catalog
+SECURITY INVOKER
 AS $$
-DECLARE
-    applied_version int;
 BEGIN
-    SELECT head.applied_catalog_version INTO applied_version
-    FROM catalog.catalog_heads AS head
-    WHERE p_tenant_id = NULLIF(current_setting('app.tenant', true), '')
-      AND head.tenant_id = p_tenant_id
-      AND head.catalog_id = p_catalog_id
-      AND head.environment = p_environment
-    FOR SHARE OF head;
-    RETURN applied_version;
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_roles AS authority
+         WHERE authority.rolname = 'wamn_executor_platform'
+           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'executor-platform-authority-required';
+    END IF;
+    RETURN true;
 END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head(text, text, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text) TO wamn_app;
-GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text)
-    TO wamn_scenario_author;"#;
+$$;"#;
+
+const REQUIRE_MANAGEMENT_ADMISSION_AUTHORITY_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.require_management_admission_authority()
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY INVOKER
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_roles AS authority
+         WHERE authority.rolname = 'wamn_management_admitter'
+           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'management-admission-authority-required';
+    END IF;
+    RETURN true;
+END
+$$;"#;
 
 const PIN_RUN_DURABILITY_CLASS_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.pin_run_durability_class()
 RETURNS trigger
@@ -680,14 +688,19 @@ fn borrowed_helper_spec(
 fn helper_specs() -> Vec<HelperSpec> {
     vec![
         borrowed_helper_spec(
+            "require_executor_platform_authority",
+            REQUIRE_EXECUTOR_PLATFORM_AUTHORITY_DEF,
+            REQUIRE_EXECUTOR_PLATFORM_AUTHORITY_SQL,
+        ),
+        borrowed_helper_spec(
+            "require_management_admission_authority",
+            REQUIRE_MANAGEMENT_ADMISSION_AUTHORITY_DEF,
+            REQUIRE_MANAGEMENT_ADMISSION_AUTHORITY_SQL,
+        ),
+        borrowed_helper_spec(
             "pin_run_durability_class",
             PIN_RUN_DURABILITY_CLASS_DEF,
             PIN_RUN_DURABILITY_CLASS_SQL,
-        ),
-        borrowed_helper_spec(
-            "lock_catalog_head",
-            LOCK_CATALOG_HEAD_DEF,
-            LOCK_CATALOG_HEAD_SQL,
         ),
         borrowed_helper_spec(
             "guard_event_lineage_immutable",
@@ -2165,13 +2178,10 @@ pub struct RunPlaneObservation {
     /// Revocable table or column authority on `run_queue` held directly by
     /// `wamn_app` or inherited from `PUBLIC`.
     pub app_run_queue_authority: bool,
-    /// Effective `wamn_app` authority on the run capture carrier. The first
-    /// value is a table-level INSERT/UPDATE grant (which covers every column);
-    /// the second is effective INSERT/UPDATE on `runs.capture_mode` itself;
-    /// the third proves the live column grants MATCH the ratified sets
-    /// ([`RUNS_APP_INSERT_COLUMNS`] / [`RUNS_APP_UPDATE_COLUMNS`]) exactly —
-    /// not that the app holds INSERT+UPDATE on every non-capture column, which
-    /// a correctly confined table can never satisfy (wamn-0h0g.12.40).
+    /// Effective `wamn_app` authority on the retired run-write surface. The
+    /// first value detects table-level INSERT/UPDATE, the second detects the
+    /// historical `capture_mode` carrier specifically, and the third proves
+    /// no run column remains writable by the app role.
     pub app_run_capture_privileges: (bool, bool, bool),
     /// Direct table grants for the authoring-state security surface, keyed by
     /// `(schema, table, grantee)` and containing uppercase privilege names.
@@ -2189,9 +2199,6 @@ pub struct RunPlaneObservation {
     pub authoring_table_owners: BTreeMap<(String, String), String>,
     /// Schemas on which the host-only author role effectively has USAGE.
     pub scenario_author_schema_usage: BTreeSet<String>,
-    /// Whether the host-only author may call the narrow SECURITY DEFINER
-    /// catalog-head lock without gaining direct UPDATE/row-lock authority.
-    pub scenario_author_can_lock_catalog_head: bool,
     /// Whether the cluster-global dispatcher read principal exists at all
     /// (wamn-0h0g.12.123). The reconciler owns that role's IN-DATABASE surface
     /// but never the role itself — `provision-project-env` mints it, with a
@@ -2279,8 +2286,8 @@ pub enum RunPlaneActionKind {
     RetireExecutionBundles,
     /// Strict empty-only conversion from legacy effect identity to frames.
     FrameIdentityCutover,
-    /// Remove invocation-admission expiry and make the client key optional.
-    InvocationAdmissionRetentionCutover,
+    /// Delete retired callable/event storage and its definer lock bridge.
+    RetireLegacyAdmissionSurface,
     /// Delete the retired partition plane after a locked drain/evidence preflight.
     PartitionPlaneCutover,
     /// Delete retired durable child, wait, and invoke-depth run state.
@@ -2605,80 +2612,8 @@ ALTER TABLE {target}.runs
       (wiring_id IS NULL AND wiring_version IS NULL)
       OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
           AND wiring_id <> '' AND wiring_version > 0)
-    );
-GRANT INSERT (wiring_id, wiring_version) ON {target}.runs TO wamn_app;"#
+    );"#
     )
-}
-
-/// The exact `runs` columns `wamn_app` may INSERT (wamn-0h0g.12.40).
-///
-/// This is the ratified set that `deploy/sql/run-state.sql` grants, NOT "every
-/// canonical column except `capture_mode`". It is the column list of the
-/// callable admission's run insert, which subsumes every other app-role insert.
-/// A column added to `runs` does not join this set by being added; it joins by
-/// being written by a statement `wamn_app` executes, and then by being named
-/// here.
-const RUNS_APP_INSERT_COLUMNS: &[&str] = &[
-    "admission_context_version",
-    "attachment_id",
-    "catalog_id",
-    "catalog_version",
-    "environment",
-    "event_depth",
-    "event_root_run_id",
-    "event_source_run_id",
-    "flow_id",
-    "flow_version",
-    "idempotency_key",
-    "input_json",
-    "invocation_context",
-    "platform_revision",
-    "registration_id",
-    "response_deadline_at",
-    "run_deadline_at",
-    "run_id",
-    "status",
-    "tenant_id",
-    "trigger_source",
-    "wiring_id",
-    "wiring_version",
-];
-
-/// The exact `runs` columns `wamn_app` may UPDATE (wamn-0h0g.12.40).
-///
-/// The union of the run plane's claim, park, release, and terminalize
-/// statements. It is deliberately non-empty for a second reason: PostgreSQL
-/// requires `UPDATE` on at least one column for any row-locking clause, and the
-/// claim and fence paths take `FOR UPDATE`/`FOR KEY SHARE` on `runs`.
-const RUNS_APP_UPDATE_COLUMNS: &[&str] = &[
-    "caller_http_status",
-    "caller_outcome_hash",
-    "caller_outcome_json",
-    "caller_outcome_kind",
-    "caller_release_node_id",
-    "caller_released_at",
-    "fail_kind",
-    "manifest_digest",
-    "release_version",
-    "result_json",
-    "state_json",
-    "status",
-    "terminal_reason",
-    "updated_at",
-];
-
-/// The `wamn_app` column grants a `runs` column earns, or `None` for a column
-/// that no statement the application role executes ever writes.
-fn runs_app_column_grants(column: &str) -> Option<String> {
-    let ident = quote_ident(column);
-    let mut grants = Vec::new();
-    if RUNS_APP_INSERT_COLUMNS.contains(&column) {
-        grants.push(format!("INSERT ({ident})"));
-    }
-    if RUNS_APP_UPDATE_COLUMNS.contains(&column) {
-        grants.push(format!("UPDATE ({ident})"));
-    }
-    (!grants.is_empty()).then(|| grants.join(", "))
 }
 
 fn repair_run_capture_privilege_sql(
@@ -2687,40 +2622,12 @@ fn repair_run_capture_privilege_sql(
 ) -> String {
     let available_columns = available_columns.into_iter().collect::<BTreeSet<_>>();
     debug_assert!(available_columns.contains("capture_mode"));
-    // Only columns that BOTH exist on the live table and belong to a ratified
-    // set are granted. Intersecting with the observation is what keeps the
-    // repair from naming a column a legacy database does not have yet.
-    let granted = |ratified: &[&str]| {
-        ratified
-            .iter()
-            .filter(|column| available_columns.contains(**column))
-            .map(|column| quote_ident(column))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let insertable_columns = granted(RUNS_APP_INSERT_COLUMNS);
-    let updatable_columns = granted(RUNS_APP_UPDATE_COLUMNS);
     let all_columns = available_columns
         .iter()
         .map(|column| quote_ident(column))
         .collect::<Vec<_>>()
         .join(", ");
     let qualified = format!("{}.runs", schema.quoted());
-    let mut writable_clauses = Vec::new();
-    if !insertable_columns.is_empty() {
-        writable_clauses.push(format!("INSERT ({insertable_columns})"));
-    }
-    if !updatable_columns.is_empty() {
-        writable_clauses.push(format!("UPDATE ({updatable_columns})"));
-    }
-    let writable_grant = if writable_clauses.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "GRANT {} ON TABLE {qualified} TO wamn_app; ",
-            writable_clauses.join(", ")
-        )
-    };
     format!(
         "LOCK TABLE {qualified} IN ACCESS EXCLUSIVE MODE; \
          REVOKE SELECT ({all_columns}), INSERT ({all_columns}), \
@@ -2730,14 +2637,13 @@ fn repair_run_capture_privilege_sql(
            FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
          GRANT SELECT, DELETE ON TABLE {qualified} TO wamn_app; \
          GRANT SELECT ON TABLE {qualified} TO {SCENARIO_AUTHOR_ROLE}; \
-         {writable_grant}\
          DO $run_capture_acl$ BEGIN \
            IF EXISTS ( \
                 SELECT 1 \
                   FROM unnest(ARRAY['wamn_app','{SCENARIO_AUTHOR_ROLE}']) actor, \
                        unnest(ARRAY['INSERT','UPDATE']) privilege \
-                 WHERE pg_catalog.has_column_privilege( \
-                   actor, '{qualified}', 'capture_mode', privilege)) \
+                 WHERE pg_catalog.has_any_column_privilege( \
+                   actor, '{qualified}', privilege)) \
               OR EXISTS ( \
                    SELECT 1 \
                      FROM pg_catalog.pg_class relation \
@@ -2819,8 +2725,7 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
             &obs.authoring_effective_table_privileges,
             SCENARIO_AUTHOR_ROLE,
         ) != expected(&["SELECT"])
-        || observed(&obs.authoring_effective_column_privileges, "wamn_app")
-            != expected(&["SELECT", "INSERT", "UPDATE"])
+        || observed(&obs.authoring_effective_column_privileges, "wamn_app") != expected(&["SELECT"])
         || observed(
             &obs.authoring_effective_column_privileges,
             SCENARIO_AUTHOR_ROLE,
@@ -3055,43 +2960,25 @@ $retire_run_projection_authority$;"#,
             sql: failure_detail_cutover_sql(schema),
         });
     }
-    let invocation_columns = obs.tables.get("invocation_admissions");
-    let invocation_expiry_present =
-        invocation_columns.is_some_and(|columns| columns.contains("expires_at"));
-    let invocation_key_non_null = invocation_columns
-        .is_some_and(|columns| columns.contains("client_key_digest"))
-        && obs.non_nullable_columns.contains(&(
-            "invocation_admissions".to_string(),
-            "client_key_digest".to_string(),
-        ));
-    let invocation_expiry_index_present = obs.indexes.contains_key("invocation_admissions_expiry");
-    let invocation_retention_cutover_needed =
-        invocation_expiry_present || invocation_key_non_null || invocation_expiry_index_present;
-    if invocation_retention_cutover_needed {
+    let retire_invocation_admissions = obs.tables.contains_key("invocation_admissions");
+    let retire_catalog_head_lock = obs.helper_functions.contains_key("lock_catalog_head");
+    if retire_invocation_admissions || retire_catalog_head_lock {
         let mut statements = Vec::new();
-        if invocation_expiry_index_present {
+        if retire_invocation_admissions {
             statements.push(format!(
-                "DROP INDEX IF EXISTS {}.invocation_admissions_expiry",
+                "DROP TABLE {}.invocation_admissions RESTRICT",
                 schema.quoted()
             ));
         }
-        let mut alterations = Vec::new();
-        if invocation_expiry_present {
-            alterations.push("DROP COLUMN IF EXISTS expires_at".to_string());
-        }
-        if invocation_key_non_null {
-            alterations.push("ALTER COLUMN client_key_digest DROP NOT NULL".to_string());
-        }
-        if !alterations.is_empty() {
+        if retire_catalog_head_lock {
             statements.push(format!(
-                "ALTER TABLE {}.invocation_admissions {}",
-                schema.quoted(),
-                alterations.join(", ")
+                "DROP FUNCTION {}.lock_catalog_head(text, text, text) RESTRICT",
+                schema.quoted()
             ));
         }
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::InvocationAdmissionRetentionCutover,
-            target: "invocation_admissions.retention".to_string(),
+            kind: RunPlaneActionKind::RetireLegacyAdmissionSurface,
+            target: "legacy-admission-surface".to_string(),
             sql: statements.join("; "),
         });
     }
@@ -3178,17 +3065,6 @@ $retire_run_projection_authority$;"#,
                 sql: rewrite_schema(&spec.sql, schema),
             });
         }
-    }
-    if !obs.scenario_author_can_lock_catalog_head {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairAuthoringPrivilege,
-            target: format!("{}.lock_catalog_head", schema.as_str()),
-            sql: format!(
-                "GRANT EXECUTE ON FUNCTION {}.lock_catalog_head(text, text, text) \
-                 TO {SCENARIO_AUTHOR_ROLE}",
-                schema.quoted()
-            ),
-        });
     }
     // Catalog storage converges before run-plane constraint reconciliation:
     // attested rows derive their portable connection name from the pinned flow
@@ -3782,26 +3658,6 @@ $retire_run_projection_authority$;"#,
                             schema.quoted(),
                             repair_run_capture_privilege_sql(schema, available_columns),
                         )
-                    } else if let Some(column_grants) = (table == "runs"
-                        && col != "capture_mode"
-                        && (capture_mode_present
-                            || (!capture_mode_present
-                                && obs.app_run_capture_privileges.0
-                                && record_cols[..record_column_index]
-                                    .iter()
-                                    .any(|(column, _)| column == "capture_mode"))))
-                    .then(|| runs_app_column_grants(col))
-                    .flatten()
-                    {
-                        // A column added to `runs` earns ONLY the grants its
-                        // ratified sets name (wamn-0h0g.12.40). Granting every
-                        // new column INSERT + UPDATE unconditionally is how
-                        // `release_version` and `manifest_digest` became
-                        // app-writable with no decision behind it.
-                        format!(
-                            "{add_column_sql}; GRANT {column_grants} ON TABLE {}.runs TO wamn_app",
-                            schema.quoted(),
-                        )
                     } else {
                         add_column_sql
                     };
@@ -3828,12 +3684,6 @@ $retire_run_projection_authority$;"#,
                 if effect_writer_ledger_cutover_needed
                     && table == "effect_attempts"
                     && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&col.as_str())
-                {
-                    continue;
-                }
-                if invocation_retention_cutover_needed
-                    && table == "invocation_admissions"
-                    && col == "expires_at"
                 {
                     continue;
                 }
@@ -4614,35 +4464,18 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
       ORDER BY namespace.nspname, relation.relname"
 }
 
-/// Effective guest authority on the admission-owned run capture carrier.
+/// Effective guest authority on the retired run-write surface.
 ///
-/// A table-level INSERT/UPDATE grant covers every present and future column,
-/// so it is observed independently from the named-column check. Both values
-/// are false when either the role, table, or capture column is absent.
-///
-/// The third value answers "do the live column grants MATCH THE RATIFIED SETS"
-/// (wamn-0h0g.12.40). It is checked PER PRIVILEGE against the two sets, not as
-/// one `bool_and` over a single blanket list: INSERT and UPDATE no longer share
-/// a column set, so a shared list can never be satisfied by a correctly
-/// confined table and the reconcile plan would never converge.
+/// Table privileges, the historical `capture_mode` carrier, and all column
+/// privileges are observed separately so removing a table grant cannot hide a
+/// surviving column grant. The final value is true only when no column remains
+/// writable by either boundary role or `PUBLIC`.
 pub fn select_run_capture_privileges_sql() -> String {
-    let quoted = |columns: &[&str]| {
-        columns
-            .iter()
-            .map(|column| format!("'{column}'"))
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    let insert_columns = quoted(RUNS_APP_INSERT_COLUMNS);
-    let update_columns = quoted(RUNS_APP_UPDATE_COLUMNS);
-    format!(
-        "WITH target AS ( \
+    "WITH target AS ( \
            SELECT pg_catalog.to_regclass(pg_catalog.format('%I.runs', $1::text)) AS oid \
          ), boundary_roles AS ( \
            SELECT oid FROM pg_catalog.pg_roles \
             WHERE rolname IN ('wamn_app','wamn_scenario_author') \
-         ), app AS ( \
-           SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app' \
          ), capture AS ( \
            SELECT attribute.attnum \
              FROM target \
@@ -4684,28 +4517,26 @@ pub fn select_run_capture_privileges_sql() -> String {
                   pg_catalog.aclexplode(attribute.attacl) acl \
                WHERE acl.grantee = 0 \
                  AND acl.privilege_type IN ('INSERT','UPDATE'))), \
-           COALESCE(( \
-             SELECT bool_and( \
-               (CASE \
-                 WHEN attribute.attname = ANY (ARRAY[{insert_columns}]::text[]) THEN \
-                   pg_catalog.has_column_privilege( \
-                     (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'INSERT') \
-                 ELSE \
-                   NOT pg_catalog.has_column_privilege( \
-                     (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'INSERT') \
-                 END) \
-               AND (CASE \
-                 WHEN attribute.attname = ANY (ARRAY[{update_columns}]::text[]) THEN \
-                   pg_catalog.has_column_privilege( \
-                     (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'UPDATE') \
-                 ELSE \
-                   NOT pg_catalog.has_column_privilege( \
-                     (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'UPDATE') \
-                 END)) \
-               FROM pg_catalog.pg_attribute AS attribute \
-              WHERE attribute.attrelid = (SELECT oid FROM target) \
-                AND attribute.attnum > 0 AND NOT attribute.attisdropped), false)"
-    )
+           (NOT EXISTS ( \
+              SELECT 1 \
+                FROM target \
+                JOIN pg_catalog.pg_attribute AS attribute \
+                  ON attribute.attrelid = target.oid \
+                 AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+                CROSS JOIN boundary_roles AS actor \
+                CROSS JOIN unnest(ARRAY['INSERT','UPDATE']) privilege \
+               WHERE pg_catalog.has_column_privilege( \
+                 actor.oid, attribute.attrelid, attribute.attnum, privilege)) \
+            AND NOT EXISTS ( \
+              SELECT 1 \
+                FROM target \
+                JOIN pg_catalog.pg_attribute AS attribute \
+                  ON attribute.attrelid = target.oid \
+                 AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+                CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) acl \
+               WHERE acl.grantee = 0 \
+                 AND acl.privilege_type IN ('INSERT','UPDATE')))"
+        .to_string()
 }
 
 /// Revocable guest-visible authority on `run_queue` from `PUBLIC` or a direct
@@ -4747,17 +4578,6 @@ pub fn select_scenario_author_schema_usage_sql() -> &'static str {
        LEFT JOIN pg_catalog.pg_roles AS author \
          ON author.rolname = 'wamn_scenario_author' \
       ORDER BY target.schema_name"
-}
-
-/// Whether the host-only author can execute the tenant-checking catalog-head
-/// lock bridge in `$1`; absent roles/functions yield false for from-zero plans.
-pub fn select_scenario_author_catalog_lock_privilege_sql() -> &'static str {
-    "SELECT COALESCE(pg_catalog.has_function_privilege( \
-         (SELECT oid FROM pg_catalog.pg_roles \
-           WHERE rolname = 'wamn_scenario_author'), \
-         pg_catalog.to_regprocedure(pg_catalog.format( \
-           '%I.lock_catalog_head(text,text,text)', $1::text)), \
-         'EXECUTE'), false)"
 }
 
 /// Every ordinary table + column in `$1`: `(relname, attname, not-null,
@@ -4854,16 +4674,18 @@ pub fn select_schema_triggers_sql() -> &'static str {
      ORDER BY c.relname, t.tgname"
 }
 
-/// Retained helper definitions plus the three retired names needed to observe
-/// the stored-suite cutover in `$1`. A retired helper the observation cannot
-/// name is a helper the cutover can never be planned for, so every entry of
-/// `RETIRED_STORED_SUITE_FUNCTIONS` must appear here too.
+/// Retained helper definitions plus retired names needed to observe cutovers
+/// in `$1`. A retired helper the observation cannot name is a helper the
+/// cutover can never be planned for.
 pub fn select_run_plane_helper_functions_sql() -> &'static str {
     "SELECT p.proname, pg_get_functiondef(p.oid) \
      FROM pg_proc p \
      JOIN pg_namespace n ON n.oid = p.pronamespace \
      WHERE n.nspname = $1 \
-       AND p.proname IN ('lock_catalog_head', 'pin_run_durability_class', \
+       AND p.proname IN ('lock_catalog_head', \
+                         'require_executor_platform_authority', \
+                         'require_management_admission_authority', \
+                         'pin_run_durability_class', \
                          'guard_event_lineage_immutable', \
                          'reject_immutable_effect_fact_change', \
                          'reject_immutable_operator_run_action_change', \
@@ -5233,7 +5055,6 @@ CREATE INDEX event_registrations_by_entity
     fn observation_at_record() -> RunPlaneObservation {
         let mut obs = RunPlaneObservation {
             catalog_schema_present: true,
-            scenario_author_can_lock_catalog_head: true,
             scenario_author_role: Some(ScenarioAuthorRoleObservation {
                 can_login: false,
                 is_superuser: false,
@@ -5335,14 +5156,6 @@ CREATE INDEX event_registrations_by_entity
             }
         }
         obs.app_run_capture_privileges = (false, false, true);
-        obs.authoring_effective_column_privileges
-            .entry((
-                "demo".to_string(),
-                "runs".to_string(),
-                "wamn_app".to_string(),
-            ))
-            .or_default()
-            .extend(["INSERT".to_string(), "UPDATE".to_string()]);
         for table in [
             "effect_attempts",
             "effect_attempt_dispatches",
@@ -5678,8 +5491,6 @@ CREATE INDEX event_registrations_by_entity
             [
                 "environment_policies",
                 "runs",
-                "invocation_admissions",
-                "node_runs",
                 "effect_attempts",
                 "effect_attempt_dispatches",
                 "effect_attempt_outcomes",
@@ -6015,9 +5826,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(rq.contains("CREATE INDEX run_queue_claimable"));
         assert!(rq.contains("available_at, stream_seq, run_id, lease_expires_at"));
         assert!(rq.contains("FORCE ROW LEVEL SECURITY"));
-        assert!(
-            rq.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.run_queue TO wamn_app")
-        );
+        assert!(rq.contains("FROM PUBLIC, wamn_app, wamn_effect_writer"));
+        assert!(!rq.contains("TO wamn_app"));
         for retired in [
             "partition_key",
             "partition_policy",
@@ -6068,8 +5878,6 @@ CREATE INDEX event_registrations_by_entity
             names,
             [
                 "effect_attempts_bulk_scope",
-                "invocation_admissions_run",
-                "node_runs_seq",
                 "run_queue_claimable",
                 "runs_event_root",
                 "runs_execution_bundle",
@@ -6614,45 +6422,43 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
-    fn invocation_admission_retention_cutover_is_exact_and_idempotent() {
+    fn retired_legacy_admission_surface_is_dropped_exactly_once() {
         let mut legacy = observation_at_record();
-        legacy
-            .tables
-            .get_mut("invocation_admissions")
-            .unwrap()
-            .insert("expires_at".to_string());
-        legacy.non_nullable_columns.insert((
+        legacy.tables.insert(
             "invocation_admissions".to_string(),
-            "client_key_digest".to_string(),
-        ));
-        legacy.indexes.insert(
-            "invocation_admissions_expiry".to_string(),
-            "CREATE INDEX invocation_admissions_expiry ON wamn_run.invocation_admissions USING btree (tenant_id, expires_at)".to_string(),
+            BTreeSet::from([
+                "tenant_id".to_string(),
+                "run_id".to_string(),
+                "client_key_digest".to_string(),
+            ]),
+        );
+        legacy.helper_functions.insert(
+            "lock_catalog_head".to_string(),
+            "legacy security definer".to_string(),
         );
 
         let plan = plan_run_plane(&schema("demo"), &legacy);
         let cutovers = plan
             .actions
             .iter()
-            .filter(|action| action.kind == RunPlaneActionKind::InvocationAdmissionRetentionCutover)
+            .filter(|action| action.kind == RunPlaneActionKind::RetireLegacyAdmissionSurface)
             .collect::<Vec<_>>();
         assert_eq!(cutovers.len(), 1, "actions: {:#?}", plan.actions);
-        let sql = &cutovers[0].sql;
-        assert!(sql.contains("DROP INDEX IF EXISTS \"demo\".invocation_admissions_expiry"));
-        assert!(sql.contains("DROP COLUMN IF EXISTS expires_at"));
-        assert!(sql.contains("ALTER COLUMN client_key_digest DROP NOT NULL"));
-        assert!(
-            !plan.extra_columns.iter().any(|(table, column)| {
-                table == "invocation_admissions" && column == "expires_at"
-            })
+        assert_eq!(
+            cutovers[0].sql,
+            "DROP TABLE \"demo\".invocation_admissions RESTRICT; \
+             DROP FUNCTION \"demo\".lock_catalog_head(text, text, text) RESTRICT"
         );
 
-        let at_target = plan_run_plane(&schema("demo"), &observation_at_record());
+        legacy.tables.remove("invocation_admissions");
+        legacy.helper_functions.remove("lock_catalog_head");
+        let at_target = plan_run_plane(&schema("demo"), &legacy);
         assert!(
-            !at_target.actions.iter().any(|action| {
-                action.kind == RunPlaneActionKind::InvocationAdmissionRetentionCutover
-            }),
-            "at-target schema repeated retention cutover: {:#?}",
+            !at_target
+                .actions
+                .iter()
+                .any(|action| { action.kind == RunPlaneActionKind::RetireLegacyAdmissionSurface }),
+            "at-target schema repeated retirement: {:#?}",
             at_target.actions
         );
     }
@@ -8061,8 +7867,6 @@ CREATE INDEX event_registrations_by_entity
             [
                 "environment_policies",
                 "runs",
-                "invocation_admissions",
-                "node_runs",
                 "effect_attempts",
                 "effect_attempt_dispatches",
                 "effect_attempt_outcomes",
@@ -8232,7 +8036,7 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
-    fn broad_app_run_grants_are_narrowed_away_from_capture_mode() {
+    fn broad_app_run_grants_are_removed_without_regranting_writes() {
         let mut obs = observation_at_record();
         obs.app_run_capture_privileges = (true, true, true);
         obs.tables
@@ -8255,16 +8059,9 @@ CREATE INDEX event_registrations_by_entity
         assert!(repair.sql.contains("REVOKE SELECT ("));
         assert!(repair.sql.contains("tenant_id"));
         assert!(repair.sql.contains("capture_mode"));
-        let replacement_grant = repair
-            .sql
-            .split_once("GRANT INSERT (")
-            .expect("replacement INSERT grant")
-            .1
-            .split_once("DO $run_capture_acl$")
-            .expect("postcondition follows replacement grant")
-            .0;
-        assert!(!replacement_grant.contains("capture_mode"));
-        assert!(!replacement_grant.contains("legacy_extra"));
+        assert!(!repair.sql.contains("GRANT INSERT"));
+        assert!(!repair.sql.contains("GRANT UPDATE"));
+        assert!(repair.sql.contains("has_any_column_privilege"));
         assert!(
             repair
                 .sql
@@ -9164,10 +8961,6 @@ CREATE INDEX event_registrations_by_entity
         );
         assert!(select_authoring_effective_column_privileges_sql().contains("('SELECT'::text)"));
         assert!(select_scenario_author_schema_usage_sql().contains("has_schema_privilege"));
-        assert!(
-            select_scenario_author_catalog_lock_privilege_sql()
-                .contains("lock_catalog_head(text,text,text)")
-        );
         assert!(select_run_plane_helper_functions_sql().contains("pg_get_functiondef"));
         assert!(
             select_run_plane_helper_functions_sql().contains("reject_immutable_effect_fact_change")

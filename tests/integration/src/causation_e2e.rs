@@ -25,7 +25,6 @@ use wamn_control_provision::sql as provision_sql;
 use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
 use wamn_control_registry::sql as registry_sql;
 use wamn_event_wire::Op;
-use wamn_run_state::admission::registration_evidence;
 use wamn_run_state::queue::mint_evt_run_id;
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_jetstream::{
@@ -1622,7 +1621,7 @@ async fn assert_one_causal_run(
         sequence,
     );
     let registration: serde_json::Value = serde_json::from_str(&registration_json(resources))?;
-    let (_, expected_hash) = registration_evidence(&registration);
+    let expected_hash = wamn_flow::canonical_json_sha256(&registration);
     let run_count: i64 = admin
         .query_one(
             "SELECT count(*) FROM wamn_run.runs \

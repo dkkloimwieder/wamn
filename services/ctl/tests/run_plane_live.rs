@@ -61,9 +61,6 @@
 //!   guest grants and membership are removed; the owner-seeded draft-safe
 //!   relation is SELECT-only to management; and guest/release-write refusals
 //!   are exercised.
-//! - **catalog-head lock concurrency**: both runtime and author admission call
-//!   the tenant-checking SECURITY DEFINER bridge; its SHARE lock blocks the
-//!   publisher's pointer UPDATE until admission commits.
 //! - **retired effect-disposition cutover**: empty parent/child ledgers are
 //!   locked and removed child-first; populated history refuses atomically with
 //!   the exact archive-or-reprovision diagnostic.
@@ -786,12 +783,10 @@ async fn run_plane_reconcile_live() {
     rerun_lineage_cutover_leg(&su).await;
     failure_detail_cutover_leg(&su).await;
     capture_mode_additive_leg(&su, &url).await;
-    invocation_admission_retention_leg(&su).await;
     stored_suite_cutover_leg(&su).await;
     environment_policy_row_security_leg(&su, &url).await;
     current_noop_leg(&su).await;
     authoring_storage_authority_leg(&su, &url).await;
-    catalog_head_share_lock_leg(&su, &url).await;
     retired_effect_disposition_cutover_leg(&su).await;
     persisted_literal_check_drift_leg(&su).await;
     dispatch_reader_read_surface_leg(&su, &url).await;
@@ -4754,70 +4749,6 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     );
 }
 
-async fn invocation_admission_retention_leg(su: &Client) {
-    reset(su).await;
-    let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog-schema");
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
-        .await
-        .expect("apply authoring tests");
-    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
-        .await
-        .expect("apply run-queue");
-    su.batch_execute(&format!(
-        "ALTER TABLE {SCHEMA}.invocation_admissions \
-           ADD COLUMN expires_at timestamptz NOT NULL DEFAULT (now() + interval '1 day'), \
-           ALTER COLUMN client_key_digest SET NOT NULL; \
-         CREATE INDEX invocation_admissions_expiry \
-           ON {SCHEMA}.invocation_admissions (tenant_id, expires_at);"
-    ))
-    .await
-    .expect("build legacy invocation-retention carrier");
-
-    let plan = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("invocation retention cutover applies");
-    let cutovers = plan
-        .actions
-        .iter()
-        .filter(|action| action.kind == RunPlaneActionKind::InvocationAdmissionRetentionCutover)
-        .collect::<Vec<_>>();
-    assert_eq!(cutovers.len(), 1, "actions: {:#?}", plan.actions);
-    assert!(
-        !column_exists(su, "invocation_admissions", "expires_at").await,
-        "admission expiry column removed"
-    );
-    let nullable: bool = su
-        .query_one(
-            "SELECT is_nullable = 'YES' FROM information_schema.columns \
-             WHERE table_schema=$1 AND table_name='invocation_admissions' \
-               AND column_name='client_key_digest'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("read invocation client-key nullability")
-        .get(0);
-    assert!(nullable, "client key is optional at the storage boundary");
-    assert!(
-        indexdef(su, "invocation_admissions_expiry").await.is_none(),
-        "admission expiry index removed"
-    );
-
-    let again = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("invocation retention second reconcile plans");
-    assert!(
-        again.is_noop(),
-        "invocation retention converged: {:#?}",
-        again.actions
-    );
-}
-
 async fn stored_suite_cutover_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
@@ -5281,8 +5212,6 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
          GRANT INSERT, UPDATE, DELETE ON catalog.release_manifests TO wamn_scenario_author; \
          GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_test_run_reservations TO wamn_app; \
          GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_test_case_runs TO PUBLIC; \
-         REVOKE EXECUTE ON FUNCTION {SCHEMA}.lock_catalog_head(text,text,text) \
-           FROM wamn_scenario_author; \
          DO $role$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'rp_guest_writer') THEN \
              CREATE ROLE rp_guest_writer NOLOGIN; \
@@ -5399,23 +5328,6 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         !app_is_member,
         "guest is not a member of the host author role"
     );
-    let author_can_lock: bool = su
-        .query_one(
-            &format!(
-                "SELECT has_function_privilege( \
-                   'wamn_scenario_author', \
-                   '{SCHEMA}.lock_catalog_head(text,text,text)', 'EXECUTE')"
-            ),
-            &[],
-        )
-        .await
-        .expect("read repaired catalog-lock grant")
-        .get(0);
-    assert!(
-        author_can_lock,
-        "author receives only the narrow lock function"
-    );
-
     // Environment-owned connection generations and draft-safe decisions are
     // provisioned by the platform. Management can inspect an owner-seeded
     // decision, but has no mutation authority over the retained relation.
@@ -5606,73 +5518,6 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         "authoring storage converged: {:#?}",
         final_plan.actions
     );
-}
-
-/// SHARE, rather than KEY SHARE, is required because publication advances a
-/// non-key column. Both host-author and runtime callers use the same narrow
-/// tenant-checking SECURITY DEFINER bridge and hold the lock to transaction end.
-async fn catalog_head_share_lock_leg(su: &Client, url: &str) {
-    reset(su).await;
-    let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog storage for lock probe");
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply lock bridge");
-    su.batch_execute(
-        "INSERT INTO catalog.catalogs \
-           (tenant_id,catalog_id,version,environment,schema_version,state) VALUES \
-           ('t1','cat',1,'dev','1','applied'), \
-           ('t1','cat',2,'dev','1','staged'); \
-         INSERT INTO catalog.catalog_heads \
-           (tenant_id,catalog_id,environment,applied_catalog_version) \
-         VALUES ('t1','cat','dev',1);",
-    )
-    .await
-    .expect("seed two catalog versions and stable head");
-
-    for role_name in ["wamn_app", "wamn_scenario_author"] {
-        let holder = connect(url).await;
-        holder
-            .batch_execute(&format!(
-                "BEGIN; SET ROLE {role_name}; \
-                 SELECT set_config('app.tenant','t1',true); \
-                 SELECT {SCHEMA}.lock_catalog_head('t1','cat','dev');"
-            ))
-            .await
-            .expect("admission role acquires catalog-head SHARE lock");
-        let contender = connect(url).await;
-        contender
-            .batch_execute("SET lock_timeout='100ms'")
-            .await
-            .expect("bound lock probe wait");
-        let blocked = contender
-            .execute(
-                "UPDATE catalog.catalog_heads SET applied_catalog_version=2 \
-                 WHERE tenant_id='t1' AND catalog_id='cat' AND environment='dev'",
-                &[],
-            )
-            .await
-            .expect_err("publisher pointer update must block behind admission");
-        assert_db_code(blocked, "55P03", "catalog-head SHARE lock conflict");
-        holder
-            .batch_execute("ROLLBACK")
-            .await
-            .expect("release admission lock");
-        contender
-            .batch_execute("SET lock_timeout=0")
-            .await
-            .expect("restore publisher lock timeout");
-        contender
-            .execute(
-                "UPDATE catalog.catalog_heads SET updated_at=clock_timestamp() \
-                 WHERE tenant_id='t1' AND catalog_id='cat' AND environment='dev'",
-                &[],
-            )
-            .await
-            .expect("publisher update proceeds after admission ends");
-    }
 }
 
 async fn retired_effect_disposition_cutover_leg(su: &Client) {

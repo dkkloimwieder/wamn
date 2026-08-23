@@ -299,7 +299,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         &project_url,
         &format!(
             r#"
-DO $$ DECLARE writes int; reads int; app_writes int; callable int; app_callable int; BEGIN
+DO $$ DECLARE writes int; reads int; app_writes int; BEGIN
   SELECT count(*) INTO writes FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE c.relkind IN ('r','p','v','m') AND n.nspname NOT IN ('pg_catalog','information_schema')
      AND (has_table_privilege('{DISPATCH_READER_ROLE}', c.oid, 'INSERT')
@@ -337,22 +337,6 @@ DO $$ DECLARE writes int; reads int; app_writes int; callable int; app_callable 
   ASSERT has_database_privilege('{DISPATCH_READER_ROLE}', '{database}', 'CONNECT');
   ASSERT NOT has_database_privilege('{DISPATCH_READER_ROLE}', '{database}', 'CREATE');
   ASSERT NOT has_database_privilege('{DISPATCH_READER_ROLE}', '{database}', 'TEMPORARY');
-
-  -- Functions. Trigger functions are EXECUTE-to-PUBLIC by default and every new
-  -- role inherits that, but a `RETURNS trigger` function cannot be called from SQL
-  -- at all — so the number that matters is the CALLABLE ones.
-  SELECT count(*) INTO callable FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname NOT IN ('pg_catalog','information_schema')
-     AND pg_get_function_result(p.oid) <> 'trigger'
-     AND has_function_privilege('{DISPATCH_READER_ROLE}', p.oid, 'EXECUTE');
-  ASSERT callable = 0, 'the dispatch reader can call ' || callable || ' function(s)';
-  -- NON-VACUITY: wamn_app can call at least one — wamn_run.lock_catalog_head, which
-  -- is SECURITY DEFINER. That is authority the dispatcher never needed.
-  SELECT count(*) INTO app_callable FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname NOT IN ('pg_catalog','information_schema')
-     AND pg_get_function_result(p.oid) <> 'trigger'
-     AND has_function_privilege('{APP_ROLE}', p.oid, 'EXECUTE');
-  ASSERT app_callable > 0, 'the callable-function sweep matches nothing — it proves nothing';
 
   -- The role attributes the builder promised.
   ASSERT (SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole

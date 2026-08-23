@@ -352,10 +352,7 @@ fn control_author_authority_is_the_exact_ratified_class() {
     for schema in ["catalog", "wamn_run", "wamn_authority"] {
         expected.insert((schema.to_owned(), "USAGE".to_owned()));
     }
-    for routine in [
-        "wamn_authority.session_author_tenant()",
-        "wamn_run.lock_catalog_head(text, text, text)",
-    ] {
+    for routine in ["wamn_authority.session_author_tenant()"] {
         expected.insert((routine.to_owned(), "EXECUTE".to_owned()));
     }
     for relation in read_only {
@@ -484,9 +481,7 @@ fn control_author_authority_is_the_exact_ratified_class() {
         "the restrictive policy set is not exactly the granted relation set"
     );
 
-    // The resolver and the catalog-head bridge are owner routines with a fixed
-    // search path; the bridge rechecks the mapping because a SECURITY DEFINER
-    // routine runs outside the caller's row policies.
+    // The resolver is an owner routine with a fixed search path.
     let resolver = stripped
         .split("CREATE OR REPLACE FUNCTION wamn_authority.session_author_tenant()")
         .nth(1)
@@ -501,21 +496,8 @@ fn control_author_authority_is_the_exact_ratified_class() {
         !resolver.contains("app.tenant"),
         "the tenant resolver consulted the caller-set GUC"
     );
-    let bridge = stripped
-        .split("CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(")
-        .nth(1)
-        .expect("the control catalog-head bridge exists")
-        .split("REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head")
-        .next()
-        .expect("the control catalog-head bridge is revoked from PUBLIC");
-    assert!(bridge.contains("SET search_path = pg_catalog, catalog"));
-    assert!(bridge.contains("p_tenant_id = wamn_authority.session_author_tenant()"));
-    assert!(bridge.contains("p_tenant_id = NULLIF(current_setting('app.tenant', true), '')"));
-    assert!(bridge.contains("FOR SHARE OF head"));
-    assert!(
-        !bridge.contains("UPDATE"),
-        "the catalog-head bridge gained table UPDATE authority"
-    );
+    assert!(!stripped.contains("wamn_run.lock_catalog_head"));
+    assert!(!stripped.contains("SECURITY DEFINER\nSET search_path = pg_catalog, catalog"));
 
     // The mapping relation itself is owner-only and carries no policy, because
     // FORCE ROW LEVEL SECURITY applies to the owner the resolver runs as.
@@ -1094,8 +1076,6 @@ DO $positive$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.release_manifests) = 1;
   ASSERT (SELECT count(*) FROM wamn_run.authoring_test_run_reservations) = 1;
   ASSERT (SELECT count(*) FROM wamn_run.authoring_test_case_runs) = 1;
-  ASSERT wamn_run.lock_catalog_head('tenant-a','cat','dev') = 1,
-         'the narrow owner bridge locks this tenant''s head';
 END $positive$;
 
 INSERT INTO catalog.flow_drafts (tenant_id,draft_id,flow_id,revision,definition)
@@ -1126,8 +1106,6 @@ DO $no_widening$ BEGIN
          'app.tenant widened a read to another tenant';
   ASSERT (SELECT count(*) FROM catalog.catalog_heads) = 0;
   ASSERT (SELECT count(*) FROM wamn_run.authoring_test_run_reservations) = 0;
-  ASSERT wamn_run.lock_catalog_head('tenant-b','cat','dev') IS NULL,
-         'app.tenant widened the owner bridge to another tenant';
   BEGIN
     INSERT INTO catalog.flow_drafts (tenant_id,draft_id,flow_id,revision,definition)
     VALUES ('tenant-b','forged','flow-a',1,'{{}}');
@@ -1280,9 +1258,6 @@ DO $second$ BEGIN
          'the second tenant read the first tenant''s command ledger';
   ASSERT (SELECT state FROM wamn_run.authoring_test_run_reservations) = 'pending',
          'the second tenant observed the first tenant''s finalization';
-  ASSERT wamn_run.lock_catalog_head('tenant-b','cat','dev') = 1;
-  ASSERT wamn_run.lock_catalog_head('tenant-a','cat','dev') IS NULL,
-         'the second tenant locked the first tenant''s head';
 END $second$;
 "#
     );

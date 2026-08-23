@@ -36,6 +36,50 @@ GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_scenario_author;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_effect_writer;
 
+-- Closed run-queue operation classes are database facts derived from the
+-- authenticated current_user. These assertion functions are ordinary
+-- SECURITY INVOKER functions: they confer no authority, and their only effect
+-- is the stable typed refusal embedded by each role-specific statement.
+CREATE FUNCTION wamn_run.require_executor_platform_authority()
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY INVOKER
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_roles AS authority
+         WHERE authority.rolname = 'wamn_executor_platform'
+           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'executor-platform-authority-required';
+    END IF;
+    RETURN true;
+END
+$$;
+
+CREATE FUNCTION wamn_run.require_management_admission_authority()
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY INVOKER
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_roles AS authority
+         WHERE authority.rolname = 'wamn_management_admitter'
+           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'management-admission-authority-required';
+    END IF;
+    RETURN true;
+END
+$$;
+
 -- Producer roles cannot name `runs.durability_class` in their INSERT grants.
 -- This invoker-rights trigger therefore performs the only admission-time
 -- selection, from the project-local projection below.
@@ -66,40 +110,6 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.pin_run_durability_class() FROM PUBLIC;
-
--- Final admission must share-lock the stable catalog head, but the application
--- role must never gain UPDATE privilege on that control-plane row. This narrow
--- SECURITY DEFINER bridge takes only the row-share lock and returns the applied
--- version while rechecking the session tenant claim.
--- SHARE deliberately conflicts with the publisher's non-key pointer UPDATE;
--- KEY SHARE would allow admission to commit after the applied head moved.
-CREATE FUNCTION wamn_run.lock_catalog_head(
-    p_tenant_id text,
-    p_catalog_id text,
-    p_environment text
-)
-RETURNS int
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, catalog
-AS $$
-DECLARE
-    applied_version int;
-BEGIN
-    SELECT head.applied_catalog_version INTO applied_version
-    FROM catalog.catalog_heads AS head
-    WHERE p_tenant_id = NULLIF(current_setting('app.tenant', true), '')
-      AND head.tenant_id = p_tenant_id
-      AND head.catalog_id = p_catalog_id
-      AND head.environment = p_environment
-    FOR SHARE OF head;
-    RETURN applied_version;
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head(text, text, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text) TO wamn_app;
-GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text)
-    TO wamn_scenario_author;
 
 -- Effect attempt, dispatch, and outcome facts are immutable even for their
 -- owning role; retention requires a future explicit ledger protocol.
@@ -168,16 +178,8 @@ $$;
 --     a run carrying an attempt is classified terminal effect-uncertain by its
 --     next claim and never re-executes under a second release.
 --     THE CLASS PREDICATE IS LOAD-BEARING, NOT DECORATION (wamn-0h0g.20.2).
---     `queue/sql.rs` `park_sql` carries the SAME `durability_class = 'durable'`
---     predicate on the SAME `EXISTS(effect_attempts)`, and the two must move
---     together in BOTH directions. Gate only the park and this guard refuses
---     the erasure the park attempts, aborting the park. Gate only this guard
---     and a `standard` run keeps a release record across a park it should have
---     cleared, so a waking pod on a different release refuses at the grant —
---     and because a released lease is not crash evidence the refusal spends no
---     budget, the janitor can never reap it, and the run is its tenant's FIFO
---     head forever. That is exactly wamn-0h0g.15.82, resurrected by a half-
---     applied class gate.
+--     Only the executor's pre-effect reclaim can clear this pair, and it first
+--     classifies the immutable attempt ledger under the durable-class rule.
 -- The `node_runs` leg that stood beside them was dropped by wamn-0h0g.15.82. It
 -- encoded the OLD contract, "the release this RUN executed under"; under the
 -- redefined contract an executed node is a HISTORY fact, not a current-claim
@@ -443,104 +445,19 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only
 BEFORE DELETE ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
--- The guest-visible application role may drive the existing run-state columns,
--- but it cannot author or mutate the admission-owned capture carrier, nor the
--- admission-owned durability-class carrier. Off-path admissions omit those
--- columns and take their fail-closed database defaults (`off` for capture;
--- `standard` — the CHEAP tier — for the class).
---
--- The two column lists below are RATIFIED SETS (wamn-0h0g.12.40), not "every
--- canonical column minus capture_mode". Each is the exact union of the columns
--- named by statements `wamn_app` actually executes: the INSERT set is the
--- callable admission's run insert (crates/execution/run-state/src/admission.rs
--- `admit_sql`), which subsumes every other app-role run insert; the UPDATE set
--- is the union of the run-plane's claim, park, release, and terminalize
--- statements (queue/sql.rs, transitions.rs). Columns whose only writer is the
--- management admission (`capture_mode`) or the project-admin operator verb are
--- DELIBERATELY ABSENT, as is `durability_class`.
--- Its only admission-time writer is `runs_pin_durability_class`, which resolves
--- the project-local system-policy projection; no producer statement may name
--- it. A column added to this table does NOT join
--- either set by default; see `repair_run_capture_privilege_sql`.
---
--- The UPDATE set is also what keeps `FOR UPDATE`/`FOR KEY SHARE` on `runs`
--- legal: PostgreSQL demands UPDATE on at least one column for any row-locking
--- clause, and the run plane locks this table in the claim and fence paths.
---
--- DELETE stays table-wide because `wamn-ctl prune-run-history` connects AS
--- `wamn_app` and needs it. `runs_terminal_delete_only` makes the statement's
--- terminal-only predicate caller-independent without adding a privileged role.
-REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs FROM PUBLIC, wamn_effect_writer;
+-- Hot HTTP and stream delivery no longer author runs, and executor claim/reap
+-- no longer belongs to the guest ACL. `wamn_app` therefore retains only the
+-- read and terminal-history pruning surface; private management INSERT and
+-- executor UPDATE grants are provisioned to their dedicated authorities by
+-- their owning cutovers. `runs_terminal_delete_only` still confines retention.
+REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
+    FROM PUBLIC, wamn_app, wamn_effect_writer;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
-GRANT INSERT (
-    tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
-    environment, wiring_id, wiring_version, attachment_id, registration_id,
-    event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
-    input_json, invocation_context,
-    admission_context_version, platform_revision, idempotency_key,
-    response_deadline_at, run_deadline_at
-), UPDATE (
-    status, release_version, manifest_digest, result_json, state_json,
-    caller_outcome_kind, caller_outcome_json,
-    caller_http_status, caller_release_node_id, caller_outcome_hash,
-    caller_released_at, terminal_reason, fail_kind, updated_at
-) ON wamn_run.runs TO wamn_app;
 GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;
 -- The private effect writer may only recheck that the fenced run still has
 -- runnable state. Lease-generation authority remains outside this schema lane.
 GRANT SELECT (tenant_id, run_id, status)
     ON wamn_run.runs TO wamn_effect_writer;
-
--- HTTP invocation idempotency ledger (§6.2). The identity is intentionally
--- definition-independent: reusing a client key after a definition change must
--- find the old admission and return `idempotency-scope-changed`, never create a
--- second run. The named unique constraint is mapped to the transitions module's
--- typed `duplicate-identity` refusal. Pure call-free admissions may omit a
--- client key; PostgreSQL's distinct NULLs make each such admission a new run.
-CREATE TABLE wamn_run.invocation_admissions (
-    tenant_id                  text NOT NULL CHECK (tenant_id <> ''),
-    catalog_id                 text NOT NULL,
-    environment                text NOT NULL,
-    attachment_id              text NOT NULL,
-    definition_hash            text NOT NULL,
-    principal_digest           text NOT NULL,
-    client_key_digest          text,
-    client_request_fingerprint text NOT NULL,
-    admitted_catalog_version   bigint NOT NULL,
-    admitted_flow_version      int NOT NULL,
-    run_id                     text NOT NULL,
-    created_at                 timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT invocation_admissions_identity UNIQUE
-        (tenant_id, catalog_id, environment, attachment_id,
-         principal_digest, client_key_digest),
-    CONSTRAINT invocation_admissions_run_fk FOREIGN KEY (tenant_id, run_id)
-        REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
-        DEFERRABLE INITIALLY DEFERRED
-);
-CREATE INDEX invocation_admissions_run
-    ON wamn_run.invocation_admissions (tenant_id, run_id);
-ALTER TABLE wamn_run.invocation_admissions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE wamn_run.invocation_admissions FORCE ROW LEVEL SECURITY;
-CREATE POLICY invocation_admissions_tenant ON wamn_run.invocation_admissions
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
--- The ledger is APPEND-ONLY to the guest-visible role (wamn-0h0g.12.41). The
--- only production write is the callable admission's `ON CONFLICT DO NOTHING`
--- insert; nothing updates a row and nothing deletes one.
---
--- `UPDATE (tenant_id)` is NOT a rewrite authority — it is the minimum
--- PostgreSQL demands for the `FOR KEY SHARE OF a` in admission.rs, which
--- requires UPDATE on at least one column for ANY row-locking clause. It is safe
--- on `tenant_id` specifically because this table is FORCE ROW LEVEL SECURITY
--- and `invocation_admissions_tenant`'s WITH CHECK admits only the value the
--- USING clause already required to see the row, so the sole writable column can
--- only ever be rewritten to the value it already holds.
---
--- No DELETE grant is needed for the `ON DELETE CASCADE` from `runs`: a
--- referential-integrity action runs as the REFERENCING table's owner, not as
--- the deleting role, so pruning a run still removes its admission.
-GRANT SELECT, INSERT ON wamn_run.invocation_admissions TO wamn_app;
-GRANT UPDATE (tenant_id) ON wamn_run.invocation_admissions TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Immutable effect-attempt ledger. Every effectful occurrence has one

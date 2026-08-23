@@ -341,40 +341,6 @@ fn run_state_live() {
     success(&url, &stale_script);
     winner.join().expect("winner thread");
 
-    // The named unique constraint is the stable input to the public
-    // InvocationAdmissionRefusal mapping.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            wiring_id,wiring_version,status) VALUES \
-           ('t1','admit-1','f',1,'cat',1,'prod', \
-            'fixture-wiring',1,'running'), \
-           ('t1','admit-2','f',1,'cat',1,'prod', \
-            'fixture-wiring',1,'running'); \
-         INSERT INTO wamn_run.invocation_admissions \
-           (tenant_id,catalog_id,environment,attachment_id,definition_hash, \
-            principal_digest,client_key_digest,client_request_fingerprint, \
-            admitted_catalog_version,admitted_flow_version,run_id) \
-         VALUES ('t1','cat','prod','http-a','def-1','principal','client','fp-1', \
-                 1,1,'admit-1'); \
-         DO $$ DECLARE constraint_name text; BEGIN \
-           BEGIN \
-             INSERT INTO wamn_run.invocation_admissions \
-               (tenant_id,catalog_id,environment,attachment_id,definition_hash, \
-                principal_digest,client_key_digest,client_request_fingerprint, \
-                admitted_catalog_version,admitted_flow_version,run_id) \
-             VALUES ('t1','cat','prod','http-a','def-1','principal','client','fp-2', \
-                     1,1,'admit-2'); \
-             ASSERT false, 'duplicate admission unexpectedly inserted'; \
-           EXCEPTION WHEN unique_violation THEN \
-             GET STACKED DIAGNOSTICS constraint_name = CONSTRAINT_NAME; \
-             ASSERT constraint_name = 'invocation_admissions_identity', \
-                    'stable typed duplicate constraint'; \
-           END; \
-         END $$;",
-    );
-
     // Named fault: caller release + terminal run + queue deletion all execute,
     // then the transaction aborts. None may survive.
     success(

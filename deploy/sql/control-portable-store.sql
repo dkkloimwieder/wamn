@@ -1018,37 +1018,6 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION wamn_authority.session_author_tenant() FROM PUBLIC;
 
--- Draft validation must share-lock the applied catalog head without the author
--- ever gaining UPDATE on that row. Identical in shape to the project bridge in
--- deploy/sql/run-state.sql; the control copy additionally rechecks the mapping,
--- because a SECURITY DEFINER routine runs outside the caller's row policies and
--- would otherwise be a way to lock another tenant's head.
-CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(
-    p_tenant_id text,
-    p_catalog_id text,
-    p_environment text
-)
-RETURNS int
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, catalog
-AS $$
-DECLARE
-    applied_version int;
-BEGIN
-    SELECT head.applied_catalog_version INTO applied_version
-    FROM catalog.catalog_heads AS head
-    WHERE p_tenant_id = wamn_authority.session_author_tenant()
-      AND p_tenant_id = NULLIF(current_setting('app.tenant', true), '')
-      AND head.tenant_id = p_tenant_id
-      AND head.catalog_id = p_catalog_id
-      AND head.environment = p_environment
-    FOR SHARE OF head;
-    RETURN applied_version;
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head(text, text, text) FROM PUBLIC;
-
 -- Every author-accessed relation carries an APPLICABLE restrictive policy.
 -- RESTRICTIVE means it can only narrow: the permissive `app.tenant` policy above
 -- still has to pass as well, so a caller that rewrites `app.tenant` can only
@@ -1092,8 +1061,6 @@ REVOKE ALL PRIVILEGES ON SCHEMA catalog, wamn_run, wamn_authority
     FROM wamn_control_author;
 GRANT USAGE ON SCHEMA catalog, wamn_run, wamn_authority TO wamn_control_author;
 GRANT EXECUTE ON FUNCTION wamn_authority.session_author_tenant()
-    TO wamn_control_author;
-GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text)
     TO wamn_control_author;
 
 -- Portable catalog and draft-base facts the author only ever reads.

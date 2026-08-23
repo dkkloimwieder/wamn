@@ -326,12 +326,6 @@ fn retired_uncalled_run_builders_stay_deleted_while_park_remains() {
             "run-state SQL restored retired failure surface {retired_column:?}"
         );
     }
-
-    let queue_sql = read(RUN_STATE_QUEUE_SQL_SOURCE);
-    assert!(
-        queue_sql.contains("pub fn park_sql() -> String"),
-        "run-state queue must retain park_sql"
-    );
 }
 
 #[test]

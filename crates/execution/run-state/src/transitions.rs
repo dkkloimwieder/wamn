@@ -12,10 +12,14 @@ use serde_json::Value;
 use crate::RunStatus;
 
 pub(crate) const FENCED_PREFIX: &str = "\
-WITH input AS ( \
+WITH operation_authority AS MATERIALIZED ( \
+    SELECT require_executor_platform_authority() AS allowed \
+), \
+input AS ( \
     SELECT NULLIF(current_setting('app.tenant', true), '')::text AS tenant_id, \
            $1::text AS target_run_id, $2::text AS authority_run_id, \
            $3::text AS lease_owner, $4::bigint AS lease_generation \
+      FROM operation_authority WHERE operation_authority.allowed \
 ), \
 locked_run AS MATERIALIZED ( \
     SELECT r.* FROM runs AS r, input AS i \
@@ -255,19 +259,6 @@ pub fn terminalize_sql() -> String {
     )
 }
 
-/// Typed mapping for the admissions ledger's named duplicate identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InvocationAdmissionRefusal {
-    DuplicateIdentity,
-}
-
-impl InvocationAdmissionRefusal {
-    pub fn from_constraint(constraint: &str) -> Option<InvocationAdmissionRefusal> {
-        (constraint == "invocation_admissions_identity")
-            .then_some(InvocationAdmissionRefusal::DuplicateIdentity)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -345,22 +336,13 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_admission_constraint_is_a_typed_refusal() {
-        let ddl = include_str!("../../../../deploy/sql/run-state.sql");
-        assert!(ddl.contains("CONSTRAINT invocation_admissions_identity UNIQUE"));
-        assert_eq!(
-            InvocationAdmissionRefusal::from_constraint("invocation_admissions_identity"),
-            Some(InvocationAdmissionRefusal::DuplicateIdentity)
-        );
-        assert_eq!(
-            InvocationAdmissionRefusal::from_constraint("some_other_constraint"),
-            None
-        );
-    }
-
-    #[test]
     fn transitions_are_queue_joined_and_generation_fenced() {
         for sql in [release_caller_sql(), terminalize_sql()] {
+            assert_eq!(
+                sql.matches("require_executor_platform_authority()").count(),
+                1,
+                "{sql}"
+            );
             assert!(sql.contains("locked_queue AS MATERIALIZED"), "{sql}");
             assert!(
                 sql.contains("q.lease_owner IS DISTINCT FROM i.lease_owner"),
@@ -430,7 +412,7 @@ mod tests {
         assert!(!run.contains("\n    replay_of       text"));
         assert!(!run.contains("\n    root_run_id     text"));
         assert!(!run.contains("CREATE INDEX runs_root "));
-        assert!(run.contains("CREATE TABLE wamn_run.invocation_admissions"));
+        assert!(!run.contains("CREATE TABLE wamn_run.invocation_admissions"));
         assert!(run.contains("frame_id bigint"));
         assert!(run.contains("CREATE TRIGGER runs_event_lineage_immutable"));
         assert!(run.contains("'effect-uncertain'"));

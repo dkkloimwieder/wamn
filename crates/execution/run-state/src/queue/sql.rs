@@ -8,24 +8,6 @@
 use crate::durability::DURABLE_CLASS_SQL_PREDICATE;
 use crate::{RunStatus, sql as run_sql};
 
-/// Enqueue a run. Params: run id, priority, delay milliseconds.
-pub fn enqueue_sql() -> String {
-    "INSERT INTO run_queue (tenant_id, run_id, priority, available_at) \
-     VALUES (current_setting('app.tenant', true), $1, $2, \
-             now() + ($3::bigint * interval '1 millisecond')) \
-     ON CONFLICT (tenant_id, run_id) DO NOTHING"
-        .to_string()
-}
-
-/// Enqueue a CDC event run. Params: run id, priority, delay, stream sequence.
-pub fn enqueue_evt_sql() -> String {
-    "INSERT INTO run_queue (tenant_id, run_id, priority, available_at, stream_seq) \
-     VALUES (current_setting('app.tenant', true), $1, $2, \
-             now() + ($3::bigint * interval '1 millisecond'), $4) \
-     ON CONFLICT (tenant_id, run_id) DO NOTHING"
-        .to_string()
-}
-
 /// Lock one eligible run in exact global FIFO order without granting a lease.
 ///
 /// Classification occurs from the returned queue evidence before any catalog
@@ -50,14 +32,18 @@ pub fn enqueue_evt_sql() -> String {
 /// claiming pod, and the lease grant writes it.
 pub fn select_production_claim_sql() -> String {
     format!(
-        "WITH candidate AS MATERIALIZED ( \
+        "WITH authority AS MATERIALIZED ( \
+             SELECT require_executor_platform_authority() AS allowed \
+         ), \
+         candidate AS MATERIALIZED ( \
              SELECT q.tenant_id, q.run_id, \
                     q.lease_expires_at IS NOT NULL AS had_prior_lease \
                FROM run_queue AS q \
                JOIN runs AS selected_run \
                  ON selected_run.tenant_id = q.tenant_id \
                 AND selected_run.run_id = q.run_id \
-              WHERE q.tenant_id = current_setting('app.tenant', true) \
+              WHERE (SELECT allowed FROM authority) \
+                AND q.tenant_id = current_setting('app.tenant', true) \
                 AND q.available_at <= now() \
                 AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
                 AND ( \
@@ -93,22 +79,18 @@ pub fn select_production_claim_sql() -> String {
 /// under READ COMMITTED it receives a fresh snapshot after any lock wait, so an
 /// effect attempt committed before classification cannot be missed.
 ///
-/// NOT CLASS-GATED IN SQL, BY DESIGN (wamn-0h0g.20.2). Two roles execute this
-/// text: the claim composer as `wamn_app`, and the private effect writer as
-/// `wamn_effect_writer`, whose whole authority over `runs` is
-/// `SELECT (tenant_id, run_id, status)`. A `durability_class` correlation here
-/// would make the writer's own fence recheck a permission failure. The gate is
-/// therefore applied by the CALLER: the claim composer already carries the class
-/// on the candidate row it locked, and on the `standard` class it never issues
-/// this statement at all. The statement survives verbatim for the premium tier —
-/// unreachable by default, not deleted.
+/// The caller applies the durability-class gate; the statement itself is still
+/// authority-gated because only the executor claim/reap lifecycle consumes it.
 pub fn select_claim_effect_attempt_sql() -> String {
-    "SELECT EXISTS ( \
+    "WITH authority AS MATERIALIZED ( \
+         SELECT require_executor_platform_authority() AS allowed \
+     ) \
+     SELECT EXISTS ( \
          SELECT 1 FROM effect_attempts AS effect \
           WHERE effect.tenant_id = current_setting('app.tenant', true) \
             AND effect.run_id = $1 \
-     )"
-    .to_string()
+     ) FROM authority WHERE authority.allowed"
+        .to_string()
 }
 
 /// Serialize effect-attempt creation against claim-time classification.
@@ -118,11 +100,15 @@ pub fn select_claim_effect_attempt_sql() -> String {
 /// must be its own statement: the following effect-evidence query needs a fresh
 /// READ COMMITTED snapshot after any wait on a concurrent writer.
 pub fn serialize_effect_intent_sql() -> String {
-    "SELECT pg_catalog.pg_advisory_xact_lock( \
+    "WITH authority AS MATERIALIZED ( \
+         SELECT require_executor_platform_authority() AS allowed \
+     ) \
+     SELECT pg_catalog.pg_advisory_xact_lock( \
          pg_catalog.hashtextextended( \
              pg_catalog.current_setting('app.tenant', true) \
                  || E'\\x1f' || $1::text, \
-             0::bigint))"
+             0::bigint)) \
+       FROM authority WHERE authority.allowed"
         .to_string()
 }
 
@@ -138,9 +124,13 @@ pub fn serialize_effect_intent_sql() -> String {
 /// cleared, and the database guard permits the erasure for exactly that reason.
 ///
 pub fn clear_pre_effect_state_sql() -> String {
-    "UPDATE runs \
+    "WITH authority AS MATERIALIZED ( \
+         SELECT require_executor_platform_authority() AS allowed \
+     ) \
+     UPDATE runs \
         SET state_json = NULL, release_version = NULL, manifest_digest = NULL \
-      WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
+      WHERE (SELECT allowed FROM authority) \
+        AND tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
       RETURNING run_id"
         .to_string()
 }
@@ -159,10 +149,14 @@ pub fn clear_pre_effect_state_sql() -> String {
 /// (queue-parked) row does not. Reading `q.lease_expires_at` before the grant
 /// overwrites it is what keeps that identical to the fused statement it left.
 pub fn advance_claim_attempts_sql() -> String {
-    "UPDATE run_queue AS q \
+    "WITH authority AS MATERIALIZED ( \
+         SELECT require_executor_platform_authority() AS allowed \
+     ) \
+     UPDATE run_queue AS q \
         SET attempts = q.attempts \
             + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
-      WHERE q.tenant_id = current_setting('app.tenant', true) \
+      WHERE (SELECT allowed FROM authority) \
+        AND q.tenant_id = current_setting('app.tenant', true) \
         AND q.run_id = $1 \
       RETURNING q.attempts"
         .to_string()
@@ -182,22 +176,25 @@ pub fn advance_claim_attempts_sql() -> String {
 /// refuses any differing one — so a re-claim carrying the same release is an
 /// accepted no-op, and a re-claim carrying a DIFFERENT release only succeeds
 /// because the arm that reopened this run's claimability already cleared the
-/// abandoned attempt's pair: [`clear_pre_effect_state_sql`] in this same
-/// transaction on an expired pre-effect reclaim, or [`park_sql`] in the earlier
-/// transaction that released the lease. A pod with no injected release identity
-/// binds NULL for both and records nothing.
+/// abandoned attempt's pair through [`clear_pre_effect_state_sql`] in this same
+/// transaction on an expired pre-effect reclaim. A pod with no injected release
+/// identity binds NULL for both and records nothing.
 /// The status predicate widened from `dispatched` to the two runnable states the
 /// composer already validates, because a re-claim of a `running` row must reach
 /// the record too; `dispatched` still becomes `running` and `running` stays put.
 pub fn grant_production_claim_sql() -> String {
     format!(
-        "WITH leased AS ( \
+        "WITH authority AS MATERIALIZED ( \
+             SELECT require_executor_platform_authority() AS allowed \
+         ), \
+         leased AS ( \
              UPDATE run_queue AS q \
                 SET lease_owner = $2, \
                     lease_expires_at = statement_timestamp() \
                         + ($3::bigint * interval '1 millisecond'), \
                     lease_generation = q.lease_generation + 1 \
-              WHERE q.tenant_id = current_setting('app.tenant', true) \
+              WHERE (SELECT allowed FROM authority) \
+                AND q.tenant_id = current_setting('app.tenant', true) \
                 AND q.run_id = $1 \
               RETURNING q.tenant_id, q.run_id, q.lease_generation \
          ), \
@@ -224,10 +221,14 @@ pub fn grant_production_claim_sql() -> String {
 /// milliseconds. A missing row is the complete fence-lost result: the caller
 /// must stop the in-flight router walk without another run-store access.
 pub fn renew_production_lease_sql() -> String {
-    "UPDATE run_queue AS q \
+    "WITH authority AS MATERIALIZED ( \
+         SELECT require_executor_platform_authority() AS allowed \
+     ) \
+     UPDATE run_queue AS q \
         SET lease_expires_at = statement_timestamp() \
             + ($4::bigint * interval '1 millisecond') \
-      WHERE q.tenant_id = current_setting('app.tenant', true) \
+      WHERE (SELECT allowed FROM authority) \
+        AND q.tenant_id = current_setting('app.tenant', true) \
         AND q.run_id = $1 \
         AND q.lease_owner = $2 \
         AND q.lease_generation = $3 \
@@ -244,7 +245,10 @@ pub fn renew_production_lease_sql() -> String {
 /// preserved exactly.
 pub fn terminalize_effect_uncertain_claim_sql() -> String {
     format!(
-        "WITH updated AS ( \
+        "WITH authority AS MATERIALIZED ( \
+             SELECT require_executor_platform_authority() AS allowed \
+         ), \
+         updated AS ( \
              UPDATE runs AS r \
                 SET status = '{uncertain}', fail_kind = '{uncertain}', \
                     caller_outcome_kind = CASE \
@@ -266,7 +270,8 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
                         WHEN {unreleased_attached} THEN now() \
                         ELSE r.caller_released_at END, \
                     updated_at = now() \
-              WHERE r.tenant_id = current_setting('app.tenant', true) \
+              WHERE (SELECT allowed FROM authority) \
+                AND r.tenant_id = current_setting('app.tenant', true) \
                 AND r.run_id = $1 \
               RETURNING r.tenant_id, r.run_id, r.status \
          ), \
@@ -283,60 +288,6 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
     )
 }
 
-/// Wait until a later queue time, release the current lease, and clear the
-/// release record the released claim was executing under.
-///
-/// Params: run id, delay milliseconds. Releasing the lease REOPENS
-/// CLAIMABILITY, and the record names "the release of the claim currently
-/// executing this run" (wamn-0h0g.13.55) — so the park that ends that claim
-/// clears the pair exactly as the classifier's pre-effect reclaim does, and the
-/// waking pod's grant records its own identity fresh. Without this a wake
-/// classifies `Ordinary` (a released lease makes `had_prior_lease` false), no
-/// arm resets, and a pod carrying a different release refuses at the database
-/// guard — permanently, because a released lease is not crash evidence, so the
-/// refusal spends no budget and the janitor can never reap the run off the head
-/// of its tenant's FIFO (wamn-0h0g.15.82).
-///
-/// The erasure is skipped for a run that already carries an immutable effect
-/// attempt. That run is never re-claimed for execution — any attempt classifies
-/// it terminal `effect-uncertain` on the next claim — so there is no fresh
-/// record to take, and the audit link from the attributed effect to the release
-/// that fired it must outlive the park.
-/// `wamn_run.guard_run_admission_pins_immutable` refuses that erasure for the
-/// same reason, so this predicate is also what keeps the park from ever
-/// aborting on the guard.
-///
-/// THE CLASS GATE ON THIS PREDICATE IS COUPLED TO THAT GUARD AND MUST MOVE WITH
-/// IT (wamn-0h0g.20.2). `deploy/sql/run-state.sql` carries the identical
-/// `durability_class = 'durable'` conjunct on the guard's `EXISTS`. Gate one and
-/// not the other and the run plane breaks in one of two ways: gate only here and
-/// the guard refuses the erasure this statement attempts, aborting the park;
-/// gate only the guard and a `standard` run keeps a release record across a park
-/// that should have cleared it, so a waking pod on a different release refuses at
-/// the grant, spends no crash budget (a released lease is not crash evidence),
-/// and the run is its tenant's FIFO head forever — wamn-0h0g.15.82 exactly.
-pub fn park_sql() -> String {
-    format!(
-        "WITH parked AS ( \
-         UPDATE run_queue \
-            SET available_at = now() + ($2::bigint * interval '1 millisecond'), \
-                lease_owner = NULL, lease_expires_at = NULL \
-          WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
-          RETURNING tenant_id, run_id \
-     ) \
-     UPDATE runs AS r \
-        SET release_version = NULL, manifest_digest = NULL \
-       FROM parked \
-      WHERE r.tenant_id = parked.tenant_id AND r.run_id = parked.run_id \
-        AND NOT EXISTS ( \
-            SELECT 1 FROM effect_attempts AS effect \
-             WHERE effect.tenant_id = parked.tenant_id \
-               AND effect.run_id = parked.run_id \
-               AND r.{durable})",
-        durable = DURABLE_CLASS_SQL_PREDICATE,
-    )
-}
-
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
 /// `$1` is the grace period in milliseconds. Effect evidence is deliberately
@@ -348,14 +299,18 @@ pub fn park_sql() -> String {
 /// already joined and locked here.
 pub fn select_exhausted_production_sql() -> String {
     format!(
-        "SELECT q.tenant_id, q.run_id, selected_run.status, \
+        "WITH authority AS MATERIALIZED ( \
+             SELECT require_executor_platform_authority() AS allowed \
+         ) \
+         SELECT q.tenant_id, q.run_id, selected_run.status, \
                 selected_run.flow_id, selected_run.flow_version, \
                 selected_run.durability_class \
-           FROM run_queue AS q \
+           FROM authority CROSS JOIN run_queue AS q \
            JOIN runs AS selected_run \
              ON selected_run.tenant_id = q.tenant_id \
             AND selected_run.run_id = q.run_id \
-          WHERE q.tenant_id = current_setting('app.tenant', true) \
+          WHERE authority.allowed \
+            AND q.tenant_id = current_setting('app.tenant', true) \
                 AND q.lease_expires_at IS NOT NULL \
                 AND q.lease_expires_at \
                     + ($1::bigint * interval '1 millisecond') <= now() \
@@ -376,7 +331,10 @@ pub fn select_exhausted_production_sql() -> String {
 /// stay NULL and an existing released winner is preserved byte-for-byte.
 pub fn terminalize_exhausted_production_sql() -> String {
     format!(
-        "WITH updated AS ( \
+        "WITH authority AS MATERIALIZED ( \
+             SELECT require_executor_platform_authority() AS allowed \
+         ), \
+         updated AS ( \
              UPDATE runs AS r \
             SET status = '{infra}', \
                 caller_outcome_kind = CASE \
@@ -398,7 +356,8 @@ pub fn terminalize_exhausted_production_sql() -> String {
                     WHEN {unreleased_attached} THEN now() \
                     ELSE r.caller_released_at END, \
                 updated_at = now() \
-           WHERE r.tenant_id = current_setting('app.tenant', true) \
+           WHERE (SELECT allowed FROM authority) \
+             AND r.tenant_id = current_setting('app.tenant', true) \
              AND r.run_id = $1 \
              AND r.status IN ('{dispatched}', '{running}') \
            RETURNING r.tenant_id, r.run_id, r.status \
@@ -415,18 +374,6 @@ pub fn terminalize_exhausted_production_sql() -> String {
         running = RunStatus::Running.as_sql(),
         unreleased_attached = "r.trigger_source IN ('http','internal','studio') \
                                AND r.caller_released_at IS NULL",
-    )
-}
-
-/// Insert a triggered write-ahead run row.
-pub fn write_ahead_triggered_run_sql() -> String {
-    format!(
-        "INSERT INTO runs \
-             (tenant_id, run_id, flow_id, flow_version, status, trigger_source, input_json) \
-         VALUES (current_setting('app.tenant', true), $1, $2, $3, \
-                 '{dispatched}', $4, $5::text::jsonb) \
-         ON CONFLICT (tenant_id, run_id) DO NOTHING",
-        dispatched = RunStatus::Dispatched.as_sql(),
     )
 }
 
@@ -464,4 +411,48 @@ pub fn parked_due_sql(limit: usize) -> String {
           ORDER BY q.available_at, q.stream_seq, q.run_id \
           LIMIT {limit}"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_executor_operation_has_exactly_one_class_guard() {
+        for (name, sql) in [
+            ("select-production-claim", select_production_claim_sql()),
+            (
+                "select-claim-effect-attempt",
+                select_claim_effect_attempt_sql(),
+            ),
+            ("serialize-effect-intent", serialize_effect_intent_sql()),
+            ("clear-pre-effect-state", clear_pre_effect_state_sql()),
+            ("advance-claim-attempts", advance_claim_attempts_sql()),
+            ("grant-production-claim", grant_production_claim_sql()),
+            ("renew-production-lease", renew_production_lease_sql()),
+            (
+                "terminalize-effect-uncertain",
+                terminalize_effect_uncertain_claim_sql(),
+            ),
+            (
+                "select-exhausted-production",
+                select_exhausted_production_sql(),
+            ),
+            (
+                "terminalize-exhausted-production",
+                terminalize_exhausted_production_sql(),
+            ),
+        ] {
+            assert_eq!(
+                sql.matches("require_executor_platform_authority()").count(),
+                1,
+                "{name} must carry exactly one executor-platform guard"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatcher_wake_scan_is_not_an_executor_operation() {
+        assert!(!parked_due_sql(1).contains("require_executor_platform_authority"));
+    }
 }

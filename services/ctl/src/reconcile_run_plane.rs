@@ -75,9 +75,9 @@ use wamn_schema_control::{
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
-    select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
-    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
-    select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
+    select_scenario_author_role_sql, select_scenario_author_schema_usage_sql,
+    select_schema_checks_sql, select_schema_columns_sql, select_schema_foreign_keys_sql,
+    select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
 /// The action kinds permitted to execute BEFORE
@@ -116,11 +116,12 @@ use wamn_schema_control::{
 /// 2. A non-allowlisted push interleaved AHEAD of allowlisted ones — the loop
 ///    consumes a PREFIX, so the first non-member truncates it and silently
 ///    strips the pre-bootstrap property from every allowlisted action behind it.
-const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 11] = [
+const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 12] = [
     RunPlaneActionKind::VerifyEffectWriterRole,
     RunPlaneActionKind::RetireNodeRuns,
     RunPlaneActionKind::RetireExecutionBundles,
     RunPlaneActionKind::FrameIdentityCutover,
+    RunPlaneActionKind::RetireLegacyAdmissionSurface,
     RunPlaneActionKind::EffectWriterCutover,
     RunPlaneActionKind::PartitionPlaneCutover,
     RunPlaneActionKind::ChildRunCutover,
@@ -710,14 +711,6 @@ async fn observe(
         capture_privileges.get(1),
         capture_privileges.get(2),
     );
-    obs.scenario_author_can_lock_catalog_head = client
-        .query_one(
-            select_scenario_author_catalog_lock_privilege_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read scenario-author catalog-lock privilege")?
-        .get(0);
     let dispatch_reader_schema = client
         .query_one(
             select_dispatch_reader_schema_privileges_sql(),
@@ -1204,6 +1197,7 @@ mod tests {
                 RunPlaneActionKind::VerifyRunProjectionWriterRole,
                 RunPlaneActionKind::RetireExecutionBundles,
                 RunPlaneActionKind::FrameIdentityCutover,
+                RunPlaneActionKind::RetireLegacyAdmissionSurface,
                 RunPlaneActionKind::EffectWriterCutover,
                 RunPlaneActionKind::PartitionPlaneCutover,
                 RunPlaneActionKind::ChildRunCutover,

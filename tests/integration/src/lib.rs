@@ -17,7 +17,6 @@ mod dispatcher_process;
 pub mod exposure_live;
 pub mod m1;
 pub mod matbench;
-pub mod materializer;
 pub mod provisionbench;
 pub mod readerbench;
 mod release_fixture;

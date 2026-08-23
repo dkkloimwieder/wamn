@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_run_state::{
-    queue::{park_sql, select_production_claim_sql},
+    queue::select_production_claim_sql,
     schema_drift::{Need, assert_run_state_stand_in},
 };
 use wamn_runtime::plugins::wamn_postgres::{
@@ -594,63 +594,6 @@ async fn production_claim_live() -> anyhow::Result<()> {
                 "DELETE FROM {SCHEMA}.run_queue \
                   WHERE tenant_id=$1 AND run_id='release-record'"
             ),
-            &[&TENANT],
-        )
-        .await?;
-
-    // PARK/WAKE IS COVERED BY THE PARK'S OWN RESET (wamn-0h0g.15.82). `park_sql`
-    // releases the lease (`lease_owner`/`lease_expires_at` to NULL), so a
-    // doorbell wake classifies `Ordinary` and no classifier arm runs — which is
-    // exactly why the PARK, the arm that reopens claimability, clears the pair
-    // itself. A pod carrying a different release therefore wakes the run and
-    // records its own identity. Before this, the wake refused at the guard
-    // forever: a released lease is not crash evidence, so the refusal spent no
-    // budget, the janitor could never reap the run, and it stayed its tenant's
-    // FIFO head.
-    seed_run(admin, "park-wake", "cat-main", 71).await?;
-    assert_eq!(
-        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
-        "park-wake"
-    );
-    assert_eq!(release_record(admin, "park-wake").await?, recorded);
-    // The SHIPPED park statement, not a hand-written stand-in: a mutation that
-    // dropped its reset fails exactly here.
-    let tenant_literal = quote_literal(TENANT);
-    admin
-        .batch_execute(&format!(
-            "SET search_path = {SCHEMA}; SET app.tenant = {tenant_literal};"
-        ))
-        .await?;
-    admin.execute(&park_sql(), &[&"park-wake", &0_i64]).await?;
-    admin
-        .batch_execute("RESET search_path; RESET app.tenant;")
-        .await?;
-    assert_eq!(
-        release_record(admin, "park-wake").await?,
-        (None, None),
-        "the park cleared the record of the claim it released"
-    );
-    assert_eq!(
-        ready_run(
-            plugin
-                .claim_next_production(ROLLED_COMPONENT, 30_000)
-                .await?
-        ),
-        "park-wake"
-    );
-    assert_eq!(
-        release_record(admin, "park-wake").await?,
-        rerecorded,
-        "the waking pod records its own release, not the parked claim's"
-    );
-    assert_eq!(
-        queue_attempts(admin, "park-wake").await?,
-        0,
-        "a released lease is not crash evidence, so the wake spends no budget"
-    );
-    admin
-        .execute(
-            &format!("DELETE FROM {SCHEMA}.run_queue WHERE tenant_id=$1 AND run_id='park-wake'"),
             &[&TENANT],
         )
         .await?;
