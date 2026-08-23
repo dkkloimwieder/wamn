@@ -46,6 +46,7 @@ use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod claims;
+mod credential_exactness;
 mod pool;
 mod production_claim;
 mod resources;
@@ -61,6 +62,12 @@ pub use wiring_resolution::{
 pub use claims::{
     CandidateBindingWorld, CandidateConnectionBinding, ConnectionEffectLookup,
     ConnectionEffectSnapshot, ReleaseIdentity, SessionClaims, WamnPostgres,
+};
+pub use credential_exactness::{
+    AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionKind,
+    CredentialExactnessProbe, CredentialProbeError, CredentialProbeErrorKind,
+    CredentialProbePredicate, ExpectedCredentialIdentity, ExplicitCredentialSource,
+    MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
 pub use pool::{
     CheckoutProbe, CredentialProvider, K8sSecretProvider, ProjectConfig, StaticCredentialProvider,
