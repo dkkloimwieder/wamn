@@ -4550,6 +4550,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "url",
+ "wamn-control-provision",
  "wamn-flow",
  "wamn-pg-core",
 ]

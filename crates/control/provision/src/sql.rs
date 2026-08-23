@@ -8,7 +8,7 @@
 //! database name, a role password) travel as `$n` params or quoted literals.
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
-use crate::workload_role::WorkloadRoleFamily;
+use crate::workload_role::{MANAGEMENT_ADMITTER_ROLE, WorkloadRoleFamily};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
 
@@ -198,6 +198,63 @@ pub fn grant_connect_sql(project: &str) -> String {
 /// bearing even when the ledger is empty.
 pub const DISPATCH_READER_RELATIONS: [&str; 2] = ["run_queue", "effect_attempts"];
 
+/// Catalog relations read by the surviving management-admission statement.
+pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
+    "wirings",
+    "component_library",
+    "connection_requirements",
+    "connection_bindings",
+    "connection_instances",
+    "connection_generations",
+];
+/// `runs` columns read directly or through `RETURNING` by management admission.
+pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 17] = [
+    "tenant_id",
+    "run_id",
+    "binding_world_json",
+    "idempotency_key",
+    "trigger_source",
+    "capture_mode",
+    "catalog_id",
+    "catalog_version",
+    "environment",
+    "wiring_id",
+    "wiring_version",
+    "wiring_hash",
+    "gate_report_id",
+    "input_json",
+    "invocation_context",
+    "platform_revision",
+    "run_deadline_at",
+];
+/// `runs` columns minted by the management-admission statement.
+pub const MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS: [&str; 19] = [
+    "tenant_id",
+    "run_id",
+    "catalog_id",
+    "catalog_version",
+    "environment",
+    "wiring_id",
+    "wiring_version",
+    "wiring_hash",
+    "gate_report_id",
+    "binding_world_json",
+    "status",
+    "trigger_source",
+    "capture_mode",
+    "input_json",
+    "invocation_context",
+    "admission_context_version",
+    "platform_revision",
+    "idempotency_key",
+    "run_deadline_at",
+];
+/// `run_queue` columns observed through the management insert's `RETURNING`.
+pub const MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS: [&str; 2] = ["tenant_id", "run_id"];
+/// `run_queue` columns minted by management admission.
+pub const MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS: [&str; 4] =
+    ["tenant_id", "run_id", "available_at", "stream_seq"];
+
 /// Idempotently create or harden the cluster-global dispatcher reader.
 ///
 /// Create-or-*harden* under the shared `wamn_role_bootstrap` advisory lock — the
@@ -318,6 +375,73 @@ pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
     )
 }
 
+/// Converge the stable management-admitter role to its exact admission surface.
+///
+/// This is the seventh [`WorkloadRoleFamily`]'s one family-specific privilege
+/// step. Its A/B identities and their prepare/retire lifecycle remain wholly in
+/// the generic workload machinery. The catalog relations are the surviving
+/// component/wiring facts read by management admission; the run-plane grants
+/// are column-exact to the ordinary run-plus-queue statement. Environment
+/// policy access is read-only because the invoker trigger resolves the pinned
+/// durability class while inserting a run.
+///
+/// Blanket revocation precedes every grant so reapplying this batch removes a
+/// stale or widened direct ACL instead of merely adding the intended surface.
+pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
+    let role = quote_ident(MANAGEMENT_ADMITTER_ROLE);
+    let schema_literal = quote_literal(schema);
+    let schema = quote_ident(schema);
+    let mut sql = format!(
+        "{ensure} \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, {schema} FROM {role}; \
+         DO $management_column_acl$ DECLARE target record; BEGIN \
+           FOR target IN \
+             SELECT namespace.nspname, relation.relname, attribute.attname \
+               FROM pg_catalog.pg_attribute AS attribute \
+               JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid \
+               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+              WHERE namespace.nspname IN ('catalog', {schema_literal}) \
+                AND relation.relkind IN ('r', 'p') \
+                AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+           LOOP \
+             EXECUTE format( \
+               'REVOKE ALL PRIVILEGES (%I) ON TABLE %I.%I FROM %I', \
+               target.attname, target.nspname, target.relname, {role_literal}); \
+           END LOOP; \
+         END $management_column_acl$; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA catalog, {schema} TO {role};",
+        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::ManagementAdmitter),
+        role_literal = quote_literal(MANAGEMENT_ADMITTER_ROLE),
+    );
+    for relation in MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+        sql.push_str(&format!(
+            " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+            relation = quote_ident(relation),
+        ));
+    }
+    let run_select = quoted_column_list(&MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS);
+    let run_insert = quoted_column_list(&MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS);
+    let queue_select = quoted_column_list(&MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS);
+    let queue_insert = quoted_column_list(&MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS);
+    sql.push_str(&format!(
+        " GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
+         GRANT SELECT ({run_select}) ON TABLE {schema}.\"runs\" TO {role}; \
+         GRANT INSERT ({run_insert}) ON TABLE {schema}.\"runs\" TO {role}; \
+         GRANT SELECT ({queue_select}), INSERT ({queue_insert}) \
+           ON TABLE {schema}.\"run_queue\" TO {role};"
+    ));
+    sql
+}
+
+fn quoted_column_list(columns: &[&str]) -> String {
+    columns
+        .iter()
+        .map(|column| quote_ident(column))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Prepare one inactive scoped credential generation for authenticated use.
 ///
 /// `role` is the validated deterministic generation name. The caller verifies
@@ -350,8 +474,12 @@ pub fn prepare_workload_generation_sql(
     let role_ident = quote_ident(role);
     let role_lit = quote_literal(role);
     let membership = normalize_workload_generation_membership_sql(family, role, true);
+    let stable_surface = match family {
+        WorkloadRoleFamily::ManagementAdmitter => grant_management_admitter_surface_sql("wamn_run"),
+        _ => ensure_workload_acl_role_sql(family),
+    };
     format!(
-        "{ensure} \
+        "{stable_surface} \
          DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
              CREATE ROLE {role_ident} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
@@ -361,7 +489,7 @@ pub fn prepare_workload_generation_sql(
          {membership} \
          ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
          GRANT CONNECT ON DATABASE {database} TO {role_ident};",
-        ensure = ensure_workload_acl_role_sql(family),
+        stable_surface = stable_surface,
         password = quote_literal(password),
         expires_at = quote_literal(expires_at),
         database = quote_ident(database),
@@ -1107,6 +1235,87 @@ mod tests {
         }
         // The schema is an identifier position and is quoted, not interpolated.
         assert!(grant_dispatch_reader_read_surface_sql("we\"ird").contains("\"we\"\"ird\""));
+    }
+
+    #[test]
+    fn management_admitter_surface_is_current_column_exact_and_convergent() {
+        let sql = grant_management_admitter_surface_sql("wamn_run");
+        assert!(sql.contains("'wamn_management_admitter'"));
+        assert!(sql.contains("CREATE ROLE %I NOLOGIN"));
+        let revoke = sql
+            .find(
+                "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, \"wamn_run\" \
+                 FROM \"wamn_management_admitter\"",
+            )
+            .expect("blanket table revoke");
+        let usage = sql
+            .find(
+                "GRANT USAGE ON SCHEMA catalog, \"wamn_run\" \
+                 TO \"wamn_management_admitter\"",
+            )
+            .expect("exact schema usage");
+        assert!(revoke < usage);
+        let column_revoke = sql
+            .find("DO $management_column_acl$")
+            .expect("explicit stale column-ACL revocation");
+        assert!(revoke < column_revoke && column_revoke < usage);
+
+        for relation in MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+            assert!(sql.contains(&format!(
+                "GRANT SELECT ON TABLE catalog.\"{relation}\" TO \
+                 \"wamn_management_admitter\""
+            )));
+        }
+        assert!(sql.contains(
+            "GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
+             TO \"wamn_management_admitter\""
+        ));
+        assert!(sql.contains("GRANT SELECT (\"tenant_id\", \"run_id\", \"binding_world_json\""));
+        assert!(sql.contains("GRANT INSERT (\"tenant_id\", \"run_id\", \"catalog_id\""));
+        assert!(sql.contains(
+            "GRANT SELECT (\"tenant_id\", \"run_id\"), INSERT (\"tenant_id\", \
+             \"run_id\", \"available_at\", \"stream_seq\")"
+        ));
+
+        for forbidden in [
+            "GRANT SELECT ON ALL TABLES",
+            "GRANT INSERT ON TABLE catalog",
+            "GRANT UPDATE",
+            "GRANT DELETE",
+            "GRANT TRUNCATE",
+            "GRANT REFERENCES",
+            "GRANT TRIGGER",
+            "GRANT EXECUTE",
+            "flow_id",
+            "flow_version",
+            "plan_hash",
+            "execution_bundle_hash",
+        ] {
+            assert!(!sql.contains(forbidden), "surface gained {forbidden:?}");
+        }
+        assert!(grant_management_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
+    }
+
+    #[test]
+    fn management_admitter_prepare_uses_the_generic_generation_lifecycle() {
+        let role = "management-generation-a";
+        let sql = prepare_workload_generation_sql(
+            WorkloadRoleFamily::ManagementAdmitter,
+            "project-db",
+            role,
+            "secret",
+            "2026-09-15T12:00:00Z",
+        );
+        assert!(sql.contains(&grant_management_admitter_surface_sql("wamn_run")));
+        assert!(sql.contains(&format!(
+            "GRANT \"wamn_management_admitter\" TO \"{role}\" \
+             WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+        )));
+        assert!(sql.contains(&format!(
+            "GRANT CONNECT ON DATABASE \"project-db\" TO \"{role}\""
+        )));
+        assert_eq!(sql.matches("LOGIN PASSWORD 'secret'").count(), 1);
+        assert!(!sql.contains("CREATE SECRET"));
     }
 
     #[test]

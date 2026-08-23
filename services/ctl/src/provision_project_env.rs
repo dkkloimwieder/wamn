@@ -705,7 +705,7 @@ impl WorkloadRoleState {
 }
 
 fn is_workload_generation_role(family: WorkloadRoleFamily, role: &str) -> bool {
-    let prefix = format!("{}_", family.acl_role());
+    let prefix = format!("{}_", family.generation_prefix());
     let Some(scoped) = role.strip_prefix(&prefix) else {
         return false;
     };
@@ -744,6 +744,7 @@ impl<'a> WorkloadLifecycle<'a> {
         match self.family {
             WorkloadRoleFamily::EffectWriter => "effect-writer",
             WorkloadRoleFamily::ControlAuthor => "control-author",
+            WorkloadRoleFamily::ManagementAdmitter => "management-admitter",
             WorkloadRoleFamily::DispatchReader => "dispatch-reader",
             WorkloadRoleFamily::ServiceReader => "service-reader",
             WorkloadRoleFamily::App => "app",
@@ -1759,8 +1760,22 @@ async fn verify_stable_workload_role(
         "stable {} ACL role is not a connection-free NOLOGIN role with exact generation members",
         lifecycle.label()
     );
-    if lifecycle.family == WorkloadRoleFamily::EffectWriter {
-        verify_role_acl_inventory(admin_config, role, RoleAclExpectation::EffectAclRole).await?;
+    match lifecycle.family {
+        WorkloadRoleFamily::EffectWriter => {
+            verify_role_acl_inventory(admin_config, role, RoleAclExpectation::EffectAclRole)
+                .await?;
+        }
+        WorkloadRoleFamily::ManagementAdmitter => {
+            verify_role_acl_inventory(
+                admin_config,
+                role,
+                RoleAclExpectation::ManagementAclRole {
+                    required_database: lifecycle.database(),
+                },
+            )
+            .await?;
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -1770,6 +1785,7 @@ enum RoleAclExpectation<'a> {
     None,
     Generation { database: &'a str },
     EffectAclRole,
+    ManagementAclRole { required_database: &'a str },
 }
 
 async fn verify_role_acl_inventory(
@@ -1822,6 +1838,14 @@ async fn verify_role_acl_inventory(
             RoleAclExpectation::EffectAclRole => {
                 verify_effect_writer_acl_role_inventory(role, &database, &inventory)?;
             }
+            RoleAclExpectation::ManagementAclRole { required_database } => {
+                verify_management_admitter_acl_role_inventory(
+                    role,
+                    &database,
+                    required_database,
+                    &inventory,
+                )?;
+            }
             expectation => {
                 for acl in &inventory {
                     let allowed = match expectation {
@@ -1832,7 +1856,8 @@ async fn verify_role_acl_inventory(
                                 && acl.object_name == expected
                                 && acl.privilege == "CONNECT"
                         }
-                        RoleAclExpectation::EffectAclRole => {
+                        RoleAclExpectation::EffectAclRole
+                        | RoleAclExpectation::ManagementAclRole { .. } => {
                             unreachable!("handled above")
                         }
                     };
@@ -1853,6 +1878,7 @@ async fn verify_role_acl_inventory(
     Ok(())
 }
 
+#[derive(Clone)]
 struct RoleAcl {
     object_kind: String,
     schema_name: String,
@@ -1935,6 +1961,97 @@ fn verify_effect_writer_acl_role_inventory(
             "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact effect-writer grant set"
         );
     }
+    Ok(())
+}
+
+fn verify_management_admitter_acl_role_inventory(
+    role: &str,
+    database: &str,
+    required_database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    if inventory.is_empty() {
+        anyhow::ensure!(
+            database != required_database,
+            "stable role {role:?} has no management-admission ACL in required database {database:?}"
+        );
+        return Ok(());
+    }
+
+    let actual = inventory
+        .iter()
+        .map(|acl| {
+            (
+                acl.object_kind.clone(),
+                acl.schema_name.clone(),
+                acl.object_name.clone(),
+                acl.privilege.clone(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let mut expected = BTreeSet::from([
+        (
+            "schema".to_string(),
+            "catalog".to_string(),
+            "catalog".to_string(),
+            "USAGE".to_string(),
+        ),
+        (
+            "schema".to_string(),
+            "wamn_run".to_string(),
+            "wamn_run".to_string(),
+            "USAGE".to_string(),
+        ),
+        (
+            "relation".to_string(),
+            "wamn_run".to_string(),
+            "environment_policies".to_string(),
+            "SELECT".to_string(),
+        ),
+    ]);
+    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+        expected.insert((
+            "relation".to_string(),
+            "catalog".to_string(),
+            relation.to_string(),
+            "SELECT".to_string(),
+        ));
+    }
+    for (relation, privilege, columns) in [
+        (
+            "runs",
+            "SELECT",
+            &sql::MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS[..],
+        ),
+        (
+            "runs",
+            "INSERT",
+            &sql::MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS[..],
+        ),
+        (
+            "run_queue",
+            "SELECT",
+            &sql::MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS[..],
+        ),
+        (
+            "run_queue",
+            "INSERT",
+            &sql::MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS[..],
+        ),
+    ] {
+        for column in columns {
+            expected.insert((
+                "column".to_string(),
+                "wamn_run".to_string(),
+                format!("{relation}.{column}"),
+                privilege.to_string(),
+            ));
+        }
+    }
+    anyhow::ensure!(
+        actual == expected,
+        "stable role {role:?} ACLs in database {database:?} are not the exact management-admission grant set"
+    );
     Ok(())
 }
 
@@ -2503,7 +2620,7 @@ fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<
 mod tests {
     use super::*;
     use clap::{CommandFactory as _, FromArgMatches as _, Parser};
-    use wamn_control_provision::EFFECT_WRITER_ROLE;
+    use wamn_control_provision::{EFFECT_WRITER_ROLE, MANAGEMENT_ADMITTER_ROLE};
 
     #[derive(Debug, Parser)]
     struct TestCli {
@@ -3365,6 +3482,89 @@ mod tests {
     }
 
     #[test]
+    fn management_acl_inventory_is_exact_and_required_in_the_target_database() {
+        let mut exact = vec![
+            role_acl("schema", "catalog", "catalog", "USAGE"),
+            role_acl("schema", "wamn_run", "wamn_run", "USAGE"),
+            role_acl("relation", "wamn_run", "environment_policies", "SELECT"),
+        ];
+        for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+            exact.push(role_acl("relation", "catalog", relation, "SELECT"));
+        }
+        for (relation, privilege, columns) in [
+            (
+                "runs",
+                "SELECT",
+                &sql::MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS[..],
+            ),
+            (
+                "runs",
+                "INSERT",
+                &sql::MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS[..],
+            ),
+            (
+                "run_queue",
+                "SELECT",
+                &sql::MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS[..],
+            ),
+            (
+                "run_queue",
+                "INSERT",
+                &sql::MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS[..],
+            ),
+        ] {
+            for column in columns {
+                exact.push(role_acl(
+                    "column",
+                    "wamn_run",
+                    &format!("{relation}.{column}"),
+                    privilege,
+                ));
+            }
+        }
+        verify_management_admitter_acl_role_inventory(
+            MANAGEMENT_ADMITTER_ROLE,
+            "project_db",
+            "project_db",
+            &exact,
+        )
+        .unwrap();
+
+        let mut widened = exact.clone();
+        widened.push(role_acl(
+            "relation",
+            "wamn_run",
+            "environment_policies",
+            "UPDATE",
+        ));
+        assert!(
+            verify_management_admitter_acl_role_inventory(
+                MANAGEMENT_ADMITTER_ROLE,
+                "project_db",
+                "project_db",
+                &widened,
+            )
+            .is_err()
+        );
+        assert!(
+            verify_management_admitter_acl_role_inventory(
+                MANAGEMENT_ADMITTER_ROLE,
+                "project_db",
+                "project_db",
+                &[],
+            )
+            .is_err()
+        );
+        verify_management_admitter_acl_role_inventory(
+            MANAGEMENT_ADMITTER_ROLE,
+            "unprovisioned_db",
+            "project_db",
+            &[],
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn stable_acl_role_members_are_only_scoped_generation_roles() {
         assert!(is_workload_generation_role(
             WorkloadRoleFamily::EffectWriter,
@@ -3373,6 +3573,16 @@ mod tests {
         assert!(is_workload_generation_role(
             WorkloadRoleFamily::ControlAuthor,
             "wamn_control_author_0123456789abcdef0123456789abcdef01234567_b"
+        ));
+        // `wamn-0h0g.13.62`: management generations carry the short frozen
+        // prefix, never the 24-byte stable ACL role name.
+        assert!(is_workload_generation_role(
+            WorkloadRoleFamily::ManagementAdmitter,
+            "wamn_mgmt_admitter_0123456789abcdef0123456789abcdef01234567_a"
+        ));
+        assert!(!is_workload_generation_role(
+            WorkloadRoleFamily::ManagementAdmitter,
+            "wamn_management_admitter_0123456789abcdef0123456789abcdef01234567_a"
         ));
         for invalid in [
             "wamn_effect_writer_a",

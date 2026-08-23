@@ -4,6 +4,7 @@ use std::io::Write;
 use std::process::{Command, Output, Stdio};
 use std::thread;
 
+use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_run_state::admission::{RunStateSchema, management_admission_transaction};
 use wamn_run_state::queue::select_production_claim_sql;
 
@@ -121,6 +122,18 @@ fn surviving_authority_matrix_live() {
         .expect("read run-state DDL");
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .expect("read run-queue DDL");
+    let database = success(&url, "SELECT current_database();")
+        .trim()
+        .to_string();
+    let access_floor = sql::grant_connect_on_database_sql(&database);
+    let management_provision = sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::ManagementAdmitter,
+        &database,
+        MANAGEMENT_LOGIN,
+        "management-proof-password",
+        "2099-01-01T00:00:00Z",
+    );
+    let management_surface = sql::grant_management_admitter_surface_sql("wamn_run");
 
     success(
         &url,
@@ -129,7 +142,7 @@ fn surviving_authority_matrix_live() {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $$ DECLARE role_name text; BEGIN \
                FOREACH role_name IN ARRAY ARRAY[ \
-                 'wamn_app','wamn_scenario_author','wamn_effect_writer', \
+                 'wamn_app','wamn_control_author','wamn_scenario_author','wamn_effect_writer', \
                  'wamn_executor_platform','wamn_management_admitter', \
                  '{EXECUTOR_LOGIN}','{MANAGEMENT_LOGIN}' \
                ] LOOP \
@@ -142,19 +155,57 @@ fn surviving_authority_matrix_live() {
              CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
              CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
+             CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE wamn_executor_platform NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE wamn_management_admitter NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE {EXECUTOR_LOGIN} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE {MANAGEMENT_LOGIN} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOREPLICATION NOBYPASSRLS; \
              GRANT wamn_executor_platform TO {EXECUTOR_LOGIN} WITH SET FALSE, ADMIN FALSE; \
-             GRANT wamn_management_admitter TO {MANAGEMENT_LOGIN} WITH SET FALSE, ADMIN FALSE; \
-             BEGIN; {catalog} {run_state} {run_queue} COMMIT;"
+             BEGIN; {catalog} {run_state} {run_queue} COMMIT; \
+             {access_floor} \
+             {management_provision}"
+        ),
+    );
+    success(
+        &url,
+        &format!(
+            "GRANT UPDATE (durability_class) ON wamn_run.environment_policies \
+               TO wamn_management_admitter; \
+             {management_surface} \
+             DO $$ BEGIN \
+               ASSERT NOT pg_catalog.has_column_privilege( \
+                 'wamn_management_admitter', 'wamn_run.environment_policies', \
+                 'durability_class', 'UPDATE'); \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_authid \
+                  WHERE rolname = 'wamn_management_admitter' \
+                    AND NOT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
+                    AND NOT rolcreaterole AND NOT rolinherit AND NOT rolreplication \
+                    AND NOT rolbypassrls AND rolpassword IS NULL); \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_authid \
+                  WHERE rolname = '{MANAGEMENT_LOGIN}' \
+                    AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
+                    AND NOT rolcreaterole AND rolinherit AND NOT rolreplication \
+                    AND NOT rolbypassrls AND rolpassword IS NOT NULL \
+                    AND rolvaliduntil IS NOT NULL); \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_auth_members AS membership \
+                 JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
+                 JOIN pg_catalog.pg_roles AS child ON child.oid = membership.member \
+                  WHERE parent.rolname = 'wamn_management_admitter' \
+                    AND child.rolname = '{MANAGEMENT_LOGIN}' \
+                    AND NOT membership.admin_option \
+                    AND membership.inherit_option \
+                    AND NOT membership.set_option); \
+               ASSERT pg_catalog.has_database_privilege( \
+                 '{MANAGEMENT_LOGIN}', current_database(), 'CONNECT'); \
+               ASSERT NOT pg_catalog.has_database_privilege( \
+                 '{MANAGEMENT_LOGIN}', current_database(), 'TEMPORARY'); \
+             END $$;"
         ),
     );
 
@@ -163,17 +214,19 @@ fn surviving_authority_matrix_live() {
     let wiring_hash = format!("sha256:{}", "c".repeat(64));
     let race_wiring_hash = format!("sha256:{}", "d".repeat(64));
 
-    // Test-only union grants make current_user, rather than a generic ACL
-    // failure, the authority witness. The two candidate rows share one
-    // component with two requirements so array ordering is observable.
+    // The executor keeps test-only union grants so its wrong-class management
+    // attempt reaches the current_user guard. Management uses only the exact
+    // production surface above. The two candidate rows share one component
+    // with two requirements so array ordering is observable.
     success(
         &url,
         &format!(
             "GRANT USAGE ON SCHEMA wamn_run, catalog \
-               TO wamn_executor_platform, wamn_management_admitter; \
+               TO wamn_executor_platform; \
+             GRANT USAGE ON SCHEMA wamn_run TO wamn_control_author; \
              GRANT SELECT, INSERT, UPDATE, DELETE \
                ON ALL TABLES IN SCHEMA catalog, wamn_run \
-               TO wamn_executor_platform, wamn_management_admitter; \
+               TO wamn_executor_platform; \
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'dev','0.1','applied'); \
@@ -239,7 +292,8 @@ fn surviving_authority_matrix_live() {
         &format!(
             "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.tenant='t1'; \
              SET LOCAL search_path=wamn_run,catalog,public; \
-             SELECT current_user; {claim}; ROLLBACK;"
+             SELECT current_user; PREPARE matrix_claim(text,text) AS {claim}; \
+             EXECUTE matrix_claim('cat','dev'); ROLLBACK;"
         ),
     );
     assert!(claimed.contains(EXECUTOR_LOGIN));
@@ -385,8 +439,14 @@ fn surviving_authority_matrix_live() {
     assert_refusal(
         &url,
         &format!(
-            "BEGIN; SET LOCAL ROLE {MANAGEMENT_LOGIN}; SET LOCAL app.tenant='t1'; \
-             SET LOCAL search_path=wamn_run,catalog,public; {claim};"
+            "BEGIN; \
+             GRANT USAGE ON SCHEMA wamn_run, catalog TO {MANAGEMENT_LOGIN}; \
+             GRANT SELECT, INSERT, UPDATE, DELETE \
+               ON ALL TABLES IN SCHEMA catalog, wamn_run TO {MANAGEMENT_LOGIN}; \
+             SET LOCAL ROLE {MANAGEMENT_LOGIN}; SET LOCAL app.tenant='t1'; \
+             SET LOCAL search_path=wamn_run,catalog,public; \
+             PREPARE wrong_claim(text,text) AS {claim}; \
+             EXECUTE wrong_claim('cat','dev');"
         ),
         "executor-platform-authority-required",
     );
@@ -407,16 +467,30 @@ fn surviving_authority_matrix_live() {
              WHERE pg_catalog.has_table_privilege('wamn_app','wamn_run.run_queue',p)); \
          END $$;",
     );
-    assert_refusal(
-        &url,
-        "BEGIN; SET LOCAL ROLE wamn_app; \
-         SELECT wamn_run.require_executor_platform_authority();",
-        "executor-platform-authority-required",
-    );
-    assert_refusal(
-        &url,
-        "BEGIN; SET LOCAL ROLE wamn_app; \
-         SELECT wamn_run.require_management_admission_authority();",
-        "management-admission-authority-required",
-    );
+    // The management-admitter row is distinct from every author/guest writer.
+    // `wamn_app` is the guest SQL principal; neither it nor the host-side
+    // author/effect roles can cross either surviving run-queue authority guard.
+    for denied_role in [
+        "wamn_app",
+        "wamn_control_author",
+        "wamn_scenario_author",
+        "wamn_effect_writer",
+    ] {
+        assert_refusal(
+            &url,
+            &format!(
+                "BEGIN; SET LOCAL ROLE {denied_role}; \
+                 SELECT wamn_run.require_executor_platform_authority();"
+            ),
+            "executor-platform-authority-required",
+        );
+        assert_refusal(
+            &url,
+            &format!(
+                "BEGIN; SET LOCAL ROLE {denied_role}; \
+                 SELECT wamn_run.require_management_admission_authority();"
+            ),
+            "management-admission-authority-required",
+        );
+    }
 }

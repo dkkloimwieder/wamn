@@ -117,8 +117,8 @@ pub use wamn_run_state::{
     effect_writer_scope_hash, parse_effect_writer_credential, validate_effect_writer_credential,
 };
 pub use workload_role::{
-    CONTROL_AUTHOR_ROLE, RETENTION_ROLE, SERVICE_READER_ROLE, WorkloadRoleFamily,
-    WorkloadRoleScope, WorkloadRoleScopeError, WorkloadRoleScopeKind,
+    CONTROL_AUTHOR_ROLE, MANAGEMENT_ADMITTER_ROLE, RETENTION_ROLE, SERVICE_READER_ROLE,
+    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeError, WorkloadRoleScopeKind,
     legacy_effect_writer_generation_role, workload_generation_role, workload_role_scope_hash,
 };
 

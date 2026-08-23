@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, NoTls};
 
+use wamn_control_provision::sql;
 use wamn_ctl::migrate_catalog::{self, MigrateCatalogArgs};
 use wamn_ctl::reconcile_run_plane;
 use wamn_schema_control::BareSchemaName;
@@ -342,6 +343,13 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
     .await;
     let _ = std::fs::remove_file(&catalog_path);
     migrate_result.expect("install canonical application-family witnesses");
+
+    // The management surface revokes and regrants across `catalog` as well as
+    // the run schema, so it must follow the catalog install, not precede it.
+    client
+        .batch_execute(&sql::grant_management_admitter_surface_sql("wamn_run"))
+        .await
+        .expect("install canonical management-admission authority");
 
     assert!(repository.join(MANIFEST_PATH).is_file());
 }

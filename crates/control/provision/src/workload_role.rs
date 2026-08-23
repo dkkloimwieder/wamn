@@ -12,6 +12,15 @@ use crate::{APP_ROLE, DISPATCH_READER_ROLE};
 
 /// Stable NOLOGIN role used by control-author generations.
 pub const CONTROL_AUTHOR_ROLE: &str = "wamn_control_author";
+/// Stable NOLOGIN role used by management-admission generations.
+pub const MANAGEMENT_ADMITTER_ROLE: &str = "wamn_management_admitter";
+/// Frozen generation prefix for the management-admitter family (`wamn-0h0g.13.62`).
+///
+/// The stable ACL role name is 24 bytes, so reusing it as the generation prefix
+/// would mint a 67-byte identifier and PostgreSQL caps identifiers at 63. This
+/// shorter frozen prefix keeps the derived login at 61 bytes with the 160-bit
+/// scope digest and `_a`/`_b` suffix intact.
+const MANAGEMENT_ADMITTER_GENERATION_PREFIX: &str = "wamn_mgmt_admitter";
 /// Stable NOLOGIN role used by service-reader generations.
 pub const SERVICE_READER_ROLE: &str = "wamn_service_reader";
 /// Stable NOLOGIN role used by run-retention generations.
@@ -20,10 +29,16 @@ pub const RETENTION_ROLE: &str = "wamn_run_retention";
 const SCOPE_HASH_HEX_LEN: usize = 40;
 
 /// Exhaustive provisioning families. Adding authority requires a code change.
+///
+/// `wamn-0h0g.13.59` froze this vocabulary at six families.
+/// `wamn-0h0g.13.61` deliberately expands that frozen set once, from six to
+/// seven, by admitting the project-environment-scoped management-admitter
+/// family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
     EffectWriter,
     ControlAuthor,
+    ManagementAdmitter,
     DispatchReader,
     ServiceReader,
     App,
@@ -36,6 +51,7 @@ impl WorkloadRoleFamily {
         match self {
             Self::EffectWriter => EFFECT_WRITER_ROLE,
             Self::ControlAuthor => CONTROL_AUTHOR_ROLE,
+            Self::ManagementAdmitter => MANAGEMENT_ADMITTER_ROLE,
             Self::DispatchReader => DISPATCH_READER_ROLE,
             Self::ServiceReader => SERVICE_READER_ROLE,
             Self::App => APP_ROLE,
@@ -43,11 +59,25 @@ impl WorkloadRoleFamily {
         }
     }
 
+    /// Frozen prefix of this family's derived A/B generation identities.
+    ///
+    /// Equal to [`Self::acl_role`] for every family but `ManagementAdmitter`,
+    /// whose stable role name does not fit the PostgreSQL identifier cap once
+    /// the scope digest and generation suffix are appended (`wamn-0h0g.13.62`).
+    pub const fn generation_prefix(self) -> &'static str {
+        match self {
+            Self::ManagementAdmitter => MANAGEMENT_ADMITTER_GENERATION_PREFIX,
+            _ => self.acl_role(),
+        }
+    }
+
     /// Exact scope class used to derive generation identities.
     pub const fn scope_kind(self) -> WorkloadRoleScopeKind {
         match self {
             Self::EffectWriter | Self::App | Self::Retention => WorkloadRoleScopeKind::Tenant,
-            Self::DispatchReader | Self::ServiceReader => WorkloadRoleScopeKind::ProjectEnvironment,
+            Self::ManagementAdmitter | Self::DispatchReader | Self::ServiceReader => {
+                WorkloadRoleScopeKind::ProjectEnvironment
+            }
             Self::ControlAuthor => WorkloadRoleScopeKind::Control,
         }
     }
@@ -56,6 +86,7 @@ impl WorkloadRoleFamily {
         match self {
             Self::EffectWriter => b"wamn.effect-writer.scope.v0.1",
             Self::ControlAuthor => b"wamn.control-author.scope.v0.1",
+            Self::ManagementAdmitter => b"wamn.management-admitter.scope.v0.1",
             Self::DispatchReader => b"wamn.dispatch-reader.scope.v0.1",
             Self::ServiceReader => b"wamn.service-reader.scope.v0.1",
             Self::App => b"wamn.app.scope.v0.1",
@@ -217,7 +248,7 @@ pub fn workload_generation_role(
     }
     Ok(format!(
         "{}_{}_{}",
-        family.acl_role(),
+        family.generation_prefix(),
         workload_role_scope_hash(family, scope)?,
         generation.as_str(),
     ))
@@ -276,6 +307,7 @@ mod tests {
             [
                 WorkloadRoleFamily::EffectWriter,
                 WorkloadRoleFamily::ControlAuthor,
+                WorkloadRoleFamily::ManagementAdmitter,
                 WorkloadRoleFamily::DispatchReader,
                 WorkloadRoleFamily::ServiceReader,
                 WorkloadRoleFamily::App,
@@ -285,6 +317,7 @@ mod tests {
             [
                 WorkloadRoleScopeKind::Tenant,
                 WorkloadRoleScopeKind::Control,
+                WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::Tenant,
@@ -330,6 +363,15 @@ mod tests {
                 },
             ),
             (
+                WorkloadRoleFamily::ManagementAdmitter,
+                WorkloadRoleScope::ProjectEnvironment {
+                    org: "o",
+                    project: "p",
+                    environment: "dev",
+                    database: "db",
+                },
+            ),
+            (
                 WorkloadRoleFamily::DispatchReader,
                 WorkloadRoleScope::ProjectEnvironment {
                     org: "o",
@@ -369,6 +411,37 @@ mod tests {
             assert!(a.len() <= 63, "{a}");
             assert!(b.len() <= 63, "{b}");
         }
+    }
+
+    #[test]
+    fn management_admitter_generation_identity_is_frozen_and_distinct_from_its_acl_role() {
+        assert_eq!(
+            WorkloadRoleFamily::ManagementAdmitter.acl_role(),
+            MANAGEMENT_ADMITTER_ROLE
+        );
+        // The owner froze this prefix at 19 bytes or fewer so the derived
+        // login stays under the PostgreSQL identifier cap.
+        assert!(MANAGEMENT_ADMITTER_GENERATION_PREFIX.len() <= 19);
+        assert_ne!(
+            MANAGEMENT_ADMITTER_GENERATION_PREFIX,
+            MANAGEMENT_ADMITTER_ROLE
+        );
+        let role = workload_generation_role(
+            WorkloadRoleFamily::ManagementAdmitter,
+            WorkloadRoleScope::ProjectEnvironment {
+                org: "acme",
+                project: "billing",
+                environment: "dev",
+                database: "wamn-db-acme--billing--dev--k3m9x2p7",
+            },
+            CredentialGeneration::A,
+        )
+        .unwrap();
+        assert_eq!(
+            role,
+            "wamn_mgmt_admitter_c1e0f3849ce98895f9593009bc5f60e870150758_a"
+        );
+        assert_eq!(role.len(), 61);
     }
 
     #[test]

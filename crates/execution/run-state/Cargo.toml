@@ -38,3 +38,4 @@ tokio-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wamn-control-provision = { workspace = true }
