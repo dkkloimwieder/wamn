@@ -219,8 +219,27 @@ runtime:
       # The memory cap is deliberately NOT here: it is also read per store from
       # WAMN_MEMORY_CEILING_MB, which the binary must set before its Tokio runtime
       # exists, so a cap raised here alone would be silently re-clamped.
+      # [wamn-3ceu] THE HOST'S RELEASE, AND ITS FIRST ONE. Until now this file
+      # set no release at all, so `load_release(None, None, ..)` was the live
+      # path and every release-gated interface served nothing. This is an
+      # ADDITION, not a swap off a ConfigMap mount the host never had.
+      #
+      # Same carrier and same reasoning as the pool slots above: these two are
+      # not part of the chart's rendered surface either, since `wash host`
+      # upstream has no release model.
+      #
+      # The two are mutually required by the binary, so one without the other
+      # refuses at startup rather than serving a release-less host by accident.
+      #
+      # *** NOT ROLLABLE AS CHECKED IN. *** The digest is a 64-zero placeholder:
+      # no release can be minted in any environment yet (wamn-cdky, wamn-04m1),
+      # and a digest that addresses no artifact fails the pull, so every host Pod
+      # crashloops. Set both to the values the mint prints, or drop these two
+      # entries to go back to a host that carries no release.
       extraArgs:
         - "--pool-slots=512"
+        - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
+        - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
       resources:
         requests:
           memory: "256Mi"

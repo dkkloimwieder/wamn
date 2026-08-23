@@ -6,12 +6,18 @@
 #   - `wamn-executor-db`: one project-environment database URL under key `url`;
 #   - `wamn-registry-pull`: the pull-only Docker config from
 #     deploy/platform/registry-credentials.example.yaml;
-#   - the digest-named release-manifest ConfigMap selected below.
+#   - the release-manifest artifact named by the digest selected below.
 #
-# NOT APPLIABLE AS CHECKED IN: the 64-zero release ConfigMap name is a
-# placeholder for the desired-state writer owned by wamn-0h0g.15.98. A missing
-# object leaves the Pod in ContainerCreating. Unusable canonical bytes fail
-# process construction. Readiness never parses or re-verifies those bytes.
+# THE RELEASE ARRIVES OVER OCI, NOT AS A MOUNT (wamn-3ceu). A projected
+# ConfigMap carried no usable binding between the bytes and the name this
+# template asked for — the same template placed both, so comparing them tested
+# the template against itself. The registry is a third party: the digest travels
+# here, the bytes come from there, and the pull refuses unless they agree.
+#
+# NOT APPLIABLE AS CHECKED IN: the 64-zero manifest digest is a placeholder for
+# the desired-state writer owned by wamn-0h0g.15.98. A digest that addresses no
+# artifact fails process construction, so the Pod crashloops instead of going
+# ready. Readiness never re-verifies those bytes.
 #
 # STARTUP + ROLLOUTS: the process binds `/readyz` immediately and reports 503.
 # The transport asks the one RouterReadinessProbe to prepare only the release
@@ -73,7 +79,13 @@ spec:
             - { name: WAMN_SCHEMA, value: wamn_runner_demo }
             - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
             - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
-            - { name: WAMN_RELEASE_MANIFEST_ROOT, value: /etc/wamn/release-manifest }
+            # The release repository is deliberately its own base: a release
+            # artifact establishes release identity, it never implies where
+            # digest-addressed component bytes may be pulled from.
+            - name: WAMN_RELEASE_ARTIFACT_BASE
+              value: registry.wamn-system.svc.cluster.local:5000/wamn/releases
+            - name: WAMN_RELEASE_MANIFEST_DIGEST
+              value: sha256:0000000000000000000000000000000000000000000000000000000000000000
             - name: WAMN_COMPONENT_ARTIFACT_BASE
               value: registry.wamn-system.svc.cluster.local:5000/wamn/components
             - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
@@ -104,9 +116,6 @@ spec:
             successThreshold: 1
             failureThreshold: 1
           volumeMounts:
-            - name: release-manifest
-              mountPath: /etc/wamn/release-manifest
-              readOnly: true
             - name: registry-pull
               mountPath: /etc/wamn/registry
               readOnly: true
@@ -117,10 +126,6 @@ spec:
             requests: { cpu: "100m", memory: "256Mi" }
             limits: { memory: "4Gi" }
       volumes:
-        - name: release-manifest
-          configMap:
-            name: release-manifest-0000000000000000000000000000000000000000000000000000000000000000
-            optional: false
         - name: registry-pull
           secret:
             secretName: wamn-registry-pull
