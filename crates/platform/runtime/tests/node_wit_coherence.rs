@@ -1,15 +1,17 @@
-//! Drift guard for every surviving `wamn:postgres@0.1.0` package copy.
+//! Drift guard for every `wamn:node@0.1.0` package copy.
 //!
-//! `wit-bindgen` resolves each guest and host from its own WIT tree, so every
-//! copy must be registered here and remain byte-identical to the host copy.
+//! The router owns the contract. Each guest vendors its own copy for
+//! `wit-bindgen`, so inventory and complete package bytes are both guarded.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const AUTHORITY_COPY: &str = "crates/platform/runtime/wit/deps/wamn-postgres/package.wit";
+const PACKAGE_DECLARATION: &str = "package wamn:node@0.1.0;";
+const AUTHORITY_COPY: &str = "crates/execution/router/wit/package.wit";
 
-const EXPECTED_COPIES: [&str; 2] = [
-    "components/execution/materializer/wit/deps/wamn-postgres/package.wit",
+const EXPECTED_COPIES: [&str; 3] = [
+    "components/library/http-request/wit/deps/wamn-node/package.wit",
+    "components/library/transform/wit/deps/wamn-node/package.wit",
     AUTHORITY_COPY,
 ];
 
@@ -34,20 +36,14 @@ fn collect_copies(dir: &Path, root: &Path, out: &mut Vec<String>) {
             collect_copies(&path, root, out);
             continue;
         }
-
         if path.file_name().and_then(|name| name.to_str()) != Some("package.wit") {
             continue;
         }
-        let parent = path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str());
-        let grandparent = path
-            .parent()
-            .and_then(Path::parent)
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str());
-        if parent == Some("wamn-postgres") && grandparent == Some("deps") {
+
+        let Ok(source) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if source.lines().any(|line| line == PACKAGE_DECLARATION) {
             out.push(
                 path.strip_prefix(root)
                     .expect("copy is under repo root")
@@ -68,7 +64,7 @@ fn discover_copies(root: &Path) -> Vec<String> {
 }
 
 #[test]
-fn all_vendored_copies_are_registered() {
+fn all_package_copies_are_registered() {
     let root = repo_root();
     let discovered = discover_copies(&root);
     let mut expected: Vec<String> = EXPECTED_COPIES
@@ -79,13 +75,13 @@ fn all_vendored_copies_are_registered() {
 
     assert_eq!(
         discovered, expected,
-        "the wamn:postgres package inventory changed; register every surviving copy in \
-         crates/platform/runtime/tests/postgres_wit_coherence.rs"
+        "the wamn:node package inventory changed; register every copy in \
+         crates/platform/runtime/tests/node_wit_coherence.rs"
     );
 }
 
 #[test]
-fn every_copy_is_byte_identical_to_the_authority() {
+fn every_copy_is_byte_identical_to_the_router_authority() {
     let root = repo_root();
     let authority = fs::read(root.join(AUTHORITY_COPY))
         .unwrap_or_else(|error| panic!("{AUTHORITY_COPY} reads: {error}"));
