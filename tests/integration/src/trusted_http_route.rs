@@ -106,9 +106,10 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
     let component_bytes = std::fs::read(&options.component_wasm).with_context(|| {
         format!(
             "read component bytes {} — build it with a SEPARATE cargo invocation \
-             (`cargo build -p http-request --target wasm32-wasip2` inside components/); \
-             sharing one invocation with flow-http/materializer unifies serde_json/std \
-             into the no_std guest and fails with E0152 (wamn-0h0g.11.56)",
+             (`cargo build -p http-request --target wasm32-wasip2` inside \
+             components/no-std/, which is a separate workspace because sharing one \
+             invocation with flow-http/materializer unifies serde_json/std into the \
+             no_std guest and fails with E0152 — wamn-0h0g.11.56)",
             options.component_wasm.display()
         )
     })?;
@@ -199,7 +200,7 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
 }
 
 /// The SHIPPED palette declaration, rendered the way
-/// `components/library/publish.sh` renders it.
+/// `components/no-std/publish.sh` renders it.
 ///
 /// Read from the template rather than restated here: a copy would drift from
 /// the guest's real parameter contract, and `validate_parameters` in
@@ -208,7 +209,7 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
 fn declaration() -> anyhow::Result<ComponentDeclaration> {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let template = std::fs::read_to_string(format!(
-        "{root}/components/library/http-request/declaration.json.in"
+        "{root}/components/no-std/http-request/declaration.json.in"
     ))
     .context("read the http-request declaration template")?;
     let rendered = template

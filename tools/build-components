@@ -31,7 +31,6 @@ readonly WAMN_REPOSITORY_ROOT="$(
   pwd -P
 )"
 readonly WAMN_TIER_MANIFEST="$WAMN_REPOSITORY_ROOT/architecture/workspace-tiers.json"
-readonly WAMN_CARGO_MANIFEST="$WAMN_REPOSITORY_ROOT/components/Cargo.toml"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 
 command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
@@ -49,51 +48,94 @@ else
 fi
 cd -- "$WAMN_REPOSITORY_ROOT"
 
-declare WAMN_METADATA
-WAMN_METADATA="$("$WAMN_CARGO" metadata \
-  --manifest-path "$WAMN_CARGO_MANIFEST" \
-  --locked --offline --no-deps --format-version 1)" || {
-  wamn_fail 65 'locked component Cargo metadata failed'
-}
+# The guests are split across more than one Cargo workspace, because Cargo
+# feature unification is additive-only within a single invocation and would
+# force std into the `no_std` guests. One metadata read and at most one build
+# per declared workspace; the canonical inventory says which is which.
+declare WAMN_MANIFEST_LIST
+WAMN_MANIFEST_LIST="$(
+  jq -er '.source_inventory.component_workspaces
+          | select(length > 0)
+          | .[].manifest' "$WAMN_TIER_MANIFEST"
+)" || wamn_fail 65 'canonical inventory declares no component workspace'
+readonly WAMN_MANIFEST_LIST
+mapfile -t WAMN_MANIFESTS <<<"$WAMN_MANIFEST_LIST"
+readonly WAMN_MANIFESTS
+
+declare -a WAMN_METADATA=()
+declare WAMN_WORKSPACE_METADATA
+for manifest in "${WAMN_MANIFESTS[@]}"; do
+  WAMN_WORKSPACE_METADATA="$("$WAMN_CARGO" metadata \
+    --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest" \
+    --locked --offline --no-deps --format-version 1)" || {
+    wamn_fail 65 "locked component Cargo metadata failed for $manifest"
+  }
+  WAMN_METADATA+=("$WAMN_WORKSPACE_METADATA")
+done
 readonly WAMN_METADATA
 
 declare WAMN_PLAN
 WAMN_PLAN="$(
-  printf '%s\n' "$WAMN_METADATA" | jq -e -s --arg profile "$WAMN_PROFILE" '
+  printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s --arg profile "$WAMN_PROFILE" '
     .[0] as $contract
-    | .[1] as $metadata
+    | .[1:] as $metadata
+    | $contract.source_inventory.component_workspaces as $workspaces
     | $contract.profiles.components as $profiles
-    | ($metadata.packages | map({key: .id, value: .name}) | from_entries) as $names
-    | [$metadata.workspace_members[] | $names[.]] as $members
+    | [$metadata[]
+       | (.packages | map({key: .id, value: .name}) | from_entries) as $names
+       | [.workspace_members[] | $names[.]]] as $membership
+    | ($membership | add) as $members
     | (if $profile == "m1"
        then $profiles.m1_inventory_tier
        else $profiles.proof_inventory_tier
        end) as $tier
     | $contract.tiers[$tier].component_packages as $packages
     | select($contract.schema_version == "0.1")
-    | select($members | length == $contract.source_inventory.component_workspace.package_count)
+    | select($workspaces | length == ($membership | length))
+    | select([range($workspaces | length) as $index
+              | select(($membership[$index] | length)
+                       != $workspaces[$index].package_count)] | length == 0)
     | select($members | length == (unique | length))
     | select($packages | length == $profiles.expected_package_counts[$profile])
     | select($packages | length == (unique | length))
-    | select(([$packages[] as $package
-               | select($members | index($package) == null)] | length) == 0)
     | select(($contract.tiers[$profiles.proof_inventory_tier].component_packages | sort)
              == ($members | sort))
-    | {packages: $packages}
+    | [range($workspaces | length) as $index
+       | {manifest: $workspaces[$index].manifest,
+          packages: [$packages[]
+                     | select(. as $package
+                              | $membership[$index] | index($package) != null)]}]
+    | select(([.[].packages] | add | length) == ($packages | length))
+    | map(select(.packages | length > 0))
   ' "$WAMN_TIER_MANIFEST" -
 )" || wamn_fail 65 'component profile, canonical inventory, and locked metadata drifted'
 readonly WAMN_PLAN
 
-mapfile -t WAMN_PACKAGES < <(jq -r '.packages[]' <<<"$WAMN_PLAN")
+readonly WAMN_LEG_COUNT="$(jq -r 'length' <<<"$WAMN_PLAN")"
+((WAMN_LEG_COUNT > 0)) || wamn_fail 65 "$WAMN_PROFILE has an empty component selection"
+printf 'build-components: %s selects %s component packages across %s workspaces\n' \
+  "$WAMN_PROFILE" "$(jq -r '[.[].packages[]] | length' <<<"$WAMN_PLAN")" \
+  "$WAMN_LEG_COUNT" >&2
 
-declare -a WAMN_ARGUMENTS=(
-  build --locked --offline --target wasm32-wasip2
-  --manifest-path "$WAMN_CARGO_MANIFEST"
-)
-for package in "${WAMN_PACKAGES[@]}"; do
-  WAMN_ARGUMENTS+=(-p "$package")
+# Every leg runs: the workspaces are isolated precisely so that one workspace's
+# failure does not describe the other's state.
+WAMN_EXIT_STATUS=0
+for ((leg = 0; leg < WAMN_LEG_COUNT; leg += 1)); do
+  manifest="$(jq -r --argjson leg "$leg" '.[$leg].manifest' <<<"$WAMN_PLAN")"
+  declare -a WAMN_ARGUMENTS=(
+    build --locked --offline --target wasm32-wasip2
+    --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest"
+  )
+  while IFS= read -r package; do
+    WAMN_ARGUMENTS+=(-p "$package")
+  done < <(jq -r --argjson leg "$leg" '.[$leg].packages[]' <<<"$WAMN_PLAN")
+  leg_status=0
+  "$WAMN_CARGO" "${WAMN_ARGUMENTS[@]}" || leg_status=$?
+  if ((leg_status != 0)); then
+    printf 'build-components: FAIL: %s (exit %d)\n' "$manifest" "$leg_status" >&2
+    if ((WAMN_EXIT_STATUS == 0)); then
+      WAMN_EXIT_STATUS="$leg_status"
+    fi
+  fi
 done
-
-printf 'build-components: %s selects %s component packages\n' \
-  "$WAMN_PROFILE" "${#WAMN_PACKAGES[@]}" >&2
-exec "$WAMN_CARGO" "${WAMN_ARGUMENTS[@]}"
+exit "$WAMN_EXIT_STATUS"

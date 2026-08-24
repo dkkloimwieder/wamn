@@ -30,8 +30,8 @@ mod tests {
     /// Every vendored copy of the node ABI, repo-root-relative. The walk below
     /// cross-checks this list against disk BOTH ways.
     const EXPECTED_NODE_ABI_COPIES: [&str; 2] = [
-        "components/library/http-request/wit/deps/wamn-node/package.wit",
-        "components/library/transform/wit/deps/wamn-node/package.wit",
+        "components/no-std/http-request/wit/deps/wamn-node/package.wit",
+        "components/no-std/transform/wit/deps/wamn-node/package.wit",
     ];
 
     /// Tiers holding executable, bindable WIT. `docs/` is deliberately excluded:

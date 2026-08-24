@@ -8,6 +8,7 @@
 # Rust build artifacts
 /target
 /components/target
+/components/no-std/target
 *.wasm
 
 # Client workspace artifacts

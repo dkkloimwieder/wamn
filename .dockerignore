@@ -1,5 +1,6 @@
 /target
 /components/target
+/components/no-std/target
 .git
 .dolt
 .beads

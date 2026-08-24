@@ -430,18 +430,18 @@
       "deployable": false
     },
     {
-      "workspace": "components",
+      "workspace": "components-no-std",
       "name": "http-request",
-      "manifest_path": "components/library/http-request/Cargo.toml",
+      "manifest_path": "components/no-std/http-request/Cargo.toml",
       "role": "component",
       "target_class": "guest",
       "bounded_context": "execution",
       "deployable": true
     },
     {
-      "workspace": "components",
+      "workspace": "components-no-std",
       "name": "transform",
-      "manifest_path": "components/library/transform/Cargo.toml",
+      "manifest_path": "components/no-std/transform/Cargo.toml",
       "role": "component",
       "target_class": "guest",
       "bounded_context": "execution",

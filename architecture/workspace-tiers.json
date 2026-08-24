@@ -12,10 +12,19 @@
       "manifest": "Cargo.toml",
       "package_count": 35
     },
-    "component_workspace": {
-      "manifest": "components/Cargo.toml",
-      "package_count": 7
-    },
+    "component_workspaces": [
+      {
+        "workspace": "components",
+        "manifest": "components/Cargo.toml",
+        "package_count": 5
+      },
+      {
+        "workspace": "components-no-std",
+        "manifest": "components/no-std/Cargo.toml",
+        "package_count": 2
+      }
+    ],
+    "component_workspace_split_reason": "Cargo feature unification is additive-only and applies to every member of one invocation. Members of components/Cargo.toml reach serde_json/std through boon, jmespath and schemars, which have no feature knob, so a no_std guest supplying its own panic_handler fails with E0152 duplicate lang item panic_impl while it shares that invocation. Isolation is a second workspace, not a feature flag (wamn-0h0g.11.56, wamn-1yj4).",
     "non_cargo_inputs": []
   },
   "tiers": {
@@ -59,10 +68,12 @@
       "root_packages": [],
       "component_packages": [
         "flow-http",
-        "materializer"
+        "http-request",
+        "materializer",
+        "transform"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Build these explicit component package selectors from components/ with --target wasm32-wasip2. Their root-workspace path dependencies are resolved by Cargo."
+      "command_semantics": "Build these explicit component package selectors with --target wasm32-wasip2, one Cargo invocation per component workspace that owns a selected package. Their root-workspace path dependencies are resolved by Cargo."
     },
     "contract_conformance": {
       "root_packages": [
@@ -128,7 +139,7 @@
         "transform"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test all 35 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all seven component packages through explicit selectors for wasm32-wasip2, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 35 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all seven component packages through explicit selectors for wasm32-wasip2 across both component workspaces, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -171,7 +182,9 @@
       ],
       "component_packages": [
         "flow-http",
-        "materializer"
+        "http-request",
+        "materializer",
+        "transform"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Release membership is the deployable classification, but release admission requires the immutable SR17/SR26 identity join below. Cargo defaults are not release evidence."
@@ -215,7 +228,7 @@
       "m1_inventory_tier": "product_components",
       "proof_inventory_tier": "full_ci",
       "expected_package_counts": {
-        "m1": 2,
+        "m1": 4,
         "proof": 7
       }
     }
@@ -238,8 +251,18 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 7 component workspace members",
+      "selected_packages": "the 5 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
+    },
+    {
+      "working_directory": "components/no-std",
+      "commands": [
+        "cargo build",
+        "cargo check",
+        "cargo test"
+      ],
+      "selected_packages": "the 2 members of components/no-std/Cargo.toml",
+      "qualification": "these members must never share a Cargo invocation with components/Cargo.toml; production guest artifacts require build --workspace --target wasm32-wasip2"
     }
   ],
   "release_identity": {

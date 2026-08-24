@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+# A SECOND component workspace, named for the property that forces it to exist.
+#
+# Cargo unifies features across every member of one invocation, and unification
+# is ADDITIVE-ONLY: no downstream declaration can switch a feature off that an
+# upstream crate switches on. Members of ../Cargo.toml reach `serde_json/std`
+# through boon, jmespath and schemars — external crates with no feature knob —
+# so any `no_std` guest that supplies its own `#[panic_handler]` collides with
+# std's the moment it shares that invocation (E0152, duplicate lang item
+# `panic_impl`). Isolation is therefore a separate workspace, not a feature
+# flag; `resolver = "2"` does not isolate members within one invocation.
+#
+# Do not fold these members back into ../Cargo.toml. See wamn-0h0g.11.56 and
+# wamn-1yj4, which measured the alternatives: dropping `no_std` compiles but
+# adds ten wasi:cli imports that TENANT_WASI_PACKAGES denies, making both
+# guests unpublishable, and declaring `serde_json` with default-features = false
+# does not help because the std request is not local.
+members = ["http-request", "transform"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+dlmalloc = { version = "0.2.14", features = ["global"] }
+wit-bindgen = { version = "0.44", default-features = false, features = ["macros", "realloc"] }
+
+[profile.release]
+opt-level = "s"
+strip = true

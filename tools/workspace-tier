@@ -6,9 +6,10 @@ readonly WAMN_USAGE='usage:
   tools/workspace-tier dry-run TIER WORKSPACE MODE
   tools/workspace-tier run TIER WORKSPACE MODE
 
-WORKSPACE is root or components.
+WORKSPACE is root or one of the component workspaces declared in
+architecture/workspace-tiers.json source_inventory.component_workspaces.
 Root MODE is check, build, test, or test-all.
-Components MODE is check-wasm or build-wasm.'
+Component MODE is check-wasm or build-wasm.'
 
 wamn_fail() {
   local -r exit_code="$1"
@@ -31,10 +32,14 @@ readonly WAMN_REPOSITORY_ROOT="$(
   pwd -P
 )"
 readonly WAMN_TIER_MANIFEST="$WAMN_REPOSITORY_ROOT/architecture/workspace-tiers.json"
+readonly WAMN_PACKAGE_ROLES="$WAMN_REPOSITORY_ROOT/architecture/package-roles.json"
 
 command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
 [[ -r "$WAMN_TIER_MANIFEST" ]] || {
   wamn_fail 65 "cannot read $WAMN_TIER_MANIFEST"
+}
+[[ -r "$WAMN_PACKAGE_ROLES" ]] || {
+  wamn_fail 65 "cannot read $WAMN_PACKAGE_ROLES"
 }
 
 jq -e '
@@ -96,24 +101,34 @@ wamn_load_plan() {
 
   wamn_require_tier "$tier"
 
+  local workspace_family manifest_relative
   case "$workspace" in
     root)
+      workspace_family='root'
       selection_key='root_packages'
       WAMN_WORKING_DIRECTORY="$WAMN_REPOSITORY_ROOT"
       WAMN_CARGO_MANIFEST="$WAMN_REPOSITORY_ROOT/Cargo.toml"
       ;;
-    components)
-      selection_key='component_packages'
-      WAMN_WORKING_DIRECTORY="$WAMN_REPOSITORY_ROOT/components"
-      WAMN_CARGO_MANIFEST="$WAMN_REPOSITORY_ROOT/components/Cargo.toml"
-      ;;
     *)
-      wamn_usage_error "unknown workspace '$workspace'"
+      # More than one component workspace exists, because Cargo feature
+      # unification is additive-only inside one invocation. The canonical
+      # inventory owns which manifests those are.
+      manifest_relative="$(
+        jq -er --arg workspace "$workspace" '
+          .source_inventory.component_workspaces[]
+          | select(.workspace == $workspace)
+          | .manifest
+        ' "$WAMN_TIER_MANIFEST" 2>/dev/null
+      )" || wamn_usage_error "unknown workspace '$workspace'"
+      workspace_family='components'
+      selection_key='component_packages'
+      WAMN_CARGO_MANIFEST="$WAMN_REPOSITORY_ROOT/$manifest_relative"
+      WAMN_WORKING_DIRECTORY="$(dirname -- "$WAMN_CARGO_MANIFEST")"
       ;;
   esac
 
   local -a fixed_arguments
-  case "$workspace:$mode" in
+  case "$workspace_family:$mode" in
     root:check)
       fixed_arguments=(check --locked)
       ;;
@@ -146,18 +161,33 @@ wamn_load_plan() {
     wamn_fail 65 "$tier.$selection_key must contain unique Cargo package names"
   }
 
+  # A tier names every component package it covers, regardless of which
+  # component workspace owns it; the classification source resolves the owner.
+  local -a selection_filter=(--arg tier "$tier" --arg key "$selection_key")
+  local selection_program='.tiers[$tier][$key]'
+  if [[ "$workspace_family" == 'components' ]]; then
+    selection_filter+=(--arg workspace "$workspace"
+      --slurpfile roles "$WAMN_PACKAGE_ROLES")
+    selection_program='[$roles[0].packages[]
+                        | select(.workspace == $workspace)
+                        | .name] as $owned
+                       | [.tiers[$tier][$key][]
+                          | select(. as $package
+                                   | $owned | index($package) != null)]'
+  fi
+
   local selection_length
   selection_length="$(
-    jq -r --arg tier "$tier" --arg key "$selection_key" \
-      '.tiers[$tier][$key] | length' "$WAMN_TIER_MANIFEST"
+    jq -r "${selection_filter[@]}" "$selection_program | length" \
+      "$WAMN_TIER_MANIFEST"
   )"
   ((selection_length > 0)) || {
     wamn_fail 65 "$tier has an empty $workspace package selection"
   }
 
   mapfile -t WAMN_PACKAGES < <(
-    jq -r --arg tier "$tier" --arg key "$selection_key" \
-      '.tiers[$tier][$key][]' "$WAMN_TIER_MANIFEST"
+    jq -r "${selection_filter[@]}" "$selection_program | .[]" \
+      "$WAMN_TIER_MANIFEST"
   )
   WAMN_QUALIFICATION="$(
     jq -er --arg tier "$tier" \

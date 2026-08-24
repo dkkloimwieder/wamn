@@ -5,9 +5,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const ROOT_WORKSPACE: &str = "root";
-const COMPONENT_WORKSPACE: &str = "components";
+/// The guests live in more than one Cargo workspace. Feature unification is
+/// additive-only inside one invocation, so the `no_std` palette guests are
+/// isolated from the members that reach `serde_json/std` (wamn-0h0g.11.56).
+const COMPONENT_WORKSPACES: [(&str, &str, usize); 2] = [
+    ("components", "components/Cargo.toml", 5),
+    ("components-no-std", "components/no-std/Cargo.toml", 2),
+];
 const ROOT_MEMBER_COUNT: usize = 35;
-const COMPONENT_MEMBER_COUNT: usize = 7;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -311,10 +316,11 @@ fn validate_manifest_shape(root: &Path, manifest: &ArchitectureManifest) -> Vec<
                 package.manifest_path
             ));
         }
-        if !matches!(
-            package.workspace.as_str(),
-            ROOT_WORKSPACE | COMPONENT_WORKSPACE
-        ) {
+        if package.workspace != ROOT_WORKSPACE
+            && !COMPONENT_WORKSPACES
+                .iter()
+                .any(|(workspace, _, _)| *workspace == package.workspace)
+        {
             errors.push(format!(
                 "{} has unknown workspace {}",
                 package.manifest_path, package.workspace
@@ -746,7 +752,6 @@ fn manifest_classifies_both_workspaces_and_non_cargo_release_inputs() {
     let root = repository_root();
     let manifest = read_architecture_manifest(&root);
     let root_metadata = cargo_metadata(&root, "Cargo.toml");
-    let component_metadata = cargo_metadata(&root, "components/Cargo.toml");
 
     assert_no_errors(
         "package architecture manifest shape",
@@ -756,18 +761,22 @@ fn manifest_classifies_both_workspaces_and_non_cargo_release_inputs() {
         "root workspace package completeness",
         validate_workspace_completeness(&root, &manifest, ROOT_WORKSPACE, &root_metadata),
     );
-    assert_no_errors(
-        "component workspace package completeness",
-        validate_workspace_completeness(&root, &manifest, COMPONENT_WORKSPACE, &component_metadata),
-    );
     assert_eq!(
         workspace_manifest_paths(&root, &root_metadata).len(),
         ROOT_MEMBER_COUNT
     );
-    assert_eq!(
-        workspace_manifest_paths(&root, &component_metadata).len(),
-        COMPONENT_MEMBER_COUNT
-    );
+    for (workspace, cargo_manifest, member_count) in COMPONENT_WORKSPACES {
+        let component_metadata = cargo_metadata(&root, cargo_manifest);
+        assert_no_errors(
+            &format!("{workspace} workspace package completeness"),
+            validate_workspace_completeness(&root, &manifest, workspace, &component_metadata),
+        );
+        assert_eq!(
+            workspace_manifest_paths(&root, &component_metadata).len(),
+            member_count,
+            "{workspace} member count"
+        );
+    }
     assert!(manifest.non_cargo_inputs.is_empty());
 }
 
@@ -777,9 +786,10 @@ fn real_workspaces_satisfy_package_architecture() {
     let manifest = read_architecture_manifest(&root);
     let packages = package_map(&manifest);
     let root_metadata = cargo_metadata(&root, "Cargo.toml");
-    let component_metadata = cargo_metadata(&root, "components/Cargo.toml");
     let mut edges = graph_edges(&root, &root_metadata);
-    edges.extend(graph_edges(&root, &component_metadata));
+    for (_, cargo_manifest, _) in COMPONENT_WORKSPACES {
+        edges.extend(graph_edges(&root, &cargo_metadata(&root, cargo_manifest)));
+    }
 
     assert_no_errors(
         "resolved root and component workspace architecture",

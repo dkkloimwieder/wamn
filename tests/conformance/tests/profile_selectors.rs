@@ -9,7 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const ROOT_MANIFEST: &str = "Cargo.toml";
-const COMPONENT_MANIFEST: &str = "components/Cargo.toml";
+/// The guests live in more than one Cargo workspace. Feature unification is
+/// additive-only inside one invocation, so the `no_std` palette guests are
+/// isolated from the members that reach `serde_json/std` (wamn-0h0g.11.56).
+const COMPONENT_MANIFESTS: [&str; 2] = ["components/Cargo.toml", "components/no-std/Cargo.toml"];
 const PROFILE_TOOL: &str = "tools/profile";
 const COMPONENT_TOOL: &str = "tools/build-components";
 
@@ -167,12 +170,16 @@ fn profile_contract_matches_locked_metadata() {
     let root = repository_root();
     let contract = read_contract(&root);
     let root_output = cargo_metadata_output(&root, ROOT_MANIFEST);
-    let component_output = cargo_metadata_output(&root, COMPONENT_MANIFEST);
     let root_metadata = parse_metadata(&root_output, ROOT_MANIFEST);
-    let component_metadata = parse_metadata(&component_output, COMPONENT_MANIFEST);
     let root_members = names_for_ids(&root_metadata, &root_metadata.workspace_members);
-    let component_members =
-        names_for_ids(&component_metadata, &component_metadata.workspace_members);
+    let mut component_members = Vec::new();
+    for manifest in COMPONENT_MANIFESTS {
+        let output = cargo_metadata_output(&root, manifest);
+        let metadata = parse_metadata(&output, manifest);
+        let members = names_for_ids(&metadata, &metadata.workspace_members);
+        assert_unique(manifest, &members);
+        component_members.extend(members);
+    }
 
     assert_eq!(root_members.len(), 35);
     assert_eq!(component_members.len(), 7);
@@ -291,7 +298,7 @@ fn profile_contract_matches_locked_metadata() {
     assert_exact_set(
         "component m1",
         &component_m1,
-        &["flow-http", "materializer"],
+        &["flow-http", "http-request", "materializer", "transform"],
     );
     assert_exact_set(
         "component proof",
@@ -307,7 +314,7 @@ fn profile_contract_matches_locked_metadata() {
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 2);
+    assert_eq!(component_m1.len(), 4);
     assert_eq!(component_proof.len(), 7);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
@@ -338,6 +345,9 @@ fn scratch_directory(label: &str) -> PathBuf {
 
 fn write_fake_cargo(scratch: &Path) -> PathBuf {
     let fake = scratch.join("fake cargo");
+    // A metadata reply is keyed by the manifest it was asked about: more than
+    // one component workspace exists, and one canned reply for all of them
+    // would let a tool that reads the wrong workspace still pass.
     fs::write(
         &fake,
         r#"#!/usr/bin/env bash
@@ -347,7 +357,14 @@ set -euo pipefail
   printf '\036'
 } >> "$WAMN_FAKE_CARGO_LOG"
 if [[ "${1:-}" == metadata ]]; then
-  command cat -- "$WAMN_FAKE_METADATA"
+  manifest=''
+  while (($# > 0)); do
+    if [[ "$1" == --manifest-path ]]; then
+      manifest="$2"
+    fi
+    shift
+  done
+  command cat -- "$WAMN_FAKE_METADATA_DIRECTORY/${manifest//\//_}"
   exit 0
 fi
 exit 23
@@ -360,6 +377,14 @@ exit 23
     permissions.set_mode(0o755);
     fs::set_permissions(&fake, permissions).expect("failed to make fake Cargo executable");
     fake
+}
+
+fn write_fake_metadata(directory: &Path, manifest: &Path, metadata: &[u8]) {
+    fs::write(
+        directory.join(manifest.display().to_string().replace('/', "_")),
+        metadata,
+    )
+    .expect("failed to write canned Cargo metadata");
 }
 
 fn captured_invocations(path: &Path) -> Vec<Vec<String>> {
@@ -405,16 +430,24 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
     let root = repository_root();
     let contract = read_contract(&root);
     let root_output = cargo_metadata_output(&root, ROOT_MANIFEST);
-    let component_output = cargo_metadata_output(&root, COMPONENT_MANIFEST);
     let root_metadata = parse_metadata(&root_output, ROOT_MANIFEST);
     let scratch = scratch_directory("argv");
     let fake_cargo = write_fake_cargo(&scratch);
     let capture = scratch.join("captured argv");
-    let root_metadata_file = scratch.join("root metadata.json");
-    let component_metadata_file = scratch.join("component metadata.json");
-    fs::write(&root_metadata_file, &root_output.stdout).expect("failed to write root metadata");
-    fs::write(&component_metadata_file, &component_output.stdout)
-        .expect("failed to write component metadata");
+    let metadata_directory = scratch.join("canned metadata");
+    fs::create_dir(&metadata_directory).expect("failed to create canned metadata directory");
+    write_fake_metadata(
+        &metadata_directory,
+        &root.join(ROOT_MANIFEST),
+        &root_output.stdout,
+    );
+    let mut component_members = Vec::new();
+    for manifest in COMPONENT_MANIFESTS {
+        let output = cargo_metadata_output(&root, manifest);
+        let metadata = parse_metadata(&output, manifest);
+        component_members.push(set(&names_for_ids(&metadata, &metadata.workspace_members)));
+        write_fake_metadata(&metadata_directory, &root.join(manifest), &output.stdout);
+    }
 
     for profile in ["m1", "m2", "deploy", "full", "ops"] {
         let _ = fs::remove_file(&capture);
@@ -422,7 +455,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             .current_dir(&scratch)
             .env("CARGO", &fake_cargo)
             .env("WAMN_FAKE_CARGO_LOG", &capture)
-            .env("WAMN_FAKE_METADATA", &root_metadata_file)
+            .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
             .arg(profile)
             .output()
             .unwrap_or_else(|error| panic!("failed to execute profile {profile}: {error}"));
@@ -459,7 +492,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             .current_dir(&scratch)
             .env("CARGO", &fake_cargo)
             .env("WAMN_FAKE_CARGO_LOG", &capture)
-            .env("WAMN_FAKE_METADATA", &component_metadata_file)
+            .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
             .arg(profile)
             .output()
             .unwrap_or_else(|error| {
@@ -467,27 +500,40 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             });
         assert_eq!(output.status.code(), Some(23), "component {profile}");
 
-        let component_manifest = root.join(COMPONENT_MANIFEST);
-        let mut expected_run = vec![
-            root.display().to_string(),
-            "build".to_string(),
-            "--locked".to_string(),
-            "--offline".to_string(),
-            "--target".to_string(),
-            "wasm32-wasip2".to_string(),
-            "--manifest-path".to_string(),
-            component_manifest.display().to_string(),
-        ];
-        append_packages(
-            &mut expected_run,
-            &component_profile_packages(&contract, profile),
-        );
+        // One metadata read per component workspace, then one build leg per
+        // workspace that owns a selected package. Every leg runs: the second
+        // one is not described by the first one's failure.
+        let selected = component_profile_packages(&contract, profile);
+        let mut expected = COMPONENT_MANIFESTS
+            .iter()
+            .map(|manifest| expected_metadata_invocation(&root, &root.join(manifest)))
+            .collect::<Vec<_>>();
+        for (manifest, members) in COMPONENT_MANIFESTS.iter().zip(&component_members) {
+            let owned = selected
+                .iter()
+                .filter(|package| members.contains(*package))
+                .cloned()
+                .collect::<Vec<_>>();
+            if owned.is_empty() {
+                continue;
+            }
+            let component_manifest = root.join(manifest);
+            let mut expected_run = vec![
+                root.display().to_string(),
+                "build".to_string(),
+                "--locked".to_string(),
+                "--offline".to_string(),
+                "--target".to_string(),
+                "wasm32-wasip2".to_string(),
+                "--manifest-path".to_string(),
+                component_manifest.display().to_string(),
+            ];
+            append_packages(&mut expected_run, &owned);
+            expected.push(expected_run);
+        }
         assert_eq!(
             captured_invocations(&capture),
-            vec![
-                expected_metadata_invocation(&root, &component_manifest),
-                expected_run
-            ],
+            expected,
             "component profile {profile} Cargo argv drifted"
         );
     }
@@ -539,9 +585,11 @@ fn unknown_selector_modes_refuse_before_cargo() {
 fn selector_tools_do_not_duplicate_canonical_package_inventory() {
     let root = repository_root();
     let root_output = cargo_metadata_output(&root, ROOT_MANIFEST);
-    let component_output = cargo_metadata_output(&root, COMPONENT_MANIFEST);
     let root_metadata = parse_metadata(&root_output, ROOT_MANIFEST);
-    let component_metadata = parse_metadata(&component_output, COMPONENT_MANIFEST);
+    let component_metadata = COMPONENT_MANIFESTS
+        .iter()
+        .map(|manifest| parse_metadata(&cargo_metadata_output(&root, manifest), manifest))
+        .collect::<Vec<_>>();
 
     for tool in [PROFILE_TOOL, COMPONENT_TOOL] {
         let source = fs::read_to_string(root.join(tool))
@@ -549,7 +597,7 @@ fn selector_tools_do_not_duplicate_canonical_package_inventory() {
         for package in root_metadata
             .packages
             .iter()
-            .chain(&component_metadata.packages)
+            .chain(component_metadata.iter().flat_map(|one| &one.packages))
         {
             assert!(
                 !source.contains(&package.name),

@@ -2,7 +2,13 @@
 resolver = "2"
 # Product components are grouped by runtime role. Proof fixtures and reference
 # samples remain visibly outside those product tiers.
-members = ["ingress/flow-http", "execution/materializer", "library/http-request", "library/transform", "fixtures/busyloop", "fixtures/connection-http-standard", "fixtures/sockprobe"]
+#
+# The `no_std` palette guests are NOT members: Cargo feature unification is
+# additive-only, and members here reach `serde_json/std`, which collides with a
+# guest-supplied `#[panic_handler]`. They live in the second workspace at
+# `no-std/`, whose manifest carries the full reason (wamn-0h0g.11.56).
+members = ["ingress/flow-http", "execution/materializer", "fixtures/busyloop", "fixtures/connection-http-standard", "fixtures/sockprobe"]
+exclude = ["no-std"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,7 +16,6 @@ edition = "2024"
 
 [workspace.dependencies]
 boon = "0.6"
-dlmalloc = { version = "0.2.14", features = ["global"] }
 serde = "1"
 serde_json = "1"
 wit-bindgen = { version = "0.44", default-features = false, features = ["macros", "realloc"] }

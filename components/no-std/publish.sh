@@ -31,8 +31,8 @@ esac
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
-component_manifest="$repo_root/components/Cargo.toml"
-component_target="$repo_root/components/target/wasm32-wasip2/release"
+component_manifest="$repo_root/components/no-std/Cargo.toml"
+component_target="$repo_root/components/no-std/target/wasm32-wasip2/release"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/wamn-palette.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
 

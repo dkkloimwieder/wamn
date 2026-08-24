@@ -50,8 +50,8 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("busyloop", "components/fixtures/busyloop/src/main.rs"),
     ("connection-http-standard", "components/fixtures/connection-http-standard/src/lib.rs"),
     ("sockprobe", "components/fixtures/sockprobe/src/main.rs"),
-    ("http-request", "components/library/http-request/src/lib.rs"),
-    ("transform", "components/library/transform/src/lib.rs"),
+    ("http-request", "components/no-std/http-request/src/lib.rs"),
+    ("transform", "components/no-std/transform/src/lib.rs"),
 ];
 
 
@@ -96,7 +96,12 @@ fn manifest_path(module: &str) -> String {
 }
 
 fn workspace(module: &str) -> &'static str {
-    if module.starts_with("components/") {
+    // The guests live in more than one Cargo workspace: feature unification is
+    // additive-only, so the `no_std` palette guests are isolated from the
+    // members that reach serde_json/std (wamn-0h0g.11.56).
+    if module.starts_with("components/no-std/") {
+        "components-no-std"
+    } else if module.starts_with("components/") {
         "components"
     } else {
         "root"
