@@ -354,28 +354,43 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
     assert!(repository.join(MANIFEST_PATH).is_file());
 }
 
-async fn shared_portable_fingerprints(client: &Client) -> BTreeMap<String, PortableFingerprint> {
-    const RELATIONS: [&str; 17] = [
-        "catalog.catalogs",
-        "catalog.flow_artifacts",
-        "catalog.releases",
-        "catalog.release_flows",
-        "catalog.catalog_heads",
-        "catalog.component_library",
-        "catalog.flow_drafts",
-        "catalog.validated_flow_drafts",
-        "catalog.release_exposure_manifests",
-        "catalog.release_sources",
-        "catalog.release_attachments",
-        "catalog.connection_requirements",
-        "catalog.draft_safe_connection_grants",
-        "catalog.authoring_command_audit",
-        "wamn_run.authoring_test_run_reservations",
-        "wamn_run.authoring_test_case_runs",
-        "wamn_run.authoring_test_reports",
-    ];
-    let mut fingerprints = RELATIONS
-        .into_iter()
+/// Portable relations the control store installs that the project plane also
+/// installs, so both copies must carry an identical column and constraint shape.
+const SHARED_PORTABLE_RELATIONS: [&str; 10] = [
+    "catalog.catalogs",
+    "catalog.flow_artifacts",
+    "catalog.releases",
+    "catalog.release_flows",
+    "catalog.catalog_heads",
+    "catalog.component_library",
+    "catalog.release_exposure_manifests",
+    "catalog.release_sources",
+    "catalog.release_attachments",
+    "catalog.connection_requirements",
+];
+
+/// Portable relations that live only in the control plane.
+/// `install_project_database` DROPs the `catalog` and `wamn_run` schemas
+/// project-side and no project installer recreates these, so they have no
+/// project fingerprint by design. Comparing them across planes is what
+/// manufactured the seven-relation drift this list retires.
+const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 7] = [
+    "catalog.flow_drafts",
+    "catalog.validated_flow_drafts",
+    "catalog.draft_safe_connection_grants",
+    "catalog.authoring_command_audit",
+    "wamn_run.authoring_test_run_reservations",
+    "wamn_run.authoring_test_case_runs",
+    "wamn_run.authoring_test_reports",
+];
+
+async fn portable_fingerprints(
+    client: &Client,
+    relations: &[&str],
+) -> BTreeMap<String, PortableFingerprint> {
+    let mut fingerprints = relations
+        .iter()
+        .copied()
         .map(|relation| {
             (
                 relation.to_string(),
@@ -386,7 +401,6 @@ async fn shared_portable_fingerprints(client: &Client) -> BTreeMap<String, Porta
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let relations: &[&str] = &RELATIONS;
     for row in client
         .query(
             "SELECT n.nspname || '.' || c.relname, \
@@ -913,7 +927,16 @@ async fn protected_relations_match_reconciled_postgres() {
     prepare_scratch_database(&client).await;
     let declarations = declared_relations(&repository);
     install_control_database(&client).await;
-    let control_portable_fingerprints = shared_portable_fingerprints(&client).await;
+    let control_shared_fingerprints =
+        portable_fingerprints(&client, &SHARED_PORTABLE_RELATIONS).await;
+    let control_only_fingerprints =
+        portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
+    assert!(
+        control_only_fingerprints
+            .values()
+            .all(|fingerprint| !fingerprint.columns.is_empty()),
+        "control-only portable relations must exist in the control plane: {control_only_fingerprints:?}"
+    );
     let mut rows = generate_rows(
         &client,
         declarations
@@ -924,10 +947,20 @@ async fn protected_relations_match_reconciled_postgres() {
     )
     .await;
     install_project_database(&client, &url, &repository).await;
-    let project_portable_fingerprints = shared_portable_fingerprints(&client).await;
+    let project_shared_fingerprints =
+        portable_fingerprints(&client, &SHARED_PORTABLE_RELATIONS).await;
     assert_eq!(
-        control_portable_fingerprints, project_portable_fingerprints,
+        control_shared_fingerprints, project_shared_fingerprints,
         "control copies drifted from the still-authoritative project column/constraint shapes"
+    );
+    let project_side_control_only =
+        portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
+    assert!(
+        project_side_control_only
+            .values()
+            .all(|fingerprint| fingerprint.columns.is_empty()),
+        "control-only portable relations must not be installed project-side: \
+         {project_side_control_only:?}"
     );
     rows.extend(
         generate_rows(
