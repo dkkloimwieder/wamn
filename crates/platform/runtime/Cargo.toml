@@ -34,7 +34,14 @@ futures-util = { workspace = true }
 hex = { workspace = true }
 hyper = { workspace = true }
 url = { workspace = true }
-opentelemetry = { workspace = true, features = ["logs", "metrics"] }
+# wamn-0h0g.12.6: `trace` carries `opentelemetry::propagation` and
+# `global::get_text_map_propagator`, both `cfg(feature = "trace")`, which the
+# trusted HTTP effect needs to write its span onto the outbound wire.
+opentelemetry = { workspace = true, features = ["logs", "metrics", "trace"] }
+# The fork's `initialize_observability` installs a `tracing-opentelemetry` layer
+# but never a global tracer provider, so `global::tracer()` is a silent no-op
+# here. `OpenTelemetrySpanExt::context()` is the only way to read the live span.
+tracing-opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["logs"] }
 opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "logs"] }
 oci-client = { workspace = true }
@@ -69,3 +76,7 @@ wamn-catalog = { workspace = true, features = ["test-util"] }
 # no-trap proof hermetic — no wasm32-wasip2 build, no fixture artifact. Same
 # exact pin the one existing precedent uses (crates/execution/host).
 wat = "=1.252.0"
+# wamn-0h0g.12.6: the outbound-injection proof needs a real span context, which
+# only a `tracing-opentelemetry` layer over an SDK tracer provider produces.
+opentelemetry_sdk = { workspace = true, features = ["logs", "testing"] }
+tracing-subscriber = { workspace = true }

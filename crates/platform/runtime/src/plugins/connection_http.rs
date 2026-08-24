@@ -553,7 +553,56 @@ fn outbound_headers(
             .map_err(|_| ConnectionError::Incompatible)?;
         headers.insert("idempotency-key", value);
     }
+    inject_trace_context(&mut headers);
     Ok(headers)
+}
+
+/// The W3C fields of the effect span, written onto one outbound request.
+///
+/// A field the guest already sent stays: `components/library/http-request`
+/// forwards its node context's traceparent with `push_header_unless_present`,
+/// and the host adds context rather than rewriting the guest's.
+struct TraceContextHeaders<'a> {
+    headers: &'a mut reqwest::header::HeaderMap,
+}
+
+impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        // The W3C propagator writes `tracestate` even when the context carries
+        // none, and an empty field is not a field.
+        if value.is_empty() {
+            return;
+        }
+        let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) else {
+            return;
+        };
+        if self.headers.contains_key(&name) {
+            return;
+        }
+        let Ok(value) = reqwest::header::HeaderValue::from_str(&value) else {
+            return;
+        };
+        self.headers.insert(name, value);
+    }
+}
+
+/// [12.6] Put the running `wamn.connection_http` span on the wire.
+///
+/// Without this the only traceparent leaving the process was whatever the guest
+/// happened to forward, so a downstream service parented to the host's caller
+/// and never saw the effect at all.
+///
+/// The span is read through `tracing`, never `opentelemetry::global::tracer`:
+/// the fork's `initialize_observability` installs a `tracing-opentelemetry`
+/// layer and a propagator but NO global tracer provider, so the global tracer
+/// silently answers with a no-op span.
+fn inject_trace_context(headers: &mut reqwest::header::HeaderMap) {
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+
+    let context = tracing::Span::current().context();
+    opentelemetry::global::get_text_map_propagator(|propagator| {
+        propagator.inject_context(&context, &mut TraceContextHeaders { headers });
+    });
 }
 
 async fn execute(
@@ -837,5 +886,76 @@ mod tests {
         };
         let headers = outbound_headers(&admitted, HashMap::new()).expect("valid headers");
         assert_eq!(headers["idempotency-key"], "host");
+    }
+
+    fn effect_request(headers: Vec<Header>) -> Request {
+        Request {
+            requirement: "manager".to_string(),
+            method: "POST".to_string(),
+            path_and_query: "/notify".to_string(),
+            headers,
+            body: None,
+            idempotency_key: None,
+        }
+    }
+
+    /// A `tracing` subscriber whose OTel layer gives the effect span a real,
+    /// injectable span context — the only way to observe what leaves the host.
+    fn with_effect_span<T>(body: impl FnOnce() -> T) -> (T, opentelemetry::trace::SpanContext) {
+        use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
+        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+        );
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_opentelemetry::layer().with_tracer(provider.tracer("connection-http-test")),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let span = tracing::info_span!("wamn.connection_http");
+        span.in_scope(|| {
+            let context = span.context().span().span_context().clone();
+            (body(), context)
+        })
+    }
+
+    /// The effect the guest performed is what downstream must parent to. Before
+    /// `wamn-0h0g.12.6` nothing was injected at all, so the only traceparent on
+    /// the wire was whatever the guest forwarded from ingress.
+    #[test]
+    fn the_effect_span_is_injected_onto_the_outbound_request() {
+        let (headers, span_context) =
+            with_effect_span(|| outbound_headers(&effect_request(Vec::new()), HashMap::new()));
+        let headers = headers.expect("valid headers");
+        assert_eq!(
+            headers["traceparent"],
+            format!(
+                "00-{}-{}-01",
+                span_context.trace_id(),
+                span_context.span_id()
+            )
+            .as_str(),
+            "the running effect span must be the outbound parent"
+        );
+        assert!(
+            !headers.contains_key("tracestate"),
+            "an empty tracestate is not a field"
+        );
+    }
+
+    /// `components/library/http-request` forwards its node context's traceparent
+    /// with `push_header_unless_present`; the host stays coherent with it.
+    #[test]
+    fn a_guest_supplied_traceparent_is_not_overwritten() {
+        const GUEST: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let request = effect_request(vec![Header {
+            name: "traceparent".to_string(),
+            value: GUEST.as_bytes().to_vec(),
+        }]);
+        let (headers, _) = with_effect_span(|| outbound_headers(&request, HashMap::new()));
+        let headers = headers.expect("valid headers");
+        assert_eq!(headers["traceparent"], GUEST);
     }
 }

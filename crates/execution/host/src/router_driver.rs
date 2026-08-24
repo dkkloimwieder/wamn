@@ -236,6 +236,89 @@ impl Extractor for TraceHeaders<'_> {
     }
 }
 
+/// The pair of W3C fields the router hands one guest, written by the global
+/// propagator.
+///
+/// The mirror image of [`TraceHeaders`]: that one reads the caller's headers in,
+/// this one writes the host's own span out.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct NodeTraceContext {
+    traceparent: Option<String>,
+    tracestate: Option<String>,
+}
+
+impl opentelemetry::propagation::Injector for NodeTraceContext {
+    fn set(&mut self, key: &str, value: String) {
+        // The W3C propagator writes `tracestate` even when the context carries
+        // none, and an empty field is not a field.
+        let value = (!value.is_empty()).then_some(value);
+        if key.eq_ignore_ascii_case("traceparent") {
+            self.traceparent = value;
+        } else if key.eq_ignore_ascii_case("tracestate") {
+            self.tracestate = value;
+        }
+    }
+}
+
+/// The context the guest — and every hop below it — must parent to: the
+/// `wamn.component.invoke` span this node is running under, NOT the raw ingress
+/// header that opened the delivery.
+///
+/// Forwarding the ingress header verbatim made every downstream service a
+/// sibling of the host rather than its child, skipping the component span
+/// entirely, and left the queue path (which carries no ingress header at all,
+/// by the ratified host-scoped re-root) with no context to send.
+///
+/// Read through [`tracing_opentelemetry::OpenTelemetrySpanExt`], never
+/// `opentelemetry::global::tracer`: the fork's `initialize_observability`
+/// installs the layer but no global tracer provider, so the global tracer is a
+/// silent no-op.
+fn node_trace_context(request: &RouterDriverRequest) -> NodeTraceContext {
+    let mut carrier = NodeTraceContext::default();
+    let context = tracing::Span::current().context();
+    opentelemetry::global::get_text_map_propagator(|propagator| {
+        propagator.inject_context(&context, &mut carrier);
+    });
+    if carrier.traceparent.is_none() {
+        // A tracing subscriber without the OTel layer is the supported
+        // no-export mode: the span has no exportable context to inject, so pass
+        // the caller's own header through rather than dropping propagation.
+        carrier.traceparent = request.traceparent.clone();
+        carrier.tracestate = request.tracestate.clone();
+    }
+    carrier
+}
+
+/// The exact context one `wamn:node` guest is invoked with.
+///
+/// A free function, not an inline literal in `invoke_node`, because the trace
+/// fields are the only part of it a caller cannot see: `invoke_node` needs a
+/// live engine and real component bytes, and the guest's parentage has to be
+/// provable without either.
+///
+/// The caller instruments this invocation with the node's
+/// `wamn.component.invoke` span, so [`node_trace_context`] reads THAT span.
+fn node_context(
+    request: &RouterDriverRequest,
+    wiring_version: u32,
+    call: &wamn_router::NodeCall,
+    deadline_ms: u64,
+) -> anyhow::Result<node_types::NodeContext> {
+    let trace = node_trace_context(request);
+    Ok(node_types::NodeContext {
+        wiring_id: request.wiring_id.clone(),
+        wiring_version,
+        node_id: call.node.clone(),
+        delivery_id: request.delivery_id.clone(),
+        input_port: call.input_port.clone(),
+        occurrence: call.occurrence,
+        traceparent: trace.traceparent,
+        tracestate: trace.tracestate,
+        deadline_ms: Some(deadline_ms),
+        config: serde_json::to_string(&call.config).context("encode node config")?,
+    })
+}
+
 fn remote_trace_context(request: &RouterDriverRequest) -> Option<opentelemetry::Context> {
     let traceparent = request.traceparent.as_deref()?;
     let headers = TraceHeaders {
@@ -1128,18 +1211,7 @@ impl RouterDriver {
             .bind_identity(&acquisition)
             .with_context(|| format!("bind identity to {} instance", component.component_digest))?;
         let deadline_ms = bounded_node_deadline_ms(call.deadline_ms);
-        let context = node_types::NodeContext {
-            wiring_id: request.wiring_id.clone(),
-            wiring_version: active.version,
-            node_id: call.node.clone(),
-            delivery_id: request.delivery_id.clone(),
-            input_port: call.input_port.clone(),
-            occurrence: call.occurrence,
-            traceparent: request.traceparent.clone(),
-            tracestate: request.tracestate.clone(),
-            deadline_ms: Some(deadline_ms),
-            config: serde_json::to_string(&call.config).context("encode node config")?,
-        };
+        let context = node_context(request, active.version, call, deadline_ms)?;
         let input = serde_json::to_string(&call.payload).context("encode node input")?;
         // The instance is destroyed at the end of this invocation either way;
         // its `Drop` clears the identity it was bound to before it goes.
@@ -1642,6 +1714,106 @@ mod tests {
             component.span_context.trace_id(),
             root.span_context.trace_id()
         );
+    }
+
+    /// The guest must parent to the invocation the host is performing for it,
+    /// not to whatever called the host. Forwarding `request.traceparent` made
+    /// every downstream hop a sibling of `wamn.component.invoke`.
+    #[test]
+    fn node_context_carries_the_component_span_not_the_ingress_header() {
+        let harness = TraceHarness::install();
+        let request = driver_request(Some(VALID_TRACEPARENT));
+        let parent = remote_trace_context(&request).expect("valid W3C parent must extract");
+        let span = component_invocation_span(
+            &request,
+            "project-a",
+            7,
+            "sha256:component",
+            &node_call(),
+            Some(&parent),
+        );
+        let carried = span.in_scope(|| {
+            node_context(&request, 7, &node_call(), 100).expect("node context must encode")
+        });
+        drop(span);
+
+        let spans = harness.spans();
+        let component = span_named(&spans, "wamn.component.invoke");
+        assert_eq!(
+            carried.traceparent.as_deref(),
+            Some(
+                format!(
+                    "00-{}-{}-01",
+                    component.span_context.trace_id(),
+                    component.span_context.span_id()
+                )
+                .as_str()
+            ),
+            "the node must be handed the component span it is running under"
+        );
+        assert_ne!(
+            carried.traceparent.as_deref(),
+            Some(VALID_TRACEPARENT),
+            "handing the raw ingress header on skips wamn.component.invoke"
+        );
+        assert_eq!(carried.tracestate.as_deref(), Some("vendor=value"));
+    }
+
+    /// Queued delivery carries no ingress header at all — the ratified
+    /// host-scoped re-root — so injection is the ONLY thing that gives its guest
+    /// a traceparent.
+    #[test]
+    fn queue_node_context_derives_a_traceparent_from_the_host_scoped_root() {
+        let harness = TraceHarness::install();
+        let request = driver_request(None);
+        assert!(request.traceparent.is_none());
+        let queue = tracing::info_span!(parent: None, "wamn.queue.delivery");
+        let carried = queue.in_scope(|| {
+            let component = component_invocation_span(
+                &request,
+                "project-a",
+                7,
+                "sha256:component",
+                &node_call(),
+                None,
+            );
+            let carried = component.in_scope(|| {
+                node_context(&request, 7, &node_call(), 100).expect("node context must encode")
+            });
+            drop(component);
+            carried
+        });
+        drop(queue);
+
+        let spans = harness.spans();
+        let root = span_named(&spans, "wamn.queue.delivery");
+        let component = span_named(&spans, "wamn.component.invoke");
+        assert_eq!(
+            carried.traceparent.as_deref(),
+            Some(
+                format!(
+                    "00-{}-{}-01",
+                    root.span_context.trace_id(),
+                    component.span_context.span_id()
+                )
+                .as_str()
+            ),
+            "the queued guest must join the executor's own root trace"
+        );
+        assert_eq!(carried.tracestate, None);
+    }
+
+    /// A subscriber without the OTel layer is the supported no-export mode: the
+    /// span has no context to inject, and dropping the caller's header there
+    /// would break W3C pass-through for a deployment that only forwards.
+    #[test]
+    fn without_an_otel_layer_the_ingress_header_passes_through() {
+        let request = driver_request(Some(VALID_TRACEPARENT));
+        let carried = tracing::info_span!("wamn.component.invoke").in_scope(|| {
+            node_context(&request, 7, &node_call(), 100).expect("node context must encode")
+        });
+        assert_eq!(carried.traceparent.as_deref(), Some(VALID_TRACEPARENT));
+        assert_eq!(carried.tracestate.as_deref(), Some("vendor=value"));
     }
 
     #[test]
