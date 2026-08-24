@@ -1518,7 +1518,6 @@ fn catalog_execution_bundles_state_ownership_is_ratified() {
             "scenario-worker",
             "run-state",
             "execution-host",
-            "flowrunner",
             "ctl-copy",
         ]
     );

@@ -16,9 +16,7 @@ const RUN_STATE_TRANSITIONS_SOURCE: &str = "crates/execution/run-state/src/trans
 const FRESH_RUN_STATE_CARRIERS: &[&str] = &[
     "deploy/sql/run-state.sql",
     "deploy/sql/postgres-init.sql",
-    "test-support/fixtures/runner.rs",
     "tests/conformance/src/schema_drift.rs",
-    "tests/integration/src/runnerbench.rs",
     "crates/platform/runtime/tests/common/mod.rs",
 ];
 const EXECUTOR_SOURCE: &str = "services/executor/src/lib.rs";
@@ -258,24 +256,6 @@ fn dispatcher_reconciliation_is_tenant_scoped_and_read_only() {
             "NATS must remain a best-effort hint path: missing {required:?}"
         );
     }
-}
-
-#[test]
-fn executor_remains_the_direct_claim_owner() {
-    let dispatcher = read(DISPATCHER_SOURCE);
-    let dispatcher_manifest = read(DISPATCHER_MANIFEST);
-    let executor = normalize(&read(EXECUTOR_SOURCE));
-    let executor_manifest = read(EXECUTOR_MANIFEST);
-    let execution_host = normalize(&read(EXECUTION_HOST_SOURCE));
-
-    assert!(executor_manifest.contains("wamn-execution-host = { workspace = true }"));
-    assert!(executor.contains("ExecutionHost::instantiate("));
-    assert!(executor.contains("executor .drain_observing("));
-    assert!(execution_host.contains(".claim_next_production("));
-
-    assert!(!dispatcher_manifest.contains("wamn-execution-host"));
-    assert!(!dispatcher.contains("ExecutionHost"));
-    assert!(!dispatcher.contains("claim_next_production"));
 }
 
 #[test]

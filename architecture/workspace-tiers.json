@@ -10,11 +10,11 @@
   "source_inventory": {
     "root_workspace": {
       "manifest": "Cargo.toml",
-      "package_count": 39
+      "package_count": 35
     },
     "component_workspace": {
       "manifest": "components/Cargo.toml",
-      "package_count": 6
+      "package_count": 7
     },
     "non_cargo_inputs": []
   },
@@ -42,7 +42,6 @@
         "wamn-project-state",
         "wamn-router",
         "wamn-run-state",
-        "wamn-runner",
         "wamn-runtime",
         "wamn-scenario-model",
         "wamn-scenario-worker",
@@ -50,7 +49,6 @@
         "wamn-schema-compiler",
         "wamn-schema-control",
         "wamn-schema-model",
-        "wamn-standard-nodes",
         "wamn-waker"
       ],
       "component_packages": [],
@@ -110,7 +108,6 @@
         "wamn-proof-system",
         "wamn-router",
         "wamn-run-state",
-        "wamn-runner",
         "wamn-runtime",
         "wamn-scenario-model",
         "wamn-scenario-worker",
@@ -118,8 +115,6 @@
         "wamn-schema-compiler",
         "wamn-schema-control",
         "wamn-schema-model",
-        "wamn-standard-nodes",
-        "wamn-test-fixtures",
         "wamn-test-infrastructure",
         "wamn-waker"
       ],
@@ -127,8 +122,10 @@
         "busyloop",
         "connection-http-standard",
         "flow-http",
+        "http-request",
         "materializer",
-        "sockprobe"
+        "sockprobe",
+        "transform"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Test all 39 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all six component packages through explicit selectors for wasm32-wasip2, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
@@ -146,7 +143,6 @@
         "wamn-proof-integration",
         "wamn-proof-system",
         "wamn-scenario-worker",
-        "wamn-test-fixtures",
         "wamn-test-infrastructure",
         "wamn-waker"
       ],
@@ -154,8 +150,10 @@
         "busyloop",
         "connection-http-standard",
         "flow-http",
+        "http-request",
         "materializer",
-        "sockprobe"
+        "sockprobe",
+        "transform"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Build deployable native and proof owners plus every guest proof input, then execute the owning deploy/gates Jobs from docs/archive/build-and-test.md. Local Cargo success never substitutes for a named in-cluster gate of record."
@@ -310,10 +308,6 @@
         "path": "crates/data/entity-access"
       },
       {
-        "package": "wamn-runner",
-        "path": "crates/execution/flow-engine"
-      },
-      {
         "package": "wamn-execution-contract",
         "path": "crates/execution/contract"
       },
@@ -328,10 +322,6 @@
       {
         "package": "wamn-scheduler",
         "path": "crates/execution/scheduler"
-      },
-      {
-        "package": "wamn-standard-nodes",
-        "path": "crates/execution/standard-nodes"
       },
       {
         "package": "wamn-platform-identity",

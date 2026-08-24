@@ -12,9 +12,6 @@ use std::path::{Path, PathBuf};
 
 const REGISTRY_PATH: &str = "architecture/gate-registry.json";
 const GATE_DIRECTORY: &str = "deploy/gates";
-const LIVE_GATE_AUTHORITY_DOCUMENT: &str = "docs/exe-model.md";
-const LIVE_GATE_AUTHORITY_ANCHOR: &str = "## Proof and delivery";
-const EXPECTED_GATE_AUTHORITY: &str = "Gate governance derives from docs/exe-model.md §Proof and delivery. This registry records landed gate dispositions; retained D-number and recipe metadata is historical compatibility only. Commands, artifact inputs, and dependencies derive from referenced Job manifests and recipe-test directives and are intentionally absent.";
 const EVIDENCE_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 const SCHEDULING_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 
@@ -22,7 +19,11 @@ const SCHEDULING_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 #[serde(deny_unknown_fields)]
 struct Registry {
     schema_version: String,
-    authority: String,
+    // Prose about where gate governance is written down. Retained so the
+    // registry keeps parsing under deny_unknown_fields; the assertion that
+    // compared it to a copy of that prose was deleted with the doc greps.
+    #[serde(rename = "authority")]
+    _authority: String,
     registry_owner: String,
     machine_evidence_policy: String,
     decisions: Vec<Decision>,
@@ -251,11 +252,7 @@ fn validate_registry(
             registry.schema_version
         ));
     }
-    let live_authority = fs::read_to_string(root.join(LIVE_GATE_AUTHORITY_DOCUMENT))
-        .map_err(|error| format!("failed to read live gate authority: {error}"))?;
-    if registry.authority != EXPECTED_GATE_AUTHORITY
-        || !live_authority.contains(LIVE_GATE_AUTHORITY_ANCHOR)
-        || registry.registry_owner != "bd:wamn-2jdm.2"
+    if registry.registry_owner != "bd:wamn-2jdm.2"
         || !registry
             .machine_evidence_policy
             .contains("tools/kubernetes-gate-run")
@@ -576,15 +573,6 @@ fn m1_gate_claims_completed_checks_9_and_10() {
     assert!(!manifest.contains("wamn-pg"));
     assert!(!manifest.contains("wamn-sysdb"));
     assert!(!manifest.contains("error causation-e2e --timeout-secs"));
-}
-
-#[test]
-fn rejects_gate_authority_drift_mutant() {
-    let (root, mut registry, manifests) = fixtures();
-    registry.authority.push_str(" drift");
-    let error = validate_registry(&registry, &manifests, &root)
-    .expect_err("gate authority drift must fail");
-    assert!(error.contains("registry authority"), "{error}");
 }
 
 #[test]

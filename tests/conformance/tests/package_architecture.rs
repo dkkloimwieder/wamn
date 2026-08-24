@@ -6,8 +6,8 @@ use std::process::Command;
 
 const ROOT_WORKSPACE: &str = "root";
 const COMPONENT_WORKSPACE: &str = "components";
-const ROOT_MEMBER_COUNT: usize = 39;
-const COMPONENT_MEMBER_COUNT: usize = 6;
+const ROOT_MEMBER_COUNT: usize = 35;
+const COMPONENT_MEMBER_COUNT: usize = 7;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -785,22 +785,12 @@ fn real_workspaces_satisfy_package_architecture() {
         "resolved root and component workspace architecture",
         validate_graph(&packages, &manifest.graph_delta, &edges),
     );
-    let accepted = &manifest.graph_delta.accepted_edges[0];
-    assert_eq!(
-        accepted.reason,
-        "Standard nodes reuse transport-neutral response row shaping; this is pure row-shaping reuse, not deployable-root coupling."
-    );
+    // The one accepted edge was wamn-standard-nodes -> wamn-entity-access.
+    // That crate was deleted (wamn-0h0g.26.4), so the exception list is empty
+    // and every edge now has to pass the ordinary rules above.
     assert!(
-        edges.iter().any(|edge| {
-            matches_edge(
-                &accepted.from_manifest,
-                &accepted.to_manifest,
-                &accepted.dependency_kind,
-                &accepted.target,
-                edge,
-            )
-        }),
-        "the accepted standard-nodes response-row-shaping edge must remain live and exactly classified"
+        manifest.graph_delta.accepted_edges.is_empty(),
+        "an accepted graph edge reappeared without a guard naming it"
     );
 }
 

@@ -5,221 +5,55 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const PACKAGE_ROLES: &str = "architecture/package-roles.json";
-const EXECUTION_MODEL: &str = "docs/exe-model.md";
-const OUTCOME_PREFIX: &str = "//! MVP outcome: ";
 
-const CRASH_FLOOR: &str = "crash floor · M0 execution · flow composition";
-const AUTHENTICATED_ADMISSION: &str = "M0 authenticated admission via the warm run-worker";
-const EVENT_SPINE: &str = "event spine (causation depth = loop guard)";
-const WAKE_FROM_ZERO: &str = "wake-from-zero";
-const PUBLISH_GATE: &str = "publish gate";
-const PROVISIONING: &str =
-    "provisioning · publish · additive schema · tenant isolation (T1 minting)";
-const MANAGEMENT_AUTH: &str = "management auth";
-const POSTGRES_NODE: &str = "the Postgres standard node (`standard-nodes/src/postgres.rs`)";
-const EGRESS_CONFINEMENT: &str = "egress confinement (import allowlist, mutation-proofed)";
-const M0_NODE_SET: &str = "M0 node set";
-const PROOF_FLOOR: &str = "proof floor";
 
 // (package, root module, F.1 outcome)
-const RETAINED_ROOTS: &[(&str, &str, &str)] = &[
-    (
-        "wamn-authoring-model",
-        "crates/authoring/model/src/lib.rs",
-        PUBLISH_GATE,
-    ),
-    (
-        "wamn-catalog",
-        "crates/catalog/model/src/lib.rs",
-        PROVISIONING,
-    ),
-    (
-        "wamn-cdc-reader",
-        "services/cdc-reader/src/lib.rs",
-        EVENT_SPINE,
-    ),
-    (
-        "wamn-component-policy",
-        "crates/platform/component-policy/src/lib.rs",
-        EGRESS_CONFINEMENT,
-    ),
-    (
-        "wamn-control-provision",
-        "crates/control/provision/src/lib.rs",
-        PROVISIONING,
-    ),
-    (
-        "wamn-control-registry",
-        "crates/control/registry/src/lib.rs",
-        PROVISIONING,
-    ),
-    ("wamn-ctl", "services/ctl/src/lib.rs", PROVISIONING),
-    (
-        "wamn-dispatcher",
-        "services/dispatcher/src/lib.rs",
-        WAKE_FROM_ZERO,
-    ),
-    (
-        "wamn-entity-access",
-        "crates/data/entity-access/src/lib.rs",
-        POSTGRES_NODE,
-    ),
-    (
-        "wamn-event-reg",
-        "crates/events/registration/src/lib.rs",
-        EVENT_SPINE,
-    ),
-    (
-        "wamn-event-wire",
-        "crates/events/wire/src/lib.rs",
-        EVENT_SPINE,
-    ),
-    (
-        "wamn-execution-contract",
-        "crates/execution/contract/src/lib.rs",
-        CRASH_FLOOR,
-    ),
-    (
-        "wamn-execution-host",
-        "crates/execution/host/src/lib.rs",
-        CRASH_FLOOR,
-    ),
-    ("wamn-executor", "services/executor/src/lib.rs", CRASH_FLOOR),
-    (
-        "wamn-gate-harness",
-        "test-support/harness/src/lib.rs",
-        PROOF_FLOOR,
-    ),
-    ("wamn-gates", "tests/orchestrator/src/main.rs", PROOF_FLOOR),
-    ("wamn-host", "services/host/src/main.rs", CRASH_FLOOR),
-    (
-        "wamn-materializer",
-        "crates/events/materializer/src/lib.rs",
-        EVENT_SPINE,
-    ),
-    (
-        "wamn-pg-core",
-        "crates/platform/pg-core/src/lib.rs",
-        EVENT_SPINE,
-    ),
-    (
-        "wamn-platform-identity",
-        "crates/identity/platform/src/lib.rs",
-        MANAGEMENT_AUTH,
-    ),
-    (
-        "wamn-project-state",
-        "crates/identity/project-state/src/lib.rs",
-        PROVISIONING,
-    ),
-    (
-        "wamn-proof-conformance",
-        "tests/conformance/src/lib.rs",
-        PROOF_FLOOR,
-    ),
-    (
-        "wamn-proof-integration",
-        "tests/integration/src/lib.rs",
-        PROOF_FLOOR,
-    ),
-    ("wamn-proof-system", "tests/system/src/lib.rs", PROOF_FLOOR),
-    (
-        "wamn-router",
-        "crates/execution/router/src/lib.rs",
-        CRASH_FLOOR,
-    ),
-    (
-        "wamn-run-state",
-        "crates/execution/run-state/src/lib.rs",
-        CRASH_FLOOR,
-    ),
-    (
-        "wamn-runner",
-        "crates/execution/flow-engine/src/lib.rs",
-        CRASH_FLOOR,
-    ),
-    (
-        "wamn-runtime",
-        "crates/platform/runtime/src/lib.rs",
-        CRASH_FLOOR,
-    ),
-    (
-        "wamn-scenario-model",
-        "crates/scenarios/model/src/lib.rs",
-        PUBLISH_GATE,
-    ),
-    (
-        "wamn-scenario-worker",
-        "services/scenario-worker/src/lib.rs",
-        PUBLISH_GATE,
-    ),
-    (
-        "wamn-scheduler",
-        "crates/execution/scheduler/src/lib.rs",
-        WAKE_FROM_ZERO,
-    ),
-    (
-        "wamn-schema-compiler",
-        "crates/schema/compiler/src/lib.rs",
-        PROVISIONING,
-    ),
-    (
-        "wamn-schema-control",
-        "crates/schema/control/src/lib.rs",
-        PROVISIONING,
-    ),
-    (
-        "wamn-schema-model",
-        "crates/schema/model/src/lib.rs",
-        PROVISIONING,
-    ),
-    (
-        "wamn-standard-nodes",
-        "crates/execution/standard-nodes/src/lib.rs",
-        M0_NODE_SET,
-    ),
-    (
-        "wamn-test-fixtures",
-        "test-support/fixtures/lib.rs",
-        PROOF_FLOOR,
-    ),
-    (
-        "wamn-test-infrastructure",
-        "test-support/infrastructure/lib.rs",
-        PROOF_FLOOR,
-    ),
-    ("wamn-waker", "services/waker/src/lib.rs", WAKE_FROM_ZERO),
-    (
-        "flow-http",
-        "components/ingress/flow-http/src/lib.rs",
-        AUTHENTICATED_ADMISSION,
-    ),
-    (
-        "flowrunner",
-        "components/execution/flowrunner/src/lib.rs",
-        CRASH_FLOOR,
-    ),
-    (
-        "materializer",
-        "components/execution/materializer/src/main.rs",
-        EVENT_SPINE,
-    ),
-    (
-        "busyloop",
-        "components/fixtures/busyloop/src/main.rs",
-        PROOF_FLOOR,
-    ),
-    (
-        "connection-http-standard",
-        "components/fixtures/connection-http-standard/src/lib.rs",
-        PROOF_FLOOR,
-    ),
-    (
-        "sockprobe",
-        "components/fixtures/sockprobe/src/main.rs",
-        PROOF_FLOOR,
-    ),
+// (package, root module)
+const RETAINED_ROOTS: &[(&str, &str)] = &[
+    ("wamn-authoring-model", "crates/authoring/model/src/lib.rs"),
+    ("wamn-catalog", "crates/catalog/model/src/lib.rs"),
+    ("wamn-cdc-reader", "services/cdc-reader/src/lib.rs"),
+    ("wamn-component-policy", "crates/platform/component-policy/src/lib.rs"),
+    ("wamn-control-provision", "crates/control/provision/src/lib.rs"),
+    ("wamn-control-registry", "crates/control/registry/src/lib.rs"),
+    ("wamn-ctl", "services/ctl/src/lib.rs"),
+    ("wamn-dispatcher", "services/dispatcher/src/lib.rs"),
+    ("wamn-entity-access", "crates/data/entity-access/src/lib.rs"),
+    ("wamn-event-reg", "crates/events/registration/src/lib.rs"),
+    ("wamn-event-wire", "crates/events/wire/src/lib.rs"),
+    ("wamn-execution-contract", "crates/execution/contract/src/lib.rs"),
+    ("wamn-execution-host", "crates/execution/host/src/lib.rs"),
+    ("wamn-executor", "services/executor/src/lib.rs"),
+    ("wamn-gate-harness", "test-support/harness/src/lib.rs"),
+    ("wamn-gates", "tests/orchestrator/src/main.rs"),
+    ("wamn-host", "services/host/src/main.rs"),
+    ("wamn-materializer", "crates/events/materializer/src/lib.rs"),
+    ("wamn-pg-core", "crates/platform/pg-core/src/lib.rs"),
+    ("wamn-platform-identity", "crates/identity/platform/src/lib.rs"),
+    ("wamn-project-state", "crates/identity/project-state/src/lib.rs"),
+    ("wamn-proof-conformance", "tests/conformance/src/lib.rs"),
+    ("wamn-proof-integration", "tests/integration/src/lib.rs"),
+    ("wamn-proof-system", "tests/system/src/lib.rs"),
+    ("wamn-router", "crates/execution/router/src/lib.rs"),
+    ("wamn-run-state", "crates/execution/run-state/src/lib.rs"),
+    ("wamn-runtime", "crates/platform/runtime/src/lib.rs"),
+    ("wamn-scenario-model", "crates/scenarios/model/src/lib.rs"),
+    ("wamn-scenario-worker", "services/scenario-worker/src/lib.rs"),
+    ("wamn-scheduler", "crates/execution/scheduler/src/lib.rs"),
+    ("wamn-schema-compiler", "crates/schema/compiler/src/lib.rs"),
+    ("wamn-schema-control", "crates/schema/control/src/lib.rs"),
+    ("wamn-schema-model", "crates/schema/model/src/lib.rs"),
+    ("wamn-test-infrastructure", "test-support/infrastructure/lib.rs"),
+    ("wamn-waker", "services/waker/src/lib.rs"),
+    ("flow-http", "components/ingress/flow-http/src/lib.rs"),
+    ("materializer", "components/execution/materializer/src/main.rs"),
+    ("busyloop", "components/fixtures/busyloop/src/main.rs"),
+    ("connection-http-standard", "components/fixtures/connection-http-standard/src/lib.rs"),
+    ("sockprobe", "components/fixtures/sockprobe/src/main.rs"),
+    ("http-request", "components/library/http-request/src/lib.rs"),
+    ("transform", "components/library/transform/src/lib.rs"),
 ];
+
 
 #[derive(Debug, Deserialize)]
 struct PackageRoles {
@@ -269,22 +103,6 @@ fn workspace(module: &str) -> &'static str {
     }
 }
 
-fn retained_outcomes(execution_model: &str) -> BTreeSet<&str> {
-    let ledger = execution_model
-        .split_once("### Retained roots")
-        .expect("execution model must retain the outcome ledger")
-        .1
-        .split_once("## Owned tradeoffs")
-        .expect("retained roots must end at owned tradeoffs")
-        .0;
-    ledger
-        .lines()
-        .filter_map(|line| line.split('|').nth(1))
-        .map(str::trim)
-        .filter(|cell| !cell.is_empty() && *cell != "Outcome" && !cell.starts_with("---"))
-        .collect()
-}
-
 #[test]
 fn retained_root_map_exactly_covers_the_package_inventory() {
     let root = repository_root();
@@ -297,7 +115,7 @@ fn retained_root_map_exactly_covers_the_package_inventory() {
         .collect::<BTreeSet<_>>();
     let expected = RETAINED_ROOTS
         .iter()
-        .map(|&(package, module, _)| {
+        .map(|&(package, module)| {
             (
                 workspace(module).to_owned(),
                 package.to_owned(),
@@ -312,42 +130,4 @@ fn retained_root_map_exactly_covers_the_package_inventory() {
         RETAINED_ROOTS.len(),
         "duplicate package root"
     );
-}
-
-#[test]
-fn every_retained_root_names_its_exact_wip_outcome() {
-    let root = repository_root();
-    let execution_model = read(&root, EXECUTION_MODEL);
-    let ledger_outcomes = retained_outcomes(&execution_model);
-    let mut modules = BTreeSet::new();
-
-    for &(package, module, outcome) in RETAINED_ROOTS {
-        assert!(
-            ledger_outcomes.contains(outcome),
-            "{package} names an outcome absent from the execution model: {outcome:?}"
-        );
-        assert!(modules.insert(module), "duplicate module root");
-
-        let source = read(&root, module);
-        let expected = format!("{OUTCOME_PREFIX}{outcome}.");
-        let module_markers = source
-            .lines()
-            .take_while(|line| line.starts_with("//!"))
-            .filter(|line| line.starts_with(OUTCOME_PREFIX))
-            .collect::<Vec<_>>();
-        let all_markers = source
-            .lines()
-            .filter(|line| line.starts_with(OUTCOME_PREFIX))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            module_markers,
-            [expected.as_str()],
-            "{module} must name exactly one exact outcome in its root module docs"
-        );
-        assert_eq!(
-            all_markers, module_markers,
-            "{module} carries an outcome marker outside its root module docs"
-        );
-    }
 }

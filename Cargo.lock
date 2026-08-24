@@ -4679,13 +4679,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-standard-nodes"
-version = "0.1.0"
-dependencies = [
- "wamn-execution-contract",
-]
-
-[[package]]
 name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [

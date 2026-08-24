@@ -13,7 +13,7 @@ const COMPONENT_MANIFEST: &str = "components/Cargo.toml";
 const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
-const ROOT_DEFAULT_MEMBER_PATHS: [&str; 18] = [
+const ROOT_DEFAULT_MEMBER_PATHS: [&str; 17] = [
     "crates/authoring/model",
     "crates/catalog/model",
     "crates/data/entity-access",
@@ -22,7 +22,6 @@ const ROOT_DEFAULT_MEMBER_PATHS: [&str; 18] = [
     "crates/execution/router",
     "crates/execution/run-state",
     "crates/execution/scheduler",
-    "crates/execution/standard-nodes",
     "crates/identity/platform",
     "crates/platform/component-policy",
     "crates/platform/pg-core",

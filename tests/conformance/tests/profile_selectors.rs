@@ -174,8 +174,8 @@ fn profile_contract_matches_locked_metadata() {
     let component_members =
         names_for_ids(&component_metadata, &component_metadata.workspace_members);
 
-    assert_eq!(root_members.len(), 39);
-    assert_eq!(component_members.len(), 6);
+    assert_eq!(root_members.len(), 35);
+    assert_eq!(component_members.len(), 7);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -291,7 +291,7 @@ fn profile_contract_matches_locked_metadata() {
     assert_exact_set(
         "component m1",
         &component_m1,
-        &["flowrunner", "flow-http", "materializer"],
+        &["flow-http", "materializer"],
     );
     assert_exact_set(
         "component proof",
@@ -300,14 +300,15 @@ fn profile_contract_matches_locked_metadata() {
             "busyloop",
             "connection-http-standard",
             "flow-http",
-            "flowrunner",
+            "http-request",
             "materializer",
             "sockprobe",
+            "transform",
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 3);
-    assert_eq!(component_proof.len(), 6);
+    assert_eq!(component_m1.len(), 2);
+    assert_eq!(component_proof.len(), 7);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(

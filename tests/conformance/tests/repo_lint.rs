@@ -8,18 +8,16 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL: &str = "tools/repo-lint";
-const ROOT_MEMBER_COUNT: usize = 39;
-const COMPONENT_MEMBER_COUNT: usize = 6;
-const LEG_LABELS: [&str; 9] = [
+const ROOT_MEMBER_COUNT: usize = 35;
+const COMPONENT_MEMBER_COUNT: usize = 7;
+const LEG_LABELS: [&str; 7] = [
     "connection HTTP per-invocation client",
     "root rustfmt",
     "components rustfmt",
     "root Clippy",
     "components native Clippy",
     "connection-http-standard native Clippy",
-    "flowrunner native Clippy",
     "components wasm Clippy",
-    "flowrunner wasm Clippy",
 ];
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);

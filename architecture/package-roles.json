@@ -1,15 +1,7 @@
 {
   "schema_version": "0.1",
   "graph_delta": {
-    "accepted_edges": [
-      {
-        "from_manifest": "crates/execution/standard-nodes/Cargo.toml",
-        "to_manifest": "crates/data/entity-access/Cargo.toml",
-        "dependency_kind": "normal",
-        "target": "all",
-        "reason": "Standard nodes reuse transport-neutral response row shaping; this is pure row-shaping reuse, not deployable-root coupling."
-      }
-    ],
+    "accepted_edges": [],
     "transition_exceptions": []
   },
   "packages": [
@@ -297,15 +289,6 @@
     },
     {
       "workspace": "root",
-      "name": "wamn-runner",
-      "manifest_path": "crates/execution/flow-engine/Cargo.toml",
-      "role": "core",
-      "target_class": "shared",
-      "bounded_context": "execution",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
       "name": "wamn-runtime",
       "manifest_path": "crates/platform/runtime/Cargo.toml",
       "role": "adapter",
@@ -373,24 +356,6 @@
       "role": "contract",
       "target_class": "shared",
       "bounded_context": "schema",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-standard-nodes",
-      "manifest_path": "crates/execution/standard-nodes/Cargo.toml",
-      "role": "core",
-      "target_class": "shared",
-      "bounded_context": "execution",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-test-fixtures",
-      "manifest_path": "test-support/fixtures/Cargo.toml",
-      "role": "test",
-      "target_class": "native",
-      "bounded_context": "proof",
       "deployable": false
     },
     {
@@ -463,6 +428,24 @@
       "target_class": "guest",
       "bounded_context": "proof",
       "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "http-request",
+      "manifest_path": "components/library/http-request/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "execution",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
+      "name": "transform",
+      "manifest_path": "components/library/transform/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "execution",
+      "deployable": true
     }
   ],
   "non_cargo_inputs": []
