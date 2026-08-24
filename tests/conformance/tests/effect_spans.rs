@@ -68,7 +68,7 @@ const RUNTIME_SOURCE: &str = "crates/platform/runtime/src";
 /// `docs/archive/observability/dashboards.md` slices traces by them.
 const SPAN_NAMES: &[(&str, &[&str])] = &[
     (POSTGRES, &["\"wamn.postgres\""]),
-    (HTTP, &["\"wamn.http_effect\""]),
+    (HTTP, &["\"wamn.connection_http\""]),
     (JETSTREAM, &["\"wamn.jetstream\""]),
 ];
 
@@ -129,8 +129,46 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
         "client::HostCursor",
         &[("fetch", Surface::Effect), ("drop", DESTRUCTOR)],
     ),
-    (HTTP, "http_effect::Host", &[("send", Surface::Effect)]),
-    (JETSTREAM, "consumer::Host", &[("bind", Surface::Effect)]),
+    // The named-imports world (`wasm_component_model_implements`) is the SAME
+    // three DB surfaces reached with an explicit project, so it is the same set
+    // of effects. `syn` reads the source, not the enabled features, so a
+    // cfg-gated impl is as visible here as any other — and an effect that only
+    // exists in one build is exactly the one a runtime probe would miss.
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::client::Host",
+        &[
+            ("query", Surface::Effect),
+            ("execute", Surface::Effect),
+            ("begin", Surface::Effect),
+        ],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::client::HostTransaction",
+        &[
+            ("query", Surface::Effect),
+            ("execute", Surface::Effect),
+            ("open_cursor", Surface::Effect),
+            ("commit", Surface::Effect),
+            ("rollback", Surface::Effect),
+            ("drop", DESTRUCTOR),
+        ],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::client::HostCursor",
+        &[("fetch", Surface::Effect), ("drop", DESTRUCTOR)],
+    ),
+    (HTTP, "http::Host", &[("send", Surface::Effect)]),
+    (
+        JETSTREAM,
+        "consumer::Host",
+        &[
+            ("bind", Surface::Effect),
+            ("bind_registration", Surface::Effect),
+        ],
+    ),
     (
         JETSTREAM,
         "consumer::HostDurableConsumer",
@@ -147,6 +185,7 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
             ("ack", Surface::Effect),
             ("nack", Surface::Effect),
             ("term", Surface::Effect),
+            ("dead_letter", Surface::Effect),
             ("drop", DESTRUCTOR),
         ],
     ),
@@ -258,21 +297,50 @@ fn trait_path(path: &syn::Path) -> String {
         .join("::")
 }
 
-/// Every file-local function whose body reaches [`SPAN_CONSTRUCTOR`], so a
-/// per-plugin wrapper (`db_span`, `js_span`, `invocation_span`) counts as
-/// opening a span while an unrelated helper does not.
-fn span_openers(file: &syn::File) -> BTreeSet<String> {
-    let mut openers = BTreeSet::new();
-    // One pass is enough for the wrappers in the tree; a wrapper of a wrapper
-    // would need another, and would be a smell worth failing on anyway.
-    for item in &file.items {
-        if let Item::Fn(function) = item
-            && opens_a_span(&calls_of(function.block.as_ref()))
-        {
-            openers.insert(function.sig.ident.to_string());
+/// The file-local functions whose bodies satisfy `directly`, closed over the
+/// calls between them, so a wrapper — and a wrapper of a wrapper — counts while
+/// an unrelated helper does not.
+///
+/// `wamn-0h0g.24.3` wrote this as a single pass, because the tree then had
+/// exactly one level: `db_span` held the `effect_span!` and each host method
+/// called it. `dcc914b9` added the named-imports world by splitting every
+/// postgres surface into a project-aware helper the two host traits share
+/// (`db_span` → `db_span_for_project`, and `client::HostTransaction::query` →
+/// `txn_query` → `db_span_for_project`), which put two levels between an effect
+/// method and the macro. Following that split does not loosen what is asserted:
+/// delete the `effect_span!` from `db_span_for_project` and this set empties, so
+/// every postgres effect fails at once.
+fn reaching(file: &syn::File, directly: impl Fn(&Calls) -> bool) -> BTreeSet<String> {
+    let bodies: Vec<(String, Calls)> = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Fn(function) => Some((
+                function.sig.ident.to_string(),
+                calls_of(function.block.as_ref()),
+            )),
+            _ => None,
+        })
+        .collect();
+    let mut reached: BTreeSet<String> = bodies
+        .iter()
+        .filter(|(_, calls)| directly(calls))
+        .map(|(name, _)| name.clone())
+        .collect();
+    // Each round only adds, and there are finitely many functions to add.
+    loop {
+        let grown: Vec<String> = bodies
+            .iter()
+            .filter(|(name, calls)| {
+                !reached.contains(name) && calls.functions.intersection(&reached).next().is_some()
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        if grown.is_empty() {
+            return reached;
         }
+        reached.extend(grown);
     }
-    openers
 }
 
 #[test]
@@ -291,7 +359,8 @@ fn every_effect_surface_opens_the_shared_span() {
 
     for (file, traits) in expected {
         let parsed = parse(file);
-        let openers = span_openers(&parsed);
+        let openers = reaching(&parsed, opens_a_span);
+        let instrumenters = reaching(&parsed, |calls| calls.methods.contains("instrument"));
 
         let mut found: BTreeMap<String, Vec<&ImplItem>> = BTreeMap::new();
         for item in &parsed.items {
@@ -364,11 +433,17 @@ fn every_effect_surface_opens_the_shared_span() {
                      It must invoke `{SPAN_CONSTRUCTOR}!` or call a file-local wrapper of it \
                      (wrappers in this file: {openers:?})"
                 );
+                let via_delegate = calls
+                    .functions
+                    .intersection(&instrumenters)
+                    .next()
+                    .is_some();
                 assert!(
-                    calls.methods.contains("instrument"),
+                    calls.methods.contains("instrument") || via_delegate,
                     "{file}: `{host_trait}::{name}` builds a span but never calls \
                      `.instrument(..)`, so the span closes before the awaited effect runs \
-                     and covers nothing"
+                     and covers nothing (instrumenting functions in this file: \
+                     {instrumenters:?})"
                 );
             }
         }
@@ -486,11 +561,13 @@ fn the_published_postgres_identifiers_are_frozen() {
         ),
         (
             r#".f64_histogram("wamn.postgres.query.duration_ms")"#,
-            "tests/integration/src/metricbench.rs:721 (live poll, gate blocks on it) and :1251              (pinned assertion) read wamn_postgres_query_duration_ms_count",
+            "docs/archive/observability/metrics.md:134 — the 9.8 metric-set recipe asserts \
+             wamn_postgres_query_duration_ms_count > 0",
         ),
         (
             r#"const DB_OPERATION: &str = "db.operation";"#,
-            "tests/integration/src/metricbench.rs:1202 fixture carries db_operation=\"query\"",
+            "docs/archive/observability/dashboards.md:100 — db_operation is the only label \
+             besides wamn_project the published series is allowed to carry",
         ),
     ] {
         assert!(
