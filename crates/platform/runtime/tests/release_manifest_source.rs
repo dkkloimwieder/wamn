@@ -1,7 +1,8 @@
 //! Every refusal the release-manifest OCI source makes before it touches a registry.
 //!
-//! The one refusal that needs a real registry — a published artifact pulling
-//! back byte-exact — is the ignored leg at the bottom.
+//! The one leg that needs a real registry — a published artifact pulling back
+//! byte-exact and welding the release it names — is the ignored leg at the
+//! bottom.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -164,22 +165,92 @@ async fn a_digest_that_cannot_name_an_artifact_refuses_before_any_transport() {
     }
 }
 
+/// One required live-leg fact, or a failure naming the variable and its shape.
+///
+/// `#[ignore]` gates *selection*; once a run has selected this leg, an absent
+/// variable is a failed test. A `let Ok(value) = var(..) else { return }` skip
+/// would report success in every default run and prove nothing.
+fn live_env(name: &str, expectation: &str) -> String {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => panic!("this live leg requires {name}: {expectation}"),
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires a disposable authenticated registry holding a published release"]
-async fn a_published_release_pulls_back_byte_exact() {
-    let artifact_base = std::env::var("WAMN_RELEASE_MANIFEST_ARTIFACT_BASE")
-        .expect("set WAMN_RELEASE_MANIFEST_ARTIFACT_BASE to the published repository");
-    let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
-        .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
-    let manifest_digest = std::env::var("WAMN_RELEASE_MANIFEST_DIGEST")
-        .expect("set WAMN_RELEASE_MANIFEST_DIGEST to the published manifest digest");
+async fn a_published_release_pulls_back_byte_exact_and_welds_the_release_it_names() {
+    let artifact_base = live_env(
+        "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
+        "the explicit <registry>/<repository> the release was pushed to",
+    );
+    // The loader reads `auths.<bare host:port>.username` and `.password` and has
+    // no `auth` field at all, so Docker's base64 form is silently ignored and a
+    // scheme-prefixed key is not found. There is also no anonymous path: even an
+    // unauthenticated throwaway registry needs a dummy non-empty pair here.
+    let registry_auth_file = live_env(
+        "WAMN_REGISTRY_AUTH_FILE",
+        "a Docker config whose auths key is that registry's bare host:port, carrying \
+         explicit non-empty username and password fields",
+    );
+    let manifest_digest = live_env(
+        "WAMN_RELEASE_MANIFEST_DIGEST",
+        "the published manifest digest, sha256:<64 lowercase hex>",
+    );
+    let release_version: i32 = live_env(
+        "WAMN_RELEASE_MANIFEST_RELEASE_VERSION",
+        "the catalog version the mint froze into that manifest",
+    )
+    .parse()
+    .expect("WAMN_RELEASE_MANIFEST_RELEASE_VERSION is an i32");
 
+    // The exact pair of calls both service `load_release` functions make, in
+    // that order and with that spelling. This proves the mechanism where it
+    // lives; that each host process still *invokes* it, before it binds a
+    // component, is pinned by the conformance guard
+    // `one_release_manifest_weld_construction_site_per_host_process`
+    // (wamn-0h0g.15.101, tests/conformance/src/runtime_inventory.rs).
     let source = ReleaseManifestSource::new(&artifact_base, true, Path::new(&registry_auth_file))
-        .expect("the disposable registry configures");
-    let bytes = source
+        .expect("the disposable registry configures")
+        .with_ca_paths(&[])
+        .expect("no extra bundles leaves this source on the compiled-in roots");
+    let canonical_bytes = source
         .pull_verified(&manifest_digest)
         .await
         .expect("the published release pulls");
 
-    assert_eq!(component_digest(&bytes), manifest_digest);
+    assert_eq!(component_digest(&canonical_bytes), manifest_digest);
+
+    let origin = format!("{artifact_base}@{manifest_digest}");
+    let weld = ReleaseManifestWeld::load_canonical_bytes(&canonical_bytes, &origin)
+        .expect("the pulled bytes weld");
+
+    // Both identity halves come out of the transferred content, and they agree
+    // with the name the pod template gave — the check the mount carrier cannot
+    // make, made here against a third party that stored the bytes.
+    assert_eq!(weld.release().manifest_digest.as_str(), manifest_digest);
+    assert_eq!(
+        weld.release().release_version,
+        release_version,
+        "the narrowed release version must be the catalog version the mint froze"
+    );
+    // Nothing was dropped on the way through the parse: the welded document
+    // re-encodes to the exact bytes the registry served.
+    assert_eq!(
+        weld.manifest().canonical_bytes(),
+        canonical_bytes,
+        "the welded document must re-encode to the pulled bytes"
+    );
+
+    // A digest this repository does not hold is a refusal, never an empty
+    // release — the same posture a pod pointed at a rolled-back tag must take.
+    let absent = format!("sha256:{}", "f".repeat(64));
+    assert_eq!(
+        source
+            .pull_verified(&absent)
+            .await
+            .expect_err("a digest the repository does not hold refuses")
+            .kind(),
+        ReleaseManifestFetchErrorKind::Unavailable
+    );
 }
