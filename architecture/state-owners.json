@@ -69,7 +69,7 @@
       "role": "effect"
     },
     "flow-model": {
-      "path": "crates/execution/flow-model",
+      "path": "crates/execution/contract",
       "role": "semantic"
     },
     "catalog-model": {
