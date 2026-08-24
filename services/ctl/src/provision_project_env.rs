@@ -2863,6 +2863,29 @@ mod tests {
     use clap::{CommandFactory as _, FromArgMatches as _, Parser};
     use wamn_control_provision::{EFFECT_WRITER_ROLE, MANAGEMENT_ADMITTER_ROLE};
 
+    /// The boundary the source-scanning guards below split this file on, so they
+    /// read the IMPLEMENTATION half only (wamn-3o3a).
+    ///
+    /// Every signature those guards search for is also spelled in this module, so
+    /// a scan that reaches the test half lets a DELETED subject match the test's
+    /// own search string: the `expect` never fires and the span silently
+    /// collapses onto test source. Splitting on the bare attribute is not enough
+    /// — that string is spelled here too, so it holds only while the real
+    /// attribute happens to come first, and a boundary that stops matching (an
+    /// inner `cfg`, a reshaped attribute) reopens the collapse with no failure.
+    ///
+    /// This literal is immune because in source it is written with an ESCAPED
+    /// `\n`, so it cannot match its own spelling — only the real module header.
+    /// Locating it with `find` also makes the boundary's absence LOUD, where
+    /// `split(..).next()` is infallible and can never report it.
+    const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
+
+    /// The implementation half of this file: everything before the test module.
+    fn implementation_half() -> &'static str {
+        let source = include_str!("provision_project_env.rs");
+        &source[..source.find(CFG_TEST_MODULE).expect("test module boundary")]
+    }
+
     #[derive(Debug, Parser)]
     struct TestCli {
         #[command(flatten)]
@@ -2941,10 +2964,7 @@ mod tests {
             );
         }
 
-        let implementation = include_str!("provision_project_env.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
+        let implementation = implementation_half();
         let identity_accesses = implementation
             .split("let org = args")
             .nth(1)
@@ -3010,10 +3030,7 @@ mod tests {
             }
         }
 
-        let implementation = include_str!("provision_project_env.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
+        let implementation = implementation_half();
         let identity_accesses = implementation
             .split("fn workload_action_identity<'a>(")
             .nth(1)
