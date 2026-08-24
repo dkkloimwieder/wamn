@@ -1,9 +1,9 @@
-//! The `copy-project-env` subcommand (wamn-8df.5): the unified env-symmetric
+//! The `copy-project-env` subcommand (wamn-8df.5): the env-symmetric
 //! **data copy** between two `(org, project, env)` triples.
 //!
 //! The plan comes from the pure [`wamn_control_provision::plan_copy`]; this driver holds
 //! the connections and executes each [`CopyStep`] by composing the shipped
-//! machinery:
+//! machinery.
 //!
 //! Definition promotion now has one production owner, `wamn-ctl promote`.
 //! This operations verb retains only `pg_restore --data-only

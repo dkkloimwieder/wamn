@@ -278,7 +278,8 @@ pub(crate) async fn read_current_applied(
 /// Apply a target catalog to the connected database: read the current applied
 /// version (locked), plan with the pure engine, and run the whole [`ApplyPlan`]
 /// in **one transaction** (the R9c invariant). Shared by `migrate-catalog` and
-/// the copy driver's definition pass (`copy-project-env`, wamn-8df.5).
+/// `wamn-ctl promote` (`promote.rs`), the sole production owner of definition
+/// promotion; `copy-project-env` copies data only and never calls this.
 // Its parameters are exactly the in-transaction verb's; bundling them would churn
 // both signatures and every caller for no behaviour change.
 #[allow(clippy::too_many_arguments)]
@@ -481,8 +482,9 @@ async fn ensure_existing_release_manifest(
     Ok(())
 }
 
-/// A schema-only migration keeps the prior sealed flow set. A first release may
-/// be sealed empty only when the project flow registry is genuinely empty.
+/// A schema-only migration carries the prior sealed release membership forward
+/// (`catalog.release_flows`). A first release may be sealed empty only when the
+/// legacy flow registry (fixture-only) `<data schema>.flows` is genuinely empty.
 async fn carry_forward_release(
     tx: &tokio_postgres::Transaction<'_>,
     tenant: &str,

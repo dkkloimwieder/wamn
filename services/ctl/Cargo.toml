@@ -72,8 +72,6 @@ wamn-platform-identity = { workspace = true }
 # push-component is the sole production caller of byte admission and shares
 # the immutable OCI media/reference contract with the runtime pull side.
 wamn-runtime = { workspace = true }
-# wamn-8df.5 copy-project-env: the definition pass re-compiles the copied RLS
-# policy rows and applies them on the dst.
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
 wamn-run-state = { workspace = true }
