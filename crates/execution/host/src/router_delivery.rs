@@ -1,5 +1,6 @@
 //! Guest delivery into the single production router driver.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
@@ -9,7 +10,9 @@ use opentelemetry::metrics::{Counter, Meter};
 use wamn_catalog::{AttachmentKind, ServingManifest};
 use wamn_event_wire::Causation;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
-use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
+use wamn_runtime::plugins::wamn_jetstream::{
+    DerivedPublishRequest, RouterTapPhase, RouterTapPreview, WamnJetstream,
+};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -51,6 +54,13 @@ const SOURCE_ID: &str = "wamn.source.id";
 const WIRING_ID: &str = "wamn.wiring.id";
 const WIRING_VERSION: &str = "wamn.wiring.version";
 const DELIVERY_ERROR: &str = "wamn.delivery.error";
+
+// The two driver refusals a live view can show. Shared with `DeliveryClass`
+// rather than respelled, so a dashboard and a run screen never disagree about
+// what happened to the same delivery — pinned by
+// `a_refusal_reads_the_same_to_a_dashboard_and_to_a_live_view`.
+const WIRING_NOT_PRELOADED: &str = "wiring-not-preloaded";
+const EXECUTION_FAILED: &str = "execution-failed";
 
 /// The one bridge shared by attachment and registration ingress.
 pub struct RouterDeliveryBridge {
@@ -143,14 +153,28 @@ impl RouterDeliveryBridge {
             Some(trace) => (Some(trace.traceparent), trace.tracestate),
             None => (None, None),
         };
+        // The live view's first boundary, published while the input payload is
+        // still a local: after the request is built it belongs to the driver.
+        self.tap(
+            source,
+            &delivery_id,
+            &target.wiring_id,
+            target.wiring_version,
+            RouterTapPhase::Accepted,
+            &payload,
+        )
+        .await;
+
         let release = &self.release.manifest().release;
         let request = RouterDriverRequest {
             tenant_id: release.tenant_id.clone(),
             catalog_id: release.catalog_id.clone(),
             environment: release.environment.clone(),
-            wiring_id: target.wiring_id,
+            // Cloned, not moved: the settled preview after the driver call still
+            // has to name the delivery it settles, and `request` is gone by then.
+            wiring_id: target.wiring_id.clone(),
             wiring_version: target.wiring_version,
-            delivery_id,
+            delivery_id: delivery_id.clone(),
             payload,
             caller_attached: target.caller_attached,
             resolution: target.resolution,
@@ -168,19 +192,87 @@ impl RouterDeliveryBridge {
         match self.driver.execute(request).await {
             Ok(delivery) => {
                 self.record(&attributes, DeliveryClass::Delivered);
+                let (outcome, result) = settled_preview(&delivery.outcome);
+                self.tap(
+                    source,
+                    &delivery_id,
+                    &target.wiring_id,
+                    target.wiring_version,
+                    RouterTapPhase::Settled(outcome),
+                    &result,
+                )
+                .await;
                 self.publish_emit(&delivery.outcome, causation).await?;
                 lower_outcome(delivery.outcome)
             }
             Err(error) if error.downcast_ref::<PreloadedWiringMissing>().is_some() => {
                 self.record(&attributes, DeliveryClass::WiringNotPreloaded);
+                self.tap(
+                    source,
+                    &delivery_id,
+                    &target.wiring_id,
+                    target.wiring_version,
+                    RouterTapPhase::Settled(WIRING_NOT_PRELOADED),
+                    &serde_json::Value::Null,
+                )
+                .await;
                 Err(DeliveryError::WiringNotPreloaded)
             }
             Err(error) => {
                 self.record(&attributes, DeliveryClass::ExecutionFailed);
+                self.tap(
+                    source,
+                    &delivery_id,
+                    &target.wiring_id,
+                    target.wiring_version,
+                    RouterTapPhase::Settled(EXECUTION_FAILED),
+                    &serde_json::Value::Null,
+                )
+                .await;
                 tracing::warn!(error = %error, "router delivery execution failed");
                 Err(DeliveryError::ExecutionFailed)
             }
         }
+    }
+
+    /// Publish one delivery-boundary preview onto the host's reserved `tap.*`
+    /// namespace — the router-edge live view that `wamn-dggp.10`'s run screen
+    /// consumes in place of `get-run`.
+    ///
+    /// The bridge hands over facts and nothing else. Redaction, the payload
+    /// ceiling and the subject are all the plugin's: it mints every `tap.*`
+    /// subject from its own trusted bind-time claim, which is what makes it the
+    /// only writer of a namespace `producer::publish` refuses to every guest.
+    ///
+    /// Best-effort by contract on that side too — a tap never fails, slows or
+    /// reshapes a delivery, and is a no-op on a host with no data-plane NATS.
+    /// PER-EDGE previews inside the router walk are the DEMAND-GATED UPGRADE and
+    /// are deliberately not built: they would put a publish on every
+    /// `Step::Invoke`. Nothing here forecloses them — a per-edge phase is another
+    /// variant on a subject that already scopes to one delivery.
+    async fn tap(
+        &self,
+        source: SourceRef<'_>,
+        delivery_id: &str,
+        wiring_id: &str,
+        wiring_version: u32,
+        phase: RouterTapPhase,
+        payload: &serde_json::Value,
+    ) {
+        self.jetstream
+            .publish_router_tap(
+                ROUTER_DELIVERY_ID,
+                RouterTapPreview {
+                    delivery_id,
+                    wiring_id,
+                    wiring_version,
+                    source_kind: source.kind(),
+                    source_id: source.id(),
+                    phase,
+                    payload,
+                },
+            )
+            .await;
     }
 
     async fn publish_emit(
@@ -297,6 +389,23 @@ enum SourceRef<'a> {
     Registration(&'a str),
 }
 
+impl<'a> SourceRef<'a> {
+    /// The bridge's two ingress kinds, as the label a metric attribute and a
+    /// delivery preview both carry.
+    fn kind(self) -> &'static str {
+        match self {
+            SourceRef::Attachment(_) => "attachment",
+            SourceRef::Registration(_) => "registration",
+        }
+    }
+
+    fn id(self) -> &'a str {
+        match self {
+            SourceRef::Attachment(id) | SourceRef::Registration(id) => id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedTarget {
     wiring_id: String,
@@ -354,8 +463,8 @@ impl DeliveryClass {
     fn error(self) -> Option<&'static str> {
         match self {
             DeliveryClass::Delivered => None,
-            DeliveryClass::WiringNotPreloaded => Some("wiring-not-preloaded"),
-            DeliveryClass::ExecutionFailed => Some("execution-failed"),
+            DeliveryClass::WiringNotPreloaded => Some(WIRING_NOT_PRELOADED),
+            DeliveryClass::ExecutionFailed => Some(EXECUTION_FAILED),
         }
     }
 }
@@ -405,16 +514,55 @@ fn delivery_attributes(
     wiring_id: &str,
     wiring_version: u32,
 ) -> Vec<KeyValue> {
-    let (kind, id) = match source {
-        SourceRef::Attachment(id) => ("attachment", id),
-        SourceRef::Registration(id) => ("registration", id),
-    };
     vec![
-        KeyValue::new(SOURCE_KIND, kind),
-        KeyValue::new(SOURCE_ID, id.to_owned()),
+        KeyValue::new(SOURCE_KIND, source.kind()),
+        KeyValue::new(SOURCE_ID, source.id().to_owned()),
         KeyValue::new(WIRING_ID, wiring_id.to_owned()),
         KeyValue::new(WIRING_VERSION, i64::from(wiring_version)),
     ]
+}
+
+/// How one settled delivery reads in the live view: the outcome label, and the
+/// result the caller was given.
+///
+/// This mirrors [`lower_outcome`] arm for arm, INCLUDING its two order-sensitive
+/// rulings — a running walk is a failure whatever verdict it carries, and a
+/// first verdict stands over a later frontier failure. A live view that
+/// disagreed with what the caller actually received would be worse than none,
+/// because it would be believed.
+///
+/// The verdict payloads are BORROWED. The plugin copies only if it will publish,
+/// so a host with no data-plane NATS pays nothing for a preview it drops.
+fn settled_preview(outcome: &Outcome) -> (&'static str, Cow<'_, serde_json::Value>) {
+    if matches!(outcome.status, WalkStatus::Running) {
+        return (EXECUTION_FAILED, Cow::Owned(serde_json::Value::Null));
+    }
+    match outcome.verdict.as_ref() {
+        Some(Verdict::Respond { payload, .. }) => ("respond", Cow::Borrowed(payload)),
+        Some(Verdict::Emit { event, .. }) => ("emit", Cow::Borrowed(event)),
+        Some(Verdict::Discard) => ("discard", Cow::Owned(serde_json::Value::Null)),
+        None => match outcome.status {
+            WalkStatus::Cancelled => ("cancelled", Cow::Owned(serde_json::Value::Null)),
+            WalkStatus::Failed => (
+                "failed",
+                Cow::Owned(match outcome.failure.as_ref() {
+                    // The kind is deliberately absent: it has no wire spelling
+                    // of its own, and a `Debug` rendering on a subject a console
+                    // parses would drift the moment the enum is edited.
+                    Some(failure) => serde_json::json!({
+                        "code": failure.detail.code,
+                        "message": failure.detail.message,
+                    }),
+                    None => serde_json::Value::Null,
+                }),
+            ),
+            // A completed walk with no verdict never settled anything, and
+            // `lower_outcome` refuses both of these the same way.
+            WalkStatus::Completed | WalkStatus::Running => {
+                (EXECUTION_FAILED, Cow::Owned(serde_json::Value::Null))
+            }
+        },
+    }
 }
 
 fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, DeliveryError> {
@@ -823,5 +971,98 @@ mod tests {
                 "the driver arm recording {class} disappeared"
             );
         }
+        // The live view's boundaries ride the same unreachable driver match, so
+        // they get the same — and equally WEAK — proof. This shows a tap call is
+        // WRITTEN at each boundary, spelling its label with the SAME const the
+        // metric reads, so a dashboard and a run screen cannot come to disagree
+        // about one delivery. It does not show that a tap fires. What a tap
+        // publishes is proved behaviourally by `settled_preview`'s test below and
+        // by the plugin's `prepare_router_tap` tests.
+        for tap in [
+            "RouterTapPhase::Accepted",
+            "RouterTapPhase::Settled(outcome)",
+            "RouterTapPhase::Settled(WIRING_NOT_PRELOADED)",
+            "RouterTapPhase::Settled(EXECUTION_FAILED)",
+        ] {
+            assert!(
+                source.contains(tap),
+                "the delivery boundary tapping the live view with {tap} disappeared"
+            );
+        }
+    }
+
+    fn outcome_of(status: WalkStatus, verdict: Option<Verdict>) -> Outcome {
+        Outcome {
+            status,
+            result: serde_json::Value::Null,
+            failure: None,
+            hops: 1,
+            verdict,
+        }
+    }
+
+    /// The live view shows the caller's truth, not a second opinion: for every
+    /// outcome shape, the preview's label agrees with what `lower_outcome`
+    /// actually returns — including the two arms whose ORDER decides the answer.
+    #[test]
+    fn a_settled_preview_never_contradicts_what_the_caller_received() {
+        let respond = Verdict::Respond {
+            payload: serde_json::json!({"accepted": true}),
+            node_id: "respond".into(),
+        };
+
+        let responded = outcome_of(WalkStatus::Completed, Some(respond.clone()));
+        let (label, result) = settled_preview(&responded);
+        assert_eq!(label, "respond");
+        assert_eq!(*result, serde_json::json!({"accepted": true}));
+
+        // A running walk is refused whatever verdict it carries — `lower_outcome`
+        // tests `Running` BEFORE the verdict, so a preview that read the verdict
+        // first would promise a caller a response it never got.
+        let (label, _) = settled_preview(&outcome_of(WalkStatus::Running, Some(respond.clone())));
+        assert_eq!(label, EXECUTION_FAILED);
+        assert!(matches!(
+            lower_outcome(outcome_of(WalkStatus::Running, Some(respond.clone()))),
+            Err(DeliveryError::ExecutionFailed)
+        ));
+
+        // A first verdict stands over a later frontier failure, so the preview
+        // shows the verdict rather than the failure.
+        let mut second_verdict = outcome_of(WalkStatus::Failed, Some(respond));
+        second_verdict.failure = Some(Failure {
+            node: "later-terminal".into(),
+            kind: FailureKind::SecondVerdict,
+            detail: ErrorDetail::coded("second-verdict", "later terminal refused"),
+        });
+        assert_eq!(settled_preview(&second_verdict).0, "respond");
+
+        // Verdictless walks read off the status alone.
+        assert_eq!(
+            settled_preview(&outcome_of(WalkStatus::Cancelled, None)).0,
+            "cancelled"
+        );
+        assert_eq!(
+            settled_preview(&outcome_of(WalkStatus::Completed, None)).0,
+            EXECUTION_FAILED
+        );
+        assert_eq!(
+            settled_preview(&outcome_of(WalkStatus::Completed, Some(Verdict::Discard))).0,
+            "discard"
+        );
+
+        // A failure's preview carries the caller's own code and message and
+        // nothing the caller did not get.
+        let mut failed = outcome_of(WalkStatus::Failed, None);
+        failed.failure = Some(Failure {
+            node: "retired-coordinate".into(),
+            kind: FailureKind::InvalidInput,
+            detail: ErrorDetail::coded("bad-order", "order is invalid"),
+        });
+        let (label, result) = settled_preview(&failed);
+        assert_eq!(label, "failed");
+        assert_eq!(
+            *result,
+            serde_json::json!({"code": "bad-order", "message": "order is invalid"})
+        );
     }
 }
