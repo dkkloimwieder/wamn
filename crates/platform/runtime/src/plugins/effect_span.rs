@@ -260,6 +260,11 @@ fn ack_lag_labels(
     project: &str,
     registration: Option<AckLagRegistration<'_>>,
 ) -> [opentelemetry::KeyValue; 5] {
+    // DELIBERATE, not a placeholder: the plain `bind` path emits these four
+    // keys empty rather than omitting them, per [`AckLagRegistration`] and the
+    // [`EffectIdentity`] convention. Dropping them would fork the series shape
+    // by bind path and make "no plain-bind traffic" indistinguishable from
+    // "plain-bind acks not measured" (owner ruling, wamn-0h0g.24.8).
     let registration = registration.unwrap_or(AckLagRegistration {
         tenant: "",
         environment: "",
