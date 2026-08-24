@@ -25,6 +25,28 @@ const MANAGEMENT_ADMITTER_GENERATION_PREFIX: &str = "wamn_mgmt_admitter";
 pub const SERVICE_READER_ROLE: &str = "wamn_service_reader";
 /// Stable NOLOGIN role used by run-retention generations.
 pub const RETENTION_ROLE: &str = "wamn_run_retention";
+/// Stable NOLOGIN role used by executor-platform generations.
+pub const EXECUTOR_PLATFORM_ROLE: &str = "wamn_executor_platform";
+/// Frozen generation prefix for the executor-platform family (`wamn-0fqa`).
+///
+/// The stable ACL role name is 22 bytes, so reusing it as the generation prefix
+/// would mint a 65-byte identifier and PostgreSQL caps identifiers at 63. Worse
+/// than long: PostgreSQL truncates with a NOTICE instead of refusing, and the
+/// 63-byte prefix of the `_a` and `_b` names is identical, so both generations
+/// would collide on one role. This shorter frozen prefix keeps the derived login
+/// at 61 bytes with the 160-bit scope digest and `_a`/`_b` suffix intact.
+const EXECUTOR_PLATFORM_GENERATION_PREFIX: &str = "wamn_exec_platform";
+/// Stable NOLOGIN role used by callable-HTTP admission generations.
+pub const HTTP_ADMITTER_ROLE: &str = "wamn_http_admitter";
+/// Stable NOLOGIN role used by event-materializer generations.
+pub const EVENT_MATERIALIZER_ROLE: &str = "wamn_event_materializer";
+/// Frozen generation prefix for the event-materializer family (`wamn-0fqa`).
+///
+/// The stable ACL role name is 23 bytes, so reusing it as the generation prefix
+/// would mint a 66-byte identifier that PostgreSQL truncates into the scope
+/// digest itself, collapsing both generations and three digest characters. This
+/// shorter frozen prefix keeps the derived login at 60 bytes.
+const EVENT_MATERIALIZER_GENERATION_PREFIX: &str = "wamn_materializer";
 
 const SCOPE_HASH_HEX_LEN: usize = 40;
 
@@ -34,6 +56,13 @@ const SCOPE_HASH_HEX_LEN: usize = 40;
 /// `wamn-0h0g.13.61` deliberately expands that frozen set once, from six to
 /// seven, by admitting the project-environment-scoped management-admitter
 /// family.
+/// `wamn-0fqa` is the third deliberate expansion, from seven to ten, admitting
+/// the three role families `wamn-0h0g.22.14`'s ruled AuthorityClass mapping
+/// names and this vocabulary did not yet carry: executor-platform,
+/// callable-HTTP admitter and event-materializer. The fourth ruled row,
+/// guest-sql, already mapped to [`WorkloadRoleFamily::App`]. Only the families
+/// land here; keying credential selection by authority class is
+/// `wamn-0h0g.22.8`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
     EffectWriter,
@@ -43,6 +72,9 @@ pub enum WorkloadRoleFamily {
     ServiceReader,
     App,
     Retention,
+    ExecutorPlatform,
+    HttpAdmitter,
+    EventMaterializer,
 }
 
 impl WorkloadRoleFamily {
@@ -56,17 +88,24 @@ impl WorkloadRoleFamily {
             Self::ServiceReader => SERVICE_READER_ROLE,
             Self::App => APP_ROLE,
             Self::Retention => RETENTION_ROLE,
+            Self::ExecutorPlatform => EXECUTOR_PLATFORM_ROLE,
+            Self::HttpAdmitter => HTTP_ADMITTER_ROLE,
+            Self::EventMaterializer => EVENT_MATERIALIZER_ROLE,
         }
     }
 
     /// Frozen prefix of this family's derived A/B generation identities.
     ///
-    /// Equal to [`Self::acl_role`] for every family but `ManagementAdmitter`,
-    /// whose stable role name does not fit the PostgreSQL identifier cap once
-    /// the scope digest and generation suffix are appended (`wamn-0h0g.13.62`).
+    /// Equal to [`Self::acl_role`] for every family whose stable role name still
+    /// fits the PostgreSQL identifier cap once the scope digest and generation
+    /// suffix are appended. `ManagementAdmitter` (`wamn-0h0g.13.62`),
+    /// `ExecutorPlatform` and `EventMaterializer` (`wamn-0fqa`) do not, so each
+    /// carries its own shorter frozen prefix.
     pub const fn generation_prefix(self) -> &'static str {
         match self {
             Self::ManagementAdmitter => MANAGEMENT_ADMITTER_GENERATION_PREFIX,
+            Self::ExecutorPlatform => EXECUTOR_PLATFORM_GENERATION_PREFIX,
+            Self::EventMaterializer => EVENT_MATERIALIZER_GENERATION_PREFIX,
             _ => self.acl_role(),
         }
     }
@@ -75,9 +114,12 @@ impl WorkloadRoleFamily {
     pub const fn scope_kind(self) -> WorkloadRoleScopeKind {
         match self {
             Self::EffectWriter | Self::App | Self::Retention => WorkloadRoleScopeKind::Tenant,
-            Self::ManagementAdmitter | Self::DispatchReader | Self::ServiceReader => {
-                WorkloadRoleScopeKind::ProjectEnvironment
-            }
+            Self::ManagementAdmitter
+            | Self::DispatchReader
+            | Self::ServiceReader
+            | Self::ExecutorPlatform
+            | Self::HttpAdmitter
+            | Self::EventMaterializer => WorkloadRoleScopeKind::ProjectEnvironment,
             Self::ControlAuthor => WorkloadRoleScopeKind::Control,
         }
     }
@@ -91,6 +133,9 @@ impl WorkloadRoleFamily {
             Self::ServiceReader => b"wamn.service-reader.scope.v0.1",
             Self::App => b"wamn.app.scope.v0.1",
             Self::Retention => b"wamn.run-retention.scope.v0.1",
+            Self::ExecutorPlatform => b"wamn.executor-platform.scope.v0.1",
+            Self::HttpAdmitter => b"wamn.http-admitter.scope.v0.1",
+            Self::EventMaterializer => b"wamn.event-materializer.scope.v0.1",
         }
     }
 }
@@ -301,19 +346,41 @@ fn frame(preimage: &mut Vec<u8>, value: &[u8]) {
 mod tests {
     use super::*;
 
+    /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten).
+    const FAMILIES: [WorkloadRoleFamily; 10] = [
+        WorkloadRoleFamily::EffectWriter,
+        WorkloadRoleFamily::ControlAuthor,
+        WorkloadRoleFamily::ManagementAdmitter,
+        WorkloadRoleFamily::DispatchReader,
+        WorkloadRoleFamily::ServiceReader,
+        WorkloadRoleFamily::App,
+        WorkloadRoleFamily::Retention,
+        WorkloadRoleFamily::ExecutorPlatform,
+        WorkloadRoleFamily::HttpAdmitter,
+        WorkloadRoleFamily::EventMaterializer,
+    ];
+
     #[test]
     fn family_set_and_scope_classes_are_closed() {
+        // An eleventh variant fails to compile here as well as in the
+        // implementation, so the pinned vocabulary cannot silently grow.
+        for (index, family) in FAMILIES.into_iter().enumerate() {
+            let pinned = match family {
+                WorkloadRoleFamily::EffectWriter => 0,
+                WorkloadRoleFamily::ControlAuthor => 1,
+                WorkloadRoleFamily::ManagementAdmitter => 2,
+                WorkloadRoleFamily::DispatchReader => 3,
+                WorkloadRoleFamily::ServiceReader => 4,
+                WorkloadRoleFamily::App => 5,
+                WorkloadRoleFamily::Retention => 6,
+                WorkloadRoleFamily::ExecutorPlatform => 7,
+                WorkloadRoleFamily::HttpAdmitter => 8,
+                WorkloadRoleFamily::EventMaterializer => 9,
+            };
+            assert_eq!(index, pinned, "{family:?}");
+        }
         assert_eq!(
-            [
-                WorkloadRoleFamily::EffectWriter,
-                WorkloadRoleFamily::ControlAuthor,
-                WorkloadRoleFamily::ManagementAdmitter,
-                WorkloadRoleFamily::DispatchReader,
-                WorkloadRoleFamily::ServiceReader,
-                WorkloadRoleFamily::App,
-                WorkloadRoleFamily::Retention,
-            ]
-            .map(WorkloadRoleFamily::scope_kind),
+            FAMILIES.map(WorkloadRoleFamily::scope_kind),
             [
                 WorkloadRoleScopeKind::Tenant,
                 WorkloadRoleScopeKind::Control,
@@ -322,6 +389,24 @@ mod tests {
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::Tenant,
                 WorkloadRoleScopeKind::Tenant,
+                WorkloadRoleScopeKind::ProjectEnvironment,
+                WorkloadRoleScopeKind::ProjectEnvironment,
+                WorkloadRoleScopeKind::ProjectEnvironment,
+            ],
+        );
+        assert_eq!(
+            FAMILIES.map(WorkloadRoleFamily::acl_role),
+            [
+                "wamn_effect_writer",
+                "wamn_control_author",
+                "wamn_management_admitter",
+                "wamn_dispatch_reader",
+                "wamn_service_reader",
+                "wamn_app",
+                "wamn_run_retention",
+                "wamn_executor_platform",
+                "wamn_http_admitter",
+                "wamn_event_materializer",
             ],
         );
     }
@@ -403,7 +488,35 @@ mod tests {
                     database: "db",
                 },
             ),
+            (
+                WorkloadRoleFamily::ExecutorPlatform,
+                WorkloadRoleScope::ProjectEnvironment {
+                    org: "o",
+                    project: "p",
+                    environment: "dev",
+                    database: "db",
+                },
+            ),
+            (
+                WorkloadRoleFamily::HttpAdmitter,
+                WorkloadRoleScope::ProjectEnvironment {
+                    org: "o",
+                    project: "p",
+                    environment: "dev",
+                    database: "db",
+                },
+            ),
+            (
+                WorkloadRoleFamily::EventMaterializer,
+                WorkloadRoleScope::ProjectEnvironment {
+                    org: "o",
+                    project: "p",
+                    environment: "dev",
+                    database: "db",
+                },
+            ),
         ];
+        assert_eq!(scopes.len(), FAMILIES.len());
         for (family, scope) in scopes {
             let a = workload_generation_role(family, scope, CredentialGeneration::A).unwrap();
             let b = workload_generation_role(family, scope, CredentialGeneration::B).unwrap();
@@ -442,6 +555,82 @@ mod tests {
             "wamn_mgmt_admitter_c1e0f3849ce98895f9593009bc5f60e870150758_a"
         );
         assert_eq!(role.len(), 61);
+    }
+
+    #[test]
+    fn the_three_authority_class_families_freeze_their_strings_and_identities() {
+        // `wamn-0fqa`. Role names are `wamn-0h0g.22.14`'s ruled mapping targets;
+        // the derived logins were computed independently of this module and
+        // created on PostgreSQL 18.6, which stored all three untruncated.
+        for (family, acl_role, scope_domain, role, length) in [
+            (
+                WorkloadRoleFamily::ExecutorPlatform,
+                "wamn_executor_platform",
+                b"wamn.executor-platform.scope.v0.1".as_slice(),
+                "wamn_exec_platform_3626eacd20996441de7f3fcb96938db40ea70218_a",
+                61,
+            ),
+            (
+                WorkloadRoleFamily::HttpAdmitter,
+                "wamn_http_admitter",
+                b"wamn.http-admitter.scope.v0.1".as_slice(),
+                "wamn_http_admitter_2c32ce283199537fe77884c321e5148093e10895_a",
+                61,
+            ),
+            (
+                WorkloadRoleFamily::EventMaterializer,
+                "wamn_event_materializer",
+                b"wamn.event-materializer.scope.v0.1".as_slice(),
+                "wamn_materializer_3506a61f50601c211eec66b05f70f45a57c34879_a",
+                60,
+            ),
+        ] {
+            assert_eq!(family.acl_role(), acl_role, "{family:?}");
+            assert_eq!(family.scope_domain(), scope_domain, "{family:?}");
+            assert_eq!(
+                family.scope_kind(),
+                WorkloadRoleScopeKind::ProjectEnvironment,
+                "{family:?}"
+            );
+            let derived = workload_generation_role(
+                family,
+                WorkloadRoleScope::ProjectEnvironment {
+                    org: "acme",
+                    project: "billing",
+                    environment: "dev",
+                    database: "wamn-db-acme--billing--dev--k3m9x2p7",
+                },
+                CredentialGeneration::A,
+            )
+            .unwrap();
+            assert_eq!(derived, role);
+            assert_eq!(derived.len(), length, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn the_two_overlong_new_families_carry_short_frozen_generation_prefixes() {
+        // Reusing these 22- and 23-byte ACL role names as generation prefixes
+        // mints 65- and 66-byte logins. PostgreSQL truncates rather than
+        // refusing, and both truncations drop the `_a`/`_b` suffix, so the two
+        // generations of one scope would collide on a single role.
+        // `_` + 40-hex digest + `_` + one generation character.
+        let suffix = SCOPE_HASH_HEX_LEN + 3;
+        for (family, prefix) in [
+            (WorkloadRoleFamily::ExecutorPlatform, "wamn_exec_platform"),
+            (WorkloadRoleFamily::EventMaterializer, "wamn_materializer"),
+        ] {
+            assert_eq!(family.generation_prefix(), prefix, "{family:?}");
+            assert_ne!(family.generation_prefix(), family.acl_role(), "{family:?}");
+            assert!(family.acl_role().len() + suffix > 63, "{family:?}");
+            assert!(prefix.len() + suffix <= 63, "{family:?}");
+        }
+        // The callable-HTTP admitter's 18-byte name fits, so it keeps the
+        // wildcard arm's default of reusing the ACL role name.
+        assert_eq!(
+            WorkloadRoleFamily::HttpAdmitter.generation_prefix(),
+            WorkloadRoleFamily::HttpAdmitter.acl_role()
+        );
     }
 
     #[test]

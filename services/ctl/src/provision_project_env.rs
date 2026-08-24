@@ -851,6 +851,9 @@ impl<'a> WorkloadLifecycle<'a> {
             WorkloadRoleFamily::ServiceReader => "service-reader",
             WorkloadRoleFamily::App => "app",
             WorkloadRoleFamily::Retention => "retention",
+            WorkloadRoleFamily::ExecutorPlatform => "executor-platform",
+            WorkloadRoleFamily::HttpAdmitter => "http-admitter",
+            WorkloadRoleFamily::EventMaterializer => "event-materializer",
         }
     }
 }
@@ -3992,6 +3995,43 @@ mod tests {
     }
 
     #[test]
+    fn every_workload_family_carries_a_distinct_frozen_label() {
+        // `wamn-0fqa` takes the vocabulary to ten. `label` reads only the
+        // family, so the scope below is inert and deliberately uniform.
+        let expected = [
+            (WorkloadRoleFamily::EffectWriter, "effect-writer"),
+            (WorkloadRoleFamily::ControlAuthor, "control-author"),
+            (
+                WorkloadRoleFamily::ManagementAdmitter,
+                "management-admitter",
+            ),
+            (WorkloadRoleFamily::DispatchReader, "dispatch-reader"),
+            (WorkloadRoleFamily::ServiceReader, "service-reader"),
+            (WorkloadRoleFamily::App, "app"),
+            (WorkloadRoleFamily::Retention, "retention"),
+            (WorkloadRoleFamily::ExecutorPlatform, "executor-platform"),
+            (WorkloadRoleFamily::HttpAdmitter, "http-admitter"),
+            (WorkloadRoleFamily::EventMaterializer, "event-materializer"),
+        ];
+        let mut seen = Vec::new();
+        for (family, label) in expected {
+            let lifecycle = WorkloadLifecycle {
+                family,
+                scope: WorkloadRoleScope::Tenant {
+                    tenant: "t",
+                    database: "db",
+                },
+                control_tenant: None,
+            };
+            assert_eq!(lifecycle.label(), label, "{family:?}");
+            seen.push(label);
+        }
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), expected.len(), "labels must stay distinct");
+    }
+
+    #[test]
     fn stable_acl_role_members_are_only_scoped_generation_roles() {
         assert!(is_workload_generation_role(
             WorkloadRoleFamily::EffectWriter,
@@ -4010,6 +4050,29 @@ mod tests {
         assert!(!is_workload_generation_role(
             WorkloadRoleFamily::ManagementAdmitter,
             "wamn_management_admitter_0123456789abcdef0123456789abcdef01234567_a"
+        ));
+        // `wamn-0fqa`: the executor-platform and event-materializer families
+        // carry short frozen prefixes for the same reason; the callable-HTTP
+        // admitter's name fits and keeps its ACL role name as the prefix.
+        assert!(is_workload_generation_role(
+            WorkloadRoleFamily::ExecutorPlatform,
+            "wamn_exec_platform_0123456789abcdef0123456789abcdef01234567_a"
+        ));
+        assert!(!is_workload_generation_role(
+            WorkloadRoleFamily::ExecutorPlatform,
+            "wamn_executor_platform_0123456789abcdef0123456789abcdef01234567_a"
+        ));
+        assert!(is_workload_generation_role(
+            WorkloadRoleFamily::EventMaterializer,
+            "wamn_materializer_0123456789abcdef0123456789abcdef01234567_b"
+        ));
+        assert!(!is_workload_generation_role(
+            WorkloadRoleFamily::EventMaterializer,
+            "wamn_event_materializer_0123456789abcdef0123456789abcdef01234567_b"
+        ));
+        assert!(is_workload_generation_role(
+            WorkloadRoleFamily::HttpAdmitter,
+            "wamn_http_admitter_0123456789abcdef0123456789abcdef01234567_a"
         ));
         for invalid in [
             "wamn_effect_writer_a",
