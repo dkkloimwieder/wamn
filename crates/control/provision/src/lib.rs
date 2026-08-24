@@ -59,6 +59,7 @@ pub mod database;
 #[cfg(feature = "ops")]
 pub mod dump;
 mod error;
+pub mod management_admitter;
 mod name;
 pub mod org;
 #[cfg(feature = "ops")]
@@ -92,15 +93,20 @@ pub use dump::{
     render_project_env_dump_cronjob, render_project_env_dump_job, validate_dump_resource_name,
 };
 pub use error::ProvisionError;
+pub use management_admitter::{
+    ManagementAdmissionConnection, ManagementAdmissionUrlError, ManagementAdmissionUrlErrorKind,
+    management_admitter_generation_role, management_admitter_scope_hash,
+    parse_management_admission_url,
+};
 pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, CONTROL_AUTHOR_SECRET_PREFIX, DB_OWNER_ROLE,
     DB_PREFIX, DISPATCH_READER_ROLE, EFFECT_WRITER_SECRET_PREFIX, INSTANCE_SUFFIX_LEN,
-    MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN,
-    NAMESPACE_PREFIX, cdc_object_name, compose_url, control_author_secret_name, database_name,
-    event_stream_name, project_env_cdc_secret_name, project_env_database_name,
-    project_env_effect_writer_secret_name, project_env_namespace, project_env_secret_name,
-    secret_name, validate_instance_suffix, validate_project_env, validate_project_env_cdc,
-    validate_project_id,
+    MANAGEMENT_ADMITTER_SECRET_PREFIX, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
+    MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url, control_author_secret_name,
+    database_name, event_stream_name, management_admitter_secret_name, project_env_cdc_secret_name,
+    project_env_database_name, project_env_effect_writer_secret_name, project_env_namespace,
+    project_env_secret_name, secret_name, validate_instance_suffix, validate_project_env,
+    validate_project_env_cdc, validate_project_id,
 };
 pub use org::{OrgClusters, render_org_cluster_set};
 #[cfg(feature = "ops")]

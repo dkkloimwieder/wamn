@@ -54,13 +54,17 @@ mod tests {
 
     /// wamn-0h0g.8.18: the authoring input is the control-database one, and the
     /// environment is fixed configuration rather than a per-request choice.
-    const SERVE: [&str; 14] = [
+    /// wamn-0h0g.8.5.3 adds the second, separate project-database admission
+    /// input alongside it.
+    const SERVE: [&str; 16] = [
         "wamn-scenario-worker",
         "serve",
         "--system-url",
         "postgres://system.invalid/system",
         "--control-authoring-database-url",
         "postgres://control.invalid/wamn-system",
+        "--management-admission-database-url",
+        "postgres://project.invalid/wamn-db-acme--receiving--dev--k3m9x2p7",
         "--org",
         "acme",
         "--project",
@@ -89,12 +93,17 @@ mod tests {
             args.control_authoring_database_url,
             "postgres://control.invalid/wamn-system"
         );
+        assert_eq!(
+            args.management_admission_database_url,
+            "postgres://project.invalid/wamn-db-acme--receiving--dev--k3m9x2p7"
+        );
         assert!(Cli::try_parse_from(["wamn-scenario-worker"]).is_err());
         assert!(Cli::try_parse_from(["wamn-scenario-worker", "--tenant", "tenant-a"]).is_err());
         // Every scope component is required: none of them has a default that
         // would silently bind this process to a scope nobody chose.
         for omitted in [
             "--control-authoring-database-url",
+            "--management-admission-database-url",
             "--org",
             "--project",
             "--environment",
@@ -114,5 +123,36 @@ mod tests {
                 "serve parsed without {omitted}"
             );
         }
+    }
+
+    /// wamn-0h0g.8.5.3: the admission input refuses at PARSE time, and the
+    /// refusal NAMES the environment variable.
+    ///
+    /// The Secret this variable is fed from is minted by wamn-0h0g.12.176. Until
+    /// that lands, an environment brought up without it crash-loops here, and
+    /// the only thing an operator has to go on is this message — clap's default
+    /// value name is the uppercased argument, which names no variable at all, so
+    /// the explicit `value_name` is what makes the log actionable.
+    #[test]
+    fn the_admission_input_refusal_names_its_environment_variable() {
+        let without: Vec<&str> = SERVE
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(index, argument)| {
+                *argument != "--management-admission-database-url"
+                    && SERVE.get(index.wrapping_sub(1))
+                        != Some(&"--management-admission-database-url")
+            })
+            .map(|(_, argument)| argument)
+            .collect();
+        let Err(error) = Cli::try_parse_from(without) else {
+            panic!("serve parsed without the admission connection input");
+        };
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("WAMN_MANAGEMENT_ADMISSION_PG_URL"),
+            "the missing-argument refusal does not name the variable: {rendered}"
+        );
     }
 }

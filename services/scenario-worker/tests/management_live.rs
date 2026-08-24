@@ -32,7 +32,7 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL,
-    control_author_generation_role,
+    control_author_generation_role, management_admitter_generation_role,
 };
 use wamn_platform_identity::{
     IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
@@ -438,6 +438,26 @@ fn author_url(admin_url: &str) -> String {
     parsed.to_string()
 }
 
+/// The project-database admission input `serve` refuses to start without
+/// (wamn-0h0g.8.5.3).
+///
+/// This gate never opens it: the admission consumer is wamn-0h0g.8.5.4. It is
+/// here because `serve` settles BOTH connection inputs purely, before it binds,
+/// so a gate that omits it never reaches the surface under test. Derived rather
+/// than hand-written for the same reason `author_role` is — the role name binds
+/// `(org, project, environment, database)`.
+fn admission_url() -> String {
+    const DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+    let role = management_admitter_generation_role(
+        ORG,
+        PROJECT,
+        ENVIRONMENT,
+        DATABASE,
+        CredentialGeneration::A,
+    );
+    format!("postgres://{role}:{AUTHOR_PASSWORD}@project.invalid:5432/{DATABASE}")
+}
+
 fn authoring_scope() -> ControlAuthoringScope {
     ControlAuthoringScope {
         org: ORG.to_owned(),
@@ -752,6 +772,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             bind: BIND.to_owned(),
             system_url: url.clone(),
             control_authoring_database_url: author_url(&url),
+            management_admission_database_url: admission_url(),
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             environment: ENVIRONMENT.to_owned(),

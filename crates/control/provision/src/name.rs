@@ -61,6 +61,16 @@ pub const EFFECT_WRITER_SECRET_PREFIX: &str = "wamn-effect-writer-";
 /// Prefix for the scoped control-author URL Secret.
 pub const CONTROL_AUTHOR_SECRET_PREFIX: &str = "wamn-authoring-";
 
+/// Prefix for the scoped management-admitter URL Secret (`wamn-0h0g.8.5.3`).
+///
+/// It mirrors the family's frozen Postgres generation prefix `wamn_mgmt_admitter`
+/// (`wamn-0h0g.13.62`) in the hyphenated K8s convention, so one glance ties the
+/// Secret to the login it carries. The abbreviation is inherited, not re-derived:
+/// a Kubernetes Secret name has 253 bytes to spend and would have fit the full
+/// role name, but two spellings for one credential is exactly the drift this
+/// helper exists to prevent.
+pub const MANAGEMENT_ADMITTER_SECRET_PREFIX: &str = "wamn-mgmt-admitter-";
+
 /// Prefix for the per-project database **and** Secret name: `wamn-db-<project>`.
 /// It is under the platform-reserved `wamn` prefix (wamn-66x) on purpose — the
 /// platform mints it, and project ids in that space are rejected.
@@ -234,6 +244,22 @@ pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
 /// Scoped control-author Secret name consumed by scenario-worker.
 pub fn control_author_secret_name(org: &str, project: &str, env: &str) -> String {
     format!("{CONTROL_AUTHOR_SECRET_PREFIX}{org}--{project}--{env}")
+}
+
+/// Scoped management-admitter Secret name consumed by scenario-worker
+/// (`wamn-0h0g.8.5.3`): `wamn-mgmt-admitter-<org>--<project>--<env>`.
+///
+/// It is the sibling of [`control_author_secret_name`] on the other plane —
+/// control-author names the control database, this one names the project
+/// environment's own database — and it is triple-only for the same reason
+/// [`project_env_secret_name`] is: the URL inside names the suffixed Postgres
+/// database, so the Secret name does not have to.
+///
+/// This exists so the deployment manifest and the minting renderer
+/// (`wamn-0h0g.12.176`) derive the same string instead of each carrying a copied
+/// literal that can drift apart silently.
+pub fn management_admitter_secret_name(org: &str, project: &str, env: &str) -> String {
+    format!("{MANAGEMENT_ADMITTER_SECRET_PREFIX}{org}--{project}--{env}")
 }
 
 /// The per-project-env Kubernetes namespace:
@@ -983,6 +1009,40 @@ mod tests {
             project_env_effect_writer_secret_name("acme", "billing", "dev"),
             "wamn-effect-writer-acme--billing--dev"
         );
+    }
+
+    /// wamn-0h0g.8.5.3: `deploy/platform/scenario-worker.yaml` references the
+    /// management-admitter Secret by this exact rendered name, and
+    /// wamn-0h0g.12.176's renderer will mint it from this same helper. Pinning
+    /// the string here is what makes those two agree by derivation rather than
+    /// by two hand-copied literals.
+    #[test]
+    fn the_management_admitter_secret_name_is_frozen_and_its_own_tier() {
+        assert_eq!(
+            management_admitter_secret_name("acme", "receiving", "dev"),
+            "wamn-mgmt-admitter-acme--receiving--dev"
+        );
+        assert_eq!(
+            management_admitter_secret_name("acme", "billing", "prod"),
+            "wamn-mgmt-admitter-acme--billing--prod"
+        );
+        // Every identity component participates, so two environments never share
+        // one Secret.
+        assert_ne!(
+            management_admitter_secret_name("acme", "receiving", "dev"),
+            management_admitter_secret_name("acme", "receiving", "prod")
+        );
+        // R8b: a distinct credential tier is a distinct Secret. None of the
+        // sibling names can collide with it for the same triple.
+        let admitter = management_admitter_secret_name("acme", "receiving", "dev");
+        for sibling in [
+            control_author_secret_name("acme", "receiving", "dev"),
+            project_env_secret_name("acme", "receiving", "dev"),
+            project_env_effect_writer_secret_name("acme", "receiving", "dev"),
+            project_env_cdc_secret_name("acme", "receiving", "dev"),
+        ] {
+            assert_ne!(admitter, sibling);
+        }
     }
 
     #[test]

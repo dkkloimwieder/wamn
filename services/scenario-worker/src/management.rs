@@ -42,7 +42,7 @@ use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalKind, ProjectRole, authenticate_pat, project_roles,
 };
 
-use wamn_control_provision::parse_control_authoring_url;
+use wamn_control_provision::{parse_control_authoring_url, parse_management_admission_url};
 
 use crate::authoring::{
     ControlAuthoringScope, GetReportResult, InternalAuthoringBackend, SaveFlowDraft,
@@ -520,6 +520,32 @@ pub struct ManagementServeArgs {
     )]
     pub control_authoring_database_url: String,
 
+    /// The project-environment admission connection input: a scoped A/B
+    /// generation of `wamn_management_admitter` on THIS environment's PROJECT
+    /// database (wamn-0h0g.8.5.3).
+    ///
+    /// It is a SECOND, separate connection, never a fallback for the authoring
+    /// one and never reachable from it: admission writes project run state,
+    /// authoring writes the control ledger, and a transaction cannot span two
+    /// databases. Flipping the production admission path off the shared
+    /// `wamn_app` role and onto this credential is wamn-0h0g.22.10's traffic
+    /// change; this argument is the plumbing that change needs to already exist.
+    ///
+    /// **Deliberately has no `default_value`** — the shape wamn-0h0g.12.129 and
+    /// .12.134 settled for every credential input. A default here would name a
+    /// connection nobody chose: the value is a full postgres URL carrying a
+    /// password, so a placeholder either points at a database this scope holds
+    /// no credential for, or silently ships a publicly known one. The process
+    /// refuses at parse time instead, and `value_name` puts the environment
+    /// variable inside clap's own missing-argument error so an operator reading
+    /// a crash-looping pod's logs is told which Secret key is absent.
+    #[arg(
+        long = "management-admission-database-url",
+        env = "WAMN_MANAGEMENT_ADMISSION_PG_URL",
+        value_name = "URL ($WAMN_MANAGEMENT_ADMISSION_PG_URL)"
+    )]
+    pub management_admission_database_url: String,
+
     /// Organization whose project roles admit a caller.
     #[arg(long, env = "WAMN_MANAGEMENT_ORG")]
     pub org: String,
@@ -615,9 +641,12 @@ fn reconcile_command_scope(
 
 /// Serve the authenticated management authoring surface until the process ends.
 ///
-/// The authoring connection input is settled FIRST and PURELY: an absent or
-/// out-of-scope `WAMN_CONTROL_AUTHORING_PG_URL` refuses before this function
-/// opens a file or a socket (wamn-0h0g.8.18).
+/// BOTH connection inputs are settled FIRST and PURELY: an absent or
+/// out-of-scope `WAMN_CONTROL_AUTHORING_PG_URL` or
+/// `WAMN_MANAGEMENT_ADMISSION_PG_URL` refuses before this function opens a file
+/// or a socket (wamn-0h0g.8.18, wamn-0h0g.8.5.3). Neither is the other's
+/// fallback: the first names the control database, the second names this
+/// environment's project database.
 pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
     let scope = args.control_authoring_scope();
     // The accepted value is deliberately discarded: this call exists to establish
@@ -625,6 +654,16 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
     // goes through `serve` is held to the same gate.
     parse_control_authoring_url(
         &args.control_authoring_database_url,
+        &scope.org,
+        &scope.project,
+        &scope.environment,
+    )?;
+    // The admission credential is proven in scope on the same terms, at the same
+    // point, for the same reason. Its consumer is the sequential composition
+    // (wamn-0h0g.8.5.4); refusing here means a mis-scoped Secret crash-loops at
+    // startup instead of surfacing on the first admitted run.
+    parse_management_admission_url(
+        &args.management_admission_database_url,
         &scope.org,
         &scope.project,
         &scope.environment,
@@ -997,6 +1036,110 @@ mod tests {
         ] {
             assert!(bearer(&build(absent)).is_none(), "accepted {absent:?}");
         }
+    }
+
+    const SCOPE_ORG: &str = "acme";
+    const SCOPE_PROJECT: &str = "receiving";
+    const SCOPE_ENVIRONMENT: &str = "dev";
+    const CONTROL_DATABASE: &str = "wamn-system";
+    const PROJECT_DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+
+    /// `serve` arguments whose every input but the admission URL is in scope, so
+    /// what the admission gate does is the only thing under test.
+    ///
+    /// The system URL names a reserved-TLD host that cannot resolve: whatever
+    /// error escapes `serve` after the pure gates therefore identifies itself,
+    /// and cannot be mistaken for one of them.
+    fn admission_probe_args(admission_url: &str) -> ManagementServeArgs {
+        let authoring = wamn_control_provision::control_author_generation_role(
+            SCOPE_ORG,
+            SCOPE_PROJECT,
+            SCOPE_ENVIRONMENT,
+            CONTROL_DATABASE,
+            wamn_control_provision::CredentialGeneration::A,
+        );
+        ManagementServeArgs {
+            bind: "127.0.0.1:0".to_owned(),
+            system_url: "postgres://system.invalid:5432/system".to_owned(),
+            control_authoring_database_url: format!(
+                "postgres://{authoring}:secret@control.invalid:5432/{CONTROL_DATABASE}"
+            ),
+            management_admission_database_url: admission_url.to_owned(),
+            org: SCOPE_ORG.to_owned(),
+            project: SCOPE_PROJECT.to_owned(),
+            environment: SCOPE_ENVIRONMENT.to_owned(),
+            tenant: "tenant-a".to_owned(),
+            source_schema: "wamn_run".to_owned(),
+        }
+    }
+
+    /// wamn-0h0g.8.5.3: the admission connection input is settled on the same
+    /// terms as the authoring one, and by `serve` itself.
+    ///
+    /// This is the CALL-SITE proof. `wamn-control-provision` proves the parser;
+    /// nothing there proves the production entry point runs it. Reaching an
+    /// admission refusal means the authoring gate passed and the admission gate
+    /// then ran — before the identity connect, whose failure against an
+    /// unresolvable host is the error this test would see instead if the call
+    /// were removed or moved down.
+    #[tokio::test]
+    async fn the_admission_connection_input_is_settled_before_any_io() {
+        for out_of_scope in [
+            // Absent: no fallback exists to pick up the slack.
+            String::new(),
+            // The shared query role this credential exists to replace.
+            format!("postgres://wamn_app:secret@project.invalid:5432/{PROJECT_DATABASE}"),
+            // The CONTROL database with an otherwise-shaped identity: the two
+            // planes are separate connections, never one another's fallback.
+            format!(
+                "postgres://{}:secret@control.invalid:5432/{CONTROL_DATABASE}",
+                wamn_control_provision::management_admitter_generation_role(
+                    SCOPE_ORG,
+                    SCOPE_PROJECT,
+                    SCOPE_ENVIRONMENT,
+                    PROJECT_DATABASE,
+                    wamn_control_provision::CredentialGeneration::A,
+                )
+            ),
+        ] {
+            let error = serve(admission_probe_args(&out_of_scope))
+                .await
+                .expect_err("an out-of-scope admission input must refuse");
+            let rendered = format!("{error}");
+            assert!(
+                rendered.contains("WAMN_MANAGEMENT_ADMISSION_PG_URL"),
+                "{rendered}"
+            );
+            // A refusal names the variable, never the credential in it.
+            assert!(!rendered.contains("secret"), "{rendered}");
+        }
+
+        // The accepting half: an in-scope generation passes the gate, so the
+        // refusals above are the predicate working rather than the gate refusing
+        // everything. `serve` then fails on the identity connect it was always
+        // going to reach.
+        let admitted = format!(
+            "postgres://{}:secret@project.invalid:5432/{PROJECT_DATABASE}",
+            wamn_control_provision::management_admitter_generation_role(
+                SCOPE_ORG,
+                SCOPE_PROJECT,
+                SCOPE_ENVIRONMENT,
+                PROJECT_DATABASE,
+                wamn_control_provision::CredentialGeneration::B,
+            )
+        );
+        let error = serve(admission_probe_args(&admitted))
+            .await
+            .expect_err("the unresolvable identity host still fails the startup");
+        let rendered = format!("{error}");
+        assert!(
+            !rendered.contains("WAMN_MANAGEMENT_ADMISSION_PG_URL"),
+            "an in-scope admission input was refused: {rendered}"
+        );
+        assert!(
+            rendered.contains("connect the T1 system database for identity"),
+            "{rendered}"
+        );
     }
 
     /// wamn-0h0g.8.18: the authoring connection input is settled PURELY, before
@@ -1506,7 +1649,19 @@ mod tests {
         // The project-residency variable is gone, not aliased.
         assert!(args.contains("WAMN_CONTROL_AUTHORING_PG_URL"));
         assert!(!implementation.contains("WAMN_AUTHORING_PG_URL"));
-        assert_eq!(args.matches("_PG_URL").count(), 1);
+        // wamn-0h0g.8.5.3 admits a SECOND Postgres URL, and exactly one: the
+        // project-environment admission connection. Naming both spellings keeps
+        // the anti-alias half of this assertion — a third `_PG_URL`, or either of
+        // these renamed, fails here rather than growing a quiet fallback.
+        assert!(args.contains("WAMN_MANAGEMENT_ADMISSION_PG_URL"));
+        // Counted on the closing quote so the `value_name` copy of the variable
+        // — the part that makes clap's missing-argument error name it — is not
+        // mistaken for a second binding.
+        assert_eq!(
+            args.matches("_PG_URL\"").count(),
+            2,
+            "the serve arguments admit exactly two Postgres URL variables"
+        );
         let dispatch = between(
             source,
             "async fn dispatch_command(",
