@@ -455,6 +455,47 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
         .await
         .expect("close the authorship conflict");
 
+    // The verb does not merely sit next to the compatibility gate, it CALLS it:
+    // a document whose node names a component with no admitted fact in the gate
+    // scope refuses as `Gate`, and nothing reaches `catalog.wirings`. Deriving
+    // the stored hash from the document instead of from the gate's return
+    // writes this row, so this arm is what pins the call site.
+    let ungated = wiring("ungated", 4, "unadmitted", WiringTerminal::Respond);
+    let transaction = admin
+        .transaction()
+        .await
+        .expect("open the ungated authorship transaction");
+    let refusal = author_wiring(
+        &transaction,
+        &AuthorWiringRequest {
+            tenant_id: TENANT,
+            catalog_id: CATALOG,
+            gated_catalog_version: CATALOG_VERSION,
+            gate_report_id: GATE_REPORT,
+            document: &ungated,
+        },
+    )
+    .await
+    .expect_err("a wiring naming no admitted component refuses at the gate");
+    assert_eq!(refusal.kind(), AuthorWiringErrorKind::Gate);
+    let ungated_rows: i64 = transaction
+        .query_one(
+            "SELECT count(*) FROM catalog.wirings \
+              WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3",
+            &[&TENANT, &CATALOG, &ungated.wiring_id],
+        )
+        .await
+        .expect("count the ungated wiring rows")
+        .get(0);
+    assert_eq!(
+        ungated_rows, 0,
+        "a wiring the gate refuses must not reach catalog.wirings"
+    );
+    transaction
+        .rollback()
+        .await
+        .expect("close the gate refusal");
+
     let corrupt = wiring(
         "corrupt",
         3,
