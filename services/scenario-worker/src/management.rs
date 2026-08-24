@@ -1378,7 +1378,15 @@ mod tests {
             adapter.contains("AuthoringQuery::ReadDraft(_)") && adapter.contains("NOT_IMPLEMENTED")
         );
         assert!(adapter.contains("AuthoringQuery::GetReport(input)"));
-        assert!(adapter.contains("backend.get_report("));
+        // Matched with whitespace removed. What this pins is that the adapter
+        // reaches the backend's reader, not where rustfmt chose to break the
+        // receiver off its method: `backend\n    .get_report(` is the same
+        // mount. `authoring.rs` normalizes its probe text for the same reason.
+        let wrapped = adapter
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        assert!(wrapped.contains("backend.get_report("));
         for forbidden in ["record(", "INSERT ", "UPDATE ", "DELETE ", ".execute("] {
             assert!(
                 !adapter.contains(forbidden),
