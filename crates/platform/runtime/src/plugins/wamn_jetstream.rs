@@ -25,9 +25,11 @@
 //!   registration of the release sources, so an event whose registration
 //!   identity is not the release's never reaches a component.
 //!   Generic non-event publication and the doorbell hint are not release-gated.
-//!   The reserved `evt.*` and `dlq.*` namespaces are host-only: derived events
-//!   use [`WamnJetstream::publish_derived`], while exact registration bind ties
-//!   a fetched message to its release identity before dead-letter publication.
+//!   The reserved `evt.*`, `dlq.*` and `tap.*` namespaces are host-only: derived
+//!   events use [`WamnJetstream::publish_derived`], exact registration bind ties
+//!   a fetched message to its release identity before dead-letter publication,
+//!   and delivery previews use [`WamnJetstream::publish_router_tap`], which mints
+//!   every subject it writes from the trusted bind-time claim.
 //! - A publish waits for the server ack (async-nats: send future, then the
 //!   server-ack future) — the returned `publish-ack` is the only delivery truth.
 //! - The `doorbell.ring` wake hint (l5i9.17) publishes on the CONTROL-plane
@@ -62,6 +64,7 @@ use wamn_event_wire::{
     dead_letter_message_id, dead_letter_subject, derived_msg_id, stream_name, subject,
     subject_token,
 };
+use wamn_run_state::redaction::{OUTPUT_CAPTURE_CEILING_BYTES, scrub};
 
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -158,6 +161,177 @@ impl std::fmt::Display for DerivedPublishError {
 }
 
 impl std::error::Error for DerivedPublishError {}
+
+// ---------------------------------------------------------------------------
+// The reserved router-tap preview namespace (wamn-0h0g.24.5)
+// ---------------------------------------------------------------------------
+
+/// The reserved, HOST-OWNED subject namespace carrying ephemeral delivery
+/// previews — the router-edge live view's wire, consumed by the `wamn-dggp.10`
+/// run screen.
+///
+/// A THIRD reserved namespace beside `evt.*` and `dlq.*`, and deliberately not
+/// `evt`: a preview is an ephemeral debugging tap, and putting one into the
+/// durable event grammar would give one subject two origins — a stored fact and
+/// a redacted snapshot — which is fabricated provenance. `tap` is its own
+/// three-letter token in the shape the other two already use. It is not `trace`
+/// because this host already spends that word on W3C context propagation
+/// (`traceparent`/`tracestate`), and a payload preview is not that.
+///
+/// Minting the namespace and gating it are ONE change on purpose. Before this,
+/// `producer::publish` refused exactly `dlq.*` and `evt.*` and admitted every
+/// other subject with no registration-identity check at all, so a new host-owned
+/// namespace without [`is_reserved_router_tap_subject`] in the same commit would
+/// be a minted vulnerability: any tenant guest could write an operator's live
+/// view, and a forged preview reads as the host's own observation.
+pub const ROUTER_TAP_PREFIX: &str = "tap";
+
+/// The named refusal class a guest publish onto the preview namespace earns.
+const RESERVED_ROUTER_TAP_SUBJECT: &str = "reserved-router-tap-subject";
+
+/// Wire version of the preview record. Bumped when a field's meaning changes.
+const ROUTER_TAP_FORMAT_VERSION: u32 = 1;
+
+/// Which boundary of one delivery a preview describes.
+///
+/// The bridge sees two: the delivery it admitted, and the outcome the driver
+/// settled it with. Per-edge previews inside the router walk are the
+/// DEMAND-GATED UPGRADE, not built here — they would put a publish on every
+/// `Step::Invoke`, which is hot-path cost for debugging depth the default tier
+/// deliberately dropped. Nothing in this record's shape forecloses adding them:
+/// a per-edge phase is another variant on a subject that already scopes to one
+/// delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouterTapPhase {
+    /// Admitted by the bridge; the payload is the delivery's input.
+    Accepted,
+    /// Settled by the driver under this outcome label; the payload is the result.
+    Settled(&'static str),
+}
+
+impl RouterTapPhase {
+    fn label(self) -> &'static str {
+        match self {
+            RouterTapPhase::Accepted => "accepted",
+            RouterTapPhase::Settled(_) => "settled",
+        }
+    }
+
+    fn outcome(self) -> Option<&'static str> {
+        match self {
+            RouterTapPhase::Accepted => None,
+            RouterTapPhase::Settled(outcome) => Some(outcome),
+        }
+    }
+}
+
+/// One delivery-boundary preview, borrowed from what the bridge already holds.
+///
+/// Every field is a borrow so constructing one allocates nothing: a host with no
+/// data-plane NATS skips the whole tap without copying a payload.
+#[derive(Debug, Clone, Copy)]
+pub struct RouterTapPreview<'a> {
+    pub delivery_id: &'a str,
+    pub wiring_id: &'a str,
+    pub wiring_version: u32,
+    /// `"attachment"` or `"registration"` — the bridge's own two ingress kinds.
+    pub source_kind: &'static str,
+    pub source_id: &'a str,
+    pub phase: RouterTapPhase,
+    pub payload: &'a serde_json::Value,
+}
+
+/// `tap.<org>.<project>.<env>.<wiring>.<delivery>` — six tokens, the same arity
+/// as `evt.<org>.<project>.<env>.<entity>.<op>`, so a run screen binds one
+/// delivery (`tap.<org>.<project>.<env>.*.<delivery>`) and an operator binds one
+/// environment.
+///
+/// The org, project and environment tokens come from the trusted bind-time
+/// claim, which [`WamnJetstream::required_derived_claim`] has already proved to
+/// be exactly one subject token each. The wiring and delivery ids have not: the
+/// delivery id arrives over the WIT boundary from a guest, so both go through
+/// [`subject_token`] and cannot inject a separator or a wildcard. `None` when an
+/// id sanitizes to nothing, because an empty token is not a subject.
+fn router_tap_subject(
+    claim: &JetstreamClaim,
+    wiring_id: &str,
+    delivery_id: &str,
+) -> Option<String> {
+    let wiring = subject_token(wiring_id);
+    let delivery = subject_token(delivery_id);
+    if wiring.is_empty() || delivery.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{ROUTER_TAP_PREFIX}.{}.{}.{}.{wiring}.{delivery}",
+        claim.tenant, claim.project, claim.environment
+    ))
+}
+
+/// Is `subject` inside the reserved preview namespace?
+///
+/// `strip_prefix` rather than `starts_with(ROUTER_TAP_PREFIX)`, which would also
+/// swallow every unrelated subject beginning with those three letters, and
+/// rather than a `format!`-built `"tap."`, which would allocate on the publish
+/// path. Bare `tap` is included: it is the namespace root.
+fn is_reserved_router_tap_subject(subject: &str) -> bool {
+    subject
+        .strip_prefix(ROUTER_TAP_PREFIX)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreparedRouterTap {
+    subject: String,
+    body: Vec<u8>,
+}
+
+/// Mint the subject and build the bounded, redacted body of one preview.
+///
+/// Redaction and the ceiling are applied HERE, not by the caller, so the only
+/// path onto the reserved namespace is one that has already run both. The policy
+/// is `wamn_run_state::redaction` exactly as extracted by `wamn-0h0g.26.2`
+/// ([`scrub`] and [`OUTPUT_CAPTURE_CEILING_BYTES`]); a live view that needs more
+/// renegotiates it on `wamn-0h0g.24.5` rather than widening it locally.
+///
+/// An over-ceiling payload is DROPPED, not truncated: truncated JSON does not
+/// parse, and half a redacted object is not a safer thing to publish than none.
+/// The byte count moves into the envelope so the flag cannot be confused with a
+/// key the guest payload happens to carry.
+fn prepare_router_tap(
+    claim: &JetstreamClaim,
+    preview: &RouterTapPreview<'_>,
+) -> Option<PreparedRouterTap> {
+    let subject = router_tap_subject(claim, preview.wiring_id, preview.delivery_id)?;
+    let mut payload = preview.payload.clone();
+    let redacted = scrub(&mut payload);
+    let mut record = serde_json::json!({
+        "format-version": ROUTER_TAP_FORMAT_VERSION,
+        "phase": preview.phase.label(),
+        "delivery-id": preview.delivery_id,
+        "wiring-id": preview.wiring_id,
+        "wiring-version": preview.wiring_version,
+        "source-kind": preview.source_kind,
+        "source-id": preview.source_id,
+        "redacted": redacted,
+    });
+    if let Some(outcome) = preview.phase.outcome() {
+        record["outcome"] = serde_json::Value::String(outcome.to_owned());
+    }
+    let payload_bytes = serde_json::to_vec(&payload)
+        .expect("a serde_json::Value tree always serializes")
+        .len();
+    if payload_bytes > OUTPUT_CAPTURE_CEILING_BYTES {
+        record["over-ceiling-bytes"] = serde_json::Value::from(payload_bytes);
+        record["payload"] = serde_json::Value::Null;
+    } else {
+        record["payload"] = payload;
+    }
+    Some(PreparedRouterTap {
+        subject,
+        body: serde_json::to_vec(&record).expect("a serde_json::Value tree always serializes"),
+    })
+}
 
 /// Wire the `wamn:jetstream` consumer + producer host functions into a linker
 /// directly. The host path calls this from [`HostPlugin::on_workload_item_bind`];
@@ -661,6 +835,67 @@ impl WamnJetstream {
             started.elapsed(),
         );
         result
+    }
+
+    /// Publish one ephemeral, redacted preview of a delivery boundary onto the
+    /// reserved [`ROUTER_TAP_PREFIX`] namespace.
+    ///
+    /// BEST-EFFORT BY CONTRACT, and that is why it returns nothing. A live view
+    /// is a debugging surface; a delivery must not fail, slow, or change shape
+    /// because an operator is watching. So this
+    ///
+    /// - skips entirely on a host with no data-plane NATS, before it clones or
+    ///   scrubs anything — which also makes the tap free in every test and bench
+    ///   that runs without one;
+    /// - does NOT await the JetStream server ack, unlike
+    ///   [`WamnJetstream::publish_derived`], where the ack is the delivery truth.
+    ///   Here it would only put a debugging tap on a delivery's critical path;
+    /// - logs a failure at debug rather than raising it.
+    ///
+    /// COST, named rather than hidden: on a host that HAS a data-plane NATS this
+    /// deep-clones the previewed payload once (the redaction policy scrubs in
+    /// place, so a copy is unavoidable) and sends once, per boundary. If that
+    /// shows up in a bench, the next lever is demand-gating the tap on a bound
+    /// consumer, not thinning what the preview says.
+    ///
+    /// `component_id` names whose claim mints the subject; the caller cannot
+    /// supply a subject, which is what keeps this the only writer.
+    pub async fn publish_router_tap(&self, component_id: &str, preview: RouterTapPreview<'_>) {
+        if self.nats_url.is_none() {
+            return;
+        }
+        let Ok(claim) = self.required_derived_claim(component_id) else {
+            tracing::debug!(
+                target: "wamn::jetstream",
+                component = component_id,
+                "router tap skipped: no complete bind-time claim to scope a preview subject"
+            );
+            return;
+        };
+        let Some(prepared) = prepare_router_tap(&claim, &preview) else {
+            tracing::debug!(
+                target: "wamn::jetstream",
+                component = component_id,
+                "router tap skipped: the delivery or wiring id names no subject token"
+            );
+            return;
+        };
+        let span = js_span(&claim, component_id, "router-tap");
+        let outcome = async {
+            let ctx = self
+                .ensure_ctx()
+                .await
+                .map_err(|error| format!("data-plane NATS unavailable: {error:?}"))?;
+            ctx.publish(prepared.subject, prepared.body.into())
+                .await
+                .map_err(|error| format!("send router tap preview: {error}"))?;
+            Ok::<(), String>(())
+        }
+        .instrument(span)
+        .await;
+        if let Err(error) = outcome {
+            tracing::debug!(target: "wamn::jetstream", error, "router tap preview not published");
+        }
     }
 }
 
@@ -1513,6 +1748,66 @@ impl doorbell::Host for ActiveCtx<'_> {
     }
 }
 
+/// The generic guest publish: every reserved namespace refused, then the wire.
+///
+/// A free function taking `&WamnJetstream`, in the shape [`bind_consumer`]
+/// already uses, so the refusals are reachable from a unit test that owns
+/// nothing but a plugin — the gate is the security boundary of three host-owned
+/// namespaces and a predicate test alone would never show that `publish` calls
+/// it. Every refusal is decided BEFORE [`WamnJetstream::ensure_ctx`], which is
+/// what lets `connection-unavailable` stand as proof that a subject got past
+/// the gate.
+async fn publish_generic(
+    plugin: &WamnJetstream,
+    component_id: &str,
+    subject: String,
+    headers: Vec<Header>,
+    body: Vec<u8>,
+) -> Result<producer::PublishAck, JsError> {
+    let claim = plugin.claim_for(component_id);
+    let span = js_span(&claim, component_id, "publish");
+    let started = std::time::Instant::now();
+    let result = async {
+        if is_reserved_dead_letter_subject(&subject) {
+            return Err(JsError::PublishRejected(format!(
+                "{RESERVED_DEAD_LETTER_SUBJECT}: use a bound message's dead-letter method"
+            )));
+        }
+        if is_reserved_event_subject(&subject) {
+            return Err(JsError::PublishRejected(format!(
+                "{RESERVED_EVENT_SUBJECT}: derived events use the host-owned publisher"
+            )));
+        }
+        if is_reserved_router_tap_subject(&subject) {
+            return Err(JsError::PublishRejected(format!(
+                "{RESERVED_ROUTER_TAP_SUBJECT}: delivery previews are minted by the host tap"
+            )));
+        }
+        let ctx = plugin.ensure_ctx().await?;
+        let map = to_header_map(&headers);
+        // Two awaits: the send future, then the server-ack future. The awaited
+        // PublishAck is the only delivery truth (async-nats 0.47).
+        let ack_future = ctx
+            .publish_with_headers(subject, map, body.into())
+            .await
+            .map_err(|e| JsError::PublishRejected(e.to_string()))?;
+        ack_future
+            .await
+            .map(|ack| to_publish_ack(&ack))
+            .map_err(|e| JsError::PublishRejected(e.to_string()))
+    }
+    .instrument(span)
+    .await;
+    record_effect_ms(
+        &JETSTREAM_DURATION_MS,
+        EFFECT_OPERATION,
+        "publish",
+        &claim.project,
+        started.elapsed(),
+    );
+    result
+}
+
 impl producer::Host for ActiveCtx<'_> {
     async fn publish(
         &mut self,
@@ -1522,43 +1817,7 @@ impl producer::Host for ActiveCtx<'_> {
     ) -> wash_runtime::wasmtime::Result<Result<producer::PublishAck, JsError>> {
         let plugin = plugin_of(self)?;
         let component_id = self.component_id.to_string();
-        let claim = plugin.claim_for(&component_id);
-        let span = js_span(&claim, &component_id, "publish");
-        let started = std::time::Instant::now();
-        let result = async {
-            if is_reserved_dead_letter_subject(&subject) {
-                return Err(JsError::PublishRejected(format!(
-                    "{RESERVED_DEAD_LETTER_SUBJECT}: use a bound message's dead-letter method"
-                )));
-            }
-            if is_reserved_event_subject(&subject) {
-                return Err(JsError::PublishRejected(format!(
-                    "{RESERVED_EVENT_SUBJECT}: derived events use the host-owned publisher"
-                )));
-            }
-            let ctx = plugin.ensure_ctx().await?;
-            let map = to_header_map(&headers);
-            // Two awaits: the send future, then the server-ack future. The awaited
-            // PublishAck is the only delivery truth (async-nats 0.47).
-            let ack_future = ctx
-                .publish_with_headers(subject, map, body.into())
-                .await
-                .map_err(|e| JsError::PublishRejected(e.to_string()))?;
-            ack_future
-                .await
-                .map(|ack| to_publish_ack(&ack))
-                .map_err(|e| JsError::PublishRejected(e.to_string()))
-        }
-        .instrument(span)
-        .await;
-        record_effect_ms(
-            &JETSTREAM_DURATION_MS,
-            EFFECT_OPERATION,
-            "publish",
-            &claim.project,
-            started.elapsed(),
-        );
-        Ok(result)
+        Ok(publish_generic(&plugin, &component_id, subject, headers, body).await)
     }
 }
 
@@ -1948,6 +2207,183 @@ mod tests {
         }
         assert!(!is_reserved_event_subject("wamn.jstest.orders.insert"));
     }
+
+    // ---- the reserved router-tap preview namespace (wamn-0h0g.24.5) --------
+
+    fn tap_claim() -> JetstreamClaim {
+        JetstreamClaim {
+            tenant: "acme".into(),
+            project: "app".into(),
+            environment: "prod".into(),
+        }
+    }
+
+    /// The gate is exercised THROUGH the publish path, not as a bare predicate.
+    ///
+    /// A plugin with no configured URL cannot reach a server, so
+    /// `connection-unavailable` is positive proof that a subject got PAST every
+    /// refusal, and a `publish-rejected` naming a class is proof the refusal
+    /// itself fired at the call site. Delete any of the three checks from
+    /// `publish_generic` and its subjects fall through to
+    /// `connection-unavailable` here. No NATS is involved.
+    #[tokio::test]
+    async fn generic_publish_refuses_every_reserved_namespace_before_the_wire() {
+        let plugin = WamnJetstream::new(WamnJetstreamConfig { nats_url: None });
+        for (subject, class) in [
+            ("dlq", RESERVED_DEAD_LETTER_SUBJECT),
+            ("dlq.t1.prod.cat.r1", RESERVED_DEAD_LETTER_SUBJECT),
+            ("evt", RESERVED_EVENT_SUBJECT),
+            ("evt.acme.app.dev.orders.insert", RESERVED_EVENT_SUBJECT),
+            ("tap", RESERVED_ROUTER_TAP_SUBJECT),
+            ("tap.acme.app.prod.orders.d-1", RESERVED_ROUTER_TAP_SUBJECT),
+        ] {
+            let error = publish_generic(&plugin, "c1", subject.to_owned(), Vec::new(), Vec::new())
+                .await
+                .expect_err("a host-owned namespace is not a guest's to write");
+            let JsError::PublishRejected(detail) = error else {
+                panic!("{subject:?} must be refused as publish-rejected, got {error:?}");
+            };
+            assert!(
+                detail.starts_with(class),
+                "{subject:?} must be refused as {class}: {detail}"
+            );
+        }
+        // Nothing outside the three namespaces is refused — including subjects
+        // that merely START with the reserved letters, which a `starts_with`
+        // prefix test would swallow along with a tenant's own traffic.
+        for admitted in ["wamn.jstest.orders.insert", "tapioca.acme", "taps", "evtx"] {
+            let error = publish_generic(&plugin, "c1", admitted.to_owned(), Vec::new(), Vec::new())
+                .await
+                .expect_err("the fixture plugin has no data-plane NATS");
+            assert!(
+                matches!(error, JsError::ConnectionUnavailable),
+                "{admitted:?} must reach the connection, not a reserved-namespace refusal: \
+                 {error:?}"
+            );
+        }
+    }
+
+    /// The host must never mint a subject its own gate would admit from a guest:
+    /// a preview namespace a tenant can write is a forgeable provenance channel
+    /// feeding an operator's live view, which is worse than having no tap.
+    #[test]
+    fn every_minted_tap_subject_falls_inside_the_gated_namespace() {
+        let claim = tap_claim();
+        let subject = router_tap_subject(&claim, "orders", "d-1").expect("both ids name tokens");
+        assert_eq!(subject, "tap.acme.app.prod.orders.d-1");
+        assert!(is_reserved_router_tap_subject(&subject));
+
+        // The delivery id crosses the WIT boundary from a guest. Sanitization
+        // keeps it ONE token, so it can neither add a level nor plant a
+        // wildcard that would widen what a consumer's filter selects.
+        let injected = router_tap_subject(&claim, "orders", "d.1.*.>")
+            .expect("a dirty id still names a token");
+        assert_eq!(
+            injected.split('.').count(),
+            6,
+            "a guest-supplied id must not add subject levels: {injected}"
+        );
+        assert!(
+            !injected.contains('*') && !injected.contains('>'),
+            "{injected}"
+        );
+        assert!(is_reserved_router_tap_subject(&injected));
+
+        // An id that sanitizes to nothing yields no subject at all rather than a
+        // malformed one with an empty token.
+        assert_eq!(router_tap_subject(&claim, "", "d-1"), None);
+        assert_eq!(router_tap_subject(&claim, "orders", ""), None);
+    }
+
+    /// Redaction and the ceiling are the publisher's, not the caller's: the
+    /// assertions read the BYTES the tap would put on the wire.
+    #[test]
+    fn a_preview_is_redacted_and_bounded_before_it_can_reach_the_wire() {
+        let claim = tap_claim();
+        let payload = serde_json::json!({
+            "api_key": "hunter2",
+            "nested": {"authorization": "Bearer abc"},
+            "plain": "visible",
+        });
+        let preview = RouterTapPreview {
+            delivery_id: "d-1",
+            wiring_id: "orders",
+            wiring_version: 3,
+            source_kind: "attachment",
+            source_id: "orders-http",
+            phase: RouterTapPhase::Accepted,
+            payload: &payload,
+        };
+        let prepared = prepare_router_tap(&claim, &preview).expect("the ids name tokens");
+        let record: serde_json::Value =
+            serde_json::from_slice(&prepared.body).expect("the tap body is JSON");
+
+        assert_eq!(
+            record["payload"]["api_key"],
+            serde_json::json!("[redacted]")
+        );
+        assert_eq!(
+            record["payload"]["nested"]["authorization"],
+            serde_json::json!("[redacted]")
+        );
+        assert_eq!(record["payload"]["plain"], serde_json::json!("visible"));
+        assert_eq!(record["redacted"], serde_json::json!(true));
+        assert_eq!(record["phase"], serde_json::json!("accepted"));
+        assert_eq!(record["outcome"], serde_json::Value::Null);
+        assert_eq!(record["delivery-id"], serde_json::json!("d-1"));
+        assert_eq!(record["wiring-version"], serde_json::json!(3));
+        assert_eq!(record["source-id"], serde_json::json!("orders-http"));
+        assert_eq!(
+            record["format-version"],
+            serde_json::json!(ROUTER_TAP_FORMAT_VERSION)
+        );
+        assert_eq!(prepared.subject, "tap.acme.app.prod.orders.d-1");
+
+        // A settled preview names its outcome; an accepted one has none to name.
+        let settled = prepare_router_tap(
+            &claim,
+            &RouterTapPreview {
+                phase: RouterTapPhase::Settled("respond"),
+                ..preview
+            },
+        )
+        .expect("the ids name tokens");
+        let settled: serde_json::Value =
+            serde_json::from_slice(&settled.body).expect("the tap body is JSON");
+        assert_eq!(settled["phase"], serde_json::json!("settled"));
+        assert_eq!(settled["outcome"], serde_json::json!("respond"));
+
+        // A payload the extracted policy will not retain is DROPPED, not
+        // truncated, and the envelope says how large it was.
+        let oversized = serde_json::json!({"blob": "x".repeat(OUTPUT_CAPTURE_CEILING_BYTES + 1)});
+        let bounded = prepare_router_tap(
+            &claim,
+            &RouterTapPreview {
+                payload: &oversized,
+                ..preview
+            },
+        )
+        .expect("the ids name tokens");
+        assert!(
+            bounded.body.len() < OUTPUT_CAPTURE_CEILING_BYTES,
+            "an over-ceiling payload must not reach the wire: {} bytes",
+            bounded.body.len()
+        );
+        let bounded: serde_json::Value =
+            serde_json::from_slice(&bounded.body).expect("the tap body is JSON");
+        assert_eq!(bounded["payload"], serde_json::Value::Null);
+        assert!(
+            bounded["over-ceiling-bytes"]
+                .as_u64()
+                .is_some_and(|bytes| bytes as usize > OUTPUT_CAPTURE_CEILING_BYTES),
+            "the dropped payload's size must survive as a flag: {bounded}"
+        );
+    }
+
+    // NOT ASSERTED HERE, and deliberately: `publish_router_tap`'s early return
+    // on an unconfigured host is indistinguishable from letting it fall through
+    // to `ensure_ctx`, because both end in nothing published. It is a cost
+    // decision, not a behavioural one, so there is no honest unit test for it.
 
     #[test]
     fn exact_registration_consumer_keeps_transport_redelivery_armed() {
