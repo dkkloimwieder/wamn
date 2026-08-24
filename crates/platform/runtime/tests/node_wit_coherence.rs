@@ -10,8 +10,8 @@ const PACKAGE_DECLARATION: &str = "package wamn:node@0.1.0;";
 const AUTHORITY_COPY: &str = "crates/execution/router/wit/package.wit";
 
 const EXPECTED_COPIES: [&str; 3] = [
-    "components/library/http-request/wit/deps/wamn-node/package.wit",
-    "components/library/transform/wit/deps/wamn-node/package.wit",
+    "components/no-std/http-request/wit/deps/wamn-node/package.wit",
+    "components/no-std/transform/wit/deps/wamn-node/package.wit",
     AUTHORITY_COPY,
 ];
 
