@@ -651,10 +651,7 @@ mod tests {
     #[test]
     fn no_statement_reaches_the_project_run_plane() {
         let source = include_str!("test_orchestration.rs");
-        let implementation = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
+        let implementation = crate::source_scan::implementation(source);
         for project_local in [
             "FROM runs",
             "JOIN runs",
@@ -731,10 +728,7 @@ mod tests {
     #[test]
     fn the_reconcile_pins_no_map_from_a_column_nothing_writes() {
         let source = include_str!("test_orchestration.rs");
-        let implementation = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
+        let implementation = crate::source_scan::implementation(source);
         // The dead pin, every fragment of the statement that carried it, and the
         // deleted columns themselves.
         for dead in [

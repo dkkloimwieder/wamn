@@ -5,3 +5,6 @@
 pub mod authoring;
 pub mod management;
 pub mod store;
+
+#[cfg(test)]
+pub(crate) mod source_scan;

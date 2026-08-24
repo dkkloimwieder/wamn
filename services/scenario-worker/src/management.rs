@@ -966,17 +966,7 @@ mod tests {
     use super::*;
     use wamn_authoring_model::{AuthoringCommandKind, QueryId};
 
-    /// The slice of this module between two top-level items, for the structural
-    /// guards below.
-    fn between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
-        source
-            .split(start)
-            .nth(1)
-            .unwrap_or_else(|| panic!("{start} exists"))
-            .split(end)
-            .next()
-            .unwrap_or_else(|| panic!("{end} follows {start}"))
-    }
+    use crate::source_scan::{between, implementation, within};
 
     async fn body_of(response: Response<Full<Bytes>>) -> Bytes {
         response
@@ -1162,10 +1152,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("serve performs {io}"));
             assert!(checked < at, "{io} runs before the fail-closed scope check");
         }
-        let implementation = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
+        let implementation = implementation(source);
         // Exactly one connection is opened here, and it is the identity read. The
         // authoring credential is the backend's, and there is no third.
         assert_eq!(
@@ -1323,7 +1310,7 @@ mod tests {
             "the reserved-route set changed without this guard moving"
         );
         assert!(router.contains("_ => Ok(empty(StatusCode::NOT_FOUND))"));
-        let implementation = source.split("#[cfg(test)]").next().unwrap();
+        let implementation = implementation(source);
         for removed in [
             "\"/login\"",
             "\"/session\"",
@@ -1393,7 +1380,7 @@ mod tests {
                 "non-ledgered query adapter gained {forbidden}"
             );
         }
-        let implementation = source.split("#[cfg(test)]").next().unwrap();
+        let implementation = implementation(source);
         assert!(!implementation.contains("authoring_query_log"));
         assert!(!implementation.contains("authoring_query_audit"));
     }
@@ -1581,10 +1568,7 @@ mod tests {
     #[test]
     fn provenance_reaches_the_ledger_and_no_other_statement() {
         let source = include_str!("management.rs");
-        let implementation = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
+        let implementation = implementation(source);
         assert_eq!(implementation.matches("INSERT INTO").count(), 1);
         assert_eq!(implementation.matches("UPDATE ").count(), 0);
         assert!(INSERT_COMMAND_AUDIT_SQL.contains("provenance_commit"));
@@ -1598,7 +1582,7 @@ mod tests {
             "async fn dispatch_command(",
             "/// Return the presented bearer",
         );
-        let command = between(dispatch, "let request = SaveFlowDraft {", "};");
+        let command = within(dispatch, "let request = SaveFlowDraft {", "};");
         assert!(
             !command.contains("provenance"),
             "attribution reached the command: {command}"
@@ -1619,10 +1603,7 @@ mod tests {
         // Scan the implementation only: this module's own tests name the
         // machinery they forbid, and a guard that matched its own vocabulary
         // would prove nothing.
-        let implementation = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
+        let implementation = implementation(source);
         for machinery in [
             "git2",
             "gix",

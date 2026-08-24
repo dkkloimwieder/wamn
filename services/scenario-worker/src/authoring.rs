@@ -598,16 +598,21 @@ mod tests {
         }
     }
 
+    /// The capability token carries no client identity.
+    ///
+    /// This scanned the whole file for `pub struct InternalDevAdmin`, which the
+    /// declaration below has never matched — it is `pub(crate) struct`. The only
+    /// occurrence was this test's own search literal, so the span was a slice of
+    /// the test source and all three assertions passed vacuously. Scanning the
+    /// implementation half makes the literal real: it is the declaration or it
+    /// is nothing (wamn-3o3a).
     #[test]
     fn internal_adapter_carries_no_client_principal() {
-        let source = include_str!("authoring.rs");
-        let token = source
-            .split("pub struct InternalDevAdmin")
-            .nth(1)
-            .unwrap()
-            .split("impl InternalDevAdmin")
-            .next()
-            .unwrap();
+        let token = crate::source_scan::between(
+            include_str!("authoring.rs"),
+            "pub(crate) struct InternalDevAdmin",
+            "impl InternalDevAdmin",
+        );
         assert!(!token.contains("principal"));
         assert!(!token.contains("user_id"));
         assert!(!token.contains("subject"));
