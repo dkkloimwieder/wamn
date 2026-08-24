@@ -222,11 +222,11 @@ fn profile_contract_matches_locked_metadata() {
     );
 
     let profile_counts = [
-        ("m1", 24),
-        ("m2", 26),
-        ("deploy", 32),
-        ("full", 39),
-        ("ops", 39),
+        ("m1", 21),
+        ("m2", 23),
+        ("deploy", 29),
+        ("full", 35),
+        ("ops", 35),
     ];
     let mut profiles = BTreeMap::new();
     for (profile, expected_count) in profile_counts {
