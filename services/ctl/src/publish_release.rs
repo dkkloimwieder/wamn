@@ -380,7 +380,7 @@ pub async fn mint_release_manifest(
         catalog_id: request.catalog_id.to_string(),
         catalog_version,
     };
-    let component_facts = load_component_facts(transaction, request, &scope).await?;
+    let component_facts = load_component_facts(transaction, &scope).await?;
     let (components, wirings, expected_membership) =
         resolve_current_closure(transaction, request, &scope, &component_facts).await?;
 
@@ -449,19 +449,20 @@ pub async fn read_release_snapshot(
     Ok(snapshot.map(|row| row.get(0)))
 }
 
-async fn load_component_facts(
+/// Read every admitted component fact of one gate scope.
+///
+/// Shared with `author-wiring` (wamn-1xb5) so authoring and minting gate a
+/// wiring against the same fact set rather than two readers of one table.
+pub async fn load_component_facts(
     transaction: &Transaction<'_>,
-    request: &MintReleaseManifest<'_>,
     scope: &ComponentCatalogScope,
 ) -> Result<Vec<AdmittedComponent>, MintManifestError> {
+    let catalog_version = i32::try_from(scope.catalog_version)
+        .expect("a gate scope carries a stored catalog version");
     let rows = transaction
         .query(
             SELECT_COMPONENT_FACTS_SQL,
-            &[
-                &request.tenant_id,
-                &request.catalog_id,
-                &request.catalog_version,
-            ],
+            &[&scope.tenant_id, &scope.catalog_id, &catalog_version],
         )
         .await
         .map_err(|error| storage("read admitted component facts", error))?;

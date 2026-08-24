@@ -8,6 +8,7 @@
 //! lifecycle and reporting verbs require the `ops` feature and ship in the
 //! separate `wamn-ctl-ops` binary.
 
+pub mod author_wiring;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
 #[cfg(feature = "ops")]

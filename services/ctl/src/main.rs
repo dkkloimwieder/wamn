@@ -4,7 +4,7 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    enable_cdc_project_env, migrate_catalog, promote, provision, provision_org,
+    author_wiring, enable_cdc_project_env, migrate_catalog, promote, provision, provision_org,
     provision_project_env, publish_release, push_component, push_release_manifest,
     reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
 };
@@ -34,6 +34,8 @@ enum Command {
     MigrateCatalog(migrate_catalog::MigrateCatalogArgs),
     /// Validate and publish exact component bytes, then append their T1 library fact
     PushComponent(push_component::PushComponentArgs),
+    /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
+    AuthorWiring(author_wiring::AuthorWiringArgs),
     /// INTERIM: mint one format-2 release from named wirings plus hand-authored attachment and registration documents (wamn-0h0g.15.164 replaces the documents with a projection)
     PublishRelease(publish_release::PublishReleaseArgs),
     /// Publish canonical format-2 serving-manifest bytes as an immutable OCI artifact
@@ -71,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,
         Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
         Command::PushComponent(args) => push_component::run(args).await,
+        Command::AuthorWiring(args) => author_wiring::run(args).await,
         Command::PublishRelease(args) => publish_release::run(args).await,
         Command::PushReleaseManifest(args) => push_release_manifest::run(args).await,
         Command::Promote(args) => promote::run(args).await,

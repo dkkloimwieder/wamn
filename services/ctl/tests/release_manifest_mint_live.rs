@@ -18,6 +18,9 @@ use wamn_catalog::{
     ServingRelease, ServingWiring, WiringDocument, WiringEventOperation, WiringNode,
     WiringTerminal,
 };
+use wamn_ctl::author_wiring::{
+    AuthorWiringArgs, AuthorWiringErrorKind, AuthorWiringRequest, author_wiring,
+};
 use wamn_ctl::publish_catalog::ensure_catalog_storage;
 use wamn_ctl::publish_release::{
     MintManifestErrorKind, MintReleaseManifest, PublishReleaseArgs, RELEASE_MANIFEST_MINT_REFUSAL,
@@ -36,6 +39,7 @@ const TENANT: &str = "manifest-mint-tenant";
 const CATALOG: &str = "manifest-mint-catalog";
 const CATALOG_VERSION: i32 = 3;
 const ENVIRONMENT: &str = "prod";
+const GATE_REPORT: &str = "gate-report";
 const COMPONENT_A: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const COMPONENT_B: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 const WRONG_GRAPH: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
@@ -297,7 +301,40 @@ fn wiring(id: &str, version: u32, component: &str, terminal: WiringTerminal) -> 
     .expect("fixture wiring is structurally valid")
 }
 
-async fn seed_wiring(admin: &Client, document: &WiringDocument, graph_hash: &str) {
+/// Author one gated wiring through the production authorship verb.
+///
+/// `seed_wiring`'s hand SQL retired with wamn-1xb5: the fixtures are documents
+/// now, admitted by exactly the predicates a first release is authored under.
+async fn author(admin: &mut Client, document: &WiringDocument) -> DefinitionHash {
+    let transaction = admin
+        .transaction()
+        .await
+        .expect("open the wiring authorship transaction");
+    let hash = author_wiring(
+        &transaction,
+        &AuthorWiringRequest {
+            tenant_id: TENANT,
+            catalog_id: CATALOG,
+            gated_catalog_version: CATALOG_VERSION,
+            gate_report_id: GATE_REPORT,
+            document,
+        },
+    )
+    .await
+    .expect("the authorship verb gates and stores the wiring");
+    transaction
+        .commit()
+        .await
+        .expect("commit the wiring authorship");
+    hash
+}
+
+/// Store one wiring row whose `wiring_hash` does not name its own document.
+///
+/// This state is UNREACHABLE through `author-wiring`, which derives the stored
+/// hash from the document it writes, so the corruption the mint must refuse is
+/// injected with hand SQL on purpose.
+async fn corrupt_stored_wiring_hash(admin: &Client, document: &WiringDocument, graph_hash: &str) {
     let version = i32::try_from(document.version).expect("fixture version fits storage");
     let graph = serde_json::to_string(document).expect("wiring serializes");
     admin
@@ -305,7 +342,7 @@ async fn seed_wiring(admin: &Client, document: &WiringDocument, graph_hash: &str
             "INSERT INTO catalog.wirings \
                    (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
                     graph_json, wiring_hash, gate_report_id) \
-             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'gate-report')",
+             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8)",
             &[
                 &TENANT,
                 &CATALOG,
@@ -314,10 +351,11 @@ async fn seed_wiring(admin: &Client, document: &WiringDocument, graph_hash: &str
                 &CATALOG_VERSION,
                 &graph,
                 &graph_hash,
+                &GATE_REPORT,
             ],
         )
         .await
-        .expect("seed a gated wiring");
+        .expect("inject a wiring whose stored hash is not its document's");
 }
 
 fn targets() -> BTreeSet<ReleaseWiringTarget> {
@@ -383,10 +421,39 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
         "transform",
         WiringTerminal::emit("orders", WiringEventOperation::Insert),
     );
-    let orders_hash = orders.wiring_hash();
-    let shipping_hash = shipping.wiring_hash();
-    seed_wiring(&admin, &orders, orders_hash.as_str()).await;
-    seed_wiring(&admin, &shipping, shipping_hash.as_str()).await;
+    // The authorship verb derives the stored hash from the document it stores,
+    // so the fixture's own hash is what a gated wiring row must carry.
+    let orders_hash = author(&mut admin, &orders).await;
+    let shipping_hash = author(&mut admin, &shipping).await;
+    assert_eq!(orders_hash, orders.wiring_hash());
+    assert_eq!(shipping_hash, shipping.wiring_hash());
+
+    // Authorship is one idempotent act. An exact resubmission converges, while
+    // a second document at one authored coordinate refuses: the stored
+    // definition is immutable, so there is nothing to replace it with.
+    assert_eq!(author(&mut admin, &orders).await, orders_hash);
+    let rewired = wiring("orders", 1, "transform", WiringTerminal::Respond);
+    let transaction = admin
+        .transaction()
+        .await
+        .expect("open the conflicting authorship transaction");
+    let refusal = author_wiring(
+        &transaction,
+        &AuthorWiringRequest {
+            tenant_id: TENANT,
+            catalog_id: CATALOG,
+            gated_catalog_version: CATALOG_VERSION,
+            gate_report_id: GATE_REPORT,
+            document: &rewired,
+        },
+    )
+    .await
+    .expect_err("a second document at one authored coordinate refuses");
+    assert_eq!(refusal.kind(), AuthorWiringErrorKind::Conflict);
+    transaction
+        .rollback()
+        .await
+        .expect("close the authorship conflict");
 
     let corrupt = wiring(
         "corrupt",
@@ -394,7 +461,7 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
         "transform",
         WiringTerminal::emit("orders", WiringEventOperation::Insert),
     );
-    seed_wiring(&admin, &corrupt, WRONG_GRAPH).await;
+    corrupt_stored_wiring_hash(&admin, &corrupt, WRONG_GRAPH).await;
     let corrupt_targets = BTreeSet::from([ReleaseWiringTarget {
         wiring_id: "corrupt".to_string(),
         wiring_version: 3,
@@ -648,14 +715,32 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
         "transform",
         WiringTerminal::emit("orders", WiringEventOperation::Insert),
     );
-    seed_wiring(&admin, &orders, orders.wiring_hash().as_str()).await;
-    seed_wiring(&admin, &shipping, shipping.wiring_hash().as_str()).await;
 
     let documents =
         std::env::temp_dir().join(format!("wamn-publish-release-{}", std::process::id()));
     std::fs::create_dir_all(&documents).expect("create the interim document directory");
     let attachments_path = write_document(&documents, "attachments.json", &attachments());
     let registrations_path = write_document(&documents, "registrations.json", &registrations());
+
+    // The wirings this release closes over are authored by the CLI verb from
+    // their documents. Nothing between an empty environment and a first release
+    // is hand SQL any more (wamn-1xb5).
+    for document in [&orders, &shipping] {
+        wamn_ctl::author_wiring::run(AuthorWiringArgs {
+            database_url: url.clone(),
+            tenant: TENANT.to_string(),
+            catalog_id: CATALOG.to_string(),
+            gated_catalog_version: CATALOG_VERSION as u32,
+            gate_report_id: GATE_REPORT.to_string(),
+            wiring_document: write_document(
+                &documents,
+                &format!("{}.json", document.wiring_id),
+                document,
+            ),
+        })
+        .await
+        .expect("the authorship verb gates and stores one wiring document");
+    }
 
     // The first release in this environment is minted by the CLI verb alone:
     // no hand SQL, no Rust test calling the mint, no source release to promote.
