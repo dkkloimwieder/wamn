@@ -1603,6 +1603,7 @@ fn storage(operation: &'static str, error: tokio_postgres::Error) -> ProductionC
 
 #[cfg(test)]
 mod tests {
+    use super::super::production_half;
     use super::*;
 
     #[test]
@@ -1625,7 +1626,7 @@ mod tests {
 
     #[test]
     fn production_claim_and_reaper_use_only_the_platform_pool() {
-        let source = include_str!("production_claim.rs");
+        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
         let claim_start = source
             .find("pub async fn claim_next_production(")
             .expect("production claim method");
@@ -1790,7 +1791,7 @@ mod tests {
 
     #[test]
     fn claim_is_exactly_lock_then_classify_then_lease() {
-        let source = include_str!("production_claim.rs");
+        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
         let start = source.find("async fn claim_in_transaction(").unwrap();
         let end = source.find("async fn reap_in_transaction(").unwrap();
         let body = &source[start..end];
@@ -1810,7 +1811,7 @@ mod tests {
 
     #[test]
     fn claim_and_reaper_fence_before_fresh_effect_snapshot() {
-        let source = include_str!("production_claim.rs");
+        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
         let claim_start = source.find("async fn claim_in_transaction(").unwrap();
         let reap_start = source.find("async fn reap_in_transaction(").unwrap();
         let fence_helper = source.find("async fn serialize_effect_intent(").unwrap();
@@ -1826,15 +1827,15 @@ mod tests {
                 .expect("composer reads a fresh effect snapshot");
             assert!(fence < snapshot);
         }
-        let tests_start = source.find("#[cfg(test)]").unwrap();
-        let helper = &source[fence_helper..tests_start];
+        // `source` already stops at the test module, so the helper runs to its end.
+        let helper = &source[fence_helper..];
         assert!(helper.contains("let sql = serialize_effect_intent_sql();"));
         assert!(!helper.contains("SELECT true"));
     }
 
     #[test]
     fn crash_evidence_advances_outside_the_grants_subtransaction() {
-        let source = include_str!("production_claim.rs");
+        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
         let start = source.find("async fn claim_in_transaction(").unwrap();
         let end = source.find("async fn reap_in_transaction(").unwrap();
         let body = &source[start..end];
@@ -2090,7 +2091,7 @@ mod tests {
     fn the_effect_snapshot_statements_are_issued_only_for_the_premium_class() {
         // The default tier's turn is plain lock-then-lease: the advisory fence
         // and the effect snapshot exist only to read evidence it may not act on.
-        let source = include_str!("production_claim.rs");
+        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
         for (start_marker, end_marker) in [
             (
                 "async fn claim_in_transaction(",

@@ -264,6 +264,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::production_half;
 
     #[test]
     fn fence_lost_forbids_subsequent_access() {
@@ -431,9 +432,10 @@ mod tests {
     #[test]
     fn recovery_and_successor_lineage_residue_is_absent() {
         let attempt = include_str!("attempt.rs");
-        let transitions = include_str!("transitions.rs")
-            .split_once("#[cfg(test)]")
-            .map_or(include_str!("transitions.rs"), |(production, _)| production);
+        // Splitting on a bare `#[cfg(test)]` searched for a literal this file
+        // also spells, and fell back to the WHOLE file when the split missed —
+        // both of which let the test module answer for the API (wamn-3o3a).
+        let transitions = production_half(include_str!("transitions.rs"), "transitions.rs");
         for residue in [
             "RecoveryClass",
             "AttemptStartResult",

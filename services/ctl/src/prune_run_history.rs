@@ -153,10 +153,22 @@ mod tests {
     /// served nobody and only enabled that silent mistarget.
     #[test]
     fn schema_carries_no_default_and_must_be_operator_named() {
-        let implementation = include_str!("prune_run_history.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
+        // Splitting on a bare `#[cfg(test)]` searched for a literal this file
+        // also spells, and `.next()` on a `split` never fails, so the miss was
+        // silent (wamn-3o3a). The marker's escaped newline cannot match the
+        // two-line attribute it names, so it never finds itself.
+        const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
+        let whole = include_str!("prune_run_history.rs");
+        let modules = whole.matches(CFG_TEST_MODULE).count();
+        assert_eq!(
+            modules, 1,
+            "prune_run_history.rs must carry exactly one terminal `{CFG_TEST_MODULE}` module; \
+             found {modules}"
+        );
+        let implementation = whole
+            .split_once(CFG_TEST_MODULE)
+            .expect("the counted cfg(test) module must split")
+            .0;
         assert!(!implementation.contains("default_value"));
         assert!(implementation.contains("#[arg(long)]\n    pub schema: String,"));
     }

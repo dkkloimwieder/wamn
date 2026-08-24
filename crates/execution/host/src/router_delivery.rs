@@ -789,7 +789,24 @@ mod tests {
     /// the way `crates/execution/router` pins its cache-hit series.
     #[test]
     fn the_bridge_pins_its_two_series_and_records_on_every_driver_outcome() {
-        let source = include_str!("router_delivery.rs");
+        // Scan the implementation half only. Every series name and driver arm
+        // searched below is also spelled in this module, so a whole-file scan
+        // lets a RENAMED subject match the guard's own source and the assertion
+        // passes vacuously (wamn-3o3a, the general form of wamn-0h0g.15.137).
+        // The marker's escaped newline cannot match the two-line attribute it
+        // names, so this literal never finds itself.
+        const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
+        let whole = include_str!("router_delivery.rs");
+        let modules = whole.matches(CFG_TEST_MODULE).count();
+        assert_eq!(
+            modules, 1,
+            "router_delivery.rs must carry exactly one terminal `{CFG_TEST_MODULE}` module; \
+             found {modules}"
+        );
+        let source = whole
+            .split_once(CFG_TEST_MODULE)
+            .expect("the counted cfg(test) module must split")
+            .0;
         for name in [
             "wamn.router.delivery.attempts",
             "wamn.router.delivery.errors",

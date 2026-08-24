@@ -2828,6 +2828,34 @@ pub async fn cleanup_only(args: CausationE2eArgs) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    /// The seam between this file's implementation half and this test module.
+    ///
+    /// Spelled with an escaped newline, so the literal cannot match the
+    /// two-line attribute it names and the split can never find itself. Same
+    /// marker `tests/conformance/src/runtime_inventory.rs` slices files at.
+    const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
+
+    /// This file's implementation half.
+    ///
+    /// The guards below `include_str!` this file and search it for text they
+    /// also spell themselves. Scanning the whole file lets a DELETED subject
+    /// match the guard's own source, so the assertion passes vacuously instead
+    /// of reporting the absence (wamn-3o3a, the general form of
+    /// wamn-0h0g.15.137).
+    fn implementation() -> &'static str {
+        let whole = include_str!("causation_e2e.rs");
+        let modules = whole.matches(CFG_TEST_MODULE).count();
+        assert_eq!(
+            modules, 1,
+            "causation_e2e.rs must carry exactly one terminal `{CFG_TEST_MODULE}` module; \
+             found {modules}"
+        );
+        whole
+            .split_once(CFG_TEST_MODULE)
+            .expect("the counted cfg(test) module must split")
+            .0
+    }
+
     fn args() -> CausationE2eArgs {
         CausationE2eArgs {
             component: "/bench/materializer.wasm".into(),
@@ -3047,7 +3075,7 @@ mod tests {
         assert!(job.contains("batch.kubernetes.io/controller-uid"));
         assert!(job.contains("m1-cleanup"));
         let whole_schema_drop = ["DROP", "SCHEMA"].join(" ");
-        assert!(!include_str!("causation_e2e.rs").contains(&whole_schema_drop));
+        assert!(!implementation().contains(&whole_schema_drop));
     }
 
     #[test]
@@ -3187,11 +3215,10 @@ mod tests {
 
     #[test]
     fn cleanup_source_pins_fail_closed_order_continuation_and_bounded_wait() {
-        let source = include_str!("causation_e2e.rs");
-        let implementation = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("production implementation precedes its tests");
+        // Splitting on a bare `#[cfg(test)]` searched for a literal this file
+        // also spells, and `.next()` on a `split` never fails, so the miss was
+        // silent (wamn-3o3a).
+        let implementation = implementation();
         let bounded_terminate = ["SELECT pg_", "terminate_backend($1, $2)"].concat();
         let asynchronous_terminate = ["SELECT pg_", "terminate_backend($1)"].concat();
         let disable = implementation

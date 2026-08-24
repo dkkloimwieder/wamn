@@ -406,6 +406,7 @@ pub(super) fn destroy_connection(obj: Object, counter: &AtomicU64) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::production_half;
     use super::*;
 
     // R18 — the connect-time check logic. A negative is hard to produce on stock
@@ -473,7 +474,10 @@ mod tests {
         assert!(manifest.contains("WAMN_PG_PLATFORM_POOL_MAX, value: \"2\""));
         assert!(manifest.contains("cannot starve"));
 
-        let source = include_str!("pool.rs");
+        // Implementation half only: a whole-file scan lets this assertion's own
+        // spelling of the retired knob answer for the code it watches
+        // (wamn-3o3a).
+        let source = production_half(include_str!("pool.rs"), "pool.rs");
         assert!(!source.contains("num(\"WAMN_PG_POOL_MAX\""));
     }
 }

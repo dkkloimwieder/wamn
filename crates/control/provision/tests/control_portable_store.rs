@@ -166,6 +166,13 @@ fn current_database_connect_posture_is_single_scoped_and_used_by_every_measured_
         "current-database-public-connect.sql",
     ]
     .concat();
+    // Assembled, not spelled, for the same reason as the two above: this file is
+    // itself one of the scanned gates, so a literal here would count toward its
+    // own `>= 2` applications and let the roster answer for the file it is
+    // supposed to be measuring (wamn-3o3a). This file is all test code — it has
+    // no `#[cfg(test)]` module to split on — so assembly is the only immunity
+    // available.
+    let posture_const = ["CURRENT_DATABASE", "_PUBLIC_CONNECT_SQL"].concat();
     assert!(
         executable
             .trim_start()
@@ -226,10 +233,7 @@ fn current_database_connect_posture_is_single_scoped_and_used_by_every_measured_
             "{path} does not include the shared posture exactly once"
         );
         assert!(
-            source
-                .matches("CURRENT_DATABASE_PUBLIC_CONNECT_SQL")
-                .count()
-                >= 2,
+            source.matches(posture_const.as_str()).count() >= 2,
             "{path} includes the posture but never applies it"
         );
         assert!(

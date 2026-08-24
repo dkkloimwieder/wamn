@@ -533,9 +533,25 @@ mod tests {
             concat!("fn ", "ecma_number"),
             concat!("encode_", "utf16"),
         ];
+        // This file scans itself, so its implementation half is the only part
+        // that can carry a second producer; a whole-file scan would also weigh
+        // the guard's own source (wamn-3o3a). The marker's escaped newline
+        // cannot match the two-line attribute it names.
+        const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
+        let whole = include_str!("serving_manifest.rs");
+        let modules = whole.matches(CFG_TEST_MODULE).count();
+        assert_eq!(
+            modules, 1,
+            "serving_manifest.rs must carry exactly one terminal `{CFG_TEST_MODULE}` module; \
+             found {modules}"
+        );
+        let this_file = whole
+            .split_once(CFG_TEST_MODULE)
+            .expect("the counted cfg(test) module must split")
+            .0;
         for (name, source) in [
             ("lib.rs", include_str!("lib.rs")),
-            ("serving_manifest.rs", include_str!("serving_manifest.rs")),
+            ("serving_manifest.rs", this_file),
         ] {
             for marker in SECOND_PRODUCER {
                 assert!(

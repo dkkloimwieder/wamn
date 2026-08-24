@@ -53,6 +53,37 @@ mod resources;
 mod types;
 mod wiring_resolution;
 
+/// The seam between a module's implementation half and its terminal test
+/// module.
+///
+/// Spelled with an escaped newline, so this literal cannot match the two-line
+/// attribute it names: a guard that splits on it can never find itself. Same
+/// marker `tests/conformance/src/runtime_inventory.rs` slices files at.
+#[cfg(test)]
+const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
+
+/// Everything in `source` before its terminal `#[cfg(test)] mod tests {`.
+///
+/// Guards in this module `include_str!` their own file and then locate
+/// implementation spans by searching for signature text that is also spelled in
+/// the guard. Scanning the whole file lets a DELETED subject match the guard's
+/// own source: the `expect` never fires and the span silently collapses onto
+/// the assertion instead of reporting the absence, so the guard passes
+/// vacuously (wamn-3o3a, the general form of wamn-0h0g.15.137). Scanning only
+/// the implementation half makes the absence observable.
+#[cfg(test)]
+fn production_half<'a>(source: &'a str, file: &str) -> &'a str {
+    let modules = source.matches(CFG_TEST_MODULE).count();
+    assert_eq!(
+        modules, 1,
+        "{file} must carry exactly one terminal `{CFG_TEST_MODULE}` module; found {modules}"
+    );
+    source
+        .split_once(CFG_TEST_MODULE)
+        .expect("the counted cfg(test) module must split")
+        .0
+}
+
 pub(crate) use pool::PlatformAsyncMessage;
 pub use wiring_resolution::{
     ACTIVE_WIRING_SQL, CANDIDATE_WIRING_SQL, CandidateWiringResolution, RELEASE_WIRING_SQL,

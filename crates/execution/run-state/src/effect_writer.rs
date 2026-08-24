@@ -806,6 +806,7 @@ mod tests {
         effect_run_is_runnable, record_effect_outcome, valid_schema, verify_effect_attempt,
         verify_effect_outcome,
     };
+    use crate::production_half;
 
     #[test]
     fn attempt_builder_compares_all_caller_facts_and_reuses_server_facts() {
@@ -844,7 +845,7 @@ mod tests {
                 .contains("queue.lease_expires_at > statement_timestamp()")
         );
 
-        let source = include_str!("effect_writer.rs");
+        let source = production_half(include_str!("effect_writer.rs"), "effect_writer.rs");
         let fence = source
             .find("query_one(serialize_effect_intent_sql()")
             .expect("effect writer acquires the shared fence");
