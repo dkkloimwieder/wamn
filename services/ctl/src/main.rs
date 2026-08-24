@@ -4,8 +4,8 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    author_wiring, enable_cdc_project_env, migrate_catalog, promote, provision, provision_org,
-    provision_project_env, publish_release, push_component, push_release_manifest,
+    author_wiring, enable_cdc_project_env, migrate_catalog, print_release_env, promote, provision,
+    provision_org, provision_project_env, publish_release, push_component, push_release_manifest,
     reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
 };
 
@@ -40,6 +40,8 @@ enum Command {
     PublishRelease(publish_release::PublishReleaseArgs),
     /// Publish canonical format-2 serving-manifest bytes as an immutable OCI artifact
     PushReleaseManifest(push_release_manifest::PushReleaseManifestArgs),
+    /// Print the release lines a pod template carries for one minted release (wamn-duyl)
+    PrintReleaseEnv(print_release_env::PrintReleaseEnvArgs),
     /// Promote one verified v2 release into a target environment
     Promote(promote::PromoteArgs),
     /// Detect or repair per-entity REPLICA IDENTITY drift from the catalog's registrations — one-shot, idempotent ALTERs (wamn-l5i9.31)
@@ -76,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
         Command::AuthorWiring(args) => author_wiring::run(args).await,
         Command::PublishRelease(args) => publish_release::run(args).await,
         Command::PushReleaseManifest(args) => push_release_manifest::run(args).await,
+        Command::PrintReleaseEnv(args) => print_release_env::run(args).await,
         Command::Promote(args) => promote::run(args).await,
         Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
         Command::ReconcileRunPlane(args) => reconcile_run_plane::run(args).await,

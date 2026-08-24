@@ -238,7 +238,11 @@ async fn canonical_release_bytes(args: &PushReleaseManifestArgs) -> anyhow::Resu
     }
 }
 
-async fn select_snapshot(
+/// Read one minted release's exact canonical bytes in its own transaction.
+///
+/// Shared with `print-release-env` (wamn-duyl) so the two readers of a frozen
+/// snapshot cannot drift apart on locking or on the absent-release refusal.
+pub(crate) async fn select_snapshot(
     client: &mut PgClient,
     tenant: &str,
     catalog_id: &str,

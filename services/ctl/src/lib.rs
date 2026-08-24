@@ -22,6 +22,7 @@ pub mod impact_report;
 pub mod migrate_catalog;
 #[cfg(feature = "ops")]
 mod ops_schema;
+pub mod print_release_env;
 pub mod promote;
 pub mod provision;
 pub mod provision_org;
