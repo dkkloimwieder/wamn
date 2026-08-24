@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use wash_runtime::engine::{Engine, WasmProposal};
-use wash_runtime::sockets::policy::SocketPolicy;
+use wash_runtime::sockets::policy::{EgressMode, SocketPolicy};
 use wash_runtime::wasmtime::{Config, PoolingAllocationConfig};
 
 /// Platform memory ceiling (S1 acceptance: 256 MiB, enforced): the pooling
@@ -93,7 +93,32 @@ fn memory_ceiling_mb(memory_cap_bytes: usize) -> String {
 /// deadline (`wamn.epoch-deadline-ticks` config / WAMN_EPOCH_DEADLINE_TICKS
 /// env).
 pub fn build_engine(proposals: &[WasmProposal]) -> anyhow::Result<Engine> {
-    build_engine_with_socket_policy(proposals, SocketPolicy::default())
+    build_engine_with_socket_policy(proposals, host_socket_policy())
+}
+
+/// The host-level socket policy every wamn engine installs.
+///
+/// Upstream's `SocketPolicy::default()` carries [`EgressMode::Count`]: it
+/// evaluates the policy, logs and counts what it WOULD refuse, then allows the
+/// connection anyway, so that turning the gate on cannot sever a live host's
+/// traffic. wamn takes [`EgressMode::Enforce`] instead (`wamn-0h0g.15.142`).
+///
+/// Count was never the mode most guests ran under. The fork's
+/// `shape_socket_policy` empties the allowlist and forces `Enforce` for any
+/// guest WITHOUT the `wamn.allow-raw-sockets` opt-in, and returns the policy
+/// UNSHAPED for any guest with it. So the host-wide Count governed exactly the
+/// guests granted the most reach, and for them the declared `allowed_hosts` was
+/// advisory: evaluated, logged, allowed. Enforcing here makes the opt-in widen
+/// the ALLOWLIST rather than also switch enforcement off.
+///
+/// Upstream's no-severed-traffic rationale does not transfer: no wamn guest
+/// opts in today, and for every guest that does not, the shaped policy already
+/// enforced. Nothing that is currently permitted becomes refused.
+fn host_socket_policy() -> SocketPolicy {
+    SocketPolicy {
+        egress_mode: EgressMode::Enforce,
+        ..SocketPolicy::default()
+    }
 }
 
 /// Build the platform engine with an explicit host-level socket policy.
@@ -113,7 +138,7 @@ pub fn build_engine_sized(
     proposals: &[WasmProposal],
     sizing: PoolSizing,
 ) -> anyhow::Result<Engine> {
-    build_engine_inner(proposals, SocketPolicy::default(), sizing)
+    build_engine_inner(proposals, host_socket_policy(), sizing)
 }
 
 fn build_engine_inner(
@@ -170,11 +195,38 @@ pub fn spawn_epoch_ticker(engine: &Engine, period: Duration) -> tokio::task::Joi
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+
+    use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
     use wash_runtime::wasmtime::{Instance, Module, Store};
 
     use super::*;
 
     const PAGE: usize = 64 * 1024;
+
+    /// wamn-0h0g.15.142: the host-level egress mode ENFORCES rather than counts.
+    ///
+    /// Under upstream's `EgressMode::Count` default this exact call is ALLOWED
+    /// after logging what it would refuse, which is the whole defect: a guest
+    /// carrying `wamn.allow-raw-sockets` gets its policy unshaped, so Count made
+    /// its declared `allowed_hosts` a log line rather than a confinement.
+    ///
+    /// Driven through `decide` rather than by reading `egress_mode` back — the
+    /// refusal is the property; the field is only how it is spelled.
+    #[test]
+    fn the_host_socket_policy_enforces_egress_rather_than_counting_it() {
+        let unlisted = SocketAddr::from(([93, 184, 216, 34], 443));
+        match host_socket_policy().decide(SocketAddrUse::TcpConnect, unlisted) {
+            AddrDecision::Deny(DenyReason::NotPermitted) => {}
+            AddrDecision::Deny(other) => {
+                panic!("the refusal must come from the allowlist layer, not {other:?}")
+            }
+            AddrDecision::Allow(_) => panic!(
+                "an address no allowlist entry grants must be REFUSED; allowing it is \
+                 EgressMode::Count, which leaves an opted-in guest's allowed_hosts advisory"
+            ),
+        }
+    }
 
     /// Bracket a cap one page either side: the module at the cap is admitted and
     /// the module one page over is refused.
