@@ -11,15 +11,16 @@ const {
   AuthoringPayloadError,
   AuthoringProtocolError,
   assertSupportedAuthoringSchema,
+  authoringSchema,
   createFetchTransport,
   parseAuthoringQueryRequest,
   parseAuthoringRequest,
 } = await import(process.env.WAMN_AUTHORING_CLIENT_TEST_MODULE);
 
 test("generated output covers every public schema definition", async () => {
-  const schema = JSON.parse(
-    await readFile(new URL("../../../docs/archive/contracts/authoring-surface.schema.json", import.meta.url)),
-  );
+  // The schema ships inside the generated module; `generate.mjs --check` is what
+  // proves that module still matches the live Rust source it came from.
+  const schema = authoringSchema;
   const generated = await readFile(
     new URL("../src/generated/authoring.ts", import.meta.url),
     "utf8",
@@ -79,12 +80,17 @@ const queryRequest = {
   "query-id": "query-1",
   "schema-version": AUTHORING_SCHEMA_VERSION,
   query: {
-    kind: "get-run",
+    kind: "read-draft",
     input: {
-      "run-id": "run-1",
+      draft: { "draft-id": "draft-1", revision: 1 },
       scope: { environment: "dev", "project-id": "project-1" },
     },
   },
+};
+
+const draftDocument = {
+  definition: "{}",
+  draft: { "draft-id": "draft-1", "flow-id": "flow-1", revision: 1 },
 };
 
 function validateRequest() {
@@ -167,10 +173,7 @@ test("query dispatch is separate and verifies query-id plus operation echoes", a
       observed = document;
       return queryResponse({
         status: "completed",
-        value: {
-          query: "get-run",
-          result: { nodes: [], "run-id": "run-1", status: "succeeded" },
-        },
+        value: { query: "read-draft", result: draftDocument },
       });
     },
   });
@@ -180,7 +183,7 @@ test("query dispatch is separate and verifies query-id plus operation echoes", a
   for (const payload of [
     queryResponse({
       status: "completed",
-      value: { query: "get-run", result: { nodes: [], "run-id": "run-1", status: "succeeded" } },
+      value: { query: "read-draft", result: draftDocument },
     }, "wrong-query"),
     queryResponse({
       status: "refused",
@@ -393,7 +396,6 @@ test("uint32 and uint64 response formats enforce exact inclusive boundaries", as
       revision: Number.MAX_SAFE_INTEGER,
     },
     environment: "dev",
-    "execution-bundle-hash": "bundle-1",
     "runtime-flow-version": 4_294_967_295,
     "validated-draft-id": "validated-1",
   };

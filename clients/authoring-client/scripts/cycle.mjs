@@ -43,11 +43,11 @@ import {
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { PACKAGE_ROOT, compiledPackage } from "./compile.mjs";
 
 const LAUNCHER = join(PACKAGE_ROOT, "scripts", "wamn.mjs");
-const SCHEMA_URL = new URL("../../../docs/archive/contracts/authoring-surface.schema.json", import.meta.url);
 
 const AUTHORING_PATH = "/authoring";
 const REFUSAL_BODY = '{"kind":"authorization-denied"}';
@@ -56,7 +56,6 @@ const PAT_PATTERN = /^(wamn_pat_[0-9a-f]{16}_)([0-9a-f]{64})$/;
 const FLOW_ID = "receive-material";
 const DEFINITION = `{"schema-version":"0.1","flow-id":"${FLOW_ID}","version":1,"nodes":[{"id":"request","type":"request","config":{"input-schema":true}},{"id":"respond","type":"respond","config":{"status":200}}],"edges":[{"from":"request","to":"respond"}]}`;
 const AUTHORED_INPUT = '{"receipt-id":"receipt-1042","material":"aluminum"}';
-const TEST_SET = '{"schema-version":"0.1","cases":[{"case-id":"one","input":{},"expect":[{"run-terminal-outcome":{"status":"completed"}}]}]}';
 
 // A validated draft and report the retained commands cannot always own yet.
 // When `validate` is unmounted there is no draft identity to carry forward;
@@ -75,12 +74,11 @@ const RESULT_KEYS = {
     "catalog",
     "draft",
     "environment",
-    "execution-bundle-hash",
     "runtime-flow-version",
     "validated-draft-id",
   ],
   "draft-run": ["run-id", "validated-draft"],
-  "test-set-run": ["report-id", "test-set", "validated-draft"],
+  "test-set-run": ["report-id", "validated-draft"],
   publish: ["artifact-hash", "flow-id", "version"],
 };
 
@@ -241,7 +239,7 @@ function stepOf(document, command) {
 
 async function staticHalf() {
   emit("static checks only (--check); no request is sent");
-  await compiledPackage();
+  const compiled = await compiledPackage();
   const help = launchWamn(["--help"]);
   require_("cli-compiles", help.status === 0, `wamn --help exited ${help.status}`);
   for (const verb of [
@@ -250,14 +248,16 @@ async function staticHalf() {
     "test-set-run",
     "promote",
     "read-draft",
-    "get-run",
     "get-report",
   ]) {
     require_(`cli-verb-${verb}`, help.stderr.includes(`  ${verb} `), `--help does not document ${verb}`);
   }
   // The cycle covers the whole public command inventory: every kind in the
-  // generated schema is reached by a documented verb.
-  const schema = JSON.parse(await readFile(SCHEMA_URL, "utf8"));
+  // generated schema is reached by a documented verb. That schema is read from
+  // the module that ships rather than from a second copy on disk.
+  const { authoringSchema: schema } = await import(
+    pathToFileURL(join(compiled, "index.js")).href
+  );
   const covered = [
     "save-flow-draft",
     "validate",
@@ -317,7 +317,6 @@ async function main() {
   const state = join(checkout, ".wamn", "state.json");
   const definitionPath = join(checkout, "flows", `${FLOW_ID}.flow.json`);
   const inputPath = join(checkout, "input.json");
-  const testSetPath = join(checkout, "test-set.json");
 
   emit(`surface ${baseUrl}`);
   emit(`checkout ${checkout}`);
@@ -327,7 +326,6 @@ async function main() {
   mkdirSync(join(checkout, "flows"), { recursive: true });
   await writeFile(definitionPath, DEFINITION);
   await writeFile(inputPath, AUTHORED_INPUT);
-  await writeFile(testSetPath, TEST_SET);
   git(["init", "--quiet", "--initial-branch=main"], checkout);
   git(["add", "-A"], checkout);
   git(
@@ -458,8 +456,6 @@ async function main() {
       ...scope,
       "--command-id",
       `cycle-${runId}-test-set-run`,
-      "--test-set",
-      testSetPath,
       "--validated-draft",
       validatedDraftId,
     ]),

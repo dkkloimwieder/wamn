@@ -29,12 +29,12 @@ assert.ok(process.env.WAMN_AUTHORING_CLI_TEST_MODULE, "compiled CLI module is re
 const cli = await import(process.env.WAMN_AUTHORING_CLI_TEST_MODULE);
 const {
   AUTHORING_SCHEMA_VERSION,
+  authoringSchema,
   parseAuthoringQueryRequest,
   parseAuthoringRequest,
 } = await import(process.env.WAMN_AUTHORING_CLIENT_TEST_MODULE);
 
 const COLLECTION_URL = new URL("../../../docs/archive/contracts/authoring-surface.v0.1.http", import.meta.url);
-const SCHEMA_URL = new URL("../../../docs/archive/contracts/authoring-surface.schema.json", import.meta.url);
 const CLI_SOURCE_URL = new URL("../src/cli/cli.ts", import.meta.url);
 const ADAPTER_URL = new URL("../scripts/wamn.mjs", import.meta.url);
 const LAUNCHER = fileURLToPath(ADAPTER_URL);
@@ -124,7 +124,6 @@ function builtRequests() {
       "test-set-run",
       cli.testSetRunRequest({
         commandId: "test-set-1",
-        definition: '{"schema-version":"0.1","cases":[{"expectations":[{"kind":"success"}]}]}',
         scope,
         validatedDraftId: "sha256:validated-draft-v4",
       }),
@@ -141,10 +140,6 @@ function builtRequests() {
     [
       "read-draft",
       cli.readDraftRequest("read-1", scope, "draft-receiving", 3),
-    ],
-    [
-      "get-run",
-      cli.getRunRequest("get-run-1", scope, "run-receiving-3"),
     ],
     [
       "get-report",
@@ -219,7 +214,7 @@ test("every CLI request decodes through the generated closed validator", () => {
 });
 
 test("the CLI sends exactly the schema's public operation inventory", async () => {
-  const schema = JSON.parse(await readFile(SCHEMA_URL, "utf8"));
+  const schema = authoringSchema;
   const operationKinds = (definition) =>
     definition.oneOf.map((variant) => variant.properties.kind.enum[0]);
   assert.deepEqual(
@@ -248,7 +243,6 @@ const validatedIdentity = {
   catalog: { "catalog-id": "receiving", version: 7 },
   draft: draftIdentity,
   environment: "dev",
-  "execution-bundle-hash": "sha256:bundle",
   "runtime-flow-version": 4,
   "validated-draft-id": "sha256:validated-draft-v4",
 };
@@ -595,7 +589,7 @@ test("no option, file, or default can send an unversioned or reversioned request
   const factory = source.slice(source.indexOf("function request("));
   assert.equal(factory.slice(0, factory.indexOf("\n}")).split("AUTHORING_SCHEMA_VERSION").length - 1, 1);
   assert.equal(source.split("return request(").length - 1, 5);
-  assert.equal(source.split("return queryRequest(").length - 1, 3);
+  assert.equal(source.split("return queryRequest(").length - 1, 2);
   assert.doesNotMatch(source, /"schema-version":\s*"/);
   for (const rejected of ["--schema-version", "--contract-version", "--endpoint"]) {
     assert.throws(() => cli.parseArguments([rejected, "0.2"]), /unrecognized option/);

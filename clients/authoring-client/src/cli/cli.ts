@@ -220,7 +220,6 @@ export interface TestSetRunOptions {
   readonly commandId: string;
   readonly scope: AuthoringScope;
   readonly validatedDraftId: string;
-  readonly definition: string;
 }
 
 export function testSetRunRequest(options: TestSetRunOptions): AuthoringRequest {
@@ -228,7 +227,6 @@ export function testSetRunRequest(options: TestSetRunOptions): AuthoringRequest 
     kind: "test-set-run",
     input: {
       scope: options.scope,
-      "test-set": { definition: options.definition },
       "validated-draft": { "validated-draft-id": options.validatedDraftId },
     },
   });
@@ -266,14 +264,6 @@ export function readDraftRequest(
   });
 }
 
-export function getRunRequest(
-  queryId: string,
-  scope: AuthoringScope,
-  runId: string,
-): AuthoringQueryRequest {
-  return queryRequest(queryId, { kind: "get-run", input: { "run-id": runId, scope } });
-}
-
 export function getReportRequest(
   queryId: string,
   scope: AuthoringScope,
@@ -307,8 +297,6 @@ const OPTIONS = new Set([
   "--input",
   "--capture",
   "--report-id",
-  "--run-id",
-  "--test-set",
 ]);
 
 export const VERBS = [
@@ -317,7 +305,6 @@ export const VERBS = [
   "test-set-run",
   "promote",
   "read-draft",
-  "get-run",
   "get-report",
 ] as const;
 
@@ -377,10 +364,9 @@ export const USAGE = `usage: wamn <command> [options]
 commands:
   validate     save the working-tree definition, then validate the exact saved revision
   draft-run    run one authored input against a validated draft
-  test-set-run run an inline test set against a validated draft
+  test-set-run run the validated draft's own cases
   promote      publish a validated draft proven by a successful report
   read-draft   read one exact draft revision
-  get-run      read one run projection
   get-report   read one test-set report projection
 
 authentication (always from a file so no token reaches argv):
@@ -397,10 +383,9 @@ common options:
 
 validate:  --file PATH --draft-id ID --flow-id ID [--expected-revision N] [--no-provenance]
 draft-run: --input PATH [--validated-draft ID] [--capture full|off]
-test-set-run: --test-set PATH [--validated-draft ID]
+test-set-run: [--validated-draft ID]
 promote:   [--validated-draft ID] [--report-id ID]
 read-draft: --draft-id ID --expected-revision N
-get-run:    [--run-id ID]
 get-report: [--report-id ID]
 
 stdout carries exactly one JSON document; exit 0 completed, 3 refused,
@@ -805,16 +790,11 @@ async function runDraftRun(session: Session): Promise<StepRecord[]> {
 
 async function runTestSetRun(session: Session): Promise<StepRecord[]> {
   const validatedDraftId = stateOrRequired(session, "validated-draft", "validated-draft-id");
-  const testSetPath = required(session.parsed, "test-set");
-  const definition = await session.io.readText(testSetPath);
-  session.transcript.note(
-    `test-set-run validated-draft=${validatedDraftId} test-set=${testSetPath} bytes=${definition.length}`,
-  );
+  session.transcript.note(`test-set-run validated-draft=${validatedDraftId}`);
   const step = await execute(
     session.client,
     testSetRunRequest({
       commandId: commandId(session, "test-set-run", 0),
-      definition,
       scope: session.scope,
       validatedDraftId,
     }),
@@ -856,18 +836,6 @@ async function runReadDraft(session: Session): Promise<StepRecord[]> {
     await executeQuery(
       session.client,
       readDraftRequest(queryId(session, "read-draft"), session.scope, draftId, revision),
-      session.io,
-      session.transcript,
-    ),
-  ];
-}
-
-async function runGetRun(session: Session): Promise<StepRecord[]> {
-  const runId = stateOrRequired(session, "run-id", "run-id");
-  return [
-    await executeQuery(
-      session.client,
-      getRunRequest(queryId(session, "get-run"), session.scope, runId),
       session.io,
       session.transcript,
     ),
@@ -950,9 +918,6 @@ export async function runCli(argv: ReadonlyArray<string>, io: CliIo): Promise<nu
         break;
       case "read-draft":
         steps = await runReadDraft(session);
-        break;
-      case "get-run":
-        steps = await runGetRun(session);
         break;
       case "get-report":
         steps = await runGetReport(session);

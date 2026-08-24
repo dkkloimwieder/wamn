@@ -44,12 +44,12 @@ node clients/authoring-client/scripts/wamn.mjs validate \
   --file flows/receive-material.flow.json \
   --draft-id draft-receiving --flow-id receive-material
 # then: draft-run --input FILE | test-set-run --test-set FILE | promote --report-id ID
-# queries: read-draft --draft-id ID --expected-revision N | get-run | get-report
+# queries: read-draft --draft-id ID --expected-revision N | get-report
 ```
 
-Seven verbs cover the eight-operation public contract: `validate` sends
+Six verbs cover the seven-operation public contract: `validate` sends
 `save-flow-draft` followed by `validate`; `draft-run`, `test-set-run`, and
-`promote` send the remaining commands; and `read-draft`, `get-run`, and
+`promote` send the remaining commands; and `read-draft` and
 `get-report` send correlation-only queries. Each invocation writes exactly one JSON document to stdout —
 typed identities, a typed product refusal, a typed `unmounted` answer when the
 surface has not mounted that command kind (`501`), or a fault — and exits `0`,
