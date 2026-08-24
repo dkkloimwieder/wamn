@@ -271,6 +271,9 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
                ('{TENANT}','cat-a',1,'0.1'), ('{OTHER_TENANT}','cat-b',1,'0.1'); \
              INSERT INTO catalog.release_manifests (tenant_id, catalog_id, catalog_version) VALUES \
                ('{TENANT}','cat-a',1), ('{OTHER_TENANT}','cat-b',1); \
+             INSERT INTO wamn_run.environment_policies \
+               (tenant_id, expected_environment, durability_class) VALUES \
+               ('{TENANT}','dev','standard'), ('{OTHER_TENANT}','dev','standard'); \
              INSERT INTO wamn_run.runs \
                (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
                 environment) VALUES \

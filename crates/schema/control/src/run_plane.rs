@@ -4901,6 +4901,12 @@ fn table_section(src: &str, qualifier: &str, table: &str) -> String {
         if t == "-- BEGIN POST-TABLE CONSTRAINTS" {
             break;
         }
+        // catalog-schema.sql closes its own transaction (wamn-jnms). That
+        // terminator belongs to the file, not to the last table, and a repair
+        // action that carried it would commit the caller's batch early.
+        if t == "COMMIT;" {
+            break;
+        }
         out.push(line);
     }
     assert!(
@@ -5046,6 +5052,9 @@ GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;
 -- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
 CREATE INDEX event_registrations_by_entity
     ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
+
+-- Closes the BEGIN at the head of the file (wamn-jnms).
+COMMIT;
 ";
 
     fn catalog_tail_is_complete(sql: &str) -> bool {
@@ -5585,8 +5594,8 @@ CREATE INDEX event_registrations_by_entity
     #[test]
     fn catalog_tail_guard_rejects_truncation_omission_and_object_order_drift() {
         let truncated = CATALOG_SCHEMA_SQL
-            .strip_suffix("id);\n")
-            .expect("canonical tail ends with the entity index");
+            .strip_suffix("COMMIT;\n")
+            .expect("canonical tail ends with the file's own transaction terminator");
         assert!(!catalog_tail_is_complete(truncated));
 
         let without_grant = CATALOG_SCHEMA_SQL.replace(

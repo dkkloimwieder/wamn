@@ -24,6 +24,19 @@
 -- in the control plane rather than a project DB; the tenant-scoped RLS shape is
 -- the same either way.)
 
+-- TRANSACTIONAL ARTIFACT (wamn-jnms): the file carries its own BEGIN/COMMIT so it
+-- applies identically however it is fed to the server. The migration blocks below
+-- take ACCESS EXCLUSIVE locks with a bare `LOCK TABLE`, which PostgreSQL refuses
+-- outside a transaction block — legal under a multi-statement simple query (what
+-- tokio_postgres `batch_execute` sends, the production path in
+-- services/ctl/src/publish_catalog.rs), illegal under `psql -f` autocommit and
+-- under any other per-statement applier. Owning the transaction here removes that
+-- dependence: `BEGIN` inside the implicit transaction of a simple query merely
+-- promotes it to an explicit one, so the production path still applies the file
+-- atomically, exactly as before. Nothing in this file is a statement PostgreSQL
+-- forbids inside a transaction block, so the whole-file span is safe.
+BEGIN;
+
 CREATE SCHEMA catalog AUTHORIZATION postgres;
 GRANT USAGE ON SCHEMA catalog TO wamn_app;
 GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author;
@@ -2027,3 +2040,6 @@ GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;
 -- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
 CREATE INDEX event_registrations_by_entity
     ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
+
+-- Closes the BEGIN at the head of the file (wamn-jnms).
+COMMIT;
