@@ -12,8 +12,8 @@ use url::Host;
 use wash_runtime::host::allowed_ip_name::{AllowedIpName, check_allowed_ip_name};
 use wash_runtime::types::LocalResources;
 
-const EXPECTED_VERSION: &str = "2.7.0";
-const EXPECTED_REVISION: &str = "daba602901507338e99f277e07a8e923c61dc557";
+pub(super) const EXPECTED_VERSION: &str = "2.7.0";
+pub(super) const EXPECTED_REVISION: &str = "daba602901507338e99f277e07a8e923c61dc557";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {
@@ -28,10 +28,10 @@ struct CargoPackage {
     manifest_path: String,
 }
 
-struct RuntimePackage {
-    root: PathBuf,
-    version: String,
-    source: String,
+pub(super) struct RuntimePackage {
+    pub(super) root: PathBuf,
+    pub(super) version: String,
+    pub(super) source: String,
 }
 
 struct RuntimeSources {
@@ -47,7 +47,7 @@ struct RuntimeSources {
     udp_p3: String,
 }
 
-fn repository_root() -> PathBuf {
+pub(super) fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -55,7 +55,7 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn runtime_package() -> RuntimePackage {
+pub(super) fn runtime_package() -> RuntimePackage {
     let root = repository_root();
     let output = Command::new(env!("CARGO"))
         .current_dir(root)
@@ -105,14 +105,14 @@ fn runtime_sources(root: &Path) -> RuntimeSources {
     }
 }
 
-fn compact(source: &str) -> String {
+pub(super) fn compact(source: &str) -> String {
     source
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect()
 }
 
-fn require(source: &str, marker: &str, seam: &str) -> Result<(), String> {
+pub(super) fn require(source: &str, marker: &str, seam: &str) -> Result<(), String> {
     if source.contains(marker) {
         Ok(())
     } else {
