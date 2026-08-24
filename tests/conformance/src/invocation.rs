@@ -19,11 +19,12 @@ mod tests {
 
     /// Source of record for the live node ABI, repo-root-relative.
     ///
-    /// STAGING: the intended owner is `crates/execution/router`, which does not
-    /// exist yet, so the package is currently bound by nothing. When the router
-    /// takes ownership at `crates/execution/router/wit/package.wit`, this
-    /// constant and the `include_str!` above move together — and
-    /// [`node_abi_source_and_included_copy_agree`] fails if only one of them does.
+    /// The router owns it and both sides bind it:
+    /// `crates/execution/host/src/router_driver.rs` generates the host bindings
+    /// from `../router/wit` (world `node`), and the library components export
+    /// `wamn:node/handler@0.1.0`. This constant and the `include_str!` above must
+    /// move together — [`node_abi_source_and_included_copy_agree`] fails if only
+    /// one of them does.
     const NODE_ABI_SOURCE: &str = "crates/execution/router/wit/package.wit";
 
     /// Every vendored copy of the node ABI, repo-root-relative. The walk below

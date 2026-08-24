@@ -48,10 +48,16 @@
 //!
 //! # What is deliberately absent
 //!
-//! Nothing parents these spans to a wiring or node identity yet: `wamn-0h0g.24.2`
-//! owns the router node-invoke seam that would supply it, and
-//! `crates/execution/router` has no production `NodeInvoker` implementor to
-//! supply it from.
+//! These spans carry no wiring or node identity of their own. They are not
+//! orphaned: an effect raised inside a node runs under `wamn.component.invoke`,
+//! the span `crates/execution/host/src/router_driver.rs` instruments each
+//! `Step::Invoke` with, which already carries `wamn.wiring_id`,
+//! `wamn.wiring_version`, `wamn.node_id` and `wamn.component_digest`. Copying
+//! those down so one effect span is self-describing is a separate refinement
+//! that `wamn-0h0g.24.2` (landed) did not cover.
+//! (`wamn_router::NodeInvoker` has only test implementors because its `invoke`
+//! is synchronous; `RouterDriver` drives `wiring.next` / `Step::Invoke` directly
+//! and is the production driver.)
 
 use std::time::Duration;
 
