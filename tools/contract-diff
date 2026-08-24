@@ -41,11 +41,6 @@ readonly -a WAMN_FLOW_HTTP=(
   test --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --offline
   -p flow-http --test adversarial
 )
-readonly -a WAMN_FLOW_SCHEMA=(
-  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
-  -p wamn-flow
-)
-
 wamn_print_plan() {
   local -r label="$1"
   shift
@@ -59,7 +54,6 @@ wamn_dry_run() {
   wamn_print_plan authoring "${WAMN_AUTHORING[@]}"
   wamn_print_plan runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
   wamn_print_plan flow-http "${WAMN_FLOW_HTTP[@]}"
-  wamn_print_plan flow-schema "${WAMN_FLOW_SCHEMA[@]}"
 }
 
 wamn_require_cargo() {
@@ -94,7 +88,6 @@ case "$WAMN_COMMAND" in
     wamn_run authoring "${WAMN_AUTHORING[@]}"
     wamn_run runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
     wamn_run flow-http "${WAMN_FLOW_HTTP[@]}"
-    wamn_run flow-schema "${WAMN_FLOW_SCHEMA[@]}"
     ;;
   *)
     wamn_usage_error "unknown command '$WAMN_COMMAND'"

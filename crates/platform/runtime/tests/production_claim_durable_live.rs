@@ -166,7 +166,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     assert_eq!(effect.get::<_, i32>(1), 500);
     assert_eq!(
         effect.get::<_, String>(2),
-        wamn_flow::canonical_json_sha256(&effect_body)
+        wamn_execution_contract::canonical_json_sha256(&effect_body)
     );
     assert!(!effect.get::<_, bool>(3));
     assert_eq!(

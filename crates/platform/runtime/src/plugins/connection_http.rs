@@ -15,7 +15,7 @@ use tracing::Instrument as _;
 use wamn_catalog::{
     ArtifactHash, DefinitionHash, ServingComponent, ServingManifest, ServingWiring,
 };
-use wamn_flow::node_contract::normalize_portable_http_target;
+use wamn_execution_contract::node_contract::normalize_portable_http_target;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;

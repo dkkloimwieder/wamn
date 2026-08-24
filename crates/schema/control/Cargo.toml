@@ -22,7 +22,7 @@ ops = ["wamn-schema-compiler/ops"]
 wamn-schema-model = { workspace = true }
 wamn-schema-compiler = { workspace = true }
 wamn-control-registry = { workspace = true }
-wamn-flow = { workspace = true }
+wamn-execution-contract = { workspace = true }
 wamn-pg-core = { workspace = true }
 # EVT-REPLICA-IDENT (wamn-l5i9.31): the registration model + the SINGLE root-`old`
 # detector, so the RI-FULL derivation and the materializer's per-event old-absent

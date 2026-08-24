@@ -13,12 +13,13 @@
 //! The ruling put the in-draft test contract on the *wiring*, not on a
 //! component: a golden input plus a required observable is an end-to-end shape,
 //! and the flow document's successor as the composition artifact is this
-//! document. So [`WiringDocument::cases`] is [`wamn_flow::TestSetCase`] itself —
+//! document. So [`WiringDocument::cases`] is [`wamn_execution_contract::TestSetCase`] itself —
 //! the same `case-id` / `input` / `expect` shape, the same
-//! [`wamn_flow::MAX_TEST_SET_CASES`] bound, checked by the same
-//! [`wamn_flow::validate_cases`]. A second declaration of that contract would be
-//! a second contract; when `wamn-flow` retires (wamn-0h0g.26.5) the cases module
-//! moves, and this carrier keeps working against the moved types.
+//! [`wamn_execution_contract::MAX_TEST_SET_CASES`] bound, checked by the same
+//! [`wamn_execution_contract::validate_cases`]. A second declaration of that
+//! contract would be a second contract. The flow language retired in
+//! wamn-0h0g.26.5 and the cases module moved with it to
+//! `wamn-execution-contract`; this carrier kept working against the moved types.
 //!
 //! # The entry and the terminal are the router's authoring source (wamn-0h0g.18.5)
 //!
@@ -35,7 +36,7 @@
 //!
 //! [`WiringDocument::wiring_hash`] is the SHA-256 of the document's RFC 8785
 //! canonical JSON, taken through the workspace's single canonicalizer
-//! ([`wamn_flow::canonical_json_sha256`]) exactly as
+//! ([`wamn_execution_contract::canonical_json_sha256`]) exactly as
 //! [`ServingManifest`](crate::ServingManifest) does. It is the value stored in
 //! `catalog.wirings.wiring_hash` and confirmed by
 //! `catalog.wiring_activation.confirmed_definition_hash`.
@@ -141,8 +142,8 @@ pub struct WiringNode {
 pub struct WiringEdge {
     /// Source node id — a key of [`WiringDocument::nodes`].
     pub from: String,
-    /// Source output port. Omitted means [`wamn_flow::MAIN_PORT`];
-    /// [`wamn_flow::ERROR_PORT`] is the error path the walk routes failures
+    /// Source output port. Omitted means [`wamn_execution_contract::MAIN_PORT`];
+    /// [`wamn_execution_contract::ERROR_PORT`] is the error path the walk routes failures
     /// along without ending the delivery.
     #[serde(default = "main_port", skip_serializing_if = "is_main_port")]
     pub from_port: String,
@@ -189,11 +190,12 @@ pub struct WiringDocument {
     /// real applied catalog at authoring and again at promote-time re-gate;
     /// `generate crud` writes them by construction.
     ///
-    /// Bounded by [`wamn_flow::validate_cases`], and only when the document
-    /// carries at least one: an absent and an empty array are the same bytes,
-    /// which is the rule [`wamn_flow::Flow`] already applies to the same field.
+    /// Bounded by [`wamn_execution_contract::validate_cases`], and only when the
+    /// document carries at least one: an absent and an empty array are the same
+    /// bytes, which is the rule the retired flow document applied to the same
+    /// field and this carrier inherited (wamn-0h0g.26.5).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cases: Vec<wamn_flow::TestSetCase>,
+    pub cases: Vec<wamn_execution_contract::TestSetCase>,
 }
 
 impl WiringDocument {
@@ -209,7 +211,7 @@ impl WiringDocument {
         entry: impl Into<String>,
         nodes: BTreeMap<String, WiringNode>,
         edges: Vec<WiringEdge>,
-        cases: Vec<wamn_flow::TestSetCase>,
+        cases: Vec<wamn_execution_contract::TestSetCase>,
     ) -> Result<Self, CatalogIdentityError> {
         let document = Self {
             format_version: WIRING_DOCUMENT_FORMAT_VERSION.to_string(),
@@ -242,7 +244,7 @@ impl WiringDocument {
 
     /// The definition hash over this document's RFC 8785 canonical JSON.
     pub fn wiring_hash(&self) -> DefinitionHash {
-        DefinitionHash::parse(wamn_flow::canonical_json_sha256(&self.as_value()))
+        DefinitionHash::parse(wamn_execution_contract::canonical_json_sha256(&self.as_value()))
             .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
@@ -293,7 +295,7 @@ impl WiringDocument {
         }
 
         if !self.cases.is_empty() {
-            wamn_flow::validate_cases(&self.cases).map_err(|error| {
+            wamn_execution_contract::validate_cases(&self.cases).map_err(|error| {
                 CatalogIdentityError::InvalidDefinition {
                     message: format!("wiring document cases are invalid: {error}"),
                 }
@@ -310,11 +312,11 @@ fn invalid(message: &str) -> Result<(), CatalogIdentityError> {
 }
 
 fn main_port() -> String {
-    wamn_flow::MAIN_PORT.to_string()
+    wamn_execution_contract::MAIN_PORT.to_string()
 }
 
 fn is_main_port(port: &str) -> bool {
-    port == wamn_flow::MAIN_PORT
+    port == wamn_execution_contract::MAIN_PORT
 }
 
 #[cfg(test)]
@@ -323,7 +325,7 @@ mod tests {
 
     use serde_json::{Value, json};
     use wamn_event_wire::Op;
-    use wamn_flow::{Expect, ExpectedOutcome, MAX_TEST_SET_CASES, TestSetCase};
+    use wamn_execution_contract::{Expect, ExpectedOutcome, MAX_TEST_SET_CASES, TestSetCase};
 
     use super::{WiringDocument, WiringEdge, WiringNode, WiringTerminal};
     use crate::CatalogIdentityError;
@@ -370,13 +372,13 @@ mod tests {
         let edges = vec![
             WiringEdge {
                 from: "in".to_owned(),
-                from_port: wamn_flow::MAIN_PORT.to_owned(),
+                from_port: wamn_execution_contract::MAIN_PORT.to_owned(),
                 to: "write".to_owned(),
                 to_port: None,
             },
             WiringEdge {
                 from: "write".to_owned(),
-                from_port: wamn_flow::MAIN_PORT.to_owned(),
+                from_port: wamn_execution_contract::MAIN_PORT.to_owned(),
                 to: "out".to_owned(),
                 to_port: None,
             },
@@ -404,12 +406,13 @@ mod tests {
         // walk that reads a stored edge back filters it against
         // `wamn_router::MAIN_PORT`/`ERROR_PORT`, which are declared
         // independently of these (`crates/execution/router/src/outcome.rs`) and
-        // outlive `wamn-flow`'s retirement (wamn-0h0g.26.5). They agree today;
+        // outlived the flow language's retirement (wamn-0h0g.26.5). They agree
+        // today;
         // if either side is renamed without the other, every stored edge goes
         // silently dead — the walk simply finds no successors — so the stored
         // spelling is pinned here rather than inherited.
-        assert_eq!(wamn_flow::MAIN_PORT, "main");
-        assert_eq!(wamn_flow::ERROR_PORT, "error");
+        assert_eq!(wamn_execution_contract::MAIN_PORT, "main");
+        assert_eq!(wamn_execution_contract::ERROR_PORT, "error");
         assert_eq!(wire["cases"][0]["case-id"], json!("roundtrip"));
         assert_eq!(
             WiringDocument::parse(&wire).expect("the exact document parses"),
@@ -464,7 +467,7 @@ mod tests {
         );
         wiring.edges.push(WiringEdge {
             from: "write".to_owned(),
-            from_port: wamn_flow::MAIN_PORT.to_owned(),
+            from_port: wamn_execution_contract::MAIN_PORT.to_owned(),
             to: "publish".to_owned(),
             to_port: None,
         });
@@ -547,7 +550,8 @@ mod tests {
     #[test]
     fn the_cases_array_carries_the_flow_documents_bounds() {
         // The wiring is the carrier now (wamn-0h0g.18.4), so the bounds are
-        // wamn-flow's own — not a second set that could drift from them. Each
+        // wamn-execution-contract's own — not a second set that could drift
+        // from them. Each
         // refusal is reached by storing an out-of-bounds array and reading it
         // back, which is the path a hand-edited row takes.
         let refuse = |cases: Vec<TestSetCase>| {

@@ -54,7 +54,7 @@ wamn-event-wire = { workspace = true, optional = true }
 wamn-schema-model = { workspace = true }
 wamn-schema-compiler = { workspace = true }
 # publish-catalog --flow: parse and validate the immutable graph.
-wamn-flow = { workspace = true }
+wamn-execution-contract = { workspace = true }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.
 wamn-catalog = { workspace = true }

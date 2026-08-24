@@ -75,7 +75,7 @@ pub(crate) fn load_release(
         .with_context(|| format!("create manifest mount {}", root.display()))?;
     std::fs::write(
         root.join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
-        wamn_flow::canonical_json_bytes(&document),
+        wamn_execution_contract::canonical_json_bytes(&document),
     )
     .context("write serving manifest")?;
     let loaded = ReleaseManifestWeld::load_from(&root);

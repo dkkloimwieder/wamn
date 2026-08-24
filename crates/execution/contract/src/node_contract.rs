@@ -16,13 +16,6 @@ use serde_json::Value;
 pub use portable_http_target::{
     CanonicalHttpTarget, PortableHttpTargetError, normalize_portable_http_target,
 };
-// Temporary compatibility path for legacy flow consumers. New component and
-// catalog code imports these types from their surviving schema-model owner.
-#[doc(inline)]
-pub use wamn_schema_model::{
-    CONNECTION_DESCRIPTOR_VERSION, ConnectionAuthorityModel, ConnectionField, ConnectionFieldOwner,
-    ConnectionFieldOwnership, ConnectionTypeDescriptor, CredentialInjection,
-};
 
 /// Whether a standard node can perform an external effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

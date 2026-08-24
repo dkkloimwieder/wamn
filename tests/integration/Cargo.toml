@@ -31,7 +31,7 @@ wamn-control-registry = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-flow = { workspace = true }
+wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-run-state = { workspace = true }

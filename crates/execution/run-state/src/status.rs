@@ -4,11 +4,11 @@
 //! tied to `deploy/sql/run-state.sql` by a drift-guard test). `From<…>` conversions
 //! adapt the pure-engine enums
 //! (`wamn_runner::{ExecutionStatus, ExecutionFailureKind}` and
-//! `wamn_flow::node_contract::NodeError`)
+//! `wamn_execution_contract::node_contract::NodeError`)
 //! into their persisted form, the way `wamn_pg_core::SqlValue` mirrors the WIT.
 
 use serde::{Deserialize, Serialize};
-use wamn_flow::node_contract::NodeError;
+use wamn_execution_contract::node_contract::NodeError;
 
 /// A run's lifecycle status. `Dispatched` is the write-ahead pre-state (a run row
 /// exists before the runner picks it up); `InfrastructureFailure` is a janitor
@@ -93,12 +93,12 @@ impl EffectUncertainFailure {
 
     /// RFC 8785 bytes persisted and hashed for caller-outcome replay.
     pub fn canonical_json_bytes(&self) -> Vec<u8> {
-        wamn_flow::canonical_json_bytes(&self.as_json())
+        wamn_execution_contract::canonical_json_bytes(&self.as_json())
     }
 
     /// Stable identity of the exact persisted caller-outcome body.
     pub fn canonical_json_hash(&self) -> String {
-        wamn_flow::canonical_json_sha256(&self.as_json())
+        wamn_execution_contract::canonical_json_sha256(&self.as_json())
     }
 
     /// The JSON value stored in `runs.caller_outcome_json`.

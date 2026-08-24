@@ -159,12 +159,12 @@ impl ServingManifest {
 
     /// The RFC 8785 canonical bytes mounted by serving processes.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        wamn_flow::canonical_json_bytes(&self.as_value())
+        wamn_execution_contract::canonical_json_bytes(&self.as_value())
     }
 
     /// The content digest over [`Self::canonical_bytes`].
     pub fn digest(&self) -> ManifestDigest {
-        ManifestDigest::parse(wamn_flow::canonical_json_sha256(&self.as_value()))
+        ManifestDigest::parse(wamn_execution_contract::canonical_json_sha256(&self.as_value()))
             .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 

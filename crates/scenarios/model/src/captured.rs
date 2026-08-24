@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wamn_flow::FlowFailureKind;
+use wamn_execution_contract::FlowFailureKind;
 
 /// The bounded facts one run makes available to the flat expectation.
 ///
@@ -117,7 +117,7 @@ impl Captured {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use wamn_flow::FlowFailureKind;
+    use wamn_execution_contract::FlowFailureKind;
 
     use super::{Captured, CapturedErrorKind, CapturedResponse};
 

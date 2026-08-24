@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 # The test case and its expectation are part of the flow document, so they are
 # owned by the document's contract crate; this crate only evaluates them. The
-# edge is one-way: wamn-flow must never depend on this evaluator.
-wamn-flow = { workspace = true }
+# edge is one-way: wamn-execution-contract must never depend on this evaluator.
+wamn-execution-contract = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

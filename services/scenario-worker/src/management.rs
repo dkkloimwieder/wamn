@@ -460,7 +460,7 @@ pub async fn save_flow_draft(
 
 fn canonical_request_hash(command: &AuthoringRequest) -> anyhow::Result<String> {
     let value = serde_json::to_value(command).context("project closed command request to JSON")?;
-    Ok(crate::store::sha256(&wamn_flow::canonical_json_bytes(
+    Ok(crate::store::sha256(&wamn_execution_contract::canonical_json_bytes(
         &value,
     )))
 }

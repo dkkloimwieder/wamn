@@ -48,13 +48,10 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
-use wamn_flow::node_contract::NodeInterface;
-use wamn_flow::{Flow, FlowPreimage, ResolvedInterfaces};
 
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
 const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v0.1";
-const MODEL_OWNED_NODES: [&str; 1] = ["call-flow"];
 
 /// A catalog identity construction error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -540,7 +537,7 @@ impl CanonicalJson {
                 });
             }
         }
-        let bytes = wamn_flow::canonical_json_bytes(&value).into_boxed_slice();
+        let bytes = wamn_execution_contract::canonical_json_bytes(&value).into_boxed_slice();
         Ok(Self { value, bytes })
     }
 
@@ -576,6 +573,17 @@ pub struct ArtifactIdentity {
 }
 
 impl ArtifactIdentity {
+    /// Pair a parsed artifact id with the artifact-content digest recorded
+    /// beside it.
+    ///
+    /// Both halves are already-validated newtypes, so this only joins them. It
+    /// replaced `Artifact::new`, which derived the same pair by hashing a
+    /// parsed flow graph — the flow language retired in wamn-0h0g.26.5 and the
+    /// artifact bytes it hashed are no longer produced here.
+    pub fn new(id: ArtifactId, artifact_hash: ArtifactHash) -> Self {
+        Self { id, artifact_hash }
+    }
+
     pub fn id(&self) -> &ArtifactId {
         &self.id
     }
@@ -594,204 +602,6 @@ impl ArtifactIdentity {
                 ("artifact-hash", self.artifact_hash.as_str().as_bytes()),
             ],
         )
-    }
-}
-
-/// A canonical immutable flow artifact.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Artifact {
-    identity: ArtifactIdentity,
-    schema_version: String,
-    graph_hash: String,
-    canonical_bytes: Box<[u8]>,
-}
-
-impl Artifact {
-    /// Build an artifact from its graph and resolved public interfaces.
-    pub fn new(
-        tenant_id: impl Into<String>,
-        flow: &Flow,
-        interfaces: Vec<NodeInterface>,
-    ) -> Result<Self, CatalogIdentityError> {
-        let id = ArtifactId::new(tenant_id, flow.flow_id.clone(), flow.version)?;
-        validate_text(&flow.schema_version, "schema-version")?;
-        validate_interfaces(flow, &interfaces)?;
-        let resolved: ResolvedInterfaces = interfaces
-            .iter()
-            .map(|interface| (interface.node_type.clone(), interface.output_ports.clone()))
-            .collect();
-        let flow_errors = flow.validate(&resolved).err().unwrap_or_default();
-        if !flow_errors.is_empty() {
-            return Err(CatalogIdentityError::FlowInvalid {
-                codes: flow_errors.into_iter().map(|issue| issue.code).collect(),
-            });
-        }
-        let graph_bytes = flow.canonical_bytes();
-        let graph_hash = digest(&graph_bytes);
-        let mut owned = Vec::new();
-        let id_bytes = canonical_serialized(&id);
-        owned.push(("artifact-id", id_bytes));
-        owned.push(("schema-version", flow.schema_version.as_bytes().to_vec()));
-        owned.push(("graph", graph_bytes));
-        let borrowed: Vec<_> = owned
-            .iter()
-            .map(|(tag, bytes)| (*tag, bytes.as_slice()))
-            .collect();
-        let canonical_bytes = frames("artifact", borrowed).into_boxed_slice();
-        let artifact_hash = ArtifactHash(digest(&canonical_bytes));
-        Ok(Self {
-            identity: ArtifactIdentity { id, artifact_hash },
-            schema_version: flow.schema_version.clone(),
-            graph_hash,
-            canonical_bytes,
-        })
-    }
-
-    pub fn identity(&self) -> &ArtifactIdentity {
-        &self.identity
-    }
-
-    pub fn schema_version(&self) -> &str {
-        &self.schema_version
-    }
-
-    pub fn graph_hash(&self) -> &str {
-        &self.graph_hash
-    }
-
-    pub fn canonical_bytes(&self) -> &[u8] {
-        &self.canonical_bytes
-    }
-}
-
-/// Version-independent content address of a mutable flow document after validation.
-///
-/// This is an internal document/cache identity, not the executable draft-artifact
-/// identity. Execution and publication use the ordinary exact [`ArtifactHash`],
-/// including the draft's proposed runtime/publish version.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct DraftContentHash(String);
-
-impl DraftContentHash {
-    /// Compute the version-independent content address for a parsed flow draft.
-    ///
-    /// Shares [`FlowPreimage`] with [`Flow::canonical_bytes`], so the W2 digest
-    /// ordering rules apply identically to both; only `version` differs, and it
-    /// is omitted here by construction rather than deleted from a serialized map.
-    pub fn for_flow(flow: &Flow) -> Self {
-        Self(digest(&frames(
-            "flow-draft",
-            [(
-                "graph",
-                canonical_serialized(&FlowPreimage::version_independent(flow)).as_slice(),
-            )],
-        )))
-    }
-
-    /// Parse and validate a persisted draft content address.
-    pub fn parse(value: impl Into<String>) -> Result<Self, CatalogIdentityError> {
-        let value = value.into();
-        validate_digest(&value, "draft-content-hash")?;
-        Ok(Self(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for DraftContentHash {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-fn validate_interfaces(
-    flow: &Flow,
-    interfaces: &[NodeInterface],
-) -> Result<(), CatalogIdentityError> {
-    let mut by_type = BTreeMap::new();
-    for interface in interfaces {
-        validate_interface(interface)?;
-        let node_type = interface.node_type.clone();
-        if by_type.insert(node_type.clone(), interface).is_some() {
-            return Err(CatalogIdentityError::DuplicateInterface { node_type });
-        }
-    }
-    for node in &flow.nodes {
-        if MODEL_OWNED_NODES.contains(&node.node_type.as_str()) {
-            continue;
-        }
-        if !by_type.contains_key(&node.node_type) {
-            return Err(CatalogIdentityError::UnresolvedInterface {
-                node_type: node.node_type.clone(),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn validate_interface(interface: &NodeInterface) -> Result<(), CatalogIdentityError> {
-    validate_text(&interface.node_type, "node-type")?;
-    if interface
-        .output_ports
-        .windows(2)
-        .any(|pair| pair[0] >= pair[1])
-    {
-        return Err(CatalogIdentityError::NonCanonicalInterfaceOrder {
-            node_type: interface.node_type.clone(),
-        });
-    }
-    Ok(())
-}
-
-/// An authored graph reverified against one immutable artifact row.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PinnedArtifact {
-    flow: Flow,
-}
-
-impl PinnedArtifact {
-    /// Verify the authored graph and public contract without compatibility readers.
-    pub fn from_storage(
-        expected_tenant_id: &str,
-        expected_flow_id: &str,
-        runtime_flow_version: u32,
-        graph_json: &str,
-        graph_hash: &str,
-        artifact_hash: &str,
-    ) -> Result<Self, CatalogIdentityError> {
-        let flow = Flow::from_json(graph_json).map_err(|error| {
-            CatalogIdentityError::InvalidDefinition {
-                message: format!("flow graph JSON is invalid: {error}"),
-            }
-        })?;
-        if flow.flow_id != expected_flow_id || flow.version != runtime_flow_version {
-            return Err(CatalogIdentityError::ArtifactIdMismatch);
-        }
-        let graph_bytes = flow.canonical_bytes();
-        if digest(&graph_bytes) != graph_hash {
-            return Err(CatalogIdentityError::GraphHashMismatch);
-        }
-        let id = ArtifactId::new(expected_tenant_id, flow.flow_id.clone(), flow.version)?;
-        let id_bytes = canonical_serialized(&id);
-        let expected_artifact_hash = digest(&frames(
-            "artifact",
-            [
-                ("artifact-id", id_bytes.as_slice()),
-                ("schema-version", flow.schema_version.as_bytes()),
-                ("graph", graph_bytes.as_slice()),
-            ],
-        ));
-        if expected_artifact_hash != artifact_hash {
-            return Err(CatalogIdentityError::ArtifactHashMismatch);
-        }
-        Ok(Self { flow })
-    }
-
-    pub fn flow(&self) -> &Flow {
-        &self.flow
     }
 }
 
@@ -891,10 +701,10 @@ impl Attachment {
     /// Resolve every source and compute the complete effective-contract hash.
     pub fn resolve(
         draft: AttachmentDraft,
-        artifact: &Artifact,
+        artifact: &ArtifactIdentity,
         sources: &[Source],
     ) -> Result<Self, CatalogIdentityError> {
-        if draft.artifact_id != *artifact.identity.id() {
+        if draft.artifact_id != *artifact.id() {
             return Err(CatalogIdentityError::ArtifactMismatch);
         }
         validate_sorted_unique(&draft.source_ids, "source-ids", |id| {
@@ -921,7 +731,7 @@ impl Attachment {
         let mut owned = vec![
             ("attachment-id", draft.id.as_str().as_bytes().to_vec()),
             ("kind", kind_bytes),
-            ("artifact", artifact.identity.canonical_bytes()),
+            ("artifact", artifact.canonical_bytes()),
             ("definition", draft.definition.as_bytes().to_vec()),
         ];
         for source in &resolved {
@@ -936,7 +746,7 @@ impl Attachment {
         Ok(Self {
             id: draft.id,
             kind: draft.kind,
-            artifact: artifact.identity.clone(),
+            artifact: artifact.clone(),
             source_ids: draft.source_ids,
             resolved_sources: resolved.into_iter().cloned().collect(),
             definition: draft.definition,
@@ -1258,12 +1068,12 @@ fn write_frame(output: &mut Vec<u8>, value: &[u8]) {
 
 /// Canonical identity-frame bytes for one serializable identity input.
 ///
-/// Routes through `wamn_flow::canonical_json_bytes`, the workspace's only RFC
+/// Routes through `wamn_execution_contract::canonical_json_bytes`, the workspace's only RFC
 /// 8785 producer. Until wamn-0h0g.15.63 this crate carried a second, `ryu-js`
 /// based implementation of the same spec beside it, which left release identity
 /// depending on *which* producer a call site happened to reach for.
 fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
-    wamn_flow::canonical_json_bytes(
+    wamn_execution_contract::canonical_json_bytes(
         &serde_json::to_value(value).expect("identity input serializes"),
     )
 }

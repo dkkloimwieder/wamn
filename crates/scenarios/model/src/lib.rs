@@ -3,7 +3,7 @@
 //! MVP outcome: publish gate.
 //!
 //! A test case is one golden input and one flat expected observable, both
-//! carried by the flow document ([`wamn_flow::TestSetCase`]). Effectful callers
+//! carried by the flow document ([`wamn_execution_contract::TestSetCase`]). Effectful callers
 //! collect the bounded [`Captured`] facts; this crate only evaluates them.
 //!
 //! No such caller exists yet. The producer that lands is effectful in both

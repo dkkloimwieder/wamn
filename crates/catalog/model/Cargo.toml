@@ -23,7 +23,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2 = { workspace = true }
 url = { workspace = true }
-wamn-flow = { workspace = true }
+wamn-execution-contract = { workspace = true }
 wamn-event-wire = { workspace = true }
 
 # A self dev-dependency, so this crate's own `tests/` directory — a separate

@@ -142,7 +142,7 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
 
     let release = Arc::new(
         ReleaseManifestWeld::load_canonical_bytes(
-            &wamn_flow::canonical_json_bytes(&release_manifest(&admitted, &wiring_hash)),
+            &wamn_execution_contract::canonical_json_bytes(&release_manifest(&admitted, &wiring_hash)),
             "trusted-http-route fixture",
         )
         .context("weld the fixture serving manifest")?,

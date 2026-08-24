@@ -879,7 +879,7 @@ async fn complete_in_transaction(
                 error.to_string(),
             )
         })?;
-        let hash = wamn_flow::canonical_json_sha256(&caller.body);
+        let hash = wamn_execution_contract::canonical_json_sha256(&caller.body);
         let http_status = i32::from(caller.http_status);
         let release_node_id = caller.release_node_id.as_deref();
         let sql = release_caller_sql();
@@ -1433,7 +1433,7 @@ fn generic_failure_outcome(
         }),
     };
     let body = serde_json::json!({ "error": coordinate });
-    let body_hash = wamn_flow::canonical_json_sha256(&body);
+    let body_hash = wamn_execution_contract::canonical_json_sha256(&body);
     let body_json = serde_json::to_string(&body).map_err(|error| {
         ProductionClaimError::new(
             ProductionClaimErrorKind::Contract,
@@ -1660,7 +1660,7 @@ mod tests {
             .unwrap()
         );
         assert!(body["error"].get("message").is_none());
-        assert_eq!(hash, wamn_flow::canonical_json_sha256(&body));
+        assert_eq!(hash, wamn_execution_contract::canonical_json_sha256(&body));
     }
 
     #[test]
@@ -1676,7 +1676,7 @@ mod tests {
             r#"{"error":{"code":"infrastructure-failure","flow-id":"root-flow","flow-version":19,"run-id":"run-exhausted"}}"#
         );
         let body = serde_json::from_str(&json).unwrap();
-        assert_eq!(hash, wamn_flow::canonical_json_sha256(&body));
+        assert_eq!(hash, wamn_execution_contract::canonical_json_sha256(&body));
     }
 
     #[test]

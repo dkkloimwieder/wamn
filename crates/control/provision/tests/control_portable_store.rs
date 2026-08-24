@@ -501,13 +501,13 @@ fn tested_resolution_fixture_uses_the_landed_rfc8785_canonicalizer() {
         "flow-z": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "flow-a": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     });
-    let bytes = wamn_flow::canonical_json_bytes(&value);
+    let bytes = wamn_execution_contract::canonical_json_bytes(&value);
     assert_eq!(
         bytes,
         br#"{"flow-a":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","flow-z":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#
     );
     assert_eq!(
-        wamn_flow::canonical_json_sha256(&value),
+        wamn_execution_contract::canonical_json_sha256(&value),
         "sha256:1ce65570349393c45e6c5ab58405b960e24b6d0d8ece076a4e4b0947b52383a2"
     );
 }
@@ -637,8 +637,8 @@ fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
         "flow-z": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "flow-a": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     });
-    let map_bytes = wamn_flow::canonical_json_bytes(&resolution);
-    let map_hash = wamn_flow::canonical_json_sha256(&resolution);
+    let map_bytes = wamn_execution_contract::canonical_json_bytes(&resolution);
+    let map_hash = wamn_execution_contract::canonical_json_sha256(&resolution);
     let map_hex = hex_from_bytes(&map_bytes);
 
     let mut script = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);

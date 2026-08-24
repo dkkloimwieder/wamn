@@ -16,5 +16,5 @@ schemars = { workspace = true }
 [dev-dependencies]
 # tests validate each fixture catalog against the generated JSON Schema, tying
 # the language-neutral contract to the Rust types. boon is a pure-Rust validator
-# with no network/reqwest dependency (same choice as wamn-flow).
+# with no network/reqwest dependency (same choice as wamn-execution-contract).
 boon = { workspace = true }

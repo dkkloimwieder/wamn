@@ -284,7 +284,7 @@ pub fn component_artifact_config_bytes(component: &AdmittedComponent) -> Vec<u8>
         imports_fingerprint: component.imports_fingerprint.clone(),
     };
     let value = serde_json::to_value(config).expect("a component artifact config serializes");
-    wamn_flow::canonical_json_bytes(&value)
+    wamn_execution_contract::canonical_json_bytes(&value)
 }
 
 #[cfg(test)]

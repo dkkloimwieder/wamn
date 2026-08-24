@@ -1,0 +1,16 @@
+[package]
+name = "wamn-execution-contract"
+description = "Shared execution contract vocabulary: canonical JSON identity, the node contract, persisted port names, and the publish-gate test cases."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+# `canonical_json_bytes` is `serde_json::to_vec`, so its determinism is this
+# feature set: NEVER enable `preserve_order` (it swaps the key-sorted
+# `BTreeMap` for insertion order and silently changes every persisted digest),
+# and keep `float_roundtrip` so a parsed f64 re-serializes to the same bytes.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+schemars = { workspace = true }
+sha2 = { workspace = true }

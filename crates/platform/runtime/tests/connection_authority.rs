@@ -3,7 +3,7 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
 
-use wamn_flow::node_contract::{CanonicalHttpTarget, normalize_portable_http_target};
+use wamn_execution_contract::node_contract::{CanonicalHttpTarget, normalize_portable_http_target};
 use wamn_runtime::connection_authority::{
     AuthorityError, AuthorityErrorKind, DnsResolver, HttpScheme, NetworkPolicy, TlsIdentity,
     TlsPolicy, TransportDecision, parse_http_connection_authority, resolve_http_redirect,

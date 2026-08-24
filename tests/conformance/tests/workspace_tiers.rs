@@ -17,7 +17,7 @@ const ROOT_DEFAULT_MEMBER_PATHS: [&str; 18] = [
     "crates/authoring/model",
     "crates/catalog/model",
     "crates/data/entity-access",
-    "crates/execution/flow-model",
+    "crates/execution/contract",
     "crates/execution/host",
     "crates/execution/router",
     "crates/execution/run-state",

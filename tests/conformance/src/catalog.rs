@@ -4,62 +4,16 @@
 mod tests {
     use serde_json::json;
     use wamn_catalog::{
-        Artifact, Attachment, AttachmentDraft, AttachmentId, AttachmentKind, CanonicalJson,
-        CatalogHead, Release, ReleaseId, Source, SourceId, SourceKind,
+        ArtifactHash, ArtifactId, ArtifactIdentity, Attachment, AttachmentDraft, AttachmentId,
+        AttachmentKind, CanonicalJson, CatalogHead, Release, ReleaseId, Source, SourceId,
+        SourceKind,
     };
-    use wamn_flow::Flow;
-    use wamn_flow::node_contract::{Capability, EffectPolicy, NodeInterface};
 
-    fn flow() -> Flow {
-        Flow::from_json(
-            r#"{
-              "schema-version":"0.1",
-              "flow-id":"catalog-proof",
-              "version":1,
-              "nodes":[
-                {"id":"request","type":"request","config":{"input-schema":true}},
-                {"id":"custom","type":"custom-step"},
-                {"id":"response","type":"respond","config":{"status":200}}
-              ],
-              "edges":[
-                {"from":"request","to":"custom"},
-                {"from":"custom","to":"response"}
-              ]
-            }"#,
+    fn artifact() -> ArtifactIdentity {
+        ArtifactIdentity::new(
+            ArtifactId::new("tenant-a", "catalog-proof", 1).expect("proof artifact id"),
+            ArtifactHash::parse(format!("sha256:{}", "1".repeat(64))).expect("proof artifact hash"),
         )
-        .expect("proof flow parses")
-    }
-
-    fn artifact() -> Artifact {
-        let interface = NodeInterface {
-            node_type: "custom-step".to_string(),
-            output_ports: vec!["main".to_string()],
-            capabilities: vec![Capability::HttpEgress],
-            connection_requirements: Vec::new(),
-            effect_policy: EffectPolicy::Effectful,
-        };
-        Artifact::new(
-            "tenant-a",
-            &flow(),
-            vec![
-                interface,
-                NodeInterface {
-                    node_type: "request".to_string(),
-                    output_ports: vec!["main".to_string()],
-                    capabilities: Vec::new(),
-                    connection_requirements: Vec::new(),
-                    effect_policy: EffectPolicy::Pure,
-                },
-                NodeInterface {
-                    node_type: "respond".to_string(),
-                    output_ports: vec!["main".to_string()],
-                    capabilities: Vec::new(),
-                    connection_requirements: Vec::new(),
-                    effect_policy: EffectPolicy::Pure,
-                },
-            ],
-        )
-        .expect("artifact is canonical")
     }
 
     #[test]
@@ -74,7 +28,7 @@ mod tests {
             AttachmentDraft {
                 id: AttachmentId::new("public").unwrap(),
                 kind: AttachmentKind::Http,
-                artifact_id: artifact.identity().id().clone(),
+                artifact_id: artifact.id().clone(),
                 source_ids: vec![source.id().clone()],
                 definition: CanonicalJson::new(json!({"method": "POST", "path": "/v1/run"}))
                     .unwrap(),
@@ -85,7 +39,7 @@ mod tests {
         .expect("source resolution completes the definition");
         let release = Release::new(
             ReleaseId::new("tenant-a", "main", 1).unwrap(),
-            vec![artifact.identity().clone()],
+            vec![artifact.clone()],
             vec![source],
             vec![attachment.clone()],
         )
@@ -96,7 +50,7 @@ mod tests {
             attachment.definition_hash()
         );
         assert_ne!(
-            artifact.identity().artifact_hash().as_str(),
+            artifact.artifact_hash().as_str(),
             attachment.definition_hash().as_str()
         );
     }
@@ -108,7 +62,7 @@ mod tests {
             AttachmentDraft {
                 id: AttachmentId::new("public").unwrap(),
                 kind: AttachmentKind::Http,
-                artifact_id: artifact.identity().id().clone(),
+                artifact_id: artifact.id().clone(),
                 source_ids: vec![SourceId::new("missing").unwrap()],
                 definition: CanonicalJson::new(json!({"path": "/"})).unwrap(),
             },
@@ -133,7 +87,7 @@ mod tests {
             AttachmentDraft {
                 id: AttachmentId::new("public").unwrap(),
                 kind: AttachmentKind::Http,
-                artifact_id: artifact.identity().id().clone(),
+                artifact_id: artifact.id().clone(),
                 source_ids: vec![source.id().clone()],
                 definition: CanonicalJson::new(json!({"path": "/"})).unwrap(),
             },

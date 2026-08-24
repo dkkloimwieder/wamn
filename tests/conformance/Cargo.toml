@@ -22,7 +22,7 @@ tokio = { workspace = true, features = ["net", "time", "rt", "macros"] }
 url = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-flow = { workspace = true }
+wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-runtime = { workspace = true }
 wash-runtime = { workspace = true }

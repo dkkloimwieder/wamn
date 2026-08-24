@@ -75,16 +75,16 @@ const RETAINED_ROOTS: &[(&str, &str, &str)] = &[
         EVENT_SPINE,
     ),
     (
+        "wamn-execution-contract",
+        "crates/execution/contract/src/lib.rs",
+        CRASH_FLOOR,
+    ),
+    (
         "wamn-execution-host",
         "crates/execution/host/src/lib.rs",
         CRASH_FLOOR,
     ),
     ("wamn-executor", "services/executor/src/lib.rs", CRASH_FLOOR),
-    (
-        "wamn-flow",
-        "crates/execution/flow-model/src/lib.rs",
-        CRASH_FLOOR,
-    ),
     (
         "wamn-gate-harness",
         "test-support/harness/src/lib.rs",

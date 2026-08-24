@@ -179,7 +179,7 @@ pub fn normalize_component_fact(
     let mut imports: Vec<_> = imports.into_iter().collect();
     imports.sort();
     imports.dedup();
-    let imports_fingerprint = wamn_flow::canonical_json_sha256(
+    let imports_fingerprint = wamn_execution_contract::canonical_json_sha256(
         &serde_json::to_value(&imports).expect("a string list serializes"),
     );
 
@@ -289,7 +289,7 @@ fn normalize_schema(schema: Value, field: &str) -> Result<ComponentSchema, Compo
             )
         })?;
 
-    let schema_digest = wamn_flow::canonical_json_sha256(&schema);
+    let schema_digest = wamn_execution_contract::canonical_json_sha256(&schema);
     Ok(ComponentSchema {
         schema,
         schema_digest,

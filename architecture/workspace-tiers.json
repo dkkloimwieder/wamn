@@ -34,7 +34,7 @@
         "wamn-event-wire",
         "wamn-execution-host",
         "wamn-executor",
-        "wamn-flow",
+        "wamn-execution-contract",
         "wamn-host",
         "wamn-materializer",
         "wamn-pg-core",
@@ -72,7 +72,7 @@
         "wamn-catalog",
         "wamn-event-reg",
         "wamn-event-wire",
-        "wamn-flow",
+        "wamn-execution-contract",
         "wamn-project-state",
         "wamn-proof-conformance",
         "wamn-scenario-model",
@@ -97,7 +97,7 @@
         "wamn-event-wire",
         "wamn-execution-host",
         "wamn-executor",
-        "wamn-flow",
+        "wamn-execution-contract",
         "wamn-gate-harness",
         "wamn-gates",
         "wamn-host",
@@ -314,8 +314,8 @@
         "path": "crates/execution/flow-engine"
       },
       {
-        "package": "wamn-flow",
-        "path": "crates/execution/flow-model"
+        "package": "wamn-execution-contract",
+        "path": "crates/execution/contract"
       },
       {
         "package": "wamn-execution-host",

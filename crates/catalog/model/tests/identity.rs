@@ -1,78 +1,20 @@
 use serde_json::json;
 use wamn_catalog::{
-    Artifact, Attachment, AttachmentActivation, AttachmentDraft, AttachmentId, AttachmentKind,
-    CanonicalJson, CatalogHead, CatalogIdentityError, DefinitionHash, Release, ReleaseId, Source,
-    SourceId, SourceKind,
+    ArtifactHash, ArtifactId, ArtifactIdentity, Attachment, AttachmentActivation, AttachmentDraft,
+    AttachmentId, AttachmentKind, CanonicalJson, CatalogHead, CatalogIdentityError, DefinitionHash,
+    Release, ReleaseId, Source, SourceId, SourceKind,
 };
-use wamn_flow::Flow;
-use wamn_flow::node_contract::{Capability, EffectPolicy, NodeInterface};
 
-fn request_flow() -> Flow {
-    Flow::from_json(
-        r#"{
-          "schema-version":"0.1",
-          "flow-id":"receive-order",
-          "version":7,
-          "nodes":[
-            {"id":"request","type":"request","config":{"input-schema":true}},
-            {"id":"shape","type":"custom-step","config":{"template":"v1"}},
-            {"id":"response","type":"respond","config":{"status":200}}
-          ],
-          "edges":[
-            {"from":"request","to":"shape"},
-            {"from":"shape","to":"response"}
-          ]
-        }"#,
-    )
-    .expect("fixture flow parses")
-}
-
-fn artifact_new(
-    tenant: &str,
-    flow: &Flow,
-    mut implementations: Vec<NodeInterface>,
-) -> Result<Artifact, CatalogIdentityError> {
-    let request = node_interface("request", Vec::new(), EffectPolicy::Pure);
-    let respond = node_interface("respond", Vec::new(), EffectPolicy::Pure);
-    for implementation in [request, respond] {
-        let index = implementations
-            .iter()
-            .position(|candidate| candidate.node_type > implementation.node_type)
-            .unwrap_or(implementations.len());
-        implementations.insert(index, implementation);
-    }
-    Artifact::new(tenant, flow, implementations)
-}
-
-fn node_interface(
-    node_type: &str,
-    capabilities: Vec<Capability>,
-    effect_policy: EffectPolicy,
-) -> NodeInterface {
-    NodeInterface {
-        node_type: node_type.to_string(),
-        output_ports: vec!["main".to_string()],
-        capabilities,
-        connection_requirements: Vec::new(),
-        effect_policy,
-    }
-}
-
-fn interface() -> NodeInterface {
-    node_interface(
-        "custom-step",
-        vec![Capability::HttpEgress],
-        EffectPolicy::Effectful,
+fn artifact_identity(tenant: &str, flow_version: u32, digit: char) -> ArtifactIdentity {
+    ArtifactIdentity::new(
+        ArtifactId::new(tenant, "receive-order", flow_version).expect("fixture artifact id"),
+        ArtifactHash::parse(format!("sha256:{}", digit.to_string().repeat(64)))
+            .expect("fixture artifact hash"),
     )
 }
 
-fn supplied(_digit: char) -> NodeInterface {
-    interface()
-}
-
-fn artifact() -> Artifact {
-    artifact_new("tenant-a", &request_flow(), vec![supplied('1')])
-        .expect("fixture artifact is valid")
+fn artifact() -> ArtifactIdentity {
+    artifact_identity("tenant-a", 7, '1')
 }
 
 fn source(id: &str, kind: SourceKind, definition: serde_json::Value) -> Source {
@@ -84,7 +26,7 @@ fn source(id: &str, kind: SourceKind, definition: serde_json::Value) -> Source {
 }
 
 fn attachment(
-    artifact: &Artifact,
+    artifact: &ArtifactIdentity,
     sources: &[Source],
     id: &str,
     kind: AttachmentKind,
@@ -94,7 +36,7 @@ fn attachment(
         AttachmentDraft {
             id: AttachmentId::new(id).expect("fixture attachment id is valid"),
             kind,
-            artifact_id: artifact.identity().id().clone(),
+            artifact_id: artifact.id().clone(),
             source_ids: sources.iter().map(|source| source.id().clone()).collect(),
             definition: CanonicalJson::new(definition)
                 .expect("fixture attachment definition is valid"),
@@ -147,9 +89,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         json!({"method": "PUT", "path": "/v1/orders"}),
     );
 
-    let mut changed_flow = request_flow();
-    changed_flow.nodes[1].config = json!({"template": "v2"});
-    let changed_artifact = artifact_new("tenant-a", &changed_flow, vec![supplied('2')]).unwrap();
+    let changed_artifact = artifact_identity("tenant-a", 7, '2');
     let artifact_mutant = attachment(
         &changed_artifact,
         &baseline_sources,
@@ -220,20 +160,12 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
 
 #[test]
 fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
-    let missing_interface = artifact_new("tenant-a", &request_flow(), vec![])
-        .expect_err("an ordinary graph node needs an interface pin");
-    assert!(matches!(
-        missing_interface,
-        CatalogIdentityError::UnresolvedInterface { .. }
-    ));
-    assert!(!interface().node_type.is_empty());
-
     let artifact = artifact();
     let missing_source = Attachment::resolve(
         AttachmentDraft {
             id: AttachmentId::new("public-api").unwrap(),
             kind: AttachmentKind::Http,
-            artifact_id: artifact.identity().id().clone(),
+            artifact_id: artifact.id().clone(),
             source_ids: vec![SourceId::new("missing").unwrap()],
             definition: CanonicalJson::new(json!({"path": "/"})).unwrap(),
         },
@@ -284,18 +216,6 @@ fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
 }
 
 #[test]
-fn request_nodes_require_an_explicit_pinned_interface() {
-    let respond = node_interface("respond", Vec::new(), EffectPolicy::Pure);
-    let missing_request = Artifact::new("tenant-a", &request_flow(), vec![interface(), respond])
-        .expect_err("request must not be model-owned");
-    assert!(matches!(
-        missing_request,
-        CatalogIdentityError::UnresolvedInterface { ref node_type }
-            if node_type == "request"
-    ));
-}
-
-#[test]
 fn release_activation_head_and_hash_parser_preserve_scope_invariants() {
     let artifact = artifact();
     let sources = vec![source(
@@ -312,7 +232,7 @@ fn release_activation_head_and_hash_parser_preserve_scope_invariants() {
     );
     let release = Release::new(
         ReleaseId::new("tenant-a", "main", 4).unwrap(),
-        vec![artifact.identity().clone()],
+        vec![artifact.clone()],
         sources,
         vec![attachment.clone()],
     )

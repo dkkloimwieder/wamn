@@ -29,7 +29,7 @@ use wamn_ctl::publish_release::{
 use wamn_ctl::push_release_manifest::{
     PushReleaseManifestArgs, ReleaseManifestPublishDisposition, publish_release_manifest,
 };
-use wamn_flow::EntryKind;
+use wamn_execution_contract::EntryKind;
 use wamn_schema_control::{
     Attachment as ExposureAttachment, AttachmentKind as ExposureAttachmentKind, ExposureRelease,
     FlowExposure, HttpRoute, Source, SourceKind, resolve_exposure,
@@ -127,7 +127,7 @@ fn resolved_exposure_hash_round_trips_through_serving_manifest_admission() {
             .strip_prefix("sha256:")
             .expect("admitted digest prefix")
     );
-    let bare_bytes = wamn_flow::canonical_json_bytes(&bare_document);
+    let bare_bytes = wamn_execution_contract::canonical_json_bytes(&bare_document);
     let error = ServingManifest::from_canonical_bytes(&bare_bytes)
         .expect_err("a bare definition hash cannot deserialize into the manifest");
     assert!(matches!(

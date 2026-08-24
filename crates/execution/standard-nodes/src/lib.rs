@@ -4,8 +4,8 @@
 
 use std::sync::LazyLock;
 
-use wamn_flow::MAIN_PORT;
-use wamn_flow::node_contract::{Capability, ConnectionRequirement, EffectPolicy, NodeInterface};
+use wamn_execution_contract::MAIN_PORT;
+use wamn_execution_contract::node_contract::{Capability, ConnectionRequirement, EffectPolicy, NodeInterface};
 
 const NODE_TYPES: [&str; 8] = [
     "request",

@@ -22,13 +22,6 @@ fn component_requirement() -> ComponentConnectionRequirement {
 }
 
 #[test]
-fn legacy_flow_path_reexports_the_schema_model_descriptor() {
-    let descriptor: wamn_flow::node_contract::ConnectionTypeDescriptor =
-        ConnectionTypeDescriptor::http_v1();
-    assert_eq!(descriptor, ConnectionTypeDescriptor::http_v1());
-}
-
-#[test]
 fn portable_requirement_identity_excludes_environment_definition_fields() {
     let requirement = artifact_requirement();
     let bytes = requirement.canonical_bytes();

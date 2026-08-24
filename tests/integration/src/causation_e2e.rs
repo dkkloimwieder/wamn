@@ -1568,7 +1568,7 @@ async fn assert_one_causal_run(
         sequence,
     );
     let registration: serde_json::Value = serde_json::from_str(&registration_json(resources))?;
-    let expected_hash = wamn_flow::canonical_json_sha256(&registration);
+    let expected_hash = wamn_execution_contract::canonical_json_sha256(&registration);
     let run_count: i64 = admin
         .query_one(
             "SELECT count(*) FROM wamn_run.runs \

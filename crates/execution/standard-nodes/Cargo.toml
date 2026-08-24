@@ -7,4 +7,4 @@ license.workspace = true
 
 [dependencies]
 # The canonical pure execution and publication contract for standard nodes.
-wamn-flow = { workspace = true }
+wamn-execution-contract = { workspace = true }

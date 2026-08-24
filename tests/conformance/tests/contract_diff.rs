@@ -1,4 +1,19 @@
 //! Exact orchestration proof for repo-local contract drift check 15.
+//!
+//! WHAT GREEN HERE MEANS (wamn-0h0g.15.138). This file drives `tools/contract-
+//! diff` against a FAKE CARGO that only records its argv, so a pass proves the
+//! PLAN SHAPE — that the tool invokes exactly these legs, in this order, with
+//! `--locked --offline`, from any working directory, and stops at the first
+//! failure. It proves NOTHING about whether the guards those legs name are
+//! green, and it cannot: no real Cargo runs here.
+//!
+//! Guard health is proved by the leg targets themselves, each of which is an
+//! ordinary test target in the workspace sweep:
+//!   * `-p wamn-authoring-model --test contract`
+//!   * `-p wamn-runtime --test flow_http_routing_wit_coherence`
+//!   * `-p flow-http --test adversarial` (the components workspace)
+//! Read a green here as "the orchestration is intact", never as "the contracts
+//! have not drifted".
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -7,7 +22,11 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL: &str = "tools/contract-diff";
-const LEG_COUNT: usize = 4;
+// authoring, runtime-vendored-flow-http-routing, flow-http. The flow-schema
+// leg went with wamn-0h0g.26.5: it regenerated
+// docs/archive/contracts/flow-schema.schema.json, and both the generator and
+// the committed file are gone.
+const LEG_COUNT: usize = 3;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -132,7 +151,7 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
             "flow_http_routing_wit_coherence".into(),
         ],
         vec![
-            root.clone(),
+            root,
             "test".into(),
             "--manifest-path".into(),
             component_manifest,
@@ -142,16 +161,6 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
             "flow-http".into(),
             "--test".into(),
             "adversarial".into(),
-        ],
-        vec![
-            root,
-            "test".into(),
-            "--manifest-path".into(),
-            root_manifest,
-            "--locked".into(),
-            "--offline".into(),
-            "-p".into(),
-            "wamn-flow".into(),
         ],
     ]
 }
@@ -208,7 +217,6 @@ fn contract_diff_dry_run_prints_the_complete_plan_without_cargo() {
         "authoring",
         "runtime-vendored-flow-http-routing",
         "flow-http",
-        "flow-schema",
     ]) {
         assert!(line.starts_with(&format!("{label}: ")), "{line}");
         assert!(line.contains(" --locked --offline "), "{line}");

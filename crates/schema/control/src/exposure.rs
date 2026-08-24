@@ -6,7 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
-use wamn_flow::EntryKind;
+use wamn_execution_contract::EntryKind;
 
 /// One release's authored exposure definitions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

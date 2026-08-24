@@ -16,7 +16,7 @@ wamn-event-wire = { workspace = true }
 # reports, and the process owning the pipeline configures it.
 opentelemetry = { workspace = true, features = ["metrics"] }
 
-# Deliberately NO wamn-flow: the router owns its own Wiring graph type. The node
+# Deliberately NO wamn-execution-contract: the router owns its own Wiring graph type. The node
 # language (flow docs, expression configs, reserved node types) retires with the
 # flow engine; only the walk is rehosted here (docs/exe-model.md, rev 4).
 # No pooling, no runtime, no clock, no DB: siblings own those. The wiring cache

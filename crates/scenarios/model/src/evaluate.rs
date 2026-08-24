@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wamn_flow::{Expect, ExpectedOutcome, TestSetCase};
+use wamn_execution_contract::{Expect, ExpectedOutcome, TestSetCase};
 
 use crate::Captured;
 
@@ -93,7 +93,7 @@ fn is_subset(expected: &Value, actual: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use wamn_flow::{Expect, ExpectedOutcome, FlowFailureKind, TestSetCase};
+    use wamn_execution_contract::{Expect, ExpectedOutcome, FlowFailureKind, TestSetCase};
 
     use super::evaluate;
     use crate::Captured;

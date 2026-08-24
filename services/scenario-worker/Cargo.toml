@@ -16,7 +16,7 @@ wamn-control-registry = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-schema-control = { workspace = true }
-wamn-flow = { workspace = true }
+wamn-execution-contract = { workspace = true }
 wash-runtime = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }

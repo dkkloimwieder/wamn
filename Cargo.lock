@@ -4166,7 +4166,7 @@ dependencies = [
  "url",
  "wamn-catalog",
  "wamn-event-wire",
- "wamn-flow",
+ "wamn-execution-contract",
 ]
 
 [[package]]
@@ -4205,7 +4205,7 @@ dependencies = [
  "sha2 0.11.0",
  "url",
  "wamn-control-registry",
- "wamn-flow",
+ "wamn-execution-contract",
  "wamn-pg-core",
  "wamn-run-state",
 ]
@@ -4241,7 +4241,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-wire",
- "wamn-flow",
+ "wamn-execution-contract",
  "wamn-platform-identity",
  "wamn-run-state",
  "wamn-runtime",
@@ -4305,6 +4305,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-execution-contract"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "wamn-execution-host"
 version = "0.1.0"
 dependencies = [
@@ -4348,18 +4358,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wash-runtime",
-]
-
-[[package]]
-name = "wamn-flow"
-version = "0.1.0"
-dependencies = [
- "boon",
- "jmespath",
- "schemars",
- "serde",
- "serde_json",
- "wamn-schema-model",
 ]
 
 [[package]]
@@ -4460,8 +4458,8 @@ dependencies = [
  "url",
  "wamn-catalog",
  "wamn-component-policy",
+ "wamn-execution-contract",
  "wamn-execution-host",
- "wamn-flow",
  "wamn-gate-harness",
  "wamn-run-state",
  "wamn-runtime",
@@ -4500,8 +4498,8 @@ dependencies = [
  "wamn-control-registry",
  "wamn-event-reg",
  "wamn-event-wire",
+ "wamn-execution-contract",
  "wamn-execution-host",
- "wamn-flow",
  "wamn-gate-harness",
  "wamn-run-state",
  "wamn-runtime",
@@ -4557,7 +4555,7 @@ dependencies = [
  "tokio-postgres",
  "url",
  "wamn-control-provision",
- "wamn-flow",
+ "wamn-execution-contract",
  "wamn-pg-core",
 ]
 
@@ -4594,7 +4592,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-wire",
- "wamn-flow",
+ "wamn-execution-contract",
  "wamn-pg-core",
  "wamn-router",
  "wamn-run-state",
@@ -4610,7 +4608,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "wamn-flow",
+ "wamn-execution-contract",
 ]
 
 [[package]]
@@ -4633,7 +4631,7 @@ dependencies = [
  "wamn-authoring-model",
  "wamn-control-provision",
  "wamn-control-registry",
- "wamn-flow",
+ "wamn-execution-contract",
  "wamn-platform-identity",
  "wamn-runtime",
  "wamn-schema-control",
@@ -4664,7 +4662,7 @@ dependencies = [
  "sha2 0.11.0",
  "wamn-control-registry",
  "wamn-event-reg",
- "wamn-flow",
+ "wamn-execution-contract",
  "wamn-pg-core",
  "wamn-schema-compiler",
  "wamn-schema-model",
@@ -4684,7 +4682,7 @@ dependencies = [
 name = "wamn-standard-nodes"
 version = "0.1.0"
 dependencies = [
- "wamn-flow",
+ "wamn-execution-contract",
 ]
 
 [[package]]

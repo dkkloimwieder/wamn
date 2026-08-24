@@ -138,6 +138,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-execution-contract",
+      "manifest_path": "crates/execution/contract/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-execution-host",
       "manifest_path": "crates/execution/host/Cargo.toml",
       "role": "adapter",
@@ -161,15 +170,6 @@
         "tested_boundary": "Executor process and runner integration proofs cover queue claim, component execution, and durable completion.",
         "exit_condition": "Retire when flowrunner is promoted to a production Service workload with equivalent lease, failure, and rollback behavior (wamn-l5i9.49)."
       }
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-flow",
-      "manifest_path": "crates/execution/flow-model/Cargo.toml",
-      "role": "contract",
-      "target_class": "shared",
-      "bounded_context": "execution",
-      "deployable": false
     },
     {
       "workspace": "root",

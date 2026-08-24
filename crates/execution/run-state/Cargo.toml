@@ -22,7 +22,7 @@ test-util = []
 [dependencies]
 # Canonical JSON hashing and node-error taxonomy.
 # Capture policy itself is run-state-owned and no longer comes from `Flow`.
-wamn-flow = { workspace = true }
+wamn-execution-contract = { workspace = true }
 # Composed run and queue statements carry their positional-parameter arity.
 wamn-pg-core = { workspace = true }
 # Persisted decision payloads are opaque JSON. No schemars: these are internal
