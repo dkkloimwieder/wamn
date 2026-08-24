@@ -359,7 +359,7 @@ async fn shared_portable_fingerprints(client: &Client) -> BTreeMap<String, Porta
         "catalog.catalogs",
         "catalog.flow_artifacts",
         "catalog.execution_bundles",
-        "catalog.release_manifests",
+        "catalog.releases",
         "catalog.release_flows",
         "catalog.catalog_heads",
         "catalog.flow_drafts",

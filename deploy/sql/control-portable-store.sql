@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS catalog.flow_artifacts (
     PRIMARY KEY (tenant_id, flow_id, flow_version)
 );
 
-CREATE TABLE IF NOT EXISTS catalog.release_manifests (
+CREATE TABLE IF NOT EXISTS catalog.releases (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
     catalog_version int NOT NULL,
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS catalog.release_flows (
     flow_version         int NOT NULL,
     PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
+        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, flow_id, flow_version)
         REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version)
 );
@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS catalog.release_exposure_manifests (
     definitions_json jsonb NOT NULL CHECK (jsonb_typeof(definitions_json) = 'object'),
     PRIMARY KEY (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version)
 );
 
 CREATE TABLE IF NOT EXISTS catalog.release_sources (
@@ -461,7 +461,7 @@ CREATE TABLE IF NOT EXISTS catalog.deployment_attestations (
         tenant_id, catalog_id, catalog_version, org_id, project_id, environment
     ),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version)
 );
 
 DROP FUNCTION IF EXISTS catalog.register_release_flow_test_evidence(
@@ -609,7 +609,7 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.catalogs', 'catalog.flow_artifacts',
-        'catalog.release_manifests',
+        'catalog.releases',
         'catalog.release_flows', 'catalog.catalog_heads',
         'catalog.flow_drafts', 'catalog.validated_flow_drafts',
         'catalog.release_exposure_manifests', 'catalog.release_sources',
@@ -646,7 +646,7 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.flow_artifacts',
-        'catalog.release_manifests', 'catalog.release_flows',
+        'catalog.releases', 'catalog.release_flows',
         'catalog.validated_flow_drafts', 'catalog.release_exposure_manifests',
         'catalog.release_sources', 'catalog.release_attachments',
         'catalog.component_library',
@@ -735,7 +735,7 @@ BEGIN
     -- moves to 4, which the retained-shape digest hashes.
     IF EXISTS (
         SELECT 1 FROM pg_attribute
-        WHERE attrelid = to_regclass('catalog.release_manifests')
+        WHERE attrelid = to_regclass('catalog.releases')
           AND attname = 'members_json' AND NOT attisdropped
     ) THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
@@ -813,8 +813,8 @@ BEGIN
         'component_library', 'connection_requirements', 'deployment_attestations',
         'draft_safe_connection_grants', 'flow_artifacts',
         'flow_drafts', 'release_attachments', 'release_exposure_manifests',
-        'release_flow_test_evidence', 'release_flows', 'release_manifests',
-        'release_sources', 'validated_flow_drafts'
+        'release_flow_test_evidence', 'release_flows', 'release_sources',
+        'releases', 'validated_flow_drafts'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-catalog-inventory-drift';
@@ -894,7 +894,7 @@ BEGIN
     WHERE con.conrelid = 'catalog.deployment_attestations'::regclass
       AND con.contype <> 'n';
     IF attestation_constraints_fingerprint <>
-       '402504526c60def1fddf35860ec2829c7b516837292b10a9e35ed377b8af9745'
+       'abae958ad104c5875743d1e39772eb576516aa5d2f175b2d684479a3f4b98415'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'deployment-attestation-constraint-drift';
@@ -903,7 +903,7 @@ BEGIN
     WITH retained_relations(relation) AS (
         VALUES
             ('catalog.catalogs'), ('catalog.flow_artifacts'),
-            ('catalog.release_manifests'),
+            ('catalog.releases'),
             ('catalog.release_flows'), ('catalog.catalog_heads'),
             ('catalog.component_library'),
             ('catalog.flow_drafts'), ('catalog.validated_flow_drafts'),
@@ -944,7 +944,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '15a4659022aa6802a354623a3dea548c17b45659f586807c16e441536459979e'
+       'c5530dee86104d972985d9d3337c5f41a34b845c647b0c6f6cb3c3801af91071'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';
@@ -1032,7 +1032,7 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.flow_artifacts',
-        'catalog.release_manifests', 'catalog.release_flows',
+        'catalog.releases', 'catalog.release_flows',
         'catalog.catalog_heads', 'catalog.flow_drafts',
         'catalog.validated_flow_drafts', 'catalog.connection_requirements',
         'catalog.draft_safe_connection_grants', 'catalog.authoring_command_audit',
@@ -1064,10 +1064,10 @@ GRANT EXECUTE ON FUNCTION wamn_authority.session_author_tenant()
     TO wamn_control_author;
 
 -- Portable catalog and draft-base facts the author only ever reads.
-REVOKE ALL PRIVILEGES ON catalog.flow_artifacts, catalog.release_manifests,
+REVOKE ALL PRIVILEGES ON catalog.flow_artifacts, catalog.releases,
     catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements,
     catalog.draft_safe_connection_grants FROM wamn_control_author;
-GRANT SELECT ON catalog.flow_artifacts, catalog.release_manifests,
+GRANT SELECT ON catalog.flow_artifacts, catalog.releases,
     catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements,
     catalog.draft_safe_connection_grants TO wamn_control_author;
 
@@ -1128,7 +1128,7 @@ BEGIN
              SELECT 1
                FROM (VALUES
                  ('catalog', 'flow_artifacts', 'SELECT'),
-                 ('catalog', 'release_manifests', 'SELECT'),
+                 ('catalog', 'releases', 'SELECT'),
                  ('catalog', 'release_flows', 'SELECT'),
                  ('catalog', 'catalog_heads', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),

@@ -230,7 +230,7 @@ fn surviving_authority_matrix_live() {
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'dev','0.1','applied'); \
-             INSERT INTO catalog.release_manifests \
+             INSERT INTO catalog.releases \
                (tenant_id,catalog_id,catalog_version) VALUES ('t1','cat',1); \
              INSERT INTO catalog.component_library \
                (tenant_id,catalog_id,catalog_version,component,interface_version,operation, \

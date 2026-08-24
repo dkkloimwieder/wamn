@@ -75,7 +75,7 @@ const RUNS_ADMISSION_SCOPE_CHECK_DEF: &str =
 const RUNS_WIRING_IDENTITY_CHECK_DEF: &str = "CHECK (wiring_id IS NULL AND wiring_version IS NULL OR wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0)";
 const RUNS_EXECUTION_GRAIN_CHECK_DEF: &str = "CHECK (flow_id IS NOT NULL AND flow_version IS NOT NULL AND flow_id <> ''::text AND flow_version > 0 AND wiring_hash IS NULL AND gate_report_id IS NULL AND binding_world_json IS NULL OR flow_id IS NULL AND flow_version IS NULL AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0 AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text AND gate_report_id IS NOT NULL AND gate_report_id <> ''::text AND binding_world_json IS NOT NULL AND jsonb_typeof(binding_world_json) = 'array'::text)";
 #[cfg(test)]
-const RUNS_RELEASE_FK_DEF: &str = "FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.release_manifests(tenant_id, catalog_id, catalog_version)";
+const RUNS_RELEASE_FK_DEF: &str = "FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.releases(tenant_id, catalog_id, catalog_version)";
 #[cfg(test)]
 const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs USING btree (tenant_id, catalog_id, catalog_version)";
 const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
@@ -842,7 +842,7 @@ const EFFECT_OUTCOME_DISPATCH_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attemp
 const FLOW_AUTHOR_CHECK_NAME: &str = "flow_artifacts_verified_author_principal_check";
 const FLOW_AUTHOR_CHECK_DEF: &str =
     "CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''::text)";
-const RELEASE_PUBLISHER_CHECK_NAME: &str = "release_manifests_verified_publisher_principal_check";
+const RELEASE_PUBLISHER_CHECK_NAME: &str = "releases_verified_publisher_principal_check";
 const RELEASE_PUBLISHER_CHECK_DEF: &str =
     "CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)";
 const AUTHORING_COMMAND_KIND_CHECK_NAME: &str = "authoring_command_audit_command_kind_check";
@@ -1412,7 +1412,7 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "release_manifests",
+        table: "releases",
         app: &["SELECT"],
         author: &["SELECT"],
     },
@@ -3151,10 +3151,10 @@ $retire_run_projection_authority$;"#,
                 .catalog_columns
                 .get("flow_artifacts")
                 .is_some_and(|columns| columns.contains("verified_author_principal"));
-        let release_needs_provenance = obs.catalog_tables.contains("release_manifests")
+        let release_needs_provenance = obs.catalog_tables.contains("releases")
             && !obs
                 .catalog_columns
-                .get("release_manifests")
+                .get("releases")
                 .is_some_and(|columns| columns.contains("verified_publisher_principal"));
         let flow_check_needs_repair = obs.catalog_tables.contains("flow_artifacts")
             && obs
@@ -3164,11 +3164,11 @@ $retire_run_projection_authority$;"#,
                     FLOW_AUTHOR_CHECK_NAME.to_string(),
                 ))
                 .is_none_or(|definition| definition != FLOW_AUTHOR_CHECK_DEF);
-        let release_check_needs_repair = obs.catalog_tables.contains("release_manifests")
+        let release_check_needs_repair = obs.catalog_tables.contains("releases")
             && obs
                 .catalog_checks
                 .get(&(
-                    "release_manifests".to_string(),
+                    "releases".to_string(),
                     RELEASE_PUBLISHER_CHECK_NAME.to_string(),
                 ))
                 .is_none_or(|definition| definition != RELEASE_PUBLISHER_CHECK_DEF);
@@ -4455,7 +4455,7 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
       WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author', \
                         'wamn_effect_writer') \
         AND ((table_schema = 'catalog' AND table_name IN \
-              ('catalogs', 'flow_artifacts', 'release_manifests', \
+              ('catalogs', 'flow_artifacts', 'releases', \
                'release_flows', 'catalog_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
@@ -4480,7 +4480,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
                               'wamn_effect_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'flow_artifacts', 'release_manifests', \
+              ('catalogs', 'flow_artifacts', 'releases', \
                'release_flows', 'catalog_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
@@ -4506,7 +4506,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
                               'wamn_effect_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'flow_artifacts', 'release_manifests', \
+              ('catalogs', 'flow_artifacts', 'releases', \
                'release_flows', 'catalog_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
@@ -4528,7 +4528,7 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
        JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
       WHERE relation.relkind = 'r' \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'flow_artifacts', 'release_manifests', \
+              ('catalogs', 'flow_artifacts', 'releases', \
                'release_flows', 'catalog_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
@@ -5266,7 +5266,7 @@ COMMIT;
         );
         obs.catalog_checks.insert(
             (
-                "release_manifests".to_string(),
+                "releases".to_string(),
                 RELEASE_PUBLISHER_CHECK_NAME.to_string(),
             ),
             RELEASE_PUBLISHER_CHECK_DEF.to_string(),
@@ -5668,7 +5668,7 @@ COMMIT;
         assert!(runs.contains("catalog_version > 0"));
         assert!(runs.contains("CONSTRAINT runs_release_fk"));
         assert!(runs.contains(
-            "FOREIGN KEY (tenant_id, catalog_id, catalog_version)\n        REFERENCES catalog.release_manifests"
+            "FOREIGN KEY (tenant_id, catalog_id, catalog_version)\n        REFERENCES catalog.releases"
         ));
         assert!(runs.contains(
             "CREATE INDEX runs_release ON wamn_run.runs (tenant_id, catalog_id, catalog_version)"
@@ -6547,7 +6547,7 @@ COMMIT;
         obs.authoring_effective_table_privileges
             .entry((
                 "catalog".to_string(),
-                "release_manifests".to_string(),
+                "releases".to_string(),
                 SCENARIO_AUTHOR_ROLE.to_string(),
             ))
             .or_default()
@@ -6565,7 +6565,7 @@ COMMIT;
         for table in [
             "flow_artifacts",
             "connection_bindings",
-            "release_manifests",
+            "releases",
             "catalog_heads",
         ] {
             let repair = plan
@@ -7617,7 +7617,7 @@ COMMIT;
             .expect("flow artifact columns")
             .remove("verified_author_principal");
         obs.catalog_columns
-            .get_mut("release_manifests")
+            .get_mut("releases")
             .expect("release manifest columns")
             .remove("verified_publisher_principal");
 
@@ -8446,7 +8446,7 @@ COMMIT;
             }
         }
         assert!(select_authoring_effective_table_privileges_sql().contains("has_table_privilege"));
-        assert!(select_authoring_effective_table_privileges_sql().contains("release_manifests"));
+        assert!(select_authoring_effective_table_privileges_sql().contains("releases"));
         assert!(select_authoring_table_owners_sql().contains("relation.relowner"));
         assert!(
             select_authoring_effective_column_privileges_sql().contains("has_any_column_privilege")

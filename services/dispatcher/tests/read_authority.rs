@@ -269,7 +269,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         &format!(
             "INSERT INTO catalog.catalogs (tenant_id, catalog_id, version, schema_version) VALUES \
                ('{TENANT}','cat-a',1,'0.1'), ('{OTHER_TENANT}','cat-b',1,'0.1'); \
-             INSERT INTO catalog.release_manifests (tenant_id, catalog_id, catalog_version) VALUES \
+             INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) VALUES \
                ('{TENANT}','cat-a',1), ('{OTHER_TENANT}','cat-b',1); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) VALUES \

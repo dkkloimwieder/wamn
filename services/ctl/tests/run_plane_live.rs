@@ -374,7 +374,7 @@ async fn seed_run_admission_facts(
     .await
     .expect("seed run-pin catalog");
     su.execute(
-        "INSERT INTO catalog.release_manifests \
+        "INSERT INTO catalog.releases \
            (tenant_id,catalog_id,catalog_version) \
          VALUES ($1,$2,$3)",
         &[&tenant_id, &catalog_id, &catalog_version],
@@ -4787,7 +4787,7 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         "ALTER ROLE wamn_scenario_author LOGIN INHERIT CREATEDB; \
          GRANT wamn_scenario_author TO wamn_app; \
          GRANT INSERT, UPDATE, DELETE ON catalog.validated_flow_drafts TO wamn_app; \
-         GRANT INSERT, UPDATE, DELETE ON catalog.release_manifests TO wamn_scenario_author; \
+         GRANT INSERT, UPDATE, DELETE ON catalog.releases TO wamn_scenario_author; \
          GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_test_run_reservations TO wamn_app; \
          GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_test_case_runs TO PUBLIC; \
          DO $role$ BEGIN \
@@ -5026,7 +5026,7 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     let author_reads: bool = su
         .query_one(
             &format!(
-                "SELECT has_table_privilege(current_user,'catalog.release_manifests','SELECT') \
+                "SELECT has_table_privilege(current_user,'catalog.releases','SELECT') \
                     AND has_table_privilege(current_user,'catalog.release_flows','SELECT') \
                     AND has_table_privilege(current_user,'catalog.catalog_heads','SELECT') \
                     AND has_table_privilege(current_user,'{SCHEMA}.runs','SELECT')"

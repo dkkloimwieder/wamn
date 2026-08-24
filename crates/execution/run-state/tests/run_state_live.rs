@@ -117,7 +117,7 @@ fn run_state_live() {
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'prod','0.1','draft'); \
-             INSERT INTO catalog.release_manifests \
+             INSERT INTO catalog.releases \
                (tenant_id,catalog_id,catalog_version) \
              VALUES ('t1','cat',1);"
         ),

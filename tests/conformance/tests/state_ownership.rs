@@ -1644,7 +1644,7 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
             "catalog.flow_artifacts",
             "catalog.flow_drafts",
             "catalog.release_flows",
-            "catalog.release_manifests",
+            "catalog.releases",
             "catalog.validated_flow_drafts",
             "wamn_run.authoring_test_case_runs",
             "wamn_run.authoring_test_reports",

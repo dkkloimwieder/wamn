@@ -193,7 +193,7 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
                '0.1', decode('7b7d', 'hex'), 2 \
              ); \
              BEGIN; \
-             INSERT INTO catalog.release_manifests ( \
+             INSERT INTO catalog.releases ( \
                tenant_id, catalog_id, catalog_version \
              ) VALUES \
                ('tenant-a', 'release', 1), \

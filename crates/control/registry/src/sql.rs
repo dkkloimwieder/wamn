@@ -211,7 +211,7 @@ mod tests {
     fn catalog_release_storage_has_stable_head_and_db_immutable_artifacts() {
         for table in [
             "flow_artifacts",
-            "release_manifests",
+            "releases",
             "release_flows",
             "catalog_heads",
         ] {

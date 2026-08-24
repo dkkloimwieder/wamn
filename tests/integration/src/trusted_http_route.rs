@@ -426,7 +426,7 @@ async fn seed_with_client(
     // `catalog.connection_bindings` FKs this row.
     client
         .execute(
-            "INSERT INTO catalog.release_manifests (tenant_id, catalog_id, catalog_version) \
+            "INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) \
              VALUES ($1, $2, $3)",
             &[&TENANT, &CATALOG, &catalog_version],
         )

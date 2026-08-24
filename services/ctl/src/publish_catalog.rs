@@ -63,7 +63,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
     let release_row = client
         .query_one(
             "SELECT to_regclass('catalog.flow_artifacts') IS NOT NULL, \
-                    to_regclass('catalog.release_manifests') IS NOT NULL, \
+                    to_regclass('catalog.releases') IS NOT NULL, \
                     to_regclass('catalog.release_flows') IS NOT NULL, \
                     to_regclass('catalog.catalog_heads') IS NOT NULL, \
                     to_regclass('catalog.release_exposure_manifests') IS NOT NULL, \
@@ -78,7 +78,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                                AND column_name = 'verified_author_principal'), \
                     EXISTS (SELECT 1 FROM information_schema.columns \
                              WHERE table_schema = 'catalog' \
-                               AND table_name = 'release_manifests' \
+                               AND table_name = 'releases' \
                                AND column_name = 'verified_publisher_principal'), \
                     EXISTS (SELECT 1 FROM pg_constraint con \
                              JOIN pg_class rel ON rel.oid = con.conrelid \
@@ -92,8 +92,8 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                              JOIN pg_class rel ON rel.oid = con.conrelid \
                              JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
                              WHERE ns.nspname = 'catalog' \
-                               AND rel.relname = 'release_manifests' \
-                               AND con.conname = 'release_manifests_verified_publisher_principal_check' \
+                               AND rel.relname = 'releases' \
+                               AND con.conname = 'releases_verified_publisher_principal_check' \
                                AND pg_get_constraintdef(con.oid, true) = \
                                    'CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''''::text)'), \
                     to_regclass('catalog.connection_requirements') IS NOT NULL, \
@@ -403,8 +403,8 @@ async fn ensure_authoring_catalog_privileges(
              GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.flow_artifacts FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.flow_artifacts TO wamn_app, wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON catalog.release_manifests FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.release_manifests TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.releases FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.releases TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.release_flows FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.release_flows TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.catalog_heads FROM PUBLIC, wamn_app, wamn_scenario_author; \
@@ -428,7 +428,7 @@ async fn ensure_authoring_catalog_privileges(
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'DELETE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.flow_artifacts', 'INSERT') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.release_manifests', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.releases', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.release_flows', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalog_heads', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.component_library', 'INSERT') \

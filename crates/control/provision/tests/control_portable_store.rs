@@ -33,7 +33,7 @@ fn portable_store_record_is_exact_and_storage_only() {
     for relation in [
         "catalog.catalogs",
         "catalog.flow_artifacts",
-        "catalog.release_manifests",
+        "catalog.releases",
         "catalog.release_flows",
         "catalog.catalog_heads",
         "catalog.flow_drafts",
@@ -309,7 +309,7 @@ fn control_author_authority_is_the_exact_ratified_class() {
     // Read-only portable catalog and draft-base facts.
     let read_only = [
         "catalog.flow_artifacts",
-        "catalog.release_manifests",
+        "catalog.releases",
         "catalog.release_flows",
         "catalog.catalog_heads",
         "catalog.connection_requirements",
@@ -701,7 +701,7 @@ VALUES ('tenant-a','cat',1,'dev','0.1','applied');
 INSERT INTO catalog.flow_artifacts
   (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash)
 VALUES ('tenant-a','flow-a',1,'0.1','{{}}','graph','artifact-a');
-INSERT INTO catalog.release_manifests
+INSERT INTO catalog.releases
   (tenant_id,catalog_id,catalog_version)
 VALUES ('tenant-a','cat',1);
 INSERT INTO catalog.release_flows
@@ -1004,7 +1004,7 @@ DO $seed$ DECLARE tenant text; BEGIN
     INSERT INTO catalog.flow_artifacts
       (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash)
     VALUES (tenant,'flow-a',1,'0.1','{{}}','graph','artifact-'||tenant);
-    INSERT INTO catalog.release_manifests
+    INSERT INTO catalog.releases
       (tenant_id,catalog_id,catalog_version)
     VALUES (tenant,'cat',1);
     INSERT INTO catalog.release_flows
@@ -1053,7 +1053,7 @@ DO $positive$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.catalog_heads) = 1;
   ASSERT (SELECT count(*) FROM catalog.release_flows) = 1;
   ASSERT (SELECT count(*) FROM catalog.flow_artifacts) = 1;
-  ASSERT (SELECT count(*) FROM catalog.release_manifests) = 1;
+  ASSERT (SELECT count(*) FROM catalog.releases) = 1;
   ASSERT (SELECT count(*) FROM wamn_run.authoring_test_run_reservations) = 1;
   ASSERT (SELECT count(*) FROM wamn_run.authoring_test_case_runs) = 1;
 END $positive$;

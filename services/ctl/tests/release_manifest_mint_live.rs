@@ -149,7 +149,7 @@ fn release_membership_is_exact_wiring_to_admitted_digest() {
         "wiring_id        text NOT NULL",
         "wiring_version   int NOT NULL",
         "component_digest text NOT NULL",
-        "REFERENCES catalog.release_manifests",
+        "REFERENCES catalog.releases",
         "REFERENCES catalog.wirings",
         "REFERENCES catalog.component_library",
     ] {
@@ -249,7 +249,7 @@ async fn seed_release(admin: &Client, catalog_version: i32, state: &str) {
         .expect("seed the catalog version");
     admin
         .execute(
-            "INSERT INTO catalog.release_manifests \
+            "INSERT INTO catalog.releases \
                    (tenant_id, catalog_id, catalog_version) \
              VALUES ($1, $2, $3)",
             &[&TENANT, &CATALOG, &catalog_version],

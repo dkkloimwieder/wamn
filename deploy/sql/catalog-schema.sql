@@ -192,13 +192,31 @@ REVOKE ALL ON FUNCTION catalog.register_flow_artifact(
     text, text, int, text, jsonb, text, text
 ) FROM PUBLIC;
 
--- The release identity row: one row per (tenant, catalog, version). It is the
--- idempotency anchor a republication conflicts on, the provenance record of who
--- published, and the foreign-key root that makes "member of a release that does
--- not exist" unrepresentable. Membership is NOT stored here: it is row-per-member
--- in catalog.release_flows, which is append-only, so a release may gain a member
--- but never change or lose one (wamn-0h0g.15.159).
-CREATE TABLE catalog.release_manifests (
+-- THE RELEASE IDENTITY ROW: one row per (tenant, catalog, version). It carries
+-- no manifest bytes and never did after wamn-0h0g.15.159 dropped the sealed
+-- member snapshot, which is why wamn-0h0g.15.162 renamed it from
+-- `release_manifests` — the serving manifest is assembled elsewhere, and nobody
+-- reading this name should go hunting here for it.
+--
+-- It has exactly three jobs.
+--
+-- 1. IDENTITY / IDEMPOTENCY ANCHOR. Its insert IS the "this release exists"
+--    event, so publish step A's ON CONFLICT verify-identical makes
+--    retry-never-remints structural rather than checked. A release whose
+--    existence were only the presence of member rows would have no single row
+--    to conflict on and idempotency would degrade to counting.
+-- 2. PUBLICATION PROVENANCE. `verified_publisher_principal` is minted inside the
+--    publish transaction by the verb that verified the PAT. It is a fact about
+--    the PUBLICATION EVENT, not about any flow, so no member or evidence row can
+--    carry it.
+-- 3. MEMBERSHIP FK ROOT. catalog.release_flows and wamn_run.runs both reference
+--    it, which is what makes "member of, or run pinned to, a release that does
+--    not exist" unrepresentable.
+--
+-- Membership is NOT stored here: it is row-per-member in catalog.release_flows,
+-- which is append-only, so a release may gain a member but never change or lose
+-- one (wamn-0h0g.15.159).
+CREATE TABLE catalog.releases (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
     catalog_version int  NOT NULL,
@@ -210,18 +228,18 @@ CREATE TABLE catalog.release_manifests (
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
 );
-ALTER TABLE catalog.release_manifests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE catalog.release_manifests FORCE ROW LEVEL SECURITY;
-CREATE POLICY release_manifests_tenant ON catalog.release_manifests
+ALTER TABLE catalog.releases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.releases FORCE ROW LEVEL SECURITY;
+CREATE POLICY releases_tenant ON catalog.releases
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT ON catalog.release_manifests TO wamn_app;
-GRANT SELECT ON catalog.release_manifests TO wamn_scenario_author;
-CREATE TRIGGER release_manifests_immutable
-BEFORE UPDATE ON catalog.release_manifests
+GRANT SELECT ON catalog.releases TO wamn_app;
+GRANT SELECT ON catalog.releases TO wamn_scenario_author;
+CREATE TRIGGER releases_immutable
+BEFORE UPDATE ON catalog.releases
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
-CREATE TRIGGER release_manifests_delete_immutable
-BEFORE DELETE ON catalog.release_manifests
+CREATE TRIGGER releases_delete_immutable
+BEFORE DELETE ON catalog.releases
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 -- BEGIN DISPOSITION PROVENANCE STORAGE MIGRATION (wamn-4u7p.42)
@@ -229,17 +247,17 @@ FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 -- provenance existed. Existing rows deliberately remain NULL/unverified.
 ALTER TABLE catalog.flow_artifacts
     ADD COLUMN IF NOT EXISTS verified_author_principal text;
-ALTER TABLE catalog.release_manifests
+ALTER TABLE catalog.releases
     ADD COLUMN IF NOT EXISTS verified_publisher_principal text;
 ALTER TABLE catalog.flow_artifacts
     DROP CONSTRAINT IF EXISTS flow_artifacts_verified_author_principal_check;
 ALTER TABLE catalog.flow_artifacts
     ADD CONSTRAINT flow_artifacts_verified_author_principal_check
     CHECK (verified_author_principal IS NULL OR verified_author_principal <> '');
-ALTER TABLE catalog.release_manifests
-    DROP CONSTRAINT IF EXISTS release_manifests_verified_publisher_principal_check;
-ALTER TABLE catalog.release_manifests
-    ADD CONSTRAINT release_manifests_verified_publisher_principal_check
+ALTER TABLE catalog.releases
+    DROP CONSTRAINT IF EXISTS releases_verified_publisher_principal_check;
+ALTER TABLE catalog.releases
+    ADD CONSTRAINT releases_verified_publisher_principal_check
     CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> '');
 -- END DISPOSITION PROVENANCE STORAGE MIGRATION (wamn-4u7p.42)
 
@@ -280,7 +298,7 @@ RETURNS void
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    INSERT INTO catalog.release_manifests (
+    INSERT INTO catalog.releases (
         tenant_id, catalog_id, catalog_version
     )
     VALUES (p_tenant_id, p_catalog_id, p_catalog_version)
@@ -288,7 +306,7 @@ BEGIN
 
     IF NOT EXISTS (
         SELECT 1
-        FROM catalog.release_manifests
+        FROM catalog.releases
         WHERE tenant_id = p_tenant_id
           AND catalog_id = p_catalog_id
           AND catalog_version = p_catalog_version
@@ -312,7 +330,7 @@ CREATE TABLE catalog.release_flows (
     flow_version    int  NOT NULL,
     PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
+        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, flow_id, flow_version)
         REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version)
 );
@@ -381,7 +399,7 @@ CREATE TABLE catalog.release_exposure_manifests (
     definitions_json jsonb NOT NULL CHECK (jsonb_typeof(definitions_json) = 'object'),
     PRIMARY KEY (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version)
 );
 ALTER TABLE catalog.release_exposure_manifests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.release_exposure_manifests FORCE ROW LEVEL SECURITY;
@@ -1125,7 +1143,7 @@ CREATE TABLE catalog.connection_bindings (
          AND component_digest IS NOT NULL AND store_alias IS NOT NULL)
     ),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
+        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, environment, instance_id)
         REFERENCES catalog.connection_instances (tenant_id, environment, instance_id)
 );
@@ -1913,7 +1931,7 @@ CREATE TABLE catalog.release_components (
         wiring_id, wiring_version, component_digest
     ),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests
+        REFERENCES catalog.releases
             (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, catalog_id, wiring_id, wiring_version)
         REFERENCES catalog.wirings (tenant_id, catalog_id, wiring_id, version),
@@ -1947,7 +1965,7 @@ CREATE TABLE catalog.release_manifest_v2_snapshots (
         manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex')
     ),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests
+        REFERENCES catalog.releases
             (tenant_id, catalog_id, catalog_version)
 );
 ALTER TABLE catalog.release_manifest_v2_snapshots ENABLE ROW LEVEL SECURITY;
@@ -1970,7 +1988,7 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     PERFORM 1
-    FROM catalog.release_manifests
+    FROM catalog.releases
     WHERE tenant_id = NEW.tenant_id
       AND catalog_id = NEW.catalog_id
       AND catalog_version = NEW.catalog_version

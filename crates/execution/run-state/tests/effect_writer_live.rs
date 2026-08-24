@@ -141,7 +141,7 @@ async fn native_effect_writer_live() {
             "INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('tenant-live-a','writer-catalog',1,'test','0.1','draft'); \
-             INSERT INTO catalog.release_manifests \
+             INSERT INTO catalog.releases \
                (tenant_id,catalog_id,catalog_version) \
              VALUES ('tenant-live-a','writer-catalog',1); \
              INSERT INTO wamn_run.runs \

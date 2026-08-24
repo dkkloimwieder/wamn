@@ -63,7 +63,7 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'dev','0.1','applied'); \
-             INSERT INTO catalog.release_manifests \
+             INSERT INTO catalog.releases \
                (tenant_id,catalog_id,catalog_version) \
              VALUES ('t1','cat',1);"
         ))

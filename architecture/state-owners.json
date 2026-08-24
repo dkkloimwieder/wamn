@@ -555,7 +555,7 @@
       "drift_gate": "SR13:control-portable-live"
     },
     {
-      "id": "catalog.release_manifests",
+      "id": "catalog.releases",
       "plane": "control",
       "semantic_owner": "catalog-model",
       "migration_owners": ["control-portable-store-installer"],
@@ -808,7 +808,7 @@
       "drift_gate": "SR13:catalog-live"
     },
     {
-      "id": "catalog.release_manifests",
+      "id": "catalog.releases",
       "plane": "project",
       "semantic_owner": "catalog-model",
       "migration_owners": [

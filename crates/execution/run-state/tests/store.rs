@@ -334,11 +334,11 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
          CREATE SCHEMA catalog;\n\
-         CREATE TABLE catalog.release_manifests (\n\
+         CREATE TABLE catalog.releases (\n\
            tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL,\n\
            PRIMARY KEY (tenant_id, catalog_id, catalog_version)\n\
          );\n\
-         INSERT INTO catalog.release_manifests VALUES\n\
+         INSERT INTO catalog.releases VALUES\n\
            ('t1','run-state-fixture',1), ('t2','run-state-fixture',1),\n\
            ('t3','run-state-fixture',1);\n",
     );

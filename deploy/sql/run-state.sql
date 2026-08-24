@@ -437,7 +437,7 @@ CREATE TABLE wamn_run.runs (
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk
         FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
 CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_key)

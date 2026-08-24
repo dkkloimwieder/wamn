@@ -930,7 +930,7 @@ async fn setup_project(
         .await?;
     transaction
         .execute(
-            "INSERT INTO catalog.release_manifests \
+            "INSERT INTO catalog.releases \
            (tenant_id,catalog_id,catalog_version) VALUES ($1,$2,1)",
             &[&resources.tenant, &resources.catalog_id],
         )

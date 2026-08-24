@@ -235,7 +235,7 @@ pub fn record_release_publication_sql() -> &'static str {
 /// Derive a release's member set from `catalog.release_flows`, the row-per-member
 /// truth that replaced the sealed `members_json` snapshot (wamn-0h0g.15.159).
 /// Yields `[]` for a release with no members, so a caller that needs to know
-/// whether the release EXISTS must probe `catalog.release_manifests` separately.
+/// whether the release EXISTS must probe `catalog.releases` separately.
 ///
 /// The join is 1:1: `catalog.flow_artifacts`' primary key is exactly the
 /// `release_flows` foreign-key target. `COLLATE "C"` is load-bearing, not
@@ -256,7 +256,7 @@ pub fn select_release_members_sql() -> &'static str {
 
 /// Probe whether a release identity row exists at one coordinate.
 pub fn release_manifest_exists_sql() -> &'static str {
-    "SELECT EXISTS (SELECT 1 FROM catalog.release_manifests \
+    "SELECT EXISTS (SELECT 1 FROM catalog.releases \
      WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3)"
 }
 
@@ -324,7 +324,7 @@ mod tests {
         assert!(!CATALOG_SCHEMA.contains("execution_bundle_hash"));
         for table in [
             "flow_artifacts",
-            "release_manifests",
+            "releases",
             "release_flows",
             "catalog_heads",
             "release_exposure_manifests",

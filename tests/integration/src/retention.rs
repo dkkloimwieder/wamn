@@ -41,17 +41,14 @@ pub struct RetentionArgs {
 // ---------------------------------------------------------------------------
 // Ephemeral schema: the REAL run-state.sql, schema-rewritten (no stand-in DDL,
 // so the `runs` shape can never drift from the schema of record). Only the
-// `catalog.release_manifests` foreign key reaches outside the run plane, so
+// `catalog.releases` foreign key reaches outside the run plane, so
 // that is the only fixture relation this gate stands up.
 // ---------------------------------------------------------------------------
 
 fn run_state_ddl() -> String {
     include_str!("../../../deploy/sql/run-state.sql")
         .replace("wamn_run", SCHEMA)
-        .replace(
-            "catalog.release_manifests",
-            &format!("{CATALOG_SCHEMA}.release_manifests"),
-        )
+        .replace("catalog.releases", &format!("{CATALOG_SCHEMA}.releases"))
 }
 
 async fn admin_exec(admin_url: &str, sql: &str) -> anyhow::Result<()> {
@@ -77,11 +74,11 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
              DROP SCHEMA IF EXISTS {CATALOG_SCHEMA} CASCADE; \
              CREATE SCHEMA {CATALOG_SCHEMA}; \
-             CREATE TABLE {CATALOG_SCHEMA}.release_manifests ( \
+             CREATE TABLE {CATALOG_SCHEMA}.releases ( \
                tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
                PRIMARY KEY (tenant_id, catalog_id, catalog_version) \
              ); \
-             INSERT INTO {CATALOG_SCHEMA}.release_manifests \
+             INSERT INTO {CATALOG_SCHEMA}.releases \
              VALUES ('{TENANT}','{CATALOG_ID}',1);"
         ),
     )

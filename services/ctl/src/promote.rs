@@ -42,7 +42,7 @@ const CLAIM_TENANT_SESSION_SQL: &str = "SELECT set_config('app.tenant', $1, fals
 const SELECT_SOURCE_RELEASE_SQL: &str = "\
 SELECT snapshot.manifest_digest, snapshot.canonical_bytes, catalog.document::text \
   FROM catalog.release_manifest_v2_snapshots AS snapshot \
-  JOIN catalog.release_manifests AS release \
+  JOIN catalog.releases AS release \
     ON release.tenant_id = snapshot.tenant_id \
    AND release.catalog_id = snapshot.catalog_id \
    AND release.catalog_version = snapshot.catalog_version \

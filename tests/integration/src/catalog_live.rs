@@ -259,7 +259,7 @@ pub(crate) mod tests {
                 .query_one(
                     "SELECT \
                        (SELECT count(*) FROM catalog.flow_artifacts WHERE tenant_id = $1), \
-                       (SELECT count(*) FROM catalog.release_manifests WHERE tenant_id = $1), \
+                       (SELECT count(*) FROM catalog.releases WHERE tenant_id = $1), \
                        (SELECT count(*) FROM catalog.release_flows WHERE tenant_id = $1), \
                        (SELECT count(*) FROM catalog.schema_migrations WHERE tenant_id = $1), \
                        (SELECT count(*) FROM catalog.catalog_heads WHERE tenant_id = $1)",

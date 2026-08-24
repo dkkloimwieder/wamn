@@ -45,7 +45,7 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
 const LOCK_RELEASE_SQL: &str = "\
 SELECT catalog.environment \
-  FROM catalog.release_manifests AS release \
+  FROM catalog.releases AS release \
   JOIN catalog.catalogs AS catalog \
     ON catalog.tenant_id = release.tenant_id \
    AND catalog.catalog_id = release.catalog_id \

@@ -466,7 +466,7 @@ async fn ensure_existing_release_manifest(
 ) -> anyhow::Result<()> {
     let present: bool = tx
         .query_one(
-            "SELECT EXISTS (SELECT 1 FROM catalog.release_manifests \
+            "SELECT EXISTS (SELECT 1 FROM catalog.releases \
              WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3) \
              AND EXISTS (SELECT 1 FROM catalog.release_exposure_manifests \
              WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3)",
