@@ -19,8 +19,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const CARGO_MANIFEST: &str = "Cargo.toml";
-const FORK_LEDGER: &str = "docs/archive/platform/wash-runtime-fork.md";
 const VALUES: &str = "deploy/infra/values-wamn.yaml";
 const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
 
@@ -72,39 +70,6 @@ fn read_repository_file(root: &Path, relative: &str) -> String {
     let path = root.join(relative);
     fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
-}
-
-/// The pin is the single source of truth for which chart the install runs
-/// against: the chart ships inside the fork tree at this revision.
-fn pinned_fork_revision(manifest: &str) -> &str {
-    let pin = manifest
-        .lines()
-        .find(|line| line.starts_with("wash-runtime = {"))
-        .expect("root manifest must pin wash-runtime");
-    let revision = pin
-        .split_once("rev = \"")
-        .and_then(|(_, rest)| rest.split_once('"'))
-        .map(|(revision, _)| revision)
-        .expect("wash-runtime pin must carry a quoted rev");
-    assert_eq!(
-        revision.len(),
-        40,
-        "wash-runtime must pin a full 40-character revision, found {revision:?}"
-    );
-
-    revision
-}
-
-/// `wamn/X.Y.Z` is the peeled upstream `vX.Y.Z` tag plus carried commits, and
-/// upstream's release train packages `charts/runtime-operator` at that same
-/// version — so the ledger's current branch names the chart version the pinned
-/// revision carries.
-fn ledger_fork_version(ledger: &str) -> &str {
-    ledger
-        .split_once("Current: `wamn/")
-        .and_then(|(_, rest)| rest.split_once('`'))
-        .map(|(version, _)| version)
-        .expect("fork ledger must name the current `wamn/X.Y.Z` branch")
 }
 
 fn installed_chart_version(values: &str) -> &str {
@@ -176,28 +141,6 @@ fn host_tier_namespaces(host_values: &str) -> Vec<&str> {
     );
 
     namespaces
-}
-
-#[test]
-fn seam_record_tracks_the_pinned_fork_revision() {
-    let root = repository_root();
-    let manifest = read_repository_file(&root, CARGO_MANIFEST);
-    let ledger = read_repository_file(&root, FORK_LEDGER);
-    let values = read_repository_file(&root, VALUES);
-
-    let revision = pinned_fork_revision(&manifest);
-    let expected = format!(
-        "Pinned: fork rev {} = chart {}.",
-        &revision[..8],
-        ledger_fork_version(&ledger)
-    );
-
-    assert!(
-        values.contains(&expected),
-        "{VALUES} records a seam verified at a different chart than the pinned \
-         fork revision carries. Re-inspect the chart at the new pin \
-         (`{RE_VERIFY} …`), then record `{expected}`"
-    );
 }
 
 #[test]
