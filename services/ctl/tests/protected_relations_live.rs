@@ -358,10 +358,10 @@ async fn shared_portable_fingerprints(client: &Client) -> BTreeMap<String, Porta
     const RELATIONS: [&str; 17] = [
         "catalog.catalogs",
         "catalog.flow_artifacts",
-        "catalog.execution_bundles",
         "catalog.releases",
         "catalog.release_flows",
         "catalog.catalog_heads",
+        "catalog.component_library",
         "catalog.flow_drafts",
         "catalog.validated_flow_drafts",
         "catalog.release_exposure_manifests",

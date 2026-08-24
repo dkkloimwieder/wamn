@@ -4403,7 +4403,7 @@ async fn stored_suite_cutover_leg(su: &Client) {
            ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
              tenant_id,draft_id,draft_revision,draft_content_hash,catalog_id, \
              catalog_version,environment,suite_flow_version,runtime_flow_version, \
-             draft_artifact_hash,execution_bundle_hash,binding_base_artifact_hash); \
+             draft_artifact_hash,binding_base_artifact_hash); \
          ALTER TABLE catalog.authoring_command_audit \
            DROP CONSTRAINT authoring_command_audit_pkey, \
            DROP CONSTRAINT authoring_command_audit_audit_id_key, \
@@ -4524,22 +4524,18 @@ async fn stored_suite_cutover_leg(su: &Client) {
            ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
              tenant_id,draft_id,draft_revision,draft_content_hash,catalog_id, \
              catalog_version,environment,suite_flow_version,runtime_flow_version, \
-             draft_artifact_hash,execution_bundle_hash,binding_base_artifact_hash); \
+             draft_artifact_hash,binding_base_artifact_hash); \
          INSERT INTO catalog.catalogs \
            (tenant_id,catalog_id,version,environment,schema_version) \
            VALUES ('legacy-authoring','cat',1,'dev','0.1'); \
-         INSERT INTO catalog.execution_bundles \
-           (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-           VALUES ('legacy-authoring','sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','0.1',''::bytea,0); \
          INSERT INTO catalog.validated_flow_drafts ( \
            tenant_id,draft_id,draft_revision,draft_edited_at,draft_content_hash, \
            catalog_id,catalog_version,environment,suite_flow_version,flow_id, \
            runtime_flow_version,graph_json,graph_hash,draft_artifact_hash, \
-           execution_bundle_hash,binding_base_artifact_hash,validated_draft_hash) \
+           binding_base_artifact_hash,validated_draft_hash) \
          VALUES ( \
            'legacy-authoring','draft',1,now(),'content','cat',1,'dev',1,'flow', \
            1,'{}'::jsonb,'graph','artifact', \
-           'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
            'base','validated')",
     )
     .await
@@ -4569,7 +4565,7 @@ async fn stored_suite_cutover_leg(su: &Client) {
            ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
              tenant_id,draft_id,draft_revision,draft_content_hash,catalog_id, \
              catalog_version,environment,suite_flow_version,runtime_flow_version, \
-             draft_artifact_hash,execution_bundle_hash,binding_base_artifact_hash); \
+             draft_artifact_hash,binding_base_artifact_hash); \
          ALTER TABLE catalog.authoring_command_audit \
            DROP CONSTRAINT authoring_command_audit_pkey, \
            DROP CONSTRAINT authoring_command_audit_audit_id_key, \

@@ -544,17 +544,6 @@
       "drift_gate": "SR13:control-portable-live"
     },
     {
-      "id": "catalog.execution_bundles",
-      "plane": "control",
-      "semantic_owner": "catalog-model",
-      "migration_owners": ["control-portable-store-installer"],
-      "schema_source": "deploy/sql/control-portable-store.sql",
-      "writers": ["control-portable-store-installer", "scenario-worker"],
-      "readers": ["scenario-worker"],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:control-portable-live"
-    },
-    {
       "id": "catalog.releases",
       "plane": "control",
       "semantic_owner": "catalog-model",
@@ -781,30 +770,6 @@
         "scenario-worker"
       ],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
-      "drift_gate": "SR13:catalog-live"
-    },
-    {
-      "id": "catalog.execution_bundles",
-      "plane": "project",
-      "semantic_owner": "catalog-model",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/catalog-schema.sql",
-      "writers": [
-        "catalog-schema-installer",
-        "schema-control",
-        "scenario-worker",
-        "ctl-copy"
-      ],
-      "readers": [
-        "schema-control",
-        "scenario-worker",
-        "run-state",
-        "execution-host",
-        "ctl-copy"
-      ],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:catalog-live"
     },
     {

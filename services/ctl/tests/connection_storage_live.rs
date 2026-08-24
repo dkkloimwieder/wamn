@@ -185,13 +185,6 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
              ) VALUES \
                ('tenant-a', 'release', 1, 'dev', '0.1', 'applied'), \
                ('tenant-a', 'release', 2, 'prod', '0.1', 'applied'); \
-             INSERT INTO catalog.execution_bundles ( \
-               tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_length \
-             ) VALUES ( \
-               'tenant-a', \
-               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-               '0.1', decode('7b7d', 'hex'), 2 \
-             ); \
              BEGIN; \
              INSERT INTO catalog.releases ( \
                tenant_id, catalog_id, catalog_version \
@@ -199,13 +192,10 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
                ('tenant-a', 'release', 1), \
                ('tenant-a', 'release', 2); \
              INSERT INTO catalog.release_flows ( \
-               tenant_id, catalog_id, catalog_version, flow_id, flow_version, \
-               execution_bundle_hash \
+               tenant_id, catalog_id, catalog_version, flow_id, flow_version \
              ) VALUES \
-               ('tenant-a', 'release', 1, 'flow-a', 1, \
-                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
-               ('tenant-a', 'release', 2, 'flow-a', 1, \
-                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
+               ('tenant-a', 'release', 1, 'flow-a', 1), \
+               ('tenant-a', 'release', 2, 'flow-a', 1); \
              COMMIT; \
              INSERT INTO catalog.connection_bindings ( \
                tenant_id, catalog_id, catalog_version, artifact_hash, requirement_name, \
