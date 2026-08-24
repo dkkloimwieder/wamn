@@ -329,12 +329,13 @@ async fn author(admin: &mut Client, document: &WiringDocument) -> DefinitionHash
     hash
 }
 
-/// Store one wiring row whose `wiring_hash` does not name its own document.
+/// Store one `catalog.wirings` row at a caller-chosen hash with hand SQL.
 ///
-/// This state is UNREACHABLE through `author-wiring`, which derives the stored
-/// hash from the document it writes, so the corruption the mint must refuse is
-/// injected with hand SQL on purpose.
-async fn corrupt_stored_wiring_hash(admin: &Client, document: &WiringDocument, graph_hash: &str) {
+/// Every state this writes is UNREACHABLE through `author-wiring`, which gates
+/// the document and derives the stored hash from what it writes, so each one
+/// the mint must refuse is injected on purpose: a hash that does not name its
+/// own document, and a document naming an unadmitted component.
+async fn inject_stored_wiring(admin: &Client, document: &WiringDocument, graph_hash: &str) {
     let version = i32::try_from(document.version).expect("fixture version fits storage");
     let graph = serde_json::to_string(document).expect("wiring serializes");
     admin
@@ -355,7 +356,7 @@ async fn corrupt_stored_wiring_hash(admin: &Client, document: &WiringDocument, g
             ],
         )
         .await
-        .expect("inject a wiring whose stored hash is not its document's");
+        .expect("inject a wiring row the authorship verb would refuse");
 }
 
 fn targets() -> BTreeSet<ReleaseWiringTarget> {
@@ -502,7 +503,7 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
         "transform",
         WiringTerminal::emit("orders", WiringEventOperation::Insert),
     );
-    corrupt_stored_wiring_hash(&admin, &corrupt, WRONG_GRAPH).await;
+    inject_stored_wiring(&admin, &corrupt, WRONG_GRAPH).await;
     let corrupt_targets = BTreeSet::from([ReleaseWiringTarget {
         wiring_id: "corrupt".to_string(),
         wiring_version: 3,
@@ -715,6 +716,64 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
         .expect_err("a frozen release cannot lose a wiring");
     assert_eq!(refusal.kind(), MintManifestErrorKind::ClosureConflict);
     transaction.rollback().await.expect("close the refusal");
+
+    drop(admin);
+    let _ = task.await;
+}
+
+/// The mint does not merely sit next to the wiring/component compatibility
+/// gate, it CALLS it.
+///
+/// `author-wiring` refuses a document naming a component with no admitted fact,
+/// and `catalog.component_library` is insert-only, so a fact cannot be withdrawn
+/// from under a gated wiring either: the row is injected with hand SQL. Dropping
+/// the gate call does not merely admit a bad wiring, it turns this typed refusal
+/// into a panic on the node-to-fact lookup below it, so this arm pins the
+/// invocation, not the validator.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 URL in WAMN_RELEASE_MANIFEST_MINT_PG_URL"]
+async fn a_wiring_node_with_no_admitted_component_fact_refuses_the_mint() {
+    let _lock = support::lock();
+    let url = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL")
+        .expect("WAMN_RELEASE_MANIFEST_MINT_PG_URL names a disposable PostgreSQL 18 database");
+    let (mut admin, task) = connect(&url).await;
+    provision(&admin).await;
+    seed_release(&admin, CATALOG_VERSION, "applied").await;
+    seed_component(&admin, "http-request", COMPONENT_A).await;
+
+    // Stored at its own hash and at the requested gated catalog version, so the
+    // wiring-shaped predicates the mint checks first all pass. The only fact
+    // this document fails is that "unadmitted" has no component-library row.
+    let ungated = wiring("ungated", 1, "unadmitted", WiringTerminal::Respond);
+    let ungated_hash = ungated.wiring_hash();
+    inject_stored_wiring(&admin, &ungated, ungated_hash.as_str()).await;
+
+    let ungated_target = BTreeSet::from([ReleaseWiringTarget {
+        wiring_id: "ungated".to_string(),
+        wiring_version: 1,
+    }]);
+    let empty_attachments = BTreeMap::new();
+    let empty_registrations = BTreeMap::new();
+    let request = MintReleaseManifest {
+        tenant_id: TENANT,
+        catalog_id: CATALOG,
+        catalog_version: CATALOG_VERSION,
+        wirings: &ungated_target,
+        attachments: &empty_attachments,
+        registrations: &empty_registrations,
+    };
+    let transaction = admin
+        .transaction()
+        .await
+        .expect("open the ungated-component transaction");
+    let refusal = mint_release_manifest(&transaction, &request)
+        .await
+        .expect_err("a wiring node with no admitted component fact refuses the mint");
+    assert_eq!(refusal.kind(), MintManifestErrorKind::Component);
+    transaction
+        .rollback()
+        .await
+        .expect("close the ungated-component refusal");
 
     drop(admin);
     let _ = task.await;
