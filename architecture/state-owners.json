@@ -144,11 +144,6 @@
       "scope": "production-project-database"
     },
     {
-      "path": "deploy/sql/authoring-tests.sql",
-      "kind": "ddl",
-      "scope": "production-project-database"
-    },
-    {
       "path": "deploy/sql/run-state.sql",
       "kind": "ddl",
       "scope": "production-project-database"
@@ -1409,57 +1404,6 @@
         "project-state"
       ],
       "compatibility_horizon": "platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.authoring_test_run_reservations",
-      "plane": "project",
-      "semantic_owner": "scenario-worker",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/authoring-tests.sql",
-      "writers": [
-        "scenario-worker"
-      ],
-      "readers": [
-        "scenario-worker"
-      ],
-      "compatibility_horizon": "scenario-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.authoring_test_case_runs",
-      "plane": "project",
-      "semantic_owner": "scenario-worker",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/authoring-tests.sql",
-      "writers": [
-        "scenario-worker"
-      ],
-      "readers": [
-        "scenario-worker"
-      ],
-      "compatibility_horizon": "scenario-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.authoring_test_reports",
-      "plane": "project",
-      "semantic_owner": "scenario-worker",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/authoring-tests.sql",
-      "writers": [
-        "scenario-worker"
-      ],
-      "readers": [
-        "scenario-worker"
-      ],
-      "compatibility_horizon": "scenario-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
