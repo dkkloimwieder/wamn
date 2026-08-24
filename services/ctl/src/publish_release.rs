@@ -40,6 +40,7 @@ use wamn_catalog::{
     ServingComponent, ServingManifest, ServingRegistration, ServingRelease, ServingWiring,
     WiringDocument, validate_wiring_compatibility,
 };
+use wamn_control_registry::Triple;
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
@@ -143,6 +144,33 @@ pub struct MintReleaseManifest<'a> {
     pub attachments: &'a BTreeMap<String, ServingAttachment>,
     /// Exact stream facts supplied by the registration owner.
     pub registrations: &'a BTreeMap<String, ServingRegistration>,
+}
+
+/// The six-part key `catalog.register_deployment_attestation` writes under.
+///
+/// Only the control-plane `(org, project)` comes from the operator. Tenant,
+/// catalog, version and environment are read back off the manifest the release
+/// actually froze, so an attestation cannot name an environment or a catalog
+/// version the deployed bytes were never projected for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeploymentCoordinate {
+    /// Control-plane placement `(org, project, env)` the release is deployed into.
+    pub triple: Triple,
+    pub tenant_id: String,
+    pub catalog_id: String,
+    pub catalog_version: u32,
+}
+
+impl DeploymentCoordinate {
+    /// Key one deployment by its operator-named placement and its own manifest.
+    pub fn new(org: &str, project: &str, release: &ServingRelease) -> Self {
+        Self {
+            triple: Triple::new(org, project, release.environment.as_str()),
+            tenant_id: release.tenant_id.clone(),
+            catalog_id: release.catalog_id.clone(),
+            catalog_version: release.catalog_version,
+        }
+    }
 }
 
 /// One minted serving manifest and the bytes its digest names.
@@ -249,7 +277,17 @@ pub struct PublishReleaseArgs {
     #[arg(long)]
     pub database_url: String,
 
-    /// Tenant claim carried by the release.
+    /// Registry organization the release is deployed into.
+    #[arg(long)]
+    pub org: String,
+
+    /// Registry project the release is deployed into.
+    #[arg(long)]
+    pub project: String,
+
+    /// Tenant claim carried by the release. Never inferred from the placement:
+    /// one `(org, project, environment)` maps to exactly one tenant, and that
+    /// mapping is stored, not derived.
     #[arg(long)]
     pub tenant: String,
 
@@ -272,6 +310,13 @@ pub struct PublishReleaseArgs {
     /// INTERIM: JSON object of registration id to serving registration; `{}` for none.
     #[arg(long)]
     pub registrations: PathBuf,
+}
+
+impl PublishReleaseArgs {
+    /// Key the minted release for attestation under this invocation's placement.
+    fn deployment_coordinate(&self, release: &ServingRelease) -> DeploymentCoordinate {
+        DeploymentCoordinate::new(&self.org, &self.project, release)
+    }
 }
 
 /// Mint one v2 release from explicit wiring, attachment, and registration facts.
@@ -298,13 +343,17 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
     let connection_task = tokio::spawn(connection);
     let minted = mint_in_transaction(&mut client, &request).await;
     match minted {
-        Ok(digest) => {
+        Ok(minted) => {
             drop(client);
             connection_task
                 .await
                 .context("join the release mint connection")?
                 .context("drive the release mint connection")?;
-            println!("{digest}");
+            report_deployment_coordinate(
+                &args.deployment_coordinate(&minted.manifest.release),
+                &minted.digest,
+            );
+            println!("{}", minted.digest);
             Ok(())
         }
         Err(error) => {
@@ -317,7 +366,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
 async fn mint_in_transaction(
     client: &mut Client,
     request: &MintReleaseManifest<'_>,
-) -> anyhow::Result<ManifestDigest> {
+) -> anyhow::Result<MintedReleaseManifest> {
     let transaction = client
         .transaction()
         .await
@@ -327,7 +376,27 @@ async fn mint_in_transaction(
         .commit()
         .await
         .context("commit the release mint")?;
-    Ok(minted.digest)
+    Ok(minted)
+}
+
+/// Report the complete attestation key one published manifest is deployable under.
+///
+/// Shared by both publish verbs so the two surfaces cannot drift on which parts
+/// of the key they resolve or on where each part comes from.
+pub(crate) fn report_deployment_coordinate(
+    coordinate: &DeploymentCoordinate,
+    manifest_hash: &ManifestDigest,
+) {
+    tracing::info!(
+        org = %coordinate.triple.org,
+        project = %coordinate.triple.project,
+        environment = %coordinate.triple.env,
+        tenant = %coordinate.tenant_id,
+        catalog = %coordinate.catalog_id,
+        catalog_version = coordinate.catalog_version,
+        manifest_hash = %manifest_hash,
+        "release carries a complete deployment attestation coordinate"
+    );
 }
 
 fn read_document<T: DeserializeOwned>(path: &Path, field: &'static str) -> anyhow::Result<T> {
@@ -803,9 +872,13 @@ mod tests {
         args: PublishReleaseArgs,
     }
 
-    const COORDINATE: [&str; 8] = [
+    const COORDINATE: [&str; 12] = [
         "--database-url",
         "postgres://release.invalid/env",
+        "--org",
+        "acme",
+        "--project",
+        "billing",
         "--tenant",
         "tenant-a",
         "--catalog-id",
@@ -814,11 +887,122 @@ mod tests {
         "3",
     ];
 
+    /// A minted release whose four manifest-fixed parts are all distinguishable.
+    fn release(environment: &str) -> ServingRelease {
+        ServingRelease {
+            tenant_id: "tenant-a".to_owned(),
+            catalog_id: "orders".to_owned(),
+            catalog_version: 7,
+            environment: environment.to_owned(),
+        }
+    }
+
     fn parse(closure: &[&str]) -> Result<PublishReleaseArgs, clap::Error> {
         let mut argv = vec!["publish-release"];
         argv.extend_from_slice(&COORDINATE);
         argv.extend_from_slice(closure);
         PublishProbe::try_parse_from(argv).map(|probe| probe.args)
+    }
+
+    #[test]
+    fn the_attestation_key_places_each_part_from_its_own_source() {
+        let coordinate = DeploymentCoordinate::new("acme", "billing", &release("prod"));
+
+        // The operator names only the placement. Tenant, catalog, version and
+        // environment are read back off the manifest the mint actually froze,
+        // so no part of the key can disagree with the deployed bytes.
+        assert_eq!(coordinate.triple.org, "acme");
+        assert_eq!(coordinate.triple.project, "billing");
+        assert_eq!(coordinate.triple.env.as_str(), "prod");
+        assert_eq!(coordinate.tenant_id, "tenant-a");
+        assert_eq!(coordinate.catalog_id, "orders");
+        assert_eq!(coordinate.catalog_version, 7);
+    }
+
+    #[test]
+    fn the_attestation_key_sources_six_parts_independently() {
+        // Destructured exhaustively on purpose: `catalog.deployment_attestations`
+        // is UNIQUE on exactly (tenant, catalog, version, org, project,
+        // environment), so a part added to or dropped from this key must break
+        // the build rather than silently re-key every attestation.
+        let DeploymentCoordinate {
+            triple: Triple { org, project, env },
+            tenant_id,
+            catalog_id,
+            catalog_version,
+        } = DeploymentCoordinate::new("acme", "billing", &release("prod"));
+        let parts = [
+            org,
+            project,
+            env.as_str().to_owned(),
+            tenant_id,
+            catalog_id,
+            catalog_version.to_string(),
+        ];
+        assert_eq!(
+            parts.iter().collect::<BTreeSet<_>>().len(),
+            parts.len(),
+            "two key parts collapsed onto one input: {parts:?}"
+        );
+    }
+
+    #[test]
+    fn a_release_cannot_be_minted_without_its_control_plane_placement() {
+        // Neither half of the placement defaults. The `dev` literal this surface
+        // used to assume is exactly what must not come back: an unnamed org or
+        // project would key the attestation to a deployment nobody requested.
+        let closure = [
+            "--wiring",
+            "orders=1",
+            "--attachments",
+            "a.json",
+            "--registrations",
+            "r.json",
+        ];
+        for placement in [vec!["--org", "acme"], vec!["--project", "billing"], vec![]] {
+            let mut argv = vec![
+                "publish-release",
+                "--database-url",
+                "postgres://release.invalid/env",
+                "--tenant",
+                "tenant-a",
+                "--catalog-id",
+                "orders",
+                "--catalog-version",
+                "3",
+            ];
+            argv.extend_from_slice(&placement);
+            argv.extend_from_slice(&closure);
+            assert!(
+                PublishProbe::try_parse_from(argv).is_err(),
+                "minted a release with placement {placement:?}"
+            );
+        }
+
+        let placed = parse(&closure).expect("the complete placement parses");
+        assert_eq!(placed.org, "acme");
+        assert_eq!(placed.project, "billing");
+    }
+
+    #[test]
+    fn the_parsed_placement_reaches_the_attestation_key() {
+        // The link the surface exists for: what the operator typed on the
+        // command line, not some other string in scope, is what keys the write.
+        let args = parse(&[
+            "--wiring",
+            "orders=1",
+            "--attachments",
+            "a.json",
+            "--registrations",
+            "r.json",
+        ])
+        .expect("the complete surface parses");
+        let coordinate = args.deployment_coordinate(&release("prod"));
+
+        assert_eq!(coordinate.triple.org, "acme");
+        assert_eq!(coordinate.triple.project, "billing");
+        assert_eq!(coordinate.triple.env.as_str(), "prod");
+        assert_eq!(coordinate.tenant_id, "tenant-a");
     }
 
     #[test]

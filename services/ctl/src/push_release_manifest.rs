@@ -21,14 +21,16 @@ use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, NoTls};
-use wamn_catalog::{ManifestDigest, ServingManifest};
+use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs, release_manifest_artifact_layout,
     release_manifest_artifact_reference, verify_release_manifest_artifact_layout,
 };
 
-use crate::publish_release::read_release_snapshot;
+use crate::publish_release::{
+    DeploymentCoordinate, read_release_snapshot, report_deployment_coordinate,
+};
 
 /// Bound each registry connect/read phase without adding a deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -136,6 +138,9 @@ pub enum ReleaseManifestPublishDisposition {
 pub struct PublishedReleaseManifest {
     pub digest: ManifestDigest,
     pub disposition: ReleaseManifestPublishDisposition,
+    /// Release coordinate the published bytes carry: the tenant, catalog,
+    /// version and environment half of the deployment attestation key.
+    pub release: ServingRelease,
 }
 
 /// Arguments for the release-manifest distribution copy.
@@ -153,6 +158,16 @@ pub struct PushReleaseManifestArgs {
     /// instead of a file. Requires the release coordinate that names it.
     #[arg(long, requires_all = ["tenant", "catalog_id", "catalog_version"])]
     pub database_url: Option<String>,
+
+    /// Registry organization the release is deployed into. Required in both
+    /// byte sources: the manifest fixes the rest of the attestation key, but
+    /// never its control-plane placement.
+    #[arg(long)]
+    pub org: String,
+
+    /// Registry project the release is deployed into.
+    #[arg(long)]
+    pub project: String,
 
     /// Tenant claim carried by the minted release snapshot.
     #[arg(long, requires = "database_url")]
@@ -179,6 +194,13 @@ pub struct PushReleaseManifestArgs {
     pub insecure_registry: bool,
 }
 
+impl PushReleaseManifestArgs {
+    /// Key the published bytes for attestation under this invocation's placement.
+    fn deployment_coordinate(&self, release: &ServingRelease) -> DeploymentCoordinate {
+        DeploymentCoordinate::new(&self.org, &self.project, release)
+    }
+}
+
 /// Publish one canonical release manifest and print its content digest.
 pub async fn run(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
     let canonical_bytes = canonical_release_bytes(&args).await?;
@@ -189,6 +211,10 @@ pub async fn run(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
         &args.registry_auth_file,
     )
     .await?;
+    report_deployment_coordinate(
+        &args.deployment_coordinate(&published.release),
+        &published.digest,
+    );
     println!("{}", published.digest);
     Ok(())
 }
@@ -274,14 +300,16 @@ pub async fn publish_release_manifest(
     insecure_registry: bool,
     registry_auth_file: &Path,
 ) -> Result<PublishedReleaseManifest, ReleaseManifestPublishError> {
-    let (_, digest) = ServingManifest::from_canonical_bytes(canonical_bytes).map_err(|source| {
-        ReleaseManifestPublishError::with_source(
-            ReleaseManifestPublishErrorKind::Document,
-            "release-manifest-document-refused",
-            "input is not canonical format-2 ServingManifest JSON",
-            source,
-        )
-    })?;
+    let (admitted, digest) =
+        ServingManifest::from_canonical_bytes(canonical_bytes).map_err(|source| {
+            ReleaseManifestPublishError::with_source(
+                ReleaseManifestPublishErrorKind::Document,
+                "release-manifest-document-refused",
+                "input is not canonical format-2 ServingManifest JSON",
+                source,
+            )
+        })?;
+    let release = admitted.release;
     let artifact =
         release_manifest_artifact_reference(artifact_base, digest.as_str()).map_err(|source| {
             ReleaseManifestPublishError::with_source(
@@ -312,6 +340,7 @@ pub async fn publish_release_manifest(
         return Ok(PublishedReleaseManifest {
             digest,
             disposition: ReleaseManifestPublishDisposition::AlreadyPresent,
+            release,
         });
     }
 
@@ -344,6 +373,7 @@ pub async fn publish_release_manifest(
     Ok(PublishedReleaseManifest {
         digest,
         disposition: ReleaseManifestPublishDisposition::Pushed,
+        release,
     })
 }
 
@@ -493,10 +523,13 @@ mod tests {
         "auth.json",
     ];
 
+    const PLACEMENT: [&str; 4] = ["--org", "acme", "--project", "billing"];
+
     fn parse(source: &[&str]) -> Result<PushReleaseManifestArgs, clap::Error> {
         let mut argv = vec!["push-release-manifest"];
         argv.extend_from_slice(source);
         argv.extend_from_slice(&DESTINATION);
+        argv.extend_from_slice(&PLACEMENT);
         PushProbe::try_parse_from(argv).map(|probe| probe.args)
     }
 
@@ -508,6 +541,72 @@ mod tests {
             "wamn/releases".to_owned(),
             "a".repeat(64),
         )
+    }
+
+    #[test]
+    fn published_bytes_carry_their_own_half_of_the_attestation_key() {
+        let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
+            .expect("the fixture is canonical format-2 bytes");
+        let coordinate = DeploymentCoordinate::new("acme", "billing", &manifest.release);
+
+        // The environment is whatever the pushed bytes were projected for, read
+        // out of those exact bytes rather than defaulted or re-typed by hand.
+        assert_eq!(coordinate.triple.env.as_str(), "prod");
+        assert_eq!(coordinate.tenant_id, "tenant-a");
+        assert_eq!(coordinate.catalog_id, "orders");
+        assert_eq!(coordinate.catalog_version, 1);
+        assert_eq!(coordinate.triple.org, "acme");
+        assert_eq!(coordinate.triple.project, "billing");
+    }
+
+    #[test]
+    fn neither_byte_source_publishes_without_its_control_plane_placement() {
+        // The file source needs the placement just as much as the snapshot
+        // source: canonical bytes fix the rest of the key but never name the org
+        // and project they are deployed into.
+        for source in [
+            vec!["--manifest", "manifest.json"],
+            vec![
+                "--database-url",
+                "postgres://release.invalid/env",
+                "--tenant",
+                "tenant-a",
+                "--catalog-id",
+                "orders",
+                "--catalog-version",
+                "3",
+            ],
+        ] {
+            for placement in [vec!["--org", "acme"], vec!["--project", "billing"], vec![]] {
+                let mut argv = vec!["push-release-manifest"];
+                argv.extend_from_slice(&source);
+                argv.extend_from_slice(&DESTINATION);
+                argv.extend_from_slice(&placement);
+                assert!(
+                    PushProbe::try_parse_from(argv).is_err(),
+                    "published {source:?} with placement {placement:?}"
+                );
+            }
+        }
+
+        let placed = parse(&["--manifest", "manifest.json"]).expect("a placed file source parses");
+        assert_eq!(placed.org, "acme");
+        assert_eq!(placed.project, "billing");
+    }
+
+    #[test]
+    fn the_parsed_placement_reaches_the_attestation_key() {
+        // The link the surface exists for: what the operator typed on the
+        // command line, not some other string in scope, is what keys the write.
+        let args = parse(&["--manifest", "manifest.json"]).expect("the file source parses");
+        let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
+            .expect("the fixture is canonical format-2 bytes");
+        let coordinate = args.deployment_coordinate(&manifest.release);
+
+        assert_eq!(coordinate.triple.org, "acme");
+        assert_eq!(coordinate.triple.project, "billing");
+        assert_eq!(coordinate.triple.env.as_str(), "prod");
+        assert_eq!(coordinate.tenant_id, "tenant-a");
     }
 
     #[test]

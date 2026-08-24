@@ -39,6 +39,8 @@ const TENANT: &str = "manifest-mint-tenant";
 const CATALOG: &str = "manifest-mint-catalog";
 const CATALOG_VERSION: i32 = 3;
 const ENVIRONMENT: &str = "prod";
+const ORG: &str = "manifest-mint-org";
+const PROJECT: &str = "manifest-mint-project";
 const GATE_REPORT: &str = "gate-report";
 const COMPONENT_A: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const COMPONENT_B: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
@@ -846,6 +848,8 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
     // no hand SQL, no Rust test calling the mint, no source release to promote.
     wamn_ctl::publish_release::run(PublishReleaseArgs {
         database_url: url.clone(),
+        org: ORG.to_string(),
+        project: PROJECT.to_string(),
         tenant: TENANT.to_string(),
         catalog_id: CATALOG.to_string(),
         catalog_version: CATALOG_VERSION as u32,
@@ -893,6 +897,8 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
     wamn_ctl::push_release_manifest::run(PushReleaseManifestArgs {
         manifest: None,
         database_url: Some(reader_url.to_string()),
+        org: ORG.to_string(),
+        project: PROJECT.to_string(),
         tenant: Some(TENANT.to_string()),
         catalog_id: Some(CATALOG.to_string()),
         catalog_version: Some(CATALOG_VERSION as u32),
