@@ -3,41 +3,87 @@
 # The runtime-operator pulls a WorkloadDeployment's components[].image via the
 # wasm-runtime's own OCI client (NOT containerd), so a `kind load`ed image is not
 # visible to it — component artifacts must live in a registry the host pods can
-# reach. This is a plain-HTTP registry at
-# registry.wamn-system.svc.cluster.local:5000; the host must run with
-# `--allow-insecure-registries` to pull from it (deploy/infra/values-wamn.yaml).
+# reach. The authority is
+#   https://registry.wamn-system.svc.cluster.local:5000
 #
-# This registry is the fresh-namespace development posture. It deliberately
-# requires Basic authentication but remains plain HTTP, single-replica and
-# backed by one RWO claim. Production uses an HA, durable, TLS OCI service with
+# [wamn-0h0g.15.155 leg B] TLS, FROM THE CHART'S OWN CA. This registry used to
+# serve plain HTTP, which forced every reader to run with
+# `--allow-insecure-registries`. Chart 2.7.0 argues against that flag in exactly
+# these terms (charts/runtime-operator/values.yaml:270-272): it "does not relax
+# verification but replaces it: every registry drops to plain HTTP, so nothing
+# is verified and credentials travel in the clear" — and this registry requires
+# HTTP Basic authentication, so "in the clear" meant the push and pull robot
+# passwords on every request. Both readers are already off the flag and onto a
+# CA path (commit b8b474b6); this file is the other half.
+#
+# No new trust root is introduced. cert-manager signs the serving certificate
+# with the SAME CA the chart already mints, so the two readers need no bundle
+# distributed to them:
+#   * host pods trust `/runtime-cert/ca.crt`, the `ca.crt` key of the
+#     chart-rendered `wasmcloud-runtime-tls` Secret
+#     (deploy/platform/values-host-default.yaml `ociCaPaths`);
+#   * the executor is hand-written, not chart-rendered, so it projects
+#     `wasmcloud-ca`'s `tls.crt` itself at `/etc/wamn/registry-ca/ca.crt`
+#     (deploy/platform/executor.yaml).
+# Both are the same CA certificate bytes, so one Issuer serves both.
+#
+# APPLY ORDER. Each step exists because the next one cannot be admitted or
+# cannot start without it:
+#   1. `deploy/infra/cert-manager.yaml` — the `cert-manager.io/v1` CRDs and the
+#      admission webhook. Without them the Issuer and Certificate below are
+#      rejected by the API server.
+#   2. the runtime-operator Helm release (`deploy/infra/values-wamn.yaml`) —
+#      it mints Secret `wasmcloud-ca` with `tls.crt` and `tls.key` into this
+#      namespace (charts/runtime-operator/templates/certificates.yaml:84-94),
+#      which is where a namespaced CA `Issuer` resolves `ca.secretName`. Without
+#      it the Certificate stays `Ready: False` with `SecretNotFound`.
+#   3. `deploy/platform/registry-credentials.example.yaml`, instantiated — the
+#      server Secret holds bcrypt htpasswd lines; the pull and push Secrets are
+#      `kubernetes.io/dockerconfigjson` documents whose exact registry key must
+#      equal the authority the caller uses.
+#   4. this file.
+# The Deployment mounts `wamn-registry-tls` by name, so the Pod stays Pending
+# until cert-manager has issued it. That is the intended failure mode: a
+# registry that came up without its certificate would serve plain HTTP to
+# readers that now refuse plain HTTP.
+#
+#   kind load docker-image registry:2 --name wamn   # so the pod starts offline
+#   kubectl -n wamn-system apply -f deploy/platform/registry.yaml
+#   kubectl -n wamn-system wait --for=condition=Ready certificate/wamn-registry-tls --timeout=120s
+#   kubectl -n wamn-system rollout status deploy/registry --timeout=120s
+#
+# This registry is the fresh-namespace development posture. It is single-replica
+# and backed by one RWO claim. Production uses an HA, durable OCI service with
 # two externally scoped robot identities: pull-only per environment namespace
 # and push-only for the ctl publisher. Both component and release-manifest
-# repositories live behind that one registry authority; they do not get a
-# second transport or credential dialect.
+# repositories live behind that one registry authority; they do not get a second
+# transport or credential dialect.
 #
-# Instantiate deploy/platform/registry-credentials.example.yaml before this
-# manifest. The server Secret contains only bcrypt htpasswd lines. The pull and
-# push Secrets are standard kubernetes.io/dockerconfigjson documents; their
-# exact registry key must equal the authority the caller uses.
-#
-# Push flow (from a machine with `wash` and the push robot credential):
+# Push flow (from a machine with `wash` and the push robot credential). The
+# certificate below carries `localhost` and `127.0.0.1` so a port-forward is a
+# name the certificate is valid for; `wash push` takes the trust root as
+# `--ca-path` (crates/wash/src/cli/oci.rs:31, env `WASH_OCI_CA_PATHS`), which
+# replaces the `--insecure` this flow used to pass:
+#   kubectl -n wamn-system get secret wasmcloud-ca \
+#     -o jsonpath='{.data.tls\.crt}' | base64 -d > /tmp/wamn-ca.crt
 #   kubectl -n wamn-system port-forward svc/registry 5000:5000 &
 #   wash push localhost:5000/wamn/materializer:dev \
-#     components/target/wasm32-wasip2/release/materializer.wasm --insecure \
+#     components/target/wasm32-wasip2/release/materializer.wasm \
+#     --ca-path /tmp/wamn-ca.crt \
 #     --user "$WAMN_REGISTRY_PUSH_USER" --password "$WAMN_REGISTRY_PUSH_PASSWORD"
 # The registry addresses artifacts by repo path (hostname-independent), so
 # pushing via localhost:5000 and pulling via the Service DNS name at the SAME
 # repo path (wamn/materializer:dev) resolve to the same manifest/blobs.
 #
+# STILL STALE, AND NOT THIS LEG'S TO FIX: the recipe at
+# deploy/platform/flow-http-workload.example.yaml:6-7 still publishes
+# `wash push localhost:5000 ... --insecure`, which this file breaks. The ctl
+# publish path is wamn-0h0g.15.155 leg C.
+#
 # [15.45] Storage is a PersistentVolumeClaim: a pod restart no longer loses every
 # blob, so readiness prefetch does not fail cluster-wide until someone
 # republishes. Still one replica on one RWO volume — see the WHY on the claim
 # below for what that does and does not buy.
-#
-#   kind load docker-image registry:2 --name wamn   # so the pod starts offline
-#   # [15.45] against a LIVE emptyDir registry this apply is REJECTED; see
-#   # NOT APPLIABLE AS CHECKED IN below for the delete-then-apply rollout
-#   kubectl -n wamn-system apply -f deploy/platform/registry.yaml
 #
 # [15.45] NOT APPLIABLE AS CHECKED IN over a live emptyDir registry. Both
 # reasons force the Deployment to be RECREATED rather than patched in place:
@@ -52,6 +98,65 @@
 #   kubectl -n wamn-system apply -f deploy/platform/registry.yaml
 #   kubectl -n wamn-system rollout status deploy/registry --timeout=120s
 #   # then re-push every artifact (the push flow above) — the claim starts empty
+---
+# [wamn-0h0g.15.155] The chart's CA, borrowed rather than duplicated. A
+# namespaced Issuer resolves `ca.secretName` in ITS OWN namespace, and this is
+# the namespace the operator release writes `wasmcloud-ca` into, so no copy of
+# the CA private key is created anywhere by this file.
+#
+# Deliberately an `Issuer` and not a `ClusterIssuer`: a ClusterIssuer would
+# resolve `ca.secretName` in cert-manager's cluster-resource namespace
+# (`cert-manager` by default), which is not where the chart writes the CA. The
+# only consumer of this issuer is the registry Certificate below, and it lives
+# here, so cluster scope would buy nothing and would need the CA copied.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: wasmcloud-ca
+  namespace: wamn-system
+  labels: { app: registry }
+spec:
+  ca:
+    secretName: wasmcloud-ca
+---
+# [wamn-0h0g.15.155] The registry's serving certificate.
+#
+# `dnsNames` covers every form of the Service name a reader may write, because a
+# certificate is only valid for the name the client actually used and the two
+# in-cluster readers disagree on which form they write. `localhost` plus the
+# `127.0.0.1` IP SAN cover the port-forward push flow: an address listed under
+# `dnsNames` becomes a DNS name, which no client matches against a URL written
+# as an IP, so the loopback address must appear under `ipAddresses` separately.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-registry-tls
+  namespace: wamn-system
+  labels: { app: registry }
+spec:
+  secretName: wamn-registry-tls
+  issuerRef:
+    name: wasmcloud-ca
+    kind: Issuer
+    group: cert-manager.io
+  commonName: registry.wamn-system.svc.cluster.local
+  dnsNames:
+    - registry
+    - registry.wamn-system
+    - registry.wamn-system.svc
+    - registry.wamn-system.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  # `server auth` is stated rather than defaulted. cert-manager's default
+  # usages are `digital signature` + `key encipherment` only, which leave the
+  # leaf with no extended-key-usage extension asserting it may terminate TLS —
+  # and the two readers verify through rustls/webpki, which wants that purpose
+  # present. The other two are carried alongside so the default set is not lost.
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
 ---
 # [15.45] Transitional only: this PVC prevents restart loss while the current
 # registry carries re-derivable OCI projections. docs/exe-model.md retires the
@@ -111,6 +216,13 @@ spec:
           env:
             - name: REGISTRY_HTTP_ADDR
               value: "0.0.0.0:5000"
+            # [wamn-0h0g.15.155] Serving both halves of the issued certificate
+            # turns this listener into HTTPS on the SAME port; readers address
+            # the identical authority, only the scheme changes.
+            - name: REGISTRY_HTTP_TLS_CERTIFICATE
+              value: /certs/tls.crt
+            - name: REGISTRY_HTTP_TLS_KEY
+              value: /certs/tls.key
             - name: REGISTRY_AUTH
               value: htpasswd
             - name: REGISTRY_AUTH_HTPASSWD_REALM
@@ -121,7 +233,9 @@ spec:
             # Authenticated /v2/ returns 401 to the kubelet, which has no
             # secret interpolation for HTTP Basic headers. Listening is the
             # registry process's readiness boundary; authenticated transfer is
-            # proved by the publisher/puller path.
+            # proved by the publisher/puller path. This stays a tcpSocket probe
+            # under TLS: an httpGet with scheme HTTPS would still be answered
+            # 401, and the kubelet has no trust root for the chart CA either.
             tcpSocket:
               port: 5000
             initialDelaySeconds: 2
@@ -135,6 +249,9 @@ spec:
             - name: auth
               mountPath: /auth
               readOnly: true
+            - name: tls
+              mountPath: /certs
+              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -142,6 +259,14 @@ spec:
         - name: auth
           secret:
             secretName: wamn-registry-server-auth
+            optional: false
+        # Issued by the Certificate above. `optional: false` is the whole
+        # ordering guarantee: the Pod does not start until cert-manager has
+        # written this Secret, so the registry can never come up serving plain
+        # HTTP to readers that have already stopped accepting it.
+        - name: tls
+          secret:
+            secretName: wamn-registry-tls
             optional: false
 ---
 apiVersion: v1
