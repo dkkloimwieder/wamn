@@ -39,7 +39,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use async_nats::HeaderMap;
 use async_nats::header::NATS_MESSAGE_ID;
@@ -70,7 +70,8 @@ use wash_runtime::wasmtime::component::{Linker, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::plugins::effect_span::{
-    EFFECT_OPERATION, EffectIdentity, JETSTREAM_DURATION_MS, effect_span, record_effect_ms,
+    AckLagRegistration, EFFECT_OPERATION, EffectIdentity, JETSTREAM_ACK_LAG_MS,
+    JETSTREAM_DURATION_MS, effect_span, record_ack_lag_ms, record_effect_ms,
 };
 use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, PROJECT_CONFIG_KEY, TENANT_CONFIG_KEY};
 use crate::release_manifest::ReleaseManifestWeld;
@@ -1266,7 +1267,10 @@ impl consumer::HostMessage for ActiveCtx<'_> {
         &mut self,
         rep: Resource<JsMessage>,
     ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
-        let msg = self.table.get(&rep)?.msg.clone();
+        let (msg, dead_letter) = {
+            let entry = self.table.get(&rep)?;
+            (entry.msg.clone(), entry.dead_letter.clone())
+        };
         let plugin = plugin_of(self)?;
         let component_id = self.component_id.to_string();
         let claim = plugin.claim_for(&component_id);
@@ -1284,6 +1288,29 @@ impl consumer::HostMessage for ActiveCtx<'_> {
             &claim.project,
             started.elapsed(),
         );
+        // Ack lag is the MESSAGE's age, not this call's duration, so it needs
+        // the server's publish stamp, which only the reply subject carries. A
+        // malformed frame costs the sample and nothing else: same warn-and-
+        // degrade posture `metadata` takes, never a trap on the ack path.
+        match msg.info() {
+            Ok(info) => record_ack_lag_ms(
+                &JETSTREAM_ACK_LAG_MS,
+                &claim.project,
+                dead_letter.as_ref().map(|identity| AckLagRegistration {
+                    tenant: &identity.tenant,
+                    environment: &identity.environment,
+                    catalog_id: &identity.catalog_id,
+                    registration_id: &identity.registration_id,
+                }),
+                SystemTime::from(info.published),
+                SystemTime::now(),
+            ),
+            Err(e) => tracing::warn!(
+                target: "wamn::jetstream",
+                error = %e,
+                "ack lag skipped: message metadata parse failed"
+            ),
+        }
         Ok(result)
     }
 
