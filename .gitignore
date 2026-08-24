@@ -17,3 +17,10 @@
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# Per-lane wave logs. Parallel lanes all resolve the same scratchpad directory,
+# so a conventional filename there is silently overwritten by another lane and
+# a lane reads a false red out of someone else's tree (wamn-usck, measured in
+# wave 54 at ~20 minutes lost). Lanes run in isolated worktrees, so a path
+# inside the worktree is unique by construction rather than by convention.
+.lane-logs/
