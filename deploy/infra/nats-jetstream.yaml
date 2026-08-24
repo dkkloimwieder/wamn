@@ -8,9 +8,13 @@
 # control plane — that cluster is untouched by this manifest, and the
 # NATS-optional posture of the doorbell/dispatcher path is unaffected.
 #
+# It also carries the ROUTER-TAP PREVIEW stream (WAMN_TAP, subjects tap.>,
+# wamn-0h0g.24.5) — see the ConfigMap and Job at the end of this file.
+#
 #   kubectl -n wamn-system apply -f deploy/infra/nats-jetstream.yaml
 #   kubectl -n wamn-system rollout status statefulset/evt-nats --timeout=180s
 #   kubectl -n wamn-system exec evt-nats-0 -- nats-server --help >/dev/null   # sanity
+#   kubectl -n wamn-system wait --for=condition=complete job/evt-nats-tap-stream --timeout=120s
 #
 # ACCOUNTS (wamn-l5i9.7 fork Q2 = single shared account now): JetStream is
 # enabled on the default global account. Per-org NATS accounts + replication
@@ -194,3 +198,108 @@ spec:
         resources:
           requests:
             storage: 1Gi
+---
+# ---------------------------------------------------------------------------
+# WAMN_TAP — the router-edge live view's stream (wamn-0h0g.24.5)
+# ---------------------------------------------------------------------------
+#
+# The RESERVED, HOST-OWNED preview namespace `tap.>`, carrying ephemeral,
+# redacted payload previews published by the router-delivery bridge at each
+# delivery boundary. Its named consumer is the wamn-dggp.10 run screen.
+#
+# `tap` is deliberately NOT `evt`: a preview is an ephemeral debugging tap, and
+# putting one into the durable event grammar would give one subject two origins
+# — a stored fact and a redacted snapshot — which is fabricated provenance. The
+# host refuses `tap.*` to every guest publish in the same commit that minted the
+# namespace (`crates/platform/runtime/src/plugins/wamn_jetstream.rs`,
+# `is_reserved_router_tap_subject`): a diagnostic subject a tenant can write
+# would be a forgeable provenance channel feeding an operator's live view.
+#
+# EVERY LIMIT HERE IS A CEILING, NOT A TARGET. This stream is a small live
+# window, not a record:
+#   * memory storage + 1 replica — a restart drops it, which is what "ephemeral"
+#     means and also keeps redacted-but-still-guest payloads off disk. The EVT_
+#     streams' R3 file storage is for facts; this is not one.
+#   * max_age 5m — a run screen attaching a moment late still sees the delivery
+#     it opened on. Nothing older is a "live" view.
+#   * max_msgs_per_subject 16 — one delivery publishes two previews (accepted,
+#     settled); the headroom is for the per-edge upgrade, which is NOT built.
+#   * max_msg_size 128KiB — above the host's 64KiB redacted-payload ceiling
+#     (wamn_run_state::redaction::OUTPUT_CAPTURE_CEILING_BYTES) plus envelope.
+#     The host drops an over-ceiling payload before publishing, so this is the
+#     backstop, not the policy.
+#   * max_bytes 64MiB — inside the 256MB max_memory_store above, so a burst of
+#     previews cannot starve JetStream's memory spill lane.
+#   * duplicate_window 0 — previews are not deduped; they are not facts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evt-nats-tap-stream
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: router-tap-stream
+data:
+  stream.json: |
+    {
+      "name": "WAMN_TAP",
+      "subjects": ["tap.>"],
+      "retention": "limits",
+      "storage": "memory",
+      "num_replicas": 1,
+      "discard": "old",
+      "max_age": 300000000000,
+      "max_msgs": 200000,
+      "max_msgs_per_subject": 16,
+      "max_bytes": 67108864,
+      "max_msg_size": 131072,
+      "duplicate_window": 0
+    }
+---
+# Install-once provisioning. Idempotent by construction: `stream info` decides
+# between add and edit, so re-applying this manifest reconciles a drifted config
+# instead of failing on "stream already exists".
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: evt-nats-tap-stream
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: router-tap-stream
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: evt-nats
+        app.kubernetes.io/component: router-tap-stream
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: provision
+          image: natsio/nats-box:0.14.5
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ce
+            - |
+              URL=nats://evt-nats.wamn-system.svc.cluster.local:4222
+              CONFIG=/etc/tap-stream/stream.json
+              if nats --server "$URL" stream info WAMN_TAP >/dev/null 2>&1; then
+                nats --server "$URL" stream edit WAMN_TAP --config "$CONFIG" --force
+              else
+                nats --server "$URL" stream add WAMN_TAP --config "$CONFIG"
+              fi
+              nats --server "$URL" stream info WAMN_TAP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tap-stream
+          resources:
+            requests: { cpu: "50m", memory: "32Mi" }
+            limits: { memory: "128Mi" }
+      volumes:
+        - name: config
+          configMap:
+            name: evt-nats-tap-stream
