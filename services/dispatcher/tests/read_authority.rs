@@ -13,9 +13,9 @@
 //!
 //! Four proofs:
 //!
-//! 1. **the surface is exactly right** — swept over EVERY relation and function in
-//!    the project database, the reader holds zero write privileges, exactly two
-//!    `SELECT`s, and can call zero functions.
+//! 1. **the surface is exactly right** — swept over EVERY relation in the project
+//!    database, the reader holds zero write privileges and exactly two `SELECT`s,
+//!    owns nothing, and belongs to no role.
 //! 2. **the reads still work** — both real dispatcher statements execute as the
 //!    reader and return the tenant's rows. This is the arm that matters most: an
 //!    authority reduction that silently reads NOTHING presents as a perfectly
@@ -41,11 +41,6 @@ const TENANT: &str = "t-a";
 const OTHER_TENANT: &str = "t-b";
 const SCHEMA: &str = "wamn_run";
 const READER_PASSWORD: &str = "dispatch-reader-probe";
-
-/// SHA-256 of the empty input — the only bundle hash `catalog.execution_bundles`
-/// accepts for a zero-byte artifact (its CHECK recomputes the digest).
-const EMPTY_BUNDLE: &str =
-    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 fn psql(url: &str, script: &str) -> std::process::Output {
     let mut child = Command::new("psql")
@@ -276,16 +271,12 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
                ('{TENANT}','cat-a',1,'0.1'), ('{OTHER_TENANT}','cat-b',1,'0.1'); \
              INSERT INTO catalog.release_manifests (tenant_id, catalog_id, catalog_version) VALUES \
                ('{TENANT}','cat-a',1), ('{OTHER_TENANT}','cat-b',1); \
-             INSERT INTO catalog.execution_bundles \
-               (tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_length) VALUES \
-               ('{TENANT}','{EMPTY_BUNDLE}','0.1','\\x'::bytea,0), \
-               ('{OTHER_TENANT}','{EMPTY_BUNDLE}','0.1','\\x'::bytea,0); \
              INSERT INTO wamn_run.runs \
                (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
-                environment, execution_bundle_hash) VALUES \
-               ('{TENANT}','run-a1','flow-a',1,'cat-a',1,'dev','{EMPTY_BUNDLE}'), \
-               ('{TENANT}','run-a2','flow-a',1,'cat-a',1,'dev','{EMPTY_BUNDLE}'), \
-               ('{OTHER_TENANT}','run-b1','flow-b',1,'cat-b',1,'dev','{EMPTY_BUNDLE}'); \
+                environment) VALUES \
+               ('{TENANT}','run-a1','flow-a',1,'cat-a',1,'dev'), \
+               ('{TENANT}','run-a2','flow-a',1,'cat-a',1,'dev'), \
+               ('{OTHER_TENANT}','run-b1','flow-b',1,'cat-b',1,'dev'); \
              INSERT INTO wamn_run.run_queue (tenant_id, run_id) VALUES \
                ('{TENANT}','run-a1'), ('{OTHER_TENANT}','run-b1');\n"
         ),
