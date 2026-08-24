@@ -13,7 +13,6 @@ const COMPONENT_MANIFEST: &str = "components/Cargo.toml";
 const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
-const BUILD_AND_TEST_DOCS: &str = "docs/archive/build-and-test.md";
 const ROOT_DEFAULT_MEMBER_PATHS: [&str; 18] = [
     "crates/authoring/model",
     "crates/catalog/model",
@@ -719,36 +718,6 @@ fn workspace_tier_helper_full_plans_cover_both_workspaces() {
         manifest.tiers.full_ci.non_cargo_inputs
     );
     assert!(listed.non_cargo_inputs.is_empty());
-}
-
-#[test]
-fn workspace_tier_docs_use_stable_helper_commands() {
-    let root = repository_root();
-    let docs = fs::read_to_string(root.join(BUILD_AND_TEST_DOCS))
-        .expect("build-and-test documentation must be readable");
-    for command in [
-        "./tools/workspace-tier run fast_developer_native root check",
-        "./tools/workspace-tier run product_components components build-wasm",
-        "./tools/workspace-tier run contract_conformance root test",
-        "./tools/workspace-tier run full_ci root test-all",
-        "./tools/workspace-tier run full_ci components build-wasm",
-        "./tools/workspace-tier list full_ci",
-    ] {
-        assert!(
-            docs.contains(command),
-            "build-and-test documentation omitted stable command: {command}"
-        );
-    }
-    for temporary in [
-        "Until wamn-5wd1.28",
-        "mapfile -t WAMN_FAST_PACKAGES",
-        "WAMN_FAST_ARGS",
-    ] {
-        assert!(
-            !docs.contains(temporary),
-            "temporary workspace selector remains documented: {temporary}"
-        );
-    }
 }
 
 #[test]

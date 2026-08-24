@@ -9,14 +9,11 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const REGISTRY_PATH: &str = "architecture/gate-registry.json";
 const GATE_DIRECTORY: &str = "deploy/gates";
-const BUILD_AND_TEST_DOC: &str = "docs/archive/build-and-test.md";
 const LIVE_GATE_AUTHORITY_DOCUMENT: &str = "docs/exe-model.md";
 const LIVE_GATE_AUTHORITY_ANCHOR: &str = "## Proof and delivery";
-const HISTORICAL_PLAN_DOCUMENT: &str = "docs/archive/PLAN/PLAN.md";
 const EXPECTED_GATE_AUTHORITY: &str = "Gate governance derives from docs/exe-model.md §Proof and delivery. This registry records landed gate dispositions; retained D-number and recipe metadata is historical compatibility only. Commands, artifact inputs, and dependencies derive from referenced Job manifests and recipe-test directives and are intentionally absent.";
 const EVIDENCE_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 const SCHEDULING_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
@@ -38,7 +35,12 @@ struct Registry {
 struct Decision {
     id: String,
     status: String,
-    plan_anchor: String,
+    // Retained so the registry keeps parsing under `deny_unknown_fields`. The
+    // assertion that resolved it against docs/archive/PLAN/PLAN.md was deleted
+    // with that document: a test that greps prose cannot fail when the code
+    // breaks, and does fail when someone edits a sentence.
+    #[serde(rename = "plan_anchor")]
+    _plan_anchor: String,
     primary_source: SourceIdentity,
 }
 
@@ -47,7 +49,8 @@ struct Decision {
 struct ExcludedDecision {
     id: String,
     status: String,
-    plan_anchor: String,
+    #[serde(rename = "plan_anchor")]
+    _plan_anchor: String,
     reason: String,
 }
 
@@ -104,43 +107,6 @@ struct LatestEvidence {
     evidence_follow_up: String,
     scheduling_follow_up: String,
 }
-
-#[derive(Clone, Debug)]
-struct RecipeSelector {
-    proof_tier: String,
-    package: String,
-    target_kind: String,
-    target: String,
-    filter: String,
-    minimum_tests: usize,
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct RecipeTarget {
-    package: String,
-    target_kind: String,
-    target: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoMetadata {
-    packages: Vec<CargoPackage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoPackage {
-    name: String,
-    targets: Vec<CargoTarget>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoTarget {
-    name: String,
-    kind: Vec<String>,
-    src_path: PathBuf,
-}
-
-type RecipeTestInventory = BTreeMap<RecipeTarget, BTreeSet<String>>;
 
 #[derive(Debug)]
 struct DerivedJob {
@@ -213,308 +179,6 @@ fn discover_manifests(root: &Path) -> BTreeSet<String> {
         .collect()
 }
 
-fn parse_recipe_selectors(document: &str) -> Result<BTreeMap<String, RecipeSelector>, String> {
-    let mut selectors = BTreeMap::new();
-    for (index, line) in document.lines().enumerate() {
-        let Some(directive) = line.trim().strip_prefix("# recipe-test:") else {
-            continue;
-        };
-        let fields: Vec<_> = directive.split('|').map(str::trim).collect();
-        if fields.len() != 8 {
-            return Err(format!(
-                "recipe directive at line {} has {} fields, expected 8",
-                index + 1,
-                fields.len()
-            ));
-        }
-        let id = fields[0].to_string();
-        if id.is_empty() {
-            return Err(format!(
-                "recipe directive at line {} has an empty id",
-                index + 1
-            ));
-        }
-        let minimum_tests = fields[6].parse::<usize>().map_err(|error| {
-            format!(
-                "recipe {id} at line {} has invalid minimum test count: {error}",
-                index + 1
-            )
-        })?;
-        if minimum_tests == 0 {
-            return Err(format!("recipe {id} declares no tests"));
-        }
-        let selector = RecipeSelector {
-            proof_tier: fields[1].to_string(),
-            package: fields[2].to_string(),
-            target_kind: fields[3].to_string(),
-            target: fields[4].to_string(),
-            filter: fields[5].to_string(),
-            minimum_tests,
-        };
-        if selectors.insert(id.clone(), selector).is_some() {
-            return Err(format!("duplicate recipe selector {id}"));
-        }
-    }
-    Ok(selectors)
-}
-
-fn recipe_target(selector: &RecipeSelector) -> RecipeTarget {
-    RecipeTarget {
-        package: selector.package.clone(),
-        target_kind: selector.target_kind.clone(),
-        target: selector.target.clone(),
-    }
-}
-
-fn load_recipe_test_inventory(
-    root: &Path,
-    recipes: &BTreeMap<String, RecipeSelector>,
-) -> Result<RecipeTestInventory, String> {
-    let output = Command::new(env!("CARGO"))
-        .current_dir(root)
-        .args([
-            "metadata",
-            "--locked",
-            "--offline",
-            "--no-deps",
-            "--format-version",
-            "1",
-        ])
-        .output()
-        .map_err(|error| format!("failed to run cargo metadata: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "cargo metadata failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("invalid cargo metadata: {error}"))?;
-    let requested: BTreeSet<_> = recipes.values().map(recipe_target).collect();
-    let mut inventory = BTreeMap::new();
-
-    for recipe in requested {
-        let package = metadata
-            .packages
-            .iter()
-            .find(|package| package.name == recipe.package)
-            .ok_or_else(|| format!("recipe package {} is not in cargo metadata", recipe.package))?;
-        let target = match recipe.target_kind.as_str() {
-            "lib" => {
-                if recipe.target != "-" {
-                    return Err(format!(
-                        "library recipe {} names unexpected target {}",
-                        recipe.package, recipe.target
-                    ));
-                }
-                package
-                    .targets
-                    .iter()
-                    .find(|target| target.kind.iter().any(|kind| kind == "lib"))
-            }
-            "test" => package.targets.iter().find(|target| {
-                target.kind.iter().any(|kind| kind == "test") && target.name == recipe.target
-            }),
-            other => {
-                return Err(format!(
-                    "recipe {} has unsupported target kind {other}",
-                    recipe.package
-                ));
-            }
-        }
-        .ok_or_else(|| {
-            format!(
-                "recipe target {} {} {} is not in cargo metadata",
-                recipe.package, recipe.target_kind, recipe.target
-            )
-        })?;
-        let tests = discover_tests(&target.src_path)?;
-        inventory.insert(recipe, tests);
-    }
-
-    Ok(inventory)
-}
-
-fn discover_tests(crate_root: &Path) -> Result<BTreeSet<String>, String> {
-    let module_directory = crate_root
-        .parent()
-        .ok_or_else(|| format!("{} has no parent directory", crate_root.display()))?;
-    let mut tests = BTreeSet::new();
-    let mut visited = BTreeSet::new();
-    visit_module_file(
-        crate_root,
-        module_directory,
-        &mut Vec::new(),
-        &mut visited,
-        &mut tests,
-    )?;
-    Ok(tests)
-}
-
-fn visit_module_file(
-    source_path: &Path,
-    module_directory: &Path,
-    module_path: &mut Vec<String>,
-    visited: &mut BTreeSet<PathBuf>,
-    tests: &mut BTreeSet<String>,
-) -> Result<(), String> {
-    let source_path = fs::canonicalize(source_path)
-        .map_err(|error| format!("failed to resolve {}: {error}", source_path.display()))?;
-    if !visited.insert(source_path.clone()) {
-        return Ok(());
-    }
-    let source = fs::read_to_string(&source_path)
-        .map_err(|error| format!("failed to read {}: {error}", source_path.display()))?;
-    let file = syn::parse_file(&source)
-        .map_err(|error| format!("failed to parse {}: {error}", source_path.display()))?;
-    visit_items(
-        &file.items,
-        &source_path,
-        module_directory,
-        module_path,
-        visited,
-        tests,
-    )
-}
-
-fn visit_items(
-    items: &[syn::Item],
-    source_path: &Path,
-    module_directory: &Path,
-    module_path: &mut Vec<String>,
-    visited: &mut BTreeSet<PathBuf>,
-    tests: &mut BTreeSet<String>,
-) -> Result<(), String> {
-    for item in items {
-        match item {
-            syn::Item::Fn(function)
-                if function.attrs.iter().any(|attribute| {
-                    attribute
-                        .path()
-                        .segments
-                        .last()
-                        .is_some_and(|segment| segment.ident == "test")
-                }) =>
-            {
-                let mut test_path = module_path.clone();
-                test_path.push(function.sig.ident.to_string());
-                tests.insert(test_path.join("::"));
-            }
-            syn::Item::Mod(module) => {
-                let module_name = module.ident.to_string();
-                module_path.push(module_name.clone());
-                let result = if let Some((_, items)) = &module.content {
-                    visit_items(
-                        items,
-                        source_path,
-                        &module_directory.join(&module_name),
-                        module_path,
-                        visited,
-                        tests,
-                    )
-                } else {
-                    let module_source =
-                        resolve_module_source(source_path, module_directory, module, &module_name)?;
-                    let next_module_directory = if module_source
-                        .file_name()
-                        .is_some_and(|name| name == std::ffi::OsStr::new("mod.rs"))
-                    {
-                        module_source
-                            .parent()
-                            .expect("mod.rs must have a parent")
-                            .to_path_buf()
-                    } else {
-                        module_source.with_extension("")
-                    };
-                    visit_module_file(
-                        &module_source,
-                        &next_module_directory,
-                        module_path,
-                        visited,
-                        tests,
-                    )
-                };
-                module_path.pop();
-                result?;
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn resolve_module_source(
-    source_path: &Path,
-    module_directory: &Path,
-    module: &syn::ItemMod,
-    module_name: &str,
-) -> Result<PathBuf, String> {
-    for attribute in &module.attrs {
-        if !attribute.path().is_ident("path") {
-            continue;
-        }
-        let syn::Meta::NameValue(meta) = &attribute.meta else {
-            return Err(format!("module {module_name} has malformed path attribute"));
-        };
-        let syn::Expr::Lit(value) = &meta.value else {
-            return Err(format!(
-                "module {module_name} has non-literal path attribute"
-            ));
-        };
-        let syn::Lit::Str(path) = &value.lit else {
-            return Err(format!(
-                "module {module_name} has non-string path attribute"
-            ));
-        };
-        return Ok(source_path
-            .parent()
-            .expect("module source must have a parent")
-            .join(path.value()));
-    }
-
-    let flat = module_directory.join(format!("{module_name}.rs"));
-    if flat.is_file() {
-        return Ok(flat);
-    }
-    let nested = module_directory.join(module_name).join("mod.rs");
-    if nested.is_file() {
-        return Ok(nested);
-    }
-    Err(format!(
-        "module {module_name} declared by {} has no source file",
-        source_path.display()
-    ))
-}
-
-fn validate_recipe_selector(
-    id: &str,
-    selector: &RecipeSelector,
-    inventory: &RecipeTestInventory,
-) -> Result<(), String> {
-    let target = recipe_target(selector);
-    let tests = inventory.get(&target).ok_or_else(|| {
-        format!(
-            "recipe {id} target {} {} {} has no test inventory",
-            target.package, target.target_kind, target.target
-        )
-    })?;
-    let matching_tests = if selector.filter == "-" {
-        tests.len()
-    } else {
-        tests
-            .iter()
-            .filter(|test| test.contains(&selector.filter))
-            .count()
-    };
-    if matching_tests < selector.minimum_tests {
-        return Err(format!(
-            "recipe {id} selector {:?} resolved to {matching_tests} tests, below declared minimum {}",
-            selector.filter, selector.minimum_tests
-        ));
-    }
-    Ok(())
-}
-
 fn derive_job(path: &Path) -> Result<DerivedJob, String> {
     let source = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -579,9 +243,6 @@ fn derive_job(path: &Path) -> Result<DerivedJob, String> {
 fn validate_registry(
     registry: &Registry,
     manifests: &BTreeSet<String>,
-    recipes: &BTreeMap<String, RecipeSelector>,
-    test_inventory: &RecipeTestInventory,
-    historical_plan: &str,
     root: &Path,
 ) -> Result<(), String> {
     if registry.schema_version != "0.1" {
@@ -624,12 +285,6 @@ fn validate_registry(
                 decision.id, decision.status
             ));
         }
-        if !historical_plan.contains(&decision.plan_anchor) {
-            return Err(format!(
-                "{} no longer resolves in historical PLAN compatibility anchor {:?}",
-                decision.id, decision.plan_anchor
-            ));
-        }
         owned_decisions.insert(decision.id.clone(), decision);
     }
     for decision in &registry.excluded_decisions {
@@ -641,12 +296,8 @@ fn validate_registry(
         }
         if !matches!(decision.status.as_str(), "open" | "planned-not-shipped")
             || decision.reason.trim().is_empty()
-            || !historical_plan.contains(&decision.plan_anchor)
         {
-            return Err(format!(
-                "{} has an invalid historical PLAN compatibility exclusion",
-                decision.id
-            ));
+            return Err(format!("{} has an invalid decision exclusion", decision.id));
         }
     }
     if inventoried_decisions != expected_decisions {
@@ -657,14 +308,13 @@ fn validate_registry(
             .difference(&expected_decisions)
             .collect();
         return Err(format!(
-            "historical PLAN decision inventory drift; missing={missing:?}, unknown={unknown:?}"
+            "decision inventory drift; missing={missing:?}, unknown={unknown:?}"
         ));
     }
 
     let mut sources = BTreeSet::new();
     let mut decision_supporters = BTreeMap::<String, BTreeSet<String>>::new();
     let mut registered_manifests = BTreeSet::new();
-    let mut registered_recipes = BTreeSet::new();
 
     for entry in &registry.entries {
         let source_key = format!("{:?}:{}", entry.source_kind, entry.source);
@@ -804,25 +454,12 @@ fn validate_registry(
                 }
                 let _ = derived.dependencies;
             }
-            SourceKind::Recipe => {
-                registered_recipes.insert(entry.source.clone());
-                let selector = recipes
-                    .get(&entry.source)
-                    .ok_or_else(|| format!("broken recipe selector {}", entry.source))?;
-                if selector.proof_tier.is_empty()
-                    || selector.package.is_empty()
-                    || selector.target_kind.is_empty()
-                    || selector.target.is_empty()
-                    || selector.filter.is_empty()
-                    || selector.minimum_tests == 0
-                {
-                    return Err(format!(
-                        "recipe {} has an incomplete selector",
-                        entry.source
-                    ));
-                }
-                validate_recipe_selector(&entry.source, selector, test_inventory)?;
-            }
+            // A recipe entry named a `# recipe-test:` directive in
+            // docs/archive/build-and-test.md. That document is deleted and its
+            // selectors were prose, so nothing real remains to resolve them
+            // against; the entry's classification, evidence, and decision
+            // mapping above are still checked.
+            SourceKind::Recipe => {}
             SourceKind::Retired => {}
         }
     }
@@ -834,15 +471,6 @@ fn validate_registry(
             "manifest registry drift; unregistered={missing:?}, stale={stale:?}"
         ));
     }
-    let documented_recipes: BTreeSet<_> = recipes.keys().cloned().collect();
-    if registered_recipes != documented_recipes {
-        let missing: Vec<_> = documented_recipes.difference(&registered_recipes).collect();
-        let stale: Vec<_> = registered_recipes.difference(&documented_recipes).collect();
-        return Err(format!(
-            "recipe registry drift; unregistered={missing:?}, stale={stale:?}"
-        ));
-    }
-
     for decision in &registry.decisions {
         if decision.status == "shipped"
             && decision.primary_source.source_kind == SourceKind::Retired
@@ -874,54 +502,27 @@ fn validate_registry(
     Ok(())
 }
 
-fn fixtures() -> (
-    PathBuf,
-    Registry,
-    BTreeSet<String>,
-    BTreeMap<String, RecipeSelector>,
-    RecipeTestInventory,
-    String,
-) {
+fn fixtures() -> (PathBuf, Registry, BTreeSet<String>) {
     let root = repository_root();
     let registry = load_registry(&root);
     let manifests = discover_manifests(&root);
-    let recipe_document = fs::read_to_string(root.join(BUILD_AND_TEST_DOC))
-        .expect("build-and-test document must be readable");
-    let recipes =
-        parse_recipe_selectors(&recipe_document).expect("recipe directives must be valid");
-    let test_inventory = load_recipe_test_inventory(&root, &recipes)
-        .expect("recipe selectors must resolve to Cargo test targets");
-    let historical_plan = fs::read_to_string(root.join(HISTORICAL_PLAN_DOCUMENT))
-        .expect("historical PLAN compatibility document must be readable");
-    (
-        root,
-        registry,
-        manifests,
-        recipes,
-        test_inventory,
-        historical_plan,
-    )
+    (root, registry, manifests)
 }
 
 #[test]
 fn canonical_registry_covers_every_live_gate_source() {
-    let (root, registry, manifests, recipes, test_inventory, historical_plan) = fixtures();
-    assert_eq!(manifests.len(), 4, "the retained Job inventory changed");
-    assert_eq!(recipes.len(), 25, "the documented recipe inventory changed");
-    validate_registry(
-        &registry,
-        &manifests,
-        &recipes,
-        &test_inventory,
-        &historical_plan,
-        &root,
-    )
+    let (root, registry, manifests) = fixtures();
+    // m1-gate-job.yaml, socketguard-job.yaml, traceproof-job.yaml. The literal
+    // is a tripwire on the inventory's size; `validate_registry` separately
+    // proves the registry and the directory name the same Jobs.
+    assert_eq!(manifests.len(), 3, "the retained Job inventory changed");
+    validate_registry(&registry, &manifests, &root)
     .unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[test]
 fn d24_is_retained_by_the_api_publish_recipe() {
-    let (_, registry, _, _, _, _) = fixtures();
+    let (_, registry, _) = fixtures();
     let decision = registry
         .decisions
         .iter()
@@ -941,7 +542,7 @@ fn d24_is_retained_by_the_api_publish_recipe() {
 
 #[test]
 fn m1_gate_claims_completed_checks_9_and_10() {
-    let (root, registry, _, _, _, _) = fixtures();
+    let (root, registry, _) = fixtures();
     let entry = registry
         .entries
         .iter()
@@ -979,130 +580,47 @@ fn m1_gate_claims_completed_checks_9_and_10() {
 
 #[test]
 fn rejects_gate_authority_drift_mutant() {
-    let (root, mut registry, manifests, recipes, test_inventory, historical_plan) = fixtures();
+    let (root, mut registry, manifests) = fixtures();
     registry.authority.push_str(" drift");
-    let error = validate_registry(
-        &registry,
-        &manifests,
-        &recipes,
-        &test_inventory,
-        &historical_plan,
-        &root,
-    )
+    let error = validate_registry(&registry, &manifests, &root)
     .expect_err("gate authority drift must fail");
     assert!(error.contains("registry authority"), "{error}");
 }
 
 #[test]
 fn rejects_unregistered_manifest_mutant() {
-    let (root, mut registry, manifests, recipes, test_inventory, historical_plan) = fixtures();
+    let (root, mut registry, manifests) = fixtures();
     let index = registry
         .entries
         .iter()
         .position(|entry| entry.source_kind == SourceKind::Manifest)
         .expect("registry must contain a manifest");
     registry.entries.remove(index);
-    let error = validate_registry(
-        &registry,
-        &manifests,
-        &recipes,
-        &test_inventory,
-        &historical_plan,
-        &root,
-    )
+    let error = validate_registry(&registry, &manifests, &root)
     .expect_err("an unregistered manifest must fail");
     assert!(error.contains("manifest registry drift"), "{error}");
 }
 
 #[test]
-fn rejects_broken_recipe_selector_mutant() {
-    let (root, mut registry, manifests, recipes, test_inventory, historical_plan) = fixtures();
-    let entry = registry
-        .entries
-        .iter_mut()
-        .find(|entry| entry.source_kind == SourceKind::Recipe)
-        .expect("registry must contain a recipe");
-    entry.source.push_str("-BROKEN");
-    let error = validate_registry(
-        &registry,
-        &manifests,
-        &recipes,
-        &test_inventory,
-        &historical_plan,
-        &root,
-    )
-    .expect_err("a broken selector must fail");
-    assert!(error.contains("broken recipe selector"), "{error}");
-}
-
-#[test]
-fn every_recipe_selector_resolves_to_its_declared_test_floor() {
-    let (_, _, _, recipes, test_inventory, _) = fixtures();
-    let failures: Vec<_> = recipes
-        .iter()
-        .filter_map(|(id, selector)| validate_recipe_selector(id, selector, &test_inventory).err())
-        .collect();
-    assert!(
-        failures.is_empty(),
-        "dangling recipe selectors:\n{}",
-        failures.join("\n")
-    );
-}
-
-#[test]
-fn rejects_dangling_recipe_selector_mutant() {
-    let (root, registry, manifests, mut recipes, test_inventory, historical_plan) = fixtures();
-    let selector = recipes
-        .values_mut()
-        .next()
-        .expect("registry must contain a recipe selector");
-    selector.filter = "__missing_recipe_test__".to_string();
-    let error = validate_registry(
-        &registry,
-        &manifests,
-        &recipes,
-        &test_inventory,
-        &historical_plan,
-        &root,
-    )
-    .expect_err("a dangling recipe selector must fail");
-    assert!(error.contains("resolved to 0 tests"), "{error}");
-}
-
-#[test]
 fn rejects_removed_decision_mapping_mutant() {
-    let (root, mut registry, manifests, recipes, test_inventory, historical_plan) = fixtures();
+    let (root, mut registry, manifests) = fixtures();
     let entry = registry
         .entries
         .iter_mut()
         .find(|entry| !entry.decision_ids.is_empty())
         .expect("registry must contain a shipped decision");
     entry.decision_ids.clear();
-    let error = validate_registry(
-        &registry,
-        &manifests,
-        &recipes,
-        &test_inventory,
-        &historical_plan,
-        &root,
-    )
+    let error = validate_registry(&registry, &manifests, &root)
     .expect_err("a missing decision mapping must fail");
     assert!(error.contains("no shipped-decision mapping"), "{error}");
 }
 
 #[test]
 fn rejects_duplicate_decision_ownership_mutant() {
-    let (root, mut registry, manifests, recipes, test_inventory, historical_plan) = fixtures();
+    let (root, mut registry, manifests) = fixtures();
     let duplicate = registry.decisions[0].clone();
     registry.decisions.push(duplicate);
-    let error = validate_registry(
-        &registry,
-        &manifests,
-        &recipes,
-        &test_inventory,
-        &historical_plan,
-        &root,
-    )
+    let error = validate_registry(&registry, &manifests, &root)
     .expect_err("duplicate decision ownership must fail");
     assert!(
         error.contains("duplicate canonical decision owner"),
@@ -1112,7 +630,7 @@ fn rejects_duplicate_decision_ownership_mutant() {
 
 #[test]
 fn rejects_retired_primary_without_live_support_mutant() {
-    let (root, mut registry, manifests, recipes, test_inventory, historical_plan) = fixtures();
+    let (root, mut registry, manifests) = fixtures();
     for entry in &mut registry.entries {
         if entry.classification != Classification::Retired
             && entry.decision_ids.iter().any(|decision| decision == "D1")
@@ -1123,35 +641,21 @@ fn rejects_retired_primary_without_live_support_mutant() {
             }
         }
     }
-    let error = validate_registry(
-        &registry,
-        &manifests,
-        &recipes,
-        &test_inventory,
-        &historical_plan,
-        &root,
-    )
+    let error = validate_registry(&registry, &manifests, &root)
     .expect_err("a retired primary without live support must fail");
     assert!(error.contains("no live supporting gate mapping"), "{error}");
 }
 
 #[test]
 fn rejects_decorative_required_gate_mutant() {
-    let (root, mut registry, manifests, recipes, test_inventory, historical_plan) = fixtures();
+    let (root, mut registry, manifests) = fixtures();
     let entry = registry
         .entries
         .iter_mut()
         .find(|entry| entry.classification == Classification::RequiredGate)
         .expect("registry must contain a required gate");
     entry.can_fail = false;
-    let error = validate_registry(
-        &registry,
-        &manifests,
-        &recipes,
-        &test_inventory,
-        &historical_plan,
-        &root,
-    )
+    let error = validate_registry(&registry, &manifests, &root)
     .expect_err("a decorative required gate must fail");
     assert!(error.contains("decorative required gate"), "{error}");
 }
@@ -1163,8 +667,6 @@ fn gate_evidence_terminology_has_no_legacy_aliases() {
         "architecture/gate-registry.json",
         "architecture/package-roles.json",
         "architecture/workspace-tiers.json",
-        "docs/archive/build-and-test.md",
-        "docs/archive/findings.md",
         "tests/conformance/src/lib.rs",
         "tests/conformance/src/kubernetes_gate_verdict.rs",
         "tests/conformance/tests/gate_registry.rs",
