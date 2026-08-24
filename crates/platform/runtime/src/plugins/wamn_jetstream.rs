@@ -2333,10 +2333,7 @@ mod tests {
         assert_eq!(record["delivery-id"], serde_json::json!("d-1"));
         assert_eq!(record["wiring-version"], serde_json::json!(3));
         assert_eq!(record["source-id"], serde_json::json!("orders-http"));
-        assert_eq!(
-            record["format-version"],
-            serde_json::json!(ROUTER_TAP_FORMAT_VERSION)
-        );
+        assert_eq!(record["format-version"], serde_json::json!(1));
         assert_eq!(prepared.subject, "tap.acme.app.prod.orders.d-1");
 
         // A settled preview names its outcome; an accepted one has none to name.
@@ -2377,6 +2374,102 @@ mod tests {
                 .as_u64()
                 .is_some_and(|bytes| bytes as usize > OUTPUT_CAPTURE_CEILING_BYTES),
             "the dropped payload's size must survive as a flag: {bounded}"
+        );
+    }
+
+    /// FROZEN WIRE RECORD. `wamn-dggp.10` is the named consumer and parses
+    /// this on the console side, so the field set, the spelling of each key and
+    /// the version literal are a contract rather than an implementation detail.
+    ///
+    /// Asserted as a WHOLE VALUE on purpose: an added field, a removed field and
+    /// a renamed field all fail here, where a key-by-key read would notice only
+    /// the removal.
+    ///
+    /// The version is pinned to the LITERAL 1, never to
+    /// [`ROUTER_TAP_FORMAT_VERSION`]. Comparing the record against the constant
+    /// that produced it is a tautology that survives any bump, which is exactly
+    /// what an unasserted format version amounts to. Bumping the constant must
+    /// fail HERE, so whoever changes a field's meaning re-freezes these records
+    /// deliberately, in that same commit.
+    #[test]
+    fn the_preview_record_is_frozen_for_its_named_consumer() {
+        let claim = tap_claim();
+        let payload = serde_json::json!({"plain": "visible"});
+        let preview = RouterTapPreview {
+            delivery_id: "d-1",
+            wiring_id: "orders",
+            wiring_version: 3,
+            source_kind: "attachment",
+            source_id: "orders-http",
+            phase: RouterTapPhase::Accepted,
+            payload: &payload,
+        };
+
+        let accepted: serde_json::Value = serde_json::from_slice(
+            &prepare_router_tap(&claim, &preview)
+                .expect("the ids name tokens")
+                .body,
+        )
+        .expect("the tap body is JSON");
+        assert_eq!(
+            accepted,
+            serde_json::json!({
+                "format-version": 1,
+                "phase": "accepted",
+                "delivery-id": "d-1",
+                "wiring-id": "orders",
+                "wiring-version": 3,
+                "source-kind": "attachment",
+                "source-id": "orders-http",
+                "redacted": false,
+                "payload": {"plain": "visible"},
+            }),
+            "the accepted preview record is frozen for wamn-dggp.10"
+        );
+
+        // A settled preview adds exactly one key. An accepted one carries no
+        // `outcome` at all rather than a null, so the console can branch on
+        // presence.
+        let settled: serde_json::Value = serde_json::from_slice(
+            &prepare_router_tap(
+                &claim,
+                &RouterTapPreview {
+                    phase: RouterTapPhase::Settled("respond"),
+                    ..preview
+                },
+            )
+            .expect("the ids name tokens")
+            .body,
+        )
+        .expect("the tap body is JSON");
+        assert_eq!(
+            settled,
+            serde_json::json!({
+                "format-version": 1,
+                "phase": "settled",
+                "outcome": "respond",
+                "delivery-id": "d-1",
+                "wiring-id": "orders",
+                "wiring-version": 3,
+                "source-kind": "attachment",
+                "source-id": "orders-http",
+                "redacted": false,
+                "payload": {"plain": "visible"},
+            }),
+            "the settled preview record is frozen for wamn-dggp.10"
+        );
+
+        assert_eq!(
+            ROUTER_TAP_FORMAT_VERSION, 1,
+            "bumping the wire version re-freezes both records above, in the \
+             same commit that changes a field's meaning"
+        );
+
+        assert_eq!(
+            router_tap_subject(&claim, "orders", "d-1").as_deref(),
+            Some("tap.acme.app.prod.orders.d-1"),
+            "the subject grammar is the other half of the frozen contract: \
+             {ROUTER_TAP_PREFIX}.<tenant>.<project>.<environment>.<wiring>.<delivery>"
         );
     }
 
