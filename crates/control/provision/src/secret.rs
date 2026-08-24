@@ -17,8 +17,9 @@ use wamn_control_registry::Triple;
 use wamn_run_state::{EFFECT_WRITER_CREDENTIAL_KEY, EffectWriterCredential};
 
 use crate::name::{
-    APP_ROLE, cdc_object_name, control_author_secret_name, project_env_cdc_secret_name,
-    project_env_effect_writer_secret_name, project_env_secret_name, secret_name,
+    APP_ROLE, cdc_object_name, control_author_secret_name, management_admitter_secret_name,
+    project_env_cdc_secret_name, project_env_effect_writer_secret_name, project_env_secret_name,
+    secret_name,
 };
 
 /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
@@ -198,6 +199,50 @@ pub fn render_control_author_secret_manifest(triple: &Triple, namespace: &str, u
     })
 }
 
+/// Render the scoped management-admitter URL Secret consumed by scenario-worker.
+///
+/// The sibling of [`render_control_author_secret_manifest`] on the other plane:
+/// control-author's URL names the **control** database, this one names the
+/// **project environment's own** database. Both carry the single `url` key
+/// because scenario-worker reads both through the same `secretKeyRef … key: url`
+/// shape (`wamn-0h0g.8.5.3`).
+///
+/// `wamn-0h0g.12.118` deliberately deferred this renderer — "no bespoke prepare,
+/// retire, Secret, or A/B implementation" — while nothing consumed the
+/// management-admitter family. `wamn-0h0g.8.5.3` is the first consumer, so
+/// `wamn-0h0g.12.176` **completes** that deferral at its trigger rather than
+/// reversing it: the A/B lifecycle behind this Secret is still the generic
+/// workload machinery, and this function only renders.
+pub fn render_management_admitter_secret_manifest(
+    triple: &Triple,
+    namespace: &str,
+    url: &str,
+) -> Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": management_admitter_secret_name(
+                &triple.org,
+                &triple.project,
+                triple.env.as_str(),
+            ),
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "wamn",
+                "app.kubernetes.io/component": "management-admitter-credentials",
+                "wamn.org": triple.org,
+                "wamn.project": triple.project,
+                "wamn.env": triple.env.as_str(),
+            },
+        },
+        "type": "Opaque",
+        "stringData": {
+            "url": url,
+        },
+    })
+}
+
 /// Render the per-project-env **CDC** credential `Secret` (wamn-l5i9.9). Name
 /// `wamn-cdc-<org>--<project>--<env>` — the reference the reader registration
 /// records as `replication_secret_name`, DISTINCT from the `wamn-db-…` query
@@ -342,6 +387,72 @@ mod tests {
             "wamn-authoring-acme--receiving--dev"
         );
         assert_eq!(secret["stringData"]["url"], url);
+    }
+
+    /// `wamn-0h0g.8.5.3` landed the consuming half — a `secretKeyRef` in
+    /// `deploy/platform/scenario-worker.yaml` — before anything minted the
+    /// Secret, and measured that pointing that reference at a wrong name killed
+    /// no test. `tests/conformance`'s workload scanner filters to kind
+    /// `WorkloadDeployment` and scenario-worker is a plain `Deployment`, so it is
+    /// invisible there.
+    ///
+    /// This is the equality that closes it, and it is not a source scan: the
+    /// Deployment's `secretKeyRef` name and key are compared against the
+    /// **renderer's own output** for the same scope, so drifting either half
+    /// fails here.
+    #[test]
+    fn management_admitter_secret_is_mount_exact_with_the_scenario_worker_deployment() {
+        const SCENARIO_WORKER: &str =
+            include_str!("../../../../deploy/platform/scenario-worker.yaml");
+
+        let triple = Triple::new("acme", "receiving", "dev");
+        let url = "postgres://wamn_mgmt_admitter_scope_a:pw@acme-dev-rw:5432/\
+                   wamn-db-acme--receiving--dev--k3m9x2p7";
+        let secret = render_management_admitter_secret_manifest(&triple, "wamn-system", url);
+        assert_eq!(secret["kind"], "Secret");
+        assert_eq!(secret["type"], "Opaque");
+        assert_eq!(
+            secret["metadata"]["labels"]["app.kubernetes.io/component"],
+            "management-admitter-credentials"
+        );
+        assert_eq!(secret["metadata"]["namespace"], "wamn-system");
+        // R8b: its own credential tier is its own Secret — never the control
+        // database's authoring Secret, which the same pod also mounts.
+        assert_ne!(
+            secret["metadata"]["name"],
+            render_control_author_secret_manifest(&triple, "wamn-system", url)["metadata"]["name"]
+        );
+
+        // Exactly one key, whatever it is named, and it carries the URL.
+        let data = secret["stringData"].as_object().unwrap();
+        assert_eq!(data.len(), 1);
+        let key = data.keys().next().expect("the Secret carries one key");
+        assert_eq!(data[key], url);
+        let name = secret["metadata"]["name"]
+            .as_str()
+            .expect("the Secret is named");
+
+        // The consuming env entry, read out of the Deployment rather than
+        // restated: `valueFrom.secretKeyRef.{name,key}` must be exactly what the
+        // renderer produced for this triple.
+        let reference: Vec<String> = SCENARIO_WORKER
+            .split("- name: WAMN_MANAGEMENT_ADMISSION_PG_URL")
+            .nth(1)
+            .expect("scenario-worker consumes WAMN_MANAGEMENT_ADMISSION_PG_URL")
+            .lines()
+            .skip(1)
+            .take(4)
+            .map(|line| line.trim().to_string())
+            .collect();
+        assert_eq!(
+            reference,
+            [
+                "valueFrom:".to_string(),
+                "secretKeyRef:".to_string(),
+                format!("name: {name}"),
+                format!("key: {key}"),
+            ]
+        );
     }
 
     #[test]

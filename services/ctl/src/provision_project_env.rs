@@ -74,8 +74,9 @@ use wamn_control_provision::{
     compose_url, effect_writer_credential, legacy_effect_writer_generation_role,
     project_env_database_name, project_env_namespace, project_env_secret_name,
     render_control_author_secret_manifest, render_effect_writer_secret_manifest,
-    render_project_env_database, render_project_env_secret_manifest, sql, validate_instance_suffix,
-    validate_project_env, workload_generation_role,
+    render_management_admitter_secret_manifest, render_project_env_database,
+    render_project_env_secret_manifest, sql, validate_instance_suffix, validate_project_env,
+    workload_generation_role,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_platform_identity::{
@@ -152,7 +153,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_effect_writer_generation",
             "prepare_control_author_generation",
             "retire_control_author_generation",
-            "abort_control_author_generation"
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
         ]
     )]
     pub app_password: Option<String>,
@@ -180,7 +184,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_effect_writer_generation",
             "prepare_control_author_generation",
             "retire_control_author_generation",
-            "abort_control_author_generation"
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
         ]
     )]
     pub dispatch_reader_password: Option<String>,
@@ -203,8 +210,9 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub secret_namespace: Option<String>,
 
-    /// Explicit target project-database admin URL for effect-writer generation
-    /// actions. Provisioning authority only: never persisted or emitted.
+    /// Explicit target project-database admin URL for the generation actions that
+    /// address the project-env database (effect-writer, management-admitter).
+    /// Provisioning authority only: never persisted or emitted.
     #[arg(long, value_name = "URL")]
     pub target_admin_database_url: Option<String>,
 
@@ -217,7 +225,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_effect_writer_generation",
             "prepare_control_author_generation",
             "retire_control_author_generation",
-            "abort_control_author_generation"
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
         ]
     )]
     pub prepare_effect_writer_generation: Option<CredentialGeneration>,
@@ -231,7 +242,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_effect_writer_generation",
             "prepare_control_author_generation",
             "retire_control_author_generation",
-            "abort_control_author_generation"
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
         ]
     )]
     pub retire_effect_writer_generation: Option<CredentialGeneration>,
@@ -248,7 +262,10 @@ pub struct ProvisionProjectEnvArgs {
             "retire_effect_writer_generation",
             "prepare_control_author_generation",
             "retire_control_author_generation",
-            "abort_control_author_generation"
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
         ]
     )]
     pub abort_effect_writer_generation: Option<CredentialGeneration>,
@@ -272,7 +289,10 @@ pub struct ProvisionProjectEnvArgs {
             "retire_effect_writer_generation",
             "abort_effect_writer_generation",
             "retire_control_author_generation",
-            "abort_control_author_generation"
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
         ]
     )]
     pub prepare_control_author_generation: Option<CredentialGeneration>,
@@ -286,7 +306,10 @@ pub struct ProvisionProjectEnvArgs {
             "retire_effect_writer_generation",
             "abort_effect_writer_generation",
             "prepare_control_author_generation",
-            "abort_control_author_generation"
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
         ]
     )]
     pub retire_control_author_generation: Option<CredentialGeneration>,
@@ -300,7 +323,10 @@ pub struct ProvisionProjectEnvArgs {
             "retire_effect_writer_generation",
             "abort_effect_writer_generation",
             "prepare_control_author_generation",
-            "retire_control_author_generation"
+            "retire_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
         ]
     )]
     pub abort_control_author_generation: Option<CredentialGeneration>,
@@ -313,6 +339,73 @@ pub struct ProvisionProjectEnvArgs {
         requires = "prepare_control_author_generation"
     )]
     pub emit_control_author_secret: Option<PathBuf>,
+
+    /// Prepare and authenticate the inactive management-admitter generation.
+    ///
+    /// The seventh frozen family (`wamn-0h0g.13.61`) reaches ctl here.
+    /// `wamn-0h0g.12.118` deferred this lifecycle while nothing consumed the
+    /// role; `wamn-0h0g.8.5.3` is the first consumer, so `wamn-0h0g.12.176`
+    /// **completes** that deferral instead of reversing it — there is still no
+    /// bespoke prepare, retire, Secret or A/B implementation, only this stamp
+    /// onto the `wamn-0h0g.13.59` unified lifecycle.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
+        ]
+    )]
+    pub prepare_management_admitter_generation: Option<CredentialGeneration>,
+
+    /// Retire the old management-admitter generation after replacement use.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "abort_management_admitter_generation"
+        ]
+    )]
+    pub retire_management_admitter_generation: Option<CredentialGeneration>,
+
+    /// Abort a prepared management-admitter generation that was not published.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation"
+        ]
+    )]
+    pub abort_management_admitter_generation: Option<CredentialGeneration>,
+
+    /// Write the management-admitter URL Secret consumed by scenario-worker.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_parser = parse_secret_path,
+        requires = "prepare_management_admitter_generation"
+    )]
+    pub emit_management_admitter_secret: Option<PathBuf>,
 
     /// Write the CNPG `Database` CR (JSON) here; `-` = stdout. Absent ⇒ printed
     /// with a labeled header.
@@ -343,7 +436,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_effect_writer_generation",
             "prepare_control_author_generation",
             "retire_control_author_generation",
-            "abort_control_author_generation"
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation"
         ]
     )]
     pub emit_secret: Option<PathBuf>,
@@ -441,9 +537,15 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     {
         return run_control_author_action(&args).await;
     }
+    if args.prepare_management_admitter_generation.is_some()
+        || args.retire_management_admitter_generation.is_some()
+        || args.abort_management_admitter_generation.is_some()
+    {
+        return run_management_admitter_action(&args).await;
+    }
     anyhow::ensure!(
         args.target_admin_database_url.is_none(),
-        "--target-admin-database-url is valid only for an effect-writer generation action"
+        "--target-admin-database-url is valid only for an effect-writer or management-admitter generation action"
     );
 
     let db_secret_path = args
@@ -780,6 +882,30 @@ fn control_author_lifecycle<'a>(
     }
 }
 
+/// The management-admitter family's pairing with its exact scope grain.
+///
+/// The third stamp of the same shape, not a fourth mechanism: project-environment
+/// scope (`org`, `project`, `environment`, and the project-env **database** the
+/// URL names), and no control tenant, because the tenant mapping row is the
+/// control plane's and this credential never touches the control database.
+fn management_admitter_lifecycle<'a>(
+    org: &'a str,
+    project: &'a str,
+    environment: &'a str,
+    database: &'a str,
+) -> WorkloadLifecycle<'a> {
+    WorkloadLifecycle {
+        family: WorkloadRoleFamily::ManagementAdmitter,
+        scope: WorkloadRoleScope::ProjectEnvironment {
+            org,
+            project,
+            environment,
+            database,
+        },
+        control_tenant: None,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct WorkloadActionIdentity<'a> {
     org: &'a str,
@@ -921,6 +1047,7 @@ async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs) -> anyhow::Res
             && args.emit_privilege_sql.is_none()
             && args.emit_secret.is_none()
             && args.emit_control_author_secret.is_none()
+            && args.emit_management_admitter_secret.is_none()
             && args.emit_management_author_pat_secret.is_none()
             && args.emit_route_caller_pat_secret.is_none(),
         "effect-writer generation actions cannot render ordinary provisioning or PAT artifacts"
@@ -1051,9 +1178,10 @@ async fn run_control_author_action(args: &ProvisionProjectEnvArgs) -> anyhow::Re
             && args.emit_privilege_sql.is_none()
             && args.emit_secret.is_none()
             && args.emit_effect_writer_secret.is_none()
+            && args.emit_management_admitter_secret.is_none()
             && args.emit_management_author_pat_secret.is_none()
             && args.emit_route_caller_pat_secret.is_none(),
-        "control-author generation actions cannot render ordinary provisioning, effect-writer, or PAT artifacts"
+        "control-author generation actions cannot render ordinary provisioning, effect-writer, management-admitter, or PAT artifacts"
     );
     let identity = workload_action_identity(args, "control-author")?;
     let WorkloadActionIdentity {
@@ -1137,6 +1265,119 @@ async fn run_control_author_action(args: &ProvisionProjectEnvArgs) -> anyhow::Re
         Ok(())
     } else {
         anyhow::bail!("no control-author generation action selected")
+    }
+}
+
+/// The management-admitter A/B lifecycle (`wamn-0h0g.12.176`).
+///
+/// The third instance of one shape. It addresses the **project-environment**
+/// database like the effect-writer action — the instance suffix is read from the
+/// registry so the database name is derived, never typed — and it publishes a
+/// single-`url` Secret like the control-author action, because scenario-worker
+/// mounts both through the same `secretKeyRef … key: url`.
+///
+/// `--tenant` is the shared workload-action identity contract, not an input to
+/// this family's derivation: management-admission scopes on `(org, project,
+/// environment, database)` alone.
+async fn run_management_admitter_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.cluster.is_none()
+            && args.connection_limit.is_none()
+            && args.app_host.is_none()
+            && args.emit_database.is_none()
+            && args.emit_role_sql.is_none()
+            && args.emit_privilege_sql.is_none()
+            && args.emit_secret.is_none()
+            && args.emit_effect_writer_secret.is_none()
+            && args.emit_control_author_secret.is_none()
+            && args.emit_management_author_pat_secret.is_none()
+            && args.emit_route_caller_pat_secret.is_none(),
+        "management-admitter generation actions cannot render ordinary provisioning, effect-writer, control-author, or PAT artifacts"
+    );
+    let identity = workload_action_identity(args, "management-admitter")?;
+    let WorkloadActionIdentity {
+        org,
+        project,
+        environment,
+        ..
+    } = identity;
+    let system_url = args.system_database_url.as_deref().context(
+        "management-admitter generation actions require --system-database-url to resolve the stored instance suffix",
+    )?;
+    let triple = Triple::new(org, project, environment);
+    let instance = read_project_env_instance(system_url, &triple).await?;
+    let database = project_env_database_name(org, project, environment, &instance);
+    let admin_url = args
+        .target_admin_database_url
+        .as_deref()
+        .context("management-admitter generation actions require --target-admin-database-url")?;
+    let admin_config = exact_project_database_config(admin_url, &database)?;
+    let lifecycle = management_admitter_lifecycle(org, project, environment, &database);
+
+    if let Some(generation) = args.prepare_management_admitter_generation {
+        let secret_path = args.emit_management_admitter_secret.as_deref().context(
+            "--prepare-management-admitter-generation requires --emit-management-admitter-secret PATH",
+        )?;
+        ensure_secret_path(secret_path, "--emit-management-admitter-secret")?;
+        let validity = workload_validity(Utc::now());
+        prepare_workload_generation(
+            &admin_config,
+            lifecycle,
+            None,
+            None,
+            generation,
+            &validity.expires_at,
+            |role, password, _predecessor_role| {
+                let credential_url = workload_url(admin_url, role, password, &database)?;
+                let secret = render_management_admitter_secret_manifest(
+                    &triple,
+                    &args.namespace,
+                    &credential_url,
+                );
+                write_secret_json(secret_path, &secret)
+                    .context("write authenticated management-admitter Secret")
+            },
+        )
+        .await?;
+        println!(
+            "prepared and authenticated management-admitter credential generation {} for {}/{}/{}; wrote {}",
+            generation.as_str(),
+            org,
+            project,
+            environment,
+            secret_path.display()
+        );
+        Ok(())
+    } else if let Some(generation) = args.retire_management_admitter_generation {
+        anyhow::ensure!(
+            args.emit_management_admitter_secret.is_none(),
+            "--emit-management-admitter-secret is valid only when preparing a generation"
+        );
+        retire_workload_generation(&admin_config, lifecycle, None, generation).await?;
+        println!(
+            "retired management-admitter credential generation {} for {}/{}/{}",
+            generation.as_str(),
+            org,
+            project,
+            environment
+        );
+        Ok(())
+    } else if let Some(generation) = args.abort_management_admitter_generation {
+        anyhow::ensure!(
+            args.emit_management_admitter_secret.is_none(),
+            "--emit-management-admitter-secret is valid only when preparing a generation"
+        );
+        abort_workload_generation(&admin_config, lifecycle, generation).await?;
+        println!(
+            "aborted unpublished management-admitter credential generation {} for {}/{}/{}",
+            generation.as_str(),
+            org,
+            project,
+            environment
+        );
+        Ok(())
+    } else {
+        anyhow::bail!("no management-admitter generation action selected")
     }
 }
 
@@ -2737,6 +2978,9 @@ mod tests {
             "--prepare-control-author-generation",
             "--retire-control-author-generation",
             "--abort-control-author-generation",
+            "--prepare-management-admitter-generation",
+            "--retire-management-admitter-generation",
+            "--abort-management-admitter-generation",
         ] {
             for omitted in ["--org", "--project", "--env"] {
                 let mut argv = vec![
@@ -3357,6 +3601,9 @@ mod tests {
             "--prepare-effect-writer-generation",
             "--retire-effect-writer-generation",
             "--abort-effect-writer-generation",
+            "--prepare-management-admitter-generation",
+            "--retire-management-admitter-generation",
+            "--abort-management-admitter-generation",
         ] {
             let parsed = parse_without_password_envs([
                 "test",
@@ -3562,6 +3809,169 @@ mod tests {
             &[],
         )
         .unwrap();
+    }
+
+    /// `wamn-0h0g.12.176`: the management-admitter action is one more STAMP of
+    /// the `wamn-0h0g.13.59` unified lifecycle, not a fourth mechanism.
+    ///
+    /// This COMPLETES `wamn-0h0g.12.118`'s deferral — "no bespoke prepare,
+    /// retire, Secret, or A/B implementation", closed for want of "a ctl
+    /// lifecycle or call site". `wamn-0h0g.8.5.3` is the first consumer, so the
+    /// deferral reached its trigger; nothing here reverses it, and every assert
+    /// below is that the generic machinery, not a bespoke path, produced the
+    /// result.
+    #[test]
+    fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() {
+        const DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+
+        // The lifecycle constructor pairs the seventh family with its exact scope
+        // grain, and carries no control tenant: the tenant mapping row belongs to
+        // the control plane, which this credential never reaches.
+        let lifecycle = management_admitter_lifecycle("acme", "receiving", "dev", DATABASE);
+        assert_eq!(lifecycle.family, WorkloadRoleFamily::ManagementAdmitter);
+        assert_eq!(lifecycle.database(), DATABASE);
+        assert_eq!(lifecycle.label(), "management-admitter");
+        assert!(lifecycle.control_tenant.is_none());
+        assert!(matches!(
+            lifecycle.scope,
+            WorkloadRoleScope::ProjectEnvironment { .. }
+        ));
+
+        // The A/B pair is the crate's derivation, never a second spelling here.
+        let a = lifecycle.role(CredentialGeneration::A);
+        let b = lifecycle.role(CredentialGeneration::B);
+        for (generation, derived) in [(CredentialGeneration::A, &a), (CredentialGeneration::B, &b)]
+        {
+            assert_eq!(
+                derived,
+                &wamn_control_provision::management_admitter_generation_role(
+                    "acme",
+                    "receiving",
+                    "dev",
+                    DATABASE,
+                    generation,
+                )
+            );
+            assert!(is_workload_generation_role(
+                WorkloadRoleFamily::ManagementAdmitter,
+                derived
+            ));
+            assert_eq!(derived.len(), 61);
+        }
+        assert_ne!(a, b);
+        assert!(a.starts_with("wamn_mgmt_admitter_") && a.ends_with("_a"));
+        assert!(b.ends_with("_b"));
+        // The generation prefix is the short frozen one, never the 24-byte stable
+        // ACL role name (wamn-0h0g.13.62).
+        assert!(!a.starts_with(MANAGEMENT_ADMITTER_ROLE));
+        assert_eq!(lifecycle.family.acl_role(), MANAGEMENT_ADMITTER_ROLE);
+
+        // Each family locks on its own key, so three lifecycles never serialize
+        // against one another.
+        let keys = [
+            lifecycle.family_lock_key(),
+            effect_writer_lifecycle("tenant", DATABASE).family_lock_key(),
+            control_author_lifecycle("tenant", "acme", "receiving", "dev", "wamn-system")
+                .family_lock_key(),
+        ];
+        assert_eq!(BTreeSet::from(keys.clone()).len(), keys.len());
+
+        // The published Secret is the crate renderer's, named by the crate helper
+        // the wamn-0h0g.8.5.3 Deployment reference derives from. One derivation,
+        // so the mint and the reference cannot drift apart.
+        let secret = render_management_admitter_secret_manifest(
+            &Triple::new("acme", "receiving", "dev"),
+            "wamn-system",
+            "postgres://role:pw@acme-dev-rw:5432/wamn-db-acme--receiving--dev--k3m9x2p7",
+        );
+        assert_eq!(
+            secret["metadata"]["name"].as_str().expect("Secret name"),
+            wamn_control_provision::management_admitter_secret_name("acme", "receiving", "dev")
+        );
+
+        // Every pair of the nine action flags is mutually exclusive: one action
+        // per invocation, across all three families.
+        const ACTIONS: [&str; 9] = [
+            "--prepare-effect-writer-generation",
+            "--retire-effect-writer-generation",
+            "--abort-effect-writer-generation",
+            "--prepare-control-author-generation",
+            "--retire-control-author-generation",
+            "--abort-control-author-generation",
+            "--prepare-management-admitter-generation",
+            "--retire-management-admitter-generation",
+            "--abort-management-admitter-generation",
+        ];
+        for (index, first) in ACTIONS.iter().enumerate() {
+            for second in &ACTIONS[index + 1..] {
+                assert!(
+                    parse_without_password_envs([
+                        "test",
+                        "--org",
+                        "acme",
+                        "--project",
+                        "receiving",
+                        "--env",
+                        "dev",
+                        first,
+                        "a",
+                        second,
+                        "b",
+                    ])
+                    .is_err(),
+                    "{first} and {second} were accepted together"
+                );
+            }
+        }
+
+        // The Secret output is bound to prepare and never to stdout, exactly like
+        // its two siblings.
+        assert!(
+            parse_args(&[
+                "--emit-management-admitter-secret",
+                "/tmp/management-admitter.json",
+            ])
+            .is_err(),
+            "--emit-management-admitter-secret escaped its prepare requirement"
+        );
+        assert!(
+            parse_without_password_envs([
+                "test",
+                "--org",
+                "acme",
+                "--project",
+                "receiving",
+                "--env",
+                "dev",
+                "--prepare-management-admitter-generation",
+                "a",
+                "--emit-management-admitter-secret",
+                "-",
+            ])
+            .is_err(),
+            "--emit-management-admitter-secret accepted stdout"
+        );
+        let prepared = parse_without_password_envs([
+            "test",
+            "--org",
+            "acme",
+            "--project",
+            "receiving",
+            "--env",
+            "dev",
+            "--prepare-management-admitter-generation",
+            "a",
+            "--emit-management-admitter-secret",
+            "/tmp/management-admitter.json",
+        ])
+        .expect("prepare with its Secret path parses");
+        assert_eq!(
+            prepared.prepare_management_admitter_generation,
+            Some(CredentialGeneration::A)
+        );
+        assert!(prepared.emit_secret.is_none());
+        assert!(prepared.emit_control_author_secret.is_none());
+        assert!(prepared.emit_effect_writer_secret.is_none());
     }
 
     #[test]

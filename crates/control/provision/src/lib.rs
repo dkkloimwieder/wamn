@@ -113,7 +113,8 @@ pub use org::{OrgClusters, render_org_cluster_set};
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use secret::{
     render_control_author_secret_manifest, render_effect_writer_secret_manifest,
-    render_project_env_cdc_secret_manifest, render_project_env_secret_manifest,
+    render_management_admitter_secret_manifest, render_project_env_cdc_secret_manifest,
+    render_project_env_secret_manifest,
 };
 pub use wamn_run_state::{
     CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_CREDENTIAL_PATH,
