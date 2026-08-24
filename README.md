@@ -156,11 +156,23 @@ The in-cluster gate of record runs on a local `kind` cluster named `wamn`,
 with the host + gate images built from the two-stage `Dockerfile`:
 
 ```bash
-# 1. stand up the cluster + wasmCloud runtime-operator
+# 1. stand up the cluster, its base infrastructure, and the runtime-operator
 kind create cluster --name wamn --config deploy/infra/kind-config.yaml
-helm upgrade --install -n wamn-system wamn \
-  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
-  -f deploy/infra/values-wamn.yaml
+
+#    cert-manager is install-once base infrastructure applied by hand at
+#    standup, before anything that renders `cert-manager.io` CRs; it is
+#    vendored at a pinned tag and `deploy/README.md` owns the bump procedure.
+kubectl apply -f deploy/infra/cert-manager.yaml
+kubectl -n cert-manager wait --for=condition=Available deploy --all --timeout=180s
+
+#    The runtime-operator is installed as TWO Helm releases from one chart, in
+#    this order: the cluster-singleton operator (which carries the CRDs and no
+#    host groups), then this environment's host tier. The chart version pin is
+#    deliberately NOT restated here — each values file's header carries the
+#    exact `helm upgrade --install` command for its release, and
+#    tests/conformance/tests/chart_seam_governance.rs fails if the two drift:
+#      deploy/infra/values-wamn.yaml             operator + CRDs, cluster singleton
+#      deploy/platform/values-host-default.yaml  host tier, one per environment
 
 # 2. build the host and gate images and load them into kind
 docker build --target host  -t wamn-host:dev  .
