@@ -25,8 +25,15 @@ readonly WAMN_REPOSITORY_ROOT="$(
 )"
 readonly WAMN_ROOT_MANIFEST="$WAMN_REPOSITORY_ROOT/Cargo.toml"
 readonly WAMN_COMPONENT_MANIFEST="$WAMN_REPOSITORY_ROOT/components/Cargo.toml"
+readonly WAMN_NO_STD_MANIFEST="$WAMN_REPOSITORY_ROOT/components/no-std/Cargo.toml"
 readonly WAMN_CARGO="${CARGO:-cargo}"
+# A no_std guest supplies its own #[panic_handler], and the precompiled core
+# library panics by unwinding, so a NATIVE check of one fails to link with
+# "unwinding panics are not supported without std" unless panics abort. The
+# wasm32-wasip2 checks need no such flag. Measured at 72107f35: without it,
+# the components/no-std native leg exits 101 on both members.
 readonly WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS='-C panic=abort'
+readonly WAMN_NO_STD_NATIVE_RUSTFLAGS='-C panic=abort'
 
 # The trusted HTTP connection effect must construct one client per invocation
 # and drop it at function exit. The wash-runtime pooled egress path keys its
@@ -68,6 +75,23 @@ readonly -a WAMN_COMPONENT_WASM_CLIPPY=(
   clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --workspace
   --target wasm32-wasip2 -- -D warnings
 )
+# The second component workspace. It exists because Cargo feature unification is
+# additive-only and per-invocation, so the no_std guests cannot share one with a
+# std sibling (wamn-0h0g.11.56). Separate workspace, therefore separate legs.
+# None of the three takes --all-targets: a no_std cdylib guest has no meaningful
+# lib-test target, and --all-targets is the invocation that is not green-capable
+# here rather than a stricter one that is.
+readonly -a WAMN_NO_STD_FORMAT=(
+  fmt --manifest-path "$WAMN_NO_STD_MANIFEST" --all -- --check
+)
+readonly -a WAMN_NO_STD_NATIVE_CLIPPY=(
+  clippy --manifest-path "$WAMN_NO_STD_MANIFEST" --locked --workspace
+  -- -D warnings
+)
+readonly -a WAMN_NO_STD_WASM_CLIPPY=(
+  clippy --manifest-path "$WAMN_NO_STD_MANIFEST" --locked --workspace
+  --target wasm32-wasip2 -- -D warnings
+)
 
 wamn_print_plan() {
   local -r label="$1"
@@ -82,6 +106,7 @@ wamn_dry_run() {
   printf 'connection-http-construction: %q\n' "$WAMN_CONNECTION_HTTP_SOURCE"
   wamn_print_plan 'root-rustfmt' "${WAMN_ROOT_FORMAT[@]}"
   wamn_print_plan 'components-rustfmt' "${WAMN_COMPONENT_FORMAT[@]}"
+  wamn_print_plan 'no-std-rustfmt' "${WAMN_NO_STD_FORMAT[@]}"
   wamn_print_plan 'root-clippy' "${WAMN_ROOT_CLIPPY[@]}"
   wamn_print_plan 'components-native-clippy' "${WAMN_COMPONENT_NATIVE_CLIPPY[@]}"
   printf 'connection-http-native-clippy: RUSTFLAGS=%q' \
@@ -89,6 +114,10 @@ wamn_dry_run() {
   printf ' %q' "$WAMN_CARGO" "${WAMN_CONNECTION_HTTP_NATIVE_CLIPPY[@]}"
   printf '\n'
   wamn_print_plan 'components-wasm-clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
+  printf 'no-std-native-clippy: RUSTFLAGS=%q' "$WAMN_NO_STD_NATIVE_RUSTFLAGS"
+  printf ' %q' "$WAMN_CARGO" "${WAMN_NO_STD_NATIVE_CLIPPY[@]}"
+  printf '\n'
+  wamn_print_plan 'no-std-wasm-clippy' "${WAMN_NO_STD_WASM_CLIPPY[@]}"
 }
 
 wamn_require_cargo() {
@@ -131,6 +160,15 @@ wamn_run_connection_http_native_clippy() {
   local exit_code=0
   RUSTFLAGS="$WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS" \
     "$WAMN_CARGO" "${WAMN_CONNECTION_HTTP_NATIVE_CLIPPY[@]}" || exit_code=$?
+  wamn_report_leg "$label" "$exit_code"
+}
+
+wamn_run_no_std_native_clippy() {
+  local -r label='no-std native Clippy'
+  printf 'repo-lint: %s\n' "$label" >&2
+  local exit_code=0
+  RUSTFLAGS="$WAMN_NO_STD_NATIVE_RUSTFLAGS" \
+    "$WAMN_CARGO" "${WAMN_NO_STD_NATIVE_CLIPPY[@]}" || exit_code=$?
   wamn_report_leg "$label" "$exit_code"
 }
 
@@ -187,10 +225,13 @@ case "$WAMN_COMMAND" in
     wamn_connection_http_construction
     wamn_run 'root rustfmt' "${WAMN_ROOT_FORMAT[@]}"
     wamn_run 'components rustfmt' "${WAMN_COMPONENT_FORMAT[@]}"
+    wamn_run 'no-std rustfmt' "${WAMN_NO_STD_FORMAT[@]}"
     wamn_run 'root Clippy' "${WAMN_ROOT_CLIPPY[@]}"
     wamn_run 'components native Clippy' "${WAMN_COMPONENT_NATIVE_CLIPPY[@]}"
     wamn_run_connection_http_native_clippy
     wamn_run 'components wasm Clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
+    wamn_run_no_std_native_clippy
+    wamn_run 'no-std wasm Clippy' "${WAMN_NO_STD_WASM_CLIPPY[@]}"
     ((WAMN_ANY_LEG_FAILED == 0))
     ;;
   *)

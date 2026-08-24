@@ -1,4 +1,4 @@
-//! Exact repo-local lint coverage over both Cargo workspaces.
+//! Exact repo-local lint coverage over all three Cargo workspaces.
 
 use serde_json::Value;
 use std::fs;
@@ -10,14 +10,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const TOOL: &str = "tools/repo-lint";
 const ROOT_MEMBER_COUNT: usize = 35;
 const COMPONENT_MEMBER_COUNT: usize = 5;
-const LEG_LABELS: [&str; 7] = [
+const NO_STD_MEMBER_COUNT: usize = 2;
+const LEG_LABELS: [&str; 10] = [
     "connection HTTP per-invocation client",
     "root rustfmt",
     "components rustfmt",
+    "no-std rustfmt",
     "root Clippy",
     "components native Clippy",
     "connection-http-standard native Clippy",
     "components wasm Clippy",
+    "no-std native Clippy",
+    "no-std wasm Clippy",
 ];
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -170,6 +174,7 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
     let root = repository_root();
     let root_manifest = root.join("Cargo.toml");
     let component_manifest = root.join("components/Cargo.toml");
+    let no_std_manifest = root.join("components/no-std/Cargo.toml");
     assert_eq!(
         workspace_member_count(&root, &root_manifest),
         ROOT_MEMBER_COUNT
@@ -177,6 +182,10 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
     assert_eq!(
         workspace_member_count(&root, &component_manifest),
         COMPONENT_MEMBER_COUNT
+    );
+    assert_eq!(
+        workspace_member_count(&root, &no_std_manifest),
+        NO_STD_MEMBER_COUNT
     );
 
     let tool = root.join(TOOL);
@@ -200,6 +209,7 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
     let root_path = root.display().to_string();
     let root_manifest_path = root_manifest.display().to_string();
     let component_manifest_path = component_manifest.display().to_string();
+    let no_std_manifest_path = no_std_manifest.display().to_string();
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")),
         vec![
@@ -217,6 +227,15 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
                 "fmt".into(),
                 "--manifest-path".into(),
                 component_manifest_path.clone(),
+                "--all".into(),
+                "--".into(),
+                "--check".into(),
+            ],
+            vec![
+                root_path.clone(),
+                "fmt".into(),
+                "--manifest-path".into(),
+                no_std_manifest_path.clone(),
                 "--all".into(),
                 "--".into(),
                 "--check".into(),
@@ -260,10 +279,34 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
                 "warnings".into(),
             ],
             vec![
-                root_path,
+                root_path.clone(),
                 "clippy".into(),
                 "--manifest-path".into(),
                 component_manifest_path,
+                "--locked".into(),
+                "--workspace".into(),
+                "--target".into(),
+                "wasm32-wasip2".into(),
+                "--".into(),
+                "-D".into(),
+                "warnings".into(),
+            ],
+            vec![
+                root_path.clone(),
+                "clippy".into(),
+                "--manifest-path".into(),
+                no_std_manifest_path.clone(),
+                "--locked".into(),
+                "--workspace".into(),
+                "--".into(),
+                "-D".into(),
+                "warnings".into(),
+            ],
+            vec![
+                root_path,
+                "clippy".into(),
+                "--manifest-path".into(),
+                no_std_manifest_path,
                 "--locked".into(),
                 "--workspace".into(),
                 "--target".into(),
@@ -279,7 +322,17 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
             .expect("read fake Cargo RUSTFLAGS log")
             .lines()
             .collect::<Vec<_>>(),
-        ["", "", "", "", "-C panic=abort", ""]
+        [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "-C panic=abort",
+            "",
+            "-C panic=abort",
+            ""
+        ]
     );
     assert_leg_statuses(&output, None);
 }
@@ -298,7 +351,7 @@ fn repo_lint_reports_every_leg_when_an_early_leg_fails() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        6,
+        9,
         "an early failure must not hide a later Cargo leg"
     );
     assert_leg_statuses(&output, Some(("root rustfmt", 23)));
@@ -324,7 +377,7 @@ fn repo_lint_reports_every_cargo_leg_when_the_static_leg_fails() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        6,
+        9,
         "a static-leg failure must not hide any Cargo leg"
     );
     assert_leg_statuses(&output, Some(("connection HTTP per-invocation client", 65)));
@@ -337,17 +390,17 @@ fn repo_lint_returns_failure_when_the_last_leg_fails() {
     executable(&directory.path("fake cargo"), FAKE_CARGO);
 
     let output = tool_command(&root, &directory)
-        .env("WAMN_FAKE_CARGO_FAIL_AT", "6")
+        .env("WAMN_FAKE_CARGO_FAIL_AT", "9")
         .arg("run")
         .output()
         .expect("run failing repo-lint tool");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        6,
+        9,
         "the final Cargo leg must run"
     );
-    assert_leg_statuses(&output, Some(("components wasm Clippy", 23)));
+    assert_leg_statuses(&output, Some(("no-std wasm Clippy", 23)));
 }
 
 #[test]
@@ -361,13 +414,17 @@ fn dry_run_is_side_effect_free_and_invalid_commands_are_refused() {
     assert!(!directory.path("cargo calls").exists());
     let plan = String::from_utf8(output.stdout).expect("dry-run output must be UTF-8");
     assert!(plan.contains("connection-http-native-clippy: RUSTFLAGS=-C\\ panic=abort"));
+    assert!(plan.contains("no-std-native-clippy: RUSTFLAGS=-C\\ panic=abort"));
     for label in [
         "root-rustfmt:",
         "components-rustfmt:",
+        "no-std-rustfmt:",
         "root-clippy:",
         "components-native-clippy:",
         "connection-http-native-clippy:",
         "components-wasm-clippy:",
+        "no-std-native-clippy:",
+        "no-std-wasm-clippy:",
     ] {
         assert!(plan.contains(label), "dry-run omitted {label}");
     }
