@@ -20,9 +20,9 @@
 //! therefore a `macro_rules!` taking `$name:literal`: one definition of the
 //! shared field block, a per-surface constant name at each call site. This is
 //! M-MACRO-LAST-RESORT's actual last resort — the limitation is the language's,
-//! not a preference — and it is what keeps `wamn-0h0g.24.2`'s coming
-//! wiring/node enrichment a ONE-line edit here rather than four edits that only
-//! a gate could notice going out of step.
+//! not a preference — and it is what keeps `wamn-0h0g.24.12`'s wiring/node
+//! enrichment a ONE-line edit here rather than four edits that only a gate
+//! could notice going out of step.
 //!
 //! # The vocabulary
 //!
@@ -53,8 +53,8 @@
 //! the span `crates/execution/host/src/router_driver.rs` instruments each
 //! `Step::Invoke` with, which already carries `wamn.wiring_id`,
 //! `wamn.wiring_version`, `wamn.node_id` and `wamn.component_digest`. Copying
-//! those down so one effect span is self-describing is a separate refinement
-//! that `wamn-0h0g.24.2` (landed) did not cover.
+//! those down so one effect span is self-describing is `wamn-0h0g.24.12`;
+//! `wamn-0h0g.24.2` landed the invocation span itself and did not cover it.
 //! (`wamn_router::NodeInvoker` has only test implementors because its `invoke`
 //! is synchronous; `RouterDriver` drives `wiring.next` / `Step::Invoke` directly
 //! and is the production driver.)
@@ -93,7 +93,7 @@ pub(crate) struct EffectRun<'a> {
 /// They live HERE rather than beside their plugins because `tools/repo-lint`
 /// refuses ANY `static` / `LazyLock` / `OnceLock` in `connection_http.rs` — a
 /// deliberately coarse rule that keeps a credentialed HTTP client from ever
-/// being cached process-wide. Keeping all three together honours it without
+/// being cached process-wide. Keeping them together honours it without
 /// weakening it: that file still holds no process-wide cell of any kind.
 ///
 /// `$instrument` is an expression, not a literal, so an instrument whose name is
