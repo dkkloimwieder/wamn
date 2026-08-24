@@ -153,7 +153,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:1502f68feaace77d5458cb6eee75cbd806aa34e17e755a99eddb095ad2529bb9",
+        baseline_hash, "sha256:a462df2c4cea6093754704bde3f8c5433555e463f6b58fd99c54cfc13d2aa604",
         "definition frame sequence changed"
     );
 }
@@ -195,10 +195,12 @@ fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
             "mutable field {field} was accepted"
         );
     }
+    // Whitespace, key order and duplicate keys are still refused: the parse
+    // re-serializes and compares bytes, and `serde_json::Map` is a `BTreeMap`,
+    // so a canonical text is the only text that reproduces itself.
     for noncanonical in [
         r#"{ "a":1}"#,
         r#"{"b":2,"a":1}"#,
-        r#"{"a":1.0}"#,
         "{\n\"a\":1\n}",
     ] {
         assert!(
@@ -212,6 +214,27 @@ fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
     assert_eq!(
         CanonicalJson::parse(r#"{"a":1,"b":2}"#).unwrap().as_bytes(),
         br#"{"a":1,"b":2}"#
+    );
+
+    // MEASURED NARROWING (wamn-0h0g.26.5). The hand-rolled RFC 8785
+    // canonicalizer rendered every number through the ECMAScript algorithm, so
+    // `1.0` re-serialized as `1` and this text was refused. `serde_json` with
+    // `float_roundtrip` reproduces the authored spelling instead, so `1.0` now
+    // round-trips and is admitted -- and `{"a":1}` and `{"a":1.0}` are two
+    // canonical texts with two different definition hashes.
+    //
+    // This is bounded, not a hole: every model that enters a digest is a typed
+    // struct whose numeric fields serialize one way (a `u16` status is always
+    // `200`), and free-form JSON reaches identity only here, where the author's
+    // own bytes are what gets hashed and re-checked. Nothing outside Rust
+    // verifies these digests.
+    assert_eq!(
+        CanonicalJson::parse(r#"{"a":1.0}"#).unwrap().as_bytes(),
+        br#"{"a":1.0}"#
+    );
+    assert_ne!(
+        CanonicalJson::parse(r#"{"a":1.0}"#).unwrap().as_bytes(),
+        CanonicalJson::parse(r#"{"a":1}"#).unwrap().as_bytes()
     );
 }
 
