@@ -8,12 +8,15 @@ lifecycle tiers because pre-tier provisioning runs before any tier exists.
 - **`infra/`** — install-once cluster infrastructure, applied by hand at cluster
   standup and rarely touched: operators (CNPG, barman plugin, cert-manager), the
   data-plane NATS, development observability inputs (Tempo/otel/MinIO), kind
-  config, and the runtime-operator's own Helm values (`values-wamn.yaml`).
+  config, the cluster-scoped `wasmcloud-ca` ClusterIssuer
+  (`wasmcloud-ca-issuer.yaml`), and the runtime-operator's own Helm values
+  (`values-wamn.yaml`).
 - **`platform/`** — long-lived production/platform manifests the control plane
   or an operator owns: dispatcher, the component+wiring router executor,
   registry, wamn-sysdb, credential `*.example` Secrets, the shared postgres
   fixture, and the per-environment runtime-operator host-tier Helm values
-  (`values-host-*.yaml`).
+  (`values-host-*.yaml`) with their host client certificates
+  (`host-environment-certs*.yaml`).
 - **`gates/`** — gate/bench Job manifests (`*-job.yaml`) and their support
   Deployments (`serve-echo`, `egress-escape`). Applied per gate run, deleted
   after.
@@ -55,9 +58,25 @@ What it installs: six CRDs, and the controller/webhook/cainjector in namespace
 any `Issuer`/`ClusterIssuer` of ours. Issuers belong to their consumers — the
 barman plugin ships its own `selfsigned-issuer` in `cnpg-system`, and the two
 consumers that make this a bill-of-materials decision rather than a rider on a
-TLS change each bring their own: wamn-0h0g.15.152 (the per-environment
-ClusterIssuer distributing the chart CA) and wamn-0h0g.15.155 leg B (the
-registry's CA `Issuer` plus serving `Certificate`).
+TLS change each bring their own:
+
+- `infra/wasmcloud-ca-issuer.yaml` (wamn-0h0g.15.152) — a cluster-scoped
+  `ClusterIssuer` over the runtime-operator release's CA, so a host-tier release
+  can live in a namespace of its own. It is paired with
+  `platform/host-environment-certs.example.yaml`, the per-environment
+  `wasmcloud-runtime-tls` / `wasmcloud-data-tls` Certificates.
+- `platform/registry.yaml` (wamn-0h0g.15.155 leg B) — a namespaced CA `Issuer`
+  plus the registry's serving `Certificate`, so the in-cluster registry serves
+  TLS instead of forcing `--allow-insecure-registries` on every reader.
+
+Both borrow the CA the runtime-operator release mints as Secret `wasmcloud-ca`
+in `wamn-system`; neither creates a second trust root. The scope difference is
+forced by where cert-manager looks for CA key material: a namespaced `Issuer`
+resolves `ca.secretName` in its own namespace, which is why the registry's works
+with no copy, while a `ClusterIssuer` resolves it in cert-manager's
+cluster-resource namespace — `cert-manager`, from the vendored install's
+`--cluster-resource-namespace=$(POD_NAMESPACE)`. That one copy of the CA is the
+single manual step, documented in `infra/wasmcloud-ca-issuer.yaml`.
 
 One chart, two tiers (wamn-0h0g.15.15, rulings `.13.49` + `.13.50`): the
 runtime-operator chart is installed twice with different values, and the tier

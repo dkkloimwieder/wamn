@@ -1,0 +1,68 @@
+# [wamn-0h0g.15.152] The chart's CA, made reachable from any namespace.
+#
+# WHAT THIS UNBLOCKS. Ruling wamn-0h0g.13.50 makes the host tier one Helm
+# release per environment. That shape does not converge when the host release
+# gets a namespace of its own, and both failure modes are in the pinned chart
+# (fork rev daba6029 = chart 2.7.0) rather than in anything we wrote:
+#   * at the chart defaults (`global.tls.enabled: true` +
+#     `global.certificates.generate: true`), templates/certificates.yaml:24 looks
+#     the CA up with `lookup "v1" "Secret" .Release.Namespace …`. A second
+#     release in its own namespace finds none and MINTS A FRESH ONE. The host
+#     then presents a client certificate the operator's NATS does not trust and
+#     never registers;
+#   * with `generate: false` instead, nothing renders `wasmcloud-runtime-tls` or
+#     `wasmcloud-data-tls` into that namespace, and templates/runtime/
+#     deployment.yaml:83-89 mounts both BY NAME, resolved in the POD's
+#     namespace. The Pod never starts.
+# Both need the same thing: certificates signed by the operator release's CA,
+# present in the environment namespace. This file is the cluster-scoped half of
+# supplying it; deploy/platform/host-environment-certs.example.yaml is the
+# per-environment half. The release split itself is not re-litigated here — this
+# supplies the precondition the ruling assumed.
+#
+# WHY A ClusterIssuer AND NOT AN Issuer PER NAMESPACE. A namespaced CA `Issuer`
+# resolves `ca.secretName` in its OWN namespace, so one per environment would
+# put a copy of the CA PRIVATE KEY in every environment namespace. A
+# `ClusterIssuer` resolves it once, in cert-manager's cluster-resource namespace
+# — `cert-manager`, measured from the vendored install's controller argument
+# `--cluster-resource-namespace=$(POD_NAMESPACE)` (deploy/infra/cert-manager.yaml).
+# One copy of the key, in an operator-only namespace, and adding environment
+# number three costs no further copy.
+#
+# THE ONE MANUAL STEP, AND WHY IT CANNOT BE A MANIFEST. The CA is minted by the
+# operator Helm release into `wamn-system`, and cert-manager reads
+# ClusterIssuer CA material only from `cert-manager`. Nothing in cert-manager
+# copies a Secret between namespaces, and a Secret's contents cannot be
+# committed. So the CA is copied once, after the operator release is first
+# installed and before the first environment Certificate is applied:
+#
+#   kubectl -n wamn-system get secret wasmcloud-ca -o json \
+#     | jq 'del(.metadata) | .metadata = {name: "wasmcloud-ca", namespace: "cert-manager"}' \
+#     | kubectl apply -f -
+#   kubectl apply -f deploy/infra/wasmcloud-ca-issuer.yaml
+#   kubectl wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s
+#
+# THE COPY IS A SNAPSHOT, and that is the standing obligation this file carries.
+# Re-run it whenever `wasmcloud-ca` in `wamn-system` changes, or every
+# certificate this issuer has signed chains to a CA nothing trusts. The chart
+# does not rotate on its own — templates/certificates.yaml re-emits the same
+# bytes on every `helm upgrade` once the Secret exists — so in practice the
+# snapshot changes exactly twice: at first install, and whenever someone deletes
+# the CA Secret to recover from its 365-day expiry, which is the chart's only
+# renewal path.
+#
+# ORDER. cert-manager first (its CRDs and webhook must exist before this object
+# is admitted), then the operator Helm release (it mints the CA), then the copy
+# above, then this file.
+#
+# This is the same CA key material the namespaced `Issuer` in
+# deploy/platform/registry.yaml borrows for the registry's serving certificate.
+# That one is namespaced because its only consumer is in `wamn-system`, where
+# the chart already writes the CA and no copy is needed.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: wasmcloud-ca
+spec:
+  ca:
+    secretName: wasmcloud-ca

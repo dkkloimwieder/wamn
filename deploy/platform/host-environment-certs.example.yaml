@@ -1,0 +1,111 @@
+# [wamn-0h0g.15.152] The two host client certificates, for ONE environment
+# namespace. This file is a template: copy it to
+# `host-environment-certs-<environment>.yaml` beside that environment's
+# `values-host-<environment>.yaml` and replace `__ENVIRONMENT_NAMESPACE__` with
+# the namespace its `runtime.hostGroups[].namespace` names.
+#
+# *** DO NOT APPLY THIS FOR AN ENVIRONMENT WHOSE NAMESPACE IS THE OPERATOR
+# *** RELEASE'S OWN (`wamn-system` today). The operator release already renders
+# both Secrets there (templates/certificates.yaml:142-169 always includes
+# `.Release.Namespace`), and a Certificate writing the same `secretName` would
+# take a Helm-owned object away from that release. This file exists for
+# environment #2 onward — the case ruling wamn-0h0g.13.50 assumed and the chart
+# does not serve.
+#
+# WHAT THE CHART NEEDS AND WILL NOT SUPPLY. A host Pod mounts
+# `wasmcloud-runtime-tls` and `wasmcloud-data-tls` by name, resolved in its own
+# namespace (templates/runtime/deployment.yaml:83-89), and passes them to both
+# NATS connections as `--scheduler-nats-tls-{ca,cert,key}` and
+# `--data-nats-tls-{ca,cert,key}` (:164-173). The chart renders those two
+# Secrets only into the namespaces of the host groups declared in the SAME
+# release, and the host release cannot generate them itself: at
+# `generate: true` it would mint a fresh, untrusted CA, because
+# templates/certificates.yaml:24 looks the CA up in the release namespace alone.
+# cert-manager issues them instead, from the operator release's own CA — see
+# deploy/infra/wasmcloud-ca-issuer.yaml for the ClusterIssuer and the one copy
+# step that backs it.
+#
+# THE DNS NAME IS THE NATS USERNAME, NOT COSMETIC. The chart's NATS runs
+# `verify_and_map: true` and authorizes exactly three users —
+# `wasmcloud-operator`, `wasmcloud-runtime`, `wasmcloud-data`
+# (templates/nats/config.yaml:19-33). Under that setting the server derives the
+# user from the client certificate rather than from a password, so these names
+# must reproduce what the chart's own `genSignedCert "wasmcloud-runtime" nil
+# (list "wasmcloud-runtime")` produces: the identity as both the common name and
+# a DNS SAN. Rename either and the host connects, fails to map to an authorized
+# user, and never registers.
+#
+# `ca.crt` comes for free: a cert-manager CA issuer writes the issuing
+# certificate into that key of every Secret it fills, which is the file the
+# chart passes as `--scheduler-nats-tls-ca` and `--data-nats-tls-ca`, and the
+# same path `runtime.ociCaPaths` uses to trust the in-cluster registry.
+#
+# WHAT ELSE ONBOARDING AN ENVIRONMENT NEEDS. Not owned here, listed so the order
+# is not discovered by failure:
+#   1. `deploy/infra/cert-manager.yaml`, then the operator Helm release
+#      (`deploy/infra/values-wamn.yaml`), then the CA copy and ClusterIssuer in
+#      `deploy/infra/wasmcloud-ca-issuer.yaml`.
+#   2. The operator release must list this namespace under BOTH
+#      `operator.watchNamespaces` and `operator.hostNamespaces`. The chart
+#      derives host namespaces from `runtime.hostGroups[]` in the same release
+#      only, and that release has none, so an uncovered namespace leaves the
+#      operator without Pod RBAC or informer cache access there.
+#      tests/conformance/tests/chart_seam_governance.rs enforces the agreement.
+#   3. `deploy/platform/registry-credentials.example.yaml`, instantiated into
+#      this namespace — the host group mounts `wamn-registry-pull` from it.
+#   4. THIS FILE, applied before the host release: the Pod mounts both Secrets
+#      with `optional` unset, so it stays Pending until cert-manager has issued.
+#   5. The host release itself, with `global.tls.enabled: true` kept and
+#      `global.certificates.generate: false` set. `generate: true` would render
+#      the chart's own copies of these two Secrets over cert-manager's.
+#
+# ORDERED MIGRATION FOR AN EXISTING CLUSTER — RECORDED, NOT AUTOMATED.
+# `hostgroup-<name>`'s Deployment, Service and NetworkPolicy are named after the
+# host GROUP, not the release. On a cluster where a previous release owns those
+# objects, the operator release must be UPGRADED FIRST — its
+# `runtime.hostGroups: []` deletes them — and only then may the host release be
+# installed, or Helm refuses on ownership metadata for all three identically
+# named objects. A fresh namespace has nothing to collide with, which is the
+# shape the RC proves and the reason this file targets new environments.
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-runtime-tls
+  namespace: __ENVIRONMENT_NAMESPACE__
+spec:
+  secretName: wasmcloud-runtime-tls
+  issuerRef:
+    name: wasmcloud-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+  commonName: wasmcloud-runtime
+  dnsNames:
+    - wasmcloud-runtime
+  # `client auth` is stated rather than defaulted: cert-manager's default usages
+  # are `digital signature` + `key encipherment` only, which leave the leaf
+  # asserting no extended key usage for presenting itself to a server. The other
+  # two are carried alongside so the default set is not lost.
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-data-tls
+  namespace: __ENVIRONMENT_NAMESPACE__
+spec:
+  secretName: wasmcloud-data-tls
+  issuerRef:
+    name: wasmcloud-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+  commonName: wasmcloud-data
+  dnsNames:
+    - wasmcloud-data
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
