@@ -2171,7 +2171,7 @@ fn hyphenated_error_message_literal_is_not_an_update() {
 #[test]
 fn row_lock_clause_is_not_an_update() {
     let discoveries = discover_writes(
-        "deploy/sql/authoring-tests.sql",
+        "deploy/sql/control-portable-store.sql",
         1,
         "SELECT to_jsonb(reservation) INTO reservation_command \
            FROM wamn_run.authoring_test_run_reservations AS reservation \

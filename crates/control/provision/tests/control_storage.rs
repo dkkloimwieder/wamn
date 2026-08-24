@@ -168,7 +168,7 @@ fn system_schema_sql_mirrors_the_model() {
 }
 
 /// Configurable publication was deleted before the control portable store was
-/// defined. Keep the registry, from-zero DDL, contract sources, generated
+/// defined. Keep the registry, from-zero DDL, authoring model, generated
 /// client, and active execution model free of every retired switch and resolver.
 #[test]
 fn retired_configurable_publish_policy_stays_deleted() {
@@ -178,7 +178,6 @@ fn retired_configurable_publish_policy_stays_deleted() {
         "crates/control/registry/src",
         "deploy/sql/system-schema.sql",
         "crates/authoring/model/src",
-        "docs/archive/contracts/authoring-surface.schema.json",
         "clients/authoring-client/src/generated/authoring.ts",
         "docs/exe-model.md",
     ] {

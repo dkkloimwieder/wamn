@@ -59,16 +59,17 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     },
     // RETIRED `crates/scenarios/model/src/test_set.rs` /
     // `TEST_SET_SCHEMA_VERSION`: wamn-0h0g.15.27 (3a042d96) deleted the
-    // self-describing test-set document, so the constant has no subject. Cases
-    // now ride the flow document and inherit the `flow-model` SCHEMA_VERSION
-    // identity guarded immediately below. wamn-0h0g.15.76 (eb1c3a88) then moved
-    // the surviving file to crates/execution/flow-model/src/test_set.rs, so
-    // repointing the path alone would not resurrect the constant.
-    GovernedLiteral {
-        path: "crates/execution/flow-model/src/types.rs",
-        exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
+    // self-describing test-set document, so the constant has no subject.
+    // wamn-0h0g.15.76 (eb1c3a88) then moved the surviving file to
+    // crates/execution/flow-model/src/test_set.rs, so repointing the path alone
+    // would not resurrect the constant.
+    //
+    // RETIRED `crates/execution/flow-model/src/types.rs` / `SCHEMA_VERSION`:
+    // wamn-0h0g.26.5 (7232366f) gutted flow-model down to its survivors and
+    // renamed it crates/execution/contract. types.rs was DELETED, not moved —
+    // the survivors are node_contract, expect, test_set, status,
+    // portable_http_target and ports, none of which carries a SCHEMA_VERSION —
+    // so the constant has no subject and there is nothing to repoint to.
     GovernedLiteral {
         path: "crates/events/registration/src/model.rs",
         exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
@@ -170,11 +171,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "components/execution/flowrunner/wit/deps/wamn-runner/package.wit",
-        exact: "version: string,",
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "crates/platform/runtime/src/plugins/connection_http.rs",
         exact: r#"context.version != "0.1""#,
         expected_count: 1,
@@ -192,16 +188,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "crates/platform/runtime/src/connection_generation.rs",
         exact: r#"pub const HTTP_CONNECTION_CONTRACT: &str = "wamn:connection/http@0.1.0";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/execution/standard-nodes/src/lib.rs",
-        exact: r#"contract: "wamn:connection/http@0.1.0".to_string(),"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/execution/standard-nodes/src/lib.rs",
-        exact: r#"contract: "wamn:connection/postgres@0.1.0".to_string(),"#,
         expected_count: 1,
     },
     GovernedLiteral {

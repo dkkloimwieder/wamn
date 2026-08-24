@@ -241,8 +241,6 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
                 "--locked".into(),
                 "--workspace".into(),
                 "--exclude".into(),
-                "flowrunner".into(),
-                "--exclude".into(),
                 "connection-http-standard".into(),
                 "--all-targets".into(),
                 "--".into(),
@@ -257,36 +255,6 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
                 "--locked".into(),
                 "--package".into(),
                 "connection-http-standard".into(),
-                "--".into(),
-                "-D".into(),
-                "warnings".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "clippy".into(),
-                "--manifest-path".into(),
-                component_manifest_path.clone(),
-                "--locked".into(),
-                "--package".into(),
-                "flowrunner".into(),
-                "--all-targets".into(),
-                "--".into(),
-                "-D".into(),
-                "warnings".into(),
-                "-A".into(),
-                "dead-code".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "clippy".into(),
-                "--manifest-path".into(),
-                component_manifest_path.clone(),
-                "--locked".into(),
-                "--workspace".into(),
-                "--exclude".into(),
-                "flowrunner".into(),
-                "--target".into(),
-                "wasm32-wasip2".into(),
                 "--".into(),
                 "-D".into(),
                 "warnings".into(),
@@ -297,15 +265,12 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
                 "--manifest-path".into(),
                 component_manifest_path,
                 "--locked".into(),
-                "--package".into(),
-                "flowrunner".into(),
+                "--workspace".into(),
                 "--target".into(),
                 "wasm32-wasip2".into(),
                 "--".into(),
                 "-D".into(),
                 "warnings".into(),
-                "-A".into(),
-                "dead-code".into(),
             ],
         ]
     );
@@ -314,7 +279,7 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
             .expect("read fake Cargo RUSTFLAGS log")
             .lines()
             .collect::<Vec<_>>(),
-        ["", "", "", "", "-C panic=abort", "", "", ""]
+        ["", "", "", "", "-C panic=abort", ""]
     );
     assert_leg_statuses(&output, None);
 }
@@ -333,7 +298,7 @@ fn repo_lint_reports_every_leg_when_an_early_leg_fails() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        8,
+        6,
         "an early failure must not hide a later Cargo leg"
     );
     assert_leg_statuses(&output, Some(("root rustfmt", 23)));
@@ -359,7 +324,7 @@ fn repo_lint_reports_every_cargo_leg_when_the_static_leg_fails() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        8,
+        6,
         "a static-leg failure must not hide any Cargo leg"
     );
     assert_leg_statuses(&output, Some(("connection HTTP per-invocation client", 65)));
@@ -372,17 +337,17 @@ fn repo_lint_returns_failure_when_the_last_leg_fails() {
     executable(&directory.path("fake cargo"), FAKE_CARGO);
 
     let output = tool_command(&root, &directory)
-        .env("WAMN_FAKE_CARGO_FAIL_AT", "8")
+        .env("WAMN_FAKE_CARGO_FAIL_AT", "6")
         .arg("run")
         .output()
         .expect("run failing repo-lint tool");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        8,
+        6,
         "the final Cargo leg must run"
     );
-    assert_leg_statuses(&output, Some(("flowrunner wasm Clippy", 23)));
+    assert_leg_statuses(&output, Some(("components wasm Clippy", 23)));
 }
 
 #[test]
@@ -402,9 +367,7 @@ fn dry_run_is_side_effect_free_and_invalid_commands_are_refused() {
         "root-clippy:",
         "components-native-clippy:",
         "connection-http-native-clippy:",
-        "flowrunner-native-clippy:",
         "components-wasm-clippy:",
-        "flowrunner-wasm-clippy:",
     ] {
         assert!(plan.contains(label), "dry-run omitted {label}");
     }
