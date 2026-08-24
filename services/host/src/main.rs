@@ -38,13 +38,19 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    wamn_runtime::advertise_memory_ceiling();
-    async_main()
+    // Parse first: the ceiling the fork's per-store limiter reads is this host
+    // group's CONFIGURED cap (wamn-t883). Advertise second, still on the single
+    // startup thread — `set_var` is sound only before the Tokio runtime exists.
+    let cli = Cli::parse();
+    let memory_cap_bytes = match &cli.command {
+        Command::Host(args) => args.pool_memory_cap_bytes,
+    };
+    wamn_runtime::advertise_memory_ceiling(memory_cap_bytes);
+    async_main(cli)
 }
 
 #[tokio::main]
-async fn async_main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let level = tracing::Level::from_str(&cli.log_level)
         .map_err(|_| anyhow::anyhow!("invalid log level: {}", cli.log_level))?;
     // OTel exporters activate when OTEL_* env vars are present.

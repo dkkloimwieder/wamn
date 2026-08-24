@@ -164,6 +164,24 @@ pub struct ExecutorArgs {
     /// reads the same on both deployables (`services/host/src/host.rs`).
     #[arg(long = "pool-slots", env = "WAMN_POOL_SLOTS", default_value_t = PoolSizing::default().slots)]
     pub pool_slots: u32,
+
+    /// Pooling-allocator memory ceiling: the largest budget any one component
+    /// may hold. Spelled exactly as the host's, so one capacity posture reads
+    /// the same on both deployables (`services/host/src/host.rs`).
+    #[arg(long = "pool-memory-cap-bytes", env = "WAMN_POOL_MEMORY_CAP_BYTES", default_value_t = PoolSizing::default().memory_cap_bytes)]
+    pub pool_memory_cap_bytes: usize,
+}
+
+/// This executor's parsed pooling sizing.
+///
+/// A named function rather than a struct literal at the build site so a test
+/// can cross the flag-to-sizing boundary: an argument that parses and is then
+/// dropped on the floor is exactly the inert knob `wamn-t883` closed.
+fn pool_sizing(args: &ExecutorArgs) -> PoolSizing {
+    PoolSizing {
+        slots: args.pool_slots,
+        memory_cap_bytes: args.pool_memory_cap_bytes,
+    }
 }
 
 /// Pull, verify and weld this process's one release.
@@ -299,13 +317,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     .with_ca_paths(&args.oci_ca_paths)
     .context("trust the configured OCI CA bundles for component pulls")?;
     let source = ComponentArtifactSource::new(source_config);
-    let engine = Arc::new(build_engine_sized(
-        &[],
-        PoolSizing {
-            slots: args.pool_slots,
-            ..PoolSizing::default()
-        },
-    )?);
+    let engine = Arc::new(build_engine_sized(&[], pool_sizing(&args))?);
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let driver = Arc::new(RouterDriver::new(
         engine,
@@ -720,6 +732,50 @@ mod tests {
         ])
         .expect("complete executor arguments parse");
         assert_eq!(cli.args.readiness_bind.to_string(), readiness::DEFAULT_BIND);
+    }
+
+    /// wamn-t883: the pooling flags reach the ENGINE SIZING, not just the parsed
+    /// struct — the executor's half of the host guard of the same name.
+    ///
+    /// Both flags are given explicitly on the argv: each also carries an `env`,
+    /// and an ambient `WAMN_POOL_SLOTS` would otherwise decide half the answer.
+    #[test]
+    fn the_parsed_pooling_flags_reach_the_engine_sizing() {
+        #[derive(clap::Parser)]
+        struct TestCli {
+            #[command(flatten)]
+            args: ExecutorArgs,
+        }
+
+        let cli = TestCli::try_parse_from([
+            "wamn-executor",
+            "--release-artifact-base",
+            "registry.invalid/wamn/releases",
+            "--release-manifest-digest",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "--component-artifact-base",
+            "registry.invalid/wamn/components",
+            "--registry-auth-file",
+            "/registry/config.json",
+            "--pool-slots",
+            "7",
+            "--pool-memory-cap-bytes",
+            "67108864",
+        ])
+        .expect("the pooling flags parse");
+        assert_ne!(
+            cli.args.pool_memory_cap_bytes,
+            PoolSizing::default().memory_cap_bytes,
+            "the configured cap must differ from the default or this proves nothing"
+        );
+        assert_eq!(
+            pool_sizing(&cli.args),
+            PoolSizing {
+                slots: 7,
+                memory_cap_bytes: 64 << 20,
+            },
+            "both halves of the parsed sizing must reach the engine"
+        );
     }
 
     #[test]

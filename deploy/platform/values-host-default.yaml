@@ -216,9 +216,12 @@ runtime:
       # crashloops the pod, while `WAMN_POOL_SLOT` would deploy cleanly and do
       # nothing. The binary keeps `WAMN_POOL_SLOTS` too, so flags are a superset.
       #
-      # The memory cap is deliberately NOT here: it is also read per store from
-      # WAMN_MEMORY_CEILING_MB, which the binary must set before its Tokio runtime
-      # exists, so a cap raised here alone would be silently re-clamped.
+      # The memory cap now has the same carrier, `--pool-memory-cap-bytes`
+      # (wamn-t883). It was held back because the cap is ALSO read per store from
+      # WAMN_MEMORY_CEILING_MB; the binary now parses its arguments and advertises
+      # the configured cap from that entry before its Tokio runtime exists, so a
+      # value set here is no longer silently re-clamped. Unset below, so this
+      # environment keeps the compiled 256 MiB platform ceiling.
       # [wamn-3ceu] THE HOST'S RELEASE, AND ITS FIRST ONE. Until now this file
       # set no release at all, so `load_release(None, None, ..)` was the live
       # path and every release-gated interface served nothing. This is an

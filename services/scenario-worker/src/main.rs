@@ -22,7 +22,11 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    wamn_runtime::advertise_memory_ceiling();
+    // The compiled default, explicitly: this process has no pooling flags to
+    // parse because it builds no engine and creates no store (wamn-t883).
+    wamn_runtime::advertise_memory_ceiling(
+        wamn_runtime::engine::PoolSizing::default().memory_cap_bytes,
+    );
     async_main()
 }
 

@@ -141,6 +141,17 @@ pub struct HostArgs {
     #[arg(long = "pool-slots", env = "WAMN_POOL_SLOTS", default_value_t = PoolSizing::default().slots)]
     pub pool_slots: u32,
 
+    /// Pooling-allocator memory ceiling for this host group: the largest budget
+    /// any one component may hold. Per-component budgets are enforced BELOW it
+    /// by the fork's per-store ResourceLimiter.
+    ///
+    /// Same carrier and same reasoning as `--pool-slots` above. Real in both
+    /// tiers only because `main` advertises the PARSED value to that limiter
+    /// before starting the Tokio runtime (`wamn-t883`); advertising the
+    /// compiled constant instead would re-clamp a raised cap per store.
+    #[arg(long = "pool-memory-cap-bytes", env = "WAMN_POOL_MEMORY_CAP_BYTES", default_value_t = PoolSizing::default().memory_cap_bytes)]
+    pub pool_memory_cap_bytes: usize,
+
     /// Registry/repository holding this environment's release-manifest
     /// artifacts, paired with [`HostArgs::release_manifest_digest`].
     ///
@@ -273,6 +284,18 @@ async fn load_release(
     Ok(Some(Arc::new(weld)))
 }
 
+/// This host group's parsed pooling sizing.
+///
+/// A named function rather than a struct literal at the build site so a test
+/// can cross the flag-to-sizing boundary: an argument that parses and is then
+/// dropped on the floor is exactly the inert knob `wamn-t883` closed.
+fn pool_sizing(args: &HostArgs) -> PoolSizing {
+    PoolSizing {
+        slots: args.pool_slots,
+        memory_cap_bytes: args.pool_memory_cap_bytes,
+    }
+}
+
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
@@ -342,10 +365,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let engine = Arc::new(build_engine_sized(
         &args.wasm_proposals,
-        PoolSizing {
-            slots: args.pool_slots,
-            ..PoolSizing::default()
-        },
+        pool_sizing(&args),
     )?);
     if args.epoch_tick_ms > 0 {
         spawn_epoch_ticker(&engine, Duration::from_millis(args.epoch_tick_ms));
@@ -583,6 +603,38 @@ mod tests {
         assert!(
             message.contains("registry-credentials-unreadable"),
             "the refusal must name the transfer invariant it could not satisfy: {message}"
+        );
+    }
+
+    /// wamn-t883: the pooling flags reach the ENGINE SIZING, not just the parsed
+    /// struct. `--pool-memory-cap-bytes` shipped late precisely because a flag
+    /// can parse cleanly and then be dropped at the build site, so this crosses
+    /// that boundary rather than reading the field back.
+    ///
+    /// Both flags are given explicitly on the argv: each also carries an `env`,
+    /// and an ambient `WAMN_POOL_SLOTS` would otherwise decide half the answer.
+    #[test]
+    fn the_parsed_pooling_flags_reach_the_engine_sizing() {
+        let cli = TestCli::try_parse_from([
+            "wamn-host",
+            "--pool-slots",
+            "7",
+            "--pool-memory-cap-bytes",
+            "67108864",
+        ])
+        .expect("the pooling flags parse");
+        assert_ne!(
+            cli.args.pool_memory_cap_bytes,
+            PoolSizing::default().memory_cap_bytes,
+            "the configured cap must differ from the default or this proves nothing"
+        );
+        assert_eq!(
+            pool_sizing(&cli.args),
+            PoolSizing {
+                slots: 7,
+                memory_cap_bytes: 64 << 20,
+            },
+            "both halves of the parsed sizing must reach the engine"
         );
     }
 

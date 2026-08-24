@@ -27,14 +27,14 @@ const POOL_SLOTS: u32 = 512;
 /// `extraArgs` CLI flag. Naming the fields after the eventual keys makes that
 /// migration a values rewire rather than a code change.
 ///
-/// `memory_cap_bytes` has no flag yet, and that gap is deliberate rather than
-/// unfinished. The platform ceiling has a SECOND consumer: the fork's per-store
-/// ResourceLimiter reads `WAMN_MEMORY_CEILING_MB`, which
-/// [`advertise_memory_ceiling`] must set before the Tokio runtime exists — i.e.
-/// in each binary's `main`, ahead of argument parsing. Until that leg moves, a
-/// cap raised here would be re-clamped per store and the flag would silently do
-/// nothing upward, which is the exact invisible-red class the interim carrier
-/// was chosen to avoid.
+/// Both fields carry a flag: `--pool-slots` and `--pool-memory-cap-bytes`. The
+/// cap needed one extra leg to be real (`wamn-t883`), because the platform
+/// ceiling has a SECOND consumer — the fork's per-store ResourceLimiter reads
+/// `WAMN_MEMORY_CEILING_MB`. Each serving binary therefore parses its arguments
+/// in `main`, hands the parsed cap to [`advertise_memory_ceiling`], and only
+/// then starts its Tokio runtime. Advertising ahead of the parse, as the
+/// binaries used to, re-clamped a raised cap per store and left the knob
+/// silently inert upward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PoolSizing {
     /// Concurrent live instances this engine admits.
@@ -59,18 +59,28 @@ pub const DEFAULT_EPOCH_TICK: Duration = Duration::from_millis(10);
 /// Hard upper bound for one guest attempt and any host call it starts.
 pub const MAX_HOST_CALL_DURATION: Duration = Duration::from_secs(30);
 
-/// Advertise the platform memory ceiling to the fork's per-store limiter.
+/// Advertise this host group's memory ceiling to the fork's per-store limiter.
 ///
-/// Call this before the Tokio runtime starts, while no other thread can read
-/// the process environment.
-pub fn advertise_memory_ceiling() {
+/// Call this AFTER argument parsing and BEFORE the Tokio runtime starts: the
+/// configured cap is what the limiter must clamp to, and `set_var` is sound
+/// only while no other thread can read the process environment.
+pub fn advertise_memory_ceiling(memory_cap_bytes: usize) {
     // SAFETY: callers uphold the documented single-threaded startup contract.
     unsafe {
         std::env::set_var(
             "WAMN_MEMORY_CEILING_MB",
-            (MEMORY_CAP_BYTES >> 20).to_string(),
+            memory_ceiling_mb(memory_cap_bytes),
         );
     }
+}
+
+/// The ceiling as the fork's limiter reads it.
+///
+/// Split out from the write because the write lands in a process global no
+/// test may read back without racing its siblings. The VALUE is chosen here,
+/// so this is what a test pins.
+fn memory_ceiling_mb(memory_cap_bytes: usize) -> String {
+    (memory_cap_bytes >> 20).to_string()
 }
 
 /// Build the engine every wamn-host mode uses: pooling allocator with the
@@ -226,6 +236,26 @@ mod tests {
         )
         .expect("a resized pooling engine");
         assert_memory_ceiling(&engine, cap_bytes);
+    }
+
+    /// wamn-t883: the ceiling handed to the fork's per-store ResourceLimiter is
+    /// the CONFIGURED cap, not the compiled constant. Without this leg
+    /// `--pool-memory-cap-bytes` would be upward-inert: the pooling allocator
+    /// would admit the raised cap and the limiter would re-clamp every store
+    /// back to 256 MiB.
+    ///
+    /// Pins the value [`advertise_memory_ceiling`] chooses rather than the
+    /// environment entry it writes. `set_var` is a process global and cargo
+    /// runs this suite multithreaded in one process, so reading the entry back
+    /// would race every sibling test rather than prove anything.
+    #[test]
+    fn the_advertised_ceiling_follows_the_configured_cap() {
+        assert_eq!(memory_ceiling_mb(64 << 20), "64");
+        assert_eq!(
+            memory_ceiling_mb(PoolSizing::default().memory_cap_bytes),
+            "256",
+            "the compiled default still advertises the 256 MiB platform ceiling"
+        );
     }
 
     /// The other half of the sizing: slots bound CONCURRENCY, so a one-slot
