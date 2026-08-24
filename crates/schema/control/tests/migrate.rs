@@ -301,8 +301,9 @@ fn catalog_schema_sql_mirrors_the_engine() {
 
 #[test]
 fn select_applied_catalogs_enumerates_an_envs_applied_set() {
-    // The unified copy's definition pass (wamn-8df.5) promotes each of the src
-    // env's applied catalogs — the enumeration is (tenant, environment)-scoped,
+    // This test is the builder's only caller: the copy definition pass that
+    // motivated it was deleted (`5bb69f0d`). What is asserted is the shape the
+    // builder still guarantees — (tenant, environment)-scoped,
     // applied-state-only, and deterministic.
     let sql = wamn_schema_control::sql::select_applied_catalogs_sql();
     assert!(sql.contains("FROM catalog.catalogs"));

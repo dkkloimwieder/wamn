@@ -360,13 +360,14 @@ async fn the_app_login_reads_the_catalog_schema_of_record_and_never_writes_it() 
         .get(0);
     assert_eq!(unchanged, 1);
 
-    // ARM 5 — wamn-0h0g.12.27. `catalog.rls_policies` rows are the INPUT to the
-    // RLS compiler: `copy_project_env.rs:1081` feeds them to
-    // `wamn_schema_compiler::rls::compile` and applies the emitted CREATE POLICY
-    // DDL to the tenant's data tables. Minting a rule is therefore minting the
-    // inputs to one's own authorization, and the compiler would render the
-    // forgery faithfully. The forged rule is RLS-legal under the probe tenant —
-    // that is exactly what makes the grant, not the policy, the boundary.
+    // ARM 5 — wamn-0h0g.12.27. `catalog.rls_policies` is the stored form of the
+    // RLS rules modelled by `wamn_schema_compiler::rls`
+    // (`crates/schema/compiler/src/rls/model.rs`). The copy driver's definition
+    // pass, which read these rows and applied the emitted CREATE POLICY DDL, was
+    // deleted (`5bb69f0d`); no production shell compiles them today, so this arm
+    // asserts the write grant itself rather than a downstream compile. The
+    // forged rule is RLS-legal under the probe tenant — that is exactly what
+    // makes the grant, not the policy, the boundary.
     let forgery = refused(
         &su,
         "INSERT INTO catalog.rls_policies (tenant_id, catalog_id, policy_id, entity_id, rule) \

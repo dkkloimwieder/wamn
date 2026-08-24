@@ -18,9 +18,13 @@ pub fn select_current_applied_sql() -> String {
         .to_string()
 }
 
-/// Enumerate every applied catalog for `(tenant, environment)` — the unified
-/// copy's definition pass (wamn-8df.5) promotes each of the src env's applied
-/// catalogs into the dst env. Returns `catalog_id, version, document::text`.
+/// Enumerate every applied catalog for `(tenant, environment)`: applied-state
+/// only, ordered by `catalog_id` for a deterministic read. Returns
+/// `catalog_id, version, document::text`.
+///
+/// The copy definition pass that motivated this builder went with the rest of
+/// the unreachable copy-definition path (`5bb69f0d`); no production shell calls
+/// it today — `crates/schema/control/tests/migrate.rs` is its only caller.
 pub fn select_applied_catalogs_sql() -> String {
     format!(
         "SELECT catalog_id, version, document::text FROM catalog.catalogs \
@@ -257,9 +261,9 @@ pub fn release_manifest_exists_sql() -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Schema-impact analysis (11.8, wamn-wvb): the dependency-edge reads the
-// ops `impact-report` / `copy-project-env` shells fold through
-// `wamn_schema_control::impact::analyze`.
+// Schema-impact analysis (11.8, wamn-wvb): the dependency-edge reads the ops
+// `impact-report` shell (`services/ctl/src/impact_report.rs`, the only one)
+// folds through `wamn_schema_control::impact::analyze`.
 // All cross-tenant (the superuser driver bypasses RLS), like the D24 read above:
 // a shared entity's change hits every tenant's flow, so the report must see
 // them all. SR12: the pure decision has no RLS/superuser — the throwaway-PG live
