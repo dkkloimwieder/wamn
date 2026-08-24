@@ -68,6 +68,8 @@ components/             wasm32-wasip2 guests
   execution/            product execution components (flowrunner, materializer)
   fixtures/             non-product proof fixtures (busyloop,
                         connection-http-standard, sockprobe)
+  no-std/               SECOND cargo workspace: the no_std palette guests
+                        (http-request, transform), isolated from serde_json/std
 
 test-support/
   harness/              shared measurement helpers for gates
@@ -119,8 +121,10 @@ Dockerfile              shared build plus one final stage per deployable artifac
 cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher \
   -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-gates
 
-# wasm guests
+# wasm guests — two workspaces, and they must not share one Cargo invocation
+# (feature unification would force std into the no_std guests, wamn-0h0g.11.56)
 (cd components && cargo build --release --target wasm32-wasip2)
+(cd components/no-std && cargo build --release --target wasm32-wasip2)
 ```
 
 ## Test
