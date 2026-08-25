@@ -6,8 +6,6 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use serde_json::json;
-
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
 
@@ -46,7 +44,6 @@ fn portable_store_record_is_exact_and_storage_only() {
         "wamn_run.authoring_test_run_reservations",
         "wamn_run.authoring_test_case_runs",
         "wamn_run.authoring_test_reports",
-        "catalog.release_flow_test_evidence",
         "catalog.deployment_attestations",
         // wamn-0h0g.8.18: the owner-maintained login-identity-to-tenant mapping.
         "wamn_authority.author_login_tenants",
@@ -61,6 +58,10 @@ fn portable_store_record_is_exact_and_storage_only() {
         // wamn-pm7k: the draft concept died with the pivot — the wiring
         // document IS the validated artifact and its hash IS the identity.
         "catalog.validated_flow_drafts",
+        // wamn-0h0g.26.16: flow-shaped release TEST EVIDENCE named a release
+        // member by `flow_id` under a retired identity, and nothing in the
+        // workspace ever executed its registrar.
+        "catalog.release_flow_test_evidence",
         "catalog.attachment_activation",
         "catalog.attachment_tombstones",
         "catalog.connection_instances",
@@ -79,13 +80,13 @@ fn portable_store_record_is_exact_and_storage_only() {
         );
     }
 
-    assert!(sql.contains("tested_resolution_map_bytes bytea NOT NULL"));
-    assert!(sql.contains("sha256(tested_resolution_map_bytes)"));
-    assert!(sql.contains("tested_resolution_map_bytes = p_tested_resolution_map_bytes"));
-    // wamn-pm7k: `validated_draft_id` is read as the WIRING HASH, so the
-    // evidence row resolves its identity without a lineage relation to point at.
+    // wamn-0h0g.26.16: the evidence row and its registrar are gone, so neither
+    // the tested-resolution carrier nor the report coordinate it resolved may
+    // reappear anywhere in the artifact.
+    assert!(!sql.contains("tested_resolution_map"));
+    assert!(!sql.contains("register_release_flow_test_evidence("));
+    assert!(!sql.contains("CREATE TABLE IF NOT EXISTS catalog.release_flow_test_evidence"));
     assert!(!sql.contains("REFERENCES catalog.validated_flow_drafts"));
-    assert!(sql.contains("REFERENCES wamn_run.authoring_test_reports (tenant_id, report_id)"));
     assert!(sql.contains("DROP TABLE catalog.validated_flow_drafts RESTRICT"));
     assert!(!sql.contains("CREATE TABLE IF NOT EXISTS catalog.execution_bundles"));
     assert!(sql.contains("DROP TABLE catalog.execution_bundles RESTRICT"));
@@ -101,11 +102,11 @@ fn portable_store_record_is_exact_and_storage_only() {
     // (wamn-0h0g.15.27); a draft's own `cases` are the only test source.
     assert!(!sql.contains("authoring_test_sets"));
     assert!(!sql.contains("REFERENCES wamn_run.authoring_test_sets"));
-    // A hash that names nothing is not evidence (wamn-0h0g.13.56): the release
-    // evidence row drops `test_set_hash` with the artifact it used to name. The
-    // name survives only where the retirement block drops it from an
-    // already-provisioned database (wamn-0h0g.15.91) — never in a declaration
-    // or a function signature.
+    // A hash that names nothing is not evidence (wamn-0h0g.13.56). The evidence
+    // carrier itself left with wamn-0h0g.26.16; what remains is the retained
+    // record tables' arm, which refuses an already-provisioned database still
+    // carrying the column (wamn-0h0g.15.91). The name may therefore appear only
+    // there — never in a declaration, a function signature, or a column fact.
     assert!(!sql.contains("p_test_set_hash"));
     assert!(!sql.contains("'test_set_hash:text:true'"));
     assert!(
@@ -118,9 +119,9 @@ fn portable_store_record_is_exact_and_storage_only() {
     // gate, which applies to a fresh database and so never takes a probe's true
     // branch.
     for retirement in [
-        "DROP FUNCTION IF EXISTS catalog.register_release_flow_test_evidence(",
         "DROP FUNCTION IF EXISTS catalog.register_deployment_attestation(",
-        "ALTER TABLE catalog.release_flow_test_evidence DROP COLUMN test_set_hash;",
+        "DROP TABLE catalog.release_flow_test_evidence RESTRICT;",
+        "AND routine.proname = 'register_release_flow_test_evidence'",
         "DROP COLUMN deployed_resolution_map;",
         "'control-portable-retired-test-set-lineage-requires-reprovision'",
         "'control-portable-retired-audit-ledger-requires-reprovision'",
@@ -139,11 +140,6 @@ fn portable_store_record_is_exact_and_storage_only() {
             .any(|line| line.trim_start().starts_with("members_json ")),
         "no relation may declare the retired members_json column"
     );
-    assert!(sql.contains(
-        r#"con.contype::text || ':' || pg_get_constraintdef(con.oid, false),
-        E'\n' ORDER BY (con.contype::text || ':'
-        || pg_get_constraintdef(con.oid, false)) COLLATE "C""#
-    ));
     // wamn-0h0g.15.32: the attestation fingerprint's ordering is now CONSTRUCTED
     // stable rather than accidentally so. Pinned here because no mutant can prove
     // it — the nine constraint definitions sort identically under C and
@@ -154,11 +150,17 @@ fn portable_store_record_is_exact_and_storage_only() {
         E'\n' ORDER BY (con.contype::text || ':'
         || pg_get_constraintdef(con.oid, true)) COLLATE "C""#
     ));
-    assert!(sql.contains("ca7165425f601f1ae9e6140b53aa49c2d83a24add8b2192c8474f9bfa5d75eaf"));
-    assert!(!sql.contains("96216cbdb364cd136ed8d1e925673cc8870beb1d15f9b016c7268b78066ac0a7"));
-    assert!(!sql.contains("ab4c8a54366eab426d72c31c81531e929a4b615d051f300be7c993c628699f78"));
-    assert!(!sql.contains("06bf7790877f52c2094511dc368d605f7de4b112383fc6b857d8886844160c85"));
-    assert!(!sql.contains("7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed"));
+    // wamn-0h0g.26.16: every generation of the release-evidence constraint
+    // fingerprint leaves with the relation it hashed, the live one included.
+    for retired_evidence_fingerprint in [
+        "ca7165425f601f1ae9e6140b53aa49c2d83a24add8b2192c8474f9bfa5d75eaf",
+        "96216cbdb364cd136ed8d1e925673cc8870beb1d15f9b016c7268b78066ac0a7",
+        "ab4c8a54366eab426d72c31c81531e929a4b615d051f300be7c993c628699f78",
+        "06bf7790877f52c2094511dc368d605f7de4b112383fc6b857d8886844160c85",
+        "7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed",
+    ] {
+        assert!(!sql.contains(retired_evidence_fingerprint));
+    }
 }
 
 #[test]
@@ -339,15 +341,13 @@ fn control_author_authority_is_the_exact_ratified_class() {
     for schema in ["catalog", "wamn_run", "wamn_authority"] {
         expected.insert((schema.to_owned(), "USAGE".to_owned()));
     }
-    // Both definer routines the author may call. Neither gives it any privilege
-    // on the relation behind the routine — that is the point of the pattern, and
+    // The one definer routine the author may call. It gives it no privilege on
+    // the relation behind the routine — that is the point of the pattern, and
     // the withheld list below is what proves it.
-    for routine in [
-        "wamn_authority.session_author_tenant()",
-        "catalog.register_release_flow_test_evidence(text, text, int, text, text, text, text, bytea, text)",
-    ] {
-        expected.insert((routine.to_owned(), "EXECUTE".to_owned()));
-    }
+    expected.insert((
+        "wamn_authority.session_author_tenant()".to_owned(),
+        "EXECUTE".to_owned(),
+    ));
     for relation in read_only {
         expected.insert((relation.to_owned(), "SELECT".to_owned()));
     }
@@ -363,16 +363,15 @@ fn control_author_authority_is_the_exact_ratified_class() {
     }
     assert_eq!(author_grants(&sql), expected);
 
-    // Nothing else in the store is reachable: no evidence or attestation
-    // publication, no project run or binding authority, no artifact-reader or
-    // effect-writer relation, no unrelated control relation, and no authority
-    // over the mapping that decides the author's tenant.
+    // Nothing else in the store is reachable: no attestation publication, no
+    // project run or binding authority, no artifact-reader or effect-writer
+    // relation, no unrelated control relation, and no authority over the mapping
+    // that decides the author's tenant.
     let granted: BTreeSet<String> = author_grants(&sql)
         .into_iter()
         .map(|(target, _)| target)
         .collect();
     for withheld in [
-        "catalog.release_flow_test_evidence",
         "catalog.deployment_attestations",
         "catalog.release_exposure_manifests",
         "catalog.release_sources",
@@ -386,10 +385,6 @@ fn control_author_authority_is_the_exact_ratified_class() {
         );
     }
     for routine in [
-        // register_release_flow_test_evidence is NO LONGER withheld: wamn-0jsr
-        // grants the author EXECUTE on it as the sole path to the evidence
-        // table. catalog.release_flow_test_evidence stays in the withheld
-        // RELATION list above, which is what keeps that path sole.
         "catalog.register_deployment_attestation",
         "catalog.reject_immutable_row_change",
         "catalog.guard_flow_draft_update",
@@ -502,7 +497,7 @@ fn control_author_authority_is_the_exact_ratified_class() {
     // applies to generated SQL, where a text pin catches a Rust builder moving.
     // The invariant is now asserted where it is decidable: against pg_proc on a
     // real server, in
-    // evidence_registrar_is_definer_reachable_only_by_the_control_author_on_postgres.
+    // control_portable_store_applies_twice_and_enforces_contract_on_postgres.
 
     // The mapping relation itself is owner-only and carries no policy, because
     // FORCE ROW LEVEL SECURITY applies to the owner the resolver runs as.
@@ -518,27 +513,6 @@ fn control_author_authority_is_the_exact_ratified_class() {
     ] {
         assert!(sql.contains(refusal), "missing apply-time guard {refusal}");
     }
-}
-
-#[test]
-fn tested_resolution_fixture_uses_the_landed_rfc8785_canonicalizer() {
-    let value = json!({
-        "flow-z": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "flow-a": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    });
-    let bytes = wamn_execution_contract::canonical_json_bytes(&value);
-    assert_eq!(
-        bytes,
-        br#"{"flow-a":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","flow-z":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#
-    );
-    assert_eq!(
-        wamn_execution_contract::canonical_json_sha256(&value),
-        "sha256:1ce65570349393c45e6c5ab58405b960e24b6d0d8ece076a4e4b0947b52383a2"
-    );
-}
-
-fn hex_from_bytes(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Rewrite one connection URL's identity, keeping its host, port, and database.
@@ -658,14 +632,6 @@ fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
         return;
     };
 
-    let resolution = json!({
-        "flow-z": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "flow-a": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    });
-    let map_bytes = wamn_execution_contract::canonical_json_bytes(&resolution);
-    let map_hash = wamn_execution_contract::canonical_json_sha256(&resolution);
-    let map_hex = hex_from_bytes(&map_bytes);
-
     let mut script = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
     script.push_str(
         "CREATE EXTENSION IF NOT EXISTS pgcrypto;\n\
@@ -690,33 +656,37 @@ fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
     script.push_str(&ddl());
     script.push_str(&format!(
         r#"
+-- wamn-0h0g.7.5's holding, asserted semantically rather than as a text pin over
+-- the DDL: the installed store has EXACTLY ONE SECURITY DEFINER routine and no
+-- second. It moved here from the evidence-registrar proof wamn-0h0g.26.16
+-- deleted; the invariant it carries is about there being no SECOND definer path,
+-- which outlives the registrar that used to be the first. pg_proc.prosecdef is
+-- the server's own answer, so formatting, comments and whitespace cannot fool it.
+DO $$ DECLARE found text[]; BEGIN
+  SELECT array_agg(namespace.nspname || '.' || routine.proname ORDER BY
+                   namespace.nspname, routine.proname) INTO found
+    FROM pg_catalog.pg_proc AS routine
+    JOIN pg_catalog.pg_namespace AS namespace
+      ON namespace.oid = routine.pronamespace
+   WHERE routine.prosecdef
+     AND namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority');
+  IF found IS DISTINCT FROM ARRAY['wamn_authority.session_author_tenant'] THEN
+    RAISE EXCEPTION 'definer routine set drifted: %', found;
+  END IF;
+END $$;
+
+-- The retirement really landed on the server: neither the relation nor any
+-- overload of its registrar survives an apply.
 DO $$ BEGIN
-  ASSERT (SELECT count(*) FROM pg_constraint
-          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype <> 'n') = 12,
-         'release evidence must retain exactly 12 governed constraints';
-  ASSERT (SELECT count(*) FROM pg_constraint
-          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype = 'c') = 9,
-         'release evidence must retain exactly nine CHECK constraints';
-  ASSERT (SELECT count(*) FROM pg_constraint
-          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype = 'f') = 2,
-         'release evidence must retain exactly two local foreign keys';
-  ASSERT (SELECT count(*) FROM pg_constraint
-          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype = 'p') = 1,
-         'release evidence must retain exactly one primary key';
-  ASSERT (SELECT encode(sha256(convert_to(string_agg(
-            contype::text || ':' || pg_get_constraintdef(oid, false),
-            E'\n' ORDER BY (contype::text || ':'
-              || pg_get_constraintdef(oid, false)) COLLATE "C"
-          ), 'UTF8')), 'hex')
-          FROM pg_constraint
-          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype <> 'n') =
-         'ca7165425f601f1ae9e6140b53aa49c2d83a24add8b2192c8474f9bfa5d75eaf',
-         'release evidence constraint fingerprint must be version-stable';
+  ASSERT to_regclass('catalog.release_flow_test_evidence') IS NULL,
+         'the retired release evidence relation survived the apply';
+  ASSERT NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc AS routine
+    JOIN pg_catalog.pg_namespace AS namespace
+      ON namespace.oid = routine.pronamespace
+   WHERE namespace.nspname = 'catalog'
+     AND routine.proname = 'register_release_flow_test_evidence'),
+         'an overload of the retired evidence registrar survived the apply';
 END $$;
 
 SET app.tenant = 'tenant-a';
@@ -746,58 +716,6 @@ INSERT INTO wamn_run.authoring_test_reports
 VALUES ('tenant-a','report-a','validated-a','cat',1,true,'{{}}'::jsonb);
 
 DO $$ DECLARE
-  first_created_at timestamptz;
-  retry_created_at timestamptz;
-BEGIN
-  first_created_at := catalog.register_release_flow_test_evidence(
-    'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    'artifact-a',decode('{map_hex}','hex'),'{map_hash}');
-  retry_created_at := catalog.register_release_flow_test_evidence(
-    'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    'artifact-a',decode('{map_hex}','hex'),'{map_hash}');
-  ASSERT first_created_at = retry_created_at,
-         'exact evidence retry must return the original server timestamp';
-  ASSERT (SELECT tested_resolution_map_bytes
-          FROM catalog.release_flow_test_evidence
-          WHERE tenant_id='tenant-a' AND flow_id='flow-a') = decode('{map_hex}','hex'),
-         'RFC8785 bytes must round-trip byte-exactly';
-END $$;
-
-DO $$ BEGIN BEGIN
-  PERFORM catalog.register_release_flow_test_evidence(
-    'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    'artifact-a',convert_to('{{"flow-a":"changed"}}','UTF8'),
-    'sha256:'||encode(sha256(convert_to('{{"flow-a":"changed"}}','UTF8')),'hex'));
-  ASSERT false, 'same evidence coordinate with different bytes must conflict';
-EXCEPTION WHEN unique_violation THEN
-  ASSERT SQLERRM = 'release-flow-test-evidence-content-conflict';
-END; END $$;
-
-DO $$ BEGIN BEGIN
-  INSERT INTO catalog.release_flow_test_evidence
-    (tenant_id,catalog_id,catalog_version,flow_id,validated_draft_id,report_id,
-     source_artifact_hash,tested_resolution_map_bytes,tested_resolution_map_hash)
-  VALUES ('tenant-a','cat',1,'missing','validated-a','report-a',
-          'artifact-a',decode('{map_hex}','hex'),'sha256:'||repeat('0',64));
-  ASSERT false, 'bad tested map hash must fail';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-
-DO $$ BEGIN BEGIN
-  INSERT INTO catalog.release_flow_test_evidence
-    (tenant_id,catalog_id,catalog_version,flow_id,validated_draft_id,report_id,
-     source_artifact_hash,tested_resolution_map_bytes,tested_resolution_map_hash)
-  VALUES ('tenant-a','cat',1,'missing-flow','validated-a','report-a',
-          'artifact-a',decode('{map_hex}','hex'),'{map_hash}');
-  ASSERT false, 'evidence coordinates must retain local foreign keys';
-EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
-
-DO $$ BEGIN BEGIN
-  UPDATE catalog.release_flow_test_evidence SET source_artifact_hash='changed'
-  WHERE tenant_id='tenant-a' AND flow_id='flow-a';
-  ASSERT false, 'evidence must be immutable';
-EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; END $$;
-
-DO $$ DECLARE
   first_attested_at timestamptz;
 BEGIN
   first_attested_at := catalog.register_deployment_attestation(
@@ -820,20 +738,19 @@ END; END $$;
 DO $$ BEGIN
   ASSERT NOT has_schema_privilege('wamn_portable_probe','catalog','USAGE');
   ASSERT NOT has_table_privilege(
-    'wamn_portable_probe','catalog.release_flow_test_evidence','SELECT');
+    'wamn_portable_probe','catalog.deployment_attestations','SELECT');
   ASSERT NOT has_table_privilege(
-    'wamn_portable_probe','catalog.release_flow_test_evidence','INSERT');
+    'wamn_portable_probe','catalog.deployment_attestations','INSERT');
   ASSERT NOT has_table_privilege(
-    'wamn_portable_probe','catalog.release_flow_test_evidence','UPDATE');
+    'wamn_portable_probe','catalog.deployment_attestations','UPDATE');
   ASSERT NOT has_table_privilege(
-    'wamn_portable_probe','catalog.release_flow_test_evidence','DELETE');
+    'wamn_portable_probe','catalog.deployment_attestations','DELETE');
   ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
-          WHERE oid='catalog.release_flow_test_evidence'::regclass);
+          WHERE oid='catalog.deployment_attestations'::regclass);
   ASSERT NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE contype='f'
-      AND conrelid IN ('catalog.release_flow_test_evidence'::regclass,
-                       'catalog.deployment_attestations'::regclass,
+      AND conrelid IN ('catalog.deployment_attestations'::regclass,
                        'catalog.draft_safe_connection_grants'::regclass)
       AND confrelid::regclass::text LIKE 'registry.%'
   ), 'cross-plane coordinates must never become foreign keys';
@@ -874,222 +791,6 @@ RESET ROLE;
 /// `tenant-a` and `(acme, shipping, dev)` maps to `tenant-b`. Each proof stage
 /// authenticates as its own author login, because the mapping resolves on
 /// `session_user` and `SET ROLE` leaves `session_user` alone.
-/// wamn-0jsr's probe arm: the definer registrar is reachable by the control
-/// author and by nobody else, and it does NOT hand the author the table.
-///
-/// SECURITY DEFINER runs the body as the function owner, so the whole safety of
-/// wamn-0h0g.7.5's exception rests on the grant being exactly one principal
-/// wide. That is asserted here against a real server rather than pinned as SQL
-/// text, because a text pin cannot prove PostgreSQL agrees.
-#[test]
-fn evidence_registrar_is_definer_reachable_only_by_the_control_author_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
-        eprintln!(
-            "skipping evidence_registrar_is_definer_reachable_only_by_the_control_author_on_postgres \
-             (set WAMN_CONTROL_PORTABLE_PG_URL)"
-        );
-        return;
-    };
-    let database = {
-        let parsed = url::Url::parse(&url).expect("the control PG URL parses");
-        parsed.path().trim_start_matches('/').to_owned()
-    };
-    assert!(!database.is_empty(), "the URL must name a database");
-
-    let author = wamn_control_provision::control_author_generation_role(
-        "acme",
-        "receiving",
-        "dev",
-        &database,
-        wamn_control_provision::CredentialGeneration::A,
-    );
-    const PASSWORD: &str = "evidence-registrar-live-proof";
-    const OUTSIDER: &str = "wamn_evidence_outsider";
-
-    let mut install = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
-    install.push_str(
-        "DROP SCHEMA IF EXISTS catalog CASCADE;\n\
-         DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
-         DROP SCHEMA IF EXISTS wamn_authority CASCADE;\n\
-         DO $$ BEGIN\n\
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN\n\
-             CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
-           END IF;\n\
-         END $$;\n",
-    );
-    install.push_str(&wamn_control_provision::sql::ensure_control_author_acl_role_sql());
-    install.push('\n');
-    install.push_str(
-        &wamn_control_provision::sql::prepare_control_author_generation_sql(
-            &database,
-            &author,
-            PASSWORD,
-            "2099-01-01T00:00:00Z",
-        ),
-    );
-    install.push('\n');
-    // A login that is NOT the control author and holds no membership in it.
-    install.push_str(&format!(
-        // Hermetic preamble: roles are CLUSTER-wide, so a bare DROP ROLE fails on
-        // a cluster where a previous run left the role holding a grant, and the
-        // suite then dies in setup instead of measuring anything.
-        "DO $$ BEGIN \n\
-           IF EXISTS (SELECT FROM pg_roles WHERE rolname='{OUTSIDER}') THEN \n\
-             EXECUTE 'DROP OWNED BY {OUTSIDER}'; \n\
-             EXECUTE 'DROP ROLE {OUTSIDER}'; \n\
-           END IF; \n\
-         END $$;\n\
-         CREATE ROLE {OUTSIDER} LOGIN PASSWORD '{PASSWORD}' NOSUPERUSER NOCREATEDB \
-           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
-         DO $$ BEGIN EXECUTE format('GRANT CONNECT ON DATABASE %I TO {OUTSIDER}', \
-           current_database()); END $$;\n"
-    ));
-    install.push_str(
-        "DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
-           current_database()); END $$;\n\
-         SET ROLE wamn_system;\n",
-    );
-    install.push_str(&ddl());
-    // One mapping row, so the author's claim can agree with a tenant. Without it
-    // session_author_tenant() resolves NULL and every restrictive policy refuses
-    // — which is correct, but would make the refusal arms below prove nothing.
-    install.push_str(&format!(
-        "\nINSERT INTO wamn_authority.author_login_tenants \
-           (login_identity, tenant_id, org_id, project_id, environment) \
-         VALUES ('{author}', 'tenant-probe', 'acme', 'receiving', 'dev');\n"
-    ));
-    psql_ok(&url, "install", &install);
-
-    // wamn-0h0g.7.5's holding, asserted semantically: the installed store has
-    // EXACTLY these two definer routines and no third. This replaces a
-    // newline-exact text `contains` that broke on reformatting and could not
-    // distinguish a real definer from a comment mentioning one. pg_proc.prosecdef
-    // is the server's own answer, so formatting, comments and whitespace are
-    // irrelevant to it.
-    psql_ok(
-        &url,
-        "exactly two ratified definer routines",
-        "DO $$ DECLARE found text[]; BEGIN \
-           SELECT array_agg(namespace.nspname || '.' || routine.proname ORDER BY \
-                            namespace.nspname, routine.proname) INTO found \
-             FROM pg_catalog.pg_proc AS routine \
-             JOIN pg_catalog.pg_namespace AS namespace \
-               ON namespace.oid = routine.pronamespace \
-            WHERE routine.prosecdef \
-              AND namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority'); \
-           IF found IS DISTINCT FROM ARRAY[ \
-                'catalog.register_release_flow_test_evidence', \
-                'wamn_authority.session_author_tenant'] THEN \
-             RAISE EXCEPTION 'definer routine set drifted: %', found; \
-           END IF; \
-         END $$;",
-    );
-
-    // The registrar really is SECURITY DEFINER on the server, not just in text.
-    psql_ok(
-        &url,
-        "definer posture",
-        "DO $$ BEGIN \
-           IF NOT (SELECT prosecdef FROM pg_catalog.pg_proc \
-                    WHERE oid = 'catalog.register_release_flow_test_evidence(text,text,int,\
-text,text,text,text,bytea,text)'::regprocedure) THEN \
-             RAISE EXCEPTION 'registrar is not SECURITY DEFINER'; \
-           END IF; \
-         END $$;",
-    );
-
-    let author_url = as_role(&url, &author, PASSWORD);
-    let outsider_url = as_role(&url, OUTSIDER, PASSWORD);
-
-    // NARROWNESS: the author reaches the relation ONLY through the routine.
-    // This is the same fact the scenario-worker startup probe asserts, proven
-    // here against the server.
-    psql_ok(
-        &url,
-        "author holds the routine and not the relation",
-        &format!(
-            "DO $$ BEGIN \
-               IF NOT pg_catalog.has_function_privilege('{author}', \
-                 'catalog.register_release_flow_test_evidence(text,text,int,text,text,text,\
-text,bytea,text)', 'EXECUTE') THEN \
-                 RAISE EXCEPTION 'the control author cannot execute the registrar'; \
-               END IF; \
-               IF pg_catalog.has_table_privilege('{author}', \
-                 'catalog.release_flow_test_evidence', 'INSERT') \
-                  OR pg_catalog.has_table_privilege('{author}', \
-                 'catalog.release_flow_test_evidence', 'SELECT') THEN \
-                 RAISE EXCEPTION 'the control author reached the evidence table directly'; \
-               END IF; \
-             END $$;"
-        ),
-    );
-
-    // REFUSAL: a caller outside the one grant cannot execute it at all.
-    let refused = psql(
-        &outsider_url,
-        "SELECT catalog.register_release_flow_test_evidence('t','c',1,'f','d','r','h',\
-'\\x00'::bytea,'h');",
-    );
-    assert!(
-        !refused.status.success(),
-        "a non-author caller executed the definer registrar"
-    );
-    let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(
-        stderr.contains("permission denied"),
-        "the refusal must be a privilege refusal, not an incidental error: {stderr}"
-    );
-
-    // POSITIVE, without needing the evidence table's FK parents: call with a
-    // deliberately WRONG map hash. If the author were still refused at the
-    // privilege gate this raises insufficient_privilege; getting a CONSTRAINT
-    // error instead proves execution entered the definer body and reached the
-    // table. That is the whole capability wamn-0jsr exists to deliver.
-    psql_ok(
-        &author_url,
-        "the author reaches the definer body",
-        "SET app.tenant = 'tenant-probe'; \
-         DO $$ DECLARE reached boolean := false; BEGIN \
-           BEGIN \
-             PERFORM catalog.register_release_flow_test_evidence( \
-               'tenant-probe','cat',1,'flow-a','vd','rep','art', \
-               convert_to('{}','UTF8'), 'sha256:'||repeat('4',64)); \
-             reached := true; \
-           EXCEPTION \
-             WHEN insufficient_privilege THEN \
-               RAISE EXCEPTION 'the control author was refused before the body'; \
-             WHEN OTHERS THEN NULL; \
-           END; \
-           IF reached THEN \
-             RAISE EXCEPTION 'a mismatched map hash must not register'; \
-           END IF; \
-         END $$;",
-    );
-
-    // THE PROPERTY THAT MAKES DEFINER SAFE HERE: the body runs as the owner, so
-    // the only thing standing between the author and another tenant's evidence
-    // is row-level security. Prove it still binds THROUGH the definer, with a
-    // hash that satisfies the check constraint so RLS is what refuses.
-    psql_ok(
-        &author_url,
-        "the definer does not cross tenants",
-        "SET app.tenant = 'tenant-probe'; \
-         DO $$ DECLARE crossed boolean := false; BEGIN \
-           BEGIN \
-             PERFORM catalog.register_release_flow_test_evidence( \
-               'tenant-elsewhere','cat',1,'flow-a','vd','rep','art', \
-               convert_to('{}','UTF8'), \
-               'sha256:'||encode(sha256(convert_to('{}','UTF8')),'hex')); \
-             crossed := true; \
-           EXCEPTION WHEN insufficient_privilege THEN NULL; END; \
-           IF crossed THEN \
-             RAISE EXCEPTION 'the definer wrote another tenant evidence row'; \
-           END IF; \
-         END $$;",
-    );
-}
-
 #[test]
 fn control_author_two_tenant_authority_holds_on_postgres() {
     let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
@@ -1337,24 +1038,9 @@ END $no_claim$;
 -- The claim must agree with the mapping; it can only ever narrow.
 SET app.tenant = 'tenant-a';
 DO $denials$ BEGIN
-  -- Evidence and deployment attestations: the author is not the publisher.
-  BEGIN PERFORM 1 FROM catalog.release_flow_test_evidence;
-    ASSERT false, 'the author read release evidence';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  -- Deployment attestations: the author is not the publisher.
   BEGIN PERFORM 1 FROM catalog.deployment_attestations;
     ASSERT false, 'the author read deployment attestations';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-  -- wamn-0jsr FLIPPED THIS ARM. The author may now EXECUTE the registrar - it
-  -- is the sole path to a table it still cannot touch, asserted just above. What
-  -- survives is the stronger claim: SECURITY DEFINER runs the body as the owner,
-  -- so row-level security is the only thing standing between this author and
-  -- another tenant's evidence. The hash is valid here so the check constraint
-  -- passes and RLS is what refuses.
-  BEGIN PERFORM catalog.register_release_flow_test_evidence(
-      'tenant-b','cat',1,'flow-a','validated-tenant-b','report-a','artifact-tenant-b',
-      convert_to('{{}}','UTF8'),
-      'sha256:'||encode(sha256(convert_to('{{}}','UTF8')),'hex'));
-    ASSERT false, 'the author published another tenant evidence through the definer';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN PERFORM catalog.register_deployment_attestation(
       'tenant-a','cat',1,'acme','receiving','dev','sha256:'||repeat('5',64),now());

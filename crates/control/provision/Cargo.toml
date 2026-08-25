@@ -56,4 +56,3 @@ url = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true, features = ["std"] }
-wamn-execution-contract = { workspace = true }

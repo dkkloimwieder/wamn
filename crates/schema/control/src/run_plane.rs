@@ -2255,8 +2255,7 @@ pub struct RunPlanePlan {
 const RETIRED_RERUN_LINEAGE_COLUMNS: &[&str] = &["replay_of", "root_run_id"];
 const RETIRED_FAILURE_DETAIL_COLUMNS: &[&str] = &["fail_node", "fail_reason"];
 const RETIRED_EXECUTION_BUNDLE_COLUMN: &str = "execution_bundle_hash";
-const RETIRED_EXECUTION_BUNDLE_CATALOG_TABLES: &[&str] =
-    &["release_flows", "release_flow_test_evidence"];
+const RETIRED_EXECUTION_BUNDLE_CATALOG_TABLES: &[&str] = &["release_flows"];
 const RETIRED_EFFECT_DISPOSITION_TABLES: [&str; 2] =
     ["effect_disposition_requests", "effect_dispositions"];
 const RETIRED_EFFECT_DISPOSITION_HELPER: &str = "guard_effect_disposition_append";
@@ -5537,13 +5536,11 @@ COMMIT;
         assert_eq!(action.kind, RunPlaneActionKind::RetireExecutionBundles);
         assert_eq!(
             action.sql,
-            "LOCK TABLE \"demo\".runs, catalog.\"release_flows\", \
-             catalog.\"release_flow_test_evidence\" IN ACCESS EXCLUSIVE MODE;\n\
+            "LOCK TABLE \"demo\".runs, catalog.\"release_flows\" \
+             IN ACCESS EXCLUSIVE MODE;\n\
              ALTER TABLE \"demo\".runs DROP COLUMN IF EXISTS \
              execution_bundle_hash RESTRICT;\n\
              ALTER TABLE catalog.\"release_flows\" DROP COLUMN IF EXISTS \
-             execution_bundle_hash RESTRICT;\n\
-             ALTER TABLE catalog.\"release_flow_test_evidence\" DROP COLUMN IF EXISTS \
              execution_bundle_hash RESTRICT;\n\
              LOCK TABLE catalog.execution_bundles IN ACCESS EXCLUSIVE MODE;\n\
              -- Persisted bundle bytes are deliberately discarded without archive.\n\

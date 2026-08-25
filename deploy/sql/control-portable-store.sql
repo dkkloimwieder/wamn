@@ -8,9 +8,10 @@
 -- and wamn_run.authoring_test_*; database residency, not a renamed schema,
 -- distinguishes them.
 --
--- `control-portable-retained-shape-drift` and the release-evidence constraint
--- fingerprint below are apply-time digests: they must be regenerated whenever
--- a retained relation's shape moves; the owning schema change regenerates both.
+-- `control-portable-retained-shape-drift` and the deployment-attestation
+-- constraint fingerprint below are apply-time digests: they must be regenerated
+-- whenever a retained relation's shape moves; the owning schema change
+-- regenerates both.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE SCHEMA IF NOT EXISTS catalog AUTHORIZATION wamn_system;
@@ -395,35 +396,6 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_reports (
         REFERENCES wamn_run.authoring_test_run_reservations (tenant_id, report_id)
 );
 
--- No test-set hash column (wamn-0h0g.13.56): after one-document lineage
--- (wamn-0h0g.15.27) the test-set artifact does not exist, so the column would
--- hash a sub-artifact nothing else references or can fetch. A hash that names
--- nothing is not evidence.
-CREATE TABLE IF NOT EXISTS catalog.release_flow_test_evidence (
-    tenant_id                  text NOT NULL CHECK (tenant_id <> ''),
-    catalog_id                 text NOT NULL CHECK (catalog_id <> ''),
-    catalog_version            int NOT NULL CHECK (catalog_version > 0),
-    flow_id                    text NOT NULL CHECK (flow_id <> ''),
-    validated_draft_id         text NOT NULL CHECK (validated_draft_id <> ''),
-    report_id                  text NOT NULL CHECK (report_id <> ''),
-    source_artifact_hash       text NOT NULL CHECK (source_artifact_hash <> ''),
-    tested_resolution_map_bytes bytea NOT NULL,
-    tested_resolution_map_hash text NOT NULL
-        CHECK (tested_resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'),
-    created_at                 timestamptz NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id),
-    FOREIGN KEY (tenant_id, catalog_id, catalog_version, flow_id)
-        REFERENCES catalog.release_flows
-            (tenant_id, catalog_id, catalog_version, flow_id),
-    FOREIGN KEY (tenant_id, report_id)
-        REFERENCES wamn_run.authoring_test_reports (tenant_id, report_id),
-    CONSTRAINT release_flow_test_evidence_map_hash_check CHECK (
-        tested_resolution_map_hash = 'sha256:' || encode(
-            sha256(tested_resolution_map_bytes), 'hex'
-        )
-    )
-);
-
 CREATE TABLE IF NOT EXISTS catalog.deployment_attestations (
     tenant_id               text NOT NULL CHECK (tenant_id <> ''),
     catalog_id              text NOT NULL CHECK (catalog_id <> ''),
@@ -439,92 +411,6 @@ CREATE TABLE IF NOT EXISTS catalog.deployment_attestations (
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version)
 );
-
-DROP FUNCTION IF EXISTS catalog.register_release_flow_test_evidence(
-    text, text, int, text, text, text, text, text, bytea, text
-);
-DROP FUNCTION IF EXISTS catalog.register_release_flow_test_evidence(
-    text, text, int, text, text, text, text, text, text, bytea, text
-);
-CREATE OR REPLACE FUNCTION catalog.register_release_flow_test_evidence(
-    p_tenant_id text,
-    p_catalog_id text,
-    p_catalog_version int,
-    p_flow_id text,
-    p_validated_draft_id text,
-    p_report_id text,
-    p_source_artifact_hash text,
-    p_tested_resolution_map_bytes bytea,
-    p_tested_resolution_map_hash text
-)
-RETURNS timestamptz
-LANGUAGE plpgsql
--- SECURITY DEFINER so the control author can register evidence WITHOUT holding
--- any privilege on catalog.release_flow_test_evidence itself. Under the previous
--- SECURITY INVOKER semantics the body ran as the caller, so EXECUTE alone let a
--- caller into the function and then failed inside it on the table; the only way
--- to make it work as INVOKER was to grant the table directly, which would let
--- that principal INSERT straight past the insert-or-verify-identical check
--- below and retire it to advisory. Definer keeps this function the SOLE path.
---
--- wamn-0h0g.7.5 held that there is no separate RPC or SECURITY DEFINER path for
--- management admission. That holding is about not minting a SECOND
--- run-creation path into the PROJECT plane. This is the sole EXISTING writer of
--- a CONTROL-plane evidence table, keeping an invariant enforced rather than
--- advisory, so the re-proposal rule is satisfied by the plane distinction
--- rather than bypassed. Same pattern as wamn_authority.session_author_tenant()
--- below: definer, pinned search_path, revoked from PUBLIC, one named grantee.
-SECURITY DEFINER
--- Fixed search path: the relation this resolves must not depend on a caller's
--- search_path, and every reference in the body is schema-qualified anyway.
-SET search_path = pg_catalog, catalog
-AS $$
-DECLARE
-    existing_created_at timestamptz;
-BEGIN
-    INSERT INTO catalog.release_flow_test_evidence (
-        tenant_id, catalog_id, catalog_version, flow_id,
-        validated_draft_id, report_id, source_artifact_hash,
-        tested_resolution_map_bytes, tested_resolution_map_hash
-    ) VALUES (
-        p_tenant_id, p_catalog_id, p_catalog_version, p_flow_id,
-        p_validated_draft_id, p_report_id,
-        p_source_artifact_hash, p_tested_resolution_map_bytes,
-        p_tested_resolution_map_hash
-    )
-    ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING
-    RETURNING created_at INTO existing_created_at;
-
-    IF existing_created_at IS NOT NULL THEN
-        RETURN existing_created_at;
-    END IF;
-
-    SELECT created_at INTO existing_created_at
-    FROM catalog.release_flow_test_evidence
-    WHERE tenant_id = p_tenant_id
-      AND catalog_id = p_catalog_id
-      AND catalog_version = p_catalog_version
-      AND flow_id = p_flow_id
-      AND validated_draft_id = p_validated_draft_id
-      AND report_id = p_report_id
-      AND source_artifact_hash = p_source_artifact_hash
-      AND tested_resolution_map_bytes = p_tested_resolution_map_bytes
-      AND tested_resolution_map_hash = p_tested_resolution_map_hash;
-
-    IF existing_created_at IS NULL THEN
-        RAISE EXCEPTION USING ERRCODE = '23505',
-            MESSAGE = 'release-flow-test-evidence-content-conflict';
-    END IF;
-    RETURN existing_created_at;
-END
-$$;
-REVOKE ALL ON FUNCTION catalog.register_release_flow_test_evidence(
-    text, text, int, text, text, text, text, bytea, text
-) FROM PUBLIC;
--- Exactly one grantee. The control author reaches the evidence table ONLY
--- through this definer function; catalog.release_flow_test_evidence itself stays
--- denied to it, and the scenario-worker startup probe asserts that denial.
-GRANT EXECUTE ON FUNCTION catalog.register_release_flow_test_evidence(text, text, int, text, text, text, text, bytea, text) TO wamn_control_author;
 
 CREATE OR REPLACE FUNCTION catalog.register_deployment_attestation(
     p_tenant_id text,
@@ -580,16 +466,43 @@ REVOKE ALL ON FUNCTION catalog.register_deployment_attestation(
     text, text, int, text, text, text, text, timestamptz
 ) FROM PUBLIC;
 
+-- wamn-0h0g.26.16: flow-shaped release TEST EVIDENCE is retired. The row named
+-- a release member by `flow_id` under an identity that no longer exists, and no
+-- caller in the workspace ever executed its registrar. The rows are deliberately
+-- discarded without archive or conversion, exactly like the bundle bytes below.
+--
+-- The routine goes first, and by NAME over every overload rather than by pinned
+-- signature: a superseded signature that outlived its pin would otherwise
+-- survive as an owner-only entry point onto a dropped relation. The table then
+-- goes BEFORE the execution-bundle block, whose RESTRICT drop would otherwise
+-- trip on the evidence foreign key it used to carry.
+DO $retire_release_flow_test_evidence$
+DECLARE
+    retired_routine text;
+BEGIN
+    FOR retired_routine IN
+        SELECT routine.oid::regprocedure::text
+          FROM pg_proc AS routine
+          JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+         WHERE namespace.nspname = 'catalog'
+           AND routine.proname = 'register_release_flow_test_evidence'
+    LOOP
+        EXECUTE format('DROP FUNCTION %s', retired_routine);
+    END LOOP;
+    IF to_regclass('catalog.release_flow_test_evidence') IS NOT NULL THEN
+        LOCK TABLE catalog.release_flow_test_evidence IN ACCESS EXCLUSIVE MODE;
+        DROP TABLE catalog.release_flow_test_evidence RESTRICT;
+    END IF;
+END
+$retire_release_flow_test_evidence$;
+
 -- Persisted bundle bytes are deliberately discarded without archive or
 -- conversion. Drop every direct carrier first so the final RESTRICT drop is a
 -- dependency tripwire, not an instruction to amputate an un-inventoried object.
 DO $retire_execution_bundles$
 BEGIN
-    LOCK TABLE catalog.release_flows,
-        catalog.release_flow_test_evidence IN ACCESS EXCLUSIVE MODE;
+    LOCK TABLE catalog.release_flows IN ACCESS EXCLUSIVE MODE;
     ALTER TABLE catalog.release_flows
-        DROP COLUMN IF EXISTS execution_bundle_hash RESTRICT;
-    ALTER TABLE catalog.release_flow_test_evidence
         DROP COLUMN IF EXISTS execution_bundle_hash RESTRICT;
     IF to_regclass('catalog.execution_bundles') IS NOT NULL THEN
         LOCK TABLE catalog.execution_bundles IN ACCESS EXCLUSIVE MODE;
@@ -613,7 +526,7 @@ BEGIN
         'catalog.release_attachments', 'catalog.component_library',
         'catalog.connection_requirements',
         'catalog.draft_safe_connection_grants', 'catalog.authoring_command_audit',
-        'catalog.release_flow_test_evidence', 'catalog.deployment_attestations',
+        'catalog.deployment_attestations',
         'wamn_run.authoring_test_run_reservations',
         'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
     ]
@@ -648,7 +561,7 @@ BEGIN
         'catalog.release_sources', 'catalog.release_attachments',
         'catalog.component_library',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
-        'catalog.release_flow_test_evidence', 'catalog.deployment_attestations',
+        'catalog.deployment_attestations',
         'wamn_run.authoring_test_reports'
     ]
     LOOP
@@ -708,27 +621,15 @@ DROP FUNCTION IF EXISTS catalog.register_deployment_attestation(
 );
 
 DO $retire$
-DECLARE
-    retired_constraint text;
 BEGIN
     -- wamn-pm7k: the draft concept died with the pivot. The wiring document IS
     -- the validated artifact and its hash IS the identity, so the relation has
     -- no writer and its rows name nothing — they are deliberately discarded
-    -- without archive, exactly like the bundle bytes above. The evidence
-    -- foreign key that used to resolve an identity through it goes first, or
-    -- the RESTRICT drop refuses on the dependency.
+    -- without archive, exactly like the bundle bytes above. The one dependency
+    -- the RESTRICT drop used to refuse on — a release-evidence foreign key that
+    -- resolved an identity through this relation — left with the evidence table
+    -- itself (wamn-0h0g.26.16), which is dropped above.
     IF to_regclass('catalog.validated_flow_drafts') IS NOT NULL THEN
-        FOR retired_constraint IN
-            SELECT conname FROM pg_constraint
-             WHERE conrelid = to_regclass('catalog.release_flow_test_evidence')
-               AND contype = 'f'
-               AND confrelid = to_regclass('catalog.validated_flow_drafts')
-        LOOP
-            EXECUTE format(
-                'ALTER TABLE catalog.release_flow_test_evidence DROP CONSTRAINT %I',
-                retired_constraint
-            );
-        END LOOP;
         LOCK TABLE catalog.validated_flow_drafts IN ACCESS EXCLUSIVE MODE;
         DROP TABLE catalog.validated_flow_drafts RESTRICT;
     END IF;
@@ -774,16 +675,6 @@ BEGIN
             MESSAGE = 'control-portable-retired-audit-ledger-requires-reprovision';
     END IF;
 
-    -- A hash that names nothing is not evidence (wamn-0h0g.13.56): the column
-    -- leaves with the artifact it used to name, and its CHECK leaves with it.
-    IF EXISTS (
-        SELECT 1 FROM pg_attribute
-        WHERE attrelid = to_regclass('catalog.release_flow_test_evidence')
-          AND attname = 'test_set_hash' AND NOT attisdropped
-    ) THEN
-        ALTER TABLE catalog.release_flow_test_evidence DROP COLUMN test_set_hash;
-    END IF;
-
     -- Ruling 5 (wamn-0h0g.15.8): the deployed map is derivable from the digest
     -- it sat next to, and its superseded overload is dropped above.
     IF EXISTS (
@@ -821,9 +712,7 @@ DO $drift$
 DECLARE
     catalog_tables text[];
     run_tables text[];
-    evidence_columns text[];
     attestation_columns text[];
-    evidence_constraints_fingerprint text;
     attestation_constraints_fingerprint text;
     retained_fingerprint text;
 BEGIN
@@ -834,7 +723,7 @@ BEGIN
         'component_library', 'connection_requirements', 'deployment_attestations',
         'draft_safe_connection_grants', 'flow_artifacts',
         'flow_drafts', 'release_attachments', 'release_exposure_manifests',
-        'release_flow_test_evidence', 'release_flows', 'release_sources',
+        'release_flows', 'release_sources',
         'releases'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
@@ -854,26 +743,6 @@ BEGIN
     SELECT array_agg(
         a.attname || ':' || pg_catalog.format_type(a.atttypid, a.atttypmod)
         || ':' || a.attnotnull::text ORDER BY a.attnum
-    ) INTO evidence_columns
-    FROM pg_attribute a
-    WHERE a.attrelid = 'catalog.release_flow_test_evidence'::regclass
-      AND a.attnum > 0 AND NOT a.attisdropped;
-    IF evidence_columns IS DISTINCT FROM ARRAY[
-        'tenant_id:text:true', 'catalog_id:text:true',
-        'catalog_version:integer:true', 'flow_id:text:true',
-        'validated_draft_id:text:true', 'report_id:text:true',
-        'source_artifact_hash:text:true',
-        'tested_resolution_map_bytes:bytea:true',
-        'tested_resolution_map_hash:text:true',
-        'created_at:timestamp with time zone:true'
-    ]::text[] THEN
-        RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'release-flow-test-evidence-shape-drift';
-    END IF;
-
-    SELECT array_agg(
-        a.attname || ':' || pg_catalog.format_type(a.atttypid, a.atttypmod)
-        || ':' || a.attnotnull::text ORDER BY a.attnum
     ) INTO attestation_columns
     FROM pg_attribute a
     WHERE a.attrelid = 'catalog.deployment_attestations'::regclass
@@ -887,22 +756,6 @@ BEGIN
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'deployment-attestation-shape-drift';
-    END IF;
-
-    SELECT encode(sha256(convert_to(string_agg(
-        con.contype::text || ':' || pg_get_constraintdef(con.oid, false),
-        E'\n' ORDER BY (con.contype::text || ':'
-        || pg_get_constraintdef(con.oid, false)) COLLATE "C"
-    ), 'UTF8')), 'hex')
-    INTO evidence_constraints_fingerprint
-    FROM pg_constraint con
-    WHERE con.conrelid = 'catalog.release_flow_test_evidence'::regclass
-      AND con.contype <> 'n';
-    IF evidence_constraints_fingerprint <>
-       'ca7165425f601f1ae9e6140b53aa49c2d83a24add8b2192c8474f9bfa5d75eaf'
-    THEN
-        RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'release-flow-test-evidence-constraint-drift';
     END IF;
 
     SELECT encode(sha256(convert_to(string_agg(
@@ -987,9 +840,8 @@ $drift$;
 -- has drifted refuses before any authority is granted on it.
 --
 -- Author, publisher/deployer, artifact reader, and effect writer stay four
--- separate principals. Nothing here grants evidence or deployment-attestation
--- publication (`catalog.release_flow_test_evidence`,
--- `catalog.deployment_attestations` and their register_* routines stay
+-- separate principals. Nothing here grants deployment-attestation publication
+-- (`catalog.deployment_attestations` and its register_* routine stay
 -- owner-only), project run or binding authority, artifact-reader authority,
 -- effect-writer authority, or UPDATE/DELETE over any immutable fact.
 -- `wamn_scenario_author` is never granted anything here and is never granted
@@ -1118,8 +970,8 @@ GRANT SELECT, INSERT, UPDATE ON wamn_run.authoring_test_run_reservations,
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog, wamn_run FROM PUBLIC;
 
 -- The author's bounded set is granted above; every other relation in these
--- schemas — release evidence, deployment attestations, the release exposure /
--- source / attachment records, and the catalog registry itself — stays
+-- schemas — deployment attestations, the release exposure / source / attachment
+-- records, and the catalog registry itself — stays
 -- owner-only for it too. Asserted rather than assumed, because a stray GRANT
 -- here is exactly the mistake that would hand one principal another's plane.
 DO $author_bounds$
@@ -1181,10 +1033,6 @@ BEGIN
        OR pg_catalog.has_schema_privilege('wamn_control_author', 'wamn_run', 'CREATE')
        OR pg_catalog.has_schema_privilege('wamn_control_author', 'wamn_authority',
                                           'CREATE')
-       -- register_release_flow_test_evidence is DELIBERATELY ABSENT here: the
-       -- control author now holds EXECUTE on it as the sole path to the evidence
-       -- table (see the definer function above). The table itself stays denied,
-       -- and that denial is what this boundary still proves.
        OR pg_catalog.has_function_privilege(
             'wamn_control_author',
             'catalog.register_deployment_attestation(text,text,int,text,text,text,text,timestamptz)',

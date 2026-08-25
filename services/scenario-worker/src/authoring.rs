@@ -36,7 +36,7 @@ use crate::store::test_orchestration;
 /// tenant must be completely unreachable, so an author cannot re-point itself.
 ///
 /// Naming `wamn_authority.author_login_tenants` and
-/// `catalog.release_flow_test_evidence` here also makes the probe structurally
+/// `catalog.deployment_attestations` here also makes the probe structurally
 /// unable to pass against a project database: those relations are absent there,
 /// so the statement errors and the process refuses instead of quietly authoring
 /// into the wrong plane.
@@ -130,10 +130,6 @@ SELECT current_user = session_user, \
                        mapping_privilege.privilege)) \
        ), \
        NOT pg_catalog.has_table_privilege( \
-             current_user, 'catalog.release_flow_test_evidence', 'SELECT') \
-         AND NOT pg_catalog.has_table_privilege( \
-             current_user, 'catalog.release_flow_test_evidence', 'INSERT') \
-         AND NOT pg_catalog.has_table_privilege( \
              current_user, 'catalog.deployment_attestations', 'SELECT') \
          AND NOT pg_catalog.has_table_privilege( \
              current_user, 'catalog.deployment_attestations', 'INSERT'), \
@@ -666,7 +662,7 @@ mod tests {
         // errors rather than admitting a project connection.
         assert!(
             AUTHORING_ROLE_PROBE_SQL.contains("'wamn_authority.author_login_tenants'")
-                && AUTHORING_ROLE_PROBE_SQL.contains("'catalog.release_flow_test_evidence'")
+                && AUTHORING_ROLE_PROBE_SQL.contains("'catalog.deployment_attestations'")
         );
         // Tenant authority is not self-service: no privilege at all on the mapping.
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("mapping_privilege.privilege"));
@@ -684,15 +680,13 @@ mod tests {
             "SELECT wamn_authority.session_author_tenant() = $1"
         );
         assert!(!AUTHORING_TENANT_BINDING_SQL.contains("app.tenant"));
-        // Neither publisher relation is readable, let alone writable. Compared on
+        // The publisher relation is not readable, let alone writable. Compared on
         // whitespace-normalized text so line wrapping is not load-bearing.
         let probe = AUTHORING_ROLE_PROBE_SQL
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
         for withheld in [
-            "'catalog.release_flow_test_evidence', 'SELECT'",
-            "'catalog.release_flow_test_evidence', 'INSERT'",
             "'catalog.deployment_attestations', 'SELECT'",
             "'catalog.deployment_attestations', 'INSERT'",
         ] {

@@ -4205,7 +4205,6 @@ dependencies = [
  "sha2 0.11.0",
  "url",
  "wamn-control-registry",
- "wamn-execution-contract",
  "wamn-pg-core",
  "wamn-run-state",
 ]

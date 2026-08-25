@@ -433,8 +433,9 @@ pub async fn finalize_test_case(
 /// `authoring_test_case_runs.resolution_map`, so that select could only ever match
 /// zero rows and the statement was a no-op that read as a source; wamn-0h0g.15.29
 /// removed it, leaving columns that carried `'{}'` forever. The columns are now
-/// gone. The publish gate's `tested_resolution_map` is derived from the release
-/// manifest in `wamn_ctl::publish_release`, never from this report.
+/// gone, and so is the release-evidence row whose `tested_resolution_map` this
+/// note used to point at as the surviving consumer (wamn-0h0g.26.16). No
+/// resolution map is derived from this report, or from anything else.
 pub async fn reconcile_test_report(
     client: &mut Client,
     tenant_id: &str,
