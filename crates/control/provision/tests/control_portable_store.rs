@@ -39,7 +39,6 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.release_sources",
         "catalog.release_attachments",
         "catalog.connection_requirements",
-        "catalog.draft_safe_connection_grants",
         "catalog.authoring_command_audit",
         "wamn_run.authoring_test_run_reservations",
         "wamn_run.authoring_test_case_runs",
@@ -58,6 +57,10 @@ fn portable_store_record_is_exact_and_storage_only() {
         // wamn-pm7k: the draft concept died with the pivot — the wiring
         // document IS the validated artifact and its hash IS the identity.
         "catalog.validated_flow_drafts",
+        // wamn-0h0g.8.5.5: gate cases are effect-free by contract, so a gate
+        // reaches no connection and this relation's concept is void. It never
+        // had production DML in any plane.
+        "catalog.draft_safe_connection_grants",
         // wamn-0h0g.26.16: flow-shaped release TEST EVIDENCE named a release
         // member by `flow_id` under a retired identity, and nothing in the
         // workspace ever executed its registrar.
@@ -88,6 +91,7 @@ fn portable_store_record_is_exact_and_storage_only() {
     assert!(!sql.contains("CREATE TABLE IF NOT EXISTS catalog.release_flow_test_evidence"));
     assert!(!sql.contains("REFERENCES catalog.validated_flow_drafts"));
     assert!(sql.contains("DROP TABLE catalog.validated_flow_drafts RESTRICT"));
+    assert!(sql.contains("DROP TABLE catalog.draft_safe_connection_grants RESTRICT"));
     assert!(!sql.contains("CREATE TABLE IF NOT EXISTS catalog.execution_bundles"));
     assert!(sql.contains("DROP TABLE catalog.execution_bundles RESTRICT"));
     assert!(!sql.contains("REFERENCES registry."));
@@ -323,7 +327,6 @@ fn control_author_authority_is_the_exact_ratified_class() {
         "catalog.release_flows",
         "catalog.catalog_heads",
         "catalog.connection_requirements",
-        "catalog.draft_safe_connection_grants",
     ];
     // Append-only facts: immutable after append.
     let append_only = [
@@ -750,10 +753,14 @@ DO $$ BEGIN
   ASSERT NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE contype='f'
-      AND conrelid IN ('catalog.deployment_attestations'::regclass,
-                       'catalog.draft_safe_connection_grants'::regclass)
+      AND conrelid = 'catalog.deployment_attestations'::regclass
       AND confrelid::regclass::text LIKE 'registry.%'
   ), 'cross-plane coordinates must never become foreign keys';
+  -- wamn-0h0g.8.5.5: the draft-safe connection-grant relation is deleted, so
+  -- the server must not hold it at all -- neither freshly created nor left
+  -- behind by an earlier apply that the retirement block failed to converge.
+  ASSERT to_regclass('catalog.draft_safe_connection_grants') IS NULL,
+    'the retired draft-safe connection grant relation is still installed';
 END $$;
 RESET ROLE;
 "#

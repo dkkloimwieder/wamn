@@ -280,20 +280,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS connection_requirements_component_key
     ON catalog.connection_requirements (tenant_id, component_digest, store_alias)
     WHERE component_digest IS NOT NULL;
 
--- The referenced connection generation is project-local after the plane split.
--- Its coordinates remain plain identity here; a cross-database FK is forbidden.
-CREATE TABLE IF NOT EXISTS catalog.draft_safe_connection_grants (
-    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
-    environment text NOT NULL CHECK (environment <> ''),
-    instance_id text NOT NULL CHECK (instance_id <> ''),
-    generation  bigint NOT NULL CHECK (generation > 0),
-    reason      text NOT NULL CHECK (reason <> ''),
-    granted_at  timestamptz NOT NULL DEFAULT now(),
-    revoked_at  timestamptz,
-    PRIMARY KEY (tenant_id, environment, instance_id, generation),
-    CONSTRAINT draft_safe_connection_grants_revocation_time
-        CHECK (revoked_at IS NULL OR revoked_at >= granted_at)
-);
+-- No draft-safe connection-grant relation (wamn-0h0g.8.5.5): gate cases are
+-- EFFECT-FREE BY CONTRACT, so a gate reaches no connection at all and there is
+-- nothing left for a per-generation draft-safety grant to say. The relation
+-- never carried production DML in any plane -- no INSERT, UPDATE or SELECT
+-- existed for it anywhere -- so its entire surface was one authoring-role
+-- privilege assertion about itself, and that retires with it.
 
 CREATE TABLE IF NOT EXISTS catalog.authoring_command_audit (
     tenant_id         text NOT NULL CHECK (tenant_id <> ''),
@@ -552,7 +544,7 @@ BEGIN
         'catalog.release_exposure_manifests', 'catalog.release_sources',
         'catalog.release_attachments', 'catalog.component_library',
         'catalog.connection_requirements',
-        'catalog.draft_safe_connection_grants', 'catalog.authoring_command_audit',
+        'catalog.authoring_command_audit',
         'catalog.deployment_attestations',
         'wamn_run.authoring_test_run_reservations',
         'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
@@ -661,6 +653,17 @@ BEGIN
         DROP TABLE catalog.validated_flow_drafts RESTRICT;
     END IF;
 
+    -- wamn-0h0g.8.5.5: gate cases are effect-free by contract, so a gate
+    -- reaches no connection and this relation's concept is void. It never had a
+    -- writer or a production reader, so its rows name nothing and are discarded
+    -- without archive exactly like the validated-draft rows above. RESTRICT
+    -- because nothing may depend on it: the only reference it ever had was an
+    -- authority probe asserting privileges on it, which retires in this commit.
+    IF to_regclass('catalog.draft_safe_connection_grants') IS NOT NULL THEN
+        LOCK TABLE catalog.draft_safe_connection_grants IN ACCESS EXCLUSIVE MODE;
+        DROP TABLE catalog.draft_safe_connection_grants RESTRICT;
+    END IF;
+
     -- wamn-0h0g.15.27 retired the test-set store, leaving both RETAINED record
     -- tables with a NOT NULL foreign-key column that has no default and
     -- therefore refuses every reservation and report INSERT.
@@ -748,7 +751,7 @@ BEGIN
     IF catalog_tables IS DISTINCT FROM ARRAY[
         'authoring_command_audit', 'catalog_heads', 'catalogs',
         'component_library', 'connection_requirements', 'deployment_attestations',
-        'draft_safe_connection_grants', 'flow_artifacts',
+        'flow_artifacts',
         'flow_drafts', 'release_attachments', 'release_exposure_manifests',
         'release_flows', 'release_sources',
         'releases'
@@ -810,7 +813,6 @@ BEGIN
             ('catalog.flow_drafts'),
             ('catalog.release_exposure_manifests'), ('catalog.release_sources'),
             ('catalog.release_attachments'), ('catalog.connection_requirements'),
-            ('catalog.draft_safe_connection_grants'),
             ('catalog.authoring_command_audit'),
             ('wamn_run.authoring_test_run_reservations'),
             ('wamn_run.authoring_test_case_runs'),
@@ -833,10 +835,6 @@ BEGIN
         FROM retained_relations r
         JOIN pg_class c ON c.oid = r.relation::regclass
         JOIN pg_constraint con ON con.conrelid = c.oid
-        WHERE NOT (
-            r.relation = 'catalog.draft_safe_connection_grants'
-            AND con.contype = 'f'
-        )
     )
     SELECT encode(sha256(convert_to(string_agg(
         relation || '|' || fact,
@@ -845,7 +843,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '1475daebde6d32ee0256ac90b5cf40cda67711f8bd294b434e7df40981c8c142'
+       'c9b837fe4c62bbcc4649f0a48af9820a0932ec31d0a97c1c1cbeef15d6e9f1b2'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';
@@ -935,7 +933,7 @@ BEGIN
         'catalog.releases', 'catalog.release_flows',
         'catalog.catalog_heads', 'catalog.flow_drafts',
         'catalog.connection_requirements',
-        'catalog.draft_safe_connection_grants', 'catalog.authoring_command_audit',
+        'catalog.authoring_command_audit',
         'wamn_run.authoring_test_run_reservations',
         'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
     ]
@@ -965,11 +963,11 @@ GRANT EXECUTE ON FUNCTION wamn_authority.session_author_tenant()
 
 -- Portable catalog and draft-base facts the author only ever reads.
 REVOKE ALL PRIVILEGES ON catalog.flow_artifacts, catalog.releases,
-    catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements,
-    catalog.draft_safe_connection_grants FROM wamn_control_author;
+    catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements
+    FROM wamn_control_author;
 GRANT SELECT ON catalog.flow_artifacts, catalog.releases,
-    catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements,
-    catalog.draft_safe_connection_grants TO wamn_control_author;
+    catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements
+    TO wamn_control_author;
 
 -- The one mutable authored document: optimistic revision control, guarded by
 -- flow_drafts_controlled_update, with DELETE structurally refused.
@@ -1031,7 +1029,6 @@ BEGIN
                  ('catalog', 'release_flows', 'SELECT'),
                  ('catalog', 'catalog_heads', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),
-                 ('catalog', 'draft_safe_connection_grants', 'SELECT'),
                  ('catalog', 'flow_drafts', 'SELECT'),
                  ('catalog', 'flow_drafts', 'INSERT'),
                  ('catalog', 'flow_drafts', 'UPDATE'),

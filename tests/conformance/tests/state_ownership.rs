@@ -1646,7 +1646,6 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
         BTreeSet::from([
             "catalog.authoring_command_audit",
             "catalog.catalog_heads",
-            "catalog.draft_safe_connection_grants",
             "catalog.execution_bundles",
             "catalog.flow_drafts",
             "catalog.releases",

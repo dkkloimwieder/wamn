@@ -374,9 +374,8 @@ const SHARED_PORTABLE_RELATIONS: [&str; 10] = [
 /// project-side and no project installer recreates these, so they have no
 /// project fingerprint by design. Comparing them across planes is what
 /// manufactured the seven-relation drift this list retires.
-const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 6] = [
+const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 5] = [
     "catalog.flow_drafts",
-    "catalog.draft_safe_connection_grants",
     "catalog.authoring_command_audit",
     "wamn_run.authoring_test_run_reservations",
     "wamn_run.authoring_test_case_runs",
@@ -436,9 +435,6 @@ async fn portable_fingerprints(
              JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
              WHERE n.nspname || '.' || c.relname = ANY($1) \
                AND con.contype <> 't' \
-               AND NOT (n.nspname='catalog' \
-                        AND c.relname='draft_safe_connection_grants' \
-                        AND con.contype='f') \
              ORDER BY 1,2",
             &[&relations],
         )

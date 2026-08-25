@@ -84,19 +84,6 @@ SELECT current_user = session_user, \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'INSERT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'UPDATE') \
          AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'DELETE'), \
-       pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'SELECT') \
-         AND NOT EXISTS ( \
-             SELECT 1 FROM pg_catalog.unnest( \
-                 ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) \
-                  AS draft_safe_mutation(privilege) \
-              WHERE pg_catalog.has_table_privilege( \
-                  current_user, 'catalog.draft_safe_connection_grants', \
-                  draft_safe_mutation.privilege) \
-                 OR (draft_safe_mutation.privilege IN ('INSERT','UPDATE','REFERENCES') \
-                     AND pg_catalog.has_any_column_privilege( \
-                         current_user, 'catalog.draft_safe_connection_grants', \
-                         draft_safe_mutation.privilege)) \
-         ), \
        pg_catalog.has_table_privilege(current_user, 'catalog.authoring_command_audit', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.authoring_command_audit', 'INSERT') \
          AND NOT pg_catalog.has_table_privilege( \
@@ -712,17 +699,10 @@ mod tests {
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("relation.relowner = session_role.oid"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("routine.proowner = session_role.oid"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.has_any_column_privilege"));
-        assert!(AUTHORING_ROLE_PROBE_SQL.contains(
-            "has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'SELECT')"
-        ));
-        assert!(
-            !AUTHORING_ROLE_PROBE_SQL
-                .contains("('catalog', 'draft_safe_connection_grants', 'INSERT')")
-        );
-        assert!(
-            !AUTHORING_ROLE_PROBE_SQL
-                .contains("('catalog', 'draft_safe_connection_grants', 'UPDATE')")
-        );
+        // wamn-0h0g.8.5.5: the draft-safe connection-grant relation is deleted,
+        // so the probe may not name it at all. A surviving arm would query a
+        // relation that does not exist and refuse every startup.
+        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("draft_safe_connection_grants"));
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("authoring_test_sets"));
         // The retired validator and its catalog-head bridge no longer add a fifth parameter.
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("$5"));

@@ -3767,11 +3767,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // wamn-0h0g.9.11.3 (805701ec); `deploy/sql/control-portable-store.sql` owns
     // them and `control_portable_store` pins them. This verb applies the
     // catalog record only, so from-zero must NOT produce them.
-    for table in [
-        "flow_drafts",
-        "draft_safe_connection_grants",
-        "authoring_command_audit",
-    ] {
+    for table in ["flow_drafts", "authoring_command_audit"] {
         assert!(
             !table_exists(su, "catalog", table).await,
             "the portable store's relation catalog.{table} is not this verb's to provision"
