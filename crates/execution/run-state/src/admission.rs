@@ -218,8 +218,8 @@ input AS ( \
            $8::text AS platform_revision, $9::timestamptz AS run_deadline_at, \
            $10::text AS command_id, $11::text AS report_id, $12::int AS case_ordinal, \
            $13::text AS wiring_id, $14::int AS wiring_version, \
-           $15::text AS wiring_hash, $16::text AS gate_report_id, \
-           $17::text::jsonb AS prior_binding_world_json \
+           $15::text AS wiring_hash, \
+           $16::text::jsonb AS prior_binding_world_json \
       FROM authority WHERE authority.allowed \
 ), \
 keyed AS ( \
@@ -245,8 +245,7 @@ keyed AS ( \
       FROM input AS i \
 ), \
 candidate AS MATERIALIZED ( \
-    SELECT wiring.version, wiring.wiring_hash, wiring.gate_report_id, \
-           wiring.graph_json \
+    SELECT wiring.version, wiring.wiring_hash, wiring.graph_json \
       FROM catalog.wirings AS wiring CROSS JOIN keyed AS k \
      WHERE wiring.tenant_id = k.tenant_id \
        AND wiring.catalog_id = k.catalog_id \
@@ -341,7 +340,6 @@ binding_world AS MATERIALIZED ( \
 ), \
 expected AS MATERIALIZED ( \
     SELECT k.*, candidate.wiring_hash AS actual_wiring_hash, \
-           candidate.gate_report_id AS actual_gate_report_id, \
            candidate.graph_json, node_summary.node_count, \
            node_summary.invalid_node_count, binding_world.requirement_count, \
            binding_world.resolved_count, binding_world.binding_world_json, \
@@ -353,8 +351,7 @@ expected AS MATERIALIZED ( \
                'catalog-version', k.expected_catalog_version, \
                'run-id', k.run_id, 'wiring-id', k.wiring_id, \
                'wiring-version', k.wiring_version, \
-               'wiring-hash', k.wiring_hash, \
-               'gate-report-id', k.gate_report_id), \
+               'wiring-hash', k.wiring_hash), \
              'source', k.source_context) AS admitted_context \
       FROM keyed AS k LEFT JOIN candidate ON true \
       CROSS JOIN node_summary CROSS JOIN binding_world \
@@ -368,7 +365,7 @@ keyed_run AS MATERIALIZED ( \
 existing_run AS MATERIALIZED ( \
     SELECT r.run_id, r.idempotency_key, r.trigger_source, r.capture_mode, \
            r.catalog_id, r.catalog_version, r.environment, r.wiring_id, \
-           r.wiring_version, r.wiring_hash, r.gate_report_id, \
+           r.wiring_version, r.wiring_hash, \
            r.binding_world_json, r.input_json, r.invocation_context, \
            r.platform_revision, r.run_deadline_at \
       FROM wamn_run.runs AS r, expected AS e \
@@ -389,7 +386,6 @@ classified AS ( \
         OR e.wiring_version IS NULL OR e.wiring_version <= 0 \
         OR e.wiring_hash IS NULL \
         OR e.wiring_hash !~ '^sha256:[0-9a-f]{64}$' \
-        OR e.gate_report_id IS NULL OR e.gate_report_id = '' \
         OR (e.prior_binding_world_json IS NOT NULL \
             AND jsonb_typeof(e.prior_binding_world_json) IS DISTINCT FROM 'array') \
         THEN 'invalid-input' \
@@ -403,7 +399,7 @@ classified AS ( \
         OR e.invocation_context ->> 'producer' = 'draft-scenario') \
         THEN 'invalid-input' \
       WHEN e.producer = 'test-case' \
-        AND e.report_id IS DISTINCT FROM e.gate_report_id \
+        AND e.report_id IS DISTINCT FROM e.wiring_hash \
         THEN 'gate-report-mismatch' \
       WHEN kr.run_id IS NOT NULL AND kr.run_id <> e.run_id \
         THEN 'conflicting-run-identity' \
@@ -417,7 +413,6 @@ classified AS ( \
          OR xr.wiring_id IS DISTINCT FROM e.wiring_id \
          OR xr.wiring_version IS DISTINCT FROM e.wiring_version \
          OR xr.wiring_hash IS DISTINCT FROM e.wiring_hash \
-         OR xr.gate_report_id IS DISTINCT FROM e.gate_report_id \
          OR xr.input_json IS DISTINCT FROM e.input_json \
          OR xr.invocation_context IS DISTINCT FROM e.admitted_context \
          OR xr.platform_revision IS DISTINCT FROM e.platform_revision \
@@ -430,8 +425,6 @@ classified AS ( \
       WHEN e.actual_wiring_hash IS NULL THEN 'candidate-not-found' \
       WHEN e.actual_wiring_hash IS DISTINCT FROM e.wiring_hash \
         THEN 'candidate-identity-mismatch' \
-      WHEN e.actual_gate_report_id IS DISTINCT FROM e.gate_report_id \
-        THEN 'gate-report-mismatch' \
       WHEN jsonb_typeof(e.graph_json -> 'nodes') IS DISTINCT FROM 'object' \
         OR e.node_count = 0 OR e.invalid_node_count <> 0 \
         THEN 'candidate-definition-invalid' \
@@ -450,12 +443,12 @@ classified AS ( \
 created_run AS ( \
     INSERT INTO wamn_run.runs \
       (tenant_id, run_id, catalog_id, catalog_version, environment, \
-       wiring_id, wiring_version, wiring_hash, gate_report_id, binding_world_json, \
+       wiring_id, wiring_version, wiring_hash, binding_world_json, \
        status, trigger_source, capture_mode, input_json, invocation_context, \
        admission_context_version, platform_revision, idempotency_key, run_deadline_at) \
     SELECT c.tenant_id, c.run_id, c.catalog_id, c.expected_catalog_version, \
            c.environment, c.wiring_id, c.wiring_version, c.wiring_hash, \
-           c.gate_report_id, c.binding_world_json, \
+           c.binding_world_json, \
            'dispatched', c.trigger_source, c.capture_mode, \
            c.input_json, c.admitted_context, \
            '0.1', c.platform_revision, c.producer_key, c.run_deadline_at \
@@ -652,6 +645,10 @@ mod tests {
             "registration_id",
             "client_key_digest",
             "event_seq",
+            // wamn-0h0g.8.5.6: the candidate's report is keyed by its wiring
+            // hash, so the second identifier is gone from the statement, the
+            // parameter list and `wamn_run.runs` alike.
+            "gate_report_id",
         ] {
             assert!(!sql.contains(retired), "management SQL retained {retired}");
         }
@@ -696,11 +693,22 @@ mod tests {
         assert!(!sql.contains("definition_json"));
     }
 
+    /// The test-case report identity IS the candidate's wiring hash
+    /// (wamn-0h0g.8.5.6).
+    ///
+    /// There is ONE arm now, not two. The second used to compare the candidate
+    /// row's own `gate_report_id` against the caller's, which after the collapse
+    /// is `actual_wiring_hash IS DISTINCT FROM wiring_hash` -- already the arm
+    /// directly above it, and already typed `candidate-identity-mismatch`. A
+    /// refusal spelled twice under two names is exactly the duplication this
+    /// bead removed from the row.
     #[test]
-    fn test_case_report_is_the_candidate_gate_report() {
+    fn test_case_report_is_the_candidates_wiring_hash() {
         let sql = management_admission_transaction(&RunStateSchema::default()).admit;
-        assert!(sql.contains("e.report_id IS DISTINCT FROM e.gate_report_id"));
-        assert!(sql.contains("e.actual_gate_report_id IS DISTINCT FROM e.gate_report_id"));
-        assert_eq!(sql.matches("THEN 'gate-report-mismatch'").count(), 2);
+        assert!(sql.contains("e.report_id IS DISTINCT FROM e.wiring_hash"));
+        assert_eq!(sql.matches("THEN 'gate-report-mismatch'").count(), 1);
+        // The candidate half of the identity check survives under its own name.
+        assert!(sql.contains("e.actual_wiring_hash IS DISTINCT FROM e.wiring_hash"));
+        assert_eq!(sql.matches("THEN 'candidate-identity-mismatch'").count(), 1);
     }
 }

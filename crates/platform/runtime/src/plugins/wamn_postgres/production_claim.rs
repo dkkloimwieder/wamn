@@ -106,7 +106,6 @@ pub enum ProductionClaimResult {
 pub struct ProductionCandidate {
     pub catalog_version: i32,
     pub wiring_hash: String,
-    pub gate_report_id: String,
     pub binding_world: CandidateBindingWorld,
 }
 
@@ -1466,8 +1465,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let flow_version: Option<i32> = row_value(row, 10, "legacy flow version")?;
     let catalog_version: i32 = row_value(row, 11, "catalog version")?;
     let wiring_hash: Option<String> = row_value(row, 12, "candidate wiring hash")?;
-    let gate_report_id: Option<String> = row_value(row, 13, "candidate gate report id")?;
-    let binding_world: Option<String> = row_value(row, 14, "candidate binding world")?;
+    let binding_world: Option<String> = row_value(row, 13, "candidate binding world")?;
     let payload_text: String = row_value(row, 3, "authoritative input")?;
     let payload = serde_json::from_str(&payload_text).map_err(|error| {
         ProductionClaimError::new(
@@ -1477,20 +1475,14 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         )
     })?;
     let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
-    let candidate = match (
-        flow_id,
-        flow_version,
-        wiring_hash,
-        gate_report_id,
-        binding_world,
-    ) {
-        (Some(flow_id), Some(flow_version), None, None, None)
+    let candidate = match (flow_id, flow_version, wiring_hash, binding_world) {
+        (Some(flow_id), Some(flow_version), None, None)
             if !flow_id.is_empty() && flow_version > 0 =>
         {
             None
         }
-        (None, None, Some(wiring_hash), Some(gate_report_id), Some(binding_world))
-            if catalog_version > 0 && !wiring_hash.is_empty() && !gate_report_id.is_empty() =>
+        (None, None, Some(wiring_hash), Some(binding_world))
+            if catalog_version > 0 && !wiring_hash.is_empty() =>
         {
             let binding_world = serde_json::from_str(&binding_world)
                 .map_err(|error| {
@@ -1512,7 +1504,6 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
             Some(ProductionCandidate {
                 catalog_version,
                 wiring_hash,
-                gate_report_id,
                 binding_world,
             })
         }
@@ -1908,7 +1899,6 @@ mod tests {
             "r.flow_version",
             "r.catalog_version",
             "r.wiring_hash",
-            "r.gate_report_id",
             "r.binding_world_json::text",
         ]
         .into_iter()

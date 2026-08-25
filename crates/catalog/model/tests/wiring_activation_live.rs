@@ -150,10 +150,10 @@ fn preamble() -> String {
                 (tenant_id, catalog_id, environment, applied_catalog_version) \
          VALUES ('t1','shop','prod',1);\n\
          INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
-                gated_catalog_version, graph_json, wiring_hash, gate_report_id) \
-         VALUES ('t1','shop','orders-create',1,1,'{{\"n\":1}}','{a}','gate-1'), \
-                ('t1','shop','orders-create',2,1,'{{\"n\":2}}','{b}','gate-2'), \
-                ('t1','shop','orders-create',3,2,'{{\"n\":3}}','{c}','gate-3');\n",
+                gated_catalog_version, graph_json, wiring_hash) \
+         VALUES ('t1','shop','orders-create',1,1,'{{\"n\":1}}','{a}'), \
+                ('t1','shop','orders-create',2,1,'{{\"n\":2}}','{b}'), \
+                ('t1','shop','orders-create',3,2,'{{\"n\":3}}','{c}');\n",
         a = hash('a'),
         b = hash('b'),
         c = hash('c'),
@@ -164,7 +164,7 @@ fn preamble() -> String {
 fn prepared() -> String {
     format!(
         "PREPARE flip (text,text,text,text,boolean) AS {flip};\n\
-         PREPARE record (text,text,text,boolean,text,text,text,text,text) AS {record};\n\
+         PREPARE record (text,text,text,boolean,text,text,text,text) AS {record};\n\
          PREPARE prior (text,text,text,text) AS {prior};\n\
          PREPARE resolve (text,text,text) AS {resolve};\n",
         flip = flip_activation(),
@@ -180,7 +180,7 @@ fn activate(definition: &str, enabled: bool, reason: &str) -> String {
         "BEGIN;\n\
          EXECUTE flip('shop','prod','orders-create','{definition}',{enabled});\n\
          EXECUTE record('shop','prod','orders-create',{enabled},'{definition}',\
-                        NULL,NULL,'ops','{reason}');\n\
+                        NULL,'ops','{reason}');\n\
          COMMIT;\n"
     )
 }
@@ -454,8 +454,8 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
     script.push_str(&format!(
         "SET app.tenant = 't1';\n\
          INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
-                gated_catalog_version, graph_json, wiring_hash, gate_report_id) \
-         VALUES ('t1','shop','orders-create',1,1,$doc${wire}$doc$,'{digest}','gate-1');\n\
+                gated_catalog_version, graph_json, wiring_hash) \
+         VALUES ('t1','shop','orders-create',1,1,$doc${wire}$doc$,'{digest}');\n\
          SELECT 'stored=' || graph_json::text FROM catalog.wirings \
           WHERE wiring_id = 'orders-create' AND version = 1;\n",
         digest = document.wiring_hash(),

@@ -88,7 +88,7 @@ fn runs_stand_in() -> String {
         trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
         durability_class text NOT NULL DEFAULT 'standard' \
           CHECK (durability_class IN ('standard', 'durable')), \
-        wiring_id text, wiring_version int, wiring_hash text, gate_report_id text, \
+        wiring_id text, wiring_version int, wiring_hash text, \
         binding_world_json jsonb, \
         release_version int, manifest_digest text, \
         input_json jsonb, result_json jsonb, state_json jsonb, \

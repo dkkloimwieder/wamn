@@ -63,6 +63,27 @@ FK beside a real content hash is two identifiers for one fact. **The report row 
 `wiring_hash`; the `gate_report_id` column dies.** Touches `catalog.wirings`,
 `services/ctl/src/author_wiring.rs`, and the admission statement's parameter shape.
 
+**LANDED (`wamn-0h0g.8.5.6`).** The measured extent was wider than this clause named, in
+three ways worth recording because each is a consequence of the ruling rather than a
+choice made beside it:
+
+- **`wamn_run.runs.gate_report_id` died with it.** The run row pinned `wiring_hash` and
+  `gate_report_id` side by side, so after the collapse it carried one value under two
+  names — the same defect one plane down. Two of the admission statement's refusal arms
+  were likewise the same comparison twice: the candidate-side
+  `actual_gate_report_id IS DISTINCT FROM gate_report_id` is `candidate-identity-mismatch`
+  already, and it deletes. `gate-report-mismatch` survives as ONE arm, now
+  `report_id IS DISTINCT FROM wiring_hash`.
+- **`catalog.wiring_activation_events.source_gate_report_id` died with it.** It was
+  populated from the SOURCE row's `gate_report_id`, and promotion copies a document
+  byte-for-byte, so post-collapse it equals `confirmed_definition_hash` on the same row —
+  the second copy this table's own comment forbids. `--target-gate-report` dies with it:
+  the target row's hash is the source hash, so there was nothing left for an operator to
+  supply.
+- **`--gate-report-id` died from `ctl author-wiring`.** There is no column to put it in.
+
+The report's own home is `wamn_run.gate_reports` in the CONTROL database — see §3.3.2.
+
 ### 2.2 `gate` is `test-set-run`, restated
 
 The directive names `gate` as a survivor and does not mention `test-set-run`. They are the
@@ -148,6 +169,34 @@ that made it circular is gone.
 **The standing rule this produced, owner-stated:** any "survives" or "re-keys" clause on
 flow-era state must name its post-collapse **writer and reader in the same sentence**, or
 it is a deletion.
+
+#### 3.3.2 The constructed successor (`wamn-0h0g.8.5.6`, landed)
+
+`wamn_run.gate_reports` in the CONTROL database — the schema `wamn-0h0g.8.5.5` kept empty
+for exactly this. Under the standing rule above, its writer and reader in one sentence: it
+is **written** by the gate verb at `services/scenario-worker/src/management.rs`, inside the
+same transaction that appends that command's attribution ledger row, and **read** by
+`get-report` at `services/scenario-worker/src/authoring.rs`, both under
+`wamn_control_author`.
+
+Shape: `(tenant_id, wiring_hash)` primary key, `passed`, `summary`, `gated_at`. Immutable
+under a trigger, RLS-forced with the same permissive tenant policy and restrictive author
+policy every other author-granted relation carries, and granted `SELECT, INSERT` only.
+
+Three properties are load-bearing:
+
+- **Only an ACCEPTED judgment writes.** A refusal is not a report, so an absent row and
+  `report-not-found` are the same fact rather than two.
+- **The write is downstream of the whole judgment**, so the §5.1 effect-free clause still
+  fires before anything can be persisted. `run_gate` reads the PROJECT database and the
+  report lives in the CONTROL one, which is why the write cannot be moved into the
+  judgment even by accident.
+- **Re-gating converges** (`ON CONFLICT DO NOTHING`) because an effect-free gate is
+  reproducible: the row already there is the row this pass would have written.
+
+This closes the capability regression `wamn-0h0g.8.5.5` opened, in which `get-report`
+answered `report-not-found` unconditionally and the gate handed back a report id no query
+could resolve.
 
 ### 3.4 Contract surface
 
@@ -292,7 +341,7 @@ not cite this spec as precedent for rebuilding reservations.
   client regenerates in the same commit.
 - **`gate_report_id` → `wiring_hash` touches the admission statement's parameter shape**,
   which `crates/execution/run-state/tests/admission_live.rs` pins at 17 parameters. Expect
-  that pin to move.
+  that pin to move. **It moved: 16 parameters (`wamn-0h0g.8.5.6`).**
 - **`ReportProjection` is `deny_unknown_fields` with a frozen-literal contract test.** The
   test currently covers the `Finalized` variant only; deleting `Pending` is still a wire
   change and the survivor should be frozen as a whole-value literal.
@@ -313,6 +362,7 @@ All four carried. This section is the record, not an open list.
    through the `.21.9` effect-posture fact at admission. `authoring_test_case_runs` deletes.
 2. **§2.2 — `gate` IS `test-set-run` renamed.** Rename lands with the collapse.
 3. **§2.1 — `gate_report_id` COLLAPSES into `wiring_hash`.** The column dies.
+   *Landed as `wamn-0h0g.8.5.6`, together with the constructed successor in §3.3.2.*
 4. **§3.5 — `draft_safe_connection_grants` DELETES in this wave**, probe arm same-commit.
 
 **This spec is ratified and authorizes the wave.** One bead per subsystem, under Phase-A

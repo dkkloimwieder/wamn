@@ -204,7 +204,6 @@ BEGIN
        OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
        OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version
        OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
-       OR NEW.gate_report_id IS DISTINCT FROM OLD.gate_report_id
        OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
@@ -329,10 +328,14 @@ CREATE TABLE wamn_run.runs (
     -- Immutable execution identity selected from the trusted active-wiring
     -- pointer by the admission transaction. Legacy rows remain NULL until the
     -- post-drain cutover; admission never backfills them.
+    --
+    -- `wiring_hash` is the WHOLE candidate identity (wamn-0h0g.8.5.6): the gate
+    -- report that certified the definition is keyed by that same hash, so the
+    -- `gate_report_id` that used to sit beside it here carried no fact this
+    -- column does not already carry.
     wiring_id       text,
     wiring_version  int,
     wiring_hash     text,
-    gate_report_id  text,
     -- Canonically ordered, non-secret requirement/binding/generation facts
     -- derived by private management admission. Array order is
     -- (component-digest, store-alias); callers never author this value.
@@ -422,7 +425,7 @@ CREATE TABLE wamn_run.runs (
     CONSTRAINT runs_execution_grain_check CHECK (
       (flow_id IS NOT NULL AND flow_version IS NOT NULL
        AND flow_id <> '' AND flow_version > 0
-       AND wiring_hash IS NULL AND gate_report_id IS NULL
+       AND wiring_hash IS NULL
        AND binding_world_json IS NULL)
       OR
       (flow_id IS NULL AND flow_version IS NULL
@@ -430,7 +433,6 @@ CREATE TABLE wamn_run.runs (
        AND wiring_id <> '' AND wiring_version > 0
        AND wiring_hash IS NOT NULL
        AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-       AND gate_report_id IS NOT NULL AND gate_report_id <> ''
        AND binding_world_json IS NOT NULL
        AND jsonb_typeof(binding_world_json) = 'array')
     ),
@@ -473,7 +475,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment,
                  capture_mode, durability_class, wiring_id, wiring_version,
-                 wiring_hash, gate_report_id, binding_world_json,
+                 wiring_hash, binding_world_json,
                  release_version, manifest_digest
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();

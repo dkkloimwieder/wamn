@@ -1720,6 +1720,11 @@ ALTER TABLE catalog.component_library
 -- and NAMES the catalog version it was gated against instead of being keyed by
 -- the release that carries it.
 --
+-- wamn-0h0g.8.5.6: the row carries ONE identity. `gate_report_id` used to sit
+-- beside `wiring_hash` as bare `text NOT NULL` with no foreign key to anything —
+-- two identifiers for one fact on an immutable row — and it collapsed into the
+-- hash, which is what the gate report now keys on.
+--
 -- The stored document is `WiringDocument` (crates/catalog/model): `entry` names
 -- the node a delivery enters at, nodes reference `(component,
 -- interface-version)` and may declare a `terminal` of `respond` or `emit`
@@ -1743,12 +1748,12 @@ CREATE TABLE catalog.wirings (
     -- makes the gated version a real row rather than an assertion.
     gated_catalog_version int NOT NULL CHECK (gated_catalog_version > 0),
     graph_json      jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object'),
+    -- The gate report that certified this definition is keyed by this SAME hash
+    -- (wamn-0h0g.8.5.6, ratified spec §2.1). A gate is effect-free, so its
+    -- report is reproducible from the document and needs no identity of its own;
+    -- see the section header for the second identifier this replaced.
     wiring_hash     text NOT NULL
         CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
-    -- The gate run that certified this definition against
-    -- `gated_catalog_version` — the TARGET half of the promote provenance pair.
-    -- The source half is `catalog.wiring_activation_events`.
-    gate_report_id  text NOT NULL CHECK (gate_report_id <> ''),
     created_at      timestamptz NOT NULL DEFAULT now(),
     -- `catalog_id` is part of the identity, not an attribute: activation is
     -- keyed by (tenant, catalog, environment, wiring), so a wiring id shared by
@@ -1895,13 +1900,16 @@ CREATE TRIGGER wiring_activation_doorbell
 AFTER INSERT OR UPDATE ON catalog.wiring_activation
 FOR EACH ROW EXECUTE FUNCTION catalog.notify_wiring_activation();
 
--- Append-only provenance: one row per flip. `source_environment` and
--- `source_gate_report_id` are the promote half of the provenance fact (the env
--- a wiring was proved green in and that run's report); a local flip has no
--- source and leaves both NULL, so they are constrained as a pair. The target
--- report id is not repeated here — `catalog.wirings.gate_report_id`, reachable
--- from `confirmed_definition_hash`, already carries it, and a second copy could
--- disagree with the definition it claims to certify.
+-- Append-only provenance: one row per flip. `source_environment` is the promote
+-- half of the provenance fact — the env a wiring was proved green in; a local
+-- flip has no source and leaves it NULL.
+--
+-- No report id is carried here at all (wamn-0h0g.8.5.6). The `source_gate_report_id`
+-- that used to pair with `source_environment` held the SOURCE row's
+-- `gate_report_id`, and promotion copies a wiring document byte-for-byte, so
+-- once the report keys on `wiring_hash` that value is `confirmed_definition_hash`
+-- spelled twice on one row — exactly the second copy this table's own rule
+-- forbids, because it could disagree with the definition it claims to certify.
 CREATE TABLE catalog.wiring_activation_events (
     event_seq   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id   text NOT NULL CHECK (tenant_id <> ''),
@@ -1911,14 +1919,11 @@ CREATE TABLE catalog.wiring_activation_events (
     enabled     boolean NOT NULL,
     confirmed_definition_hash text NOT NULL,
     source_environment    text,
-    source_gate_report_id text,
     changed_at  timestamptz NOT NULL DEFAULT now(),
     changed_by  text NOT NULL,
     reason      text NOT NULL,
     CONSTRAINT wiring_activation_events_promote_provenance CHECK (
-        (source_environment IS NULL) = (source_gate_report_id IS NULL)
-        AND (source_environment IS NULL OR source_environment <> '')
-        AND (source_gate_report_id IS NULL OR source_gate_report_id <> '')
+        source_environment IS NULL OR source_environment <> ''
     )
 );
 ALTER TABLE catalog.wiring_activation_events ENABLE ROW LEVEL SECURITY;

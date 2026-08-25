@@ -229,7 +229,7 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
 /// `grant_management_admitter_surface_sql` revokes every table and per-column
 /// privilege before granting, so this list is the whole readable surface —
 /// a column absent here is DENIED, not merely unmentioned.
-pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 23] = [
+pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 22] = [
     "tenant_id",
     "run_id",
     "binding_world_json",
@@ -242,7 +242,6 @@ pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 23] = [
     "wiring_id",
     "wiring_version",
     "wiring_hash",
-    "gate_report_id",
     "input_json",
     "invocation_context",
     "platform_revision",
@@ -255,7 +254,7 @@ pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 23] = [
     "fail_kind",
 ];
 /// `runs` columns minted by the management-admission statement.
-pub const MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS: [&str; 19] = [
+pub const MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS: [&str; 18] = [
     "tenant_id",
     "run_id",
     "catalog_id",
@@ -264,7 +263,6 @@ pub const MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS: [&str; 19] = [
     "wiring_id",
     "wiring_version",
     "wiring_hash",
-    "gate_report_id",
     "binding_world_json",
     "status",
     "trigger_source",

@@ -76,7 +76,7 @@ pub fn select_production_claim_sql() -> String {
                 COALESCE(r.trigger_source IN ('http','internal','studio'), false) \
                     AS durable_caller_attached, \
                 r.flow_id, r.flow_version, r.catalog_version, \
-                r.wiring_hash, r.gate_report_id, r.binding_world_json::text \
+                r.wiring_hash, r.binding_world_json::text \
            FROM candidate \
            JOIN runs AS r \
              ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",
@@ -395,7 +395,6 @@ pub fn terminalize_exhausted_production_sql() -> String {
         running = RunStatus::Running.as_sql(),
         candidate_result = "r.flow_id IS NULL AND r.flow_version IS NULL \
                             AND r.wiring_hash IS NOT NULL \
-                            AND r.gate_report_id IS NOT NULL \
                             AND r.binding_world_json IS NOT NULL",
         unreleased_attached = "r.trigger_source IN ('http','internal','studio') \
                                AND r.caller_released_at IS NULL",

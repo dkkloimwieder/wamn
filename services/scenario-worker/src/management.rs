@@ -59,6 +59,20 @@ const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_au
      request_hash, outcome_bytes, provenance_commit, provenance_ref, provenance_dirty) \
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)";
 
+/// Append one accepted gate's durable report (wamn-0h0g.8.5.6).
+///
+/// Keyed by `wiring_hash` alone: a gate is effect-free, so the same document
+/// always yields the same verdict and the report needs no minted identity. That
+/// same reproducibility is why re-gating converges instead of conflicting —
+/// `ON CONFLICT DO NOTHING` keeps the FIRST row, which is byte-identical to the
+/// one this pass would have written. An `UPDATE` would be refused by the
+/// relation's immutability trigger, and would be wrong if it were not.
+///
+/// Params: `$1` tenant, `$2` wiring hash, `$3` passed, `$4` summary.
+const INSERT_GATE_REPORT_SQL: &str = "INSERT INTO wamn_run.gate_reports \
+    (tenant_id, wiring_hash, passed, summary) VALUES ($1, $2, $3, $4) \
+    ON CONFLICT (tenant_id, wiring_hash) DO NOTHING";
+
 /// Serialize one principal-scoped retry identity before reading or executing.
 /// Hash collisions only over-serialize unrelated commands; the exact primary
 /// key and request hash still decide replay versus reuse.
@@ -302,6 +316,31 @@ fn author_from_authenticated(
         subject: principal.subject().into(),
         role,
     }
+}
+
+/// Append one accepted gate's report on an already-scoped author credential.
+///
+/// Takes the whole [`GateReport`](crate::store::admission::GateReport) rather
+/// than its parts, so a caller cannot pair one judgment's verdict with another
+/// judgment's hash.
+pub(crate) async fn insert_gate_report(
+    client: &(impl GenericClient + Sync),
+    tenant_id: &str,
+    report: &crate::store::admission::GateReport,
+) -> anyhow::Result<()> {
+    client
+        .execute(
+            INSERT_GATE_REPORT_SQL,
+            &[
+                &tenant_id,
+                &report.wiring_hash,
+                &report.passed,
+                &report.summary,
+            ],
+        )
+        .await
+        .context("append the accepted gate's report")?;
+    Ok(())
 }
 
 /// Write one attributed ledger row on an already-scoped author credential.
@@ -833,16 +872,22 @@ async fn gate_route(
 /// Judge one candidate against its own `cases` array, attributing the judgment
 /// to its verified author.
 ///
-/// # The judgment writes nothing, so the ledger row is the whole mutation
+/// # The judgment reads; this transaction writes both of its facts at once
 ///
 /// wamn-0h0g.8.5.5: a gate is a judgment about a document, not an execution of
-/// it, so [`run_gate`](crate::store::admission::run_gate) reads the project
-/// database and mutates nothing anywhere. The only row this command writes is
-/// the attribution ledger entry, and it is written LAST — an outcome is recorded
-/// only once one has been produced.
+/// it, so [`run_gate`](crate::store::admission::run_gate) reads the PROJECT
+/// database and mutates nothing there. Its two durable consequences are written
+/// here, in the CONTROL database, in ONE transaction: the attribution ledger
+/// row, and — for an ACCEPTED judgment only — the report row keyed by the
+/// candidate's wiring hash (wamn-0h0g.8.5.6). A refusal is not a report, so a
+/// refused command writes only the ledger row.
+///
+/// Both are written LAST, after an outcome exists. Splitting them would leave
+/// either an attributed judgment whose report no query can resolve — precisely
+/// the hole this bead closes — or a report nothing accounts for.
 ///
 /// An exact retry therefore converges trivially: a pass interrupted before the
-/// ledger commit leaves no row, so the retry classifies as `Execute` and
+/// commit leaves neither row, so the retry classifies as `Execute` and
 /// re-derives the same judgment from the same immutable candidate. Once the
 /// ledger row exists the command is finished, and the retry replays the stored
 /// receipt.
@@ -878,16 +923,23 @@ async fn gate(
         },
     )
     .await?;
-    let outcome = match judgment {
-        crate::store::admission::GateJudgment::Accepted { report_id } => {
+    // An accepted judgment carries the report this command must persist; a
+    // refusal carries none, which is what makes "no row" and "report-not-found"
+    // the same fact rather than two.
+    let (outcome, report) = match judgment {
+        crate::store::admission::GateJudgment::Accepted(report) => (
             AuthoringOutcome::Completed(Box::new(AuthoringSuccess::Gate(GateReceipt {
-                report_id,
+                // The receipt hands back the key the report is stored under, so
+                // `get-report` resolves exactly what the gate wrote.
+                report_id: report.wiring_hash.clone(),
                 validated_draft: input.validated_draft.clone(),
-            })))
-        }
-        crate::store::admission::GateJudgment::Refused(refusal) => {
-            AuthoringOutcome::Refused(CommandRefusal::Gate(refusal))
-        }
+            }))),
+            Some(report),
+        ),
+        crate::store::admission::GateJudgment::Refused(refusal) => (
+            AuthoringOutcome::Refused(CommandRefusal::Gate(refusal)),
+            None,
+        ),
     };
     let outcome_bytes = command_response_bytes(&command.command_id, outcome)?;
 
@@ -902,6 +954,9 @@ async fn gate(
         };
         transaction.commit().await.context("commit retry read")?;
         return Ok(settled);
+    }
+    if let Some(report) = &report {
+        insert_gate_report(&transaction, audit.tenant_id(), report).await?;
     }
     insert_command_audit(&transaction, &audit, &request_hash, &outcome_bytes).await?;
     transaction
@@ -1562,7 +1617,9 @@ mod tests {
     /// document for a mounted and an unmounted kind alike.
     #[test]
     fn only_the_mounted_kinds_have_a_route_and_the_rest_answer_a_bare_501() {
-        use wamn_authoring_model::{AuthoringScope, Gate, PublishValidatedDraft, ValidatedDraftRef};
+        use wamn_authoring_model::{
+            AuthoringScope, Gate, PublishValidatedDraft, ValidatedDraftRef,
+        };
 
         let scope = AuthoringScope {
             project_id: "receiving".to_owned(),
@@ -1697,12 +1754,21 @@ mod tests {
     /// source claim, so the surviving half is that the columns stay WRITE-ONLY
     /// and no surviving path branches on them: the gate supplies `None` and the
     /// retry statements never mention provenance at all.
+    ///
+    /// This transport writes exactly TWO statements (wamn-0h0g.8.5.6) — the
+    /// ledger row and the accepted gate's report — and neither is an `UPDATE`.
+    /// The count is pinned rather than bounded: a third insert appearing here is
+    /// a new durable fact and has to be argued for, not absorbed.
     #[test]
     fn provenance_reaches_the_ledger_and_no_other_statement() {
         let source = include_str!("management.rs");
         let implementation = implementation(source);
-        assert_eq!(implementation.matches("INSERT INTO").count(), 1);
+        assert_eq!(implementation.matches("INSERT INTO").count(), 2);
         assert_eq!(implementation.matches("UPDATE ").count(), 0);
+        assert!(
+            !INSERT_GATE_REPORT_SQL.contains("provenance"),
+            "the gate report grew a provenance carrier"
+        );
         assert!(INSERT_COMMAND_AUDIT_SQL.contains("provenance_commit"));
         assert!(INSERT_COMMAND_AUDIT_SQL.contains("provenance_ref"));
         assert!(INSERT_COMMAND_AUDIT_SQL.contains("provenance_dirty"));
@@ -1711,7 +1777,11 @@ mod tests {
 
         // The one surviving command supplies no source claim, so every ledger
         // row this transport can write carries NULL provenance.
-        let handler = between(source, "async fn gate(", "/// Serialize this principal-scoped");
+        let handler = between(
+            source,
+            "async fn gate(",
+            "/// Serialize this principal-scoped",
+        );
         assert!(handler.contains("provenance: None"));
         assert!(
             !handler.contains("input.provenance"),

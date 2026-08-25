@@ -70,15 +70,15 @@ SELECT component, interface_version, operation, component_digest, \
    AND component = $4 AND interface_version = $5";
 
 const SELECT_SOURCE_WIRING_SQL: &str = "\
-SELECT gated_catalog_version, wiring_hash, gate_report_id, graph_json::text \
+SELECT gated_catalog_version, wiring_hash, graph_json::text \
   FROM catalog.wirings \
  WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4";
 
 const INSERT_TARGET_WIRING_SQL: &str = "\
 INSERT INTO catalog.wirings (\
        tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
-       graph_json, wiring_hash, gate_report_id\
-     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8) \
+       graph_json, wiring_hash\
+     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
 ON CONFLICT DO NOTHING";
 
 const EXACT_TARGET_WIRING_SQL: &str = "\
@@ -86,7 +86,7 @@ SELECT EXISTS (\
     SELECT 1 FROM catalog.wirings \
      WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4 \
        AND gated_catalog_version = $5 AND graph_json = $6::text::jsonb \
-       AND wiring_hash = $7 AND gate_report_id = $8\
+       AND wiring_hash = $7\
     )";
 
 const SELECT_COMPONENT_REQUIREMENTS_SQL: &str = "\
@@ -139,36 +139,8 @@ SELECT changed_by, reason \
   FROM catalog.wiring_activation_events \
  WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 AND wiring_id = $4 \
    AND enabled AND confirmed_definition_hash = $5 \
-   AND source_environment = $6 AND source_gate_report_id = $7 \
+   AND source_environment = $6 \
  ORDER BY event_seq";
-
-/// One trusted target gate report coordinate supplied by the publish caller.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TargetGateReport {
-    wiring_id: String,
-    report_id: String,
-}
-
-impl std::str::FromStr for TargetGateReport {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let (wiring_id, report_id) = value
-            .split_once('=')
-            .ok_or_else(|| "expected WIRING_ID=REPORT_ID".to_owned())?;
-        if wiring_id.is_empty() || report_id.is_empty() {
-            return Err("wiring id and report id must both be non-empty".to_owned());
-        }
-        if wiring_id.chars().any(char::is_whitespace) || report_id.chars().any(char::is_whitespace)
-        {
-            return Err("wiring id and report id must not contain whitespace".to_owned());
-        }
-        Ok(Self {
-            wiring_id: wiring_id.to_owned(),
-            report_id: report_id.to_owned(),
-        })
-    }
-}
 
 /// Promote one source release into one target project-environment database.
 #[derive(Debug, Args)]
@@ -217,10 +189,6 @@ pub struct PromoteArgs {
     #[arg(long, default_value_t = false)]
     pub insecure_registry: bool,
 
-    /// Trusted target gate report, repeated exactly once per released wiring.
-    #[arg(long = "target-gate-report", value_name = "WIRING_ID=REPORT_ID")]
-    pub target_gate_reports: Vec<TargetGateReport>,
-
     /// Authenticated principal recorded on every target activation event.
     #[arg(long)]
     pub principal: String,
@@ -236,7 +204,6 @@ struct SourceWiring {
     document: WiringDocument,
     graph_json: String,
     wiring_hash: String,
-    source_gate_report_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -268,7 +235,6 @@ pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
     validate_args(&args)?;
     let schema = BareSchemaName::new(args.schema.clone())
         .with_context(|| format!("invalid target schema {:?}", args.schema))?;
-    let target_gate_reports = gate_report_map(&args.target_gate_reports)?;
     let artifact_config = ComponentArtifactSourceConfig::new(
         &args.artifact_base,
         args.insecure_registry,
@@ -306,7 +272,17 @@ pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
         .await
         .context("join source database connection")?
         .context("drive source database connection")?;
-    require_exact_gate_reports(&source, &target_gate_reports)?;
+    // The released wiring ids must still be unique: promotion writes one target
+    // row per id, so two members sharing one id would silently promote whichever
+    // ran last. This used to ride the gate-report key-set check that supplied
+    // the per-wiring report ids; that argument is gone (wamn-0h0g.8.5.6) and the
+    // uniqueness rule it carried is not.
+    require_unique_wiring_ids(
+        source
+            .wirings
+            .iter()
+            .map(|wiring| wiring.target.wiring_id.as_str()),
+    )?;
 
     let (mut target_client, target_connection) =
         tokio_postgres::connect(&args.target_database_url, NoTls)
@@ -317,7 +293,6 @@ pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
         &mut target_client,
         &artifact_source,
         &source,
-        &target_gate_reports,
         &args,
         &schema,
     )
@@ -365,43 +340,6 @@ fn validate_args(args: &PromoteArgs) -> anyhow::Result<()> {
     ensure!(
         args.source_environment != args.target_environment,
         "source and target environments must differ"
-    );
-    Ok(())
-}
-
-fn gate_report_map(reports: &[TargetGateReport]) -> anyhow::Result<BTreeMap<String, String>> {
-    let mut mapped = BTreeMap::new();
-    for report in reports {
-        ensure!(
-            mapped
-                .insert(report.wiring_id.clone(), report.report_id.clone())
-                .is_none(),
-            "duplicate target gate report for wiring {:?}",
-            report.wiring_id
-        );
-    }
-    Ok(mapped)
-}
-
-fn require_exact_gate_reports(
-    source: &SourceRelease,
-    reports: &BTreeMap<String, String>,
-) -> anyhow::Result<()> {
-    require_unique_wiring_ids(
-        source
-            .wirings
-            .iter()
-            .map(|wiring| wiring.target.wiring_id.as_str()),
-    )?;
-    let expected = source
-        .wirings
-        .iter()
-        .map(|wiring| wiring.target.wiring_id.clone())
-        .collect::<BTreeSet<_>>();
-    let supplied = reports.keys().cloned().collect::<BTreeSet<_>>();
-    ensure!(
-        supplied == expected,
-        "target gate reports must name exactly the released wirings; expected {expected:?}, supplied {supplied:?}"
     );
     Ok(())
 }
@@ -645,8 +583,7 @@ async fn load_source_wirings(
             })?;
         let gated_catalog_version: i32 = row.get(0);
         let wiring_hash: String = row.get(1);
-        let source_gate_report_id: String = row.get(2);
-        let graph_json: String = row.get(3);
+        let graph_json: String = row.get(2);
         ensure!(
             gated_catalog_version == catalog_version && wiring_hash == member.graph_hash.as_str(),
             "source wiring {:?} version {} does not match its released identity",
@@ -682,7 +619,6 @@ async fn load_source_wirings(
             document,
             graph_json,
             wiring_hash,
-            source_gate_report_id,
         });
     }
     Ok(wirings)
@@ -736,7 +672,6 @@ async fn promote_target(
     client: &mut Client,
     artifact_source: &ComponentArtifactSource,
     source: &SourceRelease,
-    target_gate_reports: &BTreeMap<String, String>,
     args: &PromoteArgs,
     schema: &BareSchemaName,
 ) -> anyhow::Result<PromotionSummary> {
@@ -848,16 +783,12 @@ async fn promote_target(
                     wiring.target.wiring_id, wiring.target.wiring_version
                 )
             })?;
-        let target_gate_report = target_gate_reports
-            .get(&wiring.target.wiring_id)
-            .expect("gate-report key set was checked");
         persist_target_wiring(
             &transaction,
             &args.tenant,
             &args.catalog_id,
             target_version,
             wiring,
-            target_gate_report,
         )
         .await?;
     }
@@ -1090,11 +1021,10 @@ async fn persist_target_wiring(
     catalog_id: &str,
     catalog_version: i32,
     wiring: &SourceWiring,
-    target_gate_report: &str,
 ) -> anyhow::Result<()> {
     let wiring_version = i32::try_from(wiring.target.wiring_version)
         .context("target wiring version exceeds PostgreSQL width")?;
-    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 8] = [
+    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
         &tenant,
         &catalog_id,
         &wiring.target.wiring_id,
@@ -1102,7 +1032,6 @@ async fn persist_target_wiring(
         &catalog_version,
         &wiring.graph_json,
         &wiring.wiring_hash,
-        &target_gate_report,
     ];
     transaction
         .execute(INSERT_TARGET_WIRING_SQL, &params)
@@ -1151,7 +1080,6 @@ async fn activate_once(
                 &wiring.target.wiring_id,
                 &wiring.wiring_hash,
                 &args.source_environment,
-                &wiring.source_gate_report_id,
             ],
         )
         .await
@@ -1205,7 +1133,6 @@ async fn activate_once(
                 &true,
                 &wiring.wiring_hash,
                 &args.source_environment,
-                &wiring.source_gate_report_id,
                 &args.principal,
                 &args.reason,
             ],
@@ -1217,19 +1144,20 @@ async fn activate_once(
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr as _;
-
     use super::*;
 
+    /// One target row per released wiring id, and no second identity supplied
+    /// alongside the document (wamn-0h0g.8.5.6).
     #[test]
-    fn target_gate_reports_are_explicit_and_unique() {
-        let a = TargetGateReport::from_str("orders=gate-1").expect("valid mapping");
-        assert_eq!(a.wiring_id, "orders");
-        assert_eq!(a.report_id, "gate-1");
-        assert!(TargetGateReport::from_str("orders").is_err());
-        assert!(TargetGateReport::from_str("orders=").is_err());
-        assert!(gate_report_map(&[a.clone(), a]).is_err());
+    fn released_wiring_ids_are_unique_and_no_report_is_supplied() {
         assert!(require_unique_wiring_ids(["orders", "orders"]).is_err());
+        assert!(require_unique_wiring_ids(["orders", "shipments"]).is_ok());
+        for statement in [INSERT_TARGET_WIRING_SQL, EXACT_TARGET_WIRING_SQL] {
+            assert!(
+                !statement.contains("gate_report_id"),
+                "promotion regrew the collapsed second identifier"
+            );
+        }
     }
 
     #[test]
@@ -1245,7 +1173,7 @@ mod tests {
             wamn_schema_control::connections::exact_component_connection_requirement_sql()
                 .contains("requirement_hash = $5")
         );
-        assert!(EXACT_TARGET_WIRING_SQL.contains("gate_report_id = $8"));
+        assert!(EXACT_TARGET_WIRING_SQL.contains("wiring_hash = $7"));
         assert!(flip_activation().contains("INTO catalog.wiring_activation"));
         assert!(record_activation_event().contains("INTO catalog.wiring_activation_events"));
     }
@@ -1281,6 +1209,6 @@ mod tests {
         assert!(LOCK_TARGET_HEAD_SQL.contains("FOR UPDATE"));
         assert!(SELECT_SOURCE_RELEASE_SQL.contains("release_manifest_v2_snapshots"));
         assert!(SELECT_SOURCE_RELEASE_SQL.contains("catalog.environment = $4"));
-        assert!(SELECT_PROMOTION_EVENTS_SQL.contains("source_gate_report_id = $7"));
+        assert!(SELECT_PROMOTION_EVENTS_SQL.contains("source_environment = $6"));
     }
 }

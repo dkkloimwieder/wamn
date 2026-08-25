@@ -36,7 +36,6 @@ const CANONICAL_RUN_COLUMNS: &[&str] = &[
     "wiring_id",
     "wiring_version",
     "wiring_hash",
-    "gate_report_id",
     "binding_world_json",
     "release_version",
     "manifest_digest",

@@ -41,11 +41,7 @@ fn existing_runs_gain_the_complete_candidate_grain_without_backfill() {
         .expect("candidate-grain cutover is planned");
 
     assert_eq!(action.kind, RunPlaneActionKind::AddColumn);
-    for column in [
-        "wiring_hash text",
-        "gate_report_id text",
-        "binding_world_json jsonb",
-    ] {
+    for column in ["wiring_hash text", "binding_world_json jsonb"] {
         assert!(
             action
                 .sql
@@ -58,7 +54,6 @@ fn existing_runs_gain_the_complete_candidate_grain_without_backfill() {
         "wiring_id",
         "wiring_version",
         "wiring_hash",
-        "gate_report_id",
         "binding_world_json",
     ] {
         assert!(

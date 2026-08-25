@@ -226,7 +226,7 @@ fn run_state_sql_matches_the_model() {
     // RIDER 1 of the ruling: an unnamed column's transition arm silently never
     // fires, so the column-scoped trigger MUST name the class.
     assert!(sql.contains(
-        "BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment,\n                 capture_mode, durability_class, wiring_id, wiring_version,\n                 wiring_hash, gate_report_id, binding_world_json,\n                 release_version, manifest_digest"
+        "BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment,\n                 capture_mode, durability_class, wiring_id, wiring_version,\n                 wiring_hash, binding_world_json,\n                 release_version, manifest_digest"
     ));
     // The claim-time release record: NULL at admission, written by the claiming
     // worker, and cleared again by EVERY arm that reopens claimability — the

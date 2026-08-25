@@ -14,14 +14,14 @@
 //! so a wiring authored here and a wiring promoted into this environment are
 //! admitted by exactly the same predicates.
 //!
-//! `--gate-report-id` is REQUIRED, never minted. `catalog.wirings` is
-//! insert-only immutable with `gate_report_id NOT NULL CHECK (<> '')`, so a row
-//! written ungated could never be updated with a report later: authorship
-//! submits against a report that already exists, and stays one idempotent verb.
+//! There is no gate-report argument (wamn-0h0g.8.5.6). The gate report keys on
+//! the wiring hash, which the document itself determines, so a report id in argv
+//! would be a second name for an identity the artifact already carries — and
+//! `catalog.wirings` no longer has a column to put it in.
 //!
 //! An exact resubmission converges. The same `(wiring, version)` carrying any
-//! other document, hash, gate scope, or report refuses rather than being
-//! replaced, because the stored definition is immutable.
+//! other document, hash, or gate scope refuses rather than being replaced,
+//! because the stored definition is immutable.
 
 use std::path::{Path, PathBuf};
 
@@ -40,8 +40,8 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const INSERT_WIRING_SQL: &str = "\
 INSERT INTO catalog.wirings (\
        tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
-       graph_json, wiring_hash, gate_report_id\
-     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8) \
+       graph_json, wiring_hash\
+     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
 ON CONFLICT DO NOTHING";
 
 const EXACT_WIRING_SQL: &str = "\
@@ -49,7 +49,7 @@ SELECT EXISTS (\
     SELECT 1 FROM catalog.wirings \
      WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4 \
        AND gated_catalog_version = $5 AND graph_json = $6::text::jsonb \
-       AND wiring_hash = $7 AND gate_report_id = $8\
+       AND wiring_hash = $7\
     )";
 
 /// Stable prefix every wiring-authorship refusal renders with.
@@ -137,8 +137,6 @@ pub struct AuthorWiringRequest<'a> {
     pub catalog_id: &'a str,
     /// Applied catalog version whose admitted component facts gate the wiring.
     pub gated_catalog_version: i32,
-    /// The green gate report this authorship submits against.
-    pub gate_report_id: &'a str,
     pub document: &'a WiringDocument,
 }
 
@@ -161,24 +159,9 @@ pub struct AuthorWiringArgs {
     #[arg(long)]
     pub gated_catalog_version: u32,
 
-    /// The already-green gate report this authorship submits against.
-    #[arg(long, value_parser = named_gate_report)]
-    pub gate_report_id: String,
-
     /// The wiring document to submit; it carries its own id and version.
     #[arg(long)]
     pub wiring_document: PathBuf,
-}
-
-/// `catalog.wirings.gate_report_id` is `NOT NULL CHECK (gate_report_id <> '')`
-/// and no `gate_reports` table exists to mint one from: the id names a report
-/// the operator already holds, so an empty one is refused in argv rather than
-/// after a gate run has already been spent.
-fn named_gate_report(value: &str) -> Result<String, String> {
-    if value.is_empty() {
-        return Err("gate-report-id must name an existing gate report".to_owned());
-    }
-    Ok(value.to_owned())
 }
 
 /// Author one gated wiring version and print its definition hash.
@@ -190,7 +173,6 @@ pub async fn run(args: AuthorWiringArgs) -> anyhow::Result<()> {
         tenant_id: &args.tenant,
         catalog_id: &args.catalog_id,
         gated_catalog_version,
-        gate_report_id: &args.gate_report_id,
         document: &document,
     };
 
@@ -331,7 +313,7 @@ pub async fn author_wiring(
     })?;
     let graph_json = serde_json::to_string(request.document).expect("a wiring document serializes");
     let stored_hash = wiring_hash.as_str();
-    let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 8] = [
+    let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
         &request.tenant_id,
         &request.catalog_id,
         &request.document.wiring_id,
@@ -339,7 +321,6 @@ pub async fn author_wiring(
         &request.gated_catalog_version,
         &graph_json,
         &stored_hash,
-        &request.gate_report_id,
     ];
     transaction
         .execute(INSERT_WIRING_SQL, &parameters)
@@ -448,50 +429,63 @@ mod tests {
         }
     }
 
+    /// The document is the WHOLE submission, and argv adds nothing to it.
+    ///
+    /// The gate-report argument this used to require is gone (wamn-0h0g.8.5.6):
+    /// the report keys on the wiring hash the document itself determines, so
+    /// there is no report id left for a caller to supply or mis-supply.
     #[test]
-    fn the_document_is_the_artifact_and_the_gate_report_is_required() {
-        let complete = parse(&[
-            "--gate-report-id",
-            "gate-2026-08-23",
-            "--wiring-document",
-            "wiring.json",
-        ])
-        .expect("the submission surface parses");
-        assert_eq!(complete.gate_report_id, "gate-2026-08-23");
+    fn the_document_is_the_whole_artifact_and_argv_restates_nothing() {
+        let complete =
+            parse(&["--wiring-document", "wiring.json"]).expect("the submission surface parses");
         assert_eq!(complete.wiring_document, PathBuf::from("wiring.json"));
 
-        let refusals: [Vec<&str>; 4] = [
-            // The gate report is required: authorship submits against a report
-            // that already exists rather than minting one.
-            vec!["--wiring-document", "wiring.json"],
-            // An empty report id is the schema's own refusal, made in argv.
-            vec!["--gate-report-id", "", "--wiring-document", "wiring.json"],
+        let refusals: [Vec<&str>; 3] = [
             // There is no artifact to submit.
-            vec!["--gate-report-id", "gate-2026-08-23"],
-            // The wiring id and version are the document's; argv cannot restate
-            // them, so a second authoring grammar cannot start here.
+            vec![],
+            // The retired report argument is REFUSED, not ignored: a caller
+            // still passing it is asking for an identity that no longer exists,
+            // and silently accepting it would suggest it still meant something.
             vec![
-                "--gate-report-id",
-                "gate-2026-08-23",
                 "--wiring-document",
                 "wiring.json",
-                "--wiring-id",
-                "orders",
+                "--gate-report-id",
+                "gate-2026-08-23",
             ],
+            // The wiring id and version are the document's; argv cannot restate
+            // them, so a second authoring grammar cannot start here.
+            vec!["--wiring-document", "wiring.json", "--wiring-id", "orders"],
         ];
         for refused in refusals {
             assert!(parse(&refused).is_err(), "accepted {refused:?}");
         }
     }
 
+    /// The stored row carries ONE identity for the definition.
+    ///
+    /// Scanned over the relation's own DECLARATION rather than the whole
+    /// artifact: the section header above it still names the collapsed column to
+    /// say what happened to it, and a whole-file scan would read that history as
+    /// the column's return.
     #[test]
-    fn the_empty_gate_report_refusal_is_the_stored_column_constraint() {
-        assert!(
-            CATALOG_SCHEMA.contains("gate_report_id  text NOT NULL CHECK (gate_report_id <> '')"),
-            "the authored column no longer refuses an empty gate report"
-        );
+    fn the_authored_column_set_carries_no_second_identifier() {
         assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER wirings_immutable"));
         assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER wirings_delete_immutable"));
+        let declaration = CATALOG_SCHEMA
+            .split_once("CREATE TABLE catalog.wirings (")
+            .expect("the catalog schema declares the wirings relation")
+            .1
+            .split_once("\n);")
+            .expect("the wirings declaration is terminated")
+            .0;
+        assert!(
+            declaration.contains("wiring_hash     text NOT NULL"),
+            "the wirings declaration no longer carries its content hash"
+        );
+        assert!(
+            !declaration.contains("gate_report_id"),
+            "catalog.wirings regrew the collapsed second identifier"
+        );
     }
 
     #[test]
@@ -565,7 +559,6 @@ mod tests {
             "gated_catalog_version",
             "graph_json",
             "wiring_hash",
-            "gate_report_id",
         ] {
             assert!(INSERT_WIRING_SQL.contains(column), "insert omits {column}");
             assert!(

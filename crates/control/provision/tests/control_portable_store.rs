@@ -42,6 +42,9 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.deployment_attestations",
         // wamn-0h0g.8.18: the owner-maintained login-identity-to-tenant mapping.
         "wamn_authority.author_login_tenants",
+        // wamn-0h0g.8.5.6: the one durable fact an accepted gate produces,
+        // keyed by the judged document's own wiring hash.
+        "wamn_run.gate_reports",
     ] {
         assert!(
             sql.contains(&format!("CREATE TABLE IF NOT EXISTS {relation}")),
@@ -344,11 +347,12 @@ fn control_author_authority_is_the_exact_ratified_class() {
         "catalog.catalog_heads",
         "catalog.connection_requirements",
     ];
-    // Append-only facts: immutable after append. wamn-0h0g.8.5.5 left exactly
-    // one: the gate-report lineage was the author's only state-machine
-    // authority, and its three relations are deleted, so the author now holds
-    // nothing but reads and one append.
-    let append_only = ["catalog.authoring_command_audit"];
+    // Append-only facts: immutable after append. The reservation-era gate-report
+    // lineage was the author's only STATE-MACHINE authority and its three
+    // relations are deleted (wamn-0h0g.8.5.5); the report row wamn-0h0g.8.5.6
+    // put back is written once and never revised, so the author still holds
+    // nothing but reads and appends.
+    let append_only = ["catalog.authoring_command_audit", "wamn_run.gate_reports"];
 
     let mut expected = BTreeSet::new();
     for schema in ["catalog", "wamn_run", "wamn_authority"] {
@@ -764,8 +768,18 @@ DO $$ BEGIN
     'the retired gate case-run relation is still installed';
   ASSERT to_regclass('wamn_run.authoring_test_run_reservations') IS NULL,
     'the retired gate reservation relation is still installed';
-  ASSERT NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'wamn_run'),
-    'the control store declares no portable wamn_run relation';
+  -- The schema is this artifact's exclusively, and it now declares exactly one
+  -- relation in it (wamn-0h0g.8.5.6). Asserted as an EXACT inventory rather than
+  -- as presence: a stray relation here is drift whether it arrived beside the
+  -- declared one or instead of it.
+  ASSERT (SELECT array_agg(tablename::text ORDER BY tablename) FROM pg_tables
+           WHERE schemaname = 'wamn_run') = ARRAY['gate_reports']::text[],
+    'the control store wamn_run inventory is not exactly the gate report';
+  -- Append-only in the schema too, not merely by the absence of a grant.
+  ASSERT EXISTS (SELECT 1 FROM pg_trigger
+                  WHERE tgrelid = 'wamn_run.gate_reports'::regclass
+                    AND tgname = 'gate_reports_immutable' AND NOT tgisinternal),
+    'the gate report relation is rewritable';
 END $$;
 RESET ROLE;
 "#

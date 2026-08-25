@@ -41,7 +41,6 @@ const CATALOG_VERSION: i32 = 3;
 const ENVIRONMENT: &str = "prod";
 const ORG: &str = "manifest-mint-org";
 const PROJECT: &str = "manifest-mint-project";
-const GATE_REPORT: &str = "gate-report";
 const COMPONENT_A: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const COMPONENT_B: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 const WRONG_GRAPH: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
@@ -265,10 +264,10 @@ async fn seed_component(admin: &Client, name: &str, digest: &str) {
         .execute(
             "INSERT INTO catalog.component_library \
                    (tenant_id, catalog_id, catalog_version, component, interface_version, \
-                    operation, component_digest, imports, imports_fingerprint, input_ports, \
-                    output_ports, parameters) \
+                    operation, component_digest, imports, imports_fingerprint, effects, \
+                    input_ports, output_ports, parameters) \
              VALUES ($1, $2, $3, $4, '0.1', 'call', $5, \
-                     '[]'::jsonb, $6, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)",
+                     '[]'::jsonb, $6, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)",
             &[
                 &TENANT,
                 &CATALOG,
@@ -318,7 +317,6 @@ async fn author(admin: &mut Client, document: &WiringDocument) -> DefinitionHash
             tenant_id: TENANT,
             catalog_id: CATALOG,
             gated_catalog_version: CATALOG_VERSION,
-            gate_report_id: GATE_REPORT,
             document,
         },
     )
@@ -344,8 +342,8 @@ async fn inject_stored_wiring(admin: &Client, document: &WiringDocument, graph_h
         .execute(
             "INSERT INTO catalog.wirings \
                    (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
-                    graph_json, wiring_hash, gate_report_id) \
-             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8)",
+                    graph_json, wiring_hash) \
+             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)",
             &[
                 &TENANT,
                 &CATALOG,
@@ -354,7 +352,6 @@ async fn inject_stored_wiring(admin: &Client, document: &WiringDocument, graph_h
                 &CATALOG_VERSION,
                 &graph,
                 &graph_hash,
-                &GATE_REPORT,
             ],
         )
         .await
@@ -446,7 +443,6 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
             tenant_id: TENANT,
             catalog_id: CATALOG,
             gated_catalog_version: CATALOG_VERSION,
-            gate_report_id: GATE_REPORT,
             document: &rewired,
         },
     )
@@ -474,7 +470,6 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
             tenant_id: TENANT,
             catalog_id: CATALOG,
             gated_catalog_version: CATALOG_VERSION,
-            gate_report_id: GATE_REPORT,
             document: &ungated,
         },
     )
@@ -833,7 +828,6 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
             tenant: TENANT.to_string(),
             catalog_id: CATALOG.to_string(),
             gated_catalog_version: CATALOG_VERSION as u32,
-            gate_report_id: GATE_REPORT.to_string(),
             wiring_document: write_document(
                 &documents,
                 &format!("{}.json", document.wiring_id),

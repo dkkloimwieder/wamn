@@ -5,10 +5,13 @@
 --
 -- The qualified names are intentionally unchanged from the project copies.
 -- During the one-cutover train both databases can therefore carry catalog.*;
--- database residency, not a renamed schema, distinguishes them. `wamn_run` is
--- declared here and left EMPTY: wamn-0h0g.8.5.5 deleted the whole gate-report
--- lineage that used to live in it, and the drift guard below asserts the
--- emptiness so the schema stays this artifact's exclusively.
+-- database residency, not a renamed schema, distinguishes them. `wamn_run` holds
+-- exactly ONE relation: wamn-0h0g.8.5.5 deleted the whole reservation-era
+-- gate-report lineage that used to live in it and kept the schema, and
+-- wamn-0h0g.8.5.6 put the surviving report row back in it -- keyed by
+-- `wiring_hash`, construction against the surviving row rather than migration of
+-- a corpse. The drift guard below asserts that exact inventory, so the schema
+-- stays this artifact's exclusively.
 --
 -- `control-portable-retained-shape-drift` and the deployment-attestation
 -- constraint fingerprint below are apply-time digests: they must be regenerated
@@ -321,6 +324,39 @@ ALTER TABLE catalog.authoring_command_audit
     ADD CONSTRAINT authoring_command_audit_command_kind_check
         CHECK (command_kind IN ('test-set-run', 'publish'));
 
+-- The ONE durable fact an accepted gate produces (wamn-0h0g.8.5.6).
+--
+-- A gate is a JUDGMENT ABOUT A DOCUMENT and its cases are effect-free by
+-- contract, so the verdict is reproducible from the document: same hash, same
+-- report, byte-stable. The row is therefore keyed by `wiring_hash` ALONE and
+-- mints no identity of its own -- the same collapse that deleted
+-- `catalog.wirings.gate_report_id`, which was bare text with no foreign key
+-- sitting beside a real content hash.
+--
+-- Per the 2026-08-25 standing rule, its writer and reader in one sentence: it is
+-- WRITTEN by the gate verb at `services/scenario-worker/src/management.rs`, in
+-- the same transaction as that command's ledger row, and READ by `get-report` at
+-- `services/scenario-worker/src/authoring.rs`, both under the
+-- `wamn_control_author` principal.
+--
+-- Only an ACCEPTED judgment writes here. A refusal is not a report, so an absent
+-- row and `report-not-found` are the same fact. `passed` is nonetheless STORED
+-- rather than inferred from that absence: `get-report` projects the store's
+-- facts, and a projection must not synthesise one the store does not hold.
+--
+-- Re-gating the same document is idempotent by construction, so the writer
+-- appends `ON CONFLICT DO NOTHING` against this key rather than rewriting a row
+-- the immutability trigger below would refuse anyway.
+CREATE TABLE IF NOT EXISTS wamn_run.gate_reports (
+    tenant_id    text NOT NULL CHECK (tenant_id <> ''),
+    wiring_hash  text NOT NULL
+        CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
+    passed       boolean NOT NULL,
+    summary      jsonb NOT NULL CHECK (jsonb_typeof(summary) = 'object'),
+    gated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (tenant_id, wiring_hash)
+);
+
 CREATE TABLE IF NOT EXISTS catalog.deployment_attestations (
     tenant_id               text NOT NULL CHECK (tenant_id <> ''),
     catalog_id              text NOT NULL CHECK (catalog_id <> ''),
@@ -450,7 +486,8 @@ BEGIN
         'catalog.release_attachments', 'catalog.component_library',
         'catalog.connection_requirements',
         'catalog.authoring_command_audit',
-        'catalog.deployment_attestations'
+        'catalog.deployment_attestations',
+        'wamn_run.gate_reports'
     ]
     LOOP
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
@@ -483,7 +520,8 @@ BEGIN
         'catalog.release_sources', 'catalog.release_attachments',
         'catalog.component_library',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
-        'catalog.deployment_attestations'
+        'catalog.deployment_attestations',
+        'wamn_run.gate_reports'
     ]
     LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
@@ -651,18 +689,17 @@ BEGIN
             MESSAGE = 'control-portable-catalog-inventory-drift';
     END IF;
 
-    -- wamn-0h0g.8.5.5: this artifact now declares ZERO portable tables in
-    -- `wamn_run`, so the inventory it asserts is the EMPTY one. Kept as a
-    -- positive assertion rather than deleted: the guard's job is to refuse an
-    -- inventory this artifact did not put there, and that job survives the
-    -- collapse -- the schema still belongs exclusively to this store, so a
-    -- relation appearing in it is drift whether the declared set is three names
-    -- or none. Spelled `IS NOT NULL` rather than against `ARRAY[]::text[]`
-    -- because `array_agg` over zero rows returns NULL, not an empty array, so
-    -- an empty-array literal would make this refuse on every apply.
+    -- The guard's job is to refuse an inventory this artifact did not put
+    -- there, and that job is unchanged by which relations it declares: the
+    -- schema belongs exclusively to this store, so a relation appearing in it
+    -- is drift. wamn-0h0g.8.5.5 emptied the declared set; wamn-0h0g.8.5.6 put
+    -- the one surviving report row back, so the asserted inventory is that one
+    -- name. It is spelled against a literal array rather than `IS NOT NULL`
+    -- again now that the set is non-empty -- an inventory of the WRONG one name
+    -- must refuse exactly as loudly as an extra one.
     SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
     FROM pg_tables WHERE schemaname = 'wamn_run';
-    IF run_tables IS NOT NULL THEN
+    IF run_tables IS DISTINCT FROM ARRAY['gate_reports']::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-run-inventory-drift';
     END IF;
@@ -709,7 +746,8 @@ BEGIN
             ('catalog.component_library'),
             ('catalog.release_exposure_manifests'), ('catalog.release_sources'),
             ('catalog.release_attachments'), ('catalog.connection_requirements'),
-            ('catalog.authoring_command_audit')
+            ('catalog.authoring_command_audit'),
+            ('wamn_run.gate_reports')
     ), facts AS (
         SELECT r.relation,
                'column:' || a.attnum || ':' || a.attname || ':'
@@ -736,7 +774,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       'c8985781241db7613966597c84f0c4b7477a7c5b9e146447d30b170edcd8114a'
+       'a805088d01071b7b68949adb747f6ac110d13a84d33a6515bb27e6f11e949788'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';
@@ -826,7 +864,8 @@ BEGIN
         'catalog.releases', 'catalog.release_flows',
         'catalog.catalog_heads',
         'catalog.connection_requirements',
-        'catalog.authoring_command_audit'
+        'catalog.authoring_command_audit',
+        'wamn_run.gate_reports'
     ]
     LOOP
         policy_name := split_part(relation_name, '.', 2) || '_author_tenant';
@@ -867,13 +906,14 @@ GRANT SELECT ON catalog.flow_artifacts, catalog.releases,
 -- Append-only facts: immutable after append, enforced by their own triggers as
 -- well as by the absence of UPDATE and DELETE here.
 --
--- wamn-0h0g.8.5.5 left exactly one. The gate-report lineage was the author's
--- only other authority here and its three relations are deleted above, so the
--- author now holds NO state-machine authority at all: every grant it has is
--- either a read or an append.
-REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit
+-- wamn-0h0g.8.5.5 left exactly one and wamn-0h0g.8.5.6 added the second. The
+-- reservation-era gate-report lineage was the author's only STATE-MACHINE
+-- authority here and its three relations are deleted above; the report row that
+-- replaced them is written once and never revised, so the author still holds no
+-- transition authority at all -- every grant it has is a read or an append.
+REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit, wamn_run.gate_reports
     FROM wamn_control_author;
-GRANT SELECT, INSERT ON catalog.authoring_command_audit
+GRANT SELECT, INSERT ON catalog.authoring_command_audit, wamn_run.gate_reports
     TO wamn_control_author;
 
 -- Owner-only is an explicit contract, not merely an absence of grants inherited
@@ -916,7 +956,9 @@ BEGIN
                  ('catalog', 'catalog_heads', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
-                 ('catalog', 'authoring_command_audit', 'INSERT')
+                 ('catalog', 'authoring_command_audit', 'INSERT'),
+                 ('wamn_run', 'gate_reports', 'SELECT'),
+                 ('wamn_run', 'gate_reports', 'INSERT')
                ) AS allowed(schema_name, table_name, privilege)
               WHERE allowed.schema_name = namespace.nspname
                 AND allowed.table_name = relation.relname

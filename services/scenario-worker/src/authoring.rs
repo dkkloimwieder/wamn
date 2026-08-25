@@ -6,7 +6,8 @@
 //!
 //! It persists no authored document (wamn-0h0g.8.5.5). A draft is a client-side
 //! file and the wiring document's content hash is its identity, so the only
-//! authored state this adapter reaches is the immutable report a gate produced.
+//! authored state this adapter reaches is the immutable report a gate produced —
+//! keyed by that same content hash (wamn-0h0g.8.5.6).
 
 use anyhow::{Context as _, bail};
 use serde_json::Value;
@@ -40,10 +41,12 @@ use wamn_schema_control::BareSchemaName;
 /// so the statement errors and the process refuses instead of quietly authoring
 /// into the wrong plane.
 ///
-/// Params: `$1` run schema. wamn-0h0g.8.5.5 deleted the whole gate-report
-/// lineage, so the only relation this credential may still mutate is the
-/// command ledger, and the run schema survives as a name the schema-level and
-/// blanket-exclusion legs still resolve against.
+/// Params: `$1` run schema. wamn-0h0g.8.5.5 deleted the whole reservation-era
+/// gate-report lineage and wamn-0h0g.8.5.6 put the surviving report row back, so
+/// this credential may APPEND to exactly two relations — the command ledger and
+/// `wamn_run.gate_reports` — and may rewrite neither. The run schema is still a
+/// name the schema-level and blanket-exclusion legs resolve against, and now
+/// also holds a relation those legs must find granted rather than excess.
 const AUTHORING_ROLE_PROBE_SQL: &str = "\
 WITH session_role AS ( \
     SELECT oid, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls \
@@ -52,7 +55,8 @@ WITH session_role AS ( \
     SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls \
       FROM pg_catalog.pg_roles WHERE rolname = 'wamn_control_author' \
 ), allowed_mutation(schema_name, table_name, privilege) AS ( \
-    VALUES ('catalog', 'authoring_command_audit', 'INSERT') \
+    VALUES ('catalog', 'authoring_command_audit', 'INSERT'), \
+           ('wamn_run', 'gate_reports', 'INSERT') \
 ) \
 SELECT current_user = session_user, \
        COALESCE(NOT session_role.rolsuper AND NOT session_role.rolcreatedb \
@@ -81,6 +85,12 @@ SELECT current_user = session_user, \
              current_user, 'catalog.authoring_command_audit', 'UPDATE') \
          AND NOT pg_catalog.has_table_privilege( \
              current_user, 'catalog.authoring_command_audit', 'DELETE'), \
+       pg_catalog.has_table_privilege(current_user, 'wamn_run.gate_reports', 'SELECT') \
+         AND pg_catalog.has_table_privilege(current_user, 'wamn_run.gate_reports', 'INSERT') \
+         AND NOT pg_catalog.has_table_privilege( \
+             current_user, 'wamn_run.gate_reports', 'UPDATE') \
+         AND NOT pg_catalog.has_table_privilege( \
+             current_user, 'wamn_run.gate_reports', 'DELETE'), \
        pg_catalog.has_function_privilege( \
            current_user, 'wamn_authority.session_author_tenant()', 'EXECUTE'), \
        NOT EXISTS ( \
@@ -360,15 +370,26 @@ pub enum GetReportResult {
     },
 }
 
+/// Read one gate report by its key.
+///
+/// The tenant predicate is explicit as well as enforced by the relation's two
+/// policies, on the same terms as every other statement this credential runs: a
+/// query whose only scope is a session claim reads as unscoped.
+///
+/// Params: `$1` tenant, `$2` wiring hash.
+const SELECT_GATE_REPORT_SQL: &str = "SELECT passed, summary \
+    FROM wamn_run.gate_reports \
+    WHERE tenant_id = $1 AND wiring_hash = $2";
+
 impl InternalAuthoringBackend {
     /// Read one finalized report from the fixed control-store scope.
     ///
-    /// The store holds NO reports between wamn-0h0g.8.5.5 and wamn-0h0g.8.5.6.
-    /// The relation this used to read is deleted, and the surviving report row
-    /// keyed by `wiring_hash` is `8.5.6`'s to construct — so `NotFound` is the
-    /// truthful answer here, not a stub: there is nothing for any report id to
-    /// select. The identity checks still run, because a malformed query must
-    /// refuse on its own terms rather than be answered.
+    /// `report_id` IS the wiring hash (wamn-0h0g.8.5.6) — the same collapse that
+    /// deleted `catalog.wirings.gate_report_id`, applied to the read side. The
+    /// gate verb writes one row per document it ACCEPTS, so `NotFound` is the
+    /// truthful answer for a document that was never gated, for one whose gate
+    /// refused it, and for a mistyped hash alike: in every case the store holds
+    /// no report under that key.
     pub async fn get_report(
         &self,
         tenant_id: &str,
@@ -376,7 +397,19 @@ impl InternalAuthoringBackend {
     ) -> anyhow::Result<GetReportResult> {
         self.require_tenant(tenant_id)?;
         validate_identity(report_id, "report-id")?;
-        Ok(GetReportResult::NotFound)
+        let Some(row) = self
+            .client
+            .query_opt(SELECT_GATE_REPORT_SQL, &[&tenant_id, &report_id])
+            .await
+            .context("read one gate report")?
+        else {
+            return Ok(GetReportResult::NotFound);
+        };
+        Ok(GetReportResult::Finalized {
+            validated_draft_id: report_id.to_owned(),
+            passed: row.get(0),
+            summary: row.get(1),
+        })
     }
 }
 

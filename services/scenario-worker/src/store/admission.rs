@@ -45,11 +45,11 @@ const ADMISSION_SCOPE_SQL: &str = "SELECT \
 /// Keyed on `wiring_hash` alone: the owner ruled that `validated_draft_id` IS
 /// the wiring hash, so the command carries the whole identity and no
 /// cross-database mapping exists or is needed. Every remaining admission
-/// parameter — `catalog_id`, `wiring_id`, `version`, `gated_catalog_version`,
-/// `gate_report_id` — is a column of the row the hash selects, which is why the
-/// admitter needs no `catalog.catalog_heads` grant to find them.
+/// parameter — `catalog_id`, `wiring_id`, `version`, `gated_catalog_version` —
+/// is a column of the row the hash selects, which is why the admitter needs no
+/// `catalog.catalog_heads` grant to find them.
 const SELECT_CANDIDATE_BY_HASH_SQL: &str = "SELECT catalog_id, wiring_id, version, \
-        gated_catalog_version, gate_report_id, graph_json \
+        gated_catalog_version, graph_json \
     FROM catalog.wirings \
     WHERE tenant_id = $1 AND wiring_hash = $2 \
     ORDER BY catalog_id, wiring_id, version";
@@ -158,10 +158,6 @@ pub struct CandidateWiring {
     pub wiring_id: String,
     pub wiring_version: i32,
     pub wiring_hash: String,
-    /// The gate run that certified this definition. Admission REQUIRES the
-    /// test-case `report_id` to equal it, so the control report identity is
-    /// derived from the candidate rather than minted by the command.
-    pub gate_report_id: String,
     /// The candidate's own `cases` array, riding `graph_json`.
     pub cases: Vec<TestSetCase>,
     /// The candidate's `nodes` object, retained to resolve the components it
@@ -271,14 +267,13 @@ impl AdmissionSurface {
         if rows.len() != 1 {
             bail!("one wiring hash selected {} candidate rows", rows.len());
         }
-        let graph: Value = row.get(5);
+        let graph: Value = row.get(4);
         Ok(Some(CandidateWiring {
             catalog_id: row.get(0),
             catalog_version: row.get(3),
             wiring_id: row.get(1),
             wiring_version: row.get(2),
             wiring_hash: wiring_hash.to_owned(),
-            gate_report_id: row.get(4),
             cases: candidate_cases(&graph)?,
             nodes: graph.get("nodes").cloned().unwrap_or(Value::Null),
         }))
@@ -343,13 +338,31 @@ pub struct GateRequest<'a> {
     pub validated_draft_id: &'a str,
 }
 
+/// The one durable fact an ACCEPTED gate produces (wamn-0h0g.8.5.6).
+///
+/// It is keyed by `wiring_hash` and nothing else: a gate is effect-free, so the
+/// verdict is reproducible from the document and mints no identity of its own.
+/// `wiring_hash` is therefore both the report's key and the report id the
+/// receipt hands back.
+///
+/// `summary` names the cases the judged document DECLARES. It records no
+/// per-case verdict, because nothing was executed — the gate judged the
+/// document, and a summary claiming case results would be a lie about work that
+/// did not happen.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GateReport {
+    pub wiring_hash: String,
+    pub passed: bool,
+    pub summary: Value,
+}
+
 /// What one gate command judged.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GateJudgment {
-    /// The candidate is gateable, under the report identity it already carries.
-    Accepted {
-        report_id: String,
-    },
+    /// The candidate is gateable. The report this produced is the caller's to
+    /// persist: `run_gate` reads the PROJECT database and the report lives in
+    /// the CONTROL one, so the verb that holds both connections writes it.
+    Accepted(GateReport),
     Refused(GateRefusal),
 }
 
@@ -414,11 +427,20 @@ pub async fn run_gate(
         }));
     }
 
-    // The report identity is DERIVED, never minted: it is the candidate row's
-    // own gate report.
-    Ok(GateJudgment::Accepted {
-        report_id: candidate.gate_report_id,
-    })
+    // The report identity is DERIVED, never minted: it IS the candidate's
+    // content hash. Reached only here, after every refusing posture — the
+    // effect-free clause above included — has already declined to fire.
+    Ok(GateJudgment::Accepted(GateReport {
+        summary: serde_json::json!({
+            "cases": candidate
+                .cases
+                .iter()
+                .map(|case| case.case_id.as_str())
+                .collect::<Vec<_>>(),
+        }),
+        wiring_hash: candidate.wiring_hash,
+        passed: true,
+    }))
 }
 
 /// Read a candidate's `cases` array out of its stored graph.
@@ -540,7 +562,10 @@ mod tests {
         // The refusal is a judgment, never a mutation: a gate that wrote
         // anything on this path would not be a judgment about a document.
         for mutation in ["INSERT", "UPDATE", "DELETE", "TRUNCATE"] {
-            assert!(!sql.contains(mutation), "the posture read performs {mutation}");
+            assert!(
+                !sql.contains(mutation),
+                "the posture read performs {mutation}"
+            );
         }
         // It resolves components over the same four join keys the binding-world
         // diagnostic does, so the two agree on what the document reaches.
@@ -567,7 +592,6 @@ mod tests {
             wiring_id: "wiring-a".to_owned(),
             wiring_version: 1,
             wiring_hash: "sha256:".to_owned() + &"0".repeat(64),
-            gate_report_id: "report-a".to_owned(),
             cases: Vec::new(),
             nodes: graph.get("nodes").cloned().unwrap_or(Value::Null),
         };

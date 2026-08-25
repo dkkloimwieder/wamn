@@ -144,7 +144,10 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
 
     let release = Arc::new(
         ReleaseManifestWeld::load_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&release_manifest(&admitted, &wiring_hash)),
+            &wamn_execution_contract::canonical_json_bytes(&release_manifest(
+                &admitted,
+                &wiring_hash,
+            )),
             "trusted-http-route fixture",
         )
         .context("weld the fixture serving manifest")?,
@@ -444,8 +447,8 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
-                    gated_catalog_version, graph_json, wiring_hash, gate_report_id) \
-             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'gate-1')",
+                    gated_catalog_version, graph_json, wiring_hash) \
+             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)",
             &[
                 &TENANT,
                 &CATALOG,

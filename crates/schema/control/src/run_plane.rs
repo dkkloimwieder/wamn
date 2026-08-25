@@ -73,13 +73,13 @@ const CATALOG_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/catalog-sc
 const RUNS_ADMISSION_SCOPE_CHECK_DEF: &str =
     "CHECK (catalog_id <> ''::text AND catalog_version > 0 AND environment <> ''::text)";
 const RUNS_WIRING_IDENTITY_CHECK_DEF: &str = "CHECK (wiring_id IS NULL AND wiring_version IS NULL OR wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0)";
-const RUNS_EXECUTION_GRAIN_CHECK_DEF: &str = "CHECK (flow_id IS NOT NULL AND flow_version IS NOT NULL AND flow_id <> ''::text AND flow_version > 0 AND wiring_hash IS NULL AND gate_report_id IS NULL AND binding_world_json IS NULL OR flow_id IS NULL AND flow_version IS NULL AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0 AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text AND gate_report_id IS NOT NULL AND gate_report_id <> ''::text AND binding_world_json IS NOT NULL AND jsonb_typeof(binding_world_json) = 'array'::text)";
+const RUNS_EXECUTION_GRAIN_CHECK_DEF: &str = "CHECK (flow_id IS NOT NULL AND flow_version IS NOT NULL AND flow_id <> ''::text AND flow_version > 0 AND wiring_hash IS NULL AND binding_world_json IS NULL OR flow_id IS NULL AND flow_version IS NULL AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0 AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text AND binding_world_json IS NOT NULL AND jsonb_typeof(binding_world_json) = 'array'::text)";
 #[cfg(test)]
 const RUNS_RELEASE_FK_DEF: &str = "FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.releases(tenant_id, catalog_id, catalog_version)";
 #[cfg(test)]
 const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs USING btree (tenant_id, catalog_id, catalog_version)";
 const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
-const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment, capture_mode, durability_class, wiring_id, wiring_version, wiring_hash, gate_report_id, binding_world_json, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
+const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment, capture_mode, durability_class, wiring_id, wiring_version, wiring_hash, binding_world_json, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 const ENVIRONMENT_POLICY_TENANT_QUAL: &str =
     "tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)";
 
@@ -482,7 +482,7 @@ const PIN_RUN_DURABILITY_CLASS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
-const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.flow_id IS DISTINCT FROM OLD.flow_id\n       OR NEW.flow_version IS DISTINCT FROM OLD.flow_version\n       OR NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode\n       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class\n       OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id\n       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version\n       OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash\n       OR NEW.gate_report_id IS DISTINCT FROM OLD.gate_report_id\n       OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id\n                             AND OLD.durability_class = 'durable') THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
+const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.flow_id IS DISTINCT FROM OLD.flow_id\n       OR NEW.flow_version IS DISTINCT FROM OLD.flow_version\n       OR NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode\n       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class\n       OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id\n       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version\n       OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash\n       OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id\n                             AND OLD.durability_class = 'durable') THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
 const GUARD_TERMINAL_RUN_DELETE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_terminal_run_delete()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-delete-nonterminal';\n    END IF;\n    RETURN OLD;\nEND\n$function$\n";
 
@@ -591,7 +591,6 @@ BEGIN
        OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
        OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version
        OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
-       OR NEW.gate_report_id IS DISTINCT FROM OLD.gate_report_id
        OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
@@ -676,7 +675,7 @@ const RUNS_TERMINAL_DELETE_ONLY_TRIGGER_SQL: &str = "CREATE TRIGGER \
 const RUNS_ADMISSION_PINS_TRIGGER_SQL: &str = "CREATE TRIGGER runs_admission_pins_immutable \
     BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment, \
     capture_mode, durability_class, wiring_id, wiring_version, wiring_hash, \
-    gate_report_id, binding_world_json, release_version, manifest_digest \
+    binding_world_json, release_version, manifest_digest \
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
     wamn_run.guard_run_admission_pins_immutable();";
 
@@ -2452,7 +2451,6 @@ fn run_wiring_identity_contract_complete(obs: &RunPlaneObservation) -> bool {
         ("wiring_id", "text"),
         ("wiring_version", "integer"),
         ("wiring_hash", "text"),
-        ("gate_report_id", "text"),
         ("binding_world_json", "jsonb"),
     ]
     .into_iter()
@@ -2464,7 +2462,13 @@ fn run_wiring_identity_contract_complete(obs: &RunPlaneObservation) -> bool {
                 .column_types
                 .get(&key)
                 .is_some_and(|actual| actual == expected_type)
-    }) && obs
+    })
+    // wamn-0h0g.8.5.6: the retired second identifier must be GONE, not merely
+    // unmentioned. Stated as a positive absence because the cutover below is
+    // what removes it: a database that still carries the column has not reached
+    // the contract, so the reconcile must still plan the cutover for it.
+    && !columns.contains("gate_report_id")
+        && obs
         .checks
         .get(&("runs".to_string(), "runs_wiring_identity_check".to_string()))
         .is_some_and(|definition| definition == RUNS_WIRING_IDENTITY_CHECK_DEF)
@@ -2489,7 +2493,6 @@ ALTER TABLE {target}.runs
     ADD COLUMN IF NOT EXISTS wiring_id text,
     ADD COLUMN IF NOT EXISTS wiring_version integer,
     ADD COLUMN IF NOT EXISTS wiring_hash text,
-    ADD COLUMN IF NOT EXISTS gate_report_id text,
     ADD COLUMN IF NOT EXISTS binding_world_json jsonb;
 ALTER TABLE {target}.runs
     ALTER COLUMN flow_id TYPE text USING flow_id::text,
@@ -2497,14 +2500,12 @@ ALTER TABLE {target}.runs
     ALTER COLUMN wiring_id TYPE text USING wiring_id::text,
     ALTER COLUMN wiring_version TYPE integer USING wiring_version::integer,
     ALTER COLUMN wiring_hash TYPE text USING wiring_hash::text,
-    ALTER COLUMN gate_report_id TYPE text USING gate_report_id::text,
     ALTER COLUMN binding_world_json TYPE jsonb USING binding_world_json::jsonb,
     ALTER COLUMN flow_id DROP NOT NULL,
     ALTER COLUMN flow_version DROP NOT NULL,
     ALTER COLUMN wiring_id DROP NOT NULL,
     ALTER COLUMN wiring_version DROP NOT NULL,
     ALTER COLUMN wiring_hash DROP NOT NULL,
-    ALTER COLUMN gate_report_id DROP NOT NULL,
     ALTER COLUMN binding_world_json DROP NOT NULL,
     DROP CONSTRAINT IF EXISTS runs_wiring_identity_check,
     ADD CONSTRAINT runs_wiring_identity_check CHECK (
@@ -2516,7 +2517,7 @@ ALTER TABLE {target}.runs
     ADD CONSTRAINT runs_execution_grain_check CHECK (
       (flow_id IS NOT NULL AND flow_version IS NOT NULL
        AND flow_id <> '' AND flow_version > 0
-       AND wiring_hash IS NULL AND gate_report_id IS NULL
+       AND wiring_hash IS NULL
        AND binding_world_json IS NULL)
       OR
       (flow_id IS NULL AND flow_version IS NULL
@@ -2524,10 +2525,16 @@ ALTER TABLE {target}.runs
        AND wiring_id <> '' AND wiring_version > 0
        AND wiring_hash IS NOT NULL
        AND wiring_hash ~ '^sha256:[0-9a-f]{{64}}$'
-       AND gate_report_id IS NOT NULL AND gate_report_id <> ''
        AND binding_world_json IS NOT NULL
        AND jsonb_typeof(binding_world_json) = 'array')
-    );"#
+    );
+-- The retired second identifier is DROPPED LAST, in its own statement
+-- (wamn-0h0g.8.5.6). Both CHECKs above named it, so a `DROP COLUMN` beside them
+-- would be analysed against the pre-existing relation and refuse with a
+-- dependency error; dropping it after the constraints have been rewritten
+-- leaves nothing referring to it. `IF EXISTS` is what makes this converge over
+-- a database that already ran the cutover.
+ALTER TABLE {target}.runs DROP COLUMN IF EXISTS gate_report_id;"#
     )
 }
 
@@ -3534,7 +3541,6 @@ $retire_run_projection_authority$;"#,
                             | "wiring_id"
                             | "wiring_version"
                             | "wiring_hash"
-                            | "gate_report_id"
                             | "binding_world_json"
                     )
                 {
@@ -5196,7 +5202,6 @@ COMMIT;
             ("wiring_id", "text"),
             ("wiring_version", "integer"),
             ("wiring_hash", "text"),
-            ("gate_report_id", "text"),
             ("binding_world_json", "jsonb"),
         ] {
             obs.column_types
@@ -5496,7 +5501,7 @@ COMMIT;
         for trigger_fragment in [
             "BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment,",
             "capture_mode, durability_class, wiring_id, wiring_version,",
-            "wiring_hash, gate_report_id, binding_world_json,",
+            "wiring_hash, binding_world_json,",
             "release_version, manifest_digest",
         ] {
             assert!(

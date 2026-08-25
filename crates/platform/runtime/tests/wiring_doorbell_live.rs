@@ -91,9 +91,9 @@ fn install_schema(url: &str) {
                     (tenant_id, catalog_id, environment, applied_catalog_version) \
              VALUES ('{TENANT}','{CATALOG}','{ENVIRONMENT}',1);\n\
              INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
-                    gated_catalog_version, graph_json, wiring_hash, gate_report_id) \
-             VALUES ('{TENANT}','{CATALOG}','{WIRING}',1,1,'{{\"n\":1}}','{a}','gate-1'), \
-                    ('{TENANT}','{CATALOG}','{WIRING}',2,1,'{{\"n\":2}}','{b}','gate-2');\n",
+                    gated_catalog_version, graph_json, wiring_hash) \
+             VALUES ('{TENANT}','{CATALOG}','{WIRING}',1,1,'{{\"n\":1}}','{a}'), \
+                    ('{TENANT}','{CATALOG}','{WIRING}',2,1,'{{\"n\":2}}','{b}');\n",
             a = hash('a'),
             b = hash('b'),
         ),

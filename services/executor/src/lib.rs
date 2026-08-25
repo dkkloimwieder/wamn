@@ -460,7 +460,6 @@ async fn drain_one(
                         wiring_id,
                         wiring_version,
                         wiring_hash: candidate.wiring_hash,
-                        gate_report_id: candidate.gate_report_id,
                     },
                     binding_world: Arc::new(candidate.binding_world),
                     delivery_id: run_id.clone(),

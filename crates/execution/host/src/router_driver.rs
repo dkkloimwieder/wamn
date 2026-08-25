@@ -375,7 +375,6 @@ pub struct CandidateWiringTarget {
     pub wiring_id: String,
     pub wiring_version: u32,
     pub wiring_hash: String,
-    pub gate_report_id: String,
 }
 
 /// One queued candidate input executed through the production driver.
@@ -414,7 +413,6 @@ pub(crate) struct PreparedReleaseReadiness {
 struct CatalogFacts {
     catalog_version: u32,
     components: Arc<[AdmittedComponent]>,
-    gate_report_id: Arc<str>,
 }
 
 impl CatalogFacts {
@@ -422,7 +420,6 @@ impl CatalogFacts {
         Self {
             catalog_version: resolved.catalog_version,
             components: Arc::clone(&resolved.components),
-            gate_report_id: Arc::clone(&resolved.gate_report_id),
         }
     }
 
@@ -771,7 +768,6 @@ impl RouterDriver {
                 &target.wiring_id,
                 target.wiring_version,
                 &target.wiring_hash,
-                &target.gate_report_id,
                 expected_binding_world,
             )
             .await?;
@@ -1006,7 +1002,7 @@ impl RouterDriver {
                 "candidate-request-release-scope-mismatch",
             ));
         }
-        if target.wiring_hash.is_empty() || target.gate_report_id.is_empty() {
+        if target.wiring_hash.is_empty() {
             return Err(CandidateExecutionRefusal::new(
                 CandidateExecutionRefusalKind::Identity,
                 "candidate-wiring-coordinate-incomplete",
@@ -1023,7 +1019,6 @@ impl RouterDriver {
         if active.version != target.wiring_version
             || active.graph_hash.as_ref() != target.wiring_hash
             || active.facts.catalog_version != target.catalog_version
-            || active.facts.gate_report_id.as_ref() != target.gate_report_id
             || active.facts.components.iter().any(|component| {
                 component.scope.tenant_id != target.tenant_id
                     || component.scope.catalog_id != target.catalog_id

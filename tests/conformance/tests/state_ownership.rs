@@ -1624,6 +1624,9 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
         BTreeSet::from([
             "catalog.authoring_command_audit",
             "catalog.execution_bundles",
+            // wamn-0h0g.8.5.6: the gate verb appends one report per accepted
+            // document, keyed by that document's wiring hash.
+            "wamn_run.gate_reports",
         ])
     );
 
@@ -1644,6 +1647,9 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
             "catalog.catalog_heads",
             "catalog.execution_bundles",
             "catalog.releases",
+            // `get-report` resolves what the gate wrote. A writer without this
+            // reader is the capability hole wamn-0h0g.8.5.6 closed.
+            "wamn_run.gate_reports",
         ])
     );
 }

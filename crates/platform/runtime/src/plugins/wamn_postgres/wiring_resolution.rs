@@ -20,8 +20,7 @@ WITH selected AS MATERIALIZED ( \
     SELECT wiring.version, \
            wiring.gated_catalog_version, \
            wiring.graph_json, \
-           wiring.wiring_hash, \
-           wiring.gate_report_id \
+           wiring.wiring_hash \
       FROM catalog.wiring_activation AS active \
       JOIN catalog.catalog_heads AS head \
         ON head.tenant_id = active.tenant_id \
@@ -73,7 +72,7 @@ SELECT selected.version, \
                ) ORDER BY component.component, component.interface_version \
            ) FILTER (WHERE component.component IS NOT NULL), \
            '[]'::jsonb \
-       )::text AS components, selected.gate_report_id \
+       )::text AS components \
   FROM selected \
   LEFT JOIN catalog.component_library AS component \
    ON component.tenant_id = $1 \
@@ -87,7 +86,7 @@ SELECT selected.version, \
           AND definition ->> 'operation' = component.operation \
    ) \
  GROUP BY selected.version, selected.gated_catalog_version, \
-          selected.graph_json, selected.wiring_hash, selected.gate_report_id";
+          selected.graph_json, selected.wiring_hash";
 
 /// The immutable-version snapshot behind a queued delivery. Unlike
 /// [`ACTIVE_WIRING_SQL`], this deliberately does not consult the mutable
@@ -106,7 +105,7 @@ WITH release_scope AS MATERIALIZED ( \
              #>> '{release,environment}' = $3 \
 ), selected AS MATERIALIZED ( \
     SELECT wiring.version, wiring.gated_catalog_version, \
-           wiring.graph_json, wiring.wiring_hash, wiring.gate_report_id, \
+           wiring.graph_json, wiring.wiring_hash, \
            release_scope.catalog_version AS release_catalog_version \
       FROM release_scope \
       JOIN catalog.wirings AS wiring \
@@ -148,7 +147,7 @@ SELECT selected.version, selected.gated_catalog_version, \
                ) ORDER BY component.component, component.interface_version \
            ) FILTER (WHERE component.component IS NOT NULL), \
            '[]'::jsonb \
-       )::text AS components, selected.gate_report_id \
+       )::text AS components \
   FROM selected \
   LEFT JOIN catalog.release_components AS member \
     ON member.tenant_id = $1 \
@@ -162,7 +161,7 @@ SELECT selected.version, selected.gated_catalog_version, \
    AND component.catalog_version = member.catalog_version \
    AND component.component_digest = member.component_digest \
  GROUP BY selected.version, selected.gated_catalog_version, \
-          selected.graph_json, selected.wiring_hash, selected.gate_report_id";
+          selected.graph_json, selected.wiring_hash";
 
 /// Exact immutable candidate wiring selected by private management admission.
 ///
@@ -172,7 +171,7 @@ SELECT selected.version, selected.gated_catalog_version, \
 pub const CANDIDATE_WIRING_SQL: &str = "\
 WITH selected AS MATERIALIZED ( \
     SELECT wiring.version, wiring.gated_catalog_version, \
-           wiring.graph_json, wiring.wiring_hash, wiring.gate_report_id \
+           wiring.graph_json, wiring.wiring_hash \
       FROM catalog.wirings AS wiring \
      WHERE wiring.tenant_id = $1 \
        AND wiring.catalog_id = $2 \
@@ -180,7 +179,6 @@ WITH selected AS MATERIALIZED ( \
        AND wiring.version = $5 \
        AND wiring.gated_catalog_version = $6 \
        AND wiring.wiring_hash = $7 \
-       AND wiring.gate_report_id = $8 \
        AND $3::text <> '' \
 ), candidate_nodes AS MATERIALIZED ( \
     SELECT node.key AS node_id, component.component_digest, \
@@ -286,7 +284,7 @@ SELECT selected.version, selected.gated_catalog_version, \
                ) ORDER BY component.component, component.interface_version \
            ) FILTER (WHERE component.component IS NOT NULL), \
            '[]'::jsonb \
-       )::text AS components, selected.gate_report_id, \
+       )::text AS components, \
        node_summary.node_count, node_summary.invalid_node_count, \
        binding_world.requirement_count, binding_world.resolved_count, \
        binding_world.binding_world_json::text \
@@ -303,7 +301,7 @@ SELECT selected.version, selected.gated_catalog_version, \
           AND definition ->> 'operation' = component.operation \
    ) \
  GROUP BY selected.version, selected.gated_catalog_version, \
-          selected.graph_json, selected.wiring_hash, selected.gate_report_id, \
+          selected.graph_json, selected.wiring_hash, \
           node_summary.node_count, node_summary.invalid_node_count, \
           binding_world.requirement_count, binding_world.resolved_count, \
           binding_world.binding_world_json";
@@ -353,7 +351,6 @@ pub struct ResolvedActiveWiring {
     pub graph_hash: Arc<str>,
     pub wiring: Wiring,
     pub components: Arc<[AdmittedComponent]>,
-    pub gate_report_id: Arc<str>,
 }
 
 /// Exact outcome of re-reading a frozen candidate before component execution.
@@ -556,13 +553,11 @@ impl WamnPostgres {
         wiring_id: &str,
         wiring_version: u32,
         wiring_hash: &str,
-        gate_report_id: &str,
         expected_binding_world: &CandidateBindingWorld,
     ) -> anyhow::Result<CandidateWiringResolution> {
         anyhow::ensure!(catalog_version > 0, "candidate-catalog-version-zero");
         anyhow::ensure!(wiring_version > 0, "candidate-wiring-version-zero");
         anyhow::ensure!(!wiring_hash.is_empty(), "candidate-wiring-hash-empty");
-        anyhow::ensure!(!gate_report_id.is_empty(), "candidate-gate-report-id-empty");
         let catalog_version = i32::try_from(catalog_version)
             .context("candidate catalog version exceeds PostgreSQL int")?;
         let wiring_version = i32::try_from(wiring_version)
@@ -588,7 +583,7 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
 
-        let params: [&(dyn ToSql + Sync); 8] = [
+        let params: [&(dyn ToSql + Sync); 7] = [
             &tenant_id,
             &catalog_id,
             &environment,
@@ -596,7 +591,6 @@ impl WamnPostgres {
             &wiring_version,
             &catalog_version,
             &wiring_hash,
-            &gate_report_id,
         ];
         let selected = connection
             .query_opt(CANDIDATE_WIRING_SQL, &params)
@@ -605,18 +599,18 @@ impl WamnPostgres {
         let result = match selected {
             Ok(None) => Ok(CandidateWiringResolution::Missing),
             Ok(Some(row)) => (|| -> anyhow::Result<CandidateWiringResolution> {
-                let node_count: i64 = row.try_get(6).context("decode candidate node count")?;
+                let node_count: i64 = row.try_get(5).context("decode candidate node count")?;
                 let invalid_node_count: i64 = row
-                    .try_get(7)
+                    .try_get(6)
                     .context("decode invalid candidate node count")?;
                 let requirement_count: i64 = row
-                    .try_get(8)
+                    .try_get(7)
                     .context("decode candidate requirement count")?;
                 let resolved_count: i64 = row
-                    .try_get(9)
+                    .try_get(8)
                     .context("decode resolved candidate requirement count")?;
                 let live_binding_world: String = row
-                    .try_get(10)
+                    .try_get(9)
                     .context("decode live candidate binding world")?;
                 if node_count == 0 || invalid_node_count != 0 {
                     Ok(CandidateWiringResolution::InvalidDefinition)
@@ -774,8 +768,6 @@ fn decode_active_wiring(
         serde_json::from_str(&components).context("parse active wiring component facts")?;
     let components = components_used_by_document(&document, components);
     verify_served_effect_projections(&components)?;
-    let gate_report_id: String = row.try_get(5).context("decode wiring gate report id")?;
-    anyhow::ensure!(!gate_report_id.is_empty(), "wiring-gate-report-id-empty");
     let scope = WiringScope {
         tenant_id,
         catalog_id,
@@ -802,7 +794,6 @@ fn decode_active_wiring(
         graph_hash: Arc::from(graph_hash),
         wiring,
         components: components.into(),
-        gate_report_id: gate_report_id.into(),
     })
 }
 
@@ -931,7 +922,6 @@ mod tests {
         for predicate in [
             "wiring.gated_catalog_version = $6",
             "wiring.wiring_hash = $7",
-            "wiring.gate_report_id = $8",
             "binding.environment = $3",
             "binding.binding_status = 'active'",
             "binding.validation_status = 'valid'",

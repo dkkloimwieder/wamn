@@ -73,20 +73,23 @@ fn management_prepares() -> String {
         "PREPARE management_lock(text,text,text,int) AS {}; \
          PREPARE management_admit(\
            text,text,text,int,text,text,text,text,timestamptz,text,text,int,\
-           text,int,text,text,text\
+           text,int,text,text\
          ) AS {};",
         management.lock_producer(),
         management.admit(),
     )
 }
 
+/// One test-case admission. `report_id` is the report the caller names, which
+/// admission requires to equal the candidate's own `wiring_hash`
+/// (wamn-0h0g.8.5.6) -- so passing anything else is the `gate-report-mismatch`
+/// case rather than a second parameter to vary.
 fn test_case_admission(
     report_id: &str,
     ordinal: i32,
     run_id: &str,
     wiring_id: &str,
     wiring_hash: &str,
-    gate_report_id: &str,
     prior_binding_world: Option<&str>,
 ) -> String {
     let prior = prior_binding_world
@@ -97,7 +100,7 @@ fn test_case_admission(
          EXECUTE management_admit(\
            'test-case','cat','dev',1,'{run_id}','{{}}','{{}}','proof-revision',\
            '2099-01-01T00:00:00Z',NULL,'{report_id}',{ordinal},'{wiring_id}',1,\
-           '{wiring_hash}','{gate_report_id}',{prior}\
+           '{wiring_hash}',{prior}\
          );"
     )
 }
@@ -234,22 +237,23 @@ fn surviving_authority_matrix_live() {
                (tenant_id,catalog_id,catalog_version) VALUES ('t1','cat',1); \
              INSERT INTO catalog.component_library \
                (tenant_id,catalog_id,catalog_version,component,interface_version,operation, \
-                component_digest,imports,imports_fingerprint,input_ports,output_ports,parameters) \
+                component_digest,imports,imports_fingerprint,effects,input_ports,output_ports, \
+                parameters) \
              VALUES ('t1','cat',1,'entity','0.1','create','{component_digest}', \
-                     '[]','{imports_fingerprint}','[]','[]','[]'); \
+                     '[]','{imports_fingerprint}','[]','[]','[]','[]'); \
              INSERT INTO catalog.wirings \
                (tenant_id,catalog_id,wiring_id,version,gated_catalog_version, \
-                graph_json,wiring_hash,gate_report_id) VALUES \
+                graph_json,wiring_hash) VALUES \
                ('t1','cat','candidate',1,1, \
                 '{{\"format-version\":\"0.1\",\"wiring-id\":\"candidate\",\"version\":1, \
                    \"entry\":\"node\",\"nodes\":{{\"node\":{{\"component\":\"entity\", \
                    \"interface-version\":\"0.1\",\"operation\":\"create\"}}}}}}', \
-                '{wiring_hash}','report-a'), \
+                '{wiring_hash}'), \
                ('t1','cat','race',1,1, \
                 '{{\"format-version\":\"0.1\",\"wiring-id\":\"race\",\"version\":1, \
                    \"entry\":\"node\",\"nodes\":{{\"node\":{{\"component\":\"entity\", \
                    \"interface-version\":\"0.1\",\"operation\":\"create\"}}}}}}', \
-                '{race_wiring_hash}','report-race'); \
+                '{race_wiring_hash}'); \
              INSERT INTO catalog.connection_requirements \
                (tenant_id,component_digest,store_alias,requirement_json,requirement_hash) VALUES \
                ('t1','{component_digest}','z-store','{{\"requirement-type\":\"http\"}}','req-z'), \
@@ -300,12 +304,11 @@ fn surviving_authority_matrix_live() {
     assert!(claimed.contains("run-1"));
 
     let ordinal_zero = test_case_admission(
-        "report-a",
+        &wiring_hash,
         0,
         "case-run-0",
         "candidate",
         &wiring_hash,
-        "report-a",
         None,
     );
     let admitted = success(&url, &as_management(&ordinal_zero));
@@ -331,17 +334,20 @@ fn surviving_authority_matrix_live() {
     let duplicate = success(&url, &as_management(&ordinal_zero));
     assert!(duplicate.contains(&format!("duplicate|case-run-0|{binding_world}")));
 
-    // The report is not guest echo: it must be the gate report on the exact
-    // candidate row, with its own refusal literal and no mutation.
+    // The report is not guest echo: it IS the candidate row's own content hash
+    // (wamn-0h0g.8.5.6), with its own refusal literal and no mutation. The
+    // mismatched value here is the OTHER seeded candidate's real hash, so this
+    // refuses because the report names a different document rather than because
+    // the value is malformed -- which `wiring_hash !~ '^sha256:...'` would have
+    // caught as `invalid-input` instead.
     let gate_mismatch = success(
         &url,
         &as_management(&test_case_admission(
-            "wrong-report",
+            &race_wiring_hash,
             0,
             "wrong-report-run",
             "candidate",
             &wiring_hash,
-            "report-a",
             None,
         )),
     );
@@ -367,12 +373,11 @@ fn surviving_authority_matrix_live() {
     let drift = success(
         &url,
         &as_management(&test_case_admission(
-            "report-a",
+            &wiring_hash,
             1,
             "case-run-1",
             "candidate",
             &wiring_hash,
-            "report-a",
             Some(binding_world),
         )),
     );
@@ -410,12 +415,11 @@ fn surviving_authority_matrix_live() {
     // key. One creates the ordinary run/queue pair and the other observes the
     // same row and world; neither can return a key-only duplicate.
     let race = as_management(&test_case_admission(
-        "report-race",
+        &race_wiring_hash,
         0,
         "race-run",
         "race",
         &race_wiring_hash,
-        "report-race",
         None,
     ));
     let (race_a, race_b) = thread::scope(|scope| {

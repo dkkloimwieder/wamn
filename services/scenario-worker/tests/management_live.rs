@@ -79,15 +79,13 @@ const PROJECT_DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
 const ADMITTER_PASSWORD: &str = "wamn-management-admission-live";
 /// The one candidate wiring `test-set-run` is exercised against.
 ///
-/// `CANDIDATE_WIRING_HASH` is what the command carries as its
-/// `validated-draft-id` (the owner ruled the two are the same identity), and
-/// `CANDIDATE_GATE_REPORT` is what the composition MUST use as the report id:
-/// management admission classifies a test case whose `report_id` differs from
-/// the candidate row's `gate_report_id` as `gate-report-mismatch`, so the report
-/// identity is derived from the candidate rather than chosen by the caller.
+/// `CANDIDATE_WIRING_HASH` is the WHOLE identity (wamn-0h0g.8.5.6). It is what
+/// the command carries as its `validated-draft-id`, it is the key the accepted
+/// gate's report is stored under, and it is therefore the report id the receipt
+/// hands back and `get-report` resolves. There is no second identifier to
+/// derive, chose, or mismatch -- the column that used to carry one is gone.
 const CANDIDATE_CATALOG: &str = "catalog-candidate";
 const CANDIDATE_WIRING: &str = "orders-create";
-const CANDIDATE_GATE_REPORT: &str = "gate-report-candidate";
 const CANDIDATE_WIRING_HASH: &str =
     "sha256:1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c";
 const CANDIDATE_COMPONENT_DIGEST: &str =
@@ -100,7 +98,6 @@ const CANDIDATE_IMPORTS_FINGERPRINT: &str =
 /// FIRES rather than merely being written: gate cases are effect-free by
 /// contract, so this candidate must be refused, typed, with nothing admitted.
 const EFFECTFUL_WIRING: &str = "orders-charge";
-const EFFECTFUL_GATE_REPORT: &str = "gate-report-effectful";
 const EFFECTFUL_WIRING_HASH: &str =
     "sha256:4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f";
 const EFFECTFUL_COMPONENT: &str = "ledger";
@@ -112,7 +109,6 @@ const EFFECTFUL_IMPORTS_FINGERPRINT: &str =
 /// fixed port is simpler than plumbing an ephemeral one out of the listener.
 const BIND: &str = "127.0.0.1:18088";
 const TTL: Duration = Duration::from_secs(3600);
-
 
 /// The one refusal every authentication and authorization failure must return.
 const AUTHORIZATION_DENIED: &str = r#"{"kind":"authorization-denied"}"#;
@@ -479,15 +475,14 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
         .execute(
             "INSERT INTO catalog.wirings \
                (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
-                graph_json, wiring_hash, gate_report_id) \
-             VALUES ($1, $2, $3, 1, 1, $4::text::jsonb, $5, $6)",
+                graph_json, wiring_hash) \
+             VALUES ($1, $2, $3, 1, 1, $4::text::jsonb, $5)",
             &[
                 &TENANT,
                 &CANDIDATE_CATALOG,
                 &CANDIDATE_WIRING,
                 &graph.to_string(),
                 &CANDIDATE_WIRING_HASH,
-                &CANDIDATE_GATE_REPORT,
             ],
         )
         .await
@@ -518,15 +513,14 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
         .execute(
             "INSERT INTO catalog.wirings \
                (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
-                graph_json, wiring_hash, gate_report_id) \
-             VALUES ($1, $2, $3, 1, 1, $4::text::jsonb, $5, $6)",
+                graph_json, wiring_hash) \
+             VALUES ($1, $2, $3, 1, 1, $4::text::jsonb, $5)",
             &[
                 &TENANT,
                 &CANDIDATE_CATALOG,
                 &EFFECTFUL_WIRING,
                 &effectful_graph.to_string(),
                 &EFFECTFUL_WIRING_HASH,
-                &EFFECTFUL_GATE_REPORT,
             ],
         )
         .await
@@ -696,18 +690,41 @@ async fn ledger_rows(admin: &Client) -> Vec<(String, String, String, String)> {
 
 /// Every durable authoring row the control store still holds.
 ///
-/// wamn-0h0g.8.5.5 left exactly ONE relation: the command ledger. The three
-/// gate-report relations this used to count are deleted, so naming them here
-/// would query relations that do not exist.
+/// TWO relations: the command ledger, and the gate report keyed by wiring hash
+/// that wamn-0h0g.8.5.6 built. The three reservation-era relations this used to
+/// count are deleted, so naming them here would query relations that do not
+/// exist.
 async fn authoring_durable_counts(admin: &Client) -> Vec<i64> {
     let row = admin
         .query_one(
-            "SELECT (SELECT count(*) FROM catalog.authoring_command_audit)",
+            "SELECT (SELECT count(*) FROM catalog.authoring_command_audit), \
+                    (SELECT count(*) FROM wamn_run.gate_reports)",
             &[],
         )
         .await
         .expect("count every authoring durable relation");
     (0..row.len()).map(|index| row.get(index)).collect()
+}
+
+/// The stored report for one wiring hash, read straight out of the control
+/// store rather than through the query surface.
+///
+/// The two proofs it separates: that the gate WROTE a row, and that `get-report`
+/// can RESOLVE it. A test that only read the query surface could not tell a
+/// write that never happened from a read path that cannot find it.
+async fn stored_gate_report(
+    admin: &Client,
+    wiring_hash: &str,
+) -> Option<(bool, serde_json::Value)> {
+    admin
+        .query_opt(
+            "SELECT passed, summary FROM wamn_run.gate_reports \
+              WHERE tenant_id = $1 AND wiring_hash = $2",
+            &[&TENANT, &wiring_hash],
+        )
+        .await
+        .expect("read the stored gate report")
+        .map(|row| (row.get(0), row.get(1)))
 }
 
 #[tokio::test]
@@ -1158,7 +1175,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         accepted.body
     );
     // The receipt names the report identity the judgment DERIVED — the
-    // candidate's own gate report — not one the caller chose.
+    // candidate's own content hash — not one the caller chose. Report id and
+    // validated-draft id are now the SAME string, which is the whole of
+    // wamn-0h0g.8.5.6 visible on the wire.
     assert_eq!(
         outcome(&accepted.body),
         serde_json::json!({
@@ -1166,7 +1185,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             "value": {
                 "command": "test-set-run",
                 "result": {
-                    "report-id": CANDIDATE_GATE_REPORT,
+                    "report-id": CANDIDATE_WIRING_HASH,
                     "validated-draft": {"validated-draft-id": CANDIDATE_WIRING_HASH},
                 },
             },
@@ -1192,14 +1211,16 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(alice_row.2, "test-set-run");
     assert_eq!(alice_row.3, "project-author", "a header widened a role");
     assert!(
-        !attributed.iter().any(|row| row.1 == bob_principal.id().as_str()),
+        !attributed
+            .iter()
+            .any(|row| row.1 == bob_principal.id().as_str()),
         "a header attributed a command to the wrong principal: {attributed:?}"
     );
 
     // NOTHING WAS EXECUTED. A gate is a judgment about a document (ratified
-    // spec §5.1), so an accepted candidate admits no run, enqueues nothing, and
-    // stores no report. These are the reads the deleted composition used to make
-    // non-empty; keeping them is what makes its resurrection visible here.
+    // spec §5.1), so an accepted candidate admits no run and enqueues nothing.
+    // These are the reads the deleted composition used to make non-empty;
+    // keeping them is what makes its resurrection visible here.
     let runs = project_case_runs(&project).await;
     assert!(
         runs.is_empty(),
@@ -1211,19 +1232,59 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "an accepted gate enqueued a run"
     );
 
-    // The mounted query still finds no report: the gate writes none, and the
-    // durable report row keyed by `wiring_hash` is wamn-0h0g.8.5.6's to build.
+    // ---- THE GATE'S ONE DURABLE FACT, WRITTEN AND THEN READ ----------------
+    // wamn-0h0g.8.5.6. Judging writes nothing to the PROJECT plane, but an
+    // accepted judgment is not free of consequence: the control store gains one
+    // immutable report keyed by the candidate's wiring hash.
+    //
+    // Asserted at the STORE first, so a receipt that merely echoes a hash back
+    // cannot pass for a persisted report.
+    let stored = stored_gate_report(&admin, CANDIDATE_WIRING_HASH)
+        .await
+        .expect("the accepted gate wrote its report row");
+    assert!(stored.0, "an accepted gate stored a failing report");
+    assert_eq!(
+        stored.1,
+        serde_json::json!({"cases": ["creates", "rejects"]}),
+        "the stored summary is not the judged document's own case set"
+    );
+    // The REFUSED candidate below writes none, and the un-gated one never did:
+    // one row exists, not one per candidate.
+    assert_eq!(
+        authoring_durable_counts(&admin).await[1],
+        1,
+        "the gate wrote a report for a document it did not accept"
+    );
+
+    // And the mounted query RESOLVES it. This is the half that closes the hole
+    // wamn-0h0g.8.5.5 opened: before this bead `get-report` answered
+    // `report-not-found` unconditionally, so the gate handed back a report id no
+    // query could resolve. The id it hands back is the one asked for here.
     let projected = post(
         "/authoring",
         Some(alice.token()),
         &[],
-        &get_report_document("judged-report", PROJECT, CANDIDATE_GATE_REPORT),
+        &get_report_document("judged-report", PROJECT, CANDIDATE_WIRING_HASH),
     )
     .await;
     assert_eq!(projected.status, 200, "{}", projected.body);
     assert_eq!(
-        outcome(&projected.body)["value"]["reason"]["kind"],
-        serde_json::json!("report-not-found")
+        outcome(&projected.body),
+        serde_json::json!({
+            "status": "completed",
+            "value": {
+                "query": "get-report",
+                "result": {
+                    "state": "finalized",
+                    "report-id": CANDIDATE_WIRING_HASH,
+                    "validated-draft": {"validated-draft-id": CANDIDATE_WIRING_HASH},
+                    "passed": true,
+                    "summary": {"cases": ["creates", "rejects"]},
+                },
+            },
+        }),
+        "the gate's report is not retrievable under the id the gate returned: {}",
+        projected.body
     );
     assert_eq!(
         ledger_rows(&admin).await[ledger_before_composition..]
@@ -1298,7 +1359,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(by_service.status, 200, "{}", by_service.body);
     assert_eq!(outcome(&by_service.body), outcome(&accepted.body));
     assert!(
-        ledger_rows(&admin).await.iter().any(|row| row.0 == "ci-runner"),
+        ledger_rows(&admin)
+            .await
+            .iter()
+            .any(|row| row.0 == "ci-runner"),
         "the service principal is not attributed"
     );
     assert_eq!(
@@ -1370,6 +1434,16 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         ledger_rows(&admin).await.len(),
         ledger_before_effectful + 1,
         "a typed gate refusal was not attributed"
+    );
+    // But a refusal is NOT a report (wamn-0h0g.8.5.6). The effectful candidate
+    // has a wiring hash of its own, so a writer that persisted before consulting
+    // the judgment would leave a row under it -- and `get-report` would then
+    // certify a document the gate refused.
+    assert!(
+        stored_gate_report(&admin, EFFECTFUL_WIRING_HASH)
+            .await
+            .is_none(),
+        "a refused candidate was given a gate report"
     );
 
     // The PURE candidate was ACCEPTED a few lines above, against the very same

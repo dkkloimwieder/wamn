@@ -101,19 +101,22 @@ ON CONFLICT (tenant_id, catalog_id, environment, wiring_id) DO UPDATE \
 /// Append the provenance row for one flip, in the flip's own transaction.
 ///
 /// Params: catalog id, environment, wiring id, enabled, confirmed definition
-/// hash, source environment, source gate report id, changed by, reason. The two
-/// source columns are the promote half and are constrained as a pair, so a local
-/// flip binds `NULL` to both. The target gate report is deliberately not passed:
-/// `catalog.wirings.gate_report_id` already carries it, reachable from the
-/// confirmed hash.
+/// hash, source environment, changed by, reason. `source_environment` is the
+/// promote half, so a local flip binds `NULL` to it.
+///
+/// NO report id is passed, from either side (wamn-0h0g.8.5.6). The gate report
+/// keys on the wiring hash, promotion copies a document byte-for-byte, and
+/// `confirmed_definition_hash` is already that hash — so a `source_gate_report_id`
+/// parameter would write the row's own confirmed hash into a second column of
+/// the same row.
 pub fn record_activation_event() -> &'static str {
     "\
 INSERT INTO catalog.wiring_activation_events \
        (tenant_id, catalog_id, environment, wiring_id, enabled, \
-        confirmed_definition_hash, source_environment, source_gate_report_id, \
+        confirmed_definition_hash, source_environment, \
         changed_by, reason) \
 VALUES (NULLIF(current_setting('app.tenant', true), ''), \
-        $1, $2, $3, $4, $5, $6, $7, $8, $9) \
+        $1, $2, $3, $4, $5, $6, $7, $8) \
 RETURNING event_seq"
 }
 
