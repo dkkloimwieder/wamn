@@ -1,0 +1,506 @@
+# Build and test
+
+The gate of record, the per-bead commands, and the traps that report green
+without executing anything.
+
+Every measurement below is stated at the commit it was taken at. **A count
+measured before a commit does not describe the tree after it** — re-measure
+before citing one as current.
+
+## What the gate of record is
+
+For anything that touches the deployed surface, the gate of record is a
+**Job in the local `kind` cluster named `wamn`**, running the two-stage image
+built from the repository `Dockerfile`:
+
+```bash
+docker build --target host  -t wamn-host:dev  .
+docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-host:dev  --name wamn
+kind load docker-image wamn-gates:dev --name wamn
+```
+
+Load **both** when host code changes: the `gates` stage is `FROM host`
+(`Dockerfile:238`), so the suite runs against the same host lib code it
+verifies. Host-built binaries cannot be `COPY`d into the image — the build
+stages are `rust:1.97-trixie` and the runtime stages `debian:trixie-slim`, and
+a host toolchain's glibc does not match.
+
+**Local Cargo success never substitutes for a named in-cluster gate of
+record.** `architecture/workspace-tiers.json` says the same thing in its
+`deployed_system_proof.command_semantics`.
+
+The gate Job manifests are `deploy/gates/*-job.yaml`, applied per run and
+deleted after (`deploy/README.md`). At `1bffa614` there are three:
+`m1-gate-job.yaml`, `socketguard-job.yaml`, `traceproof-job.yaml`, plus the
+`serve-echo.yaml` support Deployment that `traceproof` reads back from.
+
+```bash
+kubectl -n wamn-system apply -f deploy/gates/socketguard-job.yaml
+kubectl -n wamn-system logs -f job/socketguard
+```
+
+`tools/kubernetes-gate-run` is the runner that turns a manifest into a
+machine-decidable verdict (`--manifest`, `--verdict-record`, one `--job` JSON
+per Job; `--help` prints the full option set). `deploy/gates/m1-gate-job.yaml`
+carries its own complete invocation in its header comment — build the sidecar,
+render the manifest, then `tools/kubernetes-gate-run`. Do not paraphrase it;
+read it.
+
+`tools/kind-gate-build --image REF --cache-ref REF` builds a `--target gates`
+image with a caller-owned registry cache and loads it into kind. It refuses the
+protected tags `dev`, `latest`, and `callable-flow-base-*`.
+
+### The gates image does not build at `1bffa614`
+
+`Dockerfile:173` selects `-p flow-http` in the `component-builder` stage.
+`c935b88f` ("rename(wamn-0h0g.26.19)") renamed that package to `http-route` and
+moved it to `components/ingress/http-route`; the Dockerfile was last touched at
+`4b8c20ab`, which is an ancestor of the rename. Measured:
+
+```
+$ cargo build --target wasm32-wasip2 -p flow-http    # in components/
+error: package ID specification `flow-http` did not match any packages
+```
+
+`component-builder` is a required input of the `gates` stage
+(`Dockerfile:252-261`), so **`docker build --target gates .` fails** until
+`-p flow-http`, the `flow_http` artifact name (`Dockerfile:177`), and
+`/component-output/flow_http.wasm` (`Dockerfile:256`) are repointed at
+`http-route` / `http_route`. `docker build --target host .` is unaffected — the
+`host` stage does not consume `component-builder`.
+
+`c935b88f` fixed the same regression in `tools/contract-diff` and in
+`architecture/workspace-tiers.json` and missed the Dockerfile. **This has no
+bead as of `1bffa614`; it needs one before the gates image can be rebuilt.**
+
+## Build
+
+**Debug by default.** `cargo build` / `cargo test`. Use `--release` only when a
+named gate needs it — the `Dockerfile` stages do, and
+`deploy/gates/m1-gate-job.yaml` explicitly does *not* ("Build the gate binary
+and materializer with the debug-only SR-MVP recipe; do not use the repository
+Dockerfile's release stages for this gate receipt").
+
+**Do not build to verify a config or manifest edit.** `cargo metadata
+--no-deps` proves a manifest parses in seconds and compiles nothing.
+
+Native services and the gate binary:
+
+```bash
+cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher \
+  -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-gates
+```
+
+Guests live in **two** Cargo workspaces and must not share one invocation —
+feature unification is additive-only and would force `std` into the `no_std`
+guests (`components/Cargo.toml` header, wamn-0h0g.11.56):
+
+```bash
+(cd components         && cargo build --target wasm32-wasip2)
+(cd components/no-std  && cargo build --target wasm32-wasip2)
+```
+
+`tools/build-components m1 | proof` does the same selection from the canonical
+inventory in `architecture/workspace-tiers.json` instead of by hand; it
+requires `jq`. `tools/workspace-tier list|dry-run|run TIER WORKSPACE MODE`
+resolves a named tier's package selectors from the same manifest.
+
+## The full sweep
+
+```bash
+cargo test --workspace --no-fail-fast > sweep.txt 2>&1
+```
+
+- `--no-fail-fast` is **mandatory**: plain `cargo test` stops at the first
+  failing binary, so a sweep without it reports the first failure and nothing
+  after it.
+- **Run it unpiped.** A pipe through `tail` without `pipefail` reports *tail's*
+  exit status and truncates the per-binary counts. Capture to a file, then
+  analyse the file.
+- `--workspace` is required. Cargo otherwise selects default members only.
+  Measured at `1bffa614` from `cargo metadata --no-deps`: **17 default members
+  of 35 workspace members.** `architecture/workspace-tiers.json`'s `full_ci`
+  tier agrees on the 35.
+
+**Measured state at `1bffa614`, by the owner, not re-run here: 168 binaries,
+1448 passed, 21 failed, 34 ignored, no compile errors. All 21 failures are
+attributed to known causes.** The branch is deliberately red and that is an
+accepted owner position — a red sweep does not block feature work. This is a
+measurement at a named commit, not a standing promise.
+
+The 34 ignored is corroborated independently: `grep -rn '#\[ignore' --include=*.rs .`
+returns 34 at `1bffa614`. See "Live gates" below for why ignored is not skipped.
+
+## Lint
+
+```bash
+tools/repo-lint dry-run   # prints every leg's exact argv, runs nothing
+tools/repo-lint run       # runs all ten legs, reports PASS/FAIL per leg
+```
+
+`repo-lint` runs one grep-based guard over
+`crates/platform/runtime/src/plugins/connection_http.rs` and nine Cargo legs:
+rustfmt and Clippy across the root workspace, the components workspace (native
+and wasm), and the `no-std` workspace (native and wasm). It reports every leg
+and exits non-zero if any failed, rather than stopping at the first.
+
+**`tools/repo-lint run` has never been green.** Measured at `1bffa614`, unpiped:
+
+| leg | exit | diff hunks |
+| --- | --- | --- |
+| `cargo fmt --manifest-path Cargo.toml --all -- --check` | 1 | 19 |
+| `cargo fmt --manifest-path components/Cargo.toml --all -- --check` | 1 | 19 |
+| `cargo fmt --manifest-path components/no-std/Cargo.toml --all -- --check` | 0 | 0 |
+
+Eight files carry the diffs: `crates/catalog/model/src/serving_manifest.rs`,
+`crates/catalog/model/src/wiring.rs`, `crates/catalog/model/tests/identity.rs`,
+`services/ctl/tests/verb_surface.rs`,
+`services/scenario-worker/src/store/test_orchestration.rs`,
+`tests/conformance/tests/gate_registry.rs`,
+`tests/conformance/tests/retained_root_outcomes.rs`,
+`tests/integration/src/trusted_http_route.rs`.
+
+This is **inventory item A on `wamn-0h0g.15.137`**, which records the same legs
+red at base `c2d805e0` and the correct way to check a single file
+(`rustfmt --edition 2024 --check` on a real path — reading from stdin does not
+report through the exit code and silently reports clean).
+
+`tools/contract-diff dry-run | run` runs the three WIT/contract legs
+(`wamn-authoring-model --test contract`, `wamn-runtime --test
+flow_http_routing_wit_coherence`, `http-route --test adversarial`).
+`wamn-0h0g.15.137` note 5 records that `tests/conformance/tests/contract_diff.rs`
+proves the *argv* against a fake cargo, so a green `contract_diff` is never
+evidence that the legs themselves are green.
+
+## Live gates: arming
+
+**Env-gated live tests are the single biggest source of false green in this
+repository.**
+
+Two distinct mechanisms, and they behave differently:
+
+1. **Self-skipping.** A test whose body does
+   `let Ok(url) = std::env::var("WAMN_…_PG_URL") else { eprintln!(…); return; }`
+   reports **PASS** when the variable is unset. libtest's default capture
+   swallows the `eprintln!`, so the run prints `test result: ok`.
+2. **`#[ignore]`.** An ignored test that `.expect()`s its variable does **not**
+   self-skip — without `-- --ignored` it simply never runs, and the count of
+   ignored tests is the only trace.
+
+**Nothing in this repository sets any `WAMN_*_PG_URL` or `WAMN_*_NATS_URL`.**
+Measured at `1bffa614`: grepping every `*.yaml`, `*.sh`, `*.toml`, `*.json` for
+`WAMN_CTL_PG_URL`, `WAMN_PROVISION_PG_URL`,
+`WAMN_MANAGEMENT_ADMITTER_PG18_URL`, `WAMN_READER_PG_URL` returns nothing. A
+gate whose variable nothing sets **has never executed**.
+`wamn-0h0g.15.137` inventory item 1 records what happened when wave 56 set one
+by hand for the first time: `services/dispatcher/tests/read_authority.rs`
+failed at four independent layers, three of which no measurement pass had found.
+
+Two things are arranged so they cannot go unarmed.
+`deploy/gates/m1-gate-job.yaml` sets `WAMN_PG_URL`, `WAMN_PG_ADMIN_URL`,
+`WAMN_SYSTEM_ADMIN_URL`, and `WAMN_EVT_NATS_URL` for its own Pod, pointing at a
+self-contained sidecar in that Pod. The benches take their substrate as
+arguments (`--admin-database-url`, `--nats-url`) rather than from the
+environment, so a missing one is a parse error.
+
+**Every `wamn-ctl` live gate shares one variable and one lock.**
+`services/ctl/tests/support/mod.rs` builds the name as
+`concat!("WAMN_CTL_", "PG_URL")` — a naive `grep WAMN_CTL_PG_URL` over `*.rs`
+does not find it — and takes a cross-process file lock at
+`$TMPDIR/wamn-ctl-live-database.lock`, so two ctl live suites block rather than
+contaminate each other. `LockedUrl::required(…)` panics when the variable is
+unset (the `#[ignore]` gates); `LockedUrl::optional()` self-skips (the rest).
+`services/ctl/tests/verb_surface.rs` guards which constructor each file uses.
+
+## Recipes
+
+These are the section tags cited from source doc comments. Each one names the
+test that needs it, the variable that arms it, and what the substrate must be.
+Every substrate below is a **throwaway** Postgres — see the next section.
+
+### `[11.8]` — ops-only schema-change impact analysis
+
+`services/ctl/tests/impact_report_live.rs` (wamn-wvb). The file is
+`#![cfg(feature = "ops")]` **and** the target is `required-features = ["ops"]`
+in `services/ctl/Cargo.toml`.
+
+```bash
+WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
+  cargo test -p wamn-ctl --features ops --test impact_report_live
+```
+
+`WAMN_CTL_PG_URL` must be a **superuser** URL. Self-skips when unset.
+
+### `[EVT-REG/D24]` — registration-orphan guard
+
+`services/ctl/tests/orphan_guard_live.rs` (wamn-rmxa, wamn-0h0g.12.119). Three
+`#[ignore]` tests; they fail loudly rather than skipping when invoked without
+configuration.
+
+```bash
+WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
+  cargo test -p wamn-ctl --test orphan_guard_live -- --ignored --test-threads=1
+```
+
+Superuser, path `/postgres`. Every test in the binary rebuilds the fixed
+`catalog` schema in its preamble and they must not interleave — the file
+carries its own `SERIALIZE` mutex, but `--test-threads=1` is the safe form.
+
+### `[EVT-REPLICA-IDENT]` — per-entity `REPLICA IDENTITY FULL` reconciler
+
+`services/ctl/tests/replica_identity_live.rs` (wamn-l5i9.31).
+
+```bash
+WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
+  cargo test -p wamn-ctl --test replica_identity_live
+```
+
+Superuser, path `/postgres`, and the server **must** be booted
+`wal_level=logical` — the test creates a `test_decoding` slot before any writes
+and compares WAL before and after the flip.
+
+### `[RUN-PLANE-RECONCILE]` — `reconcile-run-plane` migration path
+
+`services/ctl/tests/run_plane_live.rs` (E4/R14-migration, wamn-1wdq).
+
+```bash
+WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
+  cargo test -p wamn-ctl --test run_plane_live -- --ignored --test-threads=1
+```
+
+Superuser, path `/postgres`. The legs share the `catalog` schema and the
+`wamn_app` role, so they run sequentially under one entry; the execution-pin
+cutover has a second entry.
+
+### `[EVT-READER]` — CDC event reader
+
+`services/cdc-reader/tests/event_reader_live.rs` (wamn-l5i9.10, D19 v3 §4).
+Needs **two** substrates and self-skips when either is unset.
+
+```bash
+WAMN_READER_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
+WAMN_READER_NATS_URL=nats://127.0.0.1:PORT \
+  cargo test -p wamn-cdc-reader --test event_reader_live
+```
+
+Postgres 18 superuser at path `/postgres`, `wal_level=logical`; NATS with
+JetStream enabled.
+
+### `[EVT-C-CDC]` — the CDC ceiling campaign
+
+`tests/integration/src/cdcbench.rs` (wamn-l5i9.14). A **measurement** campaign,
+not a regression gate: it emits curves and knees, and only sanity and
+completeness asserts gate. Four modes — `drain`, `lag`, `ri`, `switchover` —
+plus `all` (which excludes `switchover`). It needs a superuser
+`--admin-database-url` at path `/postgres` on a `wal_level=logical` server and a
+JetStream `--nats-url`.
+
+**No runnable invocation is recorded here, because none exists at `1bffa614`.**
+`cdcbench` is a `pub mod` of `wamn-proof-integration`, which has a **lib target
+only** (`cargo metadata`), and the `wamn-gates` binary
+(`tests/orchestrator/src/main.rs`) exposes exactly eight subcommands —
+`retention`, `readerbench`, `m1`, `m1-cleanup`, `serve-echo`, `socketguard`,
+`traceproof`, `dashproof` — and `cdcbench` is not among them. The same is true
+of `provisionbench`, `streambench`, `walbench`, `rie2ebench`, `catalog_live`,
+`causation_e2e`, `exposure_live`, and `trusted_http_route`. This is exactly the
+shape `wamn-0h0g.15.137` exists to inventory: a verification artifact with no
+runner of record.
+
+### `[R18-NEG]` — the `standard_conforming_strings=off` fail-closed negative
+
+`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`,
+`live_scs_off_server_fails_checkout_closed` (wamn-2jkm.65). Gated on a
+**separate** variable so it never runs against the stock test server, and skips
+loudly when unset.
+
+```bash
+docker run -d --name wamn-scsoff -e POSTGRES_PASSWORD=pw \
+  -p 127.0.0.1:PORT:5432 postgres:18 -c standard_conforming_strings=off
+WAMN_SCS_OFF_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
+  cargo test -p wamn-runtime --lib live_scs_off_server_fails_checkout_closed
+```
+
+The test asserts the server genuinely reports `off` before proceeding, so a
+stock server makes it fail rather than pass vacuously.
+
+### `[6A / wamn-ftfc.14]` — the authoring-client gates
+
+`clients/authoring-client`, documented in `clients/README.md`. Run from that
+directory:
+
+```bash
+node scripts/test.mjs    # drift, typed answers, no-shortcut checks; network-free
+node scripts/cycle.mjs   # composed edit-to-publish cycle against a live surface
+```
+
+### Other live gates that carry their command in-source
+
+These have no section tag; the file's own doc comment is the recipe of record.
+
+| test | variable | command |
+| --- | --- | --- |
+| `crates/catalog/model/tests/wiring_activation_live.rs` | `WAMN_CATALOG_PG_URL` | `cargo test -p wamn-catalog --test wiring_activation_live -- --ignored` |
+| `crates/platform/runtime/tests/wiring_doorbell_live.rs` | `WAMN_CATALOG_PG_URL` | `cargo test -p wamn-runtime --test wiring_doorbell_live -- --ignored` |
+| `services/ctl/tests/effect_writer_generation_live.rs` | `WAMN_EFFECT_WRITER_PG18_URL` | `cargo test -p wamn-ctl --test effect_writer_generation_live -- --ignored --nocapture` |
+| `services/ctl/tests/management_admitter_generation_live.rs` | `WAMN_MANAGEMENT_ADMITTER_PG18_URL` | `cargo test -p wamn-ctl --test management_admitter_generation_live -- --ignored --nocapture` |
+| `services/ctl/tests/terminalize_effect_uncertain_live.rs` | `WAMN_OPERATOR_TERMINALIZE_PG18_URL` | `cargo test -p wamn-ctl --test terminalize_effect_uncertain_live` |
+| `services/ctl/tests/release_manifest_mint_live.rs` | `WAMN_RELEASE_MANIFEST_MINT_PG_URL` | `cargo test -p wamn-ctl --test release_manifest_mint_live -- --ignored` |
+| `services/ctl/tests/protected_relations_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --features ops --test protected_relations_live -- --ignored` |
+| `services/scenario-worker/tests/management_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-scenario-worker --test management_live` |
+| `crates/execution/run-state/tests/effect_writer_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --features native --test effect_writer_live -- --ignored` |
+| `services/dispatcher/tests/read_authority.rs` | `WAMN_PROVISION_PG_URL` | `cargo test -p wamn-dispatcher --test read_authority` |
+
+Rows carrying `-- --ignored` have **every** test in that binary marked
+`#[ignore]`; without the flag the binary runs zero tests and reports ok.
+`-- --ignored` runs *only* the ignored tests, which for those binaries is all of
+them. Measured at `1bffa614` by counting `#[ignore]` against the test
+attributes in each file; the rows without it self-skip on an unset variable
+instead.
+
+`services/ctl/tests/release_manifest_mint_live.rs` is mixed: three plain
+`#[test]` and three `#[ignore]`. Run it both ways.
+
+The two `generation_live` tests revoke `PUBLIC CONNECT` on **every** non-template
+database in the cluster. Run them only against a disposable server.
+
+## The throwaway Postgres
+
+Several suites need one. Never point them at anything shared.
+
+```bash
+PORT=55471   # pick one; check it first
+ss -ltn | grep ":${PORT}\b" && echo "busy, pick another"
+
+docker run -d --name wamn-<suite>-pg -e POSTGRES_PASSWORD=pw \
+  -p 127.0.0.1:${PORT}:5432 postgres:18
+# add `-c wal_level=logical` for the CDC / replica-identity recipes
+
+# ground truth — loop on this, nothing else
+until docker exec wamn-<suite>-pg \
+        psql -h 127.0.0.1 -U postgres -tAc 'select 1' >/dev/null 2>&1; do
+  sleep 1
+done
+
+# … run the suite …
+
+docker rm -f wamn-<suite>-pg    # BY NAME
+```
+
+**Why the loop is the only ground truth.** The `postgres:18` entrypoint
+initialises the cluster on a unix socket, then restarts the server for TCP.
+Measured at `1bffa614` against `postgres:18` (18.6):
+
+- A **host-side TCP connect to the published port accepts immediately**, one
+  second in, while `psql` inside the container is still refused. The docker
+  proxy listens before the server does. A TCP probe is never evidence.
+- **`pg_isready` disagrees with itself** across the window. At t=2s the unix-socket
+  form reported `rejecting connections` while the TCP form reported
+  `accepting connections` and `psql` returned `1`.
+
+`docker exec <name> psql -h 127.0.0.1 -U postgres -c 'select 1'` tracked the
+server's actual ability to answer in both runs. Loop on that.
+
+Rules that follow:
+
+- **Check the port is free first.** Other lanes and other projects use this
+  machine; `55432` was already occupied when this was measured.
+- **One fresh container per suite.** Roles are cluster-wide, so two suites
+  sharing a server contaminate each other. Within a suite, `--test-threads=1`.
+- **A superuser fixture masks RLS.** `FORCE ROW LEVEL SECURITY` does not bind a
+  superuser or a `BYPASSRLS` role. `crates/schema/control/src/replica_identity.rs:169`
+  and `crates/schema/control/src/sql.rs:77` both record this; `deploy/sql/postgres-init.sql:13`
+  creates `wamn_app` as `NOSUPERUSER … NOBYPASSRLS` for exactly that reason. A
+  test that only ever connects as superuser proves nothing about tenant
+  isolation.
+- **Remove the container by explicit name. Never `docker prune`.** This machine
+  carries hundreds of dangling volumes belonging to other projects.
+
+## The live kind cluster is not a test fixture
+
+The `wamn` kind cluster is frozen. **Never touch, restart, or recreate** the
+Postgres fixture pod (`deploy/platform/postgres.yaml` — the shared long-lived
+fixture roughly eight gates and the dispatcher point at, per `deploy/README.md`),
+the `wamn-pg` pool, `wamn-sysdb`, or the control-plane NATS Deployment named
+`nats`. The fixture pod's `PGDATA` is an `emptyDir`: a restart **wipes it**.
+
+When a suite needs a database it can own, the correct tool is a throwaway
+docker `postgres:18`, above.
+
+## Traps
+
+**Never share a `CARGO_TARGET_DIR` between parallel worktrees.** Three
+measured failure modes: `env!("CARGO_MANIFEST_DIR")` resolves to *another*
+worktree, so a test validates the wrong tree; artifact collision overwrites in
+place, so a later run executes the other tree's code; and fingerprint thrash
+serialises every lane on one flock. Give each worktree its own directory.
+
+**A wrong package name greps as zero failures.** `cargo test -p <nonexistent>`
+errors out — it does not run and report zero. Measured at `1bffa614`:
+
+```
+$ cargo test -p wamn-runner
+error: package ID specification `wamn-runner` did not match any packages
+help: a package with a similar name exists: `wamn-router`      # exit 101
+```
+
+Names that do **not** exist: `wamn-runner`, `wamn-test-fixtures`, `wamn-flow`,
+`flow-http`. The current names: the orchestrator package is **`wamn-gates`**,
+conformance is **`wamn-proof-conformance`**, the node contract is
+**`wamn-execution-contract`**, the HTTP ingress guest is **`http-route`**.
+`cargo metadata --no-deps` is the cheap way to confirm one.
+
+**`--lib` can select nothing.** `wamn-host` has a single `bin` target and no
+library. `cargo test -p wamn-host --lib` fails with
+`error: no library targets found in package 'wamn-host'` (exit 101); use
+`--bins`. `wamn-0h0g.15.137` item 3 records a guard that sat red for a whole
+wave because the recorded sweep bar was `--lib`, which selects no `tests/`
+binary at all.
+
+**`cargo test NAME -- --exact` against a missing test runs zero tests and exits
+0** (`wamn-0h0g.15.137` item 2). A mutation harness reports that as SURVIVED.
+
+**A `required-features` target is silently deselected.**
+`services/ctl/Cargo.toml` declares `required-features = ["ops"]` on both
+`impact_report_live` and `protected_relations_live`, so a bare
+`cargo test -p wamn-ctl` never builds them and is green without them. Naming
+one explicitly without the feature does error — measured:
+
+```
+$ cargo test -p wamn-ctl --test protected_relations_live --no-run
+error: target `protected_relations_live` in package `wamn-ctl` requires the features: `ops`
+Consider enabling them by passing, e.g., `--features="ops"`      # exit 101
+```
+
+**A `#![cfg(feature = …)]` file compiles to zero tests and reports ok.**
+`crates/execution/run-state/tests/effect_writer_live.rs` is
+`#![cfg(feature = "native")]`, and `crates/execution/run-state/Cargo.toml`
+declares no `required-features` for it. Without `--features native` the binary
+builds, runs nothing, and prints `test result: ok`.
+`services/ctl/tests/impact_report_live.rs` carries the same `#![cfg]` but is
+*also* `required-features = ["ops"]`, which is what stops it failing this way —
+the manifest declaration is the protection, not the attribute.
+
+**Feature-gated unit tests need the feature *and* the right target.**
+`prune_run_history`'s tests are a `#[cfg(test)] mod tests` inside
+`services/ctl/src/prune_run_history.rs`, and `services/ctl/src/lib.rs:30-31`
+declares the module `#[cfg(feature = "ops")]`. They run only under
+`cargo test -p wamn-ctl --features ops --lib prune_run_history`.
+
+**`git grep` for a package name is not a rename check.** `c935b88f` renamed
+`flow-http` and repaired `tools/contract-diff` and
+`architecture/workspace-tiers.json` in the same commit, and still left three
+stale selectors in the `Dockerfile`. `cargo metadata --no-deps` and an actual
+`-p` resolution are the checks that catch this.
+
+## Not reconstructed
+
+`architecture/gate-registry.json` carries `SourceKind::Recipe` entries under an
+`H5-*` namespace (`H5-CDCBENCH`, `H5-WALBENCH`, `H5-RIE2EBENCH`,
+`H5-CREDENTIALS`, `H5-EXECUTION-DEADLINE`, and others).
+`tests/conformance/tests/gate_registry.rs:455` records that those named
+`# recipe-test:` directives in the deleted `docs/archive/build-and-test.md`,
+that the selectors were prose, and that nothing real remains to resolve them
+against. **This document does not reconstruct them** — the bodies are gone and
+inventing replacements would be worse than the gap. Their classification,
+evidence, and decision mapping are still checked by that test.

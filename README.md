@@ -4,13 +4,14 @@ A wasmCloud-based managed low-code platform: a data/schema layer, wiring executi
 and a four-tier Postgres control plane, all hosted on a customized wasmCloud
 runtime. **`docs/exe-model.md` is the single WIP design authority.**
 `docs/PLAN/PLAN.md` is its non-normative ordering and ambiguity map; Beads and
-git own status. Everything under `docs/archive/` is provenance or an
-operational ledger, never competing design authority.
+git own status. `docs/operations/build-and-test.md` is the gate of record and
+the per-bead build and test commands.
 
 `services/host` is the production washlet host. Production queue execution and
 deterministic scenario execution are separate artifacts which share
-`crates/execution/host`. Our wash-runtime changes are carried commits on a fork
-— see `docs/archive/platform/wash-runtime-fork.md`.
+`crates/execution/host`. Our wash-runtime changes are carried commits on a fork,
+pinned in one place: `workspace.dependencies.wash-runtime.rev` in the root
+`Cargo.toml`.
 
 ## Repository layout
 
@@ -96,7 +97,8 @@ deploy/                 deployment, gate, schema, and bootstrap assets
 
 docs/                   exe-model.md: single WIP design authority
                         PLAN/PLAN.md: ordering and ambiguity map
-                        archive/: provenance and operational ledgers
+                        operations/build-and-test.md: gate of record and the
+                        per-bead build + test commands
 
 Cargo.toml              root workspace; pins the wash-runtime fork rev
 Dockerfile              shared build plus one final stage per deployable artifact
@@ -144,7 +146,7 @@ Postgres and skip when their `WAMN_*_PG_URL` env var is unset.
 **Proofs** live in `tests/{conformance,integration,system}`. The `wamn-gates`
 package at `tests/orchestrator` is the stable deploy-facing command router. The full per-bead
 command set — local iteration and the in-cluster gate of record for each
-subsystem — is in **`docs/archive/build-and-test.md`**.
+subsystem — is in **`docs/operations/build-and-test.md`**.
 Example (S1, no backend):
 
 ```bash
@@ -184,7 +186,7 @@ kind load docker-image wamn-gates:dev --name wamn
 kubectl -n wamn-system rollout status deploy/hostgroup-default
 
 # 3. apply the manifests / gate Jobs for the subsystem under test
-#    (see docs/archive/build-and-test.md for the exact per-bead steps)
+#    (see docs/operations/build-and-test.md for the exact per-bead steps)
 kubectl -n wamn-system apply -f deploy/gates/<subsystem>-job.yaml
 kubectl -n wamn-system logs -f job/<subsystem>
 ```
@@ -193,6 +195,6 @@ kubectl -n wamn-system logs -f job/<subsystem>
 
 - `docs/exe-model.md` — the single WIP design authority.
 - `docs/PLAN/PLAN.md` — the non-normative ordering and ambiguity map.
-- `docs/archive/platform-plan.md` — the D-number decision archive of record.
-- `docs/archive/build-and-test.md` — every subsystem's build + gate commands.
+- `docs/operations/build-and-test.md` — the gate of record, every subsystem's
+  build + gate commands, and the traps that produce false green.
 - `CLAUDE.md` / `AGENTS.md` — instructions for AI coding agents (identical).
