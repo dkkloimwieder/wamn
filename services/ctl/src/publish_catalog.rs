@@ -20,10 +20,9 @@
 //! and rewritten from `wamn_run` to the target schema — when its tables are
 //! absent (the authoring-test orchestration tables are the run-plane
 //! reconciler's, wamn-0h0g.15.170);
-//! `--seed-dataset` compiles a wamn-schema-compiler (3.6) dataset against the catalog and
-//! applies it (deterministic ids, `ON CONFLICT DO NOTHING` — idempotent); and
-//! `--flow` resolves standard-node interfaces, constructs canonical CF-DEF-ID
-//! artifacts, and publishes artifacts + release membership + head atomically.
+//! and `--seed-dataset` compiles a wamn-schema-compiler (3.6) dataset against the
+//! catalog and applies it (deterministic ids, `ON CONFLICT DO NOTHING` —
+//! idempotent).
 
 use anyhow::Context as _;
 
@@ -62,32 +61,12 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
 
     let release_row = client
         .query_one(
-            "SELECT to_regclass('catalog.flow_artifacts') IS NOT NULL, \
-                    to_regclass('catalog.releases') IS NOT NULL, \
-                    to_regclass('catalog.release_flows') IS NOT NULL, \
+            "SELECT to_regclass('catalog.releases') IS NOT NULL, \
                     to_regclass('catalog.catalog_heads') IS NOT NULL, \
-                    to_regclass('catalog.release_exposure_manifests') IS NOT NULL, \
-                    to_regclass('catalog.release_sources') IS NOT NULL, \
-                    to_regclass('catalog.release_attachments') IS NOT NULL, \
-                    to_regclass('catalog.attachment_tombstones') IS NOT NULL, \
-                    to_regclass('catalog.attachment_activation') IS NOT NULL, \
-                    to_regclass('catalog.attachment_activation_events') IS NOT NULL, \
-                    EXISTS (SELECT 1 FROM information_schema.columns \
-                             WHERE table_schema = 'catalog' \
-                               AND table_name = 'flow_artifacts' \
-                               AND column_name = 'verified_author_principal'), \
                     EXISTS (SELECT 1 FROM information_schema.columns \
                              WHERE table_schema = 'catalog' \
                                AND table_name = 'releases' \
                                AND column_name = 'verified_publisher_principal'), \
-                    EXISTS (SELECT 1 FROM pg_constraint con \
-                             JOIN pg_class rel ON rel.oid = con.conrelid \
-                             JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
-                             WHERE ns.nspname = 'catalog' \
-                               AND rel.relname = 'flow_artifacts' \
-                               AND con.conname = 'flow_artifacts_verified_author_principal_check' \
-                               AND pg_get_constraintdef(con.oid, true) = \
-                                   'CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''''::text)'), \
                     EXISTS (SELECT 1 FROM pg_constraint con \
                              JOIN pg_class rel ON rel.oid = con.conrelid \
                              JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
@@ -105,8 +84,6 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     to_regclass('catalog.wiring_tombstones') IS NOT NULL, \
                     to_regclass('catalog.wiring_activation') IS NOT NULL, \
                     to_regclass('catalog.wiring_activation_events') IS NOT NULL, \
-                    to_regprocedure('catalog.register_release_source(text,text,integer,text,text,jsonb,text)') IS NOT NULL, \
-                    to_regprocedure('catalog.register_release_attachment(text,text,integer,text,text,text,text,text,jsonb,text,text,text,text)') IS NOT NULL, \
                     to_regclass('catalog.component_library') IS NOT NULL, \
                     to_regclass('catalog.release_components') IS NOT NULL, \
                     to_regclass('catalog.release_manifest_v2_snapshots') IS NOT NULL",
@@ -116,21 +93,11 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
     let release_objects = [
         release_row.get::<_, bool>(0),
         release_row.get::<_, bool>(1),
-        release_row.get::<_, bool>(2),
-        release_row.get::<_, bool>(3),
-        release_row.get::<_, bool>(4),
-        release_row.get::<_, bool>(5),
-        release_row.get::<_, bool>(6),
-        release_row.get::<_, bool>(7),
-        release_row.get::<_, bool>(8),
-        release_row.get::<_, bool>(9),
     ];
     if release_objects.iter().all(|present| *present) {
         let provenance_storage = [
-            release_row.get::<_, bool>(10),
-            release_row.get::<_, bool>(11),
-            release_row.get::<_, bool>(12),
-            release_row.get::<_, bool>(13),
+            release_row.get::<_, bool>(2),
+            release_row.get::<_, bool>(3),
         ];
         if !provenance_storage.iter().all(|present| *present) {
             let start = CATALOG_SCHEMA_SQL
@@ -145,11 +112,11 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .context("install verified publication provenance storage")?;
         }
         let connection_objects = [
-            release_row.get::<_, bool>(14),
-            release_row.get::<_, bool>(15),
-            release_row.get::<_, bool>(16),
-            release_row.get::<_, bool>(17),
-            release_row.get::<_, bool>(18),
+            release_row.get::<_, bool>(4),
+            release_row.get::<_, bool>(5),
+            release_row.get::<_, bool>(6),
+            release_row.get::<_, bool>(7),
+            release_row.get::<_, bool>(8),
         ];
         if !connection_objects.iter().all(|present| *present) {
             anyhow::ensure!(
@@ -175,10 +142,10 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         // All four or none: the slice is one CREATE TABLE run, so a partial
         // install is a reconcile, not something to re-execute over.
         let wiring_objects = [
-            release_row.get::<_, bool>(19),
-            release_row.get::<_, bool>(20),
-            release_row.get::<_, bool>(21),
-            release_row.get::<_, bool>(22),
+            release_row.get::<_, bool>(9),
+            release_row.get::<_, bool>(10),
+            release_row.get::<_, bool>(11),
+            release_row.get::<_, bool>(12),
         ];
         if !wiring_objects.iter().all(|present| *present) {
             anyhow::ensure!(
@@ -197,28 +164,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .context("install wiring storage")?;
         }
 
-        let release_copy_routines = [
-            release_row.get::<_, bool>(23),
-            release_row.get::<_, bool>(24),
-        ];
-        if !release_copy_routines.iter().all(|present| *present) {
-            anyhow::ensure!(
-                release_copy_routines.iter().all(|present| !*present),
-                "catalog release copy conflict routines are partially installed; reconcile them before publication"
-            );
-            let start = CATALOG_SCHEMA_SQL
-                .find("-- BEGIN RELEASE COPY CONFLICT ROUTINES MIGRATION")
-                .expect("release copy conflict routines migration start");
-            let end = CATALOG_SCHEMA_SQL
-                .find("-- END RELEASE COPY CONFLICT ROUTINES MIGRATION")
-                .expect("release copy conflict routines migration end");
-            client
-                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
-                .await
-                .context("install release copy conflict routines")?;
-        }
-
-        if !release_row.get::<_, bool>(25) {
+        if !release_row.get::<_, bool>(13) {
             let start = CATALOG_SCHEMA_SQL
                 .find("-- BEGIN COMPONENT LIBRARY STORAGE MIGRATION")
                 .expect("component library migration start");
@@ -233,8 +179,8 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         ensure_component_library_effects(client).await?;
 
         let release_component_objects = [
-            release_row.get::<_, bool>(26),
-            release_row.get::<_, bool>(27),
+            release_row.get::<_, bool>(14),
+            release_row.get::<_, bool>(15),
         ];
         if !release_component_objects.iter().all(|present| *present) {
             anyhow::ensure!(
@@ -259,7 +205,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         "catalog release storage is partially installed; reconcile it before publication"
     );
     let start = CATALOG_SCHEMA_SQL
-        .find("CREATE TABLE catalog.flow_artifacts")
+        .find("CREATE FUNCTION catalog.reject_immutable_row_change()")
         .expect("catalog release section start");
     let end = CATALOG_SCHEMA_SQL
         .find("-- Migration history (2.5")
@@ -422,7 +368,7 @@ async fn ensure_connection_component_grain(client: &tokio_postgres::Client) -> a
 /// restores whatever the old file granted. Two boundaries live in one batch: the
 /// authoring split between `wamn_app` and `wamn_scenario_author`, and the
 /// wamn-0h0g.12.20-.12.29 confinement that leaves the guest-reachable `wamn_app`
-/// LOGIN read-only on the ten schema-of-record relations no production writer
+/// LOGIN read-only on the schema-of-record relations no production writer
 /// reaches through it. Each half asserts its own effective ACL before returning.
 async fn ensure_authoring_catalog_privileges(
     client: &tokio_postgres::Client,
@@ -431,12 +377,8 @@ async fn ensure_authoring_catalog_privileges(
         .batch_execute(
             "REVOKE wamn_scenario_author FROM wamn_app; \
              GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON catalog.flow_artifacts FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.flow_artifacts TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.releases FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.releases TO wamn_app, wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON catalog.release_flows FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.release_flows TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.catalog_heads FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.catalog_heads TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.component_library FROM PUBLIC, wamn_app, wamn_scenario_author; \
@@ -457,9 +399,7 @@ async fn ensure_authoring_catalog_privileges(
                IF has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'DELETE') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.flow_artifacts', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.releases', 'INSERT') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.release_flows', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalog_heads', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.component_library', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.release_components', 'INSERT') \
@@ -660,9 +600,8 @@ pub(crate) async fn guard_registration_orphans(
 }
 
 // ---------------------------------------------------------------------------
-// Run-state / flow-registry provisioning + flow registration. Shared with the
-// integration proof so it provisions through the same code path production
-// provisioning uses.
+// Run-state provisioning. Shared with the integration proof so it provisions
+// through the same code path production provisioning uses.
 // ---------------------------------------------------------------------------
 
 /// Ensure the non-superuser runtime role exists (pre-created in production;
@@ -738,98 +677,4 @@ pub fn seed_dataset_sql(
     let plan = wamn_schema_compiler::seed::compile(&dataset, cat, tenant)
         .map_err(|e| anyhow::anyhow!("seed compile: {e}"))?;
     plan.sql().map_err(|e| anyhow::anyhow!("seed sql: {e}"))
-}
-
-/// Serializes every live `WAMN_MIGRATE_PG_URL` test in this crate's lib target
-/// (wamn-0h0g.11.29).
-///
-/// They all share ONE database and all call [`ensure_catalog_storage`], whose
-/// `CREATE SCHEMA catalog` races itself under the default parallel harness: a
-/// fresh database produced four failures, none of them a code defect, that went
-/// away at `--test-threads=1`. A suite that fails nondeterministically under its
-/// own default invocation trains the reader to re-run until green — which is how
-/// a real failure gets dismissed.
-///
-/// The shared resource is the DATABASE, not the module, so `migrate_catalog`'s
-/// live test takes this same lock. Per-database or per-schema isolation is not
-/// available: `catalog` is hard-coded in the storage SQL, and giving each test
-/// its own database would move the race onto the CLUSTER-wide `CREATE ROLE` in
-/// [`ensure_wamn_app_role`], whose advisory lock is per-database and so would not
-/// serialize it.
-#[cfg(test)]
-pub(crate) static LIVE_DB: std::sync::LazyLock<tokio::sync::Mutex<()>> =
-    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    async fn release_copy_routines_present(client: &tokio_postgres::Client) -> bool {
-        client
-            .query_one(
-                "SELECT \
-                   to_regprocedure('catalog.register_release_source(text,text,integer,text,text,jsonb,text)') IS NOT NULL \
-                   AND to_regprocedure('catalog.register_release_attachment(text,text,integer,text,text,text,text,text,jsonb,text,text,text,text)') IS NOT NULL",
-                &[],
-            )
-            .await
-            .unwrap()
-            .get(0)
-    }
-
-    #[tokio::test]
-    async fn existing_catalog_converges_release_copy_conflict_routines() {
-        let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
-            return;
-        };
-        let _live_db = LIVE_DB.lock().await;
-        let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
-            .await
-            .unwrap();
-        let connection_task = tokio::spawn(connection);
-
-        ensure_catalog_storage(&client).await.unwrap();
-        assert!(release_copy_routines_present(&client).await);
-        client
-            .batch_execute(
-                "DROP FUNCTION catalog.register_release_source(\
-                   text, text, integer, text, text, jsonb, text); \
-                 DROP FUNCTION catalog.register_release_attachment(\
-                   text, text, integer, text, text, text, text, text, jsonb, \
-                   text, text, text, text)",
-            )
-            .await
-            .unwrap();
-        assert!(!release_copy_routines_present(&client).await);
-
-        ensure_catalog_storage(&client).await.unwrap();
-        assert!(release_copy_routines_present(&client).await);
-
-        client
-            .batch_execute(
-                "DROP FUNCTION catalog.register_release_source(\
-                   text, text, integer, text, text, jsonb, text)",
-            )
-            .await
-            .unwrap();
-        let partial = ensure_catalog_storage(&client).await.unwrap_err();
-        assert!(
-            partial
-                .to_string()
-                .contains("catalog release copy conflict routines are partially installed")
-        );
-        client
-            .batch_execute(
-                "DROP FUNCTION catalog.register_release_attachment(\
-                   text, text, integer, text, text, text, text, text, jsonb, \
-                   text, text, text, text)",
-            )
-            .await
-            .unwrap();
-        ensure_catalog_storage(&client).await.unwrap();
-        assert!(release_copy_routines_present(&client).await);
-
-        drop(client);
-        connection_task.await.unwrap().unwrap();
-    }
 }

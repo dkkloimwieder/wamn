@@ -30,13 +30,8 @@ fn portable_store_record_is_exact_and_storage_only() {
     );
     for relation in [
         "catalog.catalogs",
-        "catalog.flow_artifacts",
         "catalog.releases",
-        "catalog.release_flows",
         "catalog.catalog_heads",
-        "catalog.release_exposure_manifests",
-        "catalog.release_sources",
-        "catalog.release_attachments",
         "catalog.connection_requirements",
         "catalog.authoring_command_audit",
         "catalog.deployment_attestations",
@@ -67,6 +62,14 @@ fn portable_store_record_is_exact_and_storage_only() {
         // member by `flow_id` under a retired identity, and nothing in the
         // workspace ever executed its registrar.
         "catalog.release_flow_test_evidence",
+        // wamn-0h0g.26.21: the flow-era release plane retires in BOTH planes, so
+        // these five are no longer declared here either -- the retirement block
+        // asserted below is what removes them from an existing store.
+        "catalog.flow_artifacts",
+        "catalog.release_flows",
+        "catalog.release_exposure_manifests",
+        "catalog.release_sources",
+        "catalog.release_attachments",
         "catalog.attachment_activation",
         "catalog.attachment_tombstones",
         "catalog.connection_instances",
@@ -149,10 +152,17 @@ fn portable_store_record_is_exact_and_storage_only() {
         "DROP TABLE wamn_run.authoring_test_run_reservations RESTRICT;",
         "'control-portable-retired-audit-ledger-requires-reprovision'",
         "'control-portable-retired-release-members-requires-reprovision'",
+        // wamn-0h0g.26.21: the flow-era release plane, child first.
+        "'catalog.release_attachments',",
+        "'catalog.release_sources',",
+        "'catalog.release_exposure_manifests',",
+        "'catalog.release_flows',",
+        "'catalog.flow_artifacts'",
+        "DROP TABLE %s RESTRICT",
     ] {
         assert!(sql.contains(retirement), "missing retirement: {retirement}");
     }
-    // wamn-0h0g.15.159: membership is row-per-member in catalog.release_flows.
+    // wamn-0h0g.15.159: the sealed member snapshot left the release identity row.
     // The snapshot column survives only where the retirement arm above names it
     // to refuse an already-provisioned database — never in a declaration, a
     // function signature, or an asserted column fact.
@@ -341,9 +351,7 @@ fn control_author_authority_is_the_exact_ratified_class() {
 
     // Read-only portable catalog and draft-base facts.
     let read_only = [
-        "catalog.flow_artifacts",
         "catalog.releases",
-        "catalog.release_flows",
         "catalog.catalog_heads",
         "catalog.connection_requirements",
     ];
@@ -385,9 +393,6 @@ fn control_author_authority_is_the_exact_ratified_class() {
         .collect();
     for withheld in [
         "catalog.deployment_attestations",
-        "catalog.release_exposure_manifests",
-        "catalog.release_sources",
-        "catalog.release_attachments",
         "catalog.catalogs",
         "wamn_authority.author_login_tenants",
     ] {
@@ -705,15 +710,9 @@ SET app.tenant = 'tenant-a';
 INSERT INTO catalog.catalogs
   (tenant_id,catalog_id,version,environment,schema_version,state)
 VALUES ('tenant-a','cat',1,'dev','0.1','applied');
-INSERT INTO catalog.flow_artifacts
-  (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash)
-VALUES ('tenant-a','flow-a',1,'0.1','{{}}','graph','artifact-a');
 INSERT INTO catalog.releases
   (tenant_id,catalog_id,catalog_version)
 VALUES ('tenant-a','cat',1);
-INSERT INTO catalog.release_flows
-  (tenant_id,catalog_id,catalog_version,flow_id,flow_version)
-VALUES ('tenant-a','cat',1,'flow-a',1);
 
 DO $$ DECLARE
   first_attested_at timestamptz;
@@ -962,15 +961,9 @@ DO $seed$ DECLARE tenant text; BEGIN
     INSERT INTO catalog.catalog_heads
       (tenant_id,catalog_id,environment,applied_catalog_version)
     VALUES (tenant,'cat','dev',1);
-    INSERT INTO catalog.flow_artifacts
-      (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash)
-    VALUES (tenant,'flow-a',1,'0.1','{{}}','graph','artifact-'||tenant);
     INSERT INTO catalog.releases
       (tenant_id,catalog_id,catalog_version)
     VALUES (tenant,'cat',1);
-    INSERT INTO catalog.release_flows
-      (tenant_id,catalog_id,catalog_version,flow_id,flow_version)
-    VALUES (tenant,'cat',1,'flow-a',1);
   END LOOP;
   PERFORM set_config('app.tenant', '', false);
 END $seed$;
@@ -997,8 +990,6 @@ END $identity$;
 SET app.tenant = 'tenant-a';
 DO $positive$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.catalog_heads) = 1;
-  ASSERT (SELECT count(*) FROM catalog.release_flows) = 1;
-  ASSERT (SELECT count(*) FROM catalog.flow_artifacts) = 1;
   ASSERT (SELECT count(*) FROM catalog.releases) = 1;
 END $positive$;
 
@@ -1015,7 +1006,7 @@ SET app.tenant = 'tenant-b';
 DO $no_widening$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.catalog_heads) = 0,
          'app.tenant widened a read to another tenant';
-  ASSERT (SELECT count(*) FROM catalog.release_flows) = 0;
+  ASSERT (SELECT count(*) FROM catalog.releases) = 0;
   BEGIN
     INSERT INTO catalog.authoring_command_audit
       (tenant_id,command_id,command_kind,principal_id,principal_kind,
@@ -1047,19 +1038,10 @@ DO $denials$ BEGIN
     ASSERT false, 'the author published a deployment attestation';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
 
-  -- Unrelated control relations, including the release record set and the
-  -- catalog registry the publisher owns.
+  -- Unrelated control relations, including the catalog registry the publisher
+  -- owns.
   BEGIN PERFORM 1 FROM catalog.catalogs;
     ASSERT false, 'the author read the catalog registry';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-  BEGIN PERFORM 1 FROM catalog.release_sources;
-    ASSERT false, 'the author read release sources';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-  BEGIN PERFORM 1 FROM catalog.release_attachments;
-    ASSERT false, 'the author read release attachments';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-  BEGIN PERFORM 1 FROM catalog.release_exposure_manifests;
-    ASSERT false, 'the author read release exposure manifests';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
 
   -- Tenant authority is not self-service: the mapping is unreadable and
@@ -1148,7 +1130,7 @@ DO $second$ BEGIN
   ASSERT wamn_authority.session_author_tenant() = 'tenant-b';
   -- tenant-a's author appended a ledger row above; tenant-b must not see it,
   -- and must see exactly its own seeded rows.
-  ASSERT (SELECT count(*) FROM catalog.release_flows) = 1,
+  ASSERT (SELECT count(*) FROM catalog.releases) = 1,
          'the second tenant lost its own seeded rows';
   ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0,
          'the second tenant read the first tenant''s command ledger';

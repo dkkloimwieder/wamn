@@ -87,9 +87,7 @@ pub use model::{
     ApplyPlan, DestructiveMigration, Env, MigrationError, MigrationRequest, SqlStatement, Value,
 };
 pub use orphan::{OrphaningPublish, RegistrationRef, check_registration_orphans};
-pub use publication::{
-    PublicationError, PublicationGuard, ReleaseFlow, canonical_release_flows, guard_publication,
-};
+pub use publication::{PublicationError, PublicationGuard, guard_publication};
 pub use replica_identity::{
     ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, UnreadableRegistrations,
     UnreadableRegistrationsKind, alter_replica_identity_sql, entities_requiring_full,

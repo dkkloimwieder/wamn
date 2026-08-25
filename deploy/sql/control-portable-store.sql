@@ -53,20 +53,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS catalogs_one_applied_per_env
     ON catalog.catalogs (tenant_id, catalog_id, environment)
     WHERE state = 'applied';
 
-CREATE TABLE IF NOT EXISTS catalog.flow_artifacts (
-    tenant_id                text NOT NULL CHECK (tenant_id <> ''),
-    flow_id                  text NOT NULL,
-    flow_version             int NOT NULL CHECK (flow_version > 0),
-    schema_version           text NOT NULL,
-    graph_json               jsonb NOT NULL,
-    graph_hash               text NOT NULL,
-    artifact_hash            text NOT NULL,
-    verified_author_principal text
-        CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''),
-    created_at               timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, flow_id, flow_version)
-);
-
 CREATE TABLE IF NOT EXISTS catalog.releases (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
@@ -76,19 +62,6 @@ CREATE TABLE IF NOT EXISTS catalog.releases (
     PRIMARY KEY (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
-);
-
-CREATE TABLE IF NOT EXISTS catalog.release_flows (
-    tenant_id            text NOT NULL CHECK (tenant_id <> ''),
-    catalog_id           text NOT NULL,
-    catalog_version      int NOT NULL,
-    flow_id              text NOT NULL,
-    flow_version         int NOT NULL,
-    PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id),
-    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version),
-    FOREIGN KEY (tenant_id, flow_id, flow_version)
-        REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version)
 );
 
 CREATE TABLE IF NOT EXISTS catalog.catalog_heads (
@@ -153,65 +126,6 @@ ALTER TABLE catalog.component_library
 --
 -- `validated_draft_id` elsewhere in this artifact is read as the wiring hash and
 -- needs no lineage row to resolve it.
-
-CREATE TABLE IF NOT EXISTS catalog.release_exposure_manifests (
-    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
-    catalog_id       text NOT NULL,
-    catalog_version  int NOT NULL,
-    definitions_json jsonb NOT NULL CHECK (jsonb_typeof(definitions_json) = 'object'),
-    PRIMARY KEY (tenant_id, catalog_id, catalog_version),
-    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version)
-);
-
-CREATE TABLE IF NOT EXISTS catalog.release_sources (
-    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
-    catalog_id      text NOT NULL,
-    catalog_version int NOT NULL,
-    source_id       text NOT NULL,
-    source_kind     text NOT NULL CHECK (source_kind IN ('auth', 'caller-policy', 'schedule')),
-    definition_json jsonb NOT NULL CHECK (jsonb_typeof(definition_json) = 'object'),
-    source_hash     text NOT NULL,
-    PRIMARY KEY (tenant_id, catalog_id, catalog_version, source_id),
-    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.release_exposure_manifests
-            (tenant_id, catalog_id, catalog_version)
-);
-
-CREATE TABLE IF NOT EXISTS catalog.release_attachments (
-    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
-    catalog_id      text NOT NULL,
-    catalog_version int NOT NULL,
-    attachment_id   text NOT NULL,
-    attachment_kind text NOT NULL CHECK (attachment_kind IN ('http', 'internal', 'studio', 'cron')),
-    flow_id         text NOT NULL,
-    source_id       text NOT NULL,
-    definition_hash text NOT NULL,
-    definition_json jsonb NOT NULL CHECK (jsonb_typeof(definition_json) = 'object'),
-    route_host      text,
-    route_path      text,
-    route_template  text,
-    route_method    text,
-    PRIMARY KEY (tenant_id, catalog_id, catalog_version, attachment_id),
-    FOREIGN KEY (tenant_id, catalog_id, catalog_version, flow_id)
-        REFERENCES catalog.release_flows (tenant_id, catalog_id, catalog_version, flow_id),
-    FOREIGN KEY (tenant_id, catalog_id, catalog_version, source_id)
-        REFERENCES catalog.release_sources
-            (tenant_id, catalog_id, catalog_version, source_id),
-    CONSTRAINT release_attachment_route_shape CHECK (
-        (attachment_kind IN ('http', 'studio')
-         AND route_host IS NOT NULL AND route_path IS NOT NULL
-         AND route_template IS NOT NULL AND route_method IS NOT NULL)
-        OR
-        (attachment_kind IN ('internal', 'cron')
-         AND route_host IS NULL AND route_path IS NULL
-         AND route_template IS NULL AND route_method IS NULL)
-    ),
-    UNIQUE (
-        tenant_id, catalog_id, catalog_version,
-        route_host, route_template, route_method
-    )
-);
 
 CREATE TABLE IF NOT EXISTS catalog.connection_requirements (
     tenant_id        text NOT NULL CHECK (tenant_id <> ''),
@@ -457,14 +371,43 @@ BEGIN
 END
 $retire_release_flow_test_evidence$;
 
+-- wamn-0h0g.26.21: the flow-era release plane retires whole. Its five relations
+-- were a closed FK component -- attachments onto flows and sources, sources onto
+-- the exposure manifest, flows onto the artifacts -- so nothing retained sat on
+-- top of them and the rows are discarded without archive, exactly like the
+-- bundle bytes below. Child first, RESTRICT throughout: the order is the FK
+-- order and RESTRICT proves nothing outside the component came to depend on
+-- them. Placed BEFORE $retire_execution_bundles$ because on an ancient database
+-- catalog.release_flows carries the execution_bundle_hash FK that the bundle
+-- block's RESTRICT drop would otherwise refuse on -- dropping the carrier
+-- relation subsumes the DROP COLUMN that used to stand there.
+DO $retire_flow_release_plane$
+DECLARE
+    retired_relation text;
+BEGIN
+    FOREACH retired_relation IN ARRAY ARRAY[
+        'catalog.release_attachments',
+        'catalog.release_sources',
+        'catalog.release_exposure_manifests',
+        'catalog.release_flows',
+        'catalog.flow_artifacts'
+    ]
+    LOOP
+        IF to_regclass(retired_relation) IS NOT NULL THEN
+            EXECUTE format(
+                'LOCK TABLE %s IN ACCESS EXCLUSIVE MODE', retired_relation
+            );
+            EXECUTE format('DROP TABLE %s RESTRICT', retired_relation);
+        END IF;
+    END LOOP;
+END
+$retire_flow_release_plane$;
+
 -- Persisted bundle bytes are deliberately discarded without archive or
 -- conversion. Drop every direct carrier first so the final RESTRICT drop is a
 -- dependency tripwire, not an instruction to amputate an un-inventoried object.
 DO $retire_execution_bundles$
 BEGIN
-    LOCK TABLE catalog.release_flows IN ACCESS EXCLUSIVE MODE;
-    ALTER TABLE catalog.release_flows
-        DROP COLUMN IF EXISTS execution_bundle_hash RESTRICT;
     IF to_regclass('catalog.execution_bundles') IS NOT NULL THEN
         LOCK TABLE catalog.execution_bundles IN ACCESS EXCLUSIVE MODE;
         DROP TABLE catalog.execution_bundles RESTRICT;
@@ -479,11 +422,10 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.catalogs', 'catalog.flow_artifacts',
+        'catalog.catalogs',
         'catalog.releases',
-        'catalog.release_flows', 'catalog.catalog_heads',
-        'catalog.release_exposure_manifests', 'catalog.release_sources',
-        'catalog.release_attachments', 'catalog.component_library',
+        'catalog.catalog_heads',
+        'catalog.component_library',
         'catalog.connection_requirements',
         'catalog.authoring_command_audit',
         'catalog.deployment_attestations',
@@ -514,10 +456,7 @@ DECLARE
     trigger_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.flow_artifacts',
-        'catalog.releases', 'catalog.release_flows',
-        'catalog.release_exposure_manifests',
-        'catalog.release_sources', 'catalog.release_attachments',
+        'catalog.releases',
         'catalog.component_library',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
         'catalog.deployment_attestations',
@@ -625,8 +564,8 @@ BEGIN
     END IF;
 
     -- wamn-0h0g.15.159 dropped the sealed member snapshot from the release
-    -- identity row; membership is row-per-member in catalog.release_flows. This
-    -- is a RETAINED relation, so DROP COLUMN cannot reach the asserted shape:
+    -- identity row. This is a RETAINED relation, so DROP COLUMN cannot reach
+    -- the asserted shape:
     -- the dropped slot keeps its attnum and verified_publisher_principal never
     -- moves to 4, which the retained-shape digest hashes.
     IF EXISTS (
@@ -680,9 +619,6 @@ BEGIN
     IF catalog_tables IS DISTINCT FROM ARRAY[
         'authoring_command_audit', 'catalog_heads', 'catalogs',
         'component_library', 'connection_requirements', 'deployment_attestations',
-        'flow_artifacts',
-        'release_attachments', 'release_exposure_manifests',
-        'release_flows', 'release_sources',
         'releases'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
@@ -740,12 +676,11 @@ BEGIN
 
     WITH retained_relations(relation) AS (
         VALUES
-            ('catalog.catalogs'), ('catalog.flow_artifacts'),
+            ('catalog.catalogs'),
             ('catalog.releases'),
-            ('catalog.release_flows'), ('catalog.catalog_heads'),
+            ('catalog.catalog_heads'),
             ('catalog.component_library'),
-            ('catalog.release_exposure_manifests'), ('catalog.release_sources'),
-            ('catalog.release_attachments'), ('catalog.connection_requirements'),
+            ('catalog.connection_requirements'),
             ('catalog.authoring_command_audit'),
             ('wamn_run.gate_reports')
     ), facts AS (
@@ -774,7 +709,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       'a805088d01071b7b68949adb747f6ac110d13a84d33a6515bb27e6f11e949788'
+       '2bbd219e98ae3fb68b6bb647607968cf6b033c89ad9c6f5edece975cb356ec61'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';
@@ -860,8 +795,7 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.flow_artifacts',
-        'catalog.releases', 'catalog.release_flows',
+        'catalog.releases',
         'catalog.catalog_heads',
         'catalog.connection_requirements',
         'catalog.authoring_command_audit',
@@ -892,11 +826,11 @@ GRANT EXECUTE ON FUNCTION wamn_authority.session_author_tenant()
     TO wamn_control_author;
 
 -- Portable catalog and draft-base facts the author only ever reads.
-REVOKE ALL PRIVILEGES ON catalog.flow_artifacts, catalog.releases,
-    catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements
+REVOKE ALL PRIVILEGES ON catalog.releases,
+    catalog.catalog_heads, catalog.connection_requirements
     FROM wamn_control_author;
-GRANT SELECT ON catalog.flow_artifacts, catalog.releases,
-    catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements
+GRANT SELECT ON catalog.releases,
+    catalog.catalog_heads, catalog.connection_requirements
     TO wamn_control_author;
 
 -- The author holds NO mutable-document authority at all (wamn-0h0g.8.5.5): the
@@ -921,8 +855,7 @@ GRANT SELECT, INSERT ON catalog.authoring_command_audit, wamn_run.gate_reports
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog, wamn_run FROM PUBLIC;
 
 -- The author's bounded set is granted above; every other relation in these
--- schemas — deployment attestations, the release exposure / source / attachment
--- records, and the catalog registry itself — stays
+-- schemas — deployment attestations and the catalog registry itself — stays
 -- owner-only for it too. Asserted rather than assumed, because a stray GRANT
 -- here is exactly the mistake that would hand one principal another's plane.
 DO $author_bounds$
@@ -950,9 +883,7 @@ BEGIN
            AND NOT EXISTS (
              SELECT 1
                FROM (VALUES
-                 ('catalog', 'flow_artifacts', 'SELECT'),
                  ('catalog', 'releases', 'SELECT'),
-                 ('catalog', 'release_flows', 'SELECT'),
                  ('catalog', 'catalog_heads', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),

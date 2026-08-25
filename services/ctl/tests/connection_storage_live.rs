@@ -91,29 +91,6 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
                ADD FOREIGN KEY (tenant_id, artifact_hash, requirement_name) \
                  REFERENCES catalog.connection_requirements \
                    (tenant_id, artifact_hash, requirement_name); \
-             CREATE FUNCTION catalog.require_connection_artifact() \
-             RETURNS trigger LANGUAGE plpgsql AS $$ \
-             BEGIN \
-               IF NOT EXISTS ( \
-                 SELECT 1 FROM catalog.flow_artifacts artifact \
-                 WHERE artifact.tenant_id = NEW.tenant_id \
-                   AND artifact.artifact_hash = NEW.artifact_hash \
-               ) THEN \
-                 RAISE EXCEPTION USING ERRCODE = '23503', \
-                   MESSAGE = 'connection-requirement-artifact-missing'; \
-               END IF; \
-               RETURN NEW; \
-             END \
-             $$; \
-             CREATE TRIGGER connection_requirements_require_artifact \
-             BEFORE INSERT ON catalog.connection_requirements \
-             FOR EACH ROW EXECUTE FUNCTION catalog.require_connection_artifact(); \
-             INSERT INTO catalog.flow_artifacts ( \
-               tenant_id, flow_id, flow_version, schema_version, graph_json, graph_hash, \
-               artifact_hash \
-             ) VALUES ( \
-               'tenant-a', 'flow-a', 1, '0.1', '{}'::jsonb, 'graph-a', 'artifact-a' \
-             ); \
              INSERT INTO catalog.connection_requirements ( \
                tenant_id, artifact_hash, requirement_name, requirement_json, requirement_hash \
              ) VALUES ( \
@@ -185,18 +162,11 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
              ) VALUES \
                ('tenant-a', 'release', 1, 'dev', '0.1', 'applied'), \
                ('tenant-a', 'release', 2, 'prod', '0.1', 'applied'); \
-             BEGIN; \
              INSERT INTO catalog.releases ( \
                tenant_id, catalog_id, catalog_version \
              ) VALUES \
                ('tenant-a', 'release', 1), \
                ('tenant-a', 'release', 2); \
-             INSERT INTO catalog.release_flows ( \
-               tenant_id, catalog_id, catalog_version, flow_id, flow_version \
-             ) VALUES \
-               ('tenant-a', 'release', 1, 'flow-a', 1), \
-               ('tenant-a', 'release', 2, 'flow-a', 1); \
-             COMMIT; \
              INSERT INTO catalog.connection_bindings ( \
                tenant_id, catalog_id, catalog_version, artifact_hash, requirement_name, \
                environment, instance_id, validation_status, validation_hash \

@@ -2,13 +2,6 @@
 
 use std::fmt;
 
-/// A release member selected during preflight.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ReleaseFlow {
-    pub flow_id: String,
-    pub flow_version: i32,
-}
-
 /// Inputs checked before a publication transaction mutates anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicationGuard<'a> {
@@ -30,9 +23,6 @@ pub enum PublicationError {
     },
     UnresolvedSources {
         ids: Vec<String>,
-    },
-    DuplicateFlow {
-        flow_id: String,
     },
 }
 
@@ -57,9 +47,6 @@ impl fmt::Display for PublicationError {
                     "catalog-release-unresolved-sources: {}",
                     ids.join(", ")
                 )
-            }
-            Self::DuplicateFlow { flow_id } => {
-                write!(formatter, "catalog-release-duplicate-flow: {flow_id:?}")
             }
         }
     }
@@ -86,21 +73,6 @@ pub fn guard_publication(guard: &PublicationGuard<'_>) -> Result<(), Publication
         });
     }
     Ok(())
-}
-
-/// Canonicalize membership and reject two versions of one flow in a release.
-pub fn canonical_release_flows(
-    mut members: Vec<ReleaseFlow>,
-) -> Result<Vec<ReleaseFlow>, PublicationError> {
-    members.sort();
-    for pair in members.windows(2) {
-        if pair[0].flow_id == pair[1].flow_id {
-            return Err(PublicationError::DuplicateFlow {
-                flow_id: pair[0].flow_id.clone(),
-            });
-        }
-    }
-    Ok(members)
 }
 
 #[cfg(test)]
@@ -155,34 +127,5 @@ mod tests {
                 applied: Some(8),
             })
         );
-    }
-
-    #[test]
-    fn membership_is_canonical_and_one_version_per_flow() {
-        let members = canonical_release_flows(vec![
-            ReleaseFlow {
-                flow_id: "z".into(),
-                flow_version: 1,
-            },
-            ReleaseFlow {
-                flow_id: "a".into(),
-                flow_version: 2,
-            },
-        ])
-        .unwrap();
-        assert_eq!(members[0].flow_id, "a");
-        assert!(matches!(
-            canonical_release_flows(vec![
-                ReleaseFlow {
-                    flow_id: "a".into(),
-                    flow_version: 1,
-                },
-                ReleaseFlow {
-                    flow_id: "a".into(),
-                    flow_version: 2,
-                },
-            ]),
-            Err(PublicationError::DuplicateFlow { .. })
-        ));
     }
 }

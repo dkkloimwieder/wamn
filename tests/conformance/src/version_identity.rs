@@ -243,11 +243,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     },
     GovernedLiteral {
         path: "tests/integration/src/catalog_live.rs",
-        exact: r#"&"0.1","#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/integration/src/catalog_live.rs",
         exact: "VALUES ($1, 'catalog', 1, 'dev', '0.1', 'applied',",
         expected_count: 1,
     },

@@ -20,8 +20,8 @@
 //!
 //! The `publish-release` verb is an INTERIM operator surface. Attachment and
 //! registration facts arrive as hand-authored JSON documents because no table
-//! projects them: `catalog.release_attachments` is flow-keyed and carries
-//! neither a wiring version nor an auth policy, and `catalog.event_registrations`
+//! projects them: the flow-era attachment records were retired whole by
+//! wamn-0h0g.26.21, and `catalog.event_registrations`
 //! is absent from the control portable store. Ruling `wamn-0h0g.15.164` moves
 //! registrations into that store; the projection replaces these two arguments
 //! then. Both stay REQUIRED until it does, because an empty registration set is

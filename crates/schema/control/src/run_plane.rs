@@ -838,9 +838,6 @@ const EFFECT_OUTCOME_DISPATCH_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attemp
      FOREIGN KEY (tenant_id, attempt_id, dispatched_at) \
      REFERENCES wamn_run.effect_attempt_dispatches \
          (tenant_id, attempt_id, dispatched_at)";
-const FLOW_AUTHOR_CHECK_NAME: &str = "flow_artifacts_verified_author_principal_check";
-const FLOW_AUTHOR_CHECK_DEF: &str =
-    "CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''::text)";
 const RELEASE_PUBLISHER_CHECK_NAME: &str = "releases_verified_publisher_principal_check";
 const RELEASE_PUBLISHER_CHECK_DEF: &str =
     "CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)";
@@ -1394,19 +1391,7 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "flow_artifacts",
-        app: &["SELECT"],
-        author: &["SELECT"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::Catalog,
         table: "releases",
-        app: &["SELECT"],
-        author: &["SELECT"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::Catalog,
-        table: "release_flows",
         app: &["SELECT"],
         author: &["SELECT"],
     },
@@ -2254,7 +2239,6 @@ pub struct RunPlanePlan {
 const RETIRED_RERUN_LINEAGE_COLUMNS: &[&str] = &["replay_of", "root_run_id"];
 const RETIRED_FAILURE_DETAIL_COLUMNS: &[&str] = &["fail_node", "fail_reason"];
 const RETIRED_EXECUTION_BUNDLE_COLUMN: &str = "execution_bundle_hash";
-const RETIRED_EXECUTION_BUNDLE_CATALOG_TABLES: &[&str] = &["release_flows"];
 const RETIRED_EFFECT_DISPOSITION_TABLES: [&str; 2] =
     ["effect_disposition_requests", "effect_dispositions"];
 const RETIRED_EFFECT_DISPOSITION_HELPER: &str = "guard_effect_disposition_append";
@@ -2265,22 +2249,12 @@ fn execution_bundle_cutover_needed(obs: &RunPlaneObservation) -> bool {
             .tables
             .get("runs")
             .is_some_and(|columns| columns.contains(RETIRED_EXECUTION_BUNDLE_COLUMN))
-        || RETIRED_EXECUTION_BUNDLE_CATALOG_TABLES.iter().any(|table| {
-            obs.catalog_columns
-                .get(*table)
-                .is_some_and(|columns| columns.contains(RETIRED_EXECUTION_BUNDLE_COLUMN))
-        })
 }
 
 fn execution_bundle_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
     let mut dependents = Vec::new();
     if obs.tables.contains_key("runs") {
         dependents.push(format!("{}.runs", schema.quoted()));
-    }
-    for table in RETIRED_EXECUTION_BUNDLE_CATALOG_TABLES {
-        if obs.catalog_tables.contains(*table) {
-            dependents.push(format!("catalog.{}", quote_ident(table)));
-        }
     }
 
     let mut statements = Vec::new();
@@ -3007,24 +2981,11 @@ $retire_run_projection_authority$;"#,
                 });
             }
         }
-        let flow_needs_provenance = obs.catalog_tables.contains("flow_artifacts")
-            && !obs
-                .catalog_columns
-                .get("flow_artifacts")
-                .is_some_and(|columns| columns.contains("verified_author_principal"));
         let release_needs_provenance = obs.catalog_tables.contains("releases")
             && !obs
                 .catalog_columns
                 .get("releases")
                 .is_some_and(|columns| columns.contains("verified_publisher_principal"));
-        let flow_check_needs_repair = obs.catalog_tables.contains("flow_artifacts")
-            && obs
-                .catalog_checks
-                .get(&(
-                    "flow_artifacts".to_string(),
-                    FLOW_AUTHOR_CHECK_NAME.to_string(),
-                ))
-                .is_none_or(|definition| definition != FLOW_AUTHOR_CHECK_DEF);
         let release_check_needs_repair = obs.catalog_tables.contains("releases")
             && obs
                 .catalog_checks
@@ -3033,11 +2994,7 @@ $retire_run_projection_authority$;"#,
                     RELEASE_PUBLISHER_CHECK_NAME.to_string(),
                 ))
                 .is_none_or(|definition| definition != RELEASE_PUBLISHER_CHECK_DEF);
-        if flow_needs_provenance
-            || release_needs_provenance
-            || flow_check_needs_repair
-            || release_check_needs_repair
-        {
+        if release_needs_provenance || release_check_needs_repair {
             plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::EnsureCatalogProvenance,
                 target: "catalog.disposition-provenance".to_string(),
@@ -4315,8 +4272,7 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
       WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author', \
                         'wamn_effect_writer') \
         AND ((table_schema = 'catalog' AND table_name IN \
-              ('catalogs', 'flow_artifacts', 'releases', \
-               'release_flows', 'catalog_heads', \
+              ('catalogs', 'releases', 'catalog_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (table_schema = $1 AND table_name IN ('environment_policies', 'runs'))) \
@@ -4340,8 +4296,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
                               'wamn_effect_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'flow_artifacts', 'releases', \
-               'release_flows', 'catalog_heads', \
+              ('catalogs', 'releases', 'catalog_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
@@ -4366,8 +4321,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
                               'wamn_effect_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'flow_artifacts', 'releases', \
-               'release_flows', 'catalog_heads', \
+              ('catalogs', 'releases', 'catalog_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
@@ -4388,8 +4342,7 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
        JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
       WHERE relation.relkind = 'r' \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'flow_artifacts', 'releases', \
-               'release_flows', 'catalog_heads', \
+              ('catalogs', 'releases', 'catalog_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
@@ -5119,13 +5072,6 @@ COMMIT;
         }
         obs.catalog_checks.insert(
             (
-                "flow_artifacts".to_string(),
-                FLOW_AUTHOR_CHECK_NAME.to_string(),
-            ),
-            FLOW_AUTHOR_CHECK_DEF.to_string(),
-        );
-        obs.catalog_checks.insert(
-            (
                 "releases".to_string(),
                 RELEASE_PUBLISHER_CHECK_NAME.to_string(),
             ),
@@ -5358,7 +5304,10 @@ COMMIT;
         let catalog = record_tables(CATALOG_SCHEMA_SQL, "catalog");
         assert!(catalog.first().is_some_and(|t| t == "catalogs"));
         assert!(catalog.contains(&"event_registrations".to_string()));
-        for exposure_table in [
+        // wamn-0h0g.26.21: the flow-era release plane left the record whole.
+        for retired_table in [
+            "flow_artifacts",
+            "release_flows",
             "release_exposure_manifests",
             "release_sources",
             "release_attachments",
@@ -5366,7 +5315,7 @@ COMMIT;
             "attachment_activation",
             "attachment_activation_events",
         ] {
-            assert!(catalog.contains(&exposure_table.to_string()));
+            assert!(!catalog.contains(&retired_table.to_string()));
         }
         for connection_table in [
             "connection_requirements",
@@ -5390,7 +5339,7 @@ COMMIT;
         }
         assert_eq!(
             catalog.len(),
-            32,
+            24,
             "catalog-schema.sql table count: {catalog:?}"
         );
     }
@@ -5515,8 +5464,7 @@ COMMIT;
         assert!(RUN_STATE_SQL.contains("OLD.release_version IS NOT NULL"));
         assert!(RUN_STATE_SQL.contains("OLD.manifest_digest IS NOT NULL"));
 
-        let release_flows = table_section(CATALOG_SCHEMA_SQL, "catalog", "release_flows");
-        assert!(!release_flows.contains(RETIRED_EXECUTION_BUNDLE_COLUMN));
+        assert!(!CATALOG_SCHEMA_SQL.contains(RETIRED_EXECUTION_BUNDLE_COLUMN));
     }
 
     #[test]
@@ -5526,13 +5474,6 @@ COMMIT;
             "runs".to_string(),
             BTreeSet::from([RETIRED_EXECUTION_BUNDLE_COLUMN.to_string()]),
         );
-        for table in RETIRED_EXECUTION_BUNDLE_CATALOG_TABLES {
-            obs.catalog_tables.insert((*table).to_string());
-            obs.catalog_columns.insert(
-                (*table).to_string(),
-                BTreeSet::from([RETIRED_EXECUTION_BUNDLE_COLUMN.to_string()]),
-            );
-        }
         obs.catalog_tables.insert("execution_bundles".to_string());
 
         let plan = plan_run_plane(&schema("demo"), &obs);
@@ -5541,11 +5482,8 @@ COMMIT;
         assert_eq!(action.kind, RunPlaneActionKind::RetireExecutionBundles);
         assert_eq!(
             action.sql,
-            "LOCK TABLE \"demo\".runs, catalog.\"release_flows\" \
-             IN ACCESS EXCLUSIVE MODE;\n\
+            "LOCK TABLE \"demo\".runs IN ACCESS EXCLUSIVE MODE;\n\
              ALTER TABLE \"demo\".runs DROP COLUMN IF EXISTS \
-             execution_bundle_hash RESTRICT;\n\
-             ALTER TABLE catalog.\"release_flows\" DROP COLUMN IF EXISTS \
              execution_bundle_hash RESTRICT;\n\
              LOCK TABLE catalog.execution_bundles IN ACCESS EXCLUSIVE MODE;\n\
              -- Persisted bundle bytes are deliberately discarded without archive.\n\
@@ -5685,8 +5623,6 @@ COMMIT;
 
         let cat = table_section(CATALOG_SCHEMA_SQL, "catalog", "catalogs");
         assert!(cat.contains("catalogs_one_applied_per_env"));
-        let artifacts = table_section(CATALOG_SCHEMA_SQL, "catalog", "flow_artifacts");
-        assert!(artifacts.contains("register_flow_artifact"));
 
         let actions = table_section(RUN_STATE_SQL, "wamn_run", "operator_run_actions");
         assert!(actions.contains("operator_run_actions_delete_immutable"));
@@ -6214,7 +6150,7 @@ COMMIT;
         // privilege — is re-pinned on a relation the reconciler still owns.
         let mut obs = observation_at_record();
         obs.authoring_table_owners.insert(
-            ("catalog".to_string(), "flow_artifacts".to_string()),
+            ("catalog".to_string(), "catalogs".to_string()),
             "wamn_app".to_string(),
         );
         obs.authoring_effective_table_privileges
@@ -6243,12 +6179,7 @@ COMMIT;
             .insert("UPDATE".to_string());
 
         let plan = plan_run_plane(&schema("demo"), &obs);
-        for table in [
-            "flow_artifacts",
-            "connection_bindings",
-            "releases",
-            "catalog_heads",
-        ] {
+        for table in ["catalogs", "connection_bindings", "releases", "catalog_heads"] {
             let repair = plan
                 .actions
                 .iter()
@@ -7294,10 +7225,6 @@ COMMIT;
     fn catalog_provenance_columns_are_reconciled_before_runtime_activation() {
         let mut obs = observation_at_record();
         obs.catalog_columns
-            .get_mut("flow_artifacts")
-            .expect("flow artifact columns")
-            .remove("verified_author_principal");
-        obs.catalog_columns
             .get_mut("releases")
             .expect("release manifest columns")
             .remove("verified_publisher_principal");
@@ -7311,11 +7238,6 @@ COMMIT;
         assert!(
             action
                 .sql
-                .contains("ADD COLUMN IF NOT EXISTS verified_author_principal")
-        );
-        assert!(
-            action
-                .sql
                 .contains("ADD COLUMN IF NOT EXISTS verified_publisher_principal")
         );
     }
@@ -7325,8 +7247,8 @@ COMMIT;
         let mut obs = observation_at_record();
         obs.catalog_checks.insert(
             (
-                "flow_artifacts".to_string(),
-                FLOW_AUTHOR_CHECK_NAME.to_string(),
+                "releases".to_string(),
+                RELEASE_PUBLISHER_CHECK_NAME.to_string(),
             ),
             "CHECK (true)".to_string(),
         );
@@ -7338,13 +7260,13 @@ COMMIT;
             .expect("catalog provenance CHECK repair");
         assert!(
             action.sql.contains(
-                "DROP CONSTRAINT IF EXISTS flow_artifacts_verified_author_principal_check"
+                "DROP CONSTRAINT IF EXISTS releases_verified_publisher_principal_check"
             )
         );
         assert!(
             action
                 .sql
-                .contains("ADD CONSTRAINT flow_artifacts_verified_author_principal_check")
+                .contains("ADD CONSTRAINT releases_verified_publisher_principal_check")
         );
     }
 

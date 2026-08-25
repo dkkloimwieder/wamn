@@ -106,18 +106,9 @@ pub fn select_registration_docs_for_catalog_sql() -> String {
 // Immutable catalog releases (FLOW-SPEC rev18 §5.1–§5.4a).
 // ---------------------------------------------------------------------------
 
-/// Register one fully resolved immutable artifact. The database function makes
-/// an identical retry a no-op and raises `flow-version-content-conflict` when
-/// the identity tuple already names different content.
-pub fn register_flow_artifact_sql() -> &'static str {
-    "SELECT catalog.register_flow_artifact(\
-       $1, $2, $3, $4, $5::text::jsonb, $6, $7)"
-}
-
 /// Ensure the release identity row for one release coordinate. Insert-or-verify:
 /// an identical retry is a no-op and a differing identity row raises
-/// `catalog-release-content-conflict`. Membership is appended separately through
-/// [`insert_release_flow_sql`].
+/// `catalog-release-content-conflict`.
 pub fn register_release_manifest_sql() -> &'static str {
     "SELECT catalog.register_release_manifest($1, $2, $3)"
 }
@@ -163,57 +154,6 @@ pub fn count_nonterminal_release_runs_sql(schema: &str) -> String {
     )
 }
 
-/// Persist one release member. Missing artifacts are rejected by the
-/// tenant-scoped FK; an identical retry converges through `DO NOTHING`.
-pub fn insert_release_flow_sql() -> &'static str {
-    "INSERT INTO catalog.release_flows \
-       (tenant_id, catalog_id, catalog_version, flow_id, flow_version) \
-     VALUES ($1, $2, $3, $4, $5) \
-     ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING"
-}
-
-/// Seal the canonical authored exposure document for a release.
-pub fn register_release_exposure_manifest_sql() -> &'static str {
-    "SELECT catalog.register_release_exposure_manifest($1, $2, $3, $4::text::jsonb)"
-}
-
-/// Register one immutable source definition. An identical identity retry is a
-/// no-op; differing content raises `catalog-release-source-content-conflict`.
-pub fn insert_release_source_sql() -> &'static str {
-    "SELECT catalog.register_release_source(\
-       $1, $2, $3, $4, $5, $6::text::jsonb, $7)"
-}
-
-/// Register one fully resolved immutable attachment definition. An identical
-/// identity retry is a no-op; differing content raises
-/// `catalog-release-attachment-content-conflict`.
-pub fn insert_release_attachment_sql() -> &'static str {
-    "SELECT catalog.register_release_attachment(\
-       $1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10, $11, $12, $13)"
-}
-
-/// Carry activation for unchanged definitions and tombstone removed IDs.
-pub fn apply_release_exposure_sql() -> &'static str {
-    "SELECT catalog.apply_release_exposure($1, $2, $3, $4, $5)"
-}
-
-/// Read every source definition carried forward by `migrate-catalog`.
-pub fn select_release_sources_sql() -> &'static str {
-    "SELECT source_id, source_kind, definition_json::text, source_hash \
-     FROM catalog.release_sources \
-     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
-     ORDER BY source_id"
-}
-
-/// Read every resolved attachment definition carried forward by `migrate-catalog`.
-pub fn select_release_attachments_sql() -> &'static str {
-    "SELECT attachment_id, attachment_kind, flow_id, source_id, definition_hash, \
-            definition_json::text, route_host, route_path, route_template, route_method \
-     FROM catalog.release_attachments \
-     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
-     ORDER BY attachment_id"
-}
-
 /// Advance (or initialize) the stable head after every other release write.
 pub fn advance_catalog_head_sql() -> &'static str {
     "INSERT INTO catalog.catalog_heads \
@@ -230,28 +170,6 @@ pub fn record_release_publication_sql() -> &'static str {
         destructive, checksum) \
      VALUES ($1, $2, $3, $4, $5, 0, false, $6) \
      ON CONFLICT (tenant_id, catalog_id, environment, to_version) DO NOTHING"
-}
-
-/// Derive a release's member set from `catalog.release_flows`, the row-per-member
-/// truth that replaced the sealed `members_json` snapshot (wamn-0h0g.15.159).
-/// Yields `[]` for a release with no members, so a caller that needs to know
-/// whether the release EXISTS must probe `catalog.releases` separately.
-///
-/// The join is 1:1: `catalog.flow_artifacts`' primary key is exactly the
-/// `release_flows` foreign-key target. `COLLATE "C"` is load-bearing, not
-/// decoration -- the comparison partner is built by
-/// [`crate::canonical_release_flows`], whose `Vec::sort` orders `flow_id` by
-/// bytes, and the database's default collation need not agree.
-pub fn select_release_members_sql() -> &'static str {
-    "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
-       'flow-id', r.flow_id, \
-       'flow-version', r.flow_version, \
-       'artifact-hash', a.artifact_hash) ORDER BY r.flow_id COLLATE \"C\"), '[]'::jsonb)::text \
-     FROM catalog.release_flows r \
-     JOIN catalog.flow_artifacts a \
-       ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
-      AND a.flow_version = r.flow_version \
-     WHERE r.tenant_id = $1 AND r.catalog_id = $2 AND r.catalog_version = $3"
 }
 
 /// Probe whether a release identity row exists at one coordinate.
@@ -322,11 +240,18 @@ mod tests {
     fn immutable_release_sql_tracks_catalog_schema() {
         assert!(!CATALOG_SCHEMA.contains("CREATE TABLE catalog.execution_bundles"));
         assert!(!CATALOG_SCHEMA.contains("execution_bundle_hash"));
-        for table in [
+        for table in ["releases", "catalog_heads"] {
+            assert!(
+                CATALOG_SCHEMA.contains(&format!("CREATE TABLE catalog.{table}")),
+                "missing catalog.{table}"
+            );
+        }
+        // wamn-0h0g.26.21: the flow-era release plane is gone from the schema,
+        // so its relations are asserted ABSENT exactly like the execution
+        // bundles above.
+        for retired in [
             "flow_artifacts",
-            "releases",
             "release_flows",
-            "catalog_heads",
             "release_exposure_manifests",
             "release_sources",
             "release_attachments",
@@ -335,15 +260,10 @@ mod tests {
             "attachment_tombstones",
         ] {
             assert!(
-                CATALOG_SCHEMA.contains(&format!("CREATE TABLE catalog.{table}")),
-                "missing catalog.{table}"
+                !CATALOG_SCHEMA.contains(&format!("CREATE TABLE catalog.{retired}")),
+                "retired catalog.{retired} survived"
             );
         }
-        assert_eq!(
-            super::register_flow_artifact_sql(),
-            "SELECT catalog.register_flow_artifact(\
-       $1, $2, $3, $4, $5::text::jsonb, $6, $7)"
-        );
         assert!(
             super::register_release_manifest_sql().contains("catalog.register_release_manifest")
         );
@@ -353,39 +273,6 @@ mod tests {
             super::count_nonterminal_release_runs_sql("app")
                 .contains("catalog_version = $3::integer")
         );
-        assert!(super::insert_release_flow_sql().contains("flow_id, flow_version)"));
-        assert!(super::insert_release_flow_sql().contains("VALUES ($1, $2, $3, $4, $5)"));
-        assert!(!super::insert_release_flow_sql().contains("$6"));
-        assert!(super::insert_release_flow_sql().contains("DO NOTHING"));
-        assert_eq!(
-            super::insert_release_source_sql(),
-            "SELECT catalog.register_release_source(\
-       $1, $2, $3, $4, $5, $6::text::jsonb, $7)"
-        );
-        assert_eq!(
-            super::insert_release_attachment_sql(),
-            "SELECT catalog.register_release_attachment(\
-       $1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10, $11, $12, $13)"
-        );
-        for required in [
-            "MESSAGE = 'catalog-release-source-content-conflict'",
-            "WHERE tenant_id = p_tenant_id",
-            "AND source_kind = p_source_kind",
-            "AND definition_json = p_definition_json",
-            "AND source_hash = p_source_hash",
-            "MESSAGE = 'catalog-release-attachment-content-conflict'",
-            "AND attachment_kind = p_attachment_kind",
-            "AND flow_id = p_flow_id",
-            "AND source_id = p_source_id",
-            "AND definition_hash = p_definition_hash",
-            "AND route_host IS NOT DISTINCT FROM p_route_host",
-            "AND route_path IS NOT DISTINCT FROM p_route_path",
-            "AND route_template IS NOT DISTINCT FROM p_route_template",
-            "AND route_method IS NOT DISTINCT FROM p_route_method",
-        ] {
-            assert!(CATALOG_SCHEMA.contains(required), "missing {required}");
-        }
-        assert!(super::apply_release_exposure_sql().contains("apply_release_exposure"));
         assert!(super::advance_catalog_head_sql().contains("DO UPDATE"));
     }
 }

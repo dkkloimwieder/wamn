@@ -10,7 +10,6 @@ mod cdc_reader_process;
 pub mod cdcbench;
 pub mod dashproof;
 mod dispatcher_process;
-pub mod exposure_live;
 mod hot_route_trace;
 pub mod m1;
 pub mod provisionbench;

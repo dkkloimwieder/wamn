@@ -10,16 +10,14 @@ pub(crate) mod tests {
 
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct Published {
-        artifacts: BTreeMap<(String, i32), Vec<u8>>,
-        members: BTreeMap<String, i32>,
+        releases: BTreeMap<(String, i32), Vec<u8>>,
         head: Option<i32>,
         journaled: bool,
     }
 
     #[derive(Clone, Copy, Debug)]
     enum Fault {
-        AfterArtifact,
-        AfterMember,
+        AfterRelease,
         AfterJournal,
         BeforeHead,
     }
@@ -27,26 +25,22 @@ pub(crate) mod tests {
     fn publish_atomically(
         stored: &mut Published,
         target: i32,
-        member: (&str, i32),
+        release: (&str, i32),
         fault: Option<Fault>,
     ) -> Result<(), &'static str> {
         let mut transaction = stored.clone();
-        transaction.artifacts.insert(
-            (member.0.to_string(), member.1),
-            b"canonical-artifact".to_vec(),
-        );
-        if matches!(fault, Some(Fault::AfterArtifact)) {
-            return Err("injected-after-artifact");
-        }
         if transaction
-            .members
-            .insert(member.0.to_string(), member.1)
-            .is_some_and(|version| version != member.1)
+            .releases
+            .insert(
+                (release.0.to_string(), release.1),
+                b"canonical-release".to_vec(),
+            )
+            .is_some_and(|bytes| bytes != b"canonical-release")
         {
             return Err("catalog-release-content-conflict");
         }
-        if matches!(fault, Some(Fault::AfterMember)) {
-            return Err("injected-after-member");
+        if matches!(fault, Some(Fault::AfterRelease)) {
+            return Err("injected-after-release");
         }
         transaction.journaled = true;
         if matches!(fault, Some(Fault::AfterJournal)) {
@@ -62,12 +56,7 @@ pub(crate) mod tests {
 
     #[test]
     fn injected_faults_leave_no_partial_release_and_retry_is_byte_identical() {
-        for fault in [
-            Fault::AfterArtifact,
-            Fault::AfterMember,
-            Fault::AfterJournal,
-            Fault::BeforeHead,
-        ] {
+        for fault in [Fault::AfterRelease, Fault::AfterJournal, Fault::BeforeHead] {
             let mut stored = Published::default();
             let before = format!("{stored:?}").into_bytes();
             assert!(publish_atomically(&mut stored, 2, ("f1", 3), Some(fault)).is_err());
@@ -82,10 +71,10 @@ pub(crate) mod tests {
 
     #[test]
     fn ddl_pins_immutable_and_atomic_release_boundaries() {
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER flow_artifacts_immutable"));
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER release_flows_immutable"));
-        assert!(CATALOG_SCHEMA.contains("flow-version-content-conflict"));
-        assert!(CATALOG_SCHEMA.contains("REFERENCES catalog.flow_artifacts"));
+        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER releases_immutable"));
+        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER releases_delete_immutable"));
+        assert!(CATALOG_SCHEMA.contains("catalog-release-content-conflict"));
+        assert!(CATALOG_SCHEMA.contains("REFERENCES catalog.catalogs"));
         assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.catalog_heads"));
         assert!(CATALOG_SCHEMA.contains("CREATE FUNCTION catalog.publication_boundary"));
     }
@@ -94,27 +83,6 @@ pub(crate) mod tests {
         client: &tokio_postgres::Client,
         tenant: &str,
     ) -> Result<(), tokio_postgres::Error> {
-        let register = wamn_schema_control::sql::register_flow_artifact_sql();
-        client
-            .execute(
-                register,
-                &[
-                    &tenant,
-                    &"flow",
-                    &1_i32,
-                    &"0.1",
-                    &r#"{"flow-id":"flow"}"#,
-                    &"graph-a",
-                    &"artifact-a",
-                ],
-            )
-            .await?;
-        client
-            .execute(
-                wamn_schema_control::sql::publication_boundary_sql(),
-                &[&"after-artifacts"],
-            )
-            .await?;
         client
             .execute(
                 "INSERT INTO catalog.catalogs \
@@ -153,18 +121,6 @@ pub(crate) mod tests {
             .await?;
         client
             .execute(
-                wamn_schema_control::sql::insert_release_flow_sql(),
-                &[&tenant, &"catalog", &1_i32, &"flow", &1_i32],
-            )
-            .await?;
-        client
-            .execute(
-                wamn_schema_control::sql::publication_boundary_sql(),
-                &[&"after-members"],
-            )
-            .await?;
-        client
-            .execute(
                 wamn_schema_control::sql::publication_boundary_sql(),
                 &[&"before-head"],
             )
@@ -182,10 +138,8 @@ pub(crate) mod tests {
         let row = client
             .query_one(
                 "SELECT \
-                   (SELECT (to_jsonb(a) - 'created_at')::text FROM catalog.flow_artifacts a \
+                   (SELECT to_jsonb(r)::text FROM catalog.releases r \
                      WHERE tenant_id = $1), \
-                   (SELECT jsonb_build_array(flow_id, flow_version)::text \
-                     FROM catalog.release_flows WHERE tenant_id = $1), \
                    (SELECT jsonb_build_array(from_version, to_version, \
                      statement_count, destructive, checksum)::text \
                      FROM catalog.schema_migrations WHERE tenant_id = $1), \
@@ -201,7 +155,6 @@ pub(crate) mod tests {
                 row.get::<_, String>(0),
                 row.get::<_, String>(1),
                 row.get::<_, String>(2),
-                row.get::<_, String>(3),
             )
         )
         .into_bytes()
@@ -235,15 +188,7 @@ pub(crate) mod tests {
         client.batch_execute(CATALOG_SCHEMA).await.unwrap();
         client.batch_execute("COMMIT").await.unwrap();
 
-        for (index, stage) in [
-            "after-artifacts",
-            "after-journal",
-            "after-members",
-            "before-head",
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        for (index, stage) in ["after-journal", "before-head"].into_iter().enumerate() {
             let tenant = format!("fault-{index}");
             client.batch_execute("BEGIN").await.unwrap();
             client
@@ -258,16 +203,14 @@ pub(crate) mod tests {
             let counts = client
                 .query_one(
                     "SELECT \
-                       (SELECT count(*) FROM catalog.flow_artifacts WHERE tenant_id = $1), \
                        (SELECT count(*) FROM catalog.releases WHERE tenant_id = $1), \
-                       (SELECT count(*) FROM catalog.release_flows WHERE tenant_id = $1), \
                        (SELECT count(*) FROM catalog.schema_migrations WHERE tenant_id = $1), \
                        (SELECT count(*) FROM catalog.catalog_heads WHERE tenant_id = $1)",
                     &[&tenant],
                 )
                 .await
                 .unwrap();
-            for column in 0..5 {
+            for column in 0..3 {
                 assert_eq!(
                     counts.get::<_, i64>(column),
                     0,
@@ -285,17 +228,13 @@ pub(crate) mod tests {
             assert_eq!(release_bytes(&client, &tenant).await, first);
         }
 
+        // The release identity row `write_release` already committed above is the
+        // subject: registering it again is the exact retry, and the row itself
+        // refuses in-place revision.
         client.batch_execute("BEGIN").await.unwrap();
-        let register = wamn_schema_control::sql::register_flow_artifact_sql();
-        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
-            &"immutable-tenant",
-            &"flow",
-            &1_i32,
-            &"1",
-            &r#"{"flow-id":"flow"}"#,
-            &"graph-a",
-            &"artifact-a",
-        ];
+        let register = wamn_schema_control::sql::register_release_manifest_sql();
+        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
+            [&"fault-0", &"catalog", &1_i32];
         client.execute(register, &params).await.unwrap();
         client.execute(register, &params).await.unwrap();
 
@@ -305,8 +244,8 @@ pub(crate) mod tests {
             .unwrap();
         let update = client
             .execute(
-                "UPDATE catalog.flow_artifacts SET graph_hash = 'changed' \
-                 WHERE tenant_id = 'immutable-tenant'",
+                "UPDATE catalog.releases SET verified_publisher_principal = 'changed' \
+                 WHERE tenant_id = 'fault-0'",
                 &[],
             )
             .await
@@ -316,23 +255,6 @@ pub(crate) mod tests {
             .batch_execute("ROLLBACK TO SAVEPOINT immutable_update")
             .await
             .unwrap();
-
-        let conflict = client
-            .execute(
-                register,
-                &[
-                    &"immutable-tenant",
-                    &"flow",
-                    &1_i32,
-                    &"1",
-                    &r#"{"flow-id":"different"}"#,
-                    &"graph-b",
-                    &"artifact-b",
-                ],
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(conflict.code().map(|code| code.code()), Some("23505"));
         client.batch_execute("ROLLBACK").await.unwrap();
         client
             .batch_execute("DROP SCHEMA catalog CASCADE")

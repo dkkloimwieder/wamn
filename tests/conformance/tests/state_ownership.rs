@@ -1865,7 +1865,7 @@ fn retired_relation_cannot_regain_a_static_writer() {
 fn an_active_relation_cannot_hold_a_forwarding_address() {
     let repository = repository();
     let mut manifest = read_manifest(&repository);
-    manifest.objects[0].ownership.superseded_by = vec!["catalog.release_flows".to_string()];
+    manifest.objects[0].ownership.superseded_by = vec!["catalog.release_components".to_string()];
     let error = validate_manifest(&repository, &manifest).unwrap_err();
     assert!(
         error.contains("must not name a superseding relation"),
@@ -2054,7 +2054,7 @@ fn trigger_event_declarations_are_not_inventoried_as_writes() {
     let discoveries = discover_writes(
         "deploy/sql/catalog-schema.sql",
         1,
-        "CREATE TRIGGER immutable BEFORE INSERT OR UPDATE ON catalog.release_attachments \
+        "CREATE TRIGGER immutable BEFORE INSERT OR UPDATE ON catalog.release_components \
          FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()",
     );
     assert!(

@@ -4,10 +4,10 @@
 -- audit_log, and api_keys.
 --
 -- This is the AUTH/RBAC half of item 2.4. The "platform metadata" half
--- (entities, fields, relations, flow artifacts, and release membership) is
+-- (entities, fields, relations, and release membership) is
 -- ALREADY shipped and is deliberately NOT redefined here: the catalog model
 -- lives in deploy/sql/catalog-schema.sql (catalog.entities / catalog.fields /
--- catalog.relations / catalog.flow_artifacts / catalog.release_flows, 3.1). A
+-- catalog.relations / catalog.release_components, 3.1). A
 -- `deployments` table is deferred — a live WorkloadDeployment is a K8s CR, so a
 -- registry table would duplicate cluster state until there is a concrete reader
 -- (follow-up bead).

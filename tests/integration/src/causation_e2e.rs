@@ -47,8 +47,6 @@ const CDC_BACKEND_TERMINATION_TIMEOUT_MS: i64 = 15_000;
 // Long enough to expose fire-and-forget termination, while automatic resume
 // keeps even a failed cleanup probe independently bounded.
 const CDC_WITNESS_RESUME_DELAY_SECS: u64 = 1;
-const ARTIFACT_HASH: &str =
-    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
 #[derive(Debug, Args)]
 pub struct CausationE2eArgs {
@@ -437,16 +435,6 @@ impl MaterializerHarness {
             .with_context(|| format!("read {}", report_path.display()))?;
         serde_json::from_str(&report).context("parse materializer report")
     }
-}
-
-fn flow_json(resources: &GateResources) -> String {
-    serde_json::json!({
-        "schema-version": "0.1",
-        "flow-id": resources.flow_id,
-        "version": 1,
-        "nodes": [{"id": "event", "type": "event"}],
-    })
-    .to_string()
 }
 
 fn registration_json(resources: &GateResources) -> String {
@@ -904,7 +892,6 @@ async fn setup_project(
         ))
         .await?;
 
-    let graph = flow_json(resources);
     let registration = registration_json(resources);
     let transaction = admin.transaction().await?;
     transaction
@@ -917,30 +904,9 @@ async fn setup_project(
         .await?;
     transaction
         .execute(
-            "INSERT INTO catalog.flow_artifacts \
-           (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash) \
-         VALUES ($1,$2,1,'0.1',$3::text::jsonb,'wave8-11-9-graph',$4)",
-            &[
-                &resources.tenant,
-                &resources.flow_id,
-                &graph,
-                &ARTIFACT_HASH,
-            ],
-        )
-        .await?;
-    transaction
-        .execute(
             "INSERT INTO catalog.releases \
            (tenant_id,catalog_id,catalog_version) VALUES ($1,$2,1)",
             &[&resources.tenant, &resources.catalog_id],
-        )
-        .await?;
-    transaction
-        .execute(
-            "INSERT INTO catalog.release_flows \
-           (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
-         VALUES ($1,$2,1,$3,1)",
-            &[&resources.tenant, &resources.catalog_id, &resources.flow_id],
         )
         .await?;
     transaction

@@ -209,26 +209,19 @@ mod tests {
 
     #[test]
     fn catalog_release_storage_has_stable_head_and_db_immutable_artifacts() {
-        for table in [
-            "flow_artifacts",
-            "releases",
-            "release_flows",
-            "catalog_heads",
-        ] {
+        for table in ["releases", "catalog_heads"] {
             assert!(
                 CATALOG_SCHEMA.contains(&format!("CREATE TABLE catalog.{table}")),
                 "missing catalog.{table}"
             );
         }
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER flow_artifacts_immutable"));
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER release_flows_immutable"));
-        assert!(CATALOG_SCHEMA.contains("MESSAGE = 'flow-version-content-conflict'"));
+        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER releases_immutable"));
+        assert!(CATALOG_SCHEMA.contains("MESSAGE = 'catalog-release-content-conflict'"));
         assert!(!CATALOG_SCHEMA.contains("catalog.execution_bundles"));
         assert!(CATALOG_SCHEMA.contains("PRIMARY KEY (tenant_id, catalog_id, environment)"));
-        assert!(CATALOG_SCHEMA.contains("GRANT SELECT ON catalog.flow_artifacts"));
+        assert!(CATALOG_SCHEMA.contains("GRANT SELECT ON catalog.releases"));
         assert!(
-            !CATALOG_SCHEMA
-                .contains("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.flow_artifacts")
+            !CATALOG_SCHEMA.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.releases")
         );
         assert!(
             CATALOG_SCHEMA

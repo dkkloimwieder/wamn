@@ -356,16 +356,11 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
 
 /// Portable relations the control store installs that the project plane also
 /// installs, so both copies must carry an identical column and constraint shape.
-const SHARED_PORTABLE_RELATIONS: [&str; 10] = [
+const SHARED_PORTABLE_RELATIONS: [&str; 5] = [
     "catalog.catalogs",
-    "catalog.flow_artifacts",
     "catalog.releases",
-    "catalog.release_flows",
     "catalog.catalog_heads",
     "catalog.component_library",
-    "catalog.release_exposure_manifests",
-    "catalog.release_sources",
-    "catalog.release_attachments",
     "catalog.connection_requirements",
 ];
 
