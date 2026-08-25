@@ -87,6 +87,20 @@ const CANDIDATE_COMPONENT_DIGEST: &str =
     "sha256:2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d";
 const CANDIDATE_IMPORTS_FINGERPRINT: &str =
     "sha256:3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e";
+/// A SECOND candidate, identical in every way that matters to admission except
+/// that the component its one node reaches carries a NON-EMPTY effects
+/// projection (wamn-0h0g.21.9). It exists to prove the constitutional clause
+/// FIRES rather than merely being written: gate cases are effect-free by
+/// contract, so this candidate must be refused, typed, with nothing admitted.
+const EFFECTFUL_WIRING: &str = "orders-charge";
+const EFFECTFUL_GATE_REPORT: &str = "gate-report-effectful";
+const EFFECTFUL_WIRING_HASH: &str =
+    "sha256:4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f";
+const EFFECTFUL_COMPONENT: &str = "ledger";
+const EFFECTFUL_COMPONENT_DIGEST: &str =
+    "sha256:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+const EFFECTFUL_IMPORTS_FINGERPRINT: &str =
+    "sha256:6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b";
 /// Fixed loopback port for the gate. The gate is serial and env-gated, so a
 /// fixed port is simpler than plumbing an ephemeral one out of the listener.
 const BIND: &str = "127.0.0.1:18088";
@@ -439,6 +453,15 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
              VALUES ('{TENANT}', '{CANDIDATE_CATALOG}', 1, 'entity', '0.1', 'create', \
                      '{CANDIDATE_COMPONENT_DIGEST}', '[]', '{CANDIDATE_IMPORTS_FINGERPRINT}', \
                      '[]', '[]', '[]', '[]'); \
+             INSERT INTO catalog.component_library \
+               (tenant_id, catalog_id, catalog_version, component, interface_version, operation, \
+                component_digest, imports, imports_fingerprint, effects, input_ports, \
+                output_ports, parameters) \
+             VALUES ('{TENANT}', '{CANDIDATE_CATALOG}', 1, '{EFFECTFUL_COMPONENT}', '0.1', \
+                     'charge', '{EFFECTFUL_COMPONENT_DIGEST}', \
+                     '[\"wamn:postgres/client@0.1.0\"]', '{EFFECTFUL_IMPORTS_FINGERPRINT}', \
+                     '[{{\"package\":\"wamn:postgres\",\"interfaces\":\
+[\"wamn:postgres/client@0.1.0\"]}}]', '[]', '[]', '[]'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');"
@@ -462,6 +485,45 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
         )
         .await
         .context("seed the gated candidate wiring")?;
+    let effectful_graph = serde_json::json!({
+        "format-version": "0.1",
+        "wiring-id": EFFECTFUL_WIRING,
+        "version": 1,
+        "entry": "node",
+        "nodes": {
+            "node": {
+                "component": EFFECTFUL_COMPONENT,
+                "interface-version": "0.1",
+                "operation": "charge",
+            },
+        },
+        // A well-formed, otherwise gateable case set. The refusal must come from
+        // the effect posture alone, not from an invalid test set.
+        "cases": [
+            {
+                "case-id": "charges",
+                "input": {"amount": 1},
+                "expect": {"outcome": "responded", "status": 201},
+            },
+        ],
+    });
+    project
+        .execute(
+            "INSERT INTO catalog.wirings \
+               (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
+                graph_json, wiring_hash, gate_report_id) \
+             VALUES ($1, $2, $3, 1, 1, $4::text::jsonb, $5, $6)",
+            &[
+                &TENANT,
+                &CANDIDATE_CATALOG,
+                &EFFECTFUL_WIRING,
+                &effectful_graph.to_string(),
+                &EFFECTFUL_WIRING_HASH,
+                &EFFECTFUL_GATE_REPORT,
+            ],
+        )
+        .await
+        .context("seed the effectful candidate wiring")?;
     Ok(())
 }
 
@@ -1492,6 +1554,92 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         project_case_runs(&project).await,
         runs,
         "a service-token re-drive admitted a second run"
+    );
+
+    // ---- THE CONSTITUTIONAL CLAUSE FIRES ------------------------------------
+    // wamn-0h0g.8.5.5: gate cases are EFFECT-FREE BY CONTRACT. A gate is a
+    // judgment about a document, not an execution of it, so a candidate that
+    // reaches a component whose admitted effects projection is non-empty is
+    // refused TYPED and executes nothing.
+    //
+    // This is the behavioural proof, not a source scan. The effectful candidate
+    // is identical to the gated one in every way admission cares about -- same
+    // tenant, same applied catalog version, same well-formed single case, its
+    // own wiring hash and its own gate report -- and differs ONLY in the
+    // `effects` value of the component its node resolves to. It therefore
+    // cannot be refused for any other reason, and if the posture read were
+    // deleted this candidate would compose a report instead.
+    let runs_before_effectful = project_case_runs(&project).await;
+    let ledger_before_effectful = ledger_rows(&admin).await.len();
+    let effectful = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &serde_json::json!({
+            "document": "request",
+            "body": {
+                "schema-version": "0.1",
+                "command-id": "gate-effectful",
+                "command": {
+                    "kind": "test-set-run",
+                    "input": {
+                        "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
+                        "validated-draft": {"validated-draft-id": EFFECTFUL_WIRING_HASH},
+                    },
+                },
+            },
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(effectful.status, 200, "{}", effectful.body);
+    assert_eq!(
+        outcome(&effectful.body)["value"],
+        serde_json::json!({
+            "command": "test-set-run",
+            "reason": {
+                "kind": "effectful-component-reached",
+                "components": [EFFECTFUL_COMPONENT],
+            },
+        }),
+        "an effectful candidate was not refused by its effect posture: {}",
+        effectful.body
+    );
+    // Nothing executed. The refusal precedes the first admission AND the
+    // reservation, so there is no run, no queue row, and no report to find.
+    assert_eq!(
+        project_case_runs(&project).await,
+        runs_before_effectful,
+        "an effectful candidate admitted a run before being refused"
+    );
+    assert_eq!(project_queue_count(&project).await, 2);
+    let effectful_report = admin
+        .query_opt(
+            &format!(
+                "SELECT 1 FROM {SOURCE_SCHEMA}.authoring_test_run_reservations \
+                  WHERE tenant_id = $1 AND report_id = $2"
+            ),
+            &[&TENANT, &EFFECTFUL_GATE_REPORT],
+        )
+        .await
+        .expect("read any reservation for the effectful candidate");
+    assert!(
+        effectful_report.is_none(),
+        "an effectful candidate reserved a report before being refused"
+    );
+    // A refusal is still an authorized command, so it IS attributed.
+    assert_eq!(
+        ledger_rows(&admin).await.len(),
+        ledger_before_effectful + 1,
+        "a typed gate refusal was not attributed"
+    );
+
+    // The PURE candidate composed a real report a few lines above, against the
+    // very same catalog version and the very same posture read. That is what
+    // makes this a predicate rather than a blanket refusal.
+    assert!(
+        !runs_before_effectful.is_empty(),
+        "the effect-free predicate never admitted the pure candidate either"
     );
 
     // A candidate this plane does not hold is a typed product refusal, not a
