@@ -356,7 +356,6 @@ fn control_author_sql_exposure_is_exact() {
         BTreeSet::from([
             "catalog.authoring_command_audit",
             "catalog.flow_drafts",
-            "catalog.validated_flow_drafts",
             "wamn_run.authoring_test_case_runs",
             "wamn_run.authoring_test_reports",
             "wamn_run.authoring_test_run_reservations",

@@ -1615,7 +1615,6 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
             "catalog.authoring_command_audit",
             "catalog.execution_bundles",
             "catalog.flow_drafts",
-            "catalog.validated_flow_drafts",
             "wamn_run.authoring_test_case_runs",
             "wamn_run.authoring_test_reports",
             "wamn_run.authoring_test_run_reservations",
@@ -1644,7 +1643,6 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
             "catalog.flow_drafts",
             "catalog.release_flows",
             "catalog.releases",
-            "catalog.validated_flow_drafts",
             "wamn_run.authoring_test_case_runs",
             "wamn_run.authoring_test_reports",
             "wamn_run.authoring_test_run_reservations",
@@ -1673,7 +1671,7 @@ fn host_owned_production_claim_authority_is_explicit_and_bounded() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         writes,
-        BTreeSet::from(["wamn_run.node_runs", "wamn_run.run_queue", "wamn_run.runs",])
+        BTreeSet::from(["wamn_run.run_queue", "wamn_run.runs",])
     );
 
     let reads = manifest
@@ -1941,58 +1939,6 @@ fn undeclared_writer_is_rejected() {
     let error = validate_discovered_writers(&manifest, &[rogue]).unwrap_err();
     assert!(error.contains("undeclared insert writer"), "{error}");
     assert!(error.contains("registry.orgs"), "{error}");
-}
-
-#[test]
-fn canonical_node_run_function_body_is_run_state_owned() {
-    let manifest = read_manifest(&repository());
-    assert_eq!(manifest.principals["run-state"].role, "persistence");
-    assert_eq!(manifest.principals["schema-control"].role, "migration");
-    let ownership = &manifest
-        .objects
-        .iter()
-        .find(|object| object.id == "wamn_run.node_runs")
-        .expect("node-run ownership")
-        .ownership;
-    assert_eq!(ownership.semantic_owner, "run-state");
-    assert_eq!(ownership.migration_owners, ["schema-control"]);
-    assert_eq!(ownership.schema_source, "deploy/sql/run-state.sql");
-    assert_eq!(
-        ownership
-            .writers
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["run-state", "execution-host"]
-    );
-
-    let function = "CREATE FUNCTION wamn_run.project_node_run() \
-                    RETURNS void LANGUAGE plpgsql AS $$ BEGIN \
-                    INSERT INTO wamn_run.node_runs (run_id) VALUES ('run-1'); \
-                    END $$";
-    let canonical = discover_writes("deploy/sql/run-state.sql", 375, function);
-    assert_only_write(&canonical, "insert", "wamn_run.node_runs");
-    assert_eq!(canonical[0].provenance, SqlProvenance::CreateFunctionBody);
-    validate_discovered_writers(&manifest, &canonical)
-        .expect("the canonical function body executes with run-state authority");
-
-    let copied = discover_writes("crates/schema/control/src/run_plane.rs", 1_023, function);
-    assert_only_write(&copied, "insert", "wamn_run.node_runs");
-    assert_eq!(copied[0].provenance, SqlProvenance::CreateFunctionBody);
-    let error = validate_discovered_writers(&manifest, &copied).unwrap_err();
-    assert!(error.contains("undeclared insert writer"), "{error}");
-
-    for path in ["deploy/sql/run-state.sql", "services/rogue/src/lib.rs"] {
-        let carrier = discover_writes(
-            path,
-            500,
-            "INSERT INTO wamn_run.node_runs (run_id) VALUES ('run-1')",
-        );
-        assert_only_write(&carrier, "insert", "wamn_run.node_runs");
-        assert_eq!(carrier[0].provenance, SqlProvenance::Carrier);
-        let error = validate_discovered_writers(&manifest, &carrier).unwrap_err();
-        assert!(error.contains("undeclared insert writer"), "{error}");
-    }
 }
 
 #[test]

@@ -68,7 +68,7 @@
       "path": "crates/execution/host",
       "role": "effect"
     },
-    "flow-model": {
+    "execution-contract": {
       "path": "crates/execution/contract",
       "role": "semantic"
     },
@@ -178,8 +178,7 @@
         "s2.fkchild",
         "s3.flows",
         "s3.sink",
-        "s3.runs",
-        "s3.node_runs"
+        "s3.runs"
       ]
     }
   ],
@@ -588,17 +587,6 @@
     },
     {
       "id": "catalog.flow_drafts",
-      "plane": "control",
-      "semantic_owner": "catalog-model",
-      "migration_owners": ["control-portable-store-installer"],
-      "schema_source": "deploy/sql/control-portable-store.sql",
-      "writers": ["control-portable-store-installer", "scenario-worker"],
-      "readers": ["scenario-worker"],
-      "compatibility_horizon": "flow-format-and-platform-schema-major",
-      "drift_gate": "SR13:control-portable-live"
-    },
-    {
-      "id": "catalog.validated_flow_drafts",
       "plane": "control",
       "semantic_owner": "catalog-model",
       "migration_owners": ["control-portable-store-installer"],
@@ -1474,43 +1462,6 @@
       "execution-host",
       "scenario-worker",
         "materializer"
-      ],
-      "compatibility_horizon": "persisted-run-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.invocation_admissions",
-      "plane": "project",
-      "semantic_owner": "run-state",
-      "migration_owners": [
-        "run-state"
-      ],
-      "schema_source": "deploy/sql/run-state.sql",
-      "writers": [
-        "run-state"
-      ],
-      "readers": [
-        "run-state"
-      ],
-      "compatibility_horizon": "caller-outcome-retention-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.node_runs",
-      "plane": "project",
-      "semantic_owner": "run-state",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/run-state.sql",
-      "writers": [
-        "run-state",
-        "execution-host"
-      ],
-      "readers": [
-        "run-state",
-        "schema-control",
-        "scenario-worker"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
