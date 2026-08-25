@@ -11,6 +11,18 @@
 //! does not mount: an untrusted presenter naming one gets the same refusal
 //! document as any other, so the surface is no route-existence oracle, and an
 //! admitted author gets a bare `501` that audits nothing and mutates nothing.
+//! `test-set-run` LEFT that set in wamn-0h0g.8.5.4 — it is mounted, so this gate
+//! now proves the composition it reaches instead of the 501 it used to answer,
+//! while `validate`, `draft-run`, `publish`, and the query-side `read-draft`
+//! keep the bare-501 property unchanged.
+//!
+//! Proving that composition takes a SECOND database. The project-environment
+//! database this gate creates alongside the control one is where runs, the run
+//! queue, and the catalog live; the surface reaches it through the scoped
+//! `wamn_management_admitter` generation, and a transaction never spans the two.
+//! There is no executor in this gate, so a stand-in completes each admitted run
+//! in place — it cannot complete one before the composition admits it, which is
+//! what makes the sequencing assertions meaningful.
 //!
 //! It also owns `wamn-ftfc.2`'s S1 write path: a checkout client reads
 //! working-tree definition files and submits their content with the revision it
@@ -23,7 +35,7 @@
 //! The recipe in `docs/archive/build-and-test.md` supplies one disposable database.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Context as _;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -31,8 +43,8 @@ use tokio::net::TcpStream;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
-    CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL,
-    control_author_generation_role, management_admitter_generation_role,
+    CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
+    control_author_generation_role, management_admitter_generation_role, sql,
 };
 use wamn_platform_identity::{
     IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
@@ -54,6 +66,28 @@ const PROJECT: &str = "receiving";
 const OTHER_PROJECT: &str = "shipping";
 const ENVIRONMENT: &str = "dev";
 const AUTHOR_PASSWORD: &str = "wamn-management-live";
+/// The project-environment database the admission credential is scoped to. The
+/// generation role name binds it, so the gate cannot rename one without the
+/// other.
+const PROJECT_DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+const ADMITTER_PASSWORD: &str = "wamn-management-admission-live";
+/// The one candidate wiring `test-set-run` is exercised against.
+///
+/// `CANDIDATE_WIRING_HASH` is what the command carries as its
+/// `validated-draft-id` (the owner ruled the two are the same identity), and
+/// `CANDIDATE_GATE_REPORT` is what the composition MUST use as the report id:
+/// management admission classifies a test case whose `report_id` differs from
+/// the candidate row's `gate_report_id` as `gate-report-mismatch`, so the report
+/// identity is derived from the candidate rather than chosen by the caller.
+const CANDIDATE_CATALOG: &str = "catalog-candidate";
+const CANDIDATE_WIRING: &str = "orders-create";
+const CANDIDATE_GATE_REPORT: &str = "gate-report-candidate";
+const CANDIDATE_WIRING_HASH: &str =
+    "sha256:1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c";
+const CANDIDATE_COMPONENT_DIGEST: &str =
+    "sha256:2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d";
+const CANDIDATE_IMPORTS_FINGERPRINT: &str =
+    "sha256:3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e";
 /// Fixed loopback port for the gate. The gate is serial and env-gated, so a
 /// fixed port is simpler than plumbing an ephemeral one out of the listener.
 const BIND: &str = "127.0.0.1:18088";
@@ -202,6 +236,12 @@ fn save_command(
 /// Each document has to decode: the contract boundary answers `400` for a
 /// document it rejects, so a `501` for one of these is evidence about the route
 /// and nothing else.
+/// The contract command kinds this transport still answers `501` for.
+///
+/// `test-set-run` was here until wamn-0h0g.8.5.4 mounted it. Its assertions moved
+/// to the composition block; what stays here is the property that outlives it —
+/// a kind with no route answers a bare `501`, and the answer carries no
+/// document.
 fn unmounted_commands() -> Vec<(&'static str, String)> {
     let scope = serde_json::json!({"project-id": PROJECT, "environment": "dev"});
     let validated = serde_json::json!({"validated-draft-id": "validated-draft-1"});
@@ -219,13 +259,6 @@ fn unmounted_commands() -> Vec<(&'static str, String)> {
                 "scope": scope.clone(),
                 "validated-draft": validated.clone(),
                 "input": {},
-            }),
-        ),
-        (
-            "test-set-run",
-            serde_json::json!({
-                "scope": scope.clone(),
-                "validated-draft": validated.clone(),
             }),
         ),
         (
@@ -436,24 +469,318 @@ fn author_url(admin_url: &str) -> String {
     parsed.to_string()
 }
 
-/// The project-database admission input `serve` refuses to start without
-/// (wamn-0h0g.8.5.3).
-///
-/// This gate never opens it: the admission consumer is wamn-0h0g.8.5.4. It is
-/// here because `serve` settles BOTH connection inputs purely, before it binds,
-/// so a gate that omits it never reaches the surface under test. Derived rather
-/// than hand-written for the same reason `author_role` is — the role name binds
-/// `(org, project, environment, database)`.
-fn admission_url() -> String {
-    const DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
-    let role = management_admitter_generation_role(
+/// The exact scoped generation the credential contract mints for the project
+/// plane. Derived, not hand-written: the role name binds `(org, project,
+/// environment, database)`.
+fn admitter_role() -> String {
+    management_admitter_generation_role(
         ORG,
         PROJECT,
         ENVIRONMENT,
-        DATABASE,
+        PROJECT_DATABASE,
         CredentialGeneration::A,
-    );
-    format!("postgres://{role}:{AUTHOR_PASSWORD}@project.invalid:5432/{DATABASE}")
+    )
+}
+
+/// The gate admin's URL, repointed at the project-environment database.
+///
+/// Same server, so both planes share one clock — which is what lets this gate
+/// compare a control-plane `finalized_at` against a project-plane `created_at`
+/// and read the comparison as an ordering rather than as skew.
+fn project_admin_url(admin_url: &str) -> String {
+    let mut parsed = url::Url::parse(admin_url).expect("the admin PG URL parses");
+    parsed.set_path(&format!("/{PROJECT_DATABASE}"));
+    parsed.to_string()
+}
+
+/// The project-database admission input `serve` refuses to start without
+/// (wamn-0h0g.8.5.3), and now OPENS (wamn-0h0g.8.5.4).
+///
+/// Until the composition landed this named an unresolvable host, because `serve`
+/// only parsed the value. It is a real connection now: the surface admits runs
+/// through it, so a URL nothing can reach would fail the process at startup.
+fn admission_url(admin_url: &str) -> String {
+    let mut parsed =
+        url::Url::parse(&project_admin_url(admin_url)).expect("the project URL parses");
+    parsed
+        .set_username(&admitter_role())
+        .expect("a postgres URL carries a username");
+    parsed
+        .set_password(Some(ADMITTER_PASSWORD))
+        .expect("a postgres URL carries a password");
+    parsed.to_string()
+}
+
+/// Bring up the project-environment plane this gate admits runs into.
+///
+/// A SEPARATE DATABASE, not a schema: residency is what distinguishes the two
+/// stores, and a gate that put them in one database would prove nothing about a
+/// composition whose whole difficulty is that it cannot be one transaction.
+async fn provision_project(
+    admin: &Client,
+    admin_url: &str,
+) -> anyhow::Result<(Client, tokio::task::JoinHandle<()>)> {
+    admin
+        .simple_query(&format!(
+            "DROP DATABASE IF EXISTS \"{PROJECT_DATABASE}\" WITH (FORCE)"
+        ))
+        .await
+        .context("drop any previous project database")?;
+    admin
+        .simple_query(&format!("CREATE DATABASE \"{PROJECT_DATABASE}\""))
+        .await
+        .context("create the project-environment database")?;
+    let (project, task) = connect(&project_admin_url(admin_url)).await?;
+
+    // The plane DDL grants to cluster-global roles, some of which the control
+    // half of this gate already minted. Create only what is missing: dropping
+    // and recreating one would revoke the other half's grants.
+    project
+        .batch_execute(
+            "DO $roles$ DECLARE role_name text; BEGIN \
+               FOREACH role_name IN ARRAY ARRAY['wamn_app', 'wamn_scenario_author', \
+                 'wamn_control_author', 'wamn_effect_writer', 'wamn_executor_platform'] LOOP \
+                 IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
+                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB \
+                     NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+                 END IF; \
+               END LOOP; \
+             END $roles$;",
+        )
+        .await
+        .context("ensure the cluster-global plane roles")?;
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let catalog = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
+        .context("read the catalog DDL")?;
+    let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
+        .context("read the run-state DDL")?;
+    let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
+        .context("read the run-queue DDL")?;
+    project
+        .batch_execute(&format!(
+            "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+             BEGIN; {catalog} {run_state} {run_queue} COMMIT; \
+             {access_floor} {generation}",
+            access_floor = sql::grant_connect_on_database_sql(PROJECT_DATABASE),
+            // One call mints the stable admitter ACL role, applies the exact
+            // column-level surface `ctl` applies, creates this generation, and
+            // grants it CONNECT. The gate does not hand-write any of it.
+            generation = sql::prepare_workload_generation_sql(
+                WorkloadRoleFamily::ManagementAdmitter,
+                PROJECT_DATABASE,
+                &admitter_role(),
+                ADMITTER_PASSWORD,
+                "2099-01-01T00:00:00Z",
+            ),
+        ))
+        .await
+        .context("apply the project plane DDL and admitter credential")?;
+    seed_candidate(&project).await?;
+    Ok((project, task))
+}
+
+/// Seed the one applied catalog and the one gated candidate wiring.
+///
+/// The candidate's component declares NO connection requirements, so its binding
+/// world is the empty array. That is deliberate: a stable empty world still
+/// proves the world is FROZEN at ordinal zero and re-presented by every later
+/// ordinal, without making the assertion depend on connection lifecycle the
+/// composition does not own.
+async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
+    let graph = serde_json::json!({
+        "format-version": "0.1",
+        "wiring-id": CANDIDATE_WIRING,
+        "version": 1,
+        "entry": "node",
+        "nodes": {
+            "node": {
+                "component": "entity",
+                "interface-version": "0.1",
+                "operation": "create",
+            },
+        },
+        "cases": [
+            {
+                "case-id": "creates",
+                "input": {"name": "first"},
+                "expect": {"outcome": "responded", "status": 201},
+            },
+            {
+                "case-id": "rejects",
+                "input": {"name": "second"},
+                "expect": {"outcome": "responded", "status": 200},
+            },
+        ],
+    });
+    project
+        .batch_execute(&format!(
+            "INSERT INTO catalog.catalogs \
+               (tenant_id, catalog_id, version, environment, schema_version, state) \
+             VALUES ('{TENANT}', '{CANDIDATE_CATALOG}', 1, '{ENVIRONMENT}', '0.1', 'applied'); \
+             INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) \
+             VALUES ('{TENANT}', '{CANDIDATE_CATALOG}', 1); \
+             INSERT INTO catalog.component_library \
+               (tenant_id, catalog_id, catalog_version, component, interface_version, operation, \
+                component_digest, imports, imports_fingerprint, effects, input_ports, \
+                output_ports, parameters) \
+             VALUES ('{TENANT}', '{CANDIDATE_CATALOG}', 1, 'entity', '0.1', 'create', \
+                     '{CANDIDATE_COMPONENT_DIGEST}', '[]', '{CANDIDATE_IMPORTS_FINGERPRINT}', \
+                     '[]', '[]', '[]', '[]'); \
+             INSERT INTO wamn_run.environment_policies \
+               (tenant_id, expected_environment, durability_class) \
+             VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');"
+        ))
+        .await
+        .context("seed the applied catalog and environment policy")?;
+    project
+        .execute(
+            "INSERT INTO catalog.wirings \
+               (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
+                graph_json, wiring_hash, gate_report_id) \
+             VALUES ($1, $2, $3, 1, 1, $4::text::jsonb, $5, $6)",
+            &[
+                &TENANT,
+                &CANDIDATE_CATALOG,
+                &CANDIDATE_WIRING,
+                &graph.to_string(),
+                &CANDIDATE_WIRING_HASH,
+                &CANDIDATE_GATE_REPORT,
+            ],
+        )
+        .await
+        .context("seed the gated candidate wiring")?;
+    Ok(())
+}
+
+/// One `test-set-run` request document for the seeded candidate.
+///
+/// The `validated-draft-id` is the WIRING HASH. There is no draft to resolve it
+/// through: the wiring document is the validated artifact and its hash is the
+/// identity, so the command carries the whole coordinate.
+fn test_set_run_document(command_id: &str) -> String {
+    serde_json::json!({
+        "document": "request",
+        "body": {
+            "schema-version": "0.1",
+            "command-id": command_id,
+            "command": {
+                "kind": "test-set-run",
+                "input": {
+                    "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
+                    "validated-draft": {"validated-draft-id": CANDIDATE_WIRING_HASH},
+                },
+            },
+        },
+    })
+    .to_string()
+}
+
+/// Stand in for the executor: release one caller outcome per admitted ordinal.
+///
+/// It waits for each ordinal's run to EXIST before completing it, and completes
+/// them strictly in ordinal order. That is the whole point: the composition
+/// admits ordinal `n + 1` only after ordinal `n` has a stored verdict, so if it
+/// ever admitted them together this task would complete them out of the order
+/// the composition observes and the sequencing assertions would fail.
+async fn complete_admitted_case_runs(url: String, outcomes: Vec<(i32, serde_json::Value)>) {
+    let (project, task) = connect(&url)
+        .await
+        .expect("connect the project plane as the gate admin");
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    for (ordinal, (status, body)) in outcomes.iter().enumerate() {
+        let key = format!("case:{CANDIDATE_GATE_REPORT}:{ordinal}");
+        loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "ordinal {ordinal} was never admitted"
+            );
+            let updated = project
+                .execute(
+                    "UPDATE wamn_run.runs \
+                        SET status = 'completed', caller_outcome_kind = 'responded', \
+                            caller_http_status = $1, caller_outcome_json = $2::text::jsonb, \
+                            caller_release_node_id = 'node', \
+                            caller_released_at = clock_timestamp(), \
+                            updated_at = clock_timestamp() \
+                      WHERE tenant_id = $3 AND idempotency_key = $4 AND status = 'dispatched'",
+                    &[status, &body.to_string(), &TENANT, &key],
+                )
+                .await
+                .expect("complete one admitted case run");
+            if updated == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+    task.abort();
+}
+
+/// Every stored case verdict of the composed report, in ordinal order.
+type CaseVerdict = (
+    i32,
+    String,
+    String,
+    bool,
+    Option<String>,
+    serde_json::Value,
+    SystemTime,
+);
+
+async fn control_case_verdicts(admin: &Client) -> Vec<CaseVerdict> {
+    admin
+        .query(
+            &format!(
+                "SELECT ordinal, case_id, run_id, passed, failure_kind, summary, finalized_at \
+                   FROM {SOURCE_SCHEMA}.authoring_test_case_runs \
+                  WHERE tenant_id = $1 AND report_id = $2 ORDER BY ordinal"
+            ),
+            &[&TENANT, &CANDIDATE_GATE_REPORT],
+        )
+        .await
+        .expect("read the composed case verdicts")
+        .iter()
+        .map(|row| {
+            (
+                row.get(0),
+                row.get(1),
+                row.get(2),
+                row.get::<_, Option<bool>>(3).unwrap_or(false),
+                row.get(4),
+                row.get(5),
+                row.get(6),
+            )
+        })
+        .collect()
+}
+
+/// Every run this composition admitted into the project plane, in admission
+/// order.
+async fn project_case_runs(project: &Client) -> Vec<(String, String, String, SystemTime)> {
+    project
+        .query(
+            "SELECT run_id, idempotency_key, status, created_at FROM wamn_run.runs \
+              WHERE tenant_id = $1 AND trigger_source = 'test-case' ORDER BY created_at, run_id",
+            &[&TENANT],
+        )
+        .await
+        .expect("read the admitted test-case runs")
+        .iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .collect()
+}
+
+async fn project_queue_count(project: &Client) -> i64 {
+    project
+        .query_one(
+            "SELECT count(*) FROM wamn_run.run_queue AS queue \
+               JOIN wamn_run.runs AS run USING (tenant_id, run_id) \
+              WHERE run.tenant_id = $1 AND run.trigger_source = 'test-case'",
+            &[&TENANT],
+        )
+        .await
+        .expect("count the admitted queue rows")
+        .get(0)
 }
 
 fn authoring_scope() -> ControlAuthoringScope {
@@ -709,6 +1036,11 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     provision(&mut admin, &url)
         .await
         .expect("provision the gate");
+    // The SECOND plane. It is a different database on the same server: the
+    // composition under test spans both, and could not be proved against one.
+    let (project, project_task) = provision_project(&admin, &url)
+        .await
+        .expect("provision the project plane");
 
     // Two admitted principals for the same project, one service principal, one
     // principal admitted only for a different project, and one with no role.
@@ -770,7 +1102,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             bind: BIND.to_owned(),
             system_url: url.clone(),
             control_authoring_database_url: author_url(&url),
-            management_admission_database_url: admission_url(),
+            management_admission_database_url: admission_url(&url),
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             environment: ENVIRONMENT.to_owned(),
@@ -909,7 +1241,11 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "an unmounted command or query wrote durable authoring state"
     );
 
-    // Nothing above reached a command: no draft, no ledger row.
+    // Nothing above reached a command: no draft, no ledger row. `test-set-run`
+    // is no longer among the kinds above — wamn-0h0g.8.5.4 mounted it, and the
+    // assertions that replaced its bare 501 run at the end of this gate, where
+    // they cannot disturb the "nothing has reached a command yet" invariants
+    // this section and the query section below both depend on.
     assert_eq!(draft_count(&admin).await, 0, "a refusal ran a command");
     assert!(
         ledger_rows(&admin).await.is_empty(),
@@ -1821,6 +2157,276 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a source claim became identity or authority"
     );
 
+    // ---- test-set-run IS mounted, and composes a real report ---------------
+    // wamn-0h0g.8.5.4. This is the assertion that replaced the bare 501: the
+    // very document that used to be in `unmounted` above now reaches the
+    // composition. `validate`, `draft-run`, `publish`, and `read-draft` kept
+    // the bare-501 property, asserted immediately above and unchanged.
+    //
+    // An untrusted presenter learns nothing from the mount either. A MOUNTED
+    // kind has to answer the same refusal document as an unmounted one, or the
+    // surface would become the route-existence oracle the 501 was shaped to
+    // avoid.
+    let ledger_before_composition = ledger_rows(&admin).await.len();
+    for (name, token) in &refusals {
+        let response = post(
+            "/authoring",
+            token.as_deref(),
+            &[],
+            &test_set_run_document("probe-test-set-run"),
+        )
+        .await;
+        assert_eq!(
+            response.status, 403,
+            "{name} probed test-set-run for a route"
+        );
+        assert_eq!(
+            response.body, AUTHORIZATION_DENIED,
+            "{name} learned that test-set-run is mounted"
+        );
+    }
+    assert_eq!(
+        ledger_rows(&admin).await.len(),
+        ledger_before_composition,
+        "an untrusted test-set-run probe was attributed"
+    );
+
+    // Ordinal 0 gets the status its case expects; ordinal 1 deliberately does
+    // not, so the report's verdict comes from real per-case evaluation rather
+    // than from everything trivially passing.
+    let stand_in = tokio::spawn(complete_admitted_case_runs(
+        project_admin_url(&url),
+        vec![
+            (201, serde_json::json!({"id": "first"})),
+            (500, serde_json::json!({"error": "second"})),
+        ],
+    ));
+    let accepted = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &test_set_run_document("test-set-1"),
+    )
+    .await;
+    stand_in
+        .await
+        .expect("the stand-in executor completed every admitted run");
+    assert_eq!(
+        accepted.status, 200,
+        "test-set-run did not reach its handler: {}",
+        accepted.body
+    );
+    // The receipt names the report the composition DERIVED — the candidate's
+    // gate report — not one the caller chose.
+    assert_eq!(
+        outcome(&accepted.body),
+        serde_json::json!({
+            "status": "completed",
+            "value": {
+                "command": "test-set-run",
+                "result": {
+                    "report-id": CANDIDATE_GATE_REPORT,
+                    "validated-draft": {"validated-draft-id": CANDIDATE_WIRING_HASH},
+                },
+            },
+        }),
+        "the test-set receipt drifted: {}",
+        accepted.body
+    );
+
+    // Exactly one run per ordinal, each under its derived producer key, each
+    // with its queue row.
+    let runs = project_case_runs(&project).await;
+    assert_eq!(
+        runs.iter()
+            .map(|(_, key, status, _)| (key.as_str(), status.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (
+                format!("case:{CANDIDATE_GATE_REPORT}:0").as_str(),
+                "completed"
+            ),
+            (
+                format!("case:{CANDIDATE_GATE_REPORT}:1").as_str(),
+                "completed"
+            ),
+        ],
+        "the admitted runs are not one per ordinal"
+    );
+    assert_eq!(project_queue_count(&project).await, 2);
+
+    // Each case's asserted facts AND its frozen binding world reached the
+    // immutable control summary, and the verdicts are the ones evaluation
+    // produced rather than a blanket pass.
+    let verdicts = control_case_verdicts(&admin).await;
+    assert_eq!(
+        verdicts.len(),
+        2,
+        "the report did not finalize both ordinals"
+    );
+    assert_eq!(verdicts[0].1, "creates");
+    assert_eq!(verdicts[1].1, "rejects");
+    assert!(
+        verdicts[0].3,
+        "the passing case was not recorded as passing"
+    );
+    assert!(!verdicts[1].3, "the failing case was recorded as passing");
+    assert_eq!(verdicts[0].4, None);
+    assert_eq!(verdicts[1].4, Some("assertion-failed".to_owned()));
+    for (ordinal, verdict) in verdicts.iter().enumerate() {
+        assert_eq!(
+            verdict.5["case"]["actual"]["response"]["status"],
+            serde_json::json!(if ordinal == 0 { 201 } else { 500 }),
+            "ordinal {ordinal} recorded facts that are not its run's"
+        );
+        assert_eq!(
+            verdict.5["binding-world"],
+            serde_json::json!([]),
+            "ordinal {ordinal} recorded no frozen binding world"
+        );
+    }
+    assert!(
+        verdicts[1].5["case"]["detail"].is_string(),
+        "the failing case recorded no diff"
+    );
+
+    // SEQUENTIAL, and it is the ordering that proves it: ordinal 1's run did
+    // not exist in the project plane until ordinal 0's verdict was committed to
+    // the control plane. Both instants come from the one server clock.
+    assert!(
+        runs[1].3 >= verdicts[0].6,
+        "ordinal 1 was admitted before ordinal 0's summary was stored"
+    );
+    assert!(
+        verdicts[1].6 >= verdicts[0].6,
+        "the case verdicts were not stored in ordinal order"
+    );
+
+    // The report is the conjunction of the cases, and it was attributed once.
+    let report = admin
+        .query_one(
+            &format!(
+                "SELECT passed, validated_draft_id FROM {SOURCE_SCHEMA}.authoring_test_reports \
+                  WHERE tenant_id = $1 AND report_id = $2"
+            ),
+            &[&TENANT, &CANDIDATE_GATE_REPORT],
+        )
+        .await
+        .expect("the composed report finalized");
+    assert!(
+        !report.get::<_, bool>(0),
+        "a failing case passed the report"
+    );
+    assert_eq!(report.get::<_, String>(1), CANDIDATE_WIRING_HASH);
+    assert_eq!(
+        ledger_rows(&admin).await[ledger_before_composition..]
+            .iter()
+            .map(|(_, _, kind, _)| kind.clone())
+            .collect::<Vec<_>>(),
+        ["test-set-run".to_owned()],
+        "the composed command was not attributed exactly once"
+    );
+
+    // The mounted query reads the report the mounted command produced.
+    let projected = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &get_report_document("composed-report", PROJECT, CANDIDATE_GATE_REPORT),
+    )
+    .await;
+    assert_eq!(projected.status, 200, "{}", projected.body);
+    assert_eq!(
+        outcome(&projected.body)["value"]["result"]["state"],
+        serde_json::json!("finalized")
+    );
+
+    // ---- an exact retry converges rather than double-admitting -------------
+    // The same command id replays the stored receipt. Nothing is admitted.
+    let replay = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &test_set_run_document("test-set-1"),
+    )
+    .await;
+    assert_eq!(replay.status, 200, "{}", replay.body);
+    assert_eq!(outcome(&replay.body), outcome(&accepted.body));
+
+    // A DIFFERENT command id for the same candidate re-drives the whole
+    // composition against durable state that already exists. Every step
+    // converges — the reservation is its own, every ordinal admits `duplicate`,
+    // every case already has its immutable verdict — so it reaches the same
+    // report without a second run, a second queue row, or a changed verdict.
+    let rerun = post(
+        "/authoring",
+        Some(bob.token()),
+        &[],
+        &test_set_run_document("test-set-2"),
+    )
+    .await;
+    assert_eq!(rerun.status, 200, "{}", rerun.body);
+    assert_eq!(outcome(&rerun.body), outcome(&accepted.body));
+    assert_eq!(
+        project_case_runs(&project).await,
+        runs,
+        "a re-driven composition admitted a second run"
+    );
+    assert_eq!(project_queue_count(&project).await, 2);
+    assert_eq!(
+        control_case_verdicts(&admin).await,
+        verdicts,
+        "a re-driven composition rewrote an immutable case verdict"
+    );
+    assert_eq!(
+        ledger_rows(&admin).await.len(),
+        ledger_before_composition + 2,
+        "the second command id was not attributed exactly once"
+    );
+
+    // A candidate this plane does not hold is a typed product refusal, not a
+    // 501 and not a fabricated report.
+    let unknown = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &serde_json::json!({
+            "document": "request",
+            "body": {
+                "schema-version": "0.1",
+                "command-id": "test-set-unknown",
+                "command": {
+                    "kind": "test-set-run",
+                    "input": {
+                        "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
+                        "validated-draft": {
+                            "validated-draft-id": "sha256:".to_owned() + &"9".repeat(64),
+                        },
+                    },
+                },
+            },
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(unknown.status, 200, "{}", unknown.body);
+    assert_eq!(
+        outcome(&unknown.body)["value"],
+        serde_json::json!({
+            "command": "test-set-run",
+            "reason": {
+                "kind": "validated-draft-not-found",
+                "validated-draft-id": "sha256:".to_owned() + &"9".repeat(64),
+            },
+        }),
+        "an unknown candidate was not refused by identity"
+    );
+    assert_eq!(
+        project_case_runs(&project).await,
+        runs,
+        "a refused test-set command admitted a run"
+    );
+
     // ---- the ledger is append-only -----------------------------------------
     let rewrite = admin
         .execute(
@@ -1835,5 +2441,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert!(erase.is_err(), "the ledger accepted a delete");
 
     surface.abort();
+    project_task.abort();
     admin_task.abort();
 }

@@ -1,7 +1,13 @@
 //! Management-owned authoring persistence.
+//!
+//! The two stores here live in DIFFERENT DATABASES and nothing joins them:
+//! [`drafts`] and [`test_orchestration`] are the control-database half,
+//! [`admission`] is the project-database half. A fact one needs from the other
+//! crosses as an already-observed value.
 
 use sha2::{Digest as _, Sha256};
 
+pub mod admission;
 pub mod drafts;
 pub mod test_orchestration;
 

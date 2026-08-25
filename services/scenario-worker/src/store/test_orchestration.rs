@@ -124,6 +124,55 @@ pub fn select_test_case_mappings_sql() -> &'static str {
       WHERE tenant_id = $1 AND report_id = $2 ORDER BY ordinal"
 }
 
+/// Read the execution plan the sequential composition drives, in ordinal order.
+///
+/// `state` lets a resumed composition skip an ordinal it already finalized, and
+/// `case_deadline_at` is the horizon the reservation FIXED for that ordinal. The
+/// composition passes that stored instant to project admission as the run
+/// deadline rather than recomputing one: the admitting statement pins
+/// `run_deadline_at` on the run row and refuses an exact retry whose value
+/// differs, so a clock-derived deadline would make a retry diverge instead of
+/// converge (wamn-0h0g.8.5.4).
+pub fn select_test_case_plan_sql() -> &'static str {
+    "SELECT ordinal, case_id, run_id, state, case_deadline_at \
+       FROM authoring_test_case_runs \
+      WHERE tenant_id = $1 AND report_id = $2 ORDER BY ordinal"
+}
+
+/// One reserved ordinal, as the sequential composition drives it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TestCasePlanEntry {
+    pub ordinal: i32,
+    pub case_id: String,
+    pub run_id: String,
+    pub finalized: bool,
+    pub case_deadline_at: std::time::SystemTime,
+}
+
+/// Read every reserved ordinal of one report in order.
+pub async fn select_test_case_plan(
+    client: &Client,
+    tenant_id: &str,
+    report_id: &str,
+) -> anyhow::Result<Vec<TestCasePlanEntry>> {
+    let rows = client
+        .query(select_test_case_plan_sql(), &[&tenant_id, &report_id])
+        .await
+        .context("read the reserved test case plan")?;
+    rows.iter()
+        .map(|row| {
+            let state: String = row.get(3);
+            Ok(TestCasePlanEntry {
+                ordinal: row.get(0),
+                case_id: row.get(1),
+                run_id: row.get(2),
+                finalized: state == "finalized",
+                case_deadline_at: row.get(4),
+            })
+        })
+        .collect()
+}
+
 /// Lock one report reservation while reconciling its terminal verdict.
 pub fn select_test_report_for_reconcile_sql() -> &'static str {
     "SELECT state FROM authoring_test_run_reservations \
@@ -238,7 +287,8 @@ fn validate_reservation(reservation: &TestReportReservation) -> anyhow::Result<(
     if !is_sha256(&reservation.command_hash) {
         bail!("test report command hash must be lowercase sha256");
     }
-    if reservation.case_ids.is_empty() || reservation.case_ids.len() > wamn_execution_contract::MAX_TEST_SET_CASES
+    if reservation.case_ids.is_empty()
+        || reservation.case_ids.len() > wamn_execution_contract::MAX_TEST_SET_CASES
     {
         bail!("test report case count is outside the stored bound");
     }

@@ -17,6 +17,15 @@ wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-execution-contract = { workspace = true }
+# wamn-0h0g.8.5.4: the private management admission recipe, its producer key, its
+# typed result, and the run status vocabulary the observation leg decodes. This
+# crate is that recipe's FIRST production caller — until now the only caller was
+# run-state's own live authority proof.
+wamn-run-state = { workspace = true }
+# wamn-0h0g.8.5.4: the pure per-case evaluator. Its module doc already names this
+# service as the effectful producer that owes it `Captured`, so the dependency
+# direction was settled when that crate landed.
+wamn-scenario-model = { workspace = true }
 wash-runtime = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }
@@ -27,7 +36,7 @@ hyper-util = { workspace = true, features = ["tokio"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 tracing = { workspace = true }
 

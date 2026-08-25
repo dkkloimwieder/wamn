@@ -36,7 +36,7 @@ use wamn_authoring_model::{
     AuthoringRequestEnvelope, AuthoringResponse, AuthoringResponseEnvelope, AuthoringSuccess,
     CommandRefusal, CommitProvenance, ContractDecodeErrorKind, DraftIdentity, GetReportRefusal,
     QueryRefusal, ReportProjection, SCHEMA_VERSION, SafeUint64, SaveDraftRefusal,
-    ValidatedDraftRef, decode_document,
+    TestSetRunReceipt, TestSetRunRefusal, ValidatedDraftRef, decode_document,
 };
 use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalKind, ProjectRole, authenticate_pat, project_roles,
@@ -588,6 +588,10 @@ impl ManagementServeArgs {
 struct Surface {
     identity: Client,
     backend: tokio::sync::Mutex<InternalAuthoringBackend>,
+    /// The SECOND, separate connection: the project database this environment's
+    /// runs live in (wamn-0h0g.8.5.3, consumed by wamn-0h0g.8.5.4). It is never
+    /// the authoring one's fallback and never reachable from it.
+    admission: tokio::sync::Mutex<crate::store::admission::AdmissionSurface>,
     query_adapter: AuthoringQueryAdapter,
     org: Box<str>,
     project: Box<str>,
@@ -660,7 +664,9 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
     // The admission credential is proven in scope on the same terms, at the same
     // point, for the same reason. Its consumer is the sequential composition
     // (wamn-0h0g.8.5.4); refusing here means a mis-scoped Secret crash-loops at
-    // startup instead of surfacing on the first admitted run.
+    // startup instead of surfacing on the first admitted run. The connection
+    // this value opens is established below, after both inputs have been
+    // settled purely — the order, not the connection, is what this call fixes.
     parse_management_admission_url(
         &args.management_admission_database_url,
         &scope.org,
@@ -681,9 +687,23 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
     });
     let backend =
         InternalAuthoringBackend::connect(&args.control_authoring_database_url, &scope).await?;
+    let admission = crate::store::admission::AdmissionSurface::connect(
+        &args.management_admission_database_url,
+        &scope.org,
+        &scope.project,
+        &scope.environment,
+        &scope.tenant_id,
+        // The project run-plane schema is the canonical one. It is not
+        // `source_schema`: that names the CONTROL store's authoring relations,
+        // in the other database. Neither is configurable here, and inventing a
+        // second knob would let an operator point them at each other.
+        wamn_run_state::admission::RunStateSchema::default(),
+    )
+    .await?;
     let surface = Arc::new(Surface {
         identity,
         backend: tokio::sync::Mutex::new(backend),
+        admission: tokio::sync::Mutex::new(admission),
         query_adapter: AuthoringQueryAdapter,
         org: args.org.into_boxed_str(),
         project: args.project.into_boxed_str(),
@@ -865,12 +885,13 @@ const fn query_kind(query: &AuthoringQuery) -> &'static str {
 
 /// Dispatch one decoded command.
 ///
-/// `save-draft` is the command this transport mounts today; the rest of the
-/// contract inventory answers `501` until the beads that own their handlers land
-/// them. A `501` is the absence of a route, not a product refusal, so it carries
-/// no document. Route selection happens here, after authorization, so naming an
-/// unmounted kind is not a way to ask whether a route exists: an untrusted
-/// presenter is refused identically whichever kind it names.
+/// `save-draft` and `test-set-run` are the commands this transport mounts; the
+/// rest of the contract inventory answers `501` until the beads that own their
+/// handlers land them. A `501` is the absence of a route, not a product refusal,
+/// so it carries no document. Route selection happens here, after
+/// authorization, so naming an unmounted kind is not a way to ask whether a
+/// route exists: an untrusted presenter is refused identically whichever kind it
+/// names.
 ///
 /// `wamn-ftfc.22` re-checked each remaining kind against this tree instead of
 /// inheriting the reasons recorded when the route landed:
@@ -883,9 +904,55 @@ async fn dispatch_command(
     author: &AuthorizedAuthor,
     command: &AuthoringRequest,
 ) -> anyhow::Result<Response<Full<Bytes>>> {
-    let AuthoringCommand::SaveDraft(input) = &command.command else {
-        return Ok(empty(StatusCode::NOT_IMPLEMENTED));
-    };
+    match command_route(&command.command) {
+        CommandRoute::SaveDraft(input) => save_draft_route(surface, author, command, input).await,
+        CommandRoute::TestSetRun(input) => {
+            test_set_run_route(surface, author, command, input).await
+        }
+        CommandRoute::Unmounted => Ok(route_absent()),
+    }
+}
+
+/// Which handler, if any, one decoded command selects.
+///
+/// Route selection is a PURE function of the command, split out from
+/// [`dispatch_command`] so the mounted inventory can be decided by CALLING it
+/// rather than by reading the dispatcher's text. `dispatch_command` has no
+/// second opinion: it matches on this answer and nothing else, so the two cannot
+/// drift (wamn-0h0g.8.5.4 — the source scan this replaced asserted a substring
+/// count over its own source, which the owner ruled the weakest form of proof).
+#[derive(Debug)]
+enum CommandRoute<'a> {
+    SaveDraft(&'a wamn_authoring_model::SaveDraft),
+    TestSetRun(&'a wamn_authoring_model::TestSetRun),
+    Unmounted,
+}
+
+const fn command_route(command: &AuthoringCommand) -> CommandRoute<'_> {
+    match command {
+        AuthoringCommand::SaveDraft(input) => CommandRoute::SaveDraft(input),
+        AuthoringCommand::TestSetRun(input) => CommandRoute::TestSetRun(input),
+        AuthoringCommand::Validate(_)
+        | AuthoringCommand::DraftRun(_)
+        | AuthoringCommand::Publish(_) => CommandRoute::Unmounted,
+    }
+}
+
+/// The one answer an unmounted kind receives.
+///
+/// A `501` is the absence of a route, not a product refusal, so it carries no
+/// document: nothing here composes an outcome envelope, and there is no branch
+/// that could put one in.
+fn route_absent() -> Response<Full<Bytes>> {
+    empty(StatusCode::NOT_IMPLEMENTED)
+}
+
+async fn save_draft_route(
+    surface: &Surface,
+    author: &AuthorizedAuthor,
+    command: &AuthoringRequest,
+    input: &wamn_authoring_model::SaveDraft,
+) -> anyhow::Result<Response<Full<Bytes>>> {
     let Some(scope) = surface.command_scope(&input.scope.project_id, &input.scope.environment)
     else {
         return Ok(authorization_denied());
@@ -908,6 +975,193 @@ async fn dispatch_command(
     let outcome_bytes = save_draft(&mut backend, author, &scope, command, &request).await?;
     drop(backend);
     Ok(json_bytes(StatusCode::OK, outcome_bytes))
+}
+
+async fn test_set_run_route(
+    surface: &Surface,
+    author: &AuthorizedAuthor,
+    command: &AuthoringRequest,
+    input: &wamn_authoring_model::TestSetRun,
+) -> anyhow::Result<Response<Full<Bytes>>> {
+    let Some(scope) = surface.command_scope(&input.scope.project_id, &input.scope.environment)
+    else {
+        return Ok(authorization_denied());
+    };
+    if input.validated_draft.validated_draft_id.is_empty() || command.command_id.is_empty() {
+        return Ok(empty(StatusCode::BAD_REQUEST));
+    }
+    let mut backend = surface.backend.lock().await;
+    let mut admission = surface.admission.lock().await;
+    let outcome_bytes =
+        test_set_run(&mut backend, &mut admission, author, &scope, command, input).await?;
+    drop(admission);
+    drop(backend);
+    Ok(json_bytes(StatusCode::OK, outcome_bytes))
+}
+
+/// Run one validated candidate's own `cases` array, attributing the run to its
+/// verified author.
+///
+/// # Why this is not one transaction, and what replaces atomicity
+///
+/// `save_draft` commits its mutation and its ledger row together because both
+/// live in the control database. This command's mutation does NOT: the report
+/// and its case verdicts are control-database rows while the runs they observe
+/// are project-database rows, and a transaction cannot span the two. Rather than
+/// claim an atomicity the platform does not have, the ledger row is written LAST
+/// — a completed outcome is recorded only once the composition has produced one.
+///
+/// That ordering is what makes an exact retry converge. A pass interrupted after
+/// a commit on either database leaves no ledger row, so the retry classifies as
+/// `Execute` and re-drives the composition, which is idempotent at every step
+/// (see [`crate::test_set`]) and reaches the same report instead of admitting a
+/// second run. Once the ledger row exists the composition is finished, and the
+/// retry replays the stored receipt.
+async fn test_set_run(
+    backend: &mut InternalAuthoringBackend,
+    admission: &mut crate::store::admission::AdmissionSurface,
+    author: &AuthorizedAuthor,
+    scope: &CommandScope,
+    command: &AuthoringRequest,
+    input: &wamn_authoring_model::TestSetRun,
+) -> anyhow::Result<Vec<u8>> {
+    let request_hash = canonical_request_hash(command)?;
+    let audit = CommandAudit {
+        scope: scope.clone(),
+        command_id: command.command_id.clone().into(),
+        command: AuditedCommand::TestSetRun,
+        author: author.clone(),
+        target_ref: input.validated_draft.validated_draft_id.clone().into(),
+        // The test-set command carries no source claim; nothing on this path
+        // reads one, exactly as nothing on the save path does.
+        provenance: None,
+    };
+    if let Some(settled) = settle_retry(backend, &audit, &request_hash).await? {
+        return Ok(settled);
+    }
+
+    let composition = crate::test_set::run_test_set(
+        backend.scoped_client(audit.tenant_id()).await?,
+        admission,
+        &crate::test_set::TestSetRunRequest {
+            tenant_id: audit.tenant_id(),
+            environment: &scope.environment,
+            validated_draft_id: &input.validated_draft.validated_draft_id,
+        },
+    )
+    .await?;
+    let outcome = match composition {
+        crate::test_set::TestSetComposition::Accepted { report_id, .. } => {
+            AuthoringOutcome::Completed(Box::new(AuthoringSuccess::TestSetRun(TestSetRunReceipt {
+                report_id,
+                validated_draft: input.validated_draft.clone(),
+            })))
+        }
+        crate::test_set::TestSetComposition::Refused(refusal) => {
+            AuthoringOutcome::Refused(CommandRefusal::TestSetRun(refusal))
+        }
+    };
+    let outcome_bytes = command_response_bytes(&command.command_id, outcome)?;
+
+    let (_, transaction) = backend.begin_command_transaction(audit.tenant_id()).await?;
+    lock_retry_identity(&transaction, &audit).await?;
+    // Re-read under the lock: a concurrent pass may have finished the identical
+    // composition while this one ran, and its stored outcome is the one answer.
+    if let Some(existing) = read_retry_outcome(&transaction, &audit).await? {
+        let settled = match classify_retry(Some(&existing), &request_hash) {
+            RetryDecision::Replay => existing.outcome_bytes,
+            _ => test_set_reuse(&command.command_id)?,
+        };
+        transaction.commit().await.context("commit retry read")?;
+        return Ok(settled);
+    }
+    insert_command_audit(&transaction, &audit, &request_hash, &outcome_bytes).await?;
+    transaction
+        .commit()
+        .await
+        .context("commit the test-set command outcome")?;
+    Ok(outcome_bytes)
+}
+
+/// Serialize this principal-scoped retry identity inside a command transaction.
+async fn lock_retry_identity(
+    transaction: &(impl GenericClient + Sync),
+    audit: &CommandAudit,
+) -> anyhow::Result<()> {
+    transaction
+        .query_one(
+            LOCK_COMMAND_RETRY_SQL,
+            &[
+                &audit.scope.tenant_id.as_ref(),
+                &audit.author.principal_id.as_ref(),
+                &audit.command_id.as_ref(),
+            ],
+        )
+        .await
+        .context("serialize authoring command retry identity")?;
+    Ok(())
+}
+
+/// Read this retry identity's stored outcome, if one was already recorded.
+async fn read_retry_outcome(
+    transaction: &(impl GenericClient + Sync),
+    audit: &CommandAudit,
+) -> anyhow::Result<Option<StoredCommandOutcome>> {
+    Ok(transaction
+        .query_opt(
+            SELECT_COMMAND_RETRY_SQL,
+            &[
+                &audit.scope.tenant_id.as_ref(),
+                &audit.author.principal_id.as_ref(),
+                &audit.command_id.as_ref(),
+            ],
+        )
+        .await
+        .context("read authoring command retry outcome")?
+        .map(|row| StoredCommandOutcome {
+            request_hash: row.get(0),
+            outcome_bytes: row.get(1),
+        }))
+}
+
+/// Answer a retry that is already settled, or `None` to run the command.
+///
+/// This runs BEFORE a composition that cannot be part of the ledger
+/// transaction, so it commits and releases the lock. It is an optimization and
+/// not the authority: the ledger insert re-reads under the lock, and the durable
+/// idempotency keys inside the composition are what make a racing duplicate
+/// converge.
+async fn settle_retry(
+    backend: &mut InternalAuthoringBackend,
+    audit: &CommandAudit,
+    request_hash: &str,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let (_, transaction) = backend.begin_command_transaction(audit.tenant_id()).await?;
+    lock_retry_identity(&transaction, audit).await?;
+    let existing = read_retry_outcome(&transaction, audit).await?;
+    let settled = match classify_retry(existing.as_ref(), request_hash) {
+        RetryDecision::Execute => None,
+        RetryDecision::Replay => Some(
+            existing
+                .expect("replay requires a stored outcome")
+                .outcome_bytes,
+        ),
+        RetryDecision::Reuse => Some(test_set_reuse(&audit.command_id)?),
+    };
+    transaction
+        .commit()
+        .await
+        .context("commit the retry classification read")?;
+    Ok(settled)
+}
+
+fn test_set_reuse(command_id: &str) -> anyhow::Result<Vec<u8>> {
+    command_response_bytes(
+        command_id,
+        AuthoringOutcome::Refused(CommandRefusal::TestSetRun(
+            TestSetRunRefusal::CommandIdReuse,
+        )),
+    )
 }
 
 /// Return the presented bearer token, or `None` when the header is absent or
@@ -1484,17 +1738,133 @@ mod tests {
         assert!(lock_at < lookup_at && lookup_at < run_at);
         assert!(run_at < record_at && record_at < commit_at);
         assert!(body.contains("AuditedCommand::SaveDraft"));
+    }
 
-        let dispatch = between(
-            source,
-            "async fn dispatch_command(",
-            "/// Return the presented",
-        );
+    /// The mounted inventory, and the shape of the answer an unmounted kind
+    /// gets, decided by CALLING route selection over every contract kind.
+    ///
+    /// This replaces a source scan that counted a substring of its own file
+    /// (wamn-0h0g.8.5.4). Nothing here reads `management.rs`: it builds one
+    /// command per kind, evaluates [`command_route`] — the same function
+    /// `dispatch_command` matches on, and its only route decision — and
+    /// evaluates the actual unmounted response. A kind added to the contract
+    /// fails to compile here until it is classified, and a kind quietly mounted
+    /// or unmounted changes an answer this test reads.
+    ///
+    /// The remaining property, that route selection happens AFTER
+    /// authorization, is not decidable from route selection alone. It is pinned
+    /// by `identity_is_settled_before_the_request_body_is_read` above (the
+    /// refusal precedes the body read, and a command cannot be decoded — let
+    /// alone routed — before its body is read) and proved behaviourally by the
+    /// live gate, where every untrusted presenter receives the identical `403`
+    /// document for a mounted and an unmounted kind alike.
+    #[test]
+    fn only_the_mounted_kinds_have_a_route_and_the_rest_answer_a_bare_501() {
+        use wamn_authoring_model::{
+            AuthoringScope, DraftRevisionRef, DraftRun, PublishValidatedDraft, TestSetRun,
+            ValidateDraft, ValidatedDraftRef,
+        };
+
+        let scope = AuthoringScope {
+            project_id: "receiving".to_owned(),
+            environment: "dev".to_owned(),
+        };
+        let validated = ValidatedDraftRef {
+            validated_draft_id: "sha256:".to_owned() + &"0".repeat(64),
+        };
+        let inventory = [
+            (
+                AuthoringCommandKind::SaveDraft,
+                AuthoringCommand::SaveDraft(wamn_authoring_model::SaveDraft {
+                    scope: scope.clone(),
+                    draft_id: "draft".to_owned(),
+                    wiring_id: "wiring".to_owned(),
+                    expected_revision: SafeUint64::try_from(0_u64).expect("zero is representable"),
+                    definition: String::new(),
+                    provenance: None,
+                }),
+            ),
+            (
+                AuthoringCommandKind::Validate,
+                AuthoringCommand::Validate(ValidateDraft {
+                    scope: scope.clone(),
+                    draft: DraftRevisionRef {
+                        draft_id: "draft".to_owned(),
+                        revision: SafeUint64::try_from(1_u64).expect("one is representable"),
+                    },
+                }),
+            ),
+            (
+                AuthoringCommandKind::DraftRun,
+                AuthoringCommand::DraftRun(DraftRun {
+                    scope: scope.clone(),
+                    validated_draft: validated.clone(),
+                    input: serde_json::Value::Null,
+                    capture: wamn_authoring_model::DraftRunCapture::default(),
+                }),
+            ),
+            (
+                AuthoringCommandKind::TestSetRun,
+                AuthoringCommand::TestSetRun(TestSetRun {
+                    scope: scope.clone(),
+                    validated_draft: validated.clone(),
+                }),
+            ),
+            (
+                AuthoringCommandKind::Publish,
+                AuthoringCommand::Publish(PublishValidatedDraft {
+                    scope,
+                    validated_draft: validated,
+                    successful_report_id: "report".to_owned(),
+                }),
+            ),
+        ];
+        // Every kind the contract declares is exercised, so the inventory cannot
+        // silently omit one.
+        assert_eq!(inventory.len(), 5);
+
+        let mut mounted = Vec::new();
+        for (kind, command) in &inventory {
+            match command_route(command) {
+                CommandRoute::Unmounted => {
+                    let response = route_absent();
+                    assert_eq!(
+                        response.status(),
+                        StatusCode::NOT_IMPLEMENTED,
+                        "{kind:?} answers an unmounted kind with something other than 501"
+                    );
+                    // The absence of a route carries nothing: no body bytes and
+                    // no content type a client could read a document out of.
+                    assert_eq!(
+                        hyper::body::Body::size_hint(response.body()).exact(),
+                        Some(0),
+                        "{kind:?} answered 501 carrying a document"
+                    );
+                    assert!(
+                        response
+                            .headers()
+                            .get(hyper::header::CONTENT_TYPE)
+                            .is_none(),
+                        "{kind:?} answered 501 typed as a document"
+                    );
+                }
+                routed => mounted.push((*kind, format!("{routed:?}"))),
+            }
+        }
+        let mounted_kinds: Vec<AuthoringCommandKind> =
+            mounted.iter().map(|(kind, _)| *kind).collect();
         assert_eq!(
-            dispatch.matches("save_draft(&mut backend").count(),
-            1,
-            "save is the sole mounted audited command"
+            mounted_kinds,
+            [
+                AuthoringCommandKind::SaveDraft,
+                AuthoringCommandKind::TestSetRun
+            ],
+            "the mounted inventory changed"
         );
+        // A mounted kind is routed to its OWN handler input, not merely to
+        // something that is not `Unmounted`.
+        assert!(mounted[0].1.starts_with("SaveDraft("));
+        assert!(mounted[1].1.starts_with("TestSetRun("));
     }
 
     /// Attribution a client attaches to a submission is never an input to the

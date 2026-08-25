@@ -356,6 +356,19 @@ impl InternalAuthoringBackend {
         Ok(())
     }
 
+    /// Reassert the fixed tenant scope and lend the control connection.
+    ///
+    /// For the compositions that CANNOT be one transaction because their other
+    /// half lives in another database (wamn-0h0g.8.5.4). Such a caller owns its
+    /// own commit boundaries, and the scope reassertion here is the same one
+    /// [`Self::begin_command_transaction`] performs, so neither path can run
+    /// against a stale tenant setting.
+    pub(crate) async fn scoped_client(&mut self, tenant_id: &str) -> anyhow::Result<&mut Client> {
+        self.require_tenant(tenant_id)?;
+        self.scope().await?;
+        Ok(&mut self.client)
+    }
+
     /// Begin one command transaction after reasserting the fixed tenant scope.
     ///
     /// The returned capability copy and transaction must stay together: the
