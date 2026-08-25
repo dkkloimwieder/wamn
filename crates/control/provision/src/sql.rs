@@ -217,10 +217,19 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
 /// second mechanism would need: a view, a separate reader role, or replicating
 /// run status into the control database were all considered and rejected.
 ///
+/// `caller_outcome_kind`, `caller_outcome_json`, `caller_http_status` and
+/// `fail_kind` are the EVALUATION LEG (wamn-0h0g.8.25). They are exactly the
+/// `runs` columns `wamn_scenario_model::Captured` is documented over, so they
+/// are the facts `evaluate` consumes: `caller_http_status` plus
+/// `caller_outcome_json` when `caller_outcome_kind` is `responded`, and
+/// `fail_kind` when it is `failed`. Status alone says a run reached terminal,
+/// not what it produced, so without these four a test-case run can be admitted
+/// and polled to terminal and still never be evaluated.
+///
 /// `grant_management_admitter_surface_sql` revokes every table and per-column
 /// privilege before granting, so this list is the whole readable surface —
 /// a column absent here is DENIED, not merely unmentioned.
-pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 19] = [
+pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 23] = [
     "tenant_id",
     "run_id",
     "binding_world_json",
@@ -240,6 +249,10 @@ pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 19] = [
     "run_deadline_at",
     "status",
     "result_json",
+    "caller_outcome_kind",
+    "caller_outcome_json",
+    "caller_http_status",
+    "fail_kind",
 ];
 /// `runs` columns minted by the management-admission statement.
 pub const MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS: [&str; 19] = [
@@ -1285,15 +1298,20 @@ mod tests {
              TO \"wamn_management_admitter\""
         ));
         assert!(sql.contains("GRANT SELECT (\"tenant_id\", \"run_id\", \"binding_world_json\""));
-        // wamn-oici's probe arm. The consumers derive their expectations from
-        // the same constant, so a widening flows through them silently and they
-        // prove nothing about it. This names the two observation columns in the
-        // emitted grant, so removing either fails HERE.
+        // wamn-oici's probe arm, extended by wamn-0h0g.8.25. The consumers derive
+        // their expectations from the same constant, so a widening flows through
+        // them silently and they prove nothing about it. This names the
+        // observation and evaluation columns literally in the emitted grant, so
+        // dropping any of them fails HERE.
         assert!(
             sql.contains(
-                "\"run_deadline_at\", \"status\", \"result_json\") ON TABLE \"wamn_run\".\"runs\""
+                "\"run_deadline_at\", \"status\", \"result_json\", \
+                 \"caller_outcome_kind\", \"caller_outcome_json\", \
+                 \"caller_http_status\", \"fail_kind\") \
+                 ON TABLE \"wamn_run\".\"runs\""
             ),
-            "the observation leg must be able to read runs.status and runs.result_json"
+            "the observation leg must read runs.status and runs.result_json, and the \
+             evaluation leg the caller-outcome family plus runs.fail_kind"
         );
         assert!(sql.contains("GRANT INSERT (\"tenant_id\", \"run_id\", \"catalog_id\""));
         assert!(sql.contains(
