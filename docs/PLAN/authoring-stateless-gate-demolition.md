@@ -1,7 +1,7 @@
 # Authoring collapses to the stateless-gate model — demolition spec
 
-**Status: DRAFT, awaiting owner ratification (`wamn-7qtw`). Non-normative until ratified.**
-On approval this is a Phase-A-style deletion wave, not a refactor.
+**Status: RATIFIED by the owner, 2026-08-25 (`wamn-7qtw`). All four questions in §7 decided.**
+This authorizes a Phase-A-style deletion wave, not a refactor.
 
 Everything below is measured at `10bbe597` unless marked as a judgement. Where the
 directive's expectation and the tree disagree, the tree is reported.
@@ -58,10 +58,10 @@ the candidate*, never minted by the caller.
 It sits on the same immutable row as `wiring_hash`, which is a real content hash. Two
 identifiers for one fact.
 
-**Ruling asked: `gate_report_id` collapses into `wiring_hash`.** A report keyed by the
-hash needs no second identifier, and the one it has references no table. This is the single
-highest-value simplification in the spec and it touches `catalog.wirings`,
-`services/ctl/src/author_wiring.rs`, and the admission statement's 17-parameter shape.
+**RATIFIED 2026-08-25: `gate_report_id` collapses into `wiring_hash`.** Bare text with no
+FK beside a real content hash is two identifiers for one fact. **The report row keys on
+`wiring_hash`; the `gate_report_id` column dies.** Touches `catalog.wirings`,
+`services/ctl/src/author_wiring.rs`, and the admission statement's parameter shape.
 
 ### 2.2 `gate` is `test-set-run`, restated
 
@@ -73,9 +73,9 @@ pass/fail report — which is gating. Nothing else in the contract produces a re
 `validate` checked a document without executing it, `draft-run` executed one case ad hoc.
 Both are strictly weaker than "execute the document's cases and report."
 
-**Judgement, not measurement:** renaming `test-set-run` to `gate` is a wire change. It
-should ride the deletion wave rather than precede it, because the wave deletes four of the
-seven ops and the contract crate is a registered drift gate.
+**RATIFIED 2026-08-25: `gate` is `test-set-run` renamed — same judgment, honest name.**
+One verb produces reports. The rename lands **with the collapse**, and the wire literal
+follows the wiring vocabulary sweep (`wamn-0h0g.26.18`).
 
 ---
 
@@ -98,7 +98,7 @@ seven ops and the contract crate is a registered drift gate.
 | --- | --- | --- |
 | `store/test_orchestration.rs` | 845 | **deletes.** Reservation/case-run/report lifecycle. |
 | `test_set.rs` | 538 | **mostly deletes.** The sequential per-ordinal loop is the resumption protocol. |
-| `store/admission.rs` | 528 | **contested — see §5.** |
+| `store/admission.rs` | 528 | **~350-400 survive**, re-homed under the gate verb; see §4. |
 | `store/drafts.rs` | 70 | **deletes.** |
 | `management.rs` | 2,032 | **partially deletes**: `lock_retry_identity`, `read_retry_outcome`, `settle_retry`, `classify_retry`, `test_set_reuse`, `save_draft_route`. |
 
@@ -111,7 +111,7 @@ idempotency makes it dead weight**: the report either exists for that hash or it
 | relation | fate |
 | --- | --- |
 | `wamn_run.authoring_test_run_reservations` | **deletes.** `state`, `whole_deadline_at`, `finalized_at`, `command_hash` are all resumption-protocol state. |
-| `wamn_run.authoring_test_case_runs` | **contested — see §5.** |
+| `wamn_run.authoring_test_case_runs` | **deletes.** Resolved by §5.1: effect-free cases make re-execution free, so per-case progress is not worth remembering. |
 | `wamn_run.authoring_test_reports` | **survives, re-keyed** by wiring-hash. It is already immutable and finalized-only. |
 
 ### 3.4 Contract surface
@@ -128,10 +128,10 @@ Survives: `PublishValidatedDraft`, `GetReport`, `GetReportRefusal`, `TestSetRun`
 **`ReportProjection::Pending` deletes.** There is no pending state in a stateless gate.
 This is what supersedes the `last_attempt_at` rider.
 
-### 3.5 Not in scope, do not sweep
+### 3.5 Adjacent relations — one survives, one deletes
 
-`catalog.authoring_command_audit` survives — it audits *who ran what*, which is orthogonal
-to draft persistence.
+`catalog.authoring_command_audit` **survives** — it audits *who ran what*, which is
+orthogonal to draft persistence. Do not sweep it.
 
 `catalog.draft_safe_connection_grants` is a **separate finding, not a survivor.** It has
 **zero production DML** — no INSERT, UPDATE, or SELECT anywhere in the tree. Its only
@@ -140,11 +140,11 @@ appearances are inside the authoring role's privilege probe
 SELECT on it, and two negative assertions that the role holds neither INSERT nor UPDATE.
 It is a table whose entire purpose is to be named in an assertion about privileges on it.
 
-That makes it a deletion candidate on its own merits, independent of this spec, and it is
-**not** a reason to keep gate-run machinery. It is called out here only so the wave does not
-inherit it by accident. Note also that `architecture/state-owners.json` lists
-`scenario-worker` as its reader, which is true only in the `has_table_privilege` sense —
-worth re-measuring against the phantom-reader class when the row is touched.
+**RATIFIED 2026-08-25: it deletes in THIS wave.** Under effect-free gating its *concept*
+is void — gate runs touch no connections — and it had no production DML to begin with. The
+probe arm dies with it **in the same commit**, per deletion rule 9, along with its
+`architecture/state-owners.json` row (which lists `scenario-worker` as a reader, true only
+in the `has_table_privilege` sense).
 
 ---
 
@@ -208,13 +208,37 @@ So there are exactly two coherent positions, and they are not equally cheap:
    "stateless" describes the *report identity*, not the execution. `authoring_test_case_runs`
    survives, re-keyed by wiring-hash instead of by reservation.
 
-**Recommendation: position 1, ratified as a contract, is the only one that delivers the
-directive's actual goal.** Position 2 keeps the machinery the directive exists to delete
-and merely re-keys it. But position 1 is a real constraint on what a test case may do, and
-it must be stated and enforced rather than assumed — otherwise the first effectful case
-silently double-fires on a retry.
+### 5.1 RATIFIED — position 1, as a constitutional clause
 
-**This is the ratification question. Everything else in the spec follows from it.**
+**Gate cases are effect-free by contract.** Owner ruling, 2026-08-25.
+
+> A gate is a **judgment about a document**, not an execution of it. Effects belong to
+> admitted runs under run identity. A report must be reproducible from the document alone,
+> or the hash-keyed idempotency is a lie.
+
+**Enforcement, and this is what makes the clause checkable rather than aspirational:** gate
+cases invoke components in a **no-effect execution mode**. The case runner refuses — typed,
+at validation or at invocation — any case whose path reaches an effectful operation. The
+enforcement point is the **effect-posture fact `wamn-0h0g.21.9` minted at admission**:
+`catalog.component_library.effects`, the validator's derived projection of a component's
+imports onto the authority packages that leave the host. A component with a non-empty
+`effects` projection cannot be reached from a gate case.
+
+That fact is already load-bearing and already guarded: `wamn-0h0g.21.10` established that a
+projection no validator derived is refused at publication (`2d81e5f1`) and on the serving
+path (`d7f36905`). The gate refusal is a third reader of the same fact, not a new mechanism.
+
+**The justification, recorded verbatim as the clause's own reasoning:**
+
+> assume it and the first effectful case silently double-fires.
+
+**Consequence:** `wamn_run.authoring_test_case_runs` **deletes** with the rest. Re-execution
+is free, so there is nothing to remember. §3.3's "contested" marking is resolved.
+
+**Demand-gated future surface, not this wave:** effectful case-testing — integration against
+real bindings — is a *different product surface*. Its trigger is a client asking for it, and
+it arrives **with run identity**, not with a resurrection of the per-ordinal machinery. Do
+not cite this spec as precedent for rebuilding reservations.
 
 ---
 
@@ -240,14 +264,19 @@ silently double-fires on a retry.
 
 ---
 
-## 7. What ratification decides
+## 7. What ratification decided — owner, 2026-08-25
 
-1. **§5: are gate cases effect-free by contract?** Position 1 or 2. Everything follows.
-2. **§2.2: is `gate` the renamed `test-set-run`?** If yes, the rename rides the wave.
-3. **§2.1: does `gate_report_id` collapse into `wiring_hash`?** Recommended yes.
-4. Whether `catalog.draft_safe_connection_grants` is deleted **by this wave or a separate
-   one**. It has no production DML at all (§3.5), so its fate does not depend on §5 — it is
-   a free-standing deletion that merely happens to sit in the same neighbourhood.
+All four carried. This section is the record, not an open list.
 
-On approval: one bead per subsystem — contract surface, draft persistence, composition
-machinery, report re-keying — dispatched as a deletion wave under the Phase-A rules.
+1. **§5.1 — gate cases are EFFECT-FREE BY CONTRACT.** Constitutional clause, enforced
+   through the `.21.9` effect-posture fact at admission. `authoring_test_case_runs` deletes.
+2. **§2.2 — `gate` IS `test-set-run` renamed.** Rename lands with the collapse.
+3. **§2.1 — `gate_report_id` COLLAPSES into `wiring_hash`.** The column dies.
+4. **§3.5 — `draft_safe_connection_grants` DELETES in this wave**, probe arm same-commit.
+
+**This spec is ratified and authorizes the wave.** One bead per subsystem, under Phase-A
+deletion rules: each subject takes its tests, guards, fixtures, registry rows and doc
+references in the same commit. Partitioning into lanes is a collision-domain question to be
+**measured, not inferred from this section's headings** — the subsystems interlock through
+`AuthoringCommand` and `management.rs`, and a lane split that breaks compilation is worse
+than one lane.
