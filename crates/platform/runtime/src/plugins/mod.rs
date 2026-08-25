@@ -1,7 +1,6 @@
 pub mod connection_http;
 pub(crate) mod effect_span;
 pub mod flow_http_routing;
-pub mod runner_egress;
 pub mod wamn_credentials;
 pub mod wamn_jetstream;
 pub mod wamn_logging;
@@ -9,7 +8,6 @@ pub mod wamn_postgres;
 
 pub use connection_http::ConnectionHttp;
 pub use flow_http_routing::FlowHttpRouting;
-pub use runner_egress::RunnerEgressPolicy;
 pub use wamn_credentials::WamnCredentials;
 pub use wamn_jetstream::WamnJetstream;
 pub use wamn_logging::WamnLogging;

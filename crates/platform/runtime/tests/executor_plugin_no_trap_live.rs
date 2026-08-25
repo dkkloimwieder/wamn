@@ -1,5 +1,5 @@
-//! Runtime proof of the no-trap discipline for the four executor-sandbox
-//! plugins (`wamn-0h0g.15.53`).
+//! Runtime proof of the no-trap discipline for the executor-sandbox plugins
+//! (`wamn-0h0g.15.53`).
 //!
 //! # Why this exists
 //!
@@ -11,14 +11,12 @@
 //! declares no error channel — rather than as a wasm trap. This COMPLEMENTS the
 //! static audit; it replaces nothing.
 //!
-//! # The four
+//! # The three
 //!
-//! `crates/execution/host/src/lib.rs` registers exactly four plugins on the
-//! executor's runner store: `WAMN_POSTGRES_ID`, `RUNNER_EGRESS_ID`,
-//! `WAMN_LOGGING_ID`, `CONNECTION_HTTP_ID`. Those are gate B's retained four and
-//! the four proved here. `wamn_jetstream`, `flow_http_routing` and
-//! `wamn_credentials` are deliberately out of scope: the first two are not on
-//! the executor store, and the third
+//! The executor's runner store carries `WAMN_POSTGRES_ID`, `WAMN_LOGGING_ID`
+//! and `CONNECTION_HTTP_ID` — gate B's retained set, and the three proved here.
+//! `wamn_jetstream`, `flow_http_routing` and `wamn_credentials` are deliberately
+//! out of scope: the first two are not on the executor store, and the third
 //! implements no `HostPlugin` and has no WIT surface at all.
 //!
 //! # Why the guests are WAT, not built fixtures
@@ -48,7 +46,7 @@
 //!   was never reached and the test proves nothing. Asserted against
 //!   POSITIVELY, so this fails too.
 //!
-//! For the two plugins whose WIT declares no error channel the trail proves
+//! For the plugin whose WIT declares no error channel the trail proves
 //! survival and a plugin-owned public observation proves the host path actually
 //! ran.
 
@@ -57,7 +55,6 @@ use std::sync::{Arc, Mutex};
 
 use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
-use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -79,9 +76,8 @@ const MARK_ENTER: u32 = 238;
 const MARK_RESUMED: u32 = 255;
 
 /// The `component_id` every store is built with. Plugins key their per-component
-/// state on it (`ActiveCtx::component_id`), so the test's own registrations —
-/// the postgres tenant claim, the egress declaration read-back — must use the
-/// same string.
+/// state on it (`ActiveCtx::component_id`), so the test's own registration —
+/// the postgres tenant claim — must use the same string.
 const GUEST_ID: &str = "no-trap-guest";
 
 // ---------------------------------------------------------------------------
@@ -206,108 +202,7 @@ fn libc_module(data: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// 1. runner_egress — wamn:runner/egress@0.1.0
-// ---------------------------------------------------------------------------
-
-/// `set-allowed-hosts` declares NO error channel (`func(hosts: list<string>)`,
-/// no `result`), so the host's only mapping for an entry the [`AllowedHost`]
-/// grammar rejects is to drop it fail-closed and keep going. The guest declares
-/// the exact (good, bad) pair `runner_egress`'s own unit test pins.
-///
-/// Data segment: `notify.example` at 256 (len 14), `*bad-wildcard` at 270
-/// (len 13).
-fn egress_guest() -> String {
-    format!(
-        r#"
-(component
-  ;; wamn-0h0g.15.53
-  (import "wamn:runner/egress@0.1.0" (instance $egress
-    (export "set-allowed-hosts" (func (param "hosts" (list string))))))
-  (import "verdict" (func $verdict (param "code" u32)))
-{libc}
-  (core func $set-hosts-lowered
-    (canon lower (func $egress "set-allowed-hosts")
-      (memory $libc "memory")
-      (realloc (func $libc "realloc"))))
-  (core func $verdict-lowered (canon lower (func $verdict)))
-
-  (core module $main
-    (import "libc" "memory" (memory 1))
-    (import "host" "set-hosts" (func $set-hosts (param i32 i32)))
-    (import "host" "verdict" (func $verdict (param i32)))
-    (func (export "drive")
-      i32.const {enter}
-      call $verdict
-      ;; hosts[0] = "notify.example" (parses)
-      i32.const 192
-      i32.const 256
-      i32.store
-      i32.const 196
-      i32.const 14
-      i32.store
-      ;; hosts[1] = "*bad-wildcard" (the grammar rejects it)
-      i32.const 200
-      i32.const 270
-      i32.store
-      i32.const 204
-      i32.const 13
-      i32.store
-      i32.const 192
-      i32.const 2
-      call $set-hosts
-      i32.const {resumed}
-      call $verdict))
-  (core instance $main (instantiate $main
-    (with "libc" (instance $libc))
-    (with "host" (instance
-      (export "set-hosts" (func $set-hosts-lowered))
-      (export "verdict" (func $verdict-lowered))))))
-  (func (export "drive") (canon lift (core func $main "drive")))
-)
-"#,
-        libc = libc_module("notify.example*bad-wildcard"),
-        enter = MARK_ENTER,
-        resumed = MARK_RESUMED,
-    )
-}
-
-#[tokio::test]
-async fn runner_egress_drops_an_unparseable_declaration_without_trapping_the_guest() {
-    let policy = Arc::new(RunnerEgressPolicy::default());
-    let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
-    plugins.insert(
-        RUNNER_EGRESS_ID,
-        policy.clone() as Arc<dyn HostPlugin + Send + Sync>,
-    );
-
-    let (outcome, trail) = drive_guest(
-        &egress_guest(),
-        plugins,
-        runner_egress::add_runner_to_linker,
-    )
-    .await;
-
-    outcome.expect("the guest survived the rejected allowed-host entry");
-    assert_eq!(
-        trail,
-        vec![MARK_ENTER, MARK_RESUMED],
-        "the guest must resume after the host rejected an entry"
-    );
-    // POSITIVE evidence the fail-closed parse path actually ran: the good entry
-    // landed and the bad one did not. A declaration that never reached the
-    // plugin would leave this `None`, and one that accepted both would be 2.
-    let declared = policy
-        .declared(GUEST_ID)
-        .expect("the declaration reached the plugin");
-    assert_eq!(
-        declared.len(),
-        1,
-        "the unparseable entry dropped fail-closed and the valid one survived"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 2. wamn_logging — wasi:logging/logging@0.1.0-draft
+// 1. wamn_logging — wasi:logging/logging@0.1.0-draft
 // ---------------------------------------------------------------------------
 
 /// `log` declares NO return value at all, so the only way it can trap is to
@@ -430,7 +325,7 @@ async fn wamn_logging_absorbs_a_garbage_guest_context_without_trapping_the_guest
 }
 
 // ---------------------------------------------------------------------------
-// 3. wamn_postgres — wamn:postgres/client@0.1.0
+// 2. wamn_postgres — wamn:postgres/client@0.1.0
 // ---------------------------------------------------------------------------
 
 /// The plugin's own contract: a `WamnPostgresConfig` with no `database_url`
@@ -570,7 +465,7 @@ async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_no
 }
 
 // ---------------------------------------------------------------------------
-// 4. connection_http — wamn:runner/http-effect@0.1.0
+// 3. connection_http — wamn:runner/http-effect@0.1.0
 // ---------------------------------------------------------------------------
 
 /// `ConnectionHttp` implements the TRUSTED `wamn:runner/http-effect` surface,

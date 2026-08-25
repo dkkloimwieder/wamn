@@ -194,29 +194,6 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
     client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
-mod causation_bindings {
-    wash_runtime::wasmtime::component::bindgen!({
-        world: "causation-plugin",
-        imports: { default: async | trappable | tracing },
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-
-use causation_bindings::wamn::runner::causation;
-
-/// Wire the TRUSTED `wamn:runner/causation` `set-run-context` channel into a
-/// linker (l5i9.12.2). Call this ONLY for the trusted, compiled-in runner
-/// — the sole component allowed to declare the run it is driving. Other components
-/// must NOT get this: it never imports `wamn:runner`, and the frozen
-/// `wamn:postgres` surface rejects a raw-SQL `wamn.*` emit, so guest causation
-/// is unforgeable. The handler feeds the [`WamnPostgres`] plugin resolved from
-/// the invoking context.
-pub fn add_runner_causation_to_linker(
-    linker: &mut Linker<SharedCtx>,
-) -> wash_runtime::wasmtime::Result<()> {
-    causation::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
-}
-
 /// Per-workload config key carrying the tenant identity (plumbed end-to-end
 /// from the WorkloadDeployment CRD's `localResources.config`, i.e. set by the
 /// platform, not the guest).

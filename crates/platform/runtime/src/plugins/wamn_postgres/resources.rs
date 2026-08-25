@@ -1,8 +1,8 @@
 //! Transaction / cursor resources and the WIT host implementations for
 //! `wamn:postgres` (SR4 split, wamn-cjv.18): the crash-safe `PgTransaction` /
 //! `PgCursor` handles, the connection-lifecycle helpers, the statement drivers
-//! (`run_query` / `run_execute`), and the `client` / `causation` host traits
-//! backed by the `WamnPostgres` plugin resolved from the invoking context.
+//! (`run_query` / `run_execute`), and the `client` host traits backed by the
+//! `WamnPostgres` plugin resolved from the invoking context.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -14,14 +14,12 @@ use tracing::Instrument as _;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::Resource;
 
-use wamn_event_wire::Causation;
-
 use crate::plugins::effect_span::{EffectIdentity, effect_span, record_effect_ms};
 
 use super::claims::{OneShotResult, reject_claim_mutation};
 use super::pool::destroy_connection;
 use super::types::{PgParam, columns_of, decode_row, map_pg_error};
-use super::{PgError, RowSet, SqlValue, WAMN_POSTGRES_ID, WamnPostgres, causation, client};
+use super::{PgError, RowSet, SqlValue, WAMN_POSTGRES_ID, WamnPostgres, client};
 
 #[cfg(feature = "wasm_component_model_implements")]
 use super::bindings;
@@ -183,37 +181,6 @@ pub(super) async fn run_execute(
 
 fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPostgres>> {
     ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
-}
-
-impl causation::Host for ActiveCtx<'_> {
-    /// The trusted runner declares (or clears, with `none`) the causation
-    /// context of the run it is driving (l5i9.12.2). Only components linked with
-    /// [`add_runner_causation_to_linker`] can call this. The declaration feeds
-    /// the [`WamnPostgres`] plugin's per-component run map, so every subsequent
-    /// transaction the plugin opens for this component stamps a `wamn.causation`
-    /// message. If no postgres plugin is present in this context (a runner-less
-    /// bench), the declaration is a harmless no-op.
-    async fn set_run_context(
-        &mut self,
-        ctx: Option<causation::RunContext>,
-    ) -> wash_runtime::wasmtime::Result<()> {
-        let component = self.component_id.to_string();
-        let run = ctx.map(|c| Causation {
-            run: c.run,
-            root: c.root,
-            depth: c.depth,
-        });
-        tracing::debug!(
-            target: "wamn::causation",
-            component,
-            run = ?run.as_ref().map(|c| &c.run),
-            "per-run causation context declared"
-        );
-        if let Ok(plugin) = plugin_of(self) {
-            plugin.set_current_run(&component, run);
-        }
-        Ok(())
-    }
 }
 
 /// [9.8] Guest DB-call latency histogram (ms), labelled by `db.operation`

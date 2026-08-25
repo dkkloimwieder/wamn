@@ -16,26 +16,6 @@ world connection-http-plugin {
   import wamn:connection/http@0.1.0;
 }
 
-/// Host-side bindgen world for the trusted `wamn:runner/egress` channel
-/// (fqg.11): the compiled-in runner supplies each run's resolved
-/// connection authority so the run-worker's outgoing handler can enforce it
-/// (never-supplied / supplied-empty = deny-all, intersected with the host-level
-/// list). See plugins/runner_egress.rs.
-world egress-plugin {
-  import wamn:runner/egress@0.1.0;
-}
-
-/// Host-side bindgen world for the trusted `wamn:runner/causation` channel
-/// (l5i9.12.2): the compiled-in runner declares the run it is driving
-/// ({run, root, depth}) so the `wamn:postgres` plugin stamps a transactional
-/// `wamn.causation` logical message onto every run-owned transaction, which the
-/// CDC reader (l5i9.12.1) stitches onto the txn's row events. The host
-/// IMPLEMENTS `set-run-context`, feeding the plugin's per-component run map.
-/// See plugins/wamn_postgres.rs.
-world causation-plugin {
-  import wamn:runner/causation@0.1.0;
-}
-
 /// Host-side bindgen world for the trusted one-frame HTTP effect surface.
 world runner-http-effect-plugin {
   import wamn:runner/http-effect@0.1.0;

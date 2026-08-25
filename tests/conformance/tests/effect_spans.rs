@@ -35,15 +35,13 @@
 //! # Where the line between an effect and a local operation is drawn
 //!
 //! A method is an `Effect` when the guest invokes it and it leaves the host.
-//! Three kinds of method do not:
+//! Two kinds of method do not:
 //!
 //! - **Resource destructors** (`drop`). The host reclaiming what the guest let
 //!   go, not an operation the guest named; the WIT gives the guest no way to
 //!   observe or handle the outcome, so there is no effect to attribute.
 //! - **Accessors over already-delivered data** (`body`, `subject`, `headers`,
 //!   `metadata`). The bytes are in host memory; reading them crosses nothing.
-//! - **Host-local declarations** (`causation.set-run-context`). Writes a map
-//!   inside the plugin.
 //!
 //! # Scope
 //!
@@ -95,14 +93,6 @@ type MethodSurfaces = &'static [(&'static str, Surface)];
 
 /// Every `impl … for ActiveCtx` of the instrumented plugins, and every method.
 const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
-    (
-        POSTGRES,
-        "causation::Host",
-        &[(
-            "set_run_context",
-            Surface::Local("host-local declaration into the plugin's per-component run map"),
-        )],
-    ),
     (
         POSTGRES,
         "client::Host",

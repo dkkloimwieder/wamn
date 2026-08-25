@@ -72,11 +72,11 @@ pub struct WamnPostgres {
     /// the claim writes the pair onto the run it leases, write-once.
     release_identities: std::sync::RwLock<HashMap<String, ReleaseIdentity>>,
     /// component id → the causation context {run, root, depth} of the run the
-    /// trusted runner is currently driving (l5i9.12.2). Declared through
-    /// the `wamn:runner/causation` channel ([`add_runner_causation_to_linker`]),
-    /// cleared (removed) between runs. Absent (the default) ⇒ no causation is
-    /// stamped — so every non-run path (S2..S6, the gateway, benches without a
-    /// declaration) is byte-unchanged. When set, [`begin_with_claims`] appends a
+    /// caller is currently driving (l5i9.12.2). Declared through
+    /// [`set_current_run`](WamnPostgres::set_current_run), cleared (removed)
+    /// between runs. Absent (the default) ⇒ no causation is stamped — so every
+    /// non-run path (S2..S6, the gateway, benches without a declaration) is
+    /// byte-unchanged. When set, [`begin_with_claims`] appends a
     /// TRANSACTIONAL `wamn.causation` logical message to every transaction the
     /// plugin opens for that component, which the CDC reader (l5i9.12.1)
     /// stitches onto the txn's row events.
@@ -990,10 +990,9 @@ impl WamnPostgres {
     }
 
     /// Declare (`Some`) or clear (`None`) the causation context of the run a
-    /// component is driving (l5i9.12.2). The trusted runner feeds this
-    /// through the `wamn:runner/causation` channel; while set, every
-    /// transaction the plugin opens for the component carries a `wamn.causation`
-    /// message. The bench harness / live tests call this directly, exactly like
+    /// component is driving (l5i9.12.2). While set, every transaction the plugin
+    /// opens for the component carries a `wamn.causation` message. Host-injected
+    /// like the other claim registries — callers set it directly, exactly like
     /// [`set_tenant`](Self::set_tenant) / [`set_runner`](Self::set_runner).
     pub fn set_current_run(&self, component_id: &str, ctx: Option<Causation>) {
         let mut w = self.current_run.write().expect("current_run lock poisoned");
@@ -1098,10 +1097,10 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
-        // Causation is RUN-scoped, declared by the trusted runner through
-        // `wamn:runner/causation` once the run is in hand. A binding acquisition
-        // has no run yet, so it starts undeclared — carrying the previous
-        // acquisition's run context forward would misattribute its CDC stitch.
+        // Causation is RUN-scoped, declared through `set_current_run` once the
+        // run is in hand. A binding acquisition has no run yet, so it starts
+        // undeclared — carrying the previous acquisition's run context forward
+        // would misattribute its CDC stitch.
         self.current_run
             .write()
             .expect("current_run lock poisoned")
