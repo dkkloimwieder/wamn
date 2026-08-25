@@ -41,12 +41,12 @@
 //! The guest `context` string may carry a W3C `traceparent` (+ `tracestate`); the
 //! drain task parses it and sets the OTel `LogRecord`'s trace context
 //! (trace_id/span_id/flags) so a guest log correlates with its run's trace in the
-//! backend. The emitting runner (the flowrunner run path) includes the run's
-//! traceparent in that context object.
+//! backend. The emitting runner includes the run's traceparent in that context
+//! object.
 //!
 //! ## Production shape (run path)
 //!
-//! Beyond the S5 bench, the production flowrunner emits a few structured
+//! Beyond the S5 bench, the production runner emits a few structured
 //! `wasi:logging` records per run (node completion, node error CLASS, run
 //! completion) through THIS plugin, linked into the wamn-run-worker store with
 //! the host-injected (unspoofable) tenant/project claim.

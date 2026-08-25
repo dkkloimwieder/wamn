@@ -150,9 +150,9 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA s2 TO wamn_app;
 
 -- ===========================================================================
 -- S3 fixture: flow catalog, production-shaped run history, and an idempotent
--- sink for the flow-runner PoC (docs/archive/p0-exit-criteria.md S3). Same security
+-- sink for the runner PoC (docs/archive/p0-exit-criteria.md S3). Same security
 -- shape as s2: one app role, tenant separation via the app.tenant claim + RLS.
--- The flow-runner reads the catalog and writes run history and the sink entirely
+-- The runner reads the catalog and writes run history and the sink entirely
 -- through the wamn:postgres capability under its injected claim.
 -- ===========================================================================
 CREATE SCHEMA s3 AUTHORIZATION postgres;

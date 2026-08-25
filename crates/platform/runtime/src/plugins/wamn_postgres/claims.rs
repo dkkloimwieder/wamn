@@ -52,7 +52,7 @@ pub struct WamnPostgres {
     /// component id → durable-queue lease owner (fqg.4). Absent (the default)
     /// leaves `app.runner` unset — so every non-claiming path (S2..S6, the
     /// gateway) is byte-unchanged. When set, the plugin injects
-    /// `SET LOCAL app.runner` so a flowrunner replica reads its owner identity to
+    /// `SET LOCAL app.runner` so a runner replica reads its owner identity to
     /// claim/renew queue rows under.
     runners: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the caller's `app.role` claim (a `roles.name`). Absent
@@ -72,7 +72,7 @@ pub struct WamnPostgres {
     /// the claim writes the pair onto the run it leases, write-once.
     release_identities: std::sync::RwLock<HashMap<String, ReleaseIdentity>>,
     /// component id → the causation context {run, root, depth} of the run the
-    /// trusted flow-runner is currently driving (l5i9.12.2). Declared through
+    /// trusted runner is currently driving (l5i9.12.2). Declared through
     /// the `wamn:runner/causation` channel ([`add_runner_causation_to_linker`]),
     /// cleared (removed) between runs. Absent (the default) ⇒ no causation is
     /// stamped — so every non-run path (S2..S6, the gateway, benches without a
@@ -860,7 +860,7 @@ impl WamnPostgres {
 
     /// Register the durable-queue lease owner for a component id (fqg.4). When
     /// set, every transaction the plugin opens for that component also runs
-    /// `SET LOCAL app.runner`, so a flowrunner replica reads a stable owner to
+    /// `SET LOCAL app.runner`, so a runner replica reads a stable owner to
     /// claim/renew queue rows under. The bench harness calls this directly (a
     /// distinct owner per replica); the host path feeds it from the
     /// `wamn.runner` workload config.
@@ -990,7 +990,7 @@ impl WamnPostgres {
     }
 
     /// Declare (`Some`) or clear (`None`) the causation context of the run a
-    /// component is driving (l5i9.12.2). The trusted flow-runner feeds this
+    /// component is driving (l5i9.12.2). The trusted runner feeds this
     /// through the `wamn:runner/causation` channel; while set, every
     /// transaction the plugin opens for the component carries a `wamn.causation`
     /// message. The bench harness / live tests call this directly, exactly like

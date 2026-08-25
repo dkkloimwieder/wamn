@@ -1,9 +1,9 @@
 //! The trusted `wamn:runner/egress` channel for connection-derived outbound
 //! authority (fqg.11).
 //!
-//! The run-worker drives a SINGLE long-lived flowrunner component; the host
+//! The run-worker drives a SINGLE long-lived runner component; the host
 //! never sees a per-run boundary on the generic outgoing-handler path. The
-//! trusted, compiled-in flowrunner therefore supplies the hosts resolved from
+//! trusted, compiled-in runner therefore supplies the hosts resolved from
 //! the active connection instance through a channel linked ONLY into its world,
 //! and the host enforces them on the outgoing-`wasi:http` path (`RunnerEgress`
 //! in `crates/execution/host/src/lib.rs`).
@@ -41,7 +41,7 @@ use bindings::wamn::runner::egress;
 pub const RUNNER_EGRESS_ID: &str = "wamn-runner-egress";
 
 /// Wire the TRUSTED `wamn:runner/egress` `set-allowed-hosts` channel into a
-/// linker. Call this ONLY for the trusted, compiled-in flowrunner — the sole
+/// linker. Call this ONLY for the trusted, compiled-in runner — the sole
 /// component allowed to supply resolved per-run egress authority; ordinary
 /// components must never get this.
 pub fn add_runner_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
@@ -139,7 +139,7 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<RunnerEg
 }
 
 impl egress::Host for ActiveCtx<'_> {
-    /// The trusted flow-runner declares the hosts the run it is about to
+    /// The trusted runner declares the hosts the run it is about to
     /// dispatch may reach. Only components linked with
     /// [`add_runner_to_linker`] can call this.
     async fn set_allowed_hosts(

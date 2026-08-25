@@ -1,6 +1,6 @@
 # Component+wiring router executor. One process owns the durable queue claim,
 # the single RouterDriver, its wiring cache, and its digest-keyed instance pool.
-# It does not embed a flowrunner or accept execution plans.
+# It does not accept execution plans.
 #
 # Prerequisites are deliberately separate lifecycle objects:
 #   - `wamn-executor-db`: one project-environment database URL under key `url`;

@@ -64,8 +64,8 @@
 //! 3. jetstream delivery — gates delivery on
 //!    [`ServingManifest::registrations`].
 //!
-//! Reader 1 runs in the flowrunner in-process host; readers 2 and 3 run in the
-//! wash host. Those are separate processes and cannot share one object, so the
+//! Reader 1 runs in the executor process; readers 2 and 3 run in the wash host.
+//! Those are separate processes and cannot share one object, so the
 //! rule is one instance *per process*: construct once, hand it out by reference,
 //! and never hold two.
 

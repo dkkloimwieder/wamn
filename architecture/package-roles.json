@@ -156,11 +156,11 @@
       "deployable": true,
       "native": {
         "native_kind": "transition-runtime",
-        "native_reason": "The serving executor currently embeds the flowrunner component through the shared native execution host.",
+        "native_reason": "The serving executor currently embeds execution components through the shared native execution host.",
         "owner": "wamn-l5i9.49 / execution owners",
         "credential_failure_scope": "One worker process owns its queue lease, project database session, and embedded component failure domain.",
         "tested_boundary": "Executor process and runner integration proofs cover queue claim, component execution, and durable completion.",
-        "exit_condition": "Retire when flowrunner is promoted to a production Service workload with equivalent lease, failure, and rollback behavior (wamn-l5i9.49)."
+        "exit_condition": "Retire when the executor is promoted to a production Service workload with equivalent lease, failure, and rollback behavior (wamn-l5i9.49)."
       }
     },
     {

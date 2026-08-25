@@ -186,7 +186,7 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPost
 }
 
 impl causation::Host for ActiveCtx<'_> {
-    /// The trusted flow-runner declares (or clears, with `none`) the causation
+    /// The trusted runner declares (or clears, with `none`) the causation
     /// context of the run it is driving (l5i9.12.2). Only components linked with
     /// [`add_runner_causation_to_linker`] can call this. The declaration feeds
     /// the [`WamnPostgres`] plugin's per-component run map, so every subsequent

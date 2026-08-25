@@ -45,7 +45,7 @@ const RELEASE_WELD_CONSTRUCTION: &str = "ReleaseManifestWeld::load";
 /// `(release version, manifest digest)` pair a claim records. A component that
 /// bound first would have no pair.
 ///
-/// The second process used to be the in-process flowrunner host, reached through
+/// The second process used to be the in-process run host, reached through
 /// `load_plan_release`; `18ba72b6` deleted host plan supply and that symbol with
 /// it, so this entry named a function that existed nowhere and the guard proved
 /// nothing (wamn-nguw). Both surviving processes call the weld directly.

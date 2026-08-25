@@ -9,9 +9,8 @@ operational ledger, never competing design authority.
 
 `services/host` is the production washlet host. Production queue execution and
 deterministic scenario execution are separate artifacts which share
-`crates/execution/host` and the same flowrunner component. Our wash-runtime
-changes are carried commits on a fork — see
-`docs/archive/platform/wash-runtime-fork.md`.
+`crates/execution/host`. Our wash-runtime changes are carried commits on a fork
+— see `docs/archive/platform/wash-runtime-fork.md`.
 
 ## Repository layout
 
@@ -23,7 +22,7 @@ services/               native deployable Rust services
                         migrate-catalog, dump/restore/copy-project-env,
                         enable-cdc-project-env) — SR9 split
   dispatcher            shared trigger dispatcher service (SR9 split)
-  executor              production flow-runner service; emits the stable
+  executor              production router executor service; emits the stable
                         wamn-run-worker binary
   scenario-worker       authoring management service
   cdc-reader            CDC event-reader service (SR9 split)
@@ -46,7 +45,7 @@ crates/                 shared Rust workspace packages
     control             wamn-schema-control: lifecycle, migration, and impact
   execution/
     contract            wamn-execution-contract: node contract, ports, cases
-    host                shared native host for the flowrunner component
+    host                shared native host for execution components
     router              wamn-router: host-side graph walk
     run-state           wamn-run-state: run history, queue, lease, and timer state
     scheduler           wamn-scheduler: pure cron, due-tick, and cadence decisions
@@ -65,7 +64,7 @@ crates/                 shared Rust workspace packages
 
 components/             wasm32-wasip2 guests
   ingress/              product ingress components (flow-http)
-  execution/            product execution components (flowrunner, materializer)
+  execution/            product execution components (materializer)
   fixtures/             non-product proof fixtures (busyloop,
                         connection-http-standard, sockprobe)
   no-std/               SECOND cargo workspace: the no_std palette guests

@@ -1,7 +1,7 @@
 package wamn:runner@0.1.0;
 
 interface egress {
-  /// Supply the hosts the run the flowrunner is about to dispatch may reach
+  /// Supply the hosts the run the runner is about to dispatch may reach
   /// over outbound HTTP (resolved from its active connection, fqg.11).
   /// Replaces any prior declaration for this component. Enforcement is
   /// host-side on the outgoing-handler path: a request must pass BOTH the
@@ -13,7 +13,7 @@ interface egress {
 
 interface causation {
   /// The causation context of a run — {run, root, depth} (wamn-l5i9.12). The
-  /// flow-runner declares the run it is about to drive so the host's
+  /// runner declares the run it is about to drive so the host's
   /// `wamn:postgres` plugin stamps a TRANSACTIONAL `wamn.causation` logical
   /// message onto every run-owned transaction it opens; the CDC reader
   /// (l5i9.12.1) stitches that message onto the txn's row events. `root` is the
@@ -27,7 +27,7 @@ interface causation {
     depth: u32,
   }
 
-  /// Declare (`some`) or clear (`none`) the run context the flow-runner is
+  /// Declare (`some`) or clear (`none`) the run context the runner is
   /// driving. Replaces any prior declaration for this component. While set, the
   /// host stamps causation onto every transaction the plugin opens for this
   /// component; cleared, no causation is stamped. Trusted, compiled-in-only:
@@ -37,7 +37,7 @@ interface causation {
   set-run-context: func(ctx: option<run-context>);
 }
 /// Trusted one-frame HTTP effect surface. Linked only into the digest-pinned
-/// flowrunner.
+/// runner.
 interface http-effect {
   record invocation-context {
     version: string,

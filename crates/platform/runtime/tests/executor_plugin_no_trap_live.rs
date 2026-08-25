@@ -14,7 +14,7 @@
 //! # The four
 //!
 //! `crates/execution/host/src/lib.rs` registers exactly four plugins on the
-//! executor's flowrunner store: `WAMN_POSTGRES_ID`, `RUNNER_EGRESS_ID`,
+//! executor's runner store: `WAMN_POSTGRES_ID`, `RUNNER_EGRESS_ID`,
 //! `WAMN_LOGGING_ID`, `CONNECTION_HTTP_ID`. Those are gate B's retained four and
 //! the four proved here. `wamn_jetstream`, `flow_http_routing` and
 //! `wamn_credentials` are deliberately out of scope: the first two are not on

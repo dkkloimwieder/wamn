@@ -205,7 +205,7 @@ mod causation_bindings {
 use causation_bindings::wamn::runner::causation;
 
 /// Wire the TRUSTED `wamn:runner/causation` `set-run-context` channel into a
-/// linker (l5i9.12.2). Call this ONLY for the trusted, compiled-in flow-runner
+/// linker (l5i9.12.2). Call this ONLY for the trusted, compiled-in runner
 /// — the sole component allowed to declare the run it is driving. Other components
 /// must NOT get this: it never imports `wamn:runner`, and the frozen
 /// `wamn:postgres` surface rejects a raw-SQL `wamn.*` emit, so guest causation
