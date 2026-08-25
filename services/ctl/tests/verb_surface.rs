@@ -95,7 +95,7 @@ fn ctl_live_database_lock_inventory_is_exact() {
         (
             "run_plane_live.rs",
             include_str!("run_plane_live.rs"),
-            10,
+            9,
             5,
         ),
     ];
@@ -151,7 +151,7 @@ fn ctl_live_database_lock_inventory_is_exact() {
         optional += actual_optional;
         required += actual_required;
     }
-    assert_eq!((optional, required), (16, 11));
+    assert_eq!((optional, required), (15, 11));
 }
 
 #[test]
