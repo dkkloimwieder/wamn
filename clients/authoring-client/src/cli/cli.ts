@@ -1,17 +1,24 @@
 // The headless authoring CLI (`wamn`), wamn-ftfc.14.
 //
-// WHAT THIS IS. A checkout client. It reads working-tree wiring definitions and
-// drives the public versioned authoring commands over HTTP through the
-// wamn-jvzx.2 generated client: `validate` (save the working tree, then validate
-// the exact revision it saved), `draft-run`, and `promote` (the public `publish`
-// command). It composes nothing the contract does not define and invents no route.
+// WHAT THIS IS. A checkout client. It drives the public versioned authoring
+// commands over HTTP through the wamn-jvzx.2 generated client: `test-set-run`
+// (the `gate` verb) and `promote` (the public `publish` command), plus the
+// `get-report` read. It composes nothing the contract does not define and
+// invents no route.
+//
+// It SAVES NOTHING (wamn-0h0g.8.5.5). A draft is a client-side file — this
+// checkout's own working tree — and the wiring document's content hash is its
+// identity, so there is no save, validate, read-back or ad-hoc-run verb here.
 //
 // WHAT THIS IS NOT. It has no in-process handler, no database URL, no operator
 // recovery path, and no frontend. Its whole capability surface is the injected
 // `CliIo` port below: one POST-only fetch, read/write of caller-named files, and
-// a `git` reader for its own checkout's provenance. There is no environment
-// read, no process spawn beyond that reader, and no second transport — so the
-// absence of those shortcuts is structural rather than a promise.
+// read/write of caller-named files. There is no environment read, NO PROCESS
+// SPAWN AT ALL, and no second transport — so the absence of those shortcuts is
+// structural rather than a promise. The `git` reader left with `save-draft`
+// (wamn-0h0g.8.5.5): provenance had exactly one wire carrier, and with that
+// command gone nothing can consume a commit claim, so the capability is
+// withdrawn rather than left dangling.
 //
 // Every invocation writes exactly one JSON document to stdout: typed identities,
 // typed product refusals, typed transport absence (`501`), or a fault. The human
@@ -35,8 +42,6 @@ import {
   type AuthoringRequest,
   type AuthoringScope,
   type CommandRefusal,
-  type CommitProvenance,
-  type DraftRunCapture,
   type QueryRefusal,
 } from "../generated/authoring.js";
 
@@ -70,17 +75,10 @@ export interface CliIo {
   readonly fetch: FetchLike;
   /// Read one caller-named file as UTF-8 text.
   readonly readText: (path: string) => Promise<string>;
-  /// Last-modified time of one caller-named file, in epoch milliseconds. This
-  /// is the "edit" instant of the edit-to-run measurement.
-  readonly modifiedAt: (path: string) => Promise<number>;
   /// Read one caller-named JSON file, or `undefined` when it does not exist.
   readonly readJson: (path: string) => Promise<unknown>;
   /// Write one caller-named JSON file, creating parent directories.
   readonly writeJson: (path: string, value: unknown) => Promise<void>;
-  /// Run one read-only `git` query in the client's own checkout. Typing the
-  /// port as `git` and nothing else is what makes "no other program runs"
-  /// structural: there is no call shape that could name another executable.
-  readonly git: (args: ReadonlyArray<string>, cwd: string) => string | undefined;
   /// The single machine-readable document.
   readonly out: (line: string) => void;
   /// The human transcript.
@@ -121,7 +119,6 @@ export interface CliDocument {
   readonly verb: string;
   readonly status: StepStatus;
   readonly steps: ReadonlyArray<StepRecord>;
-  readonly "edit-to-run-ms": number | null;
   readonly "elapsed-ms": number;
 }
 
@@ -130,13 +127,8 @@ export interface CliDocument {
 /// and no privileged datum; every field here also arrives on stdout.
 export interface CliState {
   readonly "state-version": 1;
-  readonly "draft-id"?: string;
-  readonly "wiring-id"?: string;
-  readonly revision?: number;
-  readonly "edit-at"?: number;
   readonly "validated-draft-id"?: string;
   readonly "report-id"?: string;
-  readonly "run-id"?: string;
 }
 
 class UsageError extends Error {}
@@ -155,65 +147,6 @@ function request(commandId: string, command: AuthoringCommand): AuthoringRequest
 
 function queryRequest(queryId: string, query: AuthoringQuery): AuthoringQueryRequest {
   return { "query-id": queryId, "schema-version": AUTHORING_SCHEMA_VERSION, query };
-}
-
-export interface SaveOptions {
-  readonly commandId: string;
-  readonly scope: AuthoringScope;
-  readonly draftId: string;
-  readonly wiringId: string;
-  readonly expectedRevision: number;
-  readonly definition: string;
-  readonly provenance?: CommitProvenance;
-}
-
-export function saveDraftRequest(options: SaveOptions): AuthoringRequest {
-  const input = {
-    definition: options.definition,
-    "draft-id": options.draftId,
-    "expected-revision": options.expectedRevision,
-    "wiring-id": options.wiringId,
-    scope: options.scope,
-    ...(options.provenance === undefined ? {} : { provenance: options.provenance }),
-  };
-  return request(options.commandId, { kind: "save-draft", input });
-}
-
-export interface ValidateOptions {
-  readonly commandId: string;
-  readonly scope: AuthoringScope;
-  readonly draftId: string;
-  readonly revision: number;
-}
-
-export function validateRequest(options: ValidateOptions): AuthoringRequest {
-  return request(options.commandId, {
-    kind: "validate",
-    input: {
-      draft: { "draft-id": options.draftId, revision: options.revision },
-      scope: options.scope,
-    },
-  });
-}
-
-export interface DraftRunOptions {
-  readonly commandId: string;
-  readonly scope: AuthoringScope;
-  readonly validatedDraftId: string;
-  readonly input: unknown;
-  readonly capture?: DraftRunCapture;
-}
-
-export function draftRunRequest(options: DraftRunOptions): AuthoringRequest {
-  return request(options.commandId, {
-    kind: "draft-run",
-    input: {
-      ...(options.capture === undefined ? {} : { capture: options.capture }),
-      input: options.input,
-      scope: options.scope,
-      "validated-draft": { "validated-draft-id": options.validatedDraftId },
-    },
-  });
 }
 
 export interface TestSetRunOptions {
@@ -252,18 +185,6 @@ export function promoteRequest(options: PromoteOptions): AuthoringRequest {
   });
 }
 
-export function readDraftRequest(
-  queryId: string,
-  scope: AuthoringScope,
-  draftId: string,
-  revision: number,
-): AuthoringQueryRequest {
-  return queryRequest(queryId, {
-    kind: "read-draft",
-    input: { draft: { "draft-id": draftId, revision }, scope },
-  });
-}
-
 export function getReportRequest(
   queryId: string,
   scope: AuthoringScope,
@@ -279,7 +200,7 @@ export function getReportRequest(
 // Argument parsing
 // ---------------------------------------------------------------------------
 
-const FLAGS = new Set(["--help", "--no-state", "--no-provenance"]);
+const FLAGS = new Set(["--help", "--no-state"]);
 
 const OPTIONS = new Set([
   "--base-url",
@@ -289,24 +210,11 @@ const OPTIONS = new Set([
   "--command-id",
   "--query-id",
   "--state",
-  "--file",
-  "--draft-id",
-  "--wiring-id",
-  "--expected-revision",
   "--validated-draft",
-  "--input",
-  "--capture",
   "--report-id",
 ]);
 
-export const VERBS = [
-  "validate",
-  "draft-run",
-  "test-set-run",
-  "promote",
-  "read-draft",
-  "get-report",
-] as const;
+export const VERBS = ["test-set-run", "promote", "get-report"] as const;
 
 export type Verb = (typeof VERBS)[number];
 
@@ -362,12 +270,9 @@ function integer(text: string, name: string): number {
 export const USAGE = `usage: wamn <command> [options]
 
 commands:
-  validate     save the working-tree definition, then validate the exact saved revision
-  draft-run    run one authored input against a validated draft
-  test-set-run run the validated draft's own cases
-  promote      publish a validated draft proven by a successful report
-  read-draft   read one exact draft revision
-  get-report   read one test-set report projection
+  test-set-run gate a candidate wiring against its own cases
+  promote      publish a candidate proven by a successful report
+  get-report   read one gate report projection
 
 authentication (always from a file so no token reaches argv):
   --token-file FILE   an already-issued personal access token (required)
@@ -381,11 +286,8 @@ common options:
   --state FILE             client-local identity cache (default ${DEFAULT_STATE_PATH})
   --no-state               neither read nor write the state file
 
-validate:  --file PATH --draft-id ID --wiring-id ID [--expected-revision N] [--no-provenance]
-draft-run: --input PATH [--validated-draft ID] [--capture full|off]
 test-set-run: [--validated-draft ID]
 promote:   [--validated-draft ID] [--report-id ID]
-read-draft: --draft-id ID --expected-revision N
 get-report: [--report-id ID]
 
 stdout carries exactly one JSON document; exit 0 completed, 3 refused,
@@ -620,30 +522,6 @@ async function writeState(
 }
 
 // ---------------------------------------------------------------------------
-// Provenance
-// ---------------------------------------------------------------------------
-
-/// The client's own claim about where it read a definition. The platform runs no
-/// Git, so this is the only place a commit can come from — and it is attribution
-/// only: it selects no principal, widens no role, and changes no result.
-export function checkoutProvenance(io: CliIo, directory: string): CommitProvenance | undefined {
-  const commit = io.git(["rev-parse", "HEAD"], directory);
-  if (commit === undefined || commit.length === 0) return undefined;
-  const reference = io.git(["symbolic-ref", "--quiet", "HEAD"], directory);
-  const status = io.git(["status", "--porcelain"], directory);
-  return {
-    commit,
-    dirty: status !== undefined && status.length > 0,
-    ref: reference === undefined || reference.length === 0 ? null : reference,
-  };
-}
-
-function directoryOf(path: string): string {
-  const separator = path.lastIndexOf("/");
-  return separator <= 0 ? "." : path.slice(0, separator);
-}
-
-// ---------------------------------------------------------------------------
 // Verbs
 // ---------------------------------------------------------------------------
 
@@ -661,8 +539,6 @@ interface Session {
 function commandId(session: Session, kind: AuthoringCommandKind, ordinal: number): string {
   const override = session.parsed.values["command-id"];
   if (override === undefined) return `${kind}-${session.started.toString(36)}-${ordinal}`;
-  // A composed verb sends two commands, and the contract's command id is per
-  // command, so an override is suffixed rather than reused.
   return ordinal === 0 ? override : `${override}-${ordinal}`;
 }
 
@@ -676,116 +552,6 @@ function stateOrRequired(session: Session, option: string, key: keyof CliState):
   const remembered = session.state[key];
   if (typeof remembered === "string" && remembered.length > 0) return remembered;
   throw new UsageError(`--${option} is required (no ${String(key)} in the state file)`);
-}
-
-async function runValidate(session: Session): Promise<StepRecord[]> {
-  const file = required(session.parsed, "file");
-  const draftId = required(session.parsed, "draft-id");
-  const wiringId = required(session.parsed, "wiring-id");
-  const suppliedRevision = session.parsed.values["expected-revision"];
-  const expectedRevision =
-    suppliedRevision !== undefined
-      ? integer(suppliedRevision, "expected-revision")
-      : session.state["draft-id"] === draftId && typeof session.state.revision === "number"
-        ? session.state.revision
-        : 0;
-
-  const definition = await session.io.readText(file);
-  const editedAt = await session.io.modifiedAt(file);
-  const provenance = session.parsed.flags.has("--no-provenance")
-    ? undefined
-    : checkoutProvenance(session.io, directoryOf(file));
-  session.transcript.note(
-    `save   file=${file} draft-id=${draftId} wiring-id=${wiringId} bytes=${definition.length} ` +
-      `expected-revision=${expectedRevision} provenance=${provenance === undefined ? "none" : provenance.commit}`,
-  );
-
-  const saved = await execute(
-    session.client,
-    saveDraftRequest({
-      commandId: commandId(session, "save-draft", 0),
-      definition,
-      draftId,
-      expectedRevision,
-      wiringId,
-      provenance,
-      scope: session.scope,
-    }),
-    session.io,
-    session.transcript,
-  );
-  const steps = [saved];
-  if (saved.status !== "completed") return steps;
-
-  const revision = (saved.result as { revision: number }).revision;
-  await writeState(session.io, session.statePath, session.state, {
-    "draft-id": draftId,
-    "edit-at": editedAt,
-    "wiring-id": wiringId,
-    revision,
-  });
-
-  session.transcript.note(`validate draft-id=${draftId} revision=${revision}`);
-  const validated = await execute(
-    session.client,
-    validateRequest({
-      commandId: commandId(session, "validate", 1),
-      draftId,
-      revision,
-      scope: session.scope,
-    }),
-    session.io,
-    session.transcript,
-  );
-  steps.push(validated);
-  if (validated.status === "completed") {
-    const identity = validated.result as { "validated-draft-id": string };
-    await writeState(session.io, session.statePath, { ...session.state, revision }, {
-      "draft-id": draftId,
-      "edit-at": editedAt,
-      "wiring-id": wiringId,
-      revision,
-      "validated-draft-id": identity["validated-draft-id"],
-    });
-  }
-  return steps;
-}
-
-async function runDraftRun(session: Session): Promise<StepRecord[]> {
-  const validatedDraftId = stateOrRequired(session, "validated-draft", "validated-draft-id");
-  const inputPath = required(session.parsed, "input");
-  let input: unknown;
-  try {
-    input = JSON.parse(await session.io.readText(inputPath));
-  } catch (error) {
-    throw new UsageError(`--input ${inputPath} is not JSON: ${(error as Error).message}`);
-  }
-  const captureValue = session.parsed.values["capture"];
-  let capture: DraftRunCapture | undefined;
-  if (captureValue !== undefined) {
-    if (captureValue !== "full" && captureValue !== "off") {
-      throw new UsageError("--capture must be full or off");
-    }
-    capture = captureValue;
-  }
-  session.transcript.note(`draft-run validated-draft=${validatedDraftId} input=${inputPath}`);
-  const step = await execute(
-    session.client,
-    draftRunRequest({
-      commandId: commandId(session, "draft-run", 0),
-      capture,
-      input,
-      scope: session.scope,
-      validatedDraftId,
-    }),
-    session.io,
-    session.transcript,
-  );
-  if (step.status === "completed") {
-    const receipt = step.result as { "run-id": string };
-    await writeState(session.io, session.statePath, session.state, { "run-id": receipt["run-id"] });
-  }
-  return [step];
 }
 
 async function runTestSetRun(session: Session): Promise<StepRecord[]> {
@@ -829,19 +595,6 @@ async function runPromote(session: Session): Promise<StepRecord[]> {
   ];
 }
 
-async function runReadDraft(session: Session): Promise<StepRecord[]> {
-  const draftId = required(session.parsed, "draft-id");
-  const revision = integer(required(session.parsed, "expected-revision"), "expected-revision");
-  return [
-    await executeQuery(
-      session.client,
-      readDraftRequest(queryId(session, "read-draft"), session.scope, draftId, revision),
-      session.io,
-      session.transcript,
-    ),
-  ];
-}
-
 async function runGetReport(session: Session): Promise<StepRecord[]> {
   const reportId = stateOrRequired(session, "report-id", "report-id");
   return [
@@ -866,9 +619,6 @@ export async function runCli(argv: ReadonlyArray<string>, io: CliIo): Promise<nu
     if (parsed.help || parsed.verb === undefined) {
       io.err(USAGE);
       return parsed.help ? EXIT_COMPLETED : EXIT_USAGE;
-    }
-    if (parsed.values["capture"] !== undefined && parsed.verb !== "draft-run") {
-      throw new UsageError("--capture is only valid for draft-run");
     }
     const baseUrl = required(parsed, "base-url").replace(/\/+$/, "");
     const scope: AuthoringScope = {
@@ -904,45 +654,26 @@ export async function runCli(argv: ReadonlyArray<string>, io: CliIo): Promise<nu
 
     let steps: StepRecord[];
     switch (parsed.verb) {
-      case "validate":
-        steps = await runValidate(session);
-        break;
-      case "draft-run":
-        steps = await runDraftRun(session);
-        break;
       case "test-set-run":
         steps = await runTestSetRun(session);
         break;
       case "promote":
         steps = await runPromote(session);
         break;
-      case "read-draft":
-        steps = await runReadDraft(session);
-        break;
       case "get-report":
         steps = await runGetReport(session);
         break;
     }
 
-    // Edit-to-run latency, measured where a checkout client can actually
-    // measure it: from the modification time of the definition file it
-    // submitted to the moment a run receipt came back.
-    const producesRun = parsed.verb === "draft-run";
-    const completedRun = producesRun && steps[0]?.status === "completed";
-    const editedAt = state["edit-at"];
-    const editToRun =
-      completedRun && typeof editedAt === "number" ? io.now() - editedAt : null;
     const status = overall(steps);
     const document: CliDocument = {
       client: "wamn",
-      "edit-to-run-ms": editToRun,
       "elapsed-ms": io.now() - started,
       "schema-version": AUTHORING_SCHEMA_VERSION,
       status,
       steps,
       verb: parsed.verb,
     };
-    if (editToRun !== null) transcript.note(`  time  edit-to-run-ms=${editToRun}`);
     transcript.document(document);
     transcript.note(`${status.toUpperCase()} verb=${parsed.verb}`);
     if (transcript.leaked) {

@@ -1624,7 +1624,6 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
         BTreeSet::from([
             "catalog.authoring_command_audit",
             "catalog.execution_bundles",
-            "catalog.flow_drafts",
             "wamn_run.authoring_test_case_runs",
             "wamn_run.authoring_test_reports",
             "wamn_run.authoring_test_run_reservations",
@@ -1647,7 +1646,6 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
             "catalog.authoring_command_audit",
             "catalog.catalog_heads",
             "catalog.execution_bundles",
-            "catalog.flow_drafts",
             "catalog.releases",
             "wamn_run.authoring_test_case_runs",
             "wamn_run.authoring_test_reports",
@@ -2107,17 +2105,18 @@ fn hyphenated_error_message_literal_is_not_an_update() {
     let discoveries = discover_writes(
         "deploy/sql/catalog-schema.sql",
         1,
-        "CREATE FUNCTION catalog.guard_flow_draft_update() RETURNS trigger AS $function$ \
+        "CREATE FUNCTION catalog.guard_catalog_head_update() RETURNS trigger AS $function$ \
          BEGIN \
-             IF NEW.revision <> OLD.revision + 1 THEN \
+             IF NEW.applied_catalog_version <> OLD.applied_catalog_version + 1 THEN \
                  RAISE EXCEPTION USING ERRCODE = '55000', \
-                     MESSAGE = 'flow-draft-uncontrolled-update'; \
+                     MESSAGE = 'catalog-head-uncontrolled-update'; \
              END IF; \
-             UPDATE catalog.flow_drafts SET edited_at = now() WHERE draft_id = NEW.draft_id; \
+             UPDATE catalog.catalog_heads SET updated_at = now() \
+              WHERE catalog_id = NEW.catalog_id; \
              RETURN NEW; \
          END $function$ LANGUAGE plpgsql",
     );
-    assert_only_write(&discoveries, "update", "catalog.flow_drafts");
+    assert_only_write(&discoveries, "update", "catalog.catalog_heads");
 }
 
 #[test]
@@ -2148,10 +2147,10 @@ fn grant_privilege_list_is_not_a_write() {
     let discoveries = discover_writes(
         "deploy/sql/catalog-schema.sql",
         1,
-        "GRANT SELECT, INSERT, UPDATE ON catalog.flow_drafts TO wamn_scenario_author; \
-         UPDATE catalog.flow_drafts SET edited_at = now() WHERE draft_id = $1;",
+        "GRANT SELECT, INSERT, UPDATE ON catalog.catalog_heads TO wamn_scenario_author; \
+         UPDATE catalog.catalog_heads SET updated_at = now() WHERE catalog_id = $1;",
     );
-    assert_only_write(&discoveries, "update", "catalog.flow_drafts");
+    assert_only_write(&discoveries, "update", "catalog.catalog_heads");
 }
 
 #[test]
@@ -2168,8 +2167,8 @@ fn quoted_privilege_name_probe_is_not_a_write() {
         (
             "services/scenario-worker/src/authoring.rs",
             "WITH allowed_mutation(schema_name, table_name, privilege) AS ( \
-                 VALUES ('catalog', 'flow_drafts', 'INSERT'), \
-                        ('catalog', 'flow_drafts', 'UPDATE') \
+                 VALUES ('catalog', 'authoring_command_audit', 'INSERT'), \
+                        ('wamn_run', 'authoring_test_case_runs', 'UPDATE') \
              ) SELECT true",
         ),
     ] {

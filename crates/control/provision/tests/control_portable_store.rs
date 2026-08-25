@@ -34,7 +34,6 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.releases",
         "catalog.release_flows",
         "catalog.catalog_heads",
-        "catalog.flow_drafts",
         "catalog.release_exposure_manifests",
         "catalog.release_sources",
         "catalog.release_attachments",
@@ -61,6 +60,9 @@ fn portable_store_record_is_exact_and_storage_only() {
         // reaches no connection and this relation's concept is void. It never
         // had production DML in any plane.
         "catalog.draft_safe_connection_grants",
+        // wamn-0h0g.8.5.5: a draft is a CLIENT-SIDE FILE, so the mutable
+        // document store and its monotonic-revision trigger are gone too.
+        "catalog.flow_drafts",
         // wamn-0h0g.26.16: flow-shaped release TEST EVIDENCE named a release
         // member by `flow_id` under a retired identity, and nothing in the
         // workspace ever executed its registrar.
@@ -92,6 +94,14 @@ fn portable_store_record_is_exact_and_storage_only() {
     assert!(!sql.contains("REFERENCES catalog.validated_flow_drafts"));
     assert!(sql.contains("DROP TABLE catalog.validated_flow_drafts RESTRICT"));
     assert!(sql.contains("DROP TABLE catalog.draft_safe_connection_grants RESTRICT"));
+    assert!(sql.contains("DROP TABLE catalog.flow_drafts RESTRICT"));
+    // The trigger function outlives its triggers unless it is dropped by name.
+    assert!(sql.contains("DROP FUNCTION IF EXISTS catalog.guard_flow_draft_update()"));
+    assert!(!sql.contains("CREATE OR REPLACE FUNCTION catalog.guard_flow_draft_update"));
+    assert!(!sql.contains("CREATE TRIGGER flow_drafts_controlled_update"));
+    assert!(!sql.contains("CREATE TRIGGER flow_drafts_delete_immutable"));
+    // The ledger vocabulary follows the contract's two surviving commands.
+    assert!(sql.contains("CHECK (command_kind IN ('test-set-run', 'publish'))"));
     assert!(!sql.contains("CREATE TABLE IF NOT EXISTS catalog.execution_bundles"));
     assert!(sql.contains("DROP TABLE catalog.execution_bundles RESTRICT"));
     assert!(!sql.contains("REFERENCES registry."));
@@ -335,7 +345,6 @@ fn control_author_authority_is_the_exact_ratified_class() {
     ];
     // Landed state machines: exactly the transitions they shipped with.
     let state_machines = [
-        "catalog.flow_drafts",
         "wamn_run.authoring_test_run_reservations",
         "wamn_run.authoring_test_case_runs",
     ];
@@ -705,9 +714,6 @@ VALUES ('tenant-a','cat',1);
 INSERT INTO catalog.release_flows
   (tenant_id,catalog_id,catalog_version,flow_id,flow_version)
 VALUES ('tenant-a','cat',1,'flow-a',1);
-INSERT INTO catalog.flow_drafts
-  (tenant_id,draft_id,flow_id,revision,definition)
-VALUES ('tenant-a','draft-a','flow-a',1,'{{}}');
 INSERT INTO wamn_run.authoring_test_run_reservations
   (tenant_id,report_id,command_hash,validated_draft_id,
    catalog_id,catalog_version,case_count,whole_deadline_at)
@@ -879,11 +885,11 @@ fn control_author_two_tenant_authority_holds_on_postgres() {
     // replace both, not confuse name equality with policy equality.
     install.push_str(
         r#"
-DROP POLICY flow_drafts_tenant ON catalog.flow_drafts;
-CREATE POLICY flow_drafts_tenant ON catalog.flow_drafts
+DROP POLICY authoring_command_audit_tenant ON catalog.authoring_command_audit;
+CREATE POLICY authoring_command_audit_tenant ON catalog.authoring_command_audit
   AS RESTRICTIVE FOR SELECT TO wamn_portable_probe USING (false);
-DROP POLICY flow_drafts_author_tenant ON catalog.flow_drafts;
-CREATE POLICY flow_drafts_author_tenant ON catalog.flow_drafts
+DROP POLICY authoring_command_audit_author_tenant ON catalog.authoring_command_audit;
+CREATE POLICY authoring_command_audit_author_tenant ON catalog.authoring_command_audit
   AS PERMISSIVE FOR SELECT TO PUBLIC USING (true);
 "#,
     );
@@ -904,8 +910,8 @@ DO $policy_replay$ BEGIN
        AND pg_get_expr(p.polwithcheck, p.polrelid, true) =
            'tenant_id = NULLIF(current_setting(''app.tenant''::text, true), ''''::text)'
       FROM pg_policy p
-     WHERE p.polrelid = 'catalog.flow_drafts'::regclass
-       AND p.polname = 'flow_drafts_tenant'
+     WHERE p.polrelid = 'catalog.authoring_command_audit'::regclass
+       AND p.polname = 'authoring_command_audit_tenant'
   ), false), 'same-name tenant policy drift survived replay';
 
   ASSERT COALESCE((
@@ -921,8 +927,8 @@ DO $policy_replay$ BEGIN
        AND pg_get_expr(p.polwithcheck, p.polrelid, true) =
            'tenant_id = wamn_authority.session_author_tenant()'
       FROM pg_policy p
-     WHERE p.polrelid = 'catalog.flow_drafts'::regclass
-       AND p.polname = 'flow_drafts_author_tenant'
+     WHERE p.polrelid = 'catalog.authoring_command_audit'::regclass
+       AND p.polname = 'authoring_command_audit_author_tenant'
   ), false), 'same-name author policy drift survived replay';
 END $policy_replay$;
 "#,
@@ -952,9 +958,6 @@ DO $seed$ DECLARE tenant text; BEGIN
     INSERT INTO catalog.release_flows
       (tenant_id,catalog_id,catalog_version,flow_id,flow_version)
     VALUES (tenant,'cat',1,'flow-a',1);
-    INSERT INTO catalog.flow_drafts
-      (tenant_id,draft_id,flow_id,revision,definition)
-    VALUES (tenant,'draft-a','flow-a',1,'{{}}');
     INSERT INTO wamn_run.authoring_test_run_reservations
       (tenant_id,report_id,command_hash,validated_draft_id,
        catalog_id,catalog_version,case_count,whole_deadline_at)
@@ -990,8 +993,6 @@ END $identity$;
 -- POSITIVE MATRIX: exactly the ratified lifecycle class, under this tenant.
 SET app.tenant = 'tenant-a';
 DO $positive$ BEGIN
-  ASSERT (SELECT count(*) FROM catalog.flow_drafts) = 1,
-         'the author reads its own drafts';
   ASSERT (SELECT count(*) FROM catalog.catalog_heads) = 1;
   ASSERT (SELECT count(*) FROM catalog.release_flows) = 1;
   ASSERT (SELECT count(*) FROM catalog.flow_artifacts) = 1;
@@ -1000,17 +1001,11 @@ DO $positive$ BEGIN
   ASSERT (SELECT count(*) FROM wamn_run.authoring_test_case_runs) = 1;
 END $positive$;
 
-INSERT INTO catalog.flow_drafts (tenant_id,draft_id,flow_id,revision,definition)
-VALUES ('tenant-a','draft-b','flow-a',1,'{{}}');
-UPDATE catalog.flow_drafts
-   SET revision = revision + 1, definition = '{{"edited":true}}',
-       edited_at = clock_timestamp() + interval '1 microsecond'
- WHERE tenant_id = 'tenant-a' AND draft_id = 'draft-b';
 INSERT INTO catalog.authoring_command_audit
   (tenant_id,command_id,command_kind,principal_id,principal_kind,principal_subject,
    effective_role,org,project,environment,target_ref,request_hash,outcome_bytes)
-VALUES ('tenant-a','command-1','save-draft','principal-1','human','someone',
-        'project-author','acme','receiving','dev','draft-b',
+VALUES ('tenant-a','command-1','test-set-run','principal-1','human','someone',
+        'project-author','acme','receiving','dev','validated-tenant-a',
         'sha256:'||repeat('2',64),'\x7b7d'::bytea);
 UPDATE wamn_run.authoring_test_case_runs
    SET state = 'finalized', passed = true, summary = '{{}}'::jsonb,
@@ -1024,13 +1019,17 @@ UPDATE wamn_run.authoring_test_run_reservations
 -- cannot reach another tenant's rows, and cannot write one either.
 SET app.tenant = 'tenant-b';
 DO $no_widening$ BEGIN
-  ASSERT (SELECT count(*) FROM catalog.flow_drafts) = 0,
+  ASSERT (SELECT count(*) FROM catalog.catalog_heads) = 0,
          'app.tenant widened a read to another tenant';
-  ASSERT (SELECT count(*) FROM catalog.catalog_heads) = 0;
   ASSERT (SELECT count(*) FROM wamn_run.authoring_test_run_reservations) = 0;
   BEGIN
-    INSERT INTO catalog.flow_drafts (tenant_id,draft_id,flow_id,revision,definition)
-    VALUES ('tenant-b','forged','flow-a',1,'{{}}');
+    INSERT INTO catalog.authoring_command_audit
+      (tenant_id,command_id,command_kind,principal_id,principal_kind,
+       principal_subject,effective_role,org,project,environment,target_ref,
+       request_hash,outcome_bytes)
+    VALUES ('tenant-b','forged','test-set-run','principal-1','human','someone',
+            'project-author','acme','shipping','dev','forged',
+            'sha256:'||repeat('3',64),'\x7b7d'::bytea);
     ASSERT false, 'app.tenant widened a write to another tenant';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
 END $no_widening$;
@@ -1038,7 +1037,7 @@ END $no_widening$;
 -- An absent claim is not a wildcard: the permissive floor fails too.
 RESET app.tenant;
 DO $no_claim$ BEGIN
-  ASSERT (SELECT count(*) FROM catalog.flow_drafts) = 0,
+  ASSERT (SELECT count(*) FROM catalog.catalog_heads) = 0,
          'an absent app.tenant claim read rows';
 END $no_claim$;
 
@@ -1087,8 +1086,8 @@ DO $denials$ BEGIN
   BEGIN UPDATE wamn_run.authoring_test_reports SET passed = false;
     ASSERT false, 'the author mutated a finalized report';
   EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
-  BEGIN DELETE FROM catalog.flow_drafts;
-    ASSERT false, 'the author deleted a draft';
+  BEGIN DELETE FROM wamn_run.authoring_test_run_reservations;
+    ASSERT false, 'the author deleted a reservation';
   EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
   BEGIN DELETE FROM wamn_run.authoring_test_case_runs;
     ASSERT false, 'the author deleted a case mapping';
@@ -1113,8 +1112,8 @@ DO $denials$ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   -- A non-owner GRANT without grant option is a WARNING, not an error, so the
   -- proof is that nothing was actually granted.
-  GRANT SELECT ON catalog.flow_drafts TO wamn_portable_probe;
-  ASSERT NOT has_table_privilege('wamn_portable_probe','catalog.flow_drafts','SELECT'),
+  GRANT SELECT ON catalog.catalog_heads TO wamn_portable_probe;
+  ASSERT NOT has_table_privilege('wamn_portable_probe','catalog.catalog_heads','SELECT'),
          'the author re-granted its own authority';
 END $denials$;
 
@@ -1159,12 +1158,10 @@ SET app.tenant = 'tenant-b';
 DO $second$ BEGIN
   ASSERT session_user = '{author_b}';
   ASSERT wamn_authority.session_author_tenant() = 'tenant-b';
-  -- tenant-a's author inserted `draft-b` above; tenant-b must not see it, and
-  -- must see exactly its own seeded draft.
-  ASSERT (SELECT count(*) FROM catalog.flow_drafts) = 1,
+  -- tenant-a's author appended a ledger row above; tenant-b must not see it,
+  -- and must see exactly its own seeded rows.
+  ASSERT (SELECT count(*) FROM wamn_run.authoring_test_case_runs) = 1,
          'the second tenant observed the first tenant''s authored rows';
-  ASSERT (SELECT count(*) FROM catalog.flow_drafts
-           WHERE draft_id = 'draft-b') = 0;
   ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0,
          'the second tenant read the first tenant''s command ledger';
   ASSERT (SELECT state FROM wamn_run.authoring_test_run_reservations) = 'pending',

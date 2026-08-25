@@ -1,29 +1,30 @@
-//! Internal development-administrator adapter for the flow-draft loop.
+//! Internal development-administrator adapter for the authoring commands.
 //!
 //! There is intentionally no CLI or public transport in this module. Item 5
 //! owns retained client identity and client-facing authorization; this adapter
 //! proves the shared typed command/query boundary first.
-
-use std::time::SystemTime;
+//!
+//! It persists no authored document (wamn-0h0g.8.5.5). A draft is a client-side
+//! file and the wiring document's content hash is its identity, so the only
+//! authored state this adapter reaches is the immutable report a gate produced.
 
 use anyhow::{Context as _, bail};
 use serde_json::Value;
-use tokio_postgres::{Client, GenericClient, NoTls, Transaction};
+use tokio_postgres::{Client, NoTls, Transaction};
 
 use wamn_control_provision::parse_control_authoring_url;
 use wamn_schema_control::BareSchemaName;
 
-use crate::store::drafts;
 use crate::store::test_orchestration;
 
 /// Startup authority probe for the CONTROL database's author credential
 /// (wamn-0h0g.8.18).
 ///
-/// Every column must be true. The authority CLASS is unchanged from the project
-/// residency this replaced — the same reads, the same
-/// `flow_drafts` SELECT/INSERT/UPDATE, the same append-only facts, the same
-/// reservation and case-map transitions — but the principal is
-/// `wamn_control_author` and the relations live in the control database.
+/// Every column must be true. The authority CLASS narrowed with wamn-0h0g.8.5.5:
+/// the mutable-draft SELECT/INSERT/UPDATE leg is gone with `catalog.flow_drafts`
+/// itself, leaving the append-only facts and the reservation and case-map
+/// transitions. The principal is `wamn_control_author` and the relations live in
+/// the control database.
 ///
 /// Three legs of the project-residency probe are gone because the relations they
 /// named do not exist in the control store: `catalog.connection_bindings`,
@@ -50,9 +51,7 @@ WITH session_role AS ( \
     SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls \
       FROM pg_catalog.pg_roles WHERE rolname = 'wamn_control_author' \
 ), allowed_mutation(schema_name, table_name, privilege) AS ( \
-    VALUES ('catalog', 'flow_drafts', 'INSERT'), \
-           ('catalog', 'flow_drafts', 'UPDATE'), \
-           ('catalog', 'authoring_command_audit', 'INSERT'), \
+    VALUES ('catalog', 'authoring_command_audit', 'INSERT'), \
            ($1::text, 'authoring_test_run_reservations', 'INSERT'), \
            ($1::text, 'authoring_test_run_reservations', 'UPDATE'), \
            ($1::text, 'authoring_test_case_runs', 'INSERT'), \
@@ -80,10 +79,6 @@ SELECT current_user = session_user, \
        NOT pg_catalog.has_schema_privilege(current_user, 'catalog', 'CREATE'), \
        NOT pg_catalog.has_schema_privilege(current_user, $1, 'CREATE'), \
        NOT pg_catalog.has_schema_privilege(current_user, 'wamn_authority', 'CREATE'), \
-       pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'INSERT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'UPDATE') \
-         AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'DELETE'), \
        pg_catalog.has_table_privilege(current_user, 'catalog.authoring_command_audit', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.authoring_command_audit', 'INSERT') \
          AND NOT pg_catalog.has_table_privilege( \
@@ -383,28 +378,6 @@ impl Drop for InternalAuthoringBackend {
     }
 }
 
-/// Save one mutable wiring document under optimistic revision control.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SaveDraft {
-    pub tenant_id: String,
-    pub draft_id: String,
-    pub wiring_id: String,
-    /// Zero creates the draft; a positive value replaces exactly that revision.
-    pub expected_revision: i64,
-    /// Exact submitted text, stored byte for byte and never parsed here.
-    pub definition: String,
-}
-
-/// Result of a mutable draft save.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SaveDraftResult {
-    Saved {
-        revision: i64,
-        edited_at: SystemTime,
-    },
-    RevisionConflict,
-}
-
 /// Control-store projection of one test report.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GetReportResult {
@@ -421,13 +394,6 @@ pub enum GetReportResult {
 }
 
 impl InternalAuthoringBackend {
-    /// Save an incrementally editable wiring document under optimistic revision control.
-    pub async fn save_draft(&mut self, request: &SaveDraft) -> anyhow::Result<SaveDraftResult> {
-        self.require_tenant(&request.tenant_id)?;
-        self.scope().await?;
-        save_draft(&self.authority, &self.client, request).await
-    }
-
     /// Read one pending or finalized report from the fixed control-store scope.
     pub async fn get_report(
         &self,
@@ -481,61 +447,6 @@ fn validate_identity(value: &str, name: &str) -> anyhow::Result<()> {
         bail!("{name} must not be empty");
     }
     Ok(())
-}
-
-/// Save one mutable draft document without requiring it to parse or validate.
-///
-/// The definition is persisted exactly as submitted, so a half-finished edit is
-/// a preserved draft rather than a failed command.
-pub(crate) async fn save_draft(
-    _authority: &InternalDevAdmin,
-    client: &(impl GenericClient + Sync),
-    request: &SaveDraft,
-) -> anyhow::Result<SaveDraftResult> {
-    for (value, name) in [
-        (&request.tenant_id, "tenant-id"),
-        (&request.draft_id, "draft-id"),
-        (&request.wiring_id, "wiring-id"),
-    ] {
-        validate_identity(value, name)?;
-    }
-    if request.expected_revision < 0 {
-        bail!("expected-revision must not be negative");
-    }
-    let row = if request.expected_revision == 0 {
-        client
-            .query_opt(
-                drafts::insert_flow_draft_sql(),
-                &[
-                    &request.tenant_id,
-                    &request.draft_id,
-                    &request.wiring_id,
-                    &request.definition,
-                ],
-            )
-            .await
-            .context("insert flow draft")?
-    } else {
-        client
-            .query_opt(
-                drafts::update_flow_draft_sql(),
-                &[
-                    &request.tenant_id,
-                    &request.draft_id,
-                    &request.wiring_id,
-                    &request.expected_revision,
-                    &request.definition,
-                ],
-            )
-            .await
-            .context("update flow draft")?
-    };
-    Ok(row.map_or(SaveDraftResult::RevisionConflict, |row| {
-        SaveDraftResult::Saved {
-            revision: row.get(0),
-            edited_at: row.get(1),
-        }
-    }))
 }
 
 #[cfg(test)]
@@ -703,6 +614,11 @@ mod tests {
         // so the probe may not name it at all. A surviving arm would query a
         // relation that does not exist and refuse every startup.
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("draft_safe_connection_grants"));
+        // wamn-0h0g.8.5.5: the mutable draft store is deleted too, so the probe
+        // may not name it either -- neither as a privilege leg nor as an
+        // allowed mutation. A surviving leg would query a missing relation and
+        // refuse every startup.
+        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("flow_drafts"));
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("authoring_test_sets"));
         // The retired validator and its catalog-head bridge no longer add a fifth parameter.
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("$5"));

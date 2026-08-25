@@ -1,14 +1,17 @@
 //! Management-owned authoring persistence.
 //!
 //! The two stores here live in DIFFERENT DATABASES and nothing joins them:
-//! [`drafts`] and [`test_orchestration`] are the control-database half,
-//! [`admission`] is the project-database half. A fact one needs from the other
-//! crosses as an already-observed value.
+//! [`test_orchestration`] is the control-database half, [`admission`] is the
+//! project-database half. A fact one needs from the other crosses as an
+//! already-observed value.
+//!
+//! There is no draft store (wamn-0h0g.8.5.5). A draft is a CLIENT-SIDE file — a
+//! studio buffer, a git working tree — and the wiring document's own content
+//! hash is its identity, so nothing here persists a mutable authored document.
 
 use sha2::{Digest as _, Sha256};
 
 pub mod admission;
-pub mod drafts;
 pub mod test_orchestration;
 
 pub(crate) fn sha256(input: &[u8]) -> String {

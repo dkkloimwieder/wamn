@@ -34,7 +34,7 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 
-use wamn_authoring_model::TestSetRunRefusal;
+use wamn_authoring_model::GateRefusal;
 use wamn_execution_contract::{WiringFailureKind, validate_cases};
 use wamn_run_state::RunStatus;
 use wamn_run_state::admission::AdmissionResult;
@@ -72,7 +72,7 @@ pub(crate) enum TestSetComposition {
         report_id: String,
         reconciliation: TestReportReconciliation,
     },
-    Refused(TestSetRunRefusal),
+    Refused(GateRefusal),
 }
 
 /// Drive one report's cases to their verdicts, one ordinal at a time.
@@ -86,15 +86,30 @@ pub(crate) async fn run_test_set(
         .await?
     else {
         return Ok(TestSetComposition::Refused(
-            TestSetRunRefusal::ValidatedDraftNotFound {
+            GateRefusal::ValidatedDraftNotFound {
                 validated_draft_id: request.validated_draft_id.to_owned(),
             },
         ));
     };
     if let Err(error) = validate_cases(&candidate.cases) {
         return Ok(TestSetComposition::Refused(
-            TestSetRunRefusal::InvalidTestSet {
+            GateRefusal::InvalidTestSet {
                 detail: error.to_string(),
+            },
+        ));
+    }
+
+    // The constitutional clause (wamn-0h0g.8.5.5): gate cases are EFFECT-FREE BY
+    // CONTRACT. A gate is a judgment about a document, not an execution of it —
+    // effects belong to admitted runs under run identity. This refuses BEFORE
+    // the first ordinal is admitted and before the report is reserved, so no
+    // effect is performed and then regretted. Assume the clause instead of
+    // checking it and the first effectful case silently double-fires.
+    let effectful = admission.effectful_components(&candidate).await?;
+    if !effectful.is_empty() {
+        return Ok(TestSetComposition::Refused(
+            GateRefusal::EffectfulComponentReached {
+                components: effectful,
             },
         ));
     }
@@ -228,7 +243,7 @@ async fn reserved_elsewhere(
     control: &Client,
     request: &TestSetRunRequest<'_>,
     report_id: &str,
-) -> anyhow::Result<Option<TestSetRunRefusal>> {
+) -> anyhow::Result<Option<GateRefusal>> {
     let Some(row) = control
         .query_opt(
             select_test_report_reservation_sql(),
@@ -243,7 +258,7 @@ async fn reserved_elsewhere(
     if reserved == request.validated_draft_id {
         return Ok(None);
     }
-    Ok(Some(TestSetRunRefusal::ValidatedDraftDrift))
+    Ok(Some(GateRefusal::ValidatedDraftDrift))
 }
 
 /// Persist one ordinal's verdict, tolerating a concurrent pass that got there
@@ -339,20 +354,20 @@ async fn admission_refusal(
     candidate: &CandidateWiring,
     request: &TestSetRunRequest<'_>,
     result: AdmissionResult,
-) -> anyhow::Result<TestSetRunRefusal> {
+) -> anyhow::Result<GateRefusal> {
     Ok(match result {
-        AdmissionResult::CandidateNotFound => TestSetRunRefusal::ValidatedDraftNotFound {
+        AdmissionResult::CandidateNotFound => GateRefusal::ValidatedDraftNotFound {
             validated_draft_id: request.validated_draft_id.to_owned(),
         },
         AdmissionResult::CandidateIdentityMismatch
         | AdmissionResult::GateReportMismatch
         | AdmissionResult::BindingWorldDrift
-        | AdmissionResult::ConflictingRunIdentity => TestSetRunRefusal::ValidatedDraftDrift,
-        AdmissionResult::CandidateDefinitionInvalid => TestSetRunRefusal::InvalidTestSet {
+        | AdmissionResult::ConflictingRunIdentity => GateRefusal::ValidatedDraftDrift,
+        AdmissionResult::CandidateDefinitionInvalid => GateRefusal::InvalidTestSet {
             detail: "the candidate's graph names a component this catalog version does not admit"
                 .to_owned(),
         },
-        AdmissionResult::BindingWorldUnavailable => TestSetRunRefusal::DraftConnectionsDenied {
+        AdmissionResult::BindingWorldUnavailable => GateRefusal::DraftConnectionsDenied {
             connection_names: admission
                 .unresolved_store_aliases(candidate, request.environment)
                 .await?,

@@ -25,105 +25,6 @@ pub const MAX_QUERY_ID_BYTES: usize = 64;
 /// Maximum number of cases one flow document may carry.
 pub const MAX_TEST_SET_CASES: usize = 256;
 
-/// Largest integer every `format: uint64` field on this contract may carry.
-pub const SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
-
-/// A `uint64` wire value inside the exactly representable domain `[0, 2^53-1]`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct SafeUint64(u64);
-
-impl fmt::Display for SafeUint64 {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-impl TryFrom<u64> for SafeUint64 {
-    type Error = SafeIntegerError;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        if value > SAFE_INTEGER_MAX {
-            return Err(SafeIntegerError {
-                value: i128::from(value),
-            });
-        }
-        Ok(Self(value))
-    }
-}
-
-impl TryFrom<i64> for SafeUint64 {
-    type Error = SafeIntegerError;
-
-    fn try_from(value: i64) -> Result<Self, Self::Error> {
-        u64::try_from(value)
-            .map_err(|_| SafeIntegerError {
-                value: i128::from(value),
-            })
-            .and_then(Self::try_from)
-    }
-}
-
-impl From<SafeUint64> for u64 {
-    fn from(value: SafeUint64) -> Self {
-        value.0
-    }
-}
-
-impl From<SafeUint64> for i64 {
-    fn from(value: SafeUint64) -> Self {
-        value.0 as Self
-    }
-}
-
-impl Serialize for SafeUint64 {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u64(self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for SafeUint64 {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = u64::deserialize(deserializer)?;
-        Self::try_from(value).map_err(serde::de::Error::custom)
-    }
-}
-
-impl JsonSchema for SafeUint64 {
-    fn is_referenceable() -> bool {
-        false
-    }
-
-    fn schema_name() -> String {
-        "SafeUint64".to_owned()
-    }
-
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        let mut schema = <u64 as JsonSchema>::json_schema(generator).into_object();
-        schema
-            .extensions
-            .insert("maximum".to_owned(), Value::from(SAFE_INTEGER_MAX));
-        schemars::schema::Schema::Object(schema)
-    }
-}
-
-/// An integer outside the exactly representable `uint64` wire domain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SafeIntegerError {
-    pub value: i128,
-}
-
-impl fmt::Display for SafeIntegerError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "uint64 value {} is outside the exactly representable authoring wire domain [0, {SAFE_INTEGER_MAX}]",
-            self.value
-        )
-    }
-}
-
-impl std::error::Error for SafeIntegerError {}
-
 /// Non-empty, bounded, trace-only query correlation identity.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct QueryId(Box<str>);
@@ -275,7 +176,12 @@ pub struct AuthoringQueryResponse {
     pub outcome: AuthoringQueryOutcome,
 }
 
-/// Complete five-command authoring inventory.
+/// Complete two-command authoring inventory.
+///
+/// `gate` is spelled `test-set-run` ON THE WIRE. The Rust name is the honest one
+/// the owner ratified — one verb produces reports, and that judgment is gating —
+/// while the wire literal waits for the wiring vocabulary sweep
+/// (`wamn-0h0g.26.18`) so this collapse is not also a breaking rename.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -284,10 +190,8 @@ pub struct AuthoringQueryResponse {
     deny_unknown_fields
 )]
 pub enum AuthoringCommand {
-    SaveDraft(SaveDraft),
-    Validate(ValidateDraft),
-    DraftRun(DraftRun),
-    TestSetRun(TestSetRun),
+    #[serde(rename = "test-set-run")]
+    Gate(Gate),
     Publish(PublishValidatedDraft),
 }
 
@@ -295,14 +199,12 @@ pub enum AuthoringCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthoringCommandKind {
-    SaveDraft,
-    Validate,
-    DraftRun,
-    TestSetRun,
+    #[serde(rename = "test-set-run")]
+    Gate,
     Publish,
 }
 
-/// Complete two-query authoring inventory.
+/// Complete one-query authoring inventory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -311,7 +213,6 @@ pub enum AuthoringCommandKind {
     deny_unknown_fields
 )]
 pub enum AuthoringQuery {
-    ReadDraft(ReadDraft),
     GetReport(GetReport),
 }
 
@@ -319,7 +220,6 @@ pub enum AuthoringQuery {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthoringQueryKind {
-    ReadDraft,
     GetReport,
 }
 
@@ -345,10 +245,8 @@ pub enum AuthoringOutcome {
     deny_unknown_fields
 )]
 pub enum AuthoringSuccess {
-    SaveDraft(DraftIdentity),
-    Validate(ValidatedDraftIdentity),
-    DraftRun(DraftRunReceipt),
-    TestSetRun(TestSetRunReceipt),
+    #[serde(rename = "test-set-run")]
+    Gate(GateReceipt),
     Publish(PublishedWiringIdentity),
 }
 
@@ -361,10 +259,8 @@ pub enum AuthoringSuccess {
     deny_unknown_fields
 )]
 pub enum CommandRefusal {
-    SaveDraft(SaveDraftRefusal),
-    Validate(ValidateRefusal),
-    DraftRun(DraftRunRefusal),
-    TestSetRun(TestSetRunRefusal),
+    #[serde(rename = "test-set-run")]
+    Gate(GateRefusal),
     Publish(PublishRefusal),
 }
 
@@ -390,7 +286,6 @@ pub enum AuthoringQueryOutcome {
     deny_unknown_fields
 )]
 pub enum AuthoringQuerySuccess {
-    ReadDraft(DraftDocument),
     GetReport(ReportProjection),
 }
 
@@ -403,7 +298,6 @@ pub enum AuthoringQuerySuccess {
     deny_unknown_fields
 )]
 pub enum QueryRefusal {
-    ReadDraft(ReadDraftRefusal),
     GetReport(GetReportRefusal),
 }
 
@@ -424,35 +318,6 @@ pub struct CommitProvenance {
     pub dirty: bool,
 }
 
-/// Save one wiring draft document under optimistic revision control.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct SaveDraft {
-    pub scope: AuthoringScope,
-    pub draft_id: String,
-    pub wiring_id: String,
-    pub expected_revision: SafeUint64,
-    pub definition: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provenance: Option<CommitProvenance>,
-}
-
-/// Select one exact mutable draft revision.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DraftRevisionRef {
-    pub draft_id: String,
-    pub revision: SafeUint64,
-}
-
-/// Validate one exact saved draft revision.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ValidateDraft {
-    pub scope: AuthoringScope,
-    pub draft: DraftRevisionRef,
-}
-
 /// An opaque reference to the exact validated executable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -460,30 +325,14 @@ pub struct ValidatedDraftRef {
     pub validated_draft_id: String,
 }
 
-/// Execute one input against an exact validated draft.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DraftRun {
-    pub scope: AuthoringScope,
-    pub validated_draft: ValidatedDraftRef,
-    pub input: Value,
-    #[serde(default, skip_serializing_if = "draft_run_capture_is_full")]
-    pub capture: DraftRunCapture,
-}
-
-/// Capture choice for one direct draft run.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum DraftRunCapture {
-    #[default]
-    Full,
-    Off,
-}
-
-/// Execute the validated draft's own bounded `cases` array.
+/// Judge one candidate wiring against its own bounded `cases` array.
+///
+/// The judgment is a total function of the document: the candidate is resolved
+/// by content hash and its cases ride the document itself, so nothing here names
+/// server-side draft state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct TestSetRun {
+pub struct Gate {
     pub scope: AuthoringScope,
     pub validated_draft: ValidatedDraftRef,
 }
@@ -497,15 +346,7 @@ pub struct PublishValidatedDraft {
     pub successful_report_id: String,
 }
 
-/// Read one exact saved draft revision.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ReadDraft {
-    pub scope: AuthoringScope,
-    pub draft: DraftRevisionRef,
-}
-
-/// Read one pending or finalized immutable report projection.
+/// Read one immutable report projection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct GetReport {
@@ -513,47 +354,10 @@ pub struct GetReport {
     pub report_id: String,
 }
 
-/// Stable identity returned after a draft save.
+/// Receipt for one accepted gate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DraftIdentity {
-    pub draft_id: String,
-    pub wiring_id: String,
-    pub revision: SafeUint64,
-}
-
-/// Applied catalog identity pinned by validation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct CatalogIdentity {
-    pub catalog_id: String,
-    pub version: u32,
-}
-
-/// Public pins for the one own-flow executable accepted by validation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ValidatedDraftIdentity {
-    pub validated_draft_id: String,
-    pub draft: DraftIdentity,
-    pub runtime_flow_version: u32,
-    pub artifact_hash: String,
-    pub catalog: CatalogIdentity,
-    pub environment: String,
-}
-
-/// Receipt for one admitted draft run.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DraftRunReceipt {
-    pub run_id: String,
-    pub validated_draft: ValidatedDraftRef,
-}
-
-/// Receipt for one accepted test-set run.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct TestSetRunReceipt {
+pub struct GateReceipt {
     pub report_id: String,
     pub validated_draft: ValidatedDraftRef,
 }
@@ -567,15 +371,15 @@ pub struct PublishedWiringIdentity {
     pub artifact_hash: String,
 }
 
-/// Exact saved draft projection.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DraftDocument {
-    pub draft: DraftIdentity,
-    pub definition: String,
-}
-
-/// Pending or immutable finalized test report.
+/// Pending or immutable finalized gate report.
+///
+/// `Pending` survives this collapse deliberately. It is not a stateless-gate
+/// concept, but it is still a REACHABLE one: the reservation protocol behind
+/// `get-report` is intact until `wamn-0h0g.8.5.6` re-keys the report row on
+/// `wiring_hash`, and while a reservation can exist without its immutable report
+/// the only truthful answer for that pair is `Pending`. Deleting the variant
+/// first would force `get-report` to answer `report-not-found` for a report the
+/// store demonstrably holds a reservation for.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "state",
@@ -598,7 +402,7 @@ pub enum ReportProjection {
     },
 }
 
-/// Refusals owned by `save-draft`.
+/// Refusals owned by `gate`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -606,108 +410,7 @@ pub enum ReportProjection {
     rename_all_fields = "kebab-case",
     deny_unknown_fields
 )]
-pub enum SaveDraftRefusal {
-    AuthorizationDenied,
-    #[schemars(rename_all = "kebab-case")]
-    UnsupportedContractVersion {
-        requested: String,
-        supported: String,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    RevisionConflict {
-        expected_revision: SafeUint64,
-        actual_revision: Option<SafeUint64>,
-    },
-    CommandIdReuse,
-}
-
-/// Refusals owned by `validate`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum ValidateRefusal {
-    AuthorizationDenied,
-    #[schemars(rename_all = "kebab-case")]
-    UnsupportedContractVersion {
-        requested: String,
-        supported: String,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    DraftRevisionNotFound {
-        draft_id: String,
-        revision: SafeUint64,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    InvalidDraft {
-        issues: Vec<ValidationIssue>,
-    },
-    CatalogDrift,
-    #[schemars(rename_all = "kebab-case")]
-    UnresolvedNodes {
-        node_types: Vec<String>,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    UnresolvableCalleeName {
-        site: String,
-        flow_id: String,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    MissingRecordedCallability {
-        site: String,
-        flow_id: String,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    ContractIncompatibility {
-        site: String,
-        flow_id: String,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    DraftConnectionsDenied {
-        connection_names: Vec<String>,
-    },
-    CommandIdReuse,
-}
-
-/// Refusals owned by `draft-run`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum DraftRunRefusal {
-    AuthorizationDenied,
-    #[schemars(rename_all = "kebab-case")]
-    UnsupportedContractVersion {
-        requested: String,
-        supported: String,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    ValidatedDraftNotFound {
-        validated_draft_id: String,
-    },
-    ValidatedDraftDrift,
-    #[schemars(rename_all = "kebab-case")]
-    DraftConnectionsDenied {
-        connection_names: Vec<String>,
-    },
-    CommandIdReuse,
-}
-
-/// Refusals owned by `test-set-run`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum TestSetRunRefusal {
+pub enum GateRefusal {
     AuthorizationDenied,
     #[schemars(rename_all = "kebab-case")]
     UnsupportedContractVersion {
@@ -722,6 +425,18 @@ pub enum TestSetRunRefusal {
     #[schemars(rename_all = "kebab-case")]
     InvalidTestSet {
         detail: String,
+    },
+    /// The candidate reaches a component whose admitted effects projection is
+    /// non-empty.
+    ///
+    /// A gate is a JUDGMENT ABOUT A DOCUMENT, not an execution of it: effects
+    /// belong to admitted runs under run identity, and a report must be
+    /// reproducible from the document alone or its hash-keyed identity is a lie.
+    /// The refusal names the exact components that carry effects rather than a
+    /// free-text detail, so a client can act on it.
+    #[schemars(rename_all = "kebab-case")]
+    EffectfulComponentReached {
+        components: Vec<String>,
     },
     #[schemars(rename_all = "kebab-case")]
     DraftConnectionsDenied {
@@ -762,28 +477,6 @@ pub enum PublishRefusal {
     CommandIdReuse,
 }
 
-/// Refusals owned by `read-draft`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum ReadDraftRefusal {
-    AuthorizationDenied,
-    #[schemars(rename_all = "kebab-case")]
-    UnsupportedContractVersion {
-        requested: String,
-        supported: String,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    DraftRevisionNotFound {
-        draft_id: String,
-        revision: SafeUint64,
-    },
-}
-
 /// Refusals owned by `get-report`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
@@ -803,24 +496,6 @@ pub enum GetReportRefusal {
     ReportNotFound {
         report_id: String,
     },
-}
-
-/// Machine-readable validation issue; `message` is explanatory only.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ValidationIssue {
-    pub severity: ValidationSeverity,
-    pub code: String,
-    pub path: String,
-    pub message: String,
-}
-
-/// Validation issue severity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ValidationSeverity {
-    Error,
-    Warning,
 }
 
 /// Decode a contract document and reject unsupported versions before dispatch.
@@ -932,8 +607,4 @@ fn schema_version_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::
     };
     schema.enum_values = Some(vec![Value::String(SCHEMA_VERSION.to_owned())]);
     schemars::schema::Schema::Object(schema)
-}
-
-fn draft_run_capture_is_full(capture: &DraftRunCapture) -> bool {
-    *capture == DraftRunCapture::Full
 }

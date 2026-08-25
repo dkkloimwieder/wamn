@@ -138,42 +138,16 @@ ALTER TABLE catalog.component_library
 ALTER TABLE catalog.component_library
     ALTER COLUMN effects DROP DEFAULT;
 
-CREATE TABLE IF NOT EXISTS catalog.flow_drafts (
-    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
-    draft_id   text NOT NULL CHECK (draft_id <> ''),
-    flow_id    text NOT NULL CHECK (flow_id <> ''),
-    revision   bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
-    definition text,
-    graph_json jsonb CHECK (jsonb_typeof(graph_json) = 'object'),
-    created_at timestamptz NOT NULL DEFAULT now(),
-    edited_at  timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, draft_id),
-    CONSTRAINT flow_drafts_content_present
-        CHECK (definition IS NOT NULL OR graph_json IS NOT NULL)
-);
-
-CREATE OR REPLACE FUNCTION catalog.guard_flow_draft_update()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF (NEW.tenant_id, NEW.draft_id, NEW.flow_id, NEW.created_at)
-       IS DISTINCT FROM
-       (OLD.tenant_id, OLD.draft_id, OLD.flow_id, OLD.created_at)
-       OR NEW.revision <> OLD.revision + 1
-       OR NEW.edited_at <= OLD.edited_at THEN
-        RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'flow-draft-uncontrolled-update';
-    END IF;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION catalog.guard_flow_draft_update() FROM PUBLIC;
-
--- No validated-draft relation (wamn-pm7k): the draft concept died with the
--- pivot. The wiring document IS the validated artifact and its hash IS the
--- identity, so `validated_draft_id` below is read as the wiring hash and needs
--- no separate lineage row to resolve it.
+-- NO DRAFT RELATION AT ALL (wamn-0h0g.8.5.5). wamn-pm7k retired the
+-- validated-draft row on the grounds that the wiring document IS the validated
+-- artifact and its hash IS the identity; this finishes the same thought for the
+-- mutable half. A draft is a CLIENT-SIDE FILE -- a studio buffer, a git working
+-- tree -- so a server-side revision counter, an `edited_at` ordering and a
+-- stored `definition` were state the platform had no reason to own. The
+-- monotonic-revision trigger function retires with the table it guarded.
+--
+-- `validated_draft_id` elsewhere in this artifact is read as the wiring hash and
+-- needs no lineage row to resolve it.
 
 CREATE TABLE IF NOT EXISTS catalog.release_exposure_manifests (
     tenant_id        text NOT NULL CHECK (tenant_id <> ''),
@@ -329,17 +303,22 @@ CREATE TABLE IF NOT EXISTS catalog.authoring_command_audit (
 CREATE INDEX IF NOT EXISTS authoring_command_audit_recorded
     ON catalog.authoring_command_audit (tenant_id, recorded_at);
 -- wamn-0h0g.26.18: the command ledger's vocabulary is the contract's, so the
--- `save-flow-draft` spelling is retired to `save-draft` here as well. CREATE
--- TABLE IF NOT EXISTS cannot reach a store provisioned before the rename, and
+-- The ledger's command vocabulary is the CONTRACT's, and wamn-0h0g.8.5.5
+-- collapsed five commands to two. CREATE TABLE IF NOT EXISTS cannot reach a
+-- store provisioned before the narrowing, and
 -- `control-portable-retained-shape-drift` hashes this constraint's definition,
--- so the converging ALTER is what keeps an existing store applying. A store
--- holding a legacy `save-flow-draft` audit row refuses here by name rather than
--- carrying two vocabularies for one command.
+-- so the converging ALTER is what keeps an existing store applying. ADD
+-- CONSTRAINT validates the heap directly, so a store still holding a
+-- `save-draft`, `validate` or `draft-run` audit row refuses here by name rather
+-- than carrying a vocabulary no command can produce.
+--
+-- `gate` is spelled `test-set-run` here for the same reason it is on the wire:
+-- the literal follows the wiring vocabulary sweep (wamn-0h0g.26.18), not this
+-- collapse.
 ALTER TABLE catalog.authoring_command_audit
     DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check,
     ADD CONSTRAINT authoring_command_audit_command_kind_check
-        CHECK (command_kind IN ('save-draft', 'validate', 'draft-run',
-                                'test-set-run', 'publish'));
+        CHECK (command_kind IN ('test-set-run', 'publish'));
 
 CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_run_reservations (
     tenant_id          text NOT NULL CHECK (tenant_id <> ''),
@@ -540,7 +519,6 @@ BEGIN
         'catalog.catalogs', 'catalog.flow_artifacts',
         'catalog.releases',
         'catalog.release_flows', 'catalog.catalog_heads',
-        'catalog.flow_drafts',
         'catalog.release_exposure_manifests', 'catalog.release_sources',
         'catalog.release_attachments', 'catalog.component_library',
         'catalog.connection_requirements',
@@ -599,26 +577,6 @@ BEGIN
         END IF;
     END LOOP;
 
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger
-        WHERE tgrelid = 'catalog.flow_drafts'::regclass
-          AND tgname = 'flow_drafts_controlled_update'
-          AND NOT tgisinternal
-    ) THEN
-        CREATE TRIGGER flow_drafts_controlled_update
-        BEFORE UPDATE ON catalog.flow_drafts
-        FOR EACH ROW EXECUTE FUNCTION catalog.guard_flow_draft_update();
-    END IF;
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger
-        WHERE tgrelid = 'catalog.flow_drafts'::regclass
-          AND tgname = 'flow_drafts_delete_immutable'
-          AND NOT tgisinternal
-    ) THEN
-        CREATE TRIGGER flow_drafts_delete_immutable
-        BEFORE DELETE ON catalog.flow_drafts
-        FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
-    END IF;
 END
 $triggers$;
 
@@ -663,6 +621,19 @@ BEGIN
         LOCK TABLE catalog.draft_safe_connection_grants IN ACCESS EXCLUSIVE MODE;
         DROP TABLE catalog.draft_safe_connection_grants RESTRICT;
     END IF;
+
+    -- wamn-0h0g.8.5.5: a draft is a client-side file, so the mutable document
+    -- store has no writer and its rows name nothing -- they are discarded
+    -- without archive, exactly like the validated-draft rows above. CASCADE is
+    -- deliberately NOT used: RESTRICT proves nothing came to depend on it. The
+    -- two triggers on the relation go with the relation itself; the trigger
+    -- FUNCTION they called is dropped separately because a function outlives the
+    -- triggers that referenced it.
+    IF to_regclass('catalog.flow_drafts') IS NOT NULL THEN
+        LOCK TABLE catalog.flow_drafts IN ACCESS EXCLUSIVE MODE;
+        DROP TABLE catalog.flow_drafts RESTRICT;
+    END IF;
+    DROP FUNCTION IF EXISTS catalog.guard_flow_draft_update();
 
     -- wamn-0h0g.15.27 retired the test-set store, leaving both RETAINED record
     -- tables with a NOT NULL foreign-key column that has no default and
@@ -752,7 +723,7 @@ BEGIN
         'authoring_command_audit', 'catalog_heads', 'catalogs',
         'component_library', 'connection_requirements', 'deployment_attestations',
         'flow_artifacts',
-        'flow_drafts', 'release_attachments', 'release_exposure_manifests',
+        'release_attachments', 'release_exposure_manifests',
         'release_flows', 'release_sources',
         'releases'
     ]::text[] THEN
@@ -810,7 +781,6 @@ BEGIN
             ('catalog.releases'),
             ('catalog.release_flows'), ('catalog.catalog_heads'),
             ('catalog.component_library'),
-            ('catalog.flow_drafts'),
             ('catalog.release_exposure_manifests'), ('catalog.release_sources'),
             ('catalog.release_attachments'), ('catalog.connection_requirements'),
             ('catalog.authoring_command_audit'),
@@ -843,7 +813,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       'c9b837fe4c62bbcc4649f0a48af9820a0932ec31d0a97c1c1cbeef15d6e9f1b2'
+       '5d70ff98ccc9a334119074b54d1fd0383235d517a3d4d604e77fd06f0bf19bca'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';
@@ -931,7 +901,7 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.flow_artifacts',
         'catalog.releases', 'catalog.release_flows',
-        'catalog.catalog_heads', 'catalog.flow_drafts',
+        'catalog.catalog_heads',
         'catalog.connection_requirements',
         'catalog.authoring_command_audit',
         'wamn_run.authoring_test_run_reservations',
@@ -969,10 +939,9 @@ GRANT SELECT ON catalog.flow_artifacts, catalog.releases,
     catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements
     TO wamn_control_author;
 
--- The one mutable authored document: optimistic revision control, guarded by
--- flow_drafts_controlled_update, with DELETE structurally refused.
-REVOKE ALL PRIVILEGES ON catalog.flow_drafts FROM wamn_control_author;
-GRANT SELECT, INSERT, UPDATE ON catalog.flow_drafts TO wamn_control_author;
+-- The author holds NO mutable-document authority at all (wamn-0h0g.8.5.5): the
+-- one relation it could write in place is deleted, so every grant below is over
+-- an append-only fact or a bounded state machine.
 
 -- Append-only facts: immutable after append, enforced by their own triggers as
 -- well as by the absence of UPDATE and DELETE here.
@@ -1029,9 +998,6 @@ BEGIN
                  ('catalog', 'release_flows', 'SELECT'),
                  ('catalog', 'catalog_heads', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),
-                 ('catalog', 'flow_drafts', 'SELECT'),
-                 ('catalog', 'flow_drafts', 'INSERT'),
-                 ('catalog', 'flow_drafts', 'UPDATE'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'INSERT'),
                  ('wamn_run', 'authoring_test_reports', 'SELECT'),

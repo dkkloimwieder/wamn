@@ -12,9 +12,10 @@
 //! document as any other, so the surface is no route-existence oracle, and an
 //! admitted author gets a bare `501` that audits nothing and mutates nothing.
 //! `test-set-run` LEFT that set in wamn-0h0g.8.5.4 — it is mounted, so this gate
-//! now proves the composition it reaches instead of the 501 it used to answer,
-//! while `validate`, `draft-run`, `publish`, and the query-side `read-draft`
-//! keep the bare-501 property unchanged.
+//! now proves the composition it reaches instead of the 501 it used to answer.
+//! wamn-0h0g.8.5.5 then collapsed `save-draft`, `validate`, `draft-run` and
+//! `read-draft` OUT OF THE CONTRACT, so `publish` is the whole unmounted
+//! inventory and there is no unmounted query at all.
 //!
 //! Proving that composition takes a SECOND database. The project-environment
 //! database this gate creates alongside the control one is where runs, the run
@@ -24,17 +25,17 @@
 //! in place — it cannot complete one before the composition admits it, which is
 //! what makes the sequencing assertions meaningful.
 //!
-//! It also owns `wamn-ftfc.2`'s S1 write path: a checkout client reads
-//! working-tree definition files and submits their content with the revision it
-//! last saw. That half proves the submitted document reaches the canonical
-//! store, that the exact stored revision is the one the canonical store read
-//! returns, that a stale working copy refuses before mutating anything, that
-//! the public HTTP path and the canonical audited handler path agree, and that
-//! attribution a client attaches is inert.
+//! It NO LONGER owns `wamn-ftfc.2`'s S1 write path. That half proved a checkout
+//! client's submitted definition reached a server-side draft store, its exact
+//! stored revision read back, and a stale working copy refusing — every one of
+//! which is a claim about `catalog.flow_drafts`, deleted by wamn-0h0g.8.5.5. A
+//! draft is a CLIENT-SIDE FILE now, so the platform has nothing to prove about
+//! storing one. The authentication, attribution and append-only-ledger
+//! properties those sections carried survive on the mounted gate below, which
+//! reaches the ledger under two distinct principals.
 //!
 //! The recipe in `docs/operations/build-and-test.md` supplies one disposable database.
 
-use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::Context as _;
@@ -50,8 +51,6 @@ use wamn_platform_identity::{
     IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
     resolve_subject, revoke_pat,
 };
-use wamn_scenario_worker::authoring::{ControlAuthoringScope, InternalAuthoringBackend, SaveDraft};
-use wamn_scenario_worker::management::{CommandScope, authorize, save_draft};
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
@@ -93,10 +92,6 @@ const CANDIDATE_IMPORTS_FINGERPRINT: &str =
 const BIND: &str = "127.0.0.1:18088";
 const TTL: Duration = Duration::from_secs(3600);
 
-const DRAFT_GRAPH: &str = r#"{"schema-version":"0.1","flow-id":"receive-material","version":1,
-  "nodes":[{"id":"request","type":"request","config":{"input-schema":true}},
-           {"id":"respond","type":"respond","config":{"status":200}}],
-  "edges":[{"from":"request","to":"respond"}]}"#;
 
 /// The one refusal every authentication and authorization failure must return.
 const AUTHORIZATION_DENIED: &str = r#"{"kind":"authorization-denied"}"#;
@@ -153,123 +148,26 @@ async fn send(
     }
 }
 
-fn save_document(command_id: &str, project: &str, revision: u64, draft: &str) -> String {
-    save_definition(command_id, project, revision, draft, DRAFT_GRAPH)
-}
-
-/// The same closed save document with every object member deliberately emitted
-/// in a different order. Canonical retry identity must ignore this transport
-/// formatting while retaining the exact typed content.
-fn reordered_save_document(
-    command_id: &str,
-    project: &str,
-    revision: u64,
-    draft: &str,
-    definition: &str,
-) -> String {
-    format!(
-        r#"{{"body":{{"command":{{"input":{{"provenance":null,"definition":{},"expected-revision":{},"wiring-id":"receive-material","draft-id":{},"scope":{{"environment":"dev","project-id":{}}}}},"kind":"save-draft"}},"command-id":{},"schema-version":"0.1"}},"document":"request"}}"#,
-        serde_json::to_string(definition).unwrap(),
-        revision,
-        serde_json::to_string(draft).unwrap(),
-        serde_json::to_string(project).unwrap(),
-        serde_json::to_string(command_id).unwrap(),
-    )
-}
-
-/// The same command with a caller-supplied definition body.
-fn save_definition(
-    command_id: &str,
-    project: &str,
-    revision: u64,
-    draft: &str,
-    definition: &str,
-) -> String {
-    save_attributed(command_id, project, revision, draft, definition, None)
-}
-
-/// The same command carrying optional client-supplied source attribution.
-fn save_attributed(
-    command_id: &str,
-    project: &str,
-    revision: u64,
-    draft: &str,
-    definition: &str,
-    provenance: Option<serde_json::Value>,
-) -> String {
-    let mut document = save_command(command_id, project, revision, draft, definition);
-    if let Some(provenance) = provenance {
-        document["body"]["command"]["input"]["provenance"] = provenance;
-    }
-    document.to_string()
-}
-
-fn save_command(
-    command_id: &str,
-    project: &str,
-    revision: u64,
-    draft: &str,
-    definition: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "document": "request",
-        "body": {
-            "schema-version": "0.1",
-            "command-id": command_id,
-            "command": {
-                "kind": "save-draft",
-                "input": {
-                    "scope": {"project-id": project, "environment": "dev"},
-                    "draft-id": draft,
-                    "wiring-id": "receive-material",
-                    "expected-revision": revision,
-                    "definition": definition,
-                }
-            }
-        }
-    })
-}
-
-/// One well-formed request document for every contract kind this transport does
-/// not mount, paired with its kind for assertion messages.
-///
-/// Each document has to decode: the contract boundary answers `400` for a
-/// document it rejects, so a `501` for one of these is evidence about the route
-/// and nothing else.
-/// The contract command kinds this transport still answers `501` for.
-///
 /// `test-set-run` was here until wamn-0h0g.8.5.4 mounted it. Its assertions moved
 /// to the composition block; what stays here is the property that outlives it —
 /// a kind with no route answers a bare `501`, and the answer carries no
 /// document.
+///
+/// wamn-0h0g.8.5.5 removed `validate` and `draft-run` from the CONTRACT, so they
+/// are no longer unmounted kinds — they are not kinds at all, and a document
+/// naming one is refused at decode rather than answered with a 501. `publish` is
+/// the whole remaining inventory.
 fn unmounted_commands() -> Vec<(&'static str, String)> {
     let scope = serde_json::json!({"project-id": PROJECT, "environment": "dev"});
     let validated = serde_json::json!({"validated-draft-id": "validated-draft-1"});
-    [
-        (
-            "validate",
-            serde_json::json!({
-                "scope": scope.clone(),
-                "draft": {"draft-id": "draft-unmounted", "revision": 1},
-            }),
-        ),
-        (
-            "draft-run",
-            serde_json::json!({
-                "scope": scope.clone(),
-                "validated-draft": validated.clone(),
-                "input": {},
-            }),
-        ),
-        (
-            "publish",
-            serde_json::json!({
-                "scope": scope.clone(),
-                "validated-draft": validated,
-                "successful-report-id": "report-1",
-            }),
-        ),
-    ]
+    [(
+        "publish",
+        serde_json::json!({
+            "scope": scope,
+            "validated-draft": validated,
+            "successful-report-id": "report-1",
+        }),
+    )]
     .into_iter()
     .map(|(kind, input)| {
         let document = serde_json::json!({
@@ -285,28 +183,13 @@ fn unmounted_commands() -> Vec<(&'static str, String)> {
     .collect()
 }
 
+/// There is NO unmounted query (wamn-0h0g.8.5.5): `get-report` is the whole
+/// query inventory and it is mounted, and `read-draft` left the contract with
+/// the draft concept. Returned as an empty inventory rather than deleted so the
+/// bare-501 loop below still states, by running over nothing, that no query
+/// kind answers a 501.
 fn unmounted_queries() -> Vec<(&'static str, String)> {
-    let scope = serde_json::json!({"project-id": PROJECT, "environment": "dev"});
-    [(
-        "read-draft",
-        serde_json::json!({
-            "scope": scope,
-            "draft": {"draft-id": "draft-unmounted", "revision": 1},
-        }),
-    )]
-    .into_iter()
-    .map(|(kind, input)| {
-        let document = serde_json::json!({
-            "document": "request",
-            "body": {
-                "schema-version": "0.1",
-                "query-id": format!("unmounted-{kind}"),
-                "query": {"kind": kind, "input": input},
-            }
-        });
-        (kind, document.to_string())
-    })
-    .collect()
+    Vec::new()
 }
 
 fn get_report_document(query_id: &str, project: &str, report_id: &str) -> String {
@@ -345,76 +228,6 @@ fn legacy_get_run_query() -> String {
     .to_string()
 }
 
-/// Create one disposable working-tree checkout. There is no repository in it:
-/// the platform never sees a checkout, only the content a client sends.
-fn checkout() -> PathBuf {
-    let root = std::env::temp_dir().join("wamn-ftfc2-checkout");
-    std::fs::remove_dir_all(&root).ok();
-    std::fs::create_dir_all(root.join("flows")).expect("create the checkout");
-    root
-}
-
-/// Write one flow definition file, as an editor or an agent would.
-fn edit(root: &Path, file: &str, contents: &str) -> PathBuf {
-    let path = root.join("flows").join(file);
-    std::fs::write(&path, contents).expect("write the definition file");
-    path
-}
-
-/// The whole S1 client: read the working-tree file and submit its content with
-/// the revision the client last saw, presenting its own bearer token.
-///
-/// No repository is opened, no Git process runs, and no database URL or
-/// platform credential is involved on either side of this call.
-async fn submit(
-    token: &str,
-    command_id: &str,
-    path: &Path,
-    draft: &str,
-    expected_revision: u64,
-) -> Response {
-    submit_with(token, command_id, path, draft, expected_revision, &[]).await
-}
-
-/// Submit exactly as [`submit`], with extra transport headers attached.
-async fn submit_with(
-    token: &str,
-    command_id: &str,
-    path: &Path,
-    draft: &str,
-    expected_revision: u64,
-    extra: &[(&str, &str)],
-) -> Response {
-    let bytes = std::fs::read(path).expect("read the working-tree definition file");
-    let definition = String::from_utf8(bytes).expect("a definition file is UTF-8");
-    let document = save_definition(command_id, PROJECT, expected_revision, draft, &definition);
-    post("/authoring", Some(token), extra, &document).await
-}
-
-/// Submit as [`submit`], attaching the commit the working tree was read at.
-async fn submit_attributed(
-    token: &str,
-    command_id: &str,
-    path: &Path,
-    draft: &str,
-    expected_revision: u64,
-    provenance: serde_json::Value,
-) -> Response {
-    let bytes = std::fs::read(path).expect("read the working-tree definition file");
-    let definition = String::from_utf8(bytes).expect("a definition file is UTF-8");
-    let document = save_attributed(
-        command_id,
-        PROJECT,
-        expected_revision,
-        draft,
-        &definition,
-        Some(provenance),
-    );
-    post("/authoring", Some(token), &[], &document).await
-}
-
-/// The response envelope's outcome, which is where every typed result and
-/// product refusal lives.
 fn outcome(body: &str) -> serde_json::Value {
     let document: serde_json::Value =
         serde_json::from_str(body).unwrap_or_else(|_| panic!("a response document: {body}"));
@@ -652,6 +465,25 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One `test-set-run` request document for the seeded candidate, in one project.
+fn gate_document_for(command_id: &str, project: &str) -> String {
+    serde_json::json!({
+        "document": "request",
+        "body": {
+            "schema-version": "0.1",
+            "command-id": command_id,
+            "command": {
+                "kind": "test-set-run",
+                "input": {
+                    "scope": {"project-id": project, "environment": ENVIRONMENT},
+                    "validated-draft": {"validated-draft-id": CANDIDATE_WIRING_HASH},
+                },
+            },
+        },
+    })
+    .to_string()
+}
+
 /// One `test-set-run` request document for the seeded candidate.
 ///
 /// The `validated-draft-id` is the WIRING HASH. There is no draft to resolve it
@@ -783,16 +615,6 @@ async fn project_queue_count(project: &Client) -> i64 {
         .get(0)
 }
 
-fn authoring_scope() -> ControlAuthoringScope {
-    ControlAuthoringScope {
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        environment: ENVIRONMENT.to_owned(),
-        tenant_id: TENANT.to_owned(),
-        source_schema: SOURCE_SCHEMA.to_owned(),
-    }
-}
-
 async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
     let database = database_of(admin_url);
     let role = author_role(admin_url);
@@ -879,32 +701,11 @@ async fn ledger_rows(admin: &Client) -> Vec<(String, String, String, String)> {
         .collect()
 }
 
-async fn retry_ledger_count(admin: &Client, principal_id: &str, command_id: &str) -> i64 {
-    admin
-        .query_one(
-            "SELECT count(*) FROM catalog.authoring_command_audit \
-              WHERE tenant_id = $1 AND principal_id = $2 AND command_id = $3",
-            &[&TENANT, &principal_id, &command_id],
-        )
-        .await
-        .expect("count one retry identity")
-        .get(0)
-}
-
-async fn draft_count(admin: &Client) -> i64 {
-    admin
-        .query_one("SELECT count(*) FROM catalog.flow_drafts", &[])
-        .await
-        .expect("count drafts")
-        .get(0)
-}
-
 async fn authoring_durable_counts(admin: &Client) -> Vec<i64> {
     let row = admin
         .query_one(
             &format!(
-                "SELECT (SELECT count(*) FROM catalog.flow_drafts), \
-                        (SELECT count(*) FROM catalog.authoring_command_audit), \
+                "SELECT (SELECT count(*) FROM catalog.authoring_command_audit), \
                         (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_run_reservations), \
                         (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_case_runs), \
                         (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_reports)"
@@ -962,64 +763,6 @@ async fn finalize_report(admin: &Client, report_id: &str, validated_draft_id: &s
         )
         .await
         .expect("finalize the report reservation");
-}
-
-/// Read one exact draft revision through the canonical mutable-document store
-/// statement, so this gate cannot agree with the production read by accident.
-async fn draft_at_revision(admin: &Client, draft: &str, revision: i64) -> Option<(String, String)> {
-    admin
-        .query_opt(
-            wamn_scenario_worker::store::drafts::select_flow_draft_sql(),
-            &[&TENANT, &draft, &revision],
-        )
-        .await
-        .expect("read one exact draft revision")
-        .map(|row| (row.get(0), row.get(1)))
-}
-
-async fn stored_revision(admin: &Client, draft: &str) -> Option<i64> {
-    admin
-        .query_opt(
-            "SELECT revision FROM catalog.flow_drafts WHERE tenant_id = $1 AND draft_id = $2",
-            &[&TENANT, &draft],
-        )
-        .await
-        .expect("read the stored draft revision")
-        .map(|row| row.get(0))
-}
-
-/// The attribution recorded for one command target: subject and effective role.
-async fn attribution(admin: &Client, target: &str) -> Vec<(String, String)> {
-    admin
-        .query(
-            "SELECT principal_subject, effective_role \
-               FROM catalog.authoring_command_audit \
-              WHERE tenant_id = $1 AND target_ref = $2 ORDER BY recorded_at",
-            &[&TENANT, &target],
-        )
-        .await
-        .expect("read the attribution for one target")
-        .iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect()
-}
-
-/// The client's recorded source claim for one command target.
-type RecordedProvenance = (Option<String>, Option<String>, Option<bool>);
-
-async fn recorded_provenance(admin: &Client, target: &str) -> Vec<RecordedProvenance> {
-    admin
-        .query(
-            "SELECT provenance_commit, provenance_ref, provenance_dirty \
-               FROM catalog.authoring_command_audit \
-              WHERE tenant_id = $1 AND target_ref = $2 ORDER BY recorded_at",
-            &[&TENANT, &target],
-        )
-        .await
-        .expect("read the recorded provenance for one target")
-        .iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2)))
-        .collect()
 }
 
 #[tokio::test]
@@ -1134,7 +877,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             "/authoring",
             token.as_deref(),
             &[],
-            &save_document("refused", PROJECT, 0, "draft-refused"),
+            &gate_document_for("refused", PROJECT),
         )
         .await;
         assert_eq!(response.status, 403, "{name} was not refused");
@@ -1148,7 +891,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "/authoring",
         Some(alice.token()),
         &[],
-        &save_document("refused", OTHER_PROJECT, 0, "draft-refused"),
+        &gate_document_for("refused", OTHER_PROJECT),
     )
     .await;
     assert_eq!(elsewhere.status, 403);
@@ -1231,22 +974,16 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "an unmounted kind was attributed on the command ledger"
     );
     assert_eq!(
-        draft_count(&admin).await,
-        0,
-        "an unmounted kind reached a command"
-    );
-    assert_eq!(
         authoring_durable_counts(&admin).await,
         durable_before_unmounted,
         "an unmounted command or query wrote durable authoring state"
     );
 
-    // Nothing above reached a command: no draft, no ledger row. `test-set-run`
-    // is no longer among the kinds above — wamn-0h0g.8.5.4 mounted it, and the
+    // Nothing above reached a command: no ledger row. `test-set-run` is no
+    // longer among the kinds above — wamn-0h0g.8.5.4 mounted it, and the
     // assertions that replaced its bare 501 run at the end of this gate, where
     // they cannot disturb the "nothing has reached a command yet" invariants
     // this section and the query section below both depend on.
-    assert_eq!(draft_count(&admin).await, 0, "a refusal ran a command");
     assert!(
         ledger_rows(&admin).await.is_empty(),
         "a refusal was audited"
@@ -1373,177 +1110,30 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a non-ledgered query appended a command audit row"
     );
 
-    // ---- a valid human token reaches the command with trusted context --------
-    let saved = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &save_document("save-1", PROJECT, 0, "draft-alice"),
-    )
-    .await;
-    assert_eq!(saved.status, 200, "{}", saved.body);
-    assert!(
-        saved.body.contains(r#""command-id":"save-1""#),
-        "{}",
-        saved.body
-    );
-    assert!(
-        saved.body.contains(r#""status":"completed""#),
-        "{}",
-        saved.body
-    );
-
-    // Same principal + command ID + canonical content replays the exact stored
-    // full envelope even when raw JSON object order and explicit null/omission
-    // differ. It executes no second draft write and adds no ledger row.
-    let exact_retry = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &reordered_save_document("save-1", PROJECT, 0, "draft-alice", DRAFT_GRAPH),
-    )
-    .await;
-    assert_eq!(exact_retry.status, 200);
-    assert_eq!(exact_retry.body.as_bytes(), saved.body.as_bytes());
-    assert_eq!(ledger_rows(&admin).await.len(), 1);
-    assert_eq!(stored_revision(&admin, "draft-alice").await, Some(1));
-
-    // Same retry identity with changed canonical content is the typed refusal;
-    // it neither discloses the stored completion nor mutates draft or ledger.
-    let divergent = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &save_definition(
-            "save-1",
-            PROJECT,
-            0,
-            "draft-alice",
-            &DRAFT_GRAPH.replace(r#""status":200"#, r#""status":299"#),
-        ),
-    )
-    .await;
-    assert_eq!(divergent.status, 200);
-    assert_eq!(
-        outcome(&divergent.body)["value"]["reason"]["kind"],
-        "command-id-reuse"
-    );
-    assert_ne!(divergent.body, saved.body);
-    assert_eq!(ledger_rows(&admin).await.len(), 1);
-    assert_eq!(stored_revision(&admin, "draft-alice").await, Some(1));
-
-    // ---- a service token reaches the same command ---------------------------
-    let by_service = post(
-        "/authoring",
-        Some(service_token.token()),
-        &[],
-        &save_document("save-2", PROJECT, 0, "draft-service"),
-    )
-    .await;
-    assert_eq!(by_service.status, 200, "{}", by_service.body);
-
-    // ---- two principals, the same command, distinguishable evidence ---------
-    let by_bob = post(
-        "/authoring",
-        Some(bob.token()),
-        &[],
-        &save_document("save-1", PROJECT, 0, "draft-alice"),
-    )
-    .await;
-    // Same draft at revision 0 again: the command runs and refuses on revision,
-    // which is a product refusal — it still attributes. In particular, Bob
-    // does not learn or replay Alice's stored completion for the same command
-    // ID.
-    assert_eq!(by_bob.status, 200, "{}", by_bob.body);
-    assert_eq!(
-        outcome(&by_bob.body)["value"]["reason"]["kind"],
-        "revision-conflict"
-    );
-    assert_ne!(by_bob.body, saved.body);
-
-    let alice_principal = resolve_subject(
-        &admin,
-        wamn_platform_identity::PrincipalKind::Human,
-        "alice@example.com",
-    )
-    .await
-    .expect("resolve alice")
-    .expect("alice exists");
-    let bob_principal = resolve_subject(
-        &admin,
-        wamn_platform_identity::PrincipalKind::Human,
-        "bob@example.com",
-    )
-    .await
-    .expect("resolve bob")
-    .expect("bob exists");
-
-    let rows = ledger_rows(&admin).await;
-    assert_eq!(
-        rows.len(),
-        3,
-        "one ledger row per authorized command: {rows:?}"
-    );
-    let alice_row = rows
-        .iter()
-        .find(|row| row.0 == "alice@example.com")
-        .expect("alice is attributed");
-    let bob_row = rows
-        .iter()
-        .find(|row| row.0 == "bob@example.com")
-        .expect("bob is attributed");
-    assert_ne!(
-        alice_row.1, bob_row.1,
-        "two principals ran the same command and are not distinguishable"
-    );
-    assert_eq!(alice_row.1, alice_principal.id().as_str());
-    assert_eq!(bob_row.1, bob_principal.id().as_str());
-    assert_eq!(alice_row.2, "save-draft");
-    assert_eq!(bob_row.2, "save-draft");
-    // The role is the one the caller actually holds, not one it asked for.
-    assert_eq!(alice_row.3, "project-author");
-    assert_eq!(bob_row.3, "project-admin");
-    assert!(
-        rows.iter().any(|row| row.0 == "ci-runner"),
-        "the service principal is attributed: {rows:?}"
-    );
-
-    // ---- client-injected identity never overrides the token -----------------
-    // A header asserting another principal is simply never read.
-    let injected_header = post(
-        "/authoring",
-        Some(alice.token()),
-        &[
-            ("X-Wamn-Principal", "bob@example.com"),
-            ("X-Wamn-Role", "project-admin"),
-        ],
-        &save_document("save-3", PROJECT, 0, "draft-injected"),
-    )
-    .await;
-    assert_eq!(injected_header.status, 200, "{}", injected_header.body);
-    let rows = ledger_rows(&admin).await;
-    let injected_row = rows
-        .iter()
-        .find(|row| row.2 == "save-draft" && row.1 == alice_principal.id().as_str())
-        .expect("the header request is attributed to the token principal");
-    assert_eq!(injected_row.3, "project-author", "a header widened a role");
-    assert_eq!(
-        rows.iter()
-            .filter(|row| row.1 == bob_principal.id().as_str())
-            .count(),
-        1,
-        "a header attributed a command to the wrong principal: {rows:?}"
-    );
-
-    // A body asserting a principal is refused by the contract before dispatch.
+    // ---- a smuggled principal is refused by the contract before dispatch ---
+    // wamn-0h0g.8.5.5: the sections that used to live here rode `save-draft` --
+    // trusted-context attribution, the S1 checkout write path, stale-revision
+    // refusal, handler parity, concurrent-retry serialization, exact stored
+    // bytes and recorded provenance. Every one of them was a claim about
+    // `catalog.flow_drafts`, or used the one command that wrote it as its
+    // vehicle. The relation is deleted, so the claims about it are deleted too;
+    // the claims about IDENTITY that used it as a vehicle move to the mounted
+    // gate below, which reaches the ledger under two distinct principals.
+    //
+    // What survives here is the pair that never reaches a handler at all, so
+    // neither needs a mounted command to be meaningful: a body that asserts a
+    // principal, and a document with no usable contract version. Both are
+    // refused at DECODE, which is why they can be asserted before the
+    // composition runs without disturbing the "nothing has reached a command
+    // yet" invariant above.
     let before = ledger_rows(&admin).await.len();
     let injected_body = post(
         "/authoring",
         Some(alice.token()),
         &[],
-        &save_document("save-4", PROJECT, 0, "draft-body").replace(
-            r#""draft-id""#,
-            r#""principal":"bob@example.com","draft-id""#,
+        &gate_document_for("gate-injected-body", PROJECT).replace(
+            r#""validated-draft""#,
+            r#""principal":"bob@example.com","validated-draft""#,
         ),
     )
     .await;
@@ -1554,89 +1144,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a smuggled principal reached a command"
     );
 
-    // ---- S1: a checkout client submits working-tree file content -----------
-    let root = checkout();
-    let file = edit(&root, "receive-material.flow.json", DRAFT_GRAPH);
-    let created = submit(alice.token(), "checkout-1", &file, "draft-checkout", 0).await;
-    assert_eq!(created.status, 200, "{}", created.body);
-    let result = outcome(&created.body);
-    assert_eq!(result["status"], "completed", "{}", created.body);
-    assert_eq!(result["value"]["command"], "save-draft");
-    assert_eq!(result["value"]["result"]["draft-id"], "draft-checkout");
-    assert_eq!(result["value"]["result"]["wiring-id"], "receive-material");
-    assert_eq!(result["value"]["result"]["revision"], 1);
-
-    // The editor changes one literal in the file; the client submits the new
-    // content at exactly the revision it last saw.
-    let edited_text = DRAFT_GRAPH.replace(r#""status":200"#, r#""status":201"#);
-    assert_ne!(edited_text, DRAFT_GRAPH, "the fixture edit changed nothing");
-    let file = edit(&root, "receive-material.flow.json", &edited_text);
-    let saved = submit(alice.token(), "checkout-2", &file, "draft-checkout", 1).await;
-    assert_eq!(saved.status, 200, "{}", saved.body);
-    assert_eq!(outcome(&saved.body)["value"]["result"]["revision"], 2);
-
-    // The revision the client was handed is the revision the canonical read
-    // returns, carrying the document the client submitted.
-    let (flow_id, stored) = draft_at_revision(&admin, "draft-checkout", 2)
-        .await
-        .expect("the canonical store read finds the revision the client was handed");
-    assert_eq!(flow_id, "receive-material");
-    assert_eq!(
-        as_json(&stored),
-        as_json(&edited_text),
-        "the stored revision is not the document the client submitted"
-    );
-    // A superseded revision is not separately addressable: the draft is one
-    // mutable document, so the store exposes only its current revision.
-    assert!(
-        draft_at_revision(&admin, "draft-checkout", 1)
-            .await
-            .is_none()
-    );
-
-    // ---- a stale working copy refuses before it mutates anything -----------
-    let stale_text = DRAFT_GRAPH.replace(r#""status":200"#, r#""status":500"#);
-    let stale_file = edit(&root, "receive-material.flow.json", &stale_text);
-    let before = draft_at_revision(&admin, "draft-checkout", 2)
-        .await
-        .expect("the draft is stored");
-    // The client still believes it holds revision 1.
-    let stale = submit(
-        alice.token(),
-        "checkout-stale",
-        &stale_file,
-        "draft-checkout",
-        1,
-    )
-    .await;
-    assert_eq!(stale.status, 200, "{}", stale.body);
-    let refused = outcome(&stale.body);
-    assert_eq!(refused["status"], "refused", "{}", stale.body);
-    assert_eq!(refused["value"]["command"], "save-draft");
-    assert_eq!(refused["value"]["reason"]["kind"], "revision-conflict");
-    assert_eq!(refused["value"]["reason"]["expected-revision"], 1);
-    // Refused before mutation: neither the revision nor the stored document
-    // moved, so the concurrent editor's work is intact.
-    assert_eq!(
-        draft_at_revision(&admin, "draft-checkout", 2).await,
-        Some(before),
-        "a stale write overwrote the stored document"
-    );
-    assert_eq!(
-        stored_revision(&admin, "draft-checkout").await,
-        Some(2),
-        "a stale write advanced the draft revision"
-    );
-
     // ---- an unversioned or unsupported document refuses before a command ---
     let versioned = |change: fn(&mut serde_json::Value)| {
-        let mut document = as_json(&save_definition(
-            "checkout-version",
-            PROJECT,
-            0,
-            "draft-version",
-            DRAFT_GRAPH,
-        ));
+        let mut document = as_json(&gate_document_for("gate-version", PROJECT));
         change(&mut document);
         document.to_string()
     };
@@ -1653,10 +1163,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         let ledger_before = ledger_rows(&admin).await.len();
         let refused = post("/authoring", Some(alice.token()), &[], document).await;
         assert_eq!(refused.status, 400, "{name}: {}", refused.body);
-        assert!(
-            stored_revision(&admin, "draft-version").await.is_none(),
-            "{name} reached a command"
-        );
         assert_eq!(
             ledger_rows(&admin).await.len(),
             ledger_before,
@@ -1676,485 +1182,27 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         })
     );
 
-    // ---- attribution a client attaches is inert ----------------------------
-    // A checkout client legitimately knows the commit it edited from. It may
-    // send that; the platform runs no Git, reads no such header, and must
-    // produce the identical outcome and the identical attribution either way.
-    let provenance = [
-        ("X-Wamn-Commit", "0123456789abcdef0123456789abcdef01234567"),
-        ("X-Git-Author", "bob@example.com"),
-        ("X-Wamn-Signed-Off-By", "project-admin"),
-        ("X-Wamn-Repository", "git@example.invalid:acme/flows.git"),
-    ];
-    let plain = submit(alice.token(), "prov-plain", &file, "draft-prov-plain", 0).await;
-    let signed = submit_with(
-        alice.token(),
-        "prov-signed",
-        &file,
-        "draft-prov-signed",
-        0,
-        &provenance,
-    )
-    .await;
-    assert_eq!(plain.status, signed.status, "{}", signed.body);
-    assert_eq!(outcome(&plain.body)["status"], "completed");
-    assert_eq!(
-        outcome(&plain.body)["value"]["result"]["revision"],
-        outcome(&signed.body)["value"]["result"]["revision"],
-        "attached provenance changed the command outcome"
-    );
-    assert_eq!(
-        as_json(
-            &draft_at_revision(&admin, "draft-prov-plain", 1)
-                .await
-                .expect("the plain draft is stored")
-                .1
-        ),
-        as_json(
-            &draft_at_revision(&admin, "draft-prov-signed", 1)
-                .await
-                .expect("the signed draft is stored")
-                .1
-        ),
-        "attached provenance changed what was stored"
-    );
-    // Attribution stays the verified presenter, never the attached author or
-    // the attached role.
-    assert_eq!(
-        attribution(&admin, "draft-prov-signed").await,
-        vec![("alice@example.com".to_owned(), "project-author".to_owned())],
-        "attached provenance became identity or authority"
-    );
-
-    // ---- handler parity: the HTTP path is the canonical handler path -------
-    // The same author saves the same content at the same expected revision,
-    // once through the public versioned API and once through the canonical
-    // audited command boundary that API itself calls.
-    let parity_text = DRAFT_GRAPH.replace(r#""status":200"#, r#""status":202"#);
-    let parity_file = edit(&root, "parity.flow.json", &parity_text);
-    let (identity, identity_task) = connect(&url).await.expect("connect for authorization");
-    let author = authorize(&identity, alice.token(), ORG, PROJECT)
-        .await
-        .expect("authorize the parity author")
-        .expect("alice is admitted");
-    let mut backend = InternalAuthoringBackend::connect(&author_url(&url), &authoring_scope())
-        .await
-        .expect("connect the canonical authoring backend");
-    let scope = CommandScope::new(TENANT, ORG, PROJECT, ENVIRONMENT);
-    let request = |draft: &str| SaveDraft {
-        tenant_id: TENANT.to_owned(),
-        draft_id: draft.to_owned(),
-        wiring_id: "receive-material".to_owned(),
-        expected_revision: 0,
-        definition: parity_text.clone(),
-    };
-    // Both paths carry the same source claim, so parity covers attribution too.
-    let claim = wamn_authoring_model::CommitProvenance {
-        commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
-        r#ref: Some("refs/heads/main".to_owned()),
-        dirty: false,
-    };
-    let direct_document = save_attributed(
-        "parity-direct",
-        PROJECT,
-        0,
-        "draft-parity-direct",
-        &parity_text,
-        Some(serde_json::to_value(&claim).unwrap()),
-    );
-    let direct_command: wamn_authoring_model::AuthoringRequest =
-        serde_json::from_value(as_json(&direct_document)["body"].clone()).unwrap();
-    let direct = save_draft(
-        &mut backend,
-        &author,
-        &scope,
-        &direct_command,
-        &request("draft-parity-direct"),
+    let alice_principal = resolve_subject(
+        &admin,
+        wamn_platform_identity::PrincipalKind::Human,
+        "alice@example.com",
     )
     .await
-    .expect("the canonical handler runs");
-    assert_eq!(
-        outcome(std::str::from_utf8(&direct).unwrap())["value"]["result"]["revision"],
-        1
-    );
-    let over_http = submit_attributed(
-        alice.token(),
-        "parity-http",
-        &parity_file,
-        "draft-parity-http",
-        0,
-        serde_json::json!({
-            "commit": "0123456789abcdef0123456789abcdef01234567",
-            "ref": "refs/heads/main",
-            "dirty": false,
-        }),
-    )
-    .await;
-    assert_eq!(over_http.status, 200, "{}", over_http.body);
-    assert_eq!(outcome(&over_http.body)["value"]["result"]["revision"], 1);
-    assert_eq!(
-        draft_at_revision(&admin, "draft-parity-direct", 1)
-            .await
-            .map(|row| row.1),
-        draft_at_revision(&admin, "draft-parity-http", 1)
-            .await
-            .map(|row| row.1),
-        "the two paths stored different documents"
-    );
-    assert_eq!(
-        attribution(&admin, "draft-parity-direct").await,
-        attribution(&admin, "draft-parity-http").await,
-        "the two paths attributed differently"
-    );
-    assert_eq!(
-        recorded_provenance(&admin, "draft-parity-direct").await,
-        recorded_provenance(&admin, "draft-parity-http").await,
-        "the two paths recorded the source claim differently"
-    );
-
-    // ---- concurrent retries serialize on the complete retry identity ------
-    // Separate database connections eliminate the HTTP surface's process-local
-    // mutex from this proof. Exact retries produce one mutation and one ledger
-    // row, then both callers receive the exact same stored envelope bytes.
-    let mut concurrent_backend =
-        InternalAuthoringBackend::connect(&author_url(&url), &authoring_scope())
-            .await
-            .expect("connect the concurrent authoring backend");
-    let exact_document = save_document("concurrent-exact", PROJECT, 0, "draft-concurrent-exact");
-    let exact_command: wamn_authoring_model::AuthoringRequest =
-        serde_json::from_value(as_json(&exact_document)["body"].clone()).unwrap();
-    let exact_request = SaveDraft {
-        tenant_id: TENANT.to_owned(),
-        draft_id: "draft-concurrent-exact".to_owned(),
-        wiring_id: "receive-material".to_owned(),
-        expected_revision: 0,
-        definition: DRAFT_GRAPH.to_owned(),
-    };
-    let (exact_left, exact_right) = tokio::join!(
-        save_draft(
-            &mut backend,
-            &author,
-            &scope,
-            &exact_command,
-            &exact_request,
-        ),
-        save_draft(
-            &mut concurrent_backend,
-            &author,
-            &scope,
-            &exact_command,
-            &exact_request,
-        ),
-    );
-    let exact_left = exact_left.expect("the first exact retry completes");
-    let exact_right = exact_right.expect("the second exact retry completes");
-    assert_eq!(
-        exact_left, exact_right,
-        "exact retry envelope bytes drifted"
-    );
-    assert_eq!(
-        stored_revision(&admin, "draft-concurrent-exact").await,
-        Some(1)
-    );
-    assert_eq!(
-        retry_ledger_count(&admin, author.principal_id(), "concurrent-exact").await,
-        1
-    );
-
-    // Divergent canonical requests sharing the same retry identity also
-    // serialize: exactly one request executes and the other gets the typed
-    // reuse refusal without a second draft or ledger mutation.
-    let divergent_definition = DRAFT_GRAPH.replace(r#""status":200"#, r#""status":299"#);
-    let divergent_left_document = save_definition(
-        "concurrent-divergent",
-        PROJECT,
-        0,
-        "draft-concurrent-left",
-        DRAFT_GRAPH,
-    );
-    let divergent_right_document = save_definition(
-        "concurrent-divergent",
-        PROJECT,
-        0,
-        "draft-concurrent-right",
-        &divergent_definition,
-    );
-    let divergent_left_command: wamn_authoring_model::AuthoringRequest =
-        serde_json::from_value(as_json(&divergent_left_document)["body"].clone()).unwrap();
-    let divergent_right_command: wamn_authoring_model::AuthoringRequest =
-        serde_json::from_value(as_json(&divergent_right_document)["body"].clone()).unwrap();
-    let divergent_left_request = SaveDraft {
-        tenant_id: TENANT.to_owned(),
-        draft_id: "draft-concurrent-left".to_owned(),
-        wiring_id: "receive-material".to_owned(),
-        expected_revision: 0,
-        definition: DRAFT_GRAPH.to_owned(),
-    };
-    let divergent_right_request = SaveDraft {
-        tenant_id: TENANT.to_owned(),
-        draft_id: "draft-concurrent-right".to_owned(),
-        wiring_id: "receive-material".to_owned(),
-        expected_revision: 0,
-        definition: divergent_definition,
-    };
-    let (divergent_left, divergent_right) = tokio::join!(
-        save_draft(
-            &mut backend,
-            &author,
-            &scope,
-            &divergent_left_command,
-            &divergent_left_request,
-        ),
-        save_draft(
-            &mut concurrent_backend,
-            &author,
-            &scope,
-            &divergent_right_command,
-            &divergent_right_request,
-        ),
-    );
-    let divergent_left = divergent_left.expect("the first divergent retry answers");
-    let divergent_right = divergent_right.expect("the second divergent retry answers");
-    let mut kinds = [
-        outcome(std::str::from_utf8(&divergent_left).unwrap())["status"]
-            .as_str()
-            .unwrap()
-            .to_owned(),
-        outcome(std::str::from_utf8(&divergent_right).unwrap())["status"]
-            .as_str()
-            .unwrap()
-            .to_owned(),
-    ];
-    kinds.sort();
-    assert_eq!(kinds, ["completed", "refused"]);
-    let refusal = [&divergent_left, &divergent_right]
-        .into_iter()
-        .map(|bytes| outcome(std::str::from_utf8(bytes).unwrap()))
-        .find(|value| value["status"] == "refused")
-        .expect("one divergent request refuses");
-    assert_eq!(refusal["value"]["reason"]["kind"], "command-id-reuse");
-    let created = usize::from(
-        stored_revision(&admin, "draft-concurrent-left")
-            .await
-            .is_some(),
-    ) + usize::from(
-        stored_revision(&admin, "draft-concurrent-right")
-            .await
-            .is_some(),
-    );
-    assert_eq!(created, 1, "a divergent retry executed both requests");
-    assert_eq!(
-        retry_ledger_count(&admin, author.principal_id(), "concurrent-divergent").await,
-        1
-    );
-    drop(concurrent_backend);
-
-    // Both paths refuse a stale expected revision the same way.
-    let stale_direct_document = save_attributed(
-        "parity-direct-stale",
-        PROJECT,
-        9,
-        "draft-parity-direct",
-        &parity_text,
-        Some(serde_json::to_value(&claim).unwrap()),
-    );
-    let stale_direct_command: wamn_authoring_model::AuthoringRequest =
-        serde_json::from_value(as_json(&stale_direct_document)["body"].clone()).unwrap();
-    let stale_direct = save_draft(
-        &mut backend,
-        &author,
-        &scope,
-        &stale_direct_command,
-        &SaveDraft {
-            expected_revision: 9,
-            ..request("draft-parity-direct")
-        },
+    .expect("resolve alice")
+    .expect("alice exists");
+    let bob_principal = resolve_subject(
+        &admin,
+        wamn_platform_identity::PrincipalKind::Human,
+        "bob@example.com",
     )
     .await
-    .expect("the canonical handler runs");
-    assert_eq!(
-        outcome(std::str::from_utf8(&stale_direct).unwrap())["value"]["reason"]["kind"],
-        "revision-conflict"
-    );
-    let stale_http = submit(
-        alice.token(),
-        "parity-http-stale",
-        &parity_file,
-        "draft-parity-http",
-        9,
-    )
-    .await;
-    assert_eq!(
-        outcome(&stale_http.body)["value"]["reason"]["kind"],
-        "revision-conflict"
-    );
-    // Neither refusal advanced its draft.
-    for draft in ["draft-parity-direct", "draft-parity-http"] {
-        assert_eq!(stored_revision(&admin, draft).await, Some(1), "{draft}");
-    }
-    drop(backend);
-    identity_task.abort();
-
-    // ---- the stored draft is the exact submitted bytes ---------------------
-    // `definition` is `text`, so what comes back is what went in: whitespace,
-    // key order, trailing newline and all. Nothing on the save path parses it.
-    let exact = "{  \"schema-version\":\"0.1\",\n\n  \"flow-id\":\"receive-material\",\n  \
-                 \"version\":1,\n\t\"nodes\":[],\n  \"edges\":[]  }\n";
-    let exact_file = edit(&root, "exact.flow.json", exact);
-    let saved = submit(alice.token(), "exact-1", &exact_file, "draft-exact", 0).await;
-    assert_eq!(saved.status, 200, "{}", saved.body);
-    let (_, stored) = draft_at_revision(&admin, "draft-exact", 1)
-        .await
-        .expect("the exact draft is stored");
-    assert_eq!(
-        stored, exact,
-        "the stored revision is not the bytes the client submitted"
-    );
-    // And it is still exactly the file on disk, which is the whole point: the
-    // client can diff its working tree against the stored revision.
-    assert_eq!(
-        stored,
-        std::fs::read_to_string(&exact_file).expect("read the working-tree file"),
-        "the stored revision drifted from the working-tree file"
-    );
-
-    // ---- a half-finished edit is a preserved draft, not a failure ----------
-    // This is the normal state of a file between two keystrokes. Save stores it
-    // without parsing.
-    let ledger_before = ledger_rows(&admin).await.len();
-    let broken = "{\"schema-version\":\"0.1\",\n  \"nodes\": [";
-    let broken_file = edit(&root, "broken.flow.json", broken);
-    let preserved = submit(alice.token(), "broken-1", &broken_file, "draft-broken", 0).await;
-    assert_eq!(preserved.status, 200, "{}", preserved.body);
-    assert_eq!(
-        outcome(&preserved.body)["status"],
-        "completed",
-        "{}",
-        preserved.body
-    );
-    assert_eq!(outcome(&preserved.body)["value"]["result"]["revision"], 1);
-    let (_, stored) = draft_at_revision(&admin, "draft-broken", 1)
-        .await
-        .expect("the half-finished draft is preserved");
-    assert_eq!(
-        stored, broken,
-        "invalid intermediate text was not preserved"
-    );
-    assert_eq!(
-        ledger_rows(&admin).await.len(),
-        ledger_before + 1,
-        "the authorized save was not attributed"
-    );
-    // An emptied file is equally legitimate, and equally preserved.
-    let emptied_file = edit(&root, "emptied.flow.json", "");
-    let emptied = submit(
-        alice.token(),
-        "emptied-1",
-        &emptied_file,
-        "draft-emptied",
-        0,
-    )
-    .await;
-    assert_eq!(emptied.status, 200, "{}", emptied.body);
-    assert_eq!(
-        draft_at_revision(&admin, "draft-emptied", 1)
-            .await
-            .expect("the emptied draft is preserved")
-            .1,
-        ""
-    );
-
-    // ---- provenance is recorded verbatim, and only as attribution ----------
-    let attributed = serde_json::json!({
-        "commit": "0123456789abcdef0123456789abcdef01234567",
-        "ref": "refs/heads/main",
-        "dirty": false,
-    });
-    let with_source = submit_attributed(
-        alice.token(),
-        "prov-recorded",
-        &file,
-        "draft-prov-recorded",
-        0,
-        attributed.clone(),
-    )
-    .await;
-    assert_eq!(with_source.status, 200, "{}", with_source.body);
-    assert_eq!(
-        recorded_provenance(&admin, "draft-prov-recorded").await,
-        vec![(
-            Some("0123456789abcdef0123456789abcdef01234567".to_owned()),
-            Some("refs/heads/main".to_owned()),
-            Some(false),
-        )],
-        "the client's source claim was not recorded verbatim"
-    );
-    // A detached checkout has a commit and no ref; a dirty tree says so.
-    let detached = submit_attributed(
-        alice.token(),
-        "prov-detached",
-        &file,
-        "draft-prov-detached",
-        0,
-        serde_json::json!({"commit": "feedface", "ref": null, "dirty": true}),
-    )
-    .await;
-    assert_eq!(detached.status, 200, "{}", detached.body);
-    assert_eq!(
-        recorded_provenance(&admin, "draft-prov-detached").await,
-        vec![(Some("feedface".to_owned()), None, Some(true))]
-    );
-    // Omitting it records nothing rather than inventing a claim.
-    assert_eq!(
-        recorded_provenance(&admin, "draft-prov-plain").await,
-        vec![(None, None, None)],
-        "an absent claim was fabricated"
-    );
-
-    // Two commands differing ONLY in provenance are indistinguishable in every
-    // respect a client can observe, and in what they stored.
-    let twin = edit(&root, "twin.flow.json", &edited_text);
-    let bare = submit(alice.token(), "twin-bare", &twin, "draft-twin-bare", 0).await;
-    let claimed = submit_attributed(
-        alice.token(),
-        "twin-claimed",
-        &twin,
-        "draft-twin-claimed",
-        0,
-        serde_json::json!({"commit": "deadbeef", "ref": "refs/heads/other", "dirty": true}),
-    )
-    .await;
-    assert_eq!(bare.status, claimed.status);
-    assert_eq!(
-        outcome(&bare.body).to_string().replace("bare", "claimed"),
-        outcome(&claimed.body).to_string(),
-        "attribution changed the command outcome"
-    );
-    assert_eq!(
-        draft_at_revision(&admin, "draft-twin-bare", 1)
-            .await
-            .map(|row| row.1),
-        draft_at_revision(&admin, "draft-twin-claimed", 1)
-            .await
-            .map(|row| row.1),
-        "attribution changed what was stored"
-    );
-    // Even a claim that names a role or another principal is inert: the row is
-    // attributed to the verified presenter, and the claim stays a claim.
-    let hostile = submit_attributed(
-        alice.token(),
-        "prov-hostile",
-        &twin,
-        "draft-prov-hostile",
-        0,
-        serde_json::json!({"commit": "project-admin", "ref": "bob@example.com", "dirty": false}),
-    )
-    .await;
-    assert_eq!(hostile.status, 200, "{}", hostile.body);
-    assert_eq!(
-        attribution(&admin, "draft-prov-hostile").await,
-        vec![("alice@example.com".to_owned(), "project-author".to_owned())],
-        "a source claim became identity or authority"
+    .expect("resolve bob")
+    .expect("bob exists");
+    // Nothing above reached a handler, so the ledger is still empty and the
+    // composition below starts from a clean attribution slate.
+    assert!(
+        ledger_rows(&admin).await.is_empty(),
+        "a pre-dispatch refusal was audited"
     );
 
     // ---- test-set-run IS mounted, and composes a real report ---------------
@@ -2201,10 +1249,15 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             (500, serde_json::json!({"error": "second"})),
         ],
     ));
+    // The headers assert another principal and a wider role. Neither is read:
+    // identity is settled from the bearer token alone, before the body.
     let accepted = post(
         "/authoring",
         Some(alice.token()),
-        &[],
+        &[
+            ("X-Wamn-Principal", "bob@example.com"),
+            ("X-Wamn-Role", "project-admin"),
+        ],
         &test_set_run_document("test-set-1"),
     )
     .await;
@@ -2232,6 +1285,27 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         }),
         "the test-set receipt drifted: {}",
         accepted.body
+    );
+
+    // The header-asserted principal reached nothing: the one new ledger row is
+    // attributed to the TOKEN principal, under the role that principal actually
+    // holds rather than the one the header asked for.
+    let attributed = ledger_rows(&admin).await;
+    assert_eq!(
+        attributed.len(),
+        ledger_before_composition + 1,
+        "the gate was not attributed exactly once: {attributed:?}"
+    );
+    let alice_row = attributed
+        .iter()
+        .find(|row| row.0 == "alice@example.com")
+        .expect("the gate is attributed to the token principal");
+    assert_eq!(alice_row.1, alice_principal.id().as_str());
+    assert_eq!(alice_row.2, "test-set-run");
+    assert_eq!(alice_row.3, "project-author", "a header widened a role");
+    assert!(
+        !attributed.iter().any(|row| row.1 == bob_principal.id().as_str()),
+        "a header attributed a command to the wrong principal: {attributed:?}"
     );
 
     // Exactly one run per ordinal, each under its derived producer key, each
@@ -2378,10 +1452,46 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         verdicts,
         "a re-driven composition rewrote an immutable case verdict"
     );
+    // Two principals ran the same command against the same candidate. Both are
+    // attributed, and they stay distinguishable in the append-only ledger --
+    // each under the role it actually holds.
+    let rows = ledger_rows(&admin).await;
     assert_eq!(
-        ledger_rows(&admin).await.len(),
+        rows.len(),
         ledger_before_composition + 2,
         "the second command id was not attributed exactly once"
+    );
+    let bob_row = rows
+        .iter()
+        .find(|row| row.0 == "bob@example.com")
+        .expect("bob is attributed");
+    assert_ne!(
+        alice_row.1, bob_row.1,
+        "two principals ran the same command and are not distinguishable"
+    );
+    assert_eq!(bob_row.1, bob_principal.id().as_str());
+    assert_eq!(bob_row.2, "test-set-run");
+    assert_eq!(bob_row.3, "project-admin");
+
+    // A SERVICE token reaches the same command on the same terms as a human
+    // one, and is attributed as itself.
+    let by_service = post(
+        "/authoring",
+        Some(service_token.token()),
+        &[],
+        &test_set_run_document("test-set-3"),
+    )
+    .await;
+    assert_eq!(by_service.status, 200, "{}", by_service.body);
+    assert_eq!(outcome(&by_service.body), outcome(&accepted.body));
+    assert!(
+        ledger_rows(&admin).await.iter().any(|row| row.0 == "ci-runner"),
+        "the service principal is not attributed"
+    );
+    assert_eq!(
+        project_case_runs(&project).await,
+        runs,
+        "a service-token re-drive admitted a second run"
     );
 
     // A candidate this plane does not hold is a typed product refusal, not a

@@ -2,22 +2,23 @@
 // The runnable `wamn` CLI (wamn-ftfc.14).
 //
 //   node clients/authoring-client/scripts/wamn.mjs --help
-//   node clients/authoring-client/scripts/wamn.mjs validate \
+//   node clients/authoring-client/scripts/wamn.mjs test-set-run \
 //     --base-url http://HOST:PORT --token-file /path/to/pat \
 //     --project receiving --environment dev \
-//     --file flows/receive-material.flow.json \
-//     --draft-id draft-receiving --wiring-id receive-material
+//     --validated-draft sha256:...
 //
 // This file is the ONLY place the CLI touches the platform-neutral outside
 // world. Everything it hands `runCli` is listed here: POST-only HTTP, reads and
-// writes of files the caller named, a read-only `git` query for the client's own
-// checkout provenance, a clock, and two output streams. There is deliberately no
-// environment reader, no generic process spawn, and no database client — the CLI
-// cannot acquire an endpoint, a credential, or storage authority it was not
-// handed on the command line.
+// writes of files the caller named, a clock, and two output streams. There is
+// deliberately no environment reader, NO PROCESS SPAWN AT ALL, and no database
+// client — the CLI cannot acquire an endpoint, a credential, or storage
+// authority it was not handed on the command line.
+//
+// The `git` reader left with `save-draft` (wamn-0h0g.8.5.5): provenance had
+// exactly one wire carrier, so with that command gone nothing can consume a
+// commit claim and the capability is withdrawn rather than left dangling.
 
-import { spawnSync } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { compiledPackage } from "./compile.mjs";
@@ -27,7 +28,6 @@ const io = {
   fetch: (endpoint, init) =>
     fetch(endpoint, { body: init.body, headers: init.headers, method: init.method }),
   readText: (path) => readFile(path, "utf8"),
-  modifiedAt: async (path) => Math.round((await stat(path)).mtimeMs),
   readJson: async (path) => {
     try {
       return JSON.parse(await readFile(path, "utf8"));
@@ -39,10 +39,6 @@ const io = {
   writeJson: async (path, value) => {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
-  },
-  git: (args, cwd) => {
-    const result = spawnSync("git", args, { cwd, encoding: "utf8" });
-    return result.status === 0 ? result.stdout.trim() : undefined;
   },
   out: (line) => process.stdout.write(`${line}\n`),
   err: (line) => process.stderr.write(`${line}\n`),

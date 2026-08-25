@@ -54,6 +54,46 @@ const SELECT_CANDIDATE_BY_HASH_SQL: &str = "SELECT catalog_id, wiring_id, versio
     WHERE tenant_id = $1 AND wiring_hash = $2 \
     ORDER BY catalog_id, wiring_id, version";
 
+/// Name the components a gate case would reach whose admitted effects
+/// projection is NOT empty.
+///
+/// The constitutional clause (wamn-0h0g.8.5.5, ratified spec section 5.1): a
+/// gate is a JUDGMENT ABOUT A DOCUMENT, not an execution of it. Effects belong
+/// to admitted runs under run identity, and a report keyed by content hash must
+/// be reproducible from the document alone or that identity is a lie.
+///
+/// Enforcement is the effect-posture fact `wamn-0h0g.21.9` mints AT ADMISSION:
+/// `catalog.component_library.effects` is the validator's derived projection of
+/// a component's imports onto the authority packages that leave the host, and a
+/// projection no validator derived is already refused at publication and on the
+/// serving path. This is a THIRD READER of that same fact, not a new mechanism —
+/// it derives nothing and asserts nothing of its own, it only reads the stored
+/// projection and refuses a candidate that reaches a non-empty one.
+///
+/// The join is the candidate's `nodes` object onto the library at the candidate's
+/// own applied catalog version, exactly as the store-alias diagnostic below
+/// resolves it, so a gate and a run agree on which components a document reaches.
+/// A node naming no library row contributes nothing here: an unresolvable
+/// component is the admission statement's `candidate-definition-invalid`, a
+/// different and already-typed refusal.
+///
+/// Params: `$1` tenant, `$2` catalog id, `$3` catalog version, `$4` nodes.
+const SELECT_EFFECTFUL_COMPONENTS_SQL: &str = "WITH node AS ( \
+        SELECT entry.value ->> 'component' AS component, \
+               entry.value ->> 'interface-version' AS interface_version, \
+               entry.value ->> 'operation' AS operation \
+          FROM jsonb_each($4::jsonb) AS entry \
+    ) \
+    SELECT DISTINCT library.component \
+      FROM node JOIN catalog.component_library AS library \
+        ON library.tenant_id = $1 AND library.catalog_id = $2 \
+       AND library.catalog_version = $3 \
+       AND library.component = node.component \
+       AND library.interface_version = node.interface_version \
+       AND library.operation = node.operation \
+     WHERE jsonb_array_length(library.effects) > 0 \
+     ORDER BY 1";
+
 /// Name the store aliases the candidate requires and this environment cannot
 /// resolve.
 ///
@@ -124,9 +164,24 @@ pub struct CandidateWiring {
     pub gate_report_id: String,
     /// The candidate's own `cases` array, riding `graph_json`.
     pub cases: Vec<TestSetCase>,
-    /// The candidate's `nodes` object, retained only to diagnose an
-    /// unresolvable binding world.
+    /// The candidate's `nodes` object, retained to resolve the components it
+    /// reaches: the effect posture that decides whether it may be gated at all,
+    /// and the aliases that diagnose an unresolvable binding world.
     nodes: Value,
+}
+
+impl CandidateWiring {
+    /// The `nodes` object as a `jsonb`-safe value.
+    ///
+    /// A candidate whose graph carries no object here reaches no component, and
+    /// `jsonb_each` requires an object rather than a null.
+    fn nodes_object(&self) -> Value {
+        if self.nodes.is_object() {
+            self.nodes.clone()
+        } else {
+            Value::Object(serde_json::Map::new())
+        }
+    }
 }
 
 /// The terminal facts one admitted run makes available to case evaluation.
@@ -247,17 +302,37 @@ impl AdmissionSurface {
         }))
     }
 
+    /// Name the effectful components this candidate reaches, for one refusal.
+    ///
+    /// Empty means the candidate is gateable: every component it reaches carries
+    /// the empty effects projection, which is the POSITIVE fact the validator
+    /// derived rather than the absence of one.
+    pub async fn effectful_components(
+        &self,
+        candidate: &CandidateWiring,
+    ) -> anyhow::Result<Vec<String>> {
+        let rows = self
+            .client
+            .query(
+                SELECT_EFFECTFUL_COMPONENTS_SQL,
+                &[
+                    &self.tenant_id.as_ref(),
+                    &candidate.catalog_id,
+                    &candidate.catalog_version,
+                    &candidate.nodes_object(),
+                ],
+            )
+            .await
+            .context("name the candidate's effectful components")?;
+        Ok(rows.iter().map(|row| row.get(0)).collect())
+    }
+
     /// Name the candidate's unresolvable store aliases, for one refusal.
     pub async fn unresolved_store_aliases(
         &self,
         candidate: &CandidateWiring,
         environment: &str,
     ) -> anyhow::Result<Vec<String>> {
-        let nodes = if candidate.nodes.is_object() {
-            candidate.nodes.clone()
-        } else {
-            Value::Object(serde_json::Map::new())
-        };
         let rows = self
             .client
             .query(
@@ -266,7 +341,7 @@ impl AdmissionSurface {
                     &self.tenant_id.as_ref(),
                     &candidate.catalog_id,
                     &candidate.catalog_version,
-                    &nodes,
+                    &candidate.nodes_object(),
                     &environment,
                 ],
             )
@@ -463,6 +538,85 @@ mod tests {
         assert!(
             candidate_cases(&json!({"cases": [{"case-id": "x", "input": {}, "why": 1}]})).is_err()
         );
+    }
+
+    /// The effect-posture read is EXACTLY the `wamn-0h0g.21.9` fact, resolved
+    /// over exactly the components a run would reach.
+    ///
+    /// This is a static statement built in Rust, so its text is the contract and
+    /// is pinned whole. What each clause buys:
+    ///
+    /// - it reads `catalog.component_library.effects` and nothing else, so it
+    ///   is a third READER of the admitted posture rather than a second
+    ///   derivation of it;
+    /// - `jsonb_array_length(...) > 0` is the non-empty test, so the empty
+    ///   projection — the validator's POSITIVE "leaves the host nowhere" fact —
+    ///   is the only thing that passes;
+    /// - the join keys are the same four the store-alias diagnostic uses, so a
+    ///   gate cannot resolve a different component set than a run does.
+    #[test]
+    fn the_effect_posture_read_is_the_admitted_projection_and_nothing_else() {
+        let sql = SELECT_EFFECTFUL_COMPONENTS_SQL;
+        assert_eq!(
+            sql,
+            "WITH node AS ( \
+                SELECT entry.value ->> 'component' AS component, \
+                       entry.value ->> 'interface-version' AS interface_version, \
+                       entry.value ->> 'operation' AS operation \
+                  FROM jsonb_each($4::jsonb) AS entry \
+            ) \
+            SELECT DISTINCT library.component \
+              FROM node JOIN catalog.component_library AS library \
+                ON library.tenant_id = $1 AND library.catalog_id = $2 \
+               AND library.catalog_version = $3 \
+               AND library.component = node.component \
+               AND library.interface_version = node.interface_version \
+               AND library.operation = node.operation \
+             WHERE jsonb_array_length(library.effects) > 0 \
+             ORDER BY 1"
+        );
+        // The refusal is a judgment, never a mutation: a gate that wrote
+        // anything on this path would not be a judgment about a document.
+        for mutation in ["INSERT", "UPDATE", "DELETE", "TRUNCATE"] {
+            assert!(!sql.contains(mutation), "the posture read performs {mutation}");
+        }
+        // It resolves components over the same four join keys the binding-world
+        // diagnostic does, so the two agree on what the document reaches.
+        for shared in [
+            "library.component = node.component",
+            "library.interface_version = node.interface_version",
+            "library.operation = node.operation",
+            "library.catalog_version = $3",
+        ] {
+            assert!(
+                SELECT_UNRESOLVED_STORE_ALIASES_SQL.contains(shared),
+                "the two candidate resolutions disagree on {shared}"
+            );
+        }
+    }
+
+    /// A candidate whose graph carries no `nodes` object reaches no component,
+    /// and the value handed to `jsonb_each` is an object rather than a null.
+    #[test]
+    fn a_candidate_with_no_nodes_object_is_read_as_reaching_nothing() {
+        let candidate = |graph: Value| CandidateWiring {
+            catalog_id: "catalog-a".to_owned(),
+            catalog_version: 1,
+            wiring_id: "wiring-a".to_owned(),
+            wiring_version: 1,
+            wiring_hash: "sha256:".to_owned() + &"0".repeat(64),
+            gate_report_id: "report-a".to_owned(),
+            cases: Vec::new(),
+            nodes: graph.get("nodes").cloned().unwrap_or(Value::Null),
+        };
+        assert_eq!(
+            candidate(json!({"cases": []})).nodes_object(),
+            json!({}),
+            "an absent nodes object must not reach jsonb_each as null"
+        );
+        assert_eq!(candidate(json!({"nodes": []})).nodes_object(), json!({}));
+        let nodes = json!({"a": {"component": "c", "interface-version": "1", "operation": "op"}});
+        assert_eq!(candidate(json!({"nodes": nodes})).nodes_object(), nodes);
     }
 
     /// The admission statement's own classification, restated as the reason this

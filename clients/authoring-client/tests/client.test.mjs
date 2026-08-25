@@ -38,7 +38,7 @@ test("runtime schema support fails closed on unknown keywords and formats", () =
     assertSupportedAuthoringSchema({ format: "uint64", minimum: 0, type: "integer" }),
   );
   assert.doesNotThrow(() =>
-    assertSupportedAuthoringSchema({ allOf: [{ $ref: "#/definitions/DraftRunCapture" }], default: "full" }),
+    assertSupportedAuthoringSchema({ allOf: [{ $ref: "#/definitions/SomeEnum" }], default: "full" }),
   );
   assert.doesNotThrow(() =>
     assertSupportedAuthoringSchema({ minLength: 1, type: "string", "x-max-utf8-bytes": 64 }),
@@ -61,18 +61,15 @@ test("runtime schema support fails closed on unknown keywords and formats", () =
   );
 });
 
+const SCOPE = { environment: "dev", "project-id": "project-1" };
+const VALIDATED = { "validated-draft-id": "validated-1" };
+
 const request = {
   "command-id": "command-1",
   "schema-version": AUTHORING_SCHEMA_VERSION,
   command: {
-    kind: "save-draft",
-    input: {
-      definition: '{"flow":"draft"}',
-      "draft-id": "draft-1",
-      "expected-revision": 0,
-      "wiring-id": "flow-1",
-      scope: { environment: "dev", "project-id": "project-1" },
-    },
+    kind: "test-set-run",
+    input: { scope: SCOPE, "validated-draft": VALIDATED },
   },
 };
 
@@ -80,56 +77,56 @@ const queryRequest = {
   "query-id": "query-1",
   "schema-version": AUTHORING_SCHEMA_VERSION,
   query: {
-    kind: "read-draft",
-    input: {
-      draft: { "draft-id": "draft-1", revision: 1 },
-      scope: { environment: "dev", "project-id": "project-1" },
-    },
+    kind: "get-report",
+    input: { "report-id": "report-1", scope: SCOPE },
   },
 };
 
-const draftDocument = {
-  definition: "{}",
-  draft: { "draft-id": "draft-1", "wiring-id": "flow-1", revision: 1 },
+const gateReceipt = { "report-id": "report-1", "validated-draft": VALIDATED };
+
+const finalizedReport = {
+  passed: true,
+  "report-id": "report-1",
+  state: "finalized",
+  summary: { cases: [] },
+  "validated-draft": VALIDATED,
 };
 
-function validateRequest() {
-  return {
-    "command-id": "validate-1",
-    "schema-version": AUTHORING_SCHEMA_VERSION,
-    command: {
-      kind: "validate",
+/// wamn-0h0g.8.5.5: the four collapsed operations are gone from the generated
+/// closed validator, so a document naming one is refused before transport.
+test("the collapsed draft operations are refused by the generated validator", () => {
+  const collapsed = [
+    {
+      kind: "save-draft",
       input: {
-        draft: { "draft-id": "draft-1", revision: Number.MAX_SAFE_INTEGER },
-        scope: { environment: "dev", "project-id": "project-1" },
+        definition: "{}",
+        "draft-id": "draft-1",
+        "expected-revision": 0,
+        "wiring-id": "flow-1",
+        scope: SCOPE,
       },
     },
-  };
-}
-
-function draftRunRequest(capture) {
-  return {
-    "command-id": "draft-run-1",
-    "schema-version": AUTHORING_SCHEMA_VERSION,
-    command: {
+    { kind: "validate", input: { draft: { "draft-id": "draft-1", revision: 1 }, scope: SCOPE } },
+    {
       kind: "draft-run",
-      input: {
-        ...(capture === undefined ? {} : { capture }),
-        input: { receipt: "r-1" },
-        scope: { environment: "dev", "project-id": "project-1" },
-        "validated-draft": { "validated-draft-id": "validated-1" },
-      },
+      input: { input: {}, scope: SCOPE, "validated-draft": VALIDATED },
     },
-  };
-}
-
-test("draft-run capture accepts omission, full, and off only", () => {
-  for (const capture of [undefined, "full", "off"]) {
-    assert.doesNotThrow(() => parseAuthoringRequest(draftRunRequest(capture)));
+  ];
+  for (const command of collapsed) {
+    assert.throws(
+      () => parseAuthoringRequest({ ...request, command }),
+      AuthoringPayloadError,
+      command.kind,
+    );
   }
-  for (const retired of ["scrubbed", "preview"]) {
-    assert.throws(() => parseAuthoringRequest(draftRunRequest(retired)), AuthoringPayloadError);
-  }
+  assert.throws(
+    () =>
+      parseAuthoringQueryRequest({
+        ...queryRequest,
+        query: { kind: "read-draft", input: { draft: { "draft-id": "d", revision: 1 }, scope: SCOPE } },
+      }),
+    AuthoringPayloadError,
+  );
 });
 
 function response(outcome) {
@@ -173,7 +170,7 @@ test("query dispatch is separate and verifies query-id plus operation echoes", a
       observed = document;
       return queryResponse({
         status: "completed",
-        value: { query: "read-draft", result: draftDocument },
+        value: { query: "get-report", result: finalizedReport },
       });
     },
   });
@@ -183,12 +180,8 @@ test("query dispatch is separate and verifies query-id plus operation echoes", a
   for (const payload of [
     queryResponse({
       status: "completed",
-      value: { query: "read-draft", result: draftDocument },
+      value: { query: "get-report", result: finalizedReport },
     }, "wrong-query"),
-    queryResponse({
-      status: "refused",
-      value: { query: "get-report", reason: { kind: "report-not-found", "report-id": "report-1" } },
-    }),
   ]) {
     await assert.rejects(
       new AuthoringClient({ async executeQuery() { return payload; } }).query(queryRequest),
@@ -205,8 +198,8 @@ test("execute returns a schema-typed completion through a mock transport", async
       return response({
         status: "completed",
         value: {
-          command: "save-draft",
-          result: { "draft-id": "draft-1", "wiring-id": "flow-1", revision: 1 },
+          command: "test-set-run",
+          result: gateReceipt,
         },
       });
     },
@@ -223,7 +216,7 @@ test("typed refusals return normally and are not infrastructure faults", async (
       return response({
         status: "refused",
         value: {
-          command: "save-draft",
+          command: "test-set-run",
           reason: { kind: "authorization-denied" },
         },
       });
@@ -233,7 +226,7 @@ test("typed refusals return normally and are not infrastructure faults", async (
   const outcome = await client.execute(request);
   assert.deepEqual(outcome, {
     status: "refused",
-    value: { command: "save-draft", reason: { kind: "authorization-denied" } },
+    value: { command: "test-set-run", reason: { kind: "authorization-denied" } },
   });
 });
 
@@ -265,7 +258,7 @@ test("unknown, unversioned, and mismatched responses are protocol faults", async
     response({
       status: "refused",
       value: {
-        command: "save-draft",
+        command: "test-set-run",
         reason: { kind: "authorization-denied", detail: "must stay prose-free" },
       },
     }),
@@ -277,7 +270,7 @@ test("unknown, unversioned, and mismatched responses are protocol faults", async
         outcome: {
           status: "refused",
           value: {
-            command: "save-draft",
+            command: "test-set-run",
             reason: { kind: "authorization-denied" },
           },
         },
@@ -303,8 +296,8 @@ test("completed response command must match the request", async () => {
   await assertCommandMismatch({
     status: "completed",
     value: {
-      command: "draft-run",
-      result: { "run-id": "run-1", "validated-draft": { "validated-draft-id": "v1" } },
+      command: "publish",
+      result: { "artifact-hash": "sha256:artifact", version: 1, "wiring-id": "wiring-1" },
     },
   });
 });
@@ -313,17 +306,57 @@ test("refused response command must match the request", async () => {
   await assertCommandMismatch({
     status: "refused",
     value: {
-      command: "validate",
+      command: "publish",
       reason: { kind: "authorization-denied" },
     },
   });
 });
 
-test("unsafe request and response integers fail instead of returning rounded values", async () => {
-  const unsafeRequest = structuredClone(request);
-  unsafeRequest.command.input["expected-revision"] = Number.MAX_SAFE_INTEGER + 1;
-  assert.throws(() => parseAuthoringRequest(unsafeRequest), AuthoringPayloadError);
+/// wamn-0h0g.8.5.5 deleted every `uint64` wire site with the draft operations
+/// (`expected-revision` and the draft `revision`). `PublishedWiringIdentity`'s
+/// `version` is the ONE numeric field the contract still carries, so the exact
+/// inclusive `uint32` boundary is pinned there.
+test("uint32 response format enforces its exact inclusive boundary", async () => {
+  const publishRequest = {
+    "command-id": "publish-1",
+    "schema-version": AUTHORING_SCHEMA_VERSION,
+    command: {
+      kind: "publish",
+      input: {
+        scope: SCOPE,
+        "successful-report-id": "report-1",
+        "validated-draft": VALIDATED,
+      },
+    },
+  };
+  const identityFor = (version) => ({
+    document: "response",
+    body: {
+      "command-id": publishRequest["command-id"],
+      "schema-version": AUTHORING_SCHEMA_VERSION,
+      outcome: {
+        status: "completed",
+        value: {
+          command: "publish",
+          result: { "artifact-hash": "sha256:artifact", version, "wiring-id": "wiring-1" },
+        },
+      },
+    },
+  });
+  const client = (version) =>
+    new AuthoringClient({ async executeCommand() { return identityFor(version); } });
 
+  assert.equal(
+    (await client(4_294_967_295).execute(publishRequest)).value.result.version,
+    4_294_967_295,
+  );
+  for (const refused of [-1, 4_294_967_296]) {
+    await assert.rejects(client(refused).execute(publishRequest), AuthoringProtocolError);
+  }
+});
+
+/// A request that fails the closed validator never reaches the transport.
+test("an invalid request fails before transport", async () => {
   let calls = 0;
   const client = new AuthoringClient({
     async executeCommand() {
@@ -331,105 +364,11 @@ test("unsafe request and response integers fail instead of returning rounded val
       return response({ status: "refused", value: {} });
     },
   });
-  await assert.rejects(client.execute(unsafeRequest), AuthoringProtocolError);
+  const forged = structuredClone(request);
+  forged.command.input["expected-revision"] = 0;
+  assert.throws(() => parseAuthoringRequest(forged), AuthoringPayloadError);
+  await assert.rejects(client.execute(forged), AuthoringProtocolError);
   assert.equal(calls, 0);
-
-  const unsafeResponse = response({
-    status: "completed",
-    value: {
-      command: "save-draft",
-      result: {
-        "draft-id": "draft-1",
-        "wiring-id": "flow-1",
-        revision: Number.MAX_SAFE_INTEGER + 1,
-      },
-    },
-  });
-  await assert.rejects(
-    new AuthoringClient({ async executeCommand() { return unsafeResponse; } }).execute(request),
-    AuthoringProtocolError,
-  );
-});
-
-test("uint64 wire domain accepts 2^53-1 and refuses 2^53 and u64 max", async () => {
-  // wamn-ftfc.21 settled the domain at [0, 2^53-1]. `u64::MAX` is written as a
-  // JavaScript literal on purpose: the parse is already lossy, which is exactly
-  // what the contract refuses to let reach an identity.
-  const exact = structuredClone(request);
-  exact.command.input["expected-revision"] = 9007199254740991;
-  assert.equal(parseAuthoringRequest(exact).command.input["expected-revision"], 9007199254740991);
-
-  for (const refused of [9007199254740992, 18446744073709551615]) {
-    const outOfDomain = structuredClone(request);
-    outOfDomain.command.input["expected-revision"] = refused;
-    assert.throws(() => parseAuthoringRequest(outOfDomain), AuthoringPayloadError);
-  }
-
-  const identityFor = (revision) =>
-    response({
-      status: "completed",
-      value: {
-        command: "save-draft",
-        result: { "draft-id": "draft-1", "wiring-id": "flow-1", revision },
-      },
-    });
-  const client = (revision) =>
-    new AuthoringClient({ async executeCommand() { return identityFor(revision); } });
-
-  assert.equal(
-    (await client(9007199254740991).execute(request)).value.result.revision,
-    9007199254740991,
-  );
-  for (const refused of [9007199254740992, 18446744073709551615]) {
-    await assert.rejects(client(refused).execute(request), AuthoringProtocolError);
-  }
-});
-
-test("uint32 and uint64 response formats enforce exact inclusive boundaries", async () => {
-  const validationRequest = validateRequest();
-  const identity = {
-    "artifact-hash": "artifact-1",
-    catalog: { "catalog-id": "catalog-1", version: 4_294_967_295 },
-    draft: {
-      "draft-id": "draft-1",
-      "wiring-id": "flow-1",
-      revision: Number.MAX_SAFE_INTEGER,
-    },
-    environment: "dev",
-    "runtime-flow-version": 4_294_967_295,
-    "validated-draft-id": "validated-1",
-  };
-  const boundaryClient = new AuthoringClient({
-    async executeCommand() {
-      return {
-        document: "response",
-        body: {
-          "command-id": validationRequest["command-id"],
-          "schema-version": AUTHORING_SCHEMA_VERSION,
-          outcome: { status: "completed", value: { command: "validate", result: identity } },
-        },
-      };
-    },
-  });
-  assert.equal((await boundaryClient.execute(validationRequest)).status, "completed");
-
-  const overflowIdentity = { ...identity, "runtime-flow-version": 4_294_967_296 };
-  const overflowClient = new AuthoringClient({
-    async executeCommand() {
-      return {
-        document: "response",
-        body: {
-          "command-id": validationRequest["command-id"],
-          "schema-version": AUTHORING_SCHEMA_VERSION,
-          outcome: {
-            status: "completed",
-            value: { command: "validate", result: overflowIdentity },
-          },
-        },
-      };
-    },
-  });
-  await assert.rejects(overflowClient.execute(validationRequest), AuthoringProtocolError);
 });
 
 test("fetch transport posts to only the caller-supplied endpoint", async () => {
@@ -444,7 +383,7 @@ test("fetch transport posts to only the caller-supplied endpoint", async () => {
       return { ok: true, status: 200, async json() { return response({
         status: "refused",
         value: {
-          command: "save-draft",
+          command: "test-set-run",
           reason: { kind: "authorization-denied" },
         },
       }); } };

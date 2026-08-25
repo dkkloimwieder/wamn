@@ -592,17 +592,6 @@
       "drift_gate": "SR13:control-portable-live"
     },
     {
-      "id": "catalog.flow_drafts",
-      "plane": "control",
-      "semantic_owner": "catalog-model",
-      "migration_owners": ["control-portable-store-installer"],
-      "schema_source": "deploy/sql/control-portable-store.sql",
-      "writers": ["control-portable-store-installer", "scenario-worker"],
-      "readers": ["scenario-worker"],
-      "compatibility_horizon": "flow-format-and-platform-schema-major",
-      "drift_gate": "SR13:control-portable-live"
-    },
-    {
       "id": "catalog.release_exposure_manifests",
       "plane": "control",
       "semantic_owner": "catalog-model",

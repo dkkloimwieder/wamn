@@ -45,7 +45,8 @@ const LAUNCHER = fileURLToPath(ADAPTER_URL);
 // deliberately does not move this digest; a renamed or dropped field does.
 const COLLECTION_SHAPE_DIGEST = "df2e4bcb8bb85511305b17653d5936b26e9af519a730fdac0813158dd2a56daf";
 
-// `draft-run`'s authored input is `unknown` on the contract, so its shape is
+// Retained for the collection guard below, whose fixture file left the tree
+// with `docs/archive` (ff04842e) and which therefore cannot pass today.
 // deliberately not comparable — the client sends whatever the author wrote.
 const OPAQUE_PATHS = new Set(["$.body.command.input.input"]);
 
@@ -91,36 +92,6 @@ async function collectionRequests() {
 function builtRequests() {
   return new Map([
     [
-      "save-draft",
-      cli.saveDraftRequest({
-        commandId: "save-1",
-        definition: '{"schema-version":"0.1"}',
-        draftId: "draft-receiving",
-        expectedRevision: 2,
-        wiringId: "receive-material",
-        provenance: { commit: "0".repeat(40), dirty: false, ref: "refs/heads/main" },
-        scope,
-      }),
-    ],
-    [
-      "validate",
-      cli.validateRequest({
-        commandId: "validate-1",
-        draftId: "draft-receiving",
-        revision: 3,
-        scope,
-      }),
-    ],
-    [
-      "draft-run",
-      cli.draftRunRequest({
-        commandId: "run-1",
-        input: { material: "aluminum" },
-        scope,
-        validatedDraftId: "sha256:validated-draft-v4",
-      }),
-    ],
-    [
       "test-set-run",
       cli.testSetRunRequest({
         commandId: "test-set-1",
@@ -136,10 +107,6 @@ function builtRequests() {
         scope,
         validatedDraftId: "sha256:validated-draft-v4",
       }),
-    ],
-    [
-      "read-draft",
-      cli.readDraftRequest("read-1", scope, "draft-receiving", 3),
     ],
     [
       "get-report",
@@ -179,38 +146,23 @@ test("every CLI request decodes through the generated closed validator", () => {
     assert.equal(document["schema-version"], AUTHORING_SCHEMA_VERSION, name);
     assert.equal(query ? document.query.kind : document.command.kind, name);
   }
-  // Optional client claims remain optional at the wire boundary.
-  assert.doesNotThrow(() =>
-    parseAuthoringRequest(
-      cli.saveDraftRequest({
-        commandId: "save-2",
-        definition: "",
-        draftId: "d",
-        expectedRevision: 0,
-        wiringId: "f",
-        scope,
-      }),
-    ),
-  );
-  const draftRun = cli.draftRunRequest({
-    commandId: "run-2",
-    input: {},
-    scope,
-    validatedDraftId: "validated-2",
-  });
-  assert.equal(draftRun.command.input.capture, undefined);
-  assert.doesNotThrow(() => parseAuthoringRequest(draftRun));
-  assert.doesNotThrow(() =>
-    parseAuthoringRequest(
-      cli.draftRunRequest({
-        capture: "off",
-        commandId: "run-3",
-        input: {},
-        scope,
-        validatedDraftId: "validated-2",
-      }),
-    ),
-  );
+});
+
+// wamn-0h0g.8.5.5: the CLI saves nothing. A draft is this checkout's own working
+// tree, so there is no builder for a server-side draft and no verb that names
+// one. These are the request builders the collapse removed; a builder that came
+// back would fail here rather than quietly re-introduce server-side draft state.
+test("the CLI has no builder for any collapsed draft operation", () => {
+  for (const removed of [
+    "saveDraftRequest",
+    "validateRequest",
+    "draftRunRequest",
+    "readDraftRequest",
+    "checkoutProvenance",
+  ]) {
+    assert.equal(cli[removed], undefined, `the CLI re-grew ${removed}`);
+  }
+  assert.deepEqual([...cli.VERBS], ["test-set-run", "promote", "get-report"]);
 });
 
 test("the CLI sends exactly the schema's public operation inventory", async () => {
@@ -237,14 +189,10 @@ function response(commandId, outcome) {
   };
 }
 
-const draftIdentity = { "draft-id": "draft-receiving", "wiring-id": "receive-material", revision: 1 };
-const validatedIdentity = {
-  "artifact-hash": "sha256:artifact",
-  catalog: { "catalog-id": "receiving", version: 7 },
-  draft: draftIdentity,
-  environment: "dev",
-  "runtime-flow-version": 4,
-  "validated-draft-id": "sha256:validated-draft-v4",
+const VALIDATED_DRAFT_ID = "sha256:validated-draft-v4";
+const gateReceipt = {
+  "report-id": "report-receiving-3",
+  "validated-draft": { "validated-draft-id": VALIDATED_DRAFT_ID },
 };
 
 function fakeIo({ files = {}, reply, now = () => 1_700_000_000_000 } = {}) {
@@ -289,8 +237,8 @@ const baseFiles = {
   [DEFINITION]: '{"schema-version":"0.1","flow-id":"receive-material","version":1}',
 };
 
-const validateArguments = [
-  "validate",
+const gateArguments = [
+  "test-set-run",
   "--base-url",
   "http://surface.invalid",
   "--token-file",
@@ -301,12 +249,8 @@ const validateArguments = [
   "dev",
   "--state",
   STATE,
-  "--file",
-  DEFINITION,
-  "--draft-id",
-  "draft-receiving",
-  "--wiring-id",
-  "receive-material",
+  "--validated-draft",
+  VALIDATED_DRAFT_ID,
 ];
 
 function commandIdOf(init) {
@@ -318,96 +262,70 @@ function document(state) {
   return JSON.parse(state.out[0]);
 }
 
-test("a completed save and validate emit typed identities and remember them", async () => {
+test("a completed gate emits its typed receipt and remembers the report", async () => {
   const { io, state } = fakeIo({
     files: baseFiles,
     reply: (endpoint, init) => {
       const body = JSON.parse(init.body).body;
-      if (body.command.kind === "save-draft") {
-        // The whole input, so a hard-coded or dropped value cannot pass.
-        assert.deepEqual(body.command.input, {
-          definition: baseFiles[DEFINITION],
-          "draft-id": "draft-receiving",
-          "expected-revision": 0,
-          "wiring-id": "receive-material",
-          scope: { environment: "dev", "project-id": "receiving" },
-        });
-        assert.equal(init.headers.authorization, `Bearer ${TOKEN}`);
-        return {
-          status: 200,
-          body: response(body["command-id"], {
-            status: "completed",
-            value: { command: "save-draft", result: draftIdentity },
-          }),
-        };
-      }
-      assert.equal(body.command.input.draft.revision, 1);
+      // The whole input, so a hard-coded or dropped value cannot pass.
+      assert.deepEqual(body.command.input, {
+        scope: { environment: "dev", "project-id": "receiving" },
+        "validated-draft": { "validated-draft-id": VALIDATED_DRAFT_ID },
+      });
+      assert.equal(init.headers.authorization, `Bearer ${TOKEN}`);
       return {
         status: 200,
         body: response(body["command-id"], {
           status: "completed",
-          value: { command: "validate", result: validatedIdentity },
+          value: { command: "test-set-run", result: gateReceipt },
         }),
       };
     },
   });
 
-  const code = await cli.runCli(validateArguments, io);
+  const code = await cli.runCli(gateArguments, io);
   assert.equal(code, cli.EXIT_COMPLETED);
   const emitted = document(state);
   assert.equal(emitted.status, "completed");
   assert.deepEqual(
     emitted.steps.map((step) => [step.command, step.status]),
-    [
-      ["save-draft", "completed"],
-      ["validate", "completed"],
-    ],
+    [["test-set-run", "completed"]],
   );
-  assert.deepEqual(emitted.steps[0].result, draftIdentity);
-  assert.equal(emitted.steps[1].result["validated-draft-id"], "sha256:validated-draft-v4");
+  assert.deepEqual(emitted.steps[0].result, gateReceipt);
 
   const remembered = JSON.parse(state.files[STATE]);
-  assert.equal(remembered.revision, 1);
-  assert.equal(remembered["validated-draft-id"], "sha256:validated-draft-v4");
-  // The client-local cache holds public identities and nothing else.
+  assert.equal(remembered["report-id"], "report-receiving-3");
+  // The client-local cache holds public identities and nothing else, and it no
+  // longer remembers any server-side draft coordinate (wamn-0h0g.8.5.5).
+  assert.equal(remembered["draft-id"], undefined);
+  assert.equal(remembered.revision, undefined);
   assert.doesNotMatch(state.files[STATE], /wamn_pat_|secret|correct horse/);
 });
 
 test("an unmounted command is its own answer and never a success", async () => {
   const { io, state } = fakeIo({
     files: baseFiles,
-    reply: (endpoint, init) => {
-      const body = JSON.parse(init.body).body;
-      if (body.command.kind === "save-draft") {
-        return {
-          status: 200,
-          body: response(body["command-id"], {
-            status: "completed",
-            value: { command: "save-draft", result: draftIdentity },
-          }),
-        };
-      }
-      // The surface answers 501 with no document for a command kind whose
-      // handler has not landed.
-      return { status: 501, body: "" };
-    },
+    // The surface answers 501 with no document for a command kind whose
+    // handler has not landed.
+    reply: () => ({ status: 501, body: "" }),
   });
 
-  const code = await cli.runCli(validateArguments, io);
+  const code = await cli.runCli(gateArguments, io);
   assert.equal(code, cli.EXIT_UNMOUNTED);
   const emitted = document(state);
   assert.equal(emitted.status, "unmounted");
-  assert.equal(emitted.steps[0].status, "completed");
-  assert.equal(emitted.steps[1].status, "unmounted");
-  assert.equal(emitted.steps[1]["http-status"], 501);
-  assert.equal(emitted.steps[1].result, undefined);
-  assert.equal(emitted.steps[1].refusal, undefined);
+  assert.equal(emitted.steps[0].status, "unmounted");
+  assert.equal(emitted.steps[0]["http-status"], 501);
+  assert.equal(emitted.steps[0].result, undefined);
+  assert.equal(emitted.steps[0].refusal, undefined);
 });
 
 test("a product refusal is typed, exits 3, and is not a fault", async () => {
+  // The constitutional clause's refusal: a gate is a judgment about a document,
+  // so a candidate reaching an effectful component is refused, never executed.
   const refusal = {
-    command: "save-draft",
-    reason: { "expected-revision": 0, kind: "revision-conflict" },
+    command: "test-set-run",
+    reason: { components: ["acme:ledger"], kind: "effectful-component-reached" },
   };
   const { io, state } = fakeIo({
     files: baseFiles,
@@ -417,11 +335,10 @@ test("a product refusal is typed, exits 3, and is not a fault", async () => {
     }),
   });
 
-  assert.equal(await cli.runCli(validateArguments, io), cli.EXIT_REFUSED);
+  assert.equal(await cli.runCli(gateArguments, io), cli.EXIT_REFUSED);
   const emitted = document(state);
   assert.equal(emitted.status, "refused");
   assert.deepEqual(emitted.steps[0].refusal, refusal);
-  // A refused save never runs the validate step against an invented revision.
   assert.equal(emitted.steps.length, 1);
 });
 
@@ -432,17 +349,17 @@ test("an unauthorized presenter is refused with the frozen contract kind", async
     files: baseFiles,
     reply: () => ({ status: 403, body: { kind: "authorization-denied" } }),
   });
-  assert.equal(await cli.runCli(validateArguments, io), cli.EXIT_REFUSED);
+  assert.equal(await cli.runCli(gateArguments, io), cli.EXIT_REFUSED);
   const emitted = document(state);
   assert.deepEqual(emitted.steps[0].refusal, {
-    command: "save-draft",
+    command: "test-set-run",
     reason: { kind: "authorization-denied" },
   });
   assert.equal(emitted.steps[0]["http-status"], 403);
 });
 
 test("a missing token file is a usage error that reaches no network", async () => {
-  const withoutToken = validateArguments.filter(
+  const withoutToken = gateArguments.filter(
     (argument, index, all) => argument !== "--token-file" && all[index - 1] !== "--token-file",
   );
   const { io, state } = fakeIo({ files: baseFiles, reply: () => ({ status: 200, body: {} }) });
@@ -462,102 +379,12 @@ test("network, HTTP, and protocol failures are faults, not refusals", async () =
       files: baseFiles,
       reply: () => authoringAnswer,
     });
-    assert.equal(await cli.runCli(validateArguments, io), cli.EXIT_FAULT, kind);
+    assert.equal(await cli.runCli(gateArguments, io), cli.EXIT_FAULT, kind);
     const emitted = document(state);
     assert.equal(emitted.status, "fault", kind);
     assert.equal(emitted.steps[0].fault.kind, kind);
     assert.equal(emitted.steps[0].result, undefined);
     assert.equal(emitted.steps[0].refusal, undefined);
-  }
-});
-
-test("draft-run reports the edit-to-run latency of the working-tree edit", async () => {
-  const files = {
-    ...baseFiles,
-    "input.json": '{"receipt-id":"receipt-1042"}',
-    [STATE]: JSON.stringify({
-      "draft-id": "draft-receiving",
-      "edit-at": 1_699_999_990_000,
-      revision: 1,
-      "state-version": 1,
-      "validated-draft-id": "sha256:validated-draft-v4",
-    }),
-  };
-  const { io, state } = fakeIo({
-    files,
-    reply: (_endpoint, init) => {
-      const request = JSON.parse(init.body).body;
-      assert.equal(request.command.input.capture, "off");
-      return {
-        status: 200,
-        body: response(commandIdOf(init), {
-          status: "completed",
-          value: {
-            command: "draft-run",
-            result: {
-              "run-id": "run-1",
-              "validated-draft": { "validated-draft-id": "sha256:validated-draft-v4" },
-            },
-          },
-        }),
-      };
-    },
-  });
-
-  const code = await cli.runCli(
-    [
-      "draft-run",
-      "--base-url",
-      "http://surface.invalid",
-      "--token-file",
-      TOKEN_FILE,
-      "--project",
-      "receiving",
-      "--environment",
-      "dev",
-      "--state",
-      STATE,
-      "--input",
-      "input.json",
-      "--capture",
-      "off",
-    ],
-    io,
-  );
-  assert.equal(code, cli.EXIT_COMPLETED);
-  const emitted = document(state);
-  assert.equal(emitted["edit-to-run-ms"], 1_700_000_000_000 - 1_699_999_990_000);
-  assert.ok(state.err.some((line) => line.includes("edit-to-run-ms=10000")));
-  assert.equal(JSON.parse(state.files[STATE])["run-id"], "run-1");
-});
-
-test("capture is full or off and only belongs to draft-run", async () => {
-  for (const argv of [
-    [...validateArguments, "--capture", "off"],
-    [
-      "draft-run",
-      "--base-url",
-      "http://surface.invalid",
-      "--token-file",
-      TOKEN_FILE,
-      "--project",
-      "receiving",
-      "--environment",
-      "dev",
-      "--input",
-      "input.json",
-      "--validated-draft",
-      "validated-2",
-      "--capture",
-      "preview",
-    ],
-  ]) {
-    const { io, state } = fakeIo({
-      files: { ...baseFiles, "input.json": "{}" },
-      reply: () => assert.fail("invalid capture must not reach HTTP"),
-    });
-    assert.equal(await cli.runCli(argv, io), cli.EXIT_USAGE);
-    assert.equal(state.calls.length, 0);
   }
 });
 
@@ -568,11 +395,11 @@ test("no token material ever reaches stdout or the transcript", async () => {
       status: 200,
       body: response(commandIdOf(init), {
         status: "completed",
-        value: { command: "save-draft", result: draftIdentity },
+        value: { command: "test-set-run", result: gateReceipt },
       }),
     }),
   });
-  await cli.runCli(validateArguments, io);
+  await cli.runCli(gateArguments, io);
   const transcript = [...state.out, ...state.err].join("\n");
   assert.doesNotMatch(transcript, /wamn_pat_/);
 });
@@ -588,21 +415,18 @@ test("no option, file, or default can send an unversioned or reversioned request
   // client at all, so there is nothing for a flag or a file to select.
   const factory = source.slice(source.indexOf("function request("));
   assert.equal(factory.slice(0, factory.indexOf("\n}")).split("AUTHORING_SCHEMA_VERSION").length - 1, 1);
-  assert.equal(source.split("return request(").length - 1, 5);
-  assert.equal(source.split("return queryRequest(").length - 1, 2);
+  assert.equal(source.split("return request(").length - 1, 2);
+  assert.equal(source.split("return queryRequest(").length - 1, 1);
   assert.doesNotMatch(source, /"schema-version":\s*"/);
   for (const rejected of ["--schema-version", "--contract-version", "--endpoint"]) {
     assert.throws(() => cli.parseArguments([rejected, "0.2"]), /unrecognized option/);
   }
   // And the generated client refuses an unversioned document before transport,
   // so there is no path that reaches the wire without a version.
-  const built = cli.saveDraftRequest({
-    commandId: "save-1",
-    definition: "",
-    draftId: "d",
-    expectedRevision: 0,
-    wiringId: "f",
+  const built = cli.testSetRunRequest({
+    commandId: "test-set-1",
     scope,
+    validatedDraftId: "sha256:validated-draft-v4",
   });
   const unversioned = { ...built };
   delete unversioned["schema-version"];
@@ -632,9 +456,10 @@ test("the client holds no privileged database or operator capability", async () 
   const compiled = await readFile(new URL(process.env.WAMN_AUTHORING_CLI_TEST_MODULE), "utf8");
   const imports = [...compiled.matchAll(/from ["']([^"']+)["']/g)].map((match) => match[1]);
   assert.deepEqual([...new Set(imports)].sort(), ["../client.js", "../generated/authoring.js"]);
-  // The node adapter's only child process is a read-only git query.
-  const spawns = [...adapter.matchAll(/spawnSync\(\s*("[^"]*"|[A-Za-z]+)/g)].map((match) => match[1]);
-  assert.deepEqual(spawns, ['"git"']);
+  // wamn-0h0g.8.5.5: the node adapter spawns NOTHING. The `git` provenance
+  // reader left with `save-draft`, the one command that could carry a commit
+  // claim, so the capability is withdrawn rather than left dangling.
+  assert.doesNotMatch(adapter, /spawnSync|child_process/);
 });
 
 test("the client depends on no frontend and on no application handler", async () => {
