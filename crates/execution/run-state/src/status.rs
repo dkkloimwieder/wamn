@@ -1,11 +1,9 @@
 //! The persisted status/kind vocabularies — the storage-literal side of the
 //! engine's execution taxonomy. Each maps 1:1 to a `text` column value via
 //! `as_sql`/`from_sql` (the SQL literals are exactly the serde kebab-case names,
-//! tied to `deploy/sql/run-state.sql` by a drift-guard test). `From<…>` conversions
-//! adapt the pure-engine enums
-//! (`wamn_runner::{ExecutionStatus, ExecutionFailureKind}` and
-//! `wamn_execution_contract::node_contract::NodeError`)
-//! into their persisted form, the way `wamn_pg_core::SqlValue` mirrors the WIT.
+//! tied to `deploy/sql/run-state.sql` by a drift-guard test). A `From<…>` conversion
+//! adapts `wamn_execution_contract::node_contract::NodeError` into its persisted
+//! form, the way `wamn_pg_core::SqlValue` mirrors the WIT.
 
 use serde::{Deserialize, Serialize};
 use wamn_execution_contract::node_contract::NodeError;

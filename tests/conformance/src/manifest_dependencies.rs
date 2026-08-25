@@ -329,14 +329,14 @@ fn the_self_dev_dependency_exemption_admits_nothing_else() {
         // separate `tests/` compilation unit excuses it.
         (
             "dev-dependencies",
-            "wamn-flow = { path = \".\", features = [\"test-util\"] }",
+            "wamn-execution-contract = { path = \".\", features = [\"test-util\"] }",
         ),
         // This package, but by a path that is not its own directory.
         ("dev-dependencies", "wamn-catalog = { path = \"../model\" }"),
         // Plain duplication of a workspace-owned identity.
         (
             "dev-dependencies",
-            "wamn-flow = { path = \"../execution/flow-model\", version = \"0.1.0\" }",
+            "wamn-execution-contract = { path = \"../execution/contract\", version = \"0.1.0\" }",
         ),
     ];
 
@@ -358,12 +358,12 @@ fn the_self_dev_dependency_exemption_admits_nothing_else() {
 #[test]
 fn a_dotted_single_dependency_table_is_scanned_by_the_identity_rule() {
     // The keyword leads these headers, so reading only the last segment took
-    // `wamn-flow` for the table kind and every key below it escaped the rule.
+    // `wamn-execution-contract` for the table kind and every key below it escaped the rule.
     for table in [
-        "dependencies.wamn-flow",
-        "target.'cfg(unix)'.dependencies.wamn-flow",
+        "dependencies.wamn-execution-contract",
+        "target.'cfg(unix)'.dependencies.wamn-execution-contract",
     ] {
-        let refused = fixture_violations(table, "path = \"../flow-model\"");
+        let refused = fixture_violations(table, "path = \"../contract\"");
         assert_eq!(
             refused.len(),
             1,
@@ -375,7 +375,8 @@ fn a_dotted_single_dependency_table_is_scanned_by_the_identity_rule() {
             refused[0]
         );
         assert!(
-            refused[0].ends_with("`wamn-flow` must inherit its native workspace identity"),
+            refused[0]
+                .ends_with("`wamn-execution-contract` must inherit its native workspace identity"),
             "`[{table}]` was refused for the wrong reason: {}",
             refused[0]
         );
@@ -384,7 +385,7 @@ fn a_dotted_single_dependency_table_is_scanned_by_the_identity_rule() {
     // Inheritance is spelled inside the table in this form, and it counts
     // wherever it appears among the table's lines.
     let admitted = fixture_violations(
-        "dependencies.wamn-flow",
+        "dependencies.wamn-execution-contract",
         "default-features = false\nworkspace = true",
     );
     assert!(
@@ -396,7 +397,7 @@ fn a_dotted_single_dependency_table_is_scanned_by_the_identity_rule() {
     // The target-cfg spelling keeps its meaning, and no manifest in the tree
     // carries one, so only a fixture holds it: there the entry line is judged,
     // not the header.
-    let entry = "wamn-flow = { path = \"../flow-model\" }";
+    let entry = "wamn-execution-contract = { path = \"../contract\" }";
     let targeted = fixture_violations("target.'cfg(unix)'.dependencies", entry);
     assert_eq!(
         targeted.len(),
@@ -425,7 +426,7 @@ fn the_dotted_spelling_does_not_widen_the_self_dev_dependency_exemption() {
         // Not a DEV table.
         ("dependencies.wamn-catalog", "path = \".\""),
         // Not this package.
-        ("dev-dependencies.wamn-flow", "path = \".\""),
+        ("dev-dependencies.wamn-execution-contract", "path = \".\""),
         // Not this package's own directory.
         ("dev-dependencies.wamn-catalog", "path = \"../model\""),
     ];

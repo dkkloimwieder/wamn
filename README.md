@@ -45,9 +45,9 @@ crates/                 shared Rust workspace packages
     compiler            wamn-schema-compiler: DDL, RLS, and seed compilation
     control             wamn-schema-control: lifecycle, migration, and impact
   execution/
-    flow-model          wamn-flow: flow-graph JSON model + JSON Schema
-    flow-engine         wamn-runner: pure flow reducer
+    contract            wamn-execution-contract: node contract, ports, cases
     host                shared native host for the flowrunner component
+    router              wamn-router: host-side graph walk
     run-state           wamn-run-state: run history, queue, lease, and timer state
     scheduler           wamn-scheduler: pure cron, due-tick, and cadence decisions
     standard-nodes      wamn-standard-nodes: standard node library
@@ -131,7 +131,7 @@ cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher \
 
 ```bash
 # pure-crate unit/integration tests (no cluster needed)
-cargo test                       # a specific crate: cargo test -p wamn-runner
+cargo test                       # a specific crate: cargo test -p wamn-router
 
 # lint + format
 # --workspace is required: without it Cargo selects default-members only, which
