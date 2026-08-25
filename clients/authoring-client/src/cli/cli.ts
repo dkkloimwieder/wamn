@@ -1,6 +1,6 @@
 // The headless authoring CLI (`wamn`), wamn-ftfc.14.
 //
-// WHAT THIS IS. A checkout client. It reads working-tree flow definitions and
+// WHAT THIS IS. A checkout client. It reads working-tree wiring definitions and
 // drives the public versioned authoring commands over HTTP through the
 // wamn-jvzx.2 generated client: `validate` (save the working tree, then validate
 // the exact revision it saved), `draft-run`, and `promote` (the public `publish`
@@ -131,7 +131,7 @@ export interface CliDocument {
 export interface CliState {
   readonly "state-version": 1;
   readonly "draft-id"?: string;
-  readonly "flow-id"?: string;
+  readonly "wiring-id"?: string;
   readonly revision?: number;
   readonly "edit-at"?: number;
   readonly "validated-draft-id"?: string;
@@ -161,22 +161,22 @@ export interface SaveOptions {
   readonly commandId: string;
   readonly scope: AuthoringScope;
   readonly draftId: string;
-  readonly flowId: string;
+  readonly wiringId: string;
   readonly expectedRevision: number;
   readonly definition: string;
   readonly provenance?: CommitProvenance;
 }
 
-export function saveFlowDraftRequest(options: SaveOptions): AuthoringRequest {
+export function saveDraftRequest(options: SaveOptions): AuthoringRequest {
   const input = {
     definition: options.definition,
     "draft-id": options.draftId,
     "expected-revision": options.expectedRevision,
-    "flow-id": options.flowId,
+    "wiring-id": options.wiringId,
     scope: options.scope,
     ...(options.provenance === undefined ? {} : { provenance: options.provenance }),
   };
-  return request(options.commandId, { kind: "save-flow-draft", input });
+  return request(options.commandId, { kind: "save-draft", input });
 }
 
 export interface ValidateOptions {
@@ -291,7 +291,7 @@ const OPTIONS = new Set([
   "--state",
   "--file",
   "--draft-id",
-  "--flow-id",
+  "--wiring-id",
   "--expected-revision",
   "--validated-draft",
   "--input",
@@ -381,7 +381,7 @@ common options:
   --state FILE             client-local identity cache (default ${DEFAULT_STATE_PATH})
   --no-state               neither read nor write the state file
 
-validate:  --file PATH --draft-id ID --flow-id ID [--expected-revision N] [--no-provenance]
+validate:  --file PATH --draft-id ID --wiring-id ID [--expected-revision N] [--no-provenance]
 draft-run: --input PATH [--validated-draft ID] [--capture full|off]
 test-set-run: [--validated-draft ID]
 promote:   [--validated-draft ID] [--report-id ID]
@@ -681,7 +681,7 @@ function stateOrRequired(session: Session, option: string, key: keyof CliState):
 async function runValidate(session: Session): Promise<StepRecord[]> {
   const file = required(session.parsed, "file");
   const draftId = required(session.parsed, "draft-id");
-  const flowId = required(session.parsed, "flow-id");
+  const wiringId = required(session.parsed, "wiring-id");
   const suppliedRevision = session.parsed.values["expected-revision"];
   const expectedRevision =
     suppliedRevision !== undefined
@@ -696,18 +696,18 @@ async function runValidate(session: Session): Promise<StepRecord[]> {
     ? undefined
     : checkoutProvenance(session.io, directoryOf(file));
   session.transcript.note(
-    `save   file=${file} draft-id=${draftId} flow-id=${flowId} bytes=${definition.length} ` +
+    `save   file=${file} draft-id=${draftId} wiring-id=${wiringId} bytes=${definition.length} ` +
       `expected-revision=${expectedRevision} provenance=${provenance === undefined ? "none" : provenance.commit}`,
   );
 
   const saved = await execute(
     session.client,
-    saveFlowDraftRequest({
-      commandId: commandId(session, "save-flow-draft", 0),
+    saveDraftRequest({
+      commandId: commandId(session, "save-draft", 0),
       definition,
       draftId,
       expectedRevision,
-      flowId,
+      wiringId,
       provenance,
       scope: session.scope,
     }),
@@ -721,7 +721,7 @@ async function runValidate(session: Session): Promise<StepRecord[]> {
   await writeState(session.io, session.statePath, session.state, {
     "draft-id": draftId,
     "edit-at": editedAt,
-    "flow-id": flowId,
+    "wiring-id": wiringId,
     revision,
   });
 
@@ -743,7 +743,7 @@ async function runValidate(session: Session): Promise<StepRecord[]> {
     await writeState(session.io, session.statePath, { ...session.state, revision }, {
       "draft-id": draftId,
       "edit-at": editedAt,
-      "flow-id": flowId,
+      "wiring-id": wiringId,
       revision,
       "validated-draft-id": identity["validated-draft-id"],
     });

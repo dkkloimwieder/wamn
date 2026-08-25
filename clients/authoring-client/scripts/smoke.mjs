@@ -1,7 +1,7 @@
 // S0 authenticated smoke gate for the checked-in authoring request collection.
 //
 // WHAT THIS IS. A pure HTTP client. It reads a pre-issued personal access token,
-// presents that token as a Bearer credential, and POSTs the `save-flow-draft` request DERIVED
+// presents that token as a Bearer credential, and POSTs the `save-draft` request DERIVED
 // FROM docs/archive/contracts/authoring-surface.v0.1.http. It holds no database URL, no
 // platform-admin impersonation, and no test-only trusted context: the only
 // authority it ever presents is the token it was handed.
@@ -33,7 +33,7 @@ const COLLECTION_URL = new URL(
   "../../../docs/archive/contracts/authoring-surface.v0.1.http",
   import.meta.url,
 );
-const SECTION = "save-flow-draft";
+const SECTION = "save-draft";
 const ENDPOINT_LINE = "POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}";
 const AUTHORIZATION_LINE = "Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}";
 const REQUIRED_HEADERS = ["Accept: application/json", "Content-Type: application/json"];
@@ -47,7 +47,7 @@ const AUTHORING_PATH = "/authoring";
 const REFUSAL_BODY = '{"kind":"authorization-denied"}';
 const PAT_PATTERN = /^(wamn_pat_[0-9a-f]{16}_)([0-9a-f]{64})$/;
 
-// SHA-256 of the canonicalized `save-flow-draft` request document in the
+// SHA-256 of the canonicalized `save-draft` request document in the
 // checked-in collection. Re-pin it only in a commit that reviewed the
 // collection change; a silent edit on either side must fail this gate.
 const TEMPLATE_DIGEST = "0d03a8d504c8268d5c4553e6d4c20b3f53d2b973f594b4368c8257a337d41fe4";
@@ -142,7 +142,7 @@ function writePath(document, path, value) {
 }
 
 /**
- * Read the collection's `save-flow-draft` section.
+ * Read the collection's `save-draft` section.
  *
  * The header contract is the same one the static collection gate enforces: the
  * caller supplies the complete endpoint, exactly one caller-supplied bearer
@@ -281,7 +281,7 @@ function assertAuthorized(check, leg, response) {
     `${check}-saved-revision`,
     result.revision === leg.savedRevision &&
       result["draft-id"] === leg.draftId &&
-      result["flow-id"] === leg.flowId,
+      result["wiring-id"] === leg.wiringId,
     `expected revision ${leg.savedRevision} on ${leg.draftId}, got ${canonical(result)}`,
   );
 }
@@ -324,7 +324,7 @@ async function main() {
     `the ${SECTION} request changed: expected ${TEMPLATE_DIGEST}, got ${digest}`,
   );
 
-  const flowId = readPath(template, ["body", "command", "input", "flow-id"]);
+  const wiringId = readPath(template, ["body", "command", "input", "wiring-id"]);
   const scope = readPath(template, ["body", "command", "input", "scope"]);
   const runId = `${Date.now().toString(36)}`;
   const draftId = `${readPath(template, SUBSTITUTIONS["draft-id"])}-smoke-${runId}`;
@@ -332,7 +332,7 @@ async function main() {
   for (const leg of LEGS) {
     leg.commandId = `${baseCommandId}-smoke-${runId}-${leg.name}`;
     leg.draftId = draftId;
-    leg.flowId = flowId;
+    leg.wiringId = wiringId;
     leg.document = derive(template, {
       "command-id": leg.commandId,
       "draft-id": draftId,
@@ -341,7 +341,7 @@ async function main() {
     assertDerivedFromCollection(leg.document, template);
   }
   emit(`  ok    collection-derivation`);
-  emit(`  info  run-id=${runId} draft-id=${draftId} flow-id=${flowId}`);
+  emit(`  info  run-id=${runId} draft-id=${draftId} wiring-id=${wiringId}`);
 
   if (options.check) {
     emit("static drift checks only (--check); no request was sent");

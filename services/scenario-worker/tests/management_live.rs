@@ -38,10 +38,8 @@ use wamn_platform_identity::{
     IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
     resolve_subject, revoke_pat,
 };
-use wamn_scenario_worker::authoring::{
-    ControlAuthoringScope, InternalAuthoringBackend, SaveFlowDraft,
-};
-use wamn_scenario_worker::management::{CommandScope, authorize, save_flow_draft};
+use wamn_scenario_worker::authoring::{ControlAuthoringScope, InternalAuthoringBackend, SaveDraft};
+use wamn_scenario_worker::management::{CommandScope, authorize, save_draft};
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
@@ -136,7 +134,7 @@ fn reordered_save_document(
     definition: &str,
 ) -> String {
     format!(
-        r#"{{"body":{{"command":{{"input":{{"provenance":null,"definition":{},"expected-revision":{},"flow-id":"receive-material","draft-id":{},"scope":{{"environment":"dev","project-id":{}}}}},"kind":"save-flow-draft"}},"command-id":{},"schema-version":"0.1"}},"document":"request"}}"#,
+        r#"{{"body":{{"command":{{"input":{{"provenance":null,"definition":{},"expected-revision":{},"wiring-id":"receive-material","draft-id":{},"scope":{{"environment":"dev","project-id":{}}}}},"kind":"save-draft"}},"command-id":{},"schema-version":"0.1"}},"document":"request"}}"#,
         serde_json::to_string(definition).unwrap(),
         revision,
         serde_json::to_string(draft).unwrap(),
@@ -185,11 +183,11 @@ fn save_command(
             "schema-version": "0.1",
             "command-id": command_id,
             "command": {
-                "kind": "save-flow-draft",
+                "kind": "save-draft",
                 "input": {
                     "scope": {"project-id": project, "environment": "dev"},
                     "draft-id": draft,
-                    "flow-id": "receive-material",
+                    "wiring-id": "receive-material",
                     "expected-revision": revision,
                     "definition": definition,
                 }
@@ -1164,8 +1162,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     assert_eq!(alice_row.1, alice_principal.id().as_str());
     assert_eq!(bob_row.1, bob_principal.id().as_str());
-    assert_eq!(alice_row.2, "save-flow-draft");
-    assert_eq!(bob_row.2, "save-flow-draft");
+    assert_eq!(alice_row.2, "save-draft");
+    assert_eq!(bob_row.2, "save-draft");
     // The role is the one the caller actually holds, not one it asked for.
     assert_eq!(alice_row.3, "project-author");
     assert_eq!(bob_row.3, "project-admin");
@@ -1190,7 +1188,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     let rows = ledger_rows(&admin).await;
     let injected_row = rows
         .iter()
-        .find(|row| row.2 == "save-flow-draft" && row.1 == alice_principal.id().as_str())
+        .find(|row| row.2 == "save-draft" && row.1 == alice_principal.id().as_str())
         .expect("the header request is attributed to the token principal");
     assert_eq!(injected_row.3, "project-author", "a header widened a role");
     assert_eq!(
@@ -1227,9 +1225,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(created.status, 200, "{}", created.body);
     let result = outcome(&created.body);
     assert_eq!(result["status"], "completed", "{}", created.body);
-    assert_eq!(result["value"]["command"], "save-flow-draft");
+    assert_eq!(result["value"]["command"], "save-draft");
     assert_eq!(result["value"]["result"]["draft-id"], "draft-checkout");
-    assert_eq!(result["value"]["result"]["flow-id"], "receive-material");
+    assert_eq!(result["value"]["result"]["wiring-id"], "receive-material");
     assert_eq!(result["value"]["result"]["revision"], 1);
 
     // The editor changes one literal in the file; the client submits the new
@@ -1278,7 +1276,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(stale.status, 200, "{}", stale.body);
     let refused = outcome(&stale.body);
     assert_eq!(refused["status"], "refused", "{}", stale.body);
-    assert_eq!(refused["value"]["command"], "save-flow-draft");
+    assert_eq!(refused["value"]["command"], "save-draft");
     assert_eq!(refused["value"]["reason"]["kind"], "revision-conflict");
     assert_eq!(refused["value"]["reason"]["expected-revision"], 1);
     // Refused before mutation: neither the revision nor the stored document
@@ -1407,10 +1405,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("connect the canonical authoring backend");
     let scope = CommandScope::new(TENANT, ORG, PROJECT, ENVIRONMENT);
-    let request = |draft: &str| SaveFlowDraft {
+    let request = |draft: &str| SaveDraft {
         tenant_id: TENANT.to_owned(),
         draft_id: draft.to_owned(),
-        flow_id: "receive-material".to_owned(),
+        wiring_id: "receive-material".to_owned(),
         expected_revision: 0,
         definition: parity_text.clone(),
     };
@@ -1430,7 +1428,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     let direct_command: wamn_authoring_model::AuthoringRequest =
         serde_json::from_value(as_json(&direct_document)["body"].clone()).unwrap();
-    let direct = save_flow_draft(
+    let direct = save_draft(
         &mut backend,
         &author,
         &scope,
@@ -1489,22 +1487,22 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     let exact_document = save_document("concurrent-exact", PROJECT, 0, "draft-concurrent-exact");
     let exact_command: wamn_authoring_model::AuthoringRequest =
         serde_json::from_value(as_json(&exact_document)["body"].clone()).unwrap();
-    let exact_request = SaveFlowDraft {
+    let exact_request = SaveDraft {
         tenant_id: TENANT.to_owned(),
         draft_id: "draft-concurrent-exact".to_owned(),
-        flow_id: "receive-material".to_owned(),
+        wiring_id: "receive-material".to_owned(),
         expected_revision: 0,
         definition: DRAFT_GRAPH.to_owned(),
     };
     let (exact_left, exact_right) = tokio::join!(
-        save_flow_draft(
+        save_draft(
             &mut backend,
             &author,
             &scope,
             &exact_command,
             &exact_request,
         ),
-        save_flow_draft(
+        save_draft(
             &mut concurrent_backend,
             &author,
             &scope,
@@ -1549,29 +1547,29 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         serde_json::from_value(as_json(&divergent_left_document)["body"].clone()).unwrap();
     let divergent_right_command: wamn_authoring_model::AuthoringRequest =
         serde_json::from_value(as_json(&divergent_right_document)["body"].clone()).unwrap();
-    let divergent_left_request = SaveFlowDraft {
+    let divergent_left_request = SaveDraft {
         tenant_id: TENANT.to_owned(),
         draft_id: "draft-concurrent-left".to_owned(),
-        flow_id: "receive-material".to_owned(),
+        wiring_id: "receive-material".to_owned(),
         expected_revision: 0,
         definition: DRAFT_GRAPH.to_owned(),
     };
-    let divergent_right_request = SaveFlowDraft {
+    let divergent_right_request = SaveDraft {
         tenant_id: TENANT.to_owned(),
         draft_id: "draft-concurrent-right".to_owned(),
-        flow_id: "receive-material".to_owned(),
+        wiring_id: "receive-material".to_owned(),
         expected_revision: 0,
         definition: divergent_definition,
     };
     let (divergent_left, divergent_right) = tokio::join!(
-        save_flow_draft(
+        save_draft(
             &mut backend,
             &author,
             &scope,
             &divergent_left_command,
             &divergent_left_request,
         ),
-        save_flow_draft(
+        save_draft(
             &mut concurrent_backend,
             &author,
             &scope,
@@ -1626,12 +1624,12 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     let stale_direct_command: wamn_authoring_model::AuthoringRequest =
         serde_json::from_value(as_json(&stale_direct_document)["body"].clone()).unwrap();
-    let stale_direct = save_flow_draft(
+    let stale_direct = save_draft(
         &mut backend,
         &author,
         &scope,
         &stale_direct_command,
-        &SaveFlowDraft {
+        &SaveDraft {
             expected_revision: 9,
             ..request("draft-parity-direct")
         },

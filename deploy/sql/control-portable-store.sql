@@ -306,7 +306,7 @@ CREATE TABLE IF NOT EXISTS catalog.authoring_command_audit (
     CONSTRAINT authoring_command_audit_outcome_present
         CHECK (octet_length(outcome_bytes) > 0),
     CONSTRAINT authoring_command_audit_command_kind_check
-        CHECK (command_kind IN ('save-flow-draft', 'validate', 'draft-run',
+        CHECK (command_kind IN ('save-draft', 'validate', 'draft-run',
                                 'test-set-run', 'publish')),
     CONSTRAINT authoring_command_audit_principal_kind_check
         CHECK (principal_kind IN ('human', 'service')),
@@ -321,6 +321,18 @@ CREATE TABLE IF NOT EXISTS catalog.authoring_command_audit (
 );
 CREATE INDEX IF NOT EXISTS authoring_command_audit_recorded
     ON catalog.authoring_command_audit (tenant_id, recorded_at);
+-- wamn-0h0g.26.18: the command ledger's vocabulary is the contract's, so the
+-- `save-flow-draft` spelling is retired to `save-draft` here as well. CREATE
+-- TABLE IF NOT EXISTS cannot reach a store provisioned before the rename, and
+-- `control-portable-retained-shape-drift` hashes this constraint's definition,
+-- so the converging ALTER is what keeps an existing store applying. A store
+-- holding a legacy `save-flow-draft` audit row refuses here by name rather than
+-- carrying two vocabularies for one command.
+ALTER TABLE catalog.authoring_command_audit
+    DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check,
+    ADD CONSTRAINT authoring_command_audit_command_kind_check
+        CHECK (command_kind IN ('save-draft', 'validate', 'draft-run',
+                                'test-set-run', 'publish'));
 
 CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_run_reservations (
     tenant_id          text NOT NULL CHECK (tenant_id <> ''),
@@ -818,7 +830,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '571354ef77bcab1287893206acee9ce51b9f09b3146580aab88e7d944596dc0d'
+       'eea855389a6122c9a4850e0a1f11b9029eac1cbc6b7d18a5608b9cbf1171fd25'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';

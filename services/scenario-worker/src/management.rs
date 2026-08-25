@@ -35,7 +35,7 @@ use wamn_authoring_model::{
     AuthoringQueryRequest, AuthoringQueryResponse, AuthoringQuerySuccess, AuthoringRequest,
     AuthoringRequestEnvelope, AuthoringResponse, AuthoringResponseEnvelope, AuthoringSuccess,
     CommandRefusal, CommitProvenance, ContractDecodeErrorKind, DraftIdentity, GetReportRefusal,
-    QueryRefusal, ReportProjection, SCHEMA_VERSION, SafeUint64, SaveFlowDraftRefusal,
+    QueryRefusal, ReportProjection, SCHEMA_VERSION, SafeUint64, SaveDraftRefusal,
     ValidatedDraftRef, decode_document,
 };
 use wamn_platform_identity::{
@@ -45,8 +45,7 @@ use wamn_platform_identity::{
 use wamn_control_provision::{parse_control_authoring_url, parse_management_admission_url};
 
 use crate::authoring::{
-    ControlAuthoringScope, GetReportResult, InternalAuthoringBackend, SaveFlowDraft,
-    SaveFlowDraftResult,
+    ControlAuthoringScope, GetReportResult, InternalAuthoringBackend, SaveDraft, SaveDraftResult,
 };
 
 /// The append-only ledger row every authorized management command writes.
@@ -117,7 +116,7 @@ impl fmt::Display for ManagementRole {
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuditedCommand {
-    SaveFlowDraft,
+    SaveDraft,
     Validate,
     DraftRun,
     TestSetRun,
@@ -129,7 +128,7 @@ impl AuditedCommand {
     /// spelling the wire contract uses; a unit test pins them to `serde`.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::SaveFlowDraft => "save-flow-draft",
+            Self::SaveDraft => "save-draft",
             Self::Validate => "validate",
             Self::DraftRun => "draft-run",
             Self::TestSetRun => "test-set-run",
@@ -351,27 +350,27 @@ pub(crate) async fn insert_command_audit(
     Ok(())
 }
 
-/// Save one flow draft, attributing the save to its verified author.
+/// Save one wiring draft, attributing the save to its verified author.
 ///
 /// `provenance` is the client's optional claim about where it read the content.
 /// It reaches the ledger and stops there: this function does not branch on it,
 /// does not pass it to the command, and produces the identical result whether it
 /// is present or absent.
-pub async fn save_flow_draft(
+pub async fn save_draft(
     backend: &mut InternalAuthoringBackend,
     author: &AuthorizedAuthor,
     scope: &CommandScope,
     command: &AuthoringRequest,
-    request: &SaveFlowDraft,
+    request: &SaveDraft,
 ) -> anyhow::Result<Vec<u8>> {
-    let AuthoringCommand::SaveFlowDraft(input) = &command.command else {
+    let AuthoringCommand::SaveDraft(input) = &command.command else {
         anyhow::bail!("save handler received a non-save command");
     };
     let request_hash = canonical_request_hash(command)?;
     let audit = CommandAudit {
         scope: scope.clone(),
         command_id: command.command_id.clone().into(),
-        command: AuditedCommand::SaveFlowDraft,
+        command: AuditedCommand::SaveDraft,
         author: author.clone(),
         target_ref: request.draft_id.clone().into(),
         provenance: input.provenance.clone(),
@@ -418,8 +417,8 @@ pub async fn save_flow_draft(
         RetryDecision::Reuse => {
             let outcome = command_response_bytes(
                 &command.command_id,
-                AuthoringOutcome::Refused(CommandRefusal::SaveFlowDraft(
-                    SaveFlowDraftRefusal::CommandIdReuse,
+                AuthoringOutcome::Refused(CommandRefusal::SaveDraft(
+                    SaveDraftRefusal::CommandIdReuse,
                 )),
             )?;
             transaction
@@ -431,23 +430,23 @@ pub async fn save_flow_draft(
         RetryDecision::Execute => {}
     }
 
-    let saved = crate::authoring::save_flow_draft(&authority, &transaction, request).await?;
+    let saved = crate::authoring::save_draft(&authority, &transaction, request).await?;
     let outcome = match saved {
-        SaveFlowDraftResult::Saved { revision, .. } => {
+        SaveDraftResult::Saved { revision, .. } => {
             let revision = SafeUint64::try_from(revision)
                 .context("stored revision exceeds the exactly representable wire domain")?;
-            AuthoringOutcome::Completed(Box::new(AuthoringSuccess::SaveFlowDraft(DraftIdentity {
+            AuthoringOutcome::Completed(Box::new(AuthoringSuccess::SaveDraft(DraftIdentity {
                 draft_id: input.draft_id.clone(),
-                flow_id: input.flow_id.clone(),
+                wiring_id: input.wiring_id.clone(),
                 revision,
             })))
         }
-        SaveFlowDraftResult::RevisionConflict => AuthoringOutcome::Refused(
-            CommandRefusal::SaveFlowDraft(SaveFlowDraftRefusal::RevisionConflict {
+        SaveDraftResult::RevisionConflict => AuthoringOutcome::Refused(CommandRefusal::SaveDraft(
+            SaveDraftRefusal::RevisionConflict {
                 expected_revision: input.expected_revision,
                 actual_revision: None,
-            }),
-        ),
+            },
+        )),
     };
     let outcome_bytes = command_response_bytes(&command.command_id, outcome)?;
     insert_command_audit(&transaction, &audit, &request_hash, &outcome_bytes).await?;
@@ -460,9 +459,9 @@ pub async fn save_flow_draft(
 
 fn canonical_request_hash(command: &AuthoringRequest) -> anyhow::Result<String> {
     let value = serde_json::to_value(command).context("project closed command request to JSON")?;
-    Ok(crate::store::sha256(&wamn_execution_contract::canonical_json_bytes(
-        &value,
-    )))
+    Ok(crate::store::sha256(
+        &wamn_execution_contract::canonical_json_bytes(&value),
+    ))
 }
 
 fn command_response_bytes(command_id: &str, outcome: AuthoringOutcome) -> anyhow::Result<Vec<u8>> {
@@ -866,7 +865,7 @@ const fn query_kind(query: &AuthoringQuery) -> &'static str {
 
 /// Dispatch one decoded command.
 ///
-/// `save-flow-draft` is the command this transport mounts today; the rest of the
+/// `save-draft` is the command this transport mounts today; the rest of the
 /// contract inventory answers `501` until the beads that own their handlers land
 /// them. A `501` is the absence of a route, not a product refusal, so it carries
 /// no document. Route selection happens here, after authorization, so naming an
@@ -884,7 +883,7 @@ async fn dispatch_command(
     author: &AuthorizedAuthor,
     command: &AuthoringRequest,
 ) -> anyhow::Result<Response<Full<Bytes>>> {
-    let AuthoringCommand::SaveFlowDraft(input) = &command.command else {
+    let AuthoringCommand::SaveDraft(input) = &command.command else {
         return Ok(empty(StatusCode::NOT_IMPLEMENTED));
     };
     let Some(scope) = surface.command_scope(&input.scope.project_id, &input.scope.environment)
@@ -894,19 +893,19 @@ async fn dispatch_command(
     // The contract bounds `expected-revision` to the exactly representable wire
     // domain, so it always fits the `bigint` column behind it (wamn-ftfc.21).
     let expected_revision = i64::from(input.expected_revision);
-    if input.draft_id.is_empty() || input.flow_id.is_empty() || command.command_id.is_empty() {
+    if input.draft_id.is_empty() || input.wiring_id.is_empty() || command.command_id.is_empty() {
         return Ok(empty(StatusCode::BAD_REQUEST));
     }
 
-    let request = SaveFlowDraft {
+    let request = SaveDraft {
         tenant_id: scope.tenant_id.to_string(),
         draft_id: input.draft_id.clone(),
-        flow_id: input.flow_id.clone(),
+        wiring_id: input.wiring_id.clone(),
         expected_revision,
         definition: input.definition.clone(),
     };
     let mut backend = surface.backend.lock().await;
-    let outcome_bytes = save_flow_draft(&mut backend, author, &scope, command, &request).await?;
+    let outcome_bytes = save_draft(&mut backend, author, &scope, command, &request).await?;
     drop(backend);
     Ok(json_bytes(StatusCode::OK, outcome_bytes))
 }
@@ -1209,10 +1208,7 @@ mod tests {
     #[test]
     fn ledger_command_literals_match_the_wire_contract_spelling() {
         for (kind, audited) in [
-            (
-                AuthoringCommandKind::SaveFlowDraft,
-                AuditedCommand::SaveFlowDraft,
-            ),
+            (AuthoringCommandKind::SaveDraft, AuditedCommand::SaveDraft),
             (AuthoringCommandKind::Validate, AuditedCommand::Validate),
             (AuthoringCommandKind::DraftRun, AuditedCommand::DraftRun),
             (AuthoringCommandKind::TestSetRun, AuditedCommand::TestSetRun),
@@ -1473,13 +1469,13 @@ mod tests {
         let source = include_str!("management.rs");
         let body = between(
             source,
-            "pub async fn save_flow_draft(",
+            "pub async fn save_draft(",
             "fn canonical_request_hash(",
         );
         let lock_at = body.find("LOCK_COMMAND_RETRY_SQL").unwrap();
         let lookup_at = body.find("SELECT_COMMAND_RETRY_SQL").unwrap();
         let run_at = body
-            .find("crate::authoring::save_flow_draft")
+            .find("crate::authoring::save_draft")
             .expect("the new identity executes the command");
         let record_at = body
             .find("insert_command_audit")
@@ -1487,7 +1483,7 @@ mod tests {
         let commit_at = body.rfind(".commit()").expect("the transaction commits");
         assert!(lock_at < lookup_at && lookup_at < run_at);
         assert!(run_at < record_at && record_at < commit_at);
-        assert!(body.contains("AuditedCommand::SaveFlowDraft"));
+        assert!(body.contains("AuditedCommand::SaveDraft"));
 
         let dispatch = between(
             source,
@@ -1495,7 +1491,7 @@ mod tests {
             "/// Return the presented",
         );
         assert_eq!(
-            dispatch.matches("save_flow_draft(&mut backend").count(),
+            dispatch.matches("save_draft(&mut backend").count(),
             1,
             "save is the sole mounted audited command"
         );
@@ -1563,7 +1559,7 @@ mod tests {
     ///
     /// The audit insert is the only statement that may name a provenance
     /// column, and the command the transport builds may not carry one: a save
-    /// with attribution and a save without it must reach `SaveFlowDraft`
+    /// with attribution and a save without it must reach `SaveDraft`
     /// identical, or the outcome could differ.
     #[test]
     fn provenance_reaches_the_ledger_and_no_other_statement() {
@@ -1582,14 +1578,14 @@ mod tests {
             "async fn dispatch_command(",
             "/// Return the presented bearer",
         );
-        let command = within(dispatch, "let request = SaveFlowDraft {", "};");
+        let command = within(dispatch, "let request = SaveDraft {", "};");
         assert!(
             !command.contains("provenance"),
             "attribution reached the command: {command}"
         );
         let handler = between(
             source,
-            "pub async fn save_flow_draft(",
+            "pub async fn save_draft(",
             "fn canonical_request_hash(",
         );
         assert!(handler.contains("provenance: input.provenance.clone()"));

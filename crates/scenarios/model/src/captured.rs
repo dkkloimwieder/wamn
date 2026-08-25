@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wamn_execution_contract::FlowFailureKind;
+use wamn_execution_contract::WiringFailureKind;
 
 /// The bounded facts one run makes available to the flat expectation.
 ///
@@ -19,7 +19,7 @@ pub struct Captured {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<CapturedResponse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure_code: Option<FlowFailureKind>,
+    pub failure_code: Option<WiringFailureKind>,
 }
 
 /// The terminal response a run produced.
@@ -86,7 +86,7 @@ impl Captured {
     /// storage-owned kinds no expectation can author; such a run then satisfies
     /// no `outcome: failed` expectation, loudly, instead of being reported as
     /// whichever authorable kind is nearest.
-    pub fn failed(failure_code: Option<FlowFailureKind>) -> Self {
+    pub fn failed(failure_code: Option<WiringFailureKind>) -> Self {
         Self {
             response: None,
             failure_code,
@@ -117,7 +117,7 @@ impl Captured {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use wamn_execution_contract::FlowFailureKind;
+    use wamn_execution_contract::WiringFailureKind;
 
     use super::{Captured, CapturedErrorKind, CapturedResponse};
 
@@ -139,18 +139,18 @@ mod tests {
         "unbound-requirement",
     ];
 
-    /// Exhaustive by construction: a new [`FlowFailureKind`] variant stops this
+    /// Exhaustive by construction: a new [`WiringFailureKind`] variant stops this
     /// match compiling until someone decides whether a run can be persisted
     /// with it at all.
-    const fn authorable_literal(kind: FlowFailureKind) -> &'static str {
+    const fn authorable_literal(kind: WiringFailureKind) -> &'static str {
         match kind {
-            FlowFailureKind::Terminal => "terminal",
-            FlowFailureKind::RetryExhausted => "retry-exhausted",
-            FlowFailureKind::InvalidInput => "invalid-input",
-            FlowFailureKind::RunawayBudget => "runaway-budget",
-            FlowFailureKind::EffectUncertain => "effect-uncertain",
-            FlowFailureKind::DepthBudget => "depth-budget",
-            FlowFailureKind::DispatchBudget => "dispatch-budget",
+            WiringFailureKind::Terminal => "terminal",
+            WiringFailureKind::RetryExhausted => "retry-exhausted",
+            WiringFailureKind::InvalidInput => "invalid-input",
+            WiringFailureKind::RunawayBudget => "runaway-budget",
+            WiringFailureKind::EffectUncertain => "effect-uncertain",
+            WiringFailureKind::DepthBudget => "depth-budget",
+            WiringFailureKind::DispatchBudget => "dispatch-budget",
         }
     }
 
@@ -186,7 +186,7 @@ mod tests {
                     status: 200,
                     body: json!({}),
                 }),
-                failure_code: Some(FlowFailureKind::Terminal),
+                failure_code: Some(WiringFailureKind::Terminal),
             },
             serde_json::from_value(json!({
                 "response": {"status": 200, "body": {}}, "failure-code": "terminal"
@@ -216,13 +216,13 @@ mod tests {
     #[test]
     fn authorable_failure_codes_are_a_strict_subset_of_the_persisted_fail_kinds() {
         for kind in [
-            FlowFailureKind::Terminal,
-            FlowFailureKind::RetryExhausted,
-            FlowFailureKind::InvalidInput,
-            FlowFailureKind::RunawayBudget,
-            FlowFailureKind::EffectUncertain,
-            FlowFailureKind::DepthBudget,
-            FlowFailureKind::DispatchBudget,
+            WiringFailureKind::Terminal,
+            WiringFailureKind::RetryExhausted,
+            WiringFailureKind::InvalidInput,
+            WiringFailureKind::RunawayBudget,
+            WiringFailureKind::EffectUncertain,
+            WiringFailureKind::DepthBudget,
+            WiringFailureKind::DispatchBudget,
         ] {
             let literal = authorable_literal(kind);
             assert_eq!(
@@ -243,7 +243,7 @@ mod tests {
         ] {
             assert!(RUNS_FAIL_KIND_LITERALS.contains(&storage_owned));
             assert!(
-                serde_json::from_value::<FlowFailureKind>(json!(storage_owned)).is_err(),
+                serde_json::from_value::<WiringFailureKind>(json!(storage_owned)).is_err(),
                 "{storage_owned} must stay unauthorable"
             );
         }

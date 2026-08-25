@@ -56,9 +56,9 @@ fn exact_five_commands_and_two_queries_round_trip() {
     let validated = json!({"validated-draft-id": "validated-1"});
     let commands = [
         command(
-            "save-flow-draft",
+            "save-draft",
             json!({
-                "scope": scope(), "draft-id": "draft-1", "flow-id": "flow-1",
+                "scope": scope(), "draft-id": "draft-1", "wiring-id": "wiring-1",
                 "expected-revision": 0, "definition": "{draft"
             }),
         ),
@@ -171,7 +171,7 @@ fn completed_query_is_operation_specific() {
                 DraftDocument {
                     draft: DraftIdentity {
                         draft_id: "draft-1".to_owned(),
-                        flow_id: "flow-1".to_owned(),
+                        wiring_id: "wiring-1".to_owned(),
                         revision,
                     },
                     definition: "{draft".to_owned(),
@@ -224,7 +224,7 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
             "outcome": {
                 "status": "refused",
                 "value": {
-                    "command": "save-flow-draft",
+                    "command": "save-draft",
                     "reason": {"kind": "contract-incompatibility", "site": "call", "flow-id": "f"}
                 }
             }

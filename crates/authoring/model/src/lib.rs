@@ -284,7 +284,7 @@ pub struct AuthoringQueryResponse {
     deny_unknown_fields
 )]
 pub enum AuthoringCommand {
-    SaveFlowDraft(SaveFlowDraft),
+    SaveDraft(SaveDraft),
     Validate(ValidateDraft),
     DraftRun(DraftRun),
     TestSetRun(TestSetRun),
@@ -295,7 +295,7 @@ pub enum AuthoringCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthoringCommandKind {
-    SaveFlowDraft,
+    SaveDraft,
     Validate,
     DraftRun,
     TestSetRun,
@@ -345,11 +345,11 @@ pub enum AuthoringOutcome {
     deny_unknown_fields
 )]
 pub enum AuthoringSuccess {
-    SaveFlowDraft(DraftIdentity),
+    SaveDraft(DraftIdentity),
     Validate(ValidatedDraftIdentity),
     DraftRun(DraftRunReceipt),
     TestSetRun(TestSetRunReceipt),
-    Publish(PublishedFlowIdentity),
+    Publish(PublishedWiringIdentity),
 }
 
 /// An operation-specific command refusal.
@@ -361,7 +361,7 @@ pub enum AuthoringSuccess {
     deny_unknown_fields
 )]
 pub enum CommandRefusal {
-    SaveFlowDraft(SaveFlowDraftRefusal),
+    SaveDraft(SaveDraftRefusal),
     Validate(ValidateRefusal),
     DraftRun(DraftRunRefusal),
     TestSetRun(TestSetRunRefusal),
@@ -424,13 +424,13 @@ pub struct CommitProvenance {
     pub dirty: bool,
 }
 
-/// Save one flow draft document under optimistic revision control.
+/// Save one wiring draft document under optimistic revision control.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct SaveFlowDraft {
+pub struct SaveDraft {
     pub scope: AuthoringScope,
     pub draft_id: String,
-    pub flow_id: String,
+    pub wiring_id: String,
     pub expected_revision: SafeUint64,
     pub definition: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -518,7 +518,7 @@ pub struct GetReport {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DraftIdentity {
     pub draft_id: String,
-    pub flow_id: String,
+    pub wiring_id: String,
     pub revision: SafeUint64,
 }
 
@@ -561,8 +561,8 @@ pub struct TestSetRunReceipt {
 /// Immutable identity produced by publishing the tested draft.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct PublishedFlowIdentity {
-    pub flow_id: String,
+pub struct PublishedWiringIdentity {
+    pub wiring_id: String,
     pub version: u32,
     pub artifact_hash: String,
 }
@@ -598,7 +598,7 @@ pub enum ReportProjection {
     },
 }
 
-/// Refusals owned by `save-flow-draft`.
+/// Refusals owned by `save-draft`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -606,7 +606,7 @@ pub enum ReportProjection {
     rename_all_fields = "kebab-case",
     deny_unknown_fields
 )]
-pub enum SaveFlowDraftRefusal {
+pub enum SaveDraftRefusal {
     AuthorizationDenied,
     #[schemars(rename_all = "kebab-case")]
     UnsupportedContractVersion {

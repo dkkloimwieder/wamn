@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::status::FlowFailureKind;
+use crate::status::WiringFailureKind;
 
 /// The one observable a test case may require of its run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -15,7 +15,7 @@ pub struct Expect {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_subset: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure_code: Option<FlowFailureKind>,
+    pub failure_code: Option<WiringFailureKind>,
 }
 
 /// The two terminal shapes a black-box test case distinguishes.
@@ -95,7 +95,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{Expect, ExpectErrorKind, ExpectedOutcome};
-    use crate::status::FlowFailureKind;
+    use crate::status::WiringFailureKind;
 
     fn round_trip(expect: Expect, wire: Value) {
         assert_eq!(serde_json::to_value(&expect).unwrap(), wire);
@@ -122,7 +122,7 @@ mod tests {
                 outcome: ExpectedOutcome::Failed,
                 status: None,
                 body_subset: None,
-                failure_code: Some(FlowFailureKind::InvalidInput),
+                failure_code: Some(WiringFailureKind::InvalidInput),
             },
             json!({"outcome": "failed", "failure-code": "invalid-input"}),
         );
@@ -173,7 +173,7 @@ mod tests {
                 outcome: ExpectedOutcome::Responded,
                 status: None,
                 body_subset: None,
-                failure_code: Some(FlowFailureKind::Terminal),
+                failure_code: Some(WiringFailureKind::Terminal),
             }
             .validate()
             .unwrap_err()

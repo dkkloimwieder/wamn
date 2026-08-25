@@ -53,8 +53,8 @@ const AUTHORING_PATH = "/authoring";
 const REFUSAL_BODY = '{"kind":"authorization-denied"}';
 const PAT_PATTERN = /^(wamn_pat_[0-9a-f]{16}_)([0-9a-f]{64})$/;
 
-const FLOW_ID = "receive-material";
-const DEFINITION = `{"schema-version":"0.1","flow-id":"${FLOW_ID}","version":1,"nodes":[{"id":"request","type":"request","config":{"input-schema":true}},{"id":"respond","type":"respond","config":{"status":200}}],"edges":[{"from":"request","to":"respond"}]}`;
+const WIRING_ID = "receive-material";
+const DEFINITION = `{"schema-version":"0.1","flow-id":"${WIRING_ID}","version":1,"nodes":[{"id":"request","type":"request","config":{"input-schema":true}},{"id":"respond","type":"respond","config":{"status":200}}],"edges":[{"from":"request","to":"respond"}]}`;
 const AUTHORED_INPUT = '{"receipt-id":"receipt-1042","material":"aluminum"}';
 
 // A validated draft and report the retained commands cannot always own yet.
@@ -68,7 +68,7 @@ const PLACEHOLDER_REPORT = "report-not-yet-reserved";
 /// command that answers with a different identity fails here rather than being
 /// accepted because it returned 200.
 const RESULT_KEYS = {
-  "save-flow-draft": ["draft-id", "flow-id", "revision"],
+  "save-draft": ["draft-id", "wiring-id", "revision"],
   validate: [
     "artifact-hash",
     "catalog",
@@ -79,7 +79,7 @@ const RESULT_KEYS = {
   ],
   "draft-run": ["run-id", "validated-draft"],
   "test-set-run": ["report-id", "validated-draft"],
-  publish: ["artifact-hash", "flow-id", "version"],
+  publish: ["artifact-hash", "wiring-id", "version"],
 };
 
 class CheckFailure extends Error {
@@ -259,7 +259,7 @@ async function staticHalf() {
     pathToFileURL(join(compiled, "index.js")).href
   );
   const covered = [
-    "save-flow-draft",
+    "save-draft",
     "validate",
     "draft-run",
     "test-set-run",
@@ -315,12 +315,12 @@ async function main() {
   const draftId = `draft-${options.project}-cycle-${runId}`;
   const checkout = options.checkout ?? (await mkdtemp(join(tmpdir(), `wamn-ftfc14-cycle-${runId}-`)));
   const state = join(checkout, ".wamn", "state.json");
-  const definitionPath = join(checkout, "flows", `${FLOW_ID}.flow.json`);
+  const definitionPath = join(checkout, "flows", `${WIRING_ID}.flow.json`);
   const inputPath = join(checkout, "input.json");
 
   emit(`surface ${baseUrl}`);
   emit(`checkout ${checkout}`);
-  emit(`run-id=${runId} draft-id=${draftId} flow-id=${FLOW_ID}`);
+  emit(`run-id=${runId} draft-id=${draftId} wiring-id=${WIRING_ID}`);
 
   // ---- a real checkout, so the client's provenance claim is a real claim ----
   mkdirSync(join(checkout, "flows"), { recursive: true });
@@ -374,12 +374,12 @@ async function main() {
       definitionPath,
       "--draft-id",
       draftId,
-      "--flow-id",
-      FLOW_ID,
+      "--wiring-id",
+      WIRING_ID,
     ]),
-    ["save-flow-draft", "validate"],
+    ["save-draft", "validate"],
   );
-  const firstSave = stepOf(first, "save-flow-draft");
+  const firstSave = stepOf(first, "save-draft");
   require_(
     "save-first-revision",
     firstSave.status === "completed" && firstSave.result.revision === 1,
@@ -404,12 +404,12 @@ async function main() {
       definitionPath,
       "--draft-id",
       draftId,
-      "--flow-id",
-      FLOW_ID,
+      "--wiring-id",
+      WIRING_ID,
     ]),
-    ["save-flow-draft", "validate"],
+    ["save-draft", "validate"],
   );
-  const secondSave = stepOf(second, "save-flow-draft");
+  const secondSave = stepOf(second, "save-draft");
   require_(
     "save-second-revision",
     secondSave.status === "completed" && secondSave.result.revision === 2,
@@ -417,7 +417,7 @@ async function main() {
   );
   require_(
     "save-optimistic-concurrency-threaded",
-    secondSave.result["draft-id"] === draftId && secondSave.result["flow-id"] === FLOW_ID,
+    secondSave.result["draft-id"] === draftId && secondSave.result["wiring-id"] === WIRING_ID,
     "the second save did not target the same draft identity",
   );
   commandIds.authorized.push(secondSave["command-id"]);
@@ -503,12 +503,12 @@ async function main() {
         "schema-version": "0.1",
         "command-id": `cycle-${runId}-probe`,
         command: {
-          kind: "save-flow-draft",
+          kind: "save-draft",
           input: {
             definition: editedText,
             "draft-id": `${draftId}-probe`,
             "expected-revision": 0,
-            "flow-id": FLOW_ID,
+            "wiring-id": WIRING_ID,
             scope: { environment: options.environment, "project-id": options.project },
           },
         },
@@ -568,8 +568,8 @@ async function main() {
     definitionPath,
     "--draft-id",
     `${draftId}-forged`,
-    "--flow-id",
-    FLOW_ID,
+    "--wiring-id",
+    WIRING_ID,
   ]);
   rmSync(forgedPath, { force: true });
   require_(
@@ -636,10 +636,10 @@ async function main() {
       project: options.project,
       environment: options.environment,
       "draft-id": draftId,
-      "flow-id": FLOW_ID,
+      "wiring-id": WIRING_ID,
       "must-appear": commandIds.authorized.map((id, index) => ({
         "command-id": id,
-        "command-kind": "save-flow-draft",
+        "command-kind": "save-draft",
         revision: index + 1,
         "provenance-commit": commit,
         "provenance-ref": "refs/heads/main",

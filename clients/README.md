@@ -42,13 +42,13 @@ node clients/authoring-client/scripts/wamn.mjs validate \
   --base-url http://HOST:PORT --token-file /path/to/pat \
   --project receiving --environment dev \
   --file flows/receive-material.flow.json \
-  --draft-id draft-receiving --flow-id receive-material
+  --draft-id draft-receiving --wiring-id receive-material
 # then: draft-run --input FILE | test-set-run --test-set FILE | promote --report-id ID
 # queries: read-draft --draft-id ID --expected-revision N | get-report
 ```
 
 Six verbs cover the seven-operation public contract: `validate` sends
-`save-flow-draft` followed by `validate`; `draft-run`, `test-set-run`, and
+`save-draft` followed by `validate`; `draft-run`, `test-set-run`, and
 `promote` send the remaining commands; and `read-draft` and
 `get-report` send correlation-only queries. Each invocation writes exactly one JSON document to stdout —
 typed identities, a typed product refusal, a typed `unmounted` answer when the

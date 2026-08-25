@@ -15,7 +15,7 @@
 //!   the walk and the exposure row both read;
 //! - **cases** — [`TestSetCase`] and [`Expect`], the publish gate's bounded test
 //!   contract;
-//! - **failure** — [`FlowFailureKind`], the frozen `failure-code` literals.
+//! - **failure** — [`WiringFailureKind`], the frozen `failure-code` literals.
 
 mod expect;
 pub mod node_contract;
@@ -34,7 +34,7 @@ pub use node_contract::{
     normalize_portable_http_target,
 };
 pub use ports::{ERROR_PORT, EntryKind, MAIN_PORT};
-pub use status::FlowFailureKind;
+pub use status::WiringFailureKind;
 pub use test_set::{
     MAX_TEST_SET_CASES, TestSetCase, TestSetCasesError, TestSetCasesErrorKind, validate_cases,
 };

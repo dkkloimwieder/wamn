@@ -383,12 +383,12 @@ impl Drop for InternalAuthoringBackend {
     }
 }
 
-/// Save one mutable flow document under optimistic revision control.
+/// Save one mutable wiring document under optimistic revision control.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SaveFlowDraft {
+pub struct SaveDraft {
     pub tenant_id: String,
     pub draft_id: String,
-    pub flow_id: String,
+    pub wiring_id: String,
     /// Zero creates the draft; a positive value replaces exactly that revision.
     pub expected_revision: i64,
     /// Exact submitted text, stored byte for byte and never parsed here.
@@ -397,7 +397,7 @@ pub struct SaveFlowDraft {
 
 /// Result of a mutable draft save.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SaveFlowDraftResult {
+pub enum SaveDraftResult {
     Saved {
         revision: i64,
         edited_at: SystemTime,
@@ -421,14 +421,11 @@ pub enum GetReportResult {
 }
 
 impl InternalAuthoringBackend {
-    /// Save an incrementally editable flow document under optimistic revision control.
-    pub async fn save_flow_draft(
-        &mut self,
-        request: &SaveFlowDraft,
-    ) -> anyhow::Result<SaveFlowDraftResult> {
+    /// Save an incrementally editable wiring document under optimistic revision control.
+    pub async fn save_draft(&mut self, request: &SaveDraft) -> anyhow::Result<SaveDraftResult> {
         self.require_tenant(&request.tenant_id)?;
         self.scope().await?;
-        save_flow_draft(&self.authority, &self.client, request).await
+        save_draft(&self.authority, &self.client, request).await
     }
 
     /// Read one pending or finalized report from the fixed control-store scope.
@@ -490,15 +487,15 @@ fn validate_identity(value: &str, name: &str) -> anyhow::Result<()> {
 ///
 /// The definition is persisted exactly as submitted, so a half-finished edit is
 /// a preserved draft rather than a failed command.
-pub(crate) async fn save_flow_draft(
+pub(crate) async fn save_draft(
     _authority: &InternalDevAdmin,
     client: &(impl GenericClient + Sync),
-    request: &SaveFlowDraft,
-) -> anyhow::Result<SaveFlowDraftResult> {
+    request: &SaveDraft,
+) -> anyhow::Result<SaveDraftResult> {
     for (value, name) in [
         (&request.tenant_id, "tenant-id"),
         (&request.draft_id, "draft-id"),
-        (&request.flow_id, "flow-id"),
+        (&request.wiring_id, "wiring-id"),
     ] {
         validate_identity(value, name)?;
     }
@@ -512,7 +509,7 @@ pub(crate) async fn save_flow_draft(
                 &[
                     &request.tenant_id,
                     &request.draft_id,
-                    &request.flow_id,
+                    &request.wiring_id,
                     &request.definition,
                 ],
             )
@@ -525,7 +522,7 @@ pub(crate) async fn save_flow_draft(
                 &[
                     &request.tenant_id,
                     &request.draft_id,
-                    &request.flow_id,
+                    &request.wiring_id,
                     &request.expected_revision,
                     &request.definition,
                 ],
@@ -533,8 +530,8 @@ pub(crate) async fn save_flow_draft(
             .await
             .context("update flow draft")?
     };
-    Ok(row.map_or(SaveFlowDraftResult::RevisionConflict, |row| {
-        SaveFlowDraftResult::Saved {
+    Ok(row.map_or(SaveDraftResult::RevisionConflict, |row| {
+        SaveDraftResult::Saved {
             revision: row.get(0),
             edited_at: row.get(1),
         }

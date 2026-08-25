@@ -65,12 +65,12 @@ const request = {
   "command-id": "command-1",
   "schema-version": AUTHORING_SCHEMA_VERSION,
   command: {
-    kind: "save-flow-draft",
+    kind: "save-draft",
     input: {
       definition: '{"flow":"draft"}',
       "draft-id": "draft-1",
       "expected-revision": 0,
-      "flow-id": "flow-1",
+      "wiring-id": "flow-1",
       scope: { environment: "dev", "project-id": "project-1" },
     },
   },
@@ -90,7 +90,7 @@ const queryRequest = {
 
 const draftDocument = {
   definition: "{}",
-  draft: { "draft-id": "draft-1", "flow-id": "flow-1", revision: 1 },
+  draft: { "draft-id": "draft-1", "wiring-id": "flow-1", revision: 1 },
 };
 
 function validateRequest() {
@@ -205,8 +205,8 @@ test("execute returns a schema-typed completion through a mock transport", async
       return response({
         status: "completed",
         value: {
-          command: "save-flow-draft",
-          result: { "draft-id": "draft-1", "flow-id": "flow-1", revision: 1 },
+          command: "save-draft",
+          result: { "draft-id": "draft-1", "wiring-id": "flow-1", revision: 1 },
         },
       });
     },
@@ -223,7 +223,7 @@ test("typed refusals return normally and are not infrastructure faults", async (
       return response({
         status: "refused",
         value: {
-          command: "save-flow-draft",
+          command: "save-draft",
           reason: { kind: "authorization-denied" },
         },
       });
@@ -233,7 +233,7 @@ test("typed refusals return normally and are not infrastructure faults", async (
   const outcome = await client.execute(request);
   assert.deepEqual(outcome, {
     status: "refused",
-    value: { command: "save-flow-draft", reason: { kind: "authorization-denied" } },
+    value: { command: "save-draft", reason: { kind: "authorization-denied" } },
   });
 });
 
@@ -265,7 +265,7 @@ test("unknown, unversioned, and mismatched responses are protocol faults", async
     response({
       status: "refused",
       value: {
-        command: "save-flow-draft",
+        command: "save-draft",
         reason: { kind: "authorization-denied", detail: "must stay prose-free" },
       },
     }),
@@ -277,7 +277,7 @@ test("unknown, unversioned, and mismatched responses are protocol faults", async
         outcome: {
           status: "refused",
           value: {
-            command: "save-flow-draft",
+            command: "save-draft",
             reason: { kind: "authorization-denied" },
           },
         },
@@ -337,10 +337,10 @@ test("unsafe request and response integers fail instead of returning rounded val
   const unsafeResponse = response({
     status: "completed",
     value: {
-      command: "save-flow-draft",
+      command: "save-draft",
       result: {
         "draft-id": "draft-1",
-        "flow-id": "flow-1",
+        "wiring-id": "flow-1",
         revision: Number.MAX_SAFE_INTEGER + 1,
       },
     },
@@ -369,8 +369,8 @@ test("uint64 wire domain accepts 2^53-1 and refuses 2^53 and u64 max", async () 
     response({
       status: "completed",
       value: {
-        command: "save-flow-draft",
-        result: { "draft-id": "draft-1", "flow-id": "flow-1", revision },
+        command: "save-draft",
+        result: { "draft-id": "draft-1", "wiring-id": "flow-1", revision },
       },
     });
   const client = (revision) =>
@@ -392,7 +392,7 @@ test("uint32 and uint64 response formats enforce exact inclusive boundaries", as
     catalog: { "catalog-id": "catalog-1", version: 4_294_967_295 },
     draft: {
       "draft-id": "draft-1",
-      "flow-id": "flow-1",
+      "wiring-id": "flow-1",
       revision: Number.MAX_SAFE_INTEGER,
     },
     environment: "dev",
@@ -444,7 +444,7 @@ test("fetch transport posts to only the caller-supplied endpoint", async () => {
       return { ok: true, status: 200, async json() { return response({
         status: "refused",
         value: {
-          command: "save-flow-draft",
+          command: "save-draft",
           reason: { kind: "authorization-denied" },
         },
       }); } };

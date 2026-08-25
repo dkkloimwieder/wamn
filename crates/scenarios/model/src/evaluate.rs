@@ -93,7 +93,7 @@ fn is_subset(expected: &Value, actual: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use wamn_execution_contract::{Expect, ExpectedOutcome, FlowFailureKind, TestSetCase};
+    use wamn_execution_contract::{Expect, ExpectedOutcome, TestSetCase, WiringFailureKind};
 
     use super::evaluate;
     use crate::Captured;
@@ -127,7 +127,7 @@ mod tests {
                 outcome: ExpectedOutcome::Failed,
                 status: None,
                 body_subset: None,
-                failure_code: Some(FlowFailureKind::Terminal),
+                failure_code: Some(WiringFailureKind::Terminal),
             },
         ] {
             let outcome = evaluate(&case(expect), &Captured::default());
@@ -177,7 +177,7 @@ mod tests {
     fn failure_code_matches_only_the_exact_literal_and_may_be_omitted() {
         let uncertain = Captured {
             response: None,
-            failure_code: Some(FlowFailureKind::EffectUncertain),
+            failure_code: Some(WiringFailureKind::EffectUncertain),
         };
         let any_failure = Expect {
             outcome: ExpectedOutcome::Failed,
@@ -191,7 +191,7 @@ mod tests {
             outcome: ExpectedOutcome::Failed,
             status: None,
             body_subset: None,
-            failure_code: Some(FlowFailureKind::EffectUncertain),
+            failure_code: Some(WiringFailureKind::EffectUncertain),
         };
         assert!(evaluate(&case(exact.clone()), &uncertain).passed);
         assert!(
@@ -199,7 +199,7 @@ mod tests {
                 &case(exact),
                 &Captured {
                     response: None,
-                    failure_code: Some(FlowFailureKind::Terminal),
+                    failure_code: Some(WiringFailureKind::Terminal),
                 }
             )
             .passed
@@ -239,7 +239,7 @@ mod tests {
             outcome: ExpectedOutcome::Failed,
             status: None,
             body_subset: None,
-            failure_code: Some(FlowFailureKind::Terminal),
+            failure_code: Some(WiringFailureKind::Terminal),
         };
 
         for (label, expect, facts, passed) in [
@@ -258,7 +258,7 @@ mod tests {
             (
                 "a failed run never responded",
                 expect_status_200,
-                Captured::failed(Some(FlowFailureKind::Terminal)),
+                Captured::failed(Some(WiringFailureKind::Terminal)),
                 false,
             ),
             (
@@ -270,7 +270,7 @@ mod tests {
             (
                 "any typed failure meets a bare failed",
                 expect_any_failure.clone(),
-                Captured::failed(Some(FlowFailureKind::RunawayBudget)),
+                Captured::failed(Some(WiringFailureKind::RunawayBudget)),
                 true,
             ),
             (
@@ -282,7 +282,7 @@ mod tests {
             (
                 "terminal meets failure-code terminal",
                 expect_terminal.clone(),
-                Captured::failed(Some(FlowFailureKind::Terminal)),
+                Captured::failed(Some(WiringFailureKind::Terminal)),
                 true,
             ),
             (

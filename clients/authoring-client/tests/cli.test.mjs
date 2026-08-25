@@ -91,13 +91,13 @@ async function collectionRequests() {
 function builtRequests() {
   return new Map([
     [
-      "save-flow-draft",
-      cli.saveFlowDraftRequest({
+      "save-draft",
+      cli.saveDraftRequest({
         commandId: "save-1",
         definition: '{"schema-version":"0.1"}',
         draftId: "draft-receiving",
         expectedRevision: 2,
-        flowId: "receive-material",
+        wiringId: "receive-material",
         provenance: { commit: "0".repeat(40), dirty: false, ref: "refs/heads/main" },
         scope,
       }),
@@ -182,12 +182,12 @@ test("every CLI request decodes through the generated closed validator", () => {
   // Optional client claims remain optional at the wire boundary.
   assert.doesNotThrow(() =>
     parseAuthoringRequest(
-      cli.saveFlowDraftRequest({
+      cli.saveDraftRequest({
         commandId: "save-2",
         definition: "",
         draftId: "d",
         expectedRevision: 0,
-        flowId: "f",
+        wiringId: "f",
         scope,
       }),
     ),
@@ -237,7 +237,7 @@ function response(commandId, outcome) {
   };
 }
 
-const draftIdentity = { "draft-id": "draft-receiving", "flow-id": "receive-material", revision: 1 };
+const draftIdentity = { "draft-id": "draft-receiving", "wiring-id": "receive-material", revision: 1 };
 const validatedIdentity = {
   "artifact-hash": "sha256:artifact",
   catalog: { "catalog-id": "receiving", version: 7 },
@@ -305,7 +305,7 @@ const validateArguments = [
   DEFINITION,
   "--draft-id",
   "draft-receiving",
-  "--flow-id",
+  "--wiring-id",
   "receive-material",
 ];
 
@@ -323,13 +323,13 @@ test("a completed save and validate emit typed identities and remember them", as
     files: baseFiles,
     reply: (endpoint, init) => {
       const body = JSON.parse(init.body).body;
-      if (body.command.kind === "save-flow-draft") {
+      if (body.command.kind === "save-draft") {
         // The whole input, so a hard-coded or dropped value cannot pass.
         assert.deepEqual(body.command.input, {
           definition: baseFiles[DEFINITION],
           "draft-id": "draft-receiving",
           "expected-revision": 0,
-          "flow-id": "receive-material",
+          "wiring-id": "receive-material",
           scope: { environment: "dev", "project-id": "receiving" },
         });
         assert.equal(init.headers.authorization, `Bearer ${TOKEN}`);
@@ -337,7 +337,7 @@ test("a completed save and validate emit typed identities and remember them", as
           status: 200,
           body: response(body["command-id"], {
             status: "completed",
-            value: { command: "save-flow-draft", result: draftIdentity },
+            value: { command: "save-draft", result: draftIdentity },
           }),
         };
       }
@@ -359,7 +359,7 @@ test("a completed save and validate emit typed identities and remember them", as
   assert.deepEqual(
     emitted.steps.map((step) => [step.command, step.status]),
     [
-      ["save-flow-draft", "completed"],
+      ["save-draft", "completed"],
       ["validate", "completed"],
     ],
   );
@@ -378,12 +378,12 @@ test("an unmounted command is its own answer and never a success", async () => {
     files: baseFiles,
     reply: (endpoint, init) => {
       const body = JSON.parse(init.body).body;
-      if (body.command.kind === "save-flow-draft") {
+      if (body.command.kind === "save-draft") {
         return {
           status: 200,
           body: response(body["command-id"], {
             status: "completed",
-            value: { command: "save-flow-draft", result: draftIdentity },
+            value: { command: "save-draft", result: draftIdentity },
           }),
         };
       }
@@ -406,7 +406,7 @@ test("an unmounted command is its own answer and never a success", async () => {
 
 test("a product refusal is typed, exits 3, and is not a fault", async () => {
   const refusal = {
-    command: "save-flow-draft",
+    command: "save-draft",
     reason: { "expected-revision": 0, kind: "revision-conflict" },
   };
   const { io, state } = fakeIo({
@@ -435,7 +435,7 @@ test("an unauthorized presenter is refused with the frozen contract kind", async
   assert.equal(await cli.runCli(validateArguments, io), cli.EXIT_REFUSED);
   const emitted = document(state);
   assert.deepEqual(emitted.steps[0].refusal, {
-    command: "save-flow-draft",
+    command: "save-draft",
     reason: { kind: "authorization-denied" },
   });
   assert.equal(emitted.steps[0]["http-status"], 403);
@@ -568,7 +568,7 @@ test("no token material ever reaches stdout or the transcript", async () => {
       status: 200,
       body: response(commandIdOf(init), {
         status: "completed",
-        value: { command: "save-flow-draft", result: draftIdentity },
+        value: { command: "save-draft", result: draftIdentity },
       }),
     }),
   });
@@ -596,12 +596,12 @@ test("no option, file, or default can send an unversioned or reversioned request
   }
   // And the generated client refuses an unversioned document before transport,
   // so there is no path that reaches the wire without a version.
-  const built = cli.saveFlowDraftRequest({
+  const built = cli.saveDraftRequest({
     commandId: "save-1",
     definition: "",
     draftId: "d",
     expectedRevision: 0,
-    flowId: "f",
+    wiringId: "f",
     scope,
   });
   const unversioned = { ...built };

@@ -6,7 +6,7 @@
 //     --base-url http://HOST:PORT --token-file /path/to/pat \
 //     --project receiving --environment dev \
 //     --file flows/receive-material.flow.json \
-//     --draft-id draft-receiving --flow-id receive-material
+//     --draft-id draft-receiving --wiring-id receive-material
 //
 // This file is the ONLY place the CLI touches the platform-neutral outside
 // world. Everything it hands `runCli` is listed here: POST-only HTTP, reads and

@@ -1002,7 +1002,7 @@ UPDATE catalog.flow_drafts
 INSERT INTO catalog.authoring_command_audit
   (tenant_id,command_id,command_kind,principal_id,principal_kind,principal_subject,
    effective_role,org,project,environment,target_ref,request_hash,outcome_bytes)
-VALUES ('tenant-a','command-1','save-flow-draft','principal-1','human','someone',
+VALUES ('tenant-a','command-1','save-draft','principal-1','human','someone',
         'project-author','acme','receiving','dev','draft-b',
         'sha256:'||repeat('2',64),'\x7b7d'::bytea);
 UPDATE wamn_run.authoring_test_case_runs

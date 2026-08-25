@@ -113,7 +113,7 @@ mod tests {
 
     use super::{MAX_TEST_SET_CASES, TestSetCase, TestSetCasesErrorKind, validate_cases};
     use crate::expect::{Expect, ExpectedOutcome};
-    use crate::status::FlowFailureKind;
+    use crate::status::WiringFailureKind;
 
     fn case(case_id: &str) -> TestSetCase {
         TestSetCase {
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn rejects_a_semantically_invalid_expect() {
         let mut invalid = case("bad");
-        invalid.expect.failure_code = Some(FlowFailureKind::Terminal);
+        invalid.expect.failure_code = Some(WiringFailureKind::Terminal);
         let detail = refusal(
             std::slice::from_ref(&invalid),
             TestSetCasesErrorKind::InvalidExpect,
