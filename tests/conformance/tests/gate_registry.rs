@@ -94,6 +94,12 @@ enum Classification {
     Measurement,
     Drill,
     PartialProof,
+    // A gate whose subject still exists but whose production input path is
+    // dormant, so passing proves nothing about production. Distinct from
+    // `Retired` (the subject is gone) and from `PartialProof` (the gate really
+    // does prove part of its claim). The gate stays registered, keeps its
+    // decision mapping, and must record why in `coverage_exclusions`.
+    ParkedGate,
     Setup,
     NonGate,
     Retired,
@@ -397,6 +403,16 @@ fn validate_registry(
         if entry.classification == Classification::RequiredGate && !entry.can_fail {
             return Err(format!("{} is a decorative required gate", entry.source));
         }
+        // Parking withdraws a coverage claim. Withdrawing it silently is the
+        // failure being parked was supposed to expose, so the note is required.
+        if entry.classification == Classification::ParkedGate
+            && entry.coverage_exclusions.is_empty()
+        {
+            return Err(format!(
+                "{} is parked without a recorded coverage exclusion",
+                entry.source
+            ));
+        }
         if matches!(
             entry.classification,
             Classification::Setup | Classification::NonGate | Classification::Retired
@@ -478,6 +494,22 @@ fn validate_registry(
         {
             return Err(format!(
                 "{} has a retired historical primary but no live supporting gate mapping",
+                decision.id
+            ));
+        }
+        // The guard above stops retirement from silently unproving a shipped
+        // decision. Parking is retirement's softer form and needs the same
+        // guard, or it becomes the loophole around it.
+        if decision.status == "shipped"
+            && !registry.entries.iter().any(|entry| {
+                !matches!(
+                    entry.classification,
+                    Classification::ParkedGate | Classification::Retired
+                ) && entry.decision_ids.contains(&decision.id)
+            })
+        {
+            return Err(format!(
+                "{} is supported only by parked or retired gates",
                 decision.id
             ));
         }
@@ -646,6 +678,75 @@ fn rejects_decorative_required_gate_mutant() {
     let error = validate_registry(&registry, &manifests, &root)
     .expect_err("a decorative required gate must fail");
     assert!(error.contains("decorative required gate"), "{error}");
+}
+
+#[test]
+fn causation_gates_are_parked_with_a_false_coverage_note() {
+    let (_, registry, _) = fixtures();
+    for source in ["H5-CAUSATION", "H5-CAUSATION-E2E"] {
+        let entry = registry
+            .entries
+            .iter()
+            .find(|entry| entry.source == source)
+            .unwrap_or_else(|| panic!("{source} remains registered"));
+        assert_eq!(
+            entry.classification,
+            Classification::ParkedGate,
+            "{source} passes on a run context its own SQL supplies, so it cannot be required"
+        );
+        // Parking withdraws the coverage claim, not the subject: the gate still
+        // runs, can still fail, and still names the decisions it is about.
+        assert!(entry.can_fail);
+        assert!(entry.decision_ids.iter().any(|id| id == "D3"));
+        assert!(entry.decision_ids.iter().any(|id| id == "D19"));
+        let note = entry.coverage_exclusions.join(" ");
+        assert!(
+            note.contains("set_current_run"),
+            "{source} must name the dormant producer: {note}"
+        );
+        assert!(
+            note.contains("emit-with-attribution"),
+            "{source} must name the re-open trigger: {note}"
+        );
+    }
+}
+
+#[test]
+fn rejects_parked_gate_without_coverage_note_mutant() {
+    let (root, mut registry, manifests) = fixtures();
+    let entry = registry
+        .entries
+        .iter_mut()
+        .find(|entry| entry.classification == Classification::ParkedGate)
+        .expect("registry must contain a parked gate");
+    entry.coverage_exclusions.clear();
+    let error = validate_registry(&registry, &manifests, &root)
+    .expect_err("a parked gate with no coverage note must fail");
+    assert!(
+        error.contains("parked without a recorded coverage exclusion"),
+        "{error}"
+    );
+}
+
+#[test]
+fn rejects_solely_parked_decision_support_mutant() {
+    let (root, mut registry, manifests) = fixtures();
+    for entry in &mut registry.entries {
+        if entry.classification != Classification::Retired
+            && entry.decision_ids.iter().any(|decision| decision == "D19")
+        {
+            entry.classification = Classification::ParkedGate;
+            entry
+                .coverage_exclusions
+                .push("mutant parking note".to_string());
+        }
+    }
+    let error = validate_registry(&registry, &manifests, &root)
+    .expect_err("a decision left with only parked support must fail");
+    assert!(
+        error.contains("supported only by parked or retired gates"),
+        "{error}"
+    );
 }
 
 #[test]
