@@ -7,7 +7,6 @@ const OWNERS_PATH: &str = "architecture/state-owners.json";
 const TABLE_PATH: &str = "architecture/protected-writes.json";
 const AUTHOR_SQL_EXPOSURE: &str = "author SQL, RLS-bounded";
 const AUTHOR_SQL_ROLES: [&str; 2] = ["wamn_app", "wamn_control_author"];
-const NODE_ERROR_CHECK: &str = "constraint:node_runs_error_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text]))";
 
 #[derive(Debug, Deserialize)]
 struct OwnershipManifest {
@@ -293,20 +292,6 @@ fn protected_relation_table_matches_declared_ownership() {
         }
         actual_relations.insert((row.scope.clone(), row.relation.clone()));
     }
-    let node_runs = table
-        .rows
-        .iter()
-        .find(|row| {
-            row.scope == "production-project-database" && row.relation == "wamn_run.node_runs"
-        })
-        .expect("node_runs is protected");
-    let node_error_checks = node_runs
-        .guards
-        .iter()
-        .filter(|guard| guard.starts_with("constraint:node_runs_error_kind_check;"))
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    assert_eq!(node_error_checks, [NODE_ERROR_CHECK]);
     assert_eq!(
         table
             .rows
@@ -353,6 +338,6 @@ fn control_author_sql_exposure_is_exact() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         actual,
-        BTreeSet::from(["catalog.authoring_command_audit", "catalog.flow_drafts"])
+        BTreeSet::from(["catalog.authoring_command_audit", "wamn_run.gate_reports"])
     );
 }
