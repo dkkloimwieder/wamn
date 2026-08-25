@@ -208,7 +208,19 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
     "connection_generations",
 ];
 /// `runs` columns read directly or through `RETURNING` by management admission.
-pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 17] = [
+///
+/// `status` and `result_json` are the OBSERVATION LEG (wamn-oici). Without them
+/// the admitter can create a run it can never see the outcome of, so a project
+/// run cannot be polled to terminal and sequential case composition has no
+/// credential that can execute it. The admitter is already the run's producer
+/// principal, so widening its own SELECT is narrower than the alternatives a
+/// second mechanism would need: a view, a separate reader role, or replicating
+/// run status into the control database were all considered and rejected.
+///
+/// `grant_management_admitter_surface_sql` revokes every table and per-column
+/// privilege before granting, so this list is the whole readable surface —
+/// a column absent here is DENIED, not merely unmentioned.
+pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 19] = [
     "tenant_id",
     "run_id",
     "binding_world_json",
@@ -226,6 +238,8 @@ pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 17] = [
     "invocation_context",
     "platform_revision",
     "run_deadline_at",
+    "status",
+    "result_json",
 ];
 /// `runs` columns minted by the management-admission statement.
 pub const MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS: [&str; 19] = [
@@ -1271,6 +1285,16 @@ mod tests {
              TO \"wamn_management_admitter\""
         ));
         assert!(sql.contains("GRANT SELECT (\"tenant_id\", \"run_id\", \"binding_world_json\""));
+        // wamn-oici's probe arm. The consumers derive their expectations from
+        // the same constant, so a widening flows through them silently and they
+        // prove nothing about it. This names the two observation columns in the
+        // emitted grant, so removing either fails HERE.
+        assert!(
+            sql.contains(
+                "\"run_deadline_at\", \"status\", \"result_json\") ON TABLE \"wamn_run\".\"runs\""
+            ),
+            "the observation leg must be able to read runs.status and runs.result_json"
+        );
         assert!(sql.contains("GRANT INSERT (\"tenant_id\", \"run_id\", \"catalog_id\""));
         assert!(sql.contains(
             "GRANT SELECT (\"tenant_id\", \"run_id\"), INSERT (\"tenant_id\", \
