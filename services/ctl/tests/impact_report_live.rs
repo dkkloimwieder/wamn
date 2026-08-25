@@ -3,7 +3,7 @@
 //! Live gate for operations-only schema-change impact analysis (11.8, wamn-wvb).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url of a throwaway Postgres (recipe:
-//! docs/archive/build-and-test.md [11.8]); skipped cleanly when unset. Drives the REAL
+//! docs/operations/build-and-test.md [11.8]); skipped cleanly when unset. Drives the REAL
 //! machinery against the REAL storage SQL (deploy/sql/catalog-schema.sql):
 //!
 //!   1. materialize a v1 catalog with `E_touched` (`orders`) + `E_untouched`

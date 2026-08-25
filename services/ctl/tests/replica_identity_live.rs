@@ -2,7 +2,7 @@
 //! (EVT-REPLICA-IDENT, wamn-l5i9.31).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a throwaway
-//! `wal_level=logical` Postgres (recipe: docs/archive/build-and-test.md
+//! `wal_level=logical` Postgres (recipe: docs/operations/build-and-test.md
 //! [EVT-REPLICA-IDENT]); skipped cleanly when unset. Drives the REAL reconcile
 //! path (`reconcile_replica_identity::reconcile`) against the REAL floor DDL
 //! (`wamn_schema_compiler::Migration::create`) + the REAL registration storage

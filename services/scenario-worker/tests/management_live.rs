@@ -32,7 +32,7 @@
 //! the public HTTP path and the canonical audited handler path agree, and that
 //! attribution a client attaches is inert.
 //!
-//! The recipe in `docs/archive/build-and-test.md` supplies one disposable database.
+//! The recipe in `docs/operations/build-and-test.md` supplies one disposable database.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};

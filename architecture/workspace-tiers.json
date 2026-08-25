@@ -167,7 +167,7 @@
         "transform"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Build deployable native and proof owners plus every guest proof input, then execute the owning deploy/gates Jobs from docs/archive/build-and-test.md. Local Cargo success never substitutes for a named in-cluster gate of record."
+      "command_semantics": "Build deployable native and proof owners plus every guest proof input, then execute the owning deploy/gates Jobs from docs/operations/build-and-test.md. Local Cargo success never substitutes for a named in-cluster gate of record."
     },
     "release": {
       "root_packages": [

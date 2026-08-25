@@ -9,7 +9,7 @@
 // WHAT THIS IS NOT. It never reads the audit ledger — that read needs storage
 // authority this client must not have. Attribution evidence is verified by the
 // GATE RUNNER around this script; see the [jvzx.4] section of
-// docs/archive/build-and-test.md. The script's contribution to that step is the
+// docs/operations/build-and-test.md. The script's contribution to that step is the
 // AUDIT-MANIFEST line it prints, naming the command-ids that must appear with
 // which principal subject and the command-ids that must NOT appear at all.
 //

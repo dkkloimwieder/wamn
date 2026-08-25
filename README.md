@@ -135,7 +135,7 @@ cargo test                       # a specific crate: cargo test -p wamn-router
 
 # lint + format
 # --workspace is required: without it Cargo selects default-members only, which
-# is 20 of the 39 workspace crates. --keep-going is required because Cargo stops
+# is 17 of the 35 workspace crates. --keep-going is required because Cargo stops
 # scheduling new units at the first error, hiding every later package's lints.
 cargo clippy --workspace --all-targets --keep-going && cargo fmt --all --check
 ```

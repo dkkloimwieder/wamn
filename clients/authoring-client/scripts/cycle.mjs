@@ -12,7 +12,7 @@
 // platform-admin impersonation, no test-only trusted context, and no ledger
 // read — that read needs storage authority a client must not hold. The gate
 // closes by printing one VERIFY-MANIFEST line naming what a runner-side ledger
-// read must find; the `[6A / wamn-ftfc.14]` section of docs/archive/build-and-test.md
+// read must find; the `[6A / wamn-ftfc.14]` section of docs/operations/build-and-test.md
 // owns that step.
 //
 // HONEST 501s. The management surface mounts the command kinds whose handlers

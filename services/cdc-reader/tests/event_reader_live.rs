@@ -3,7 +3,7 @@
 //! Set `WAMN_READER_PG_URL` to a **superuser** URL (path `/postgres`) of a
 //! throwaway Postgres 18 running `wal_level=logical`, and
 //! `WAMN_READER_NATS_URL` to a throwaway JetStream-enabled NATS; skipped
-//! cleanly when either is unset (recipe: docs/archive/build-and-test.md
+//! cleanly when either is unset (recipe: docs/operations/build-and-test.md
 //! [EVT-READER]).
 //!
 //! Stands up the REAL substrate (system schema + registration rows via the
