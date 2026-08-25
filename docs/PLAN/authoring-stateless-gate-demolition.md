@@ -1,0 +1,253 @@
+# Authoring collapses to the stateless-gate model — demolition spec
+
+**Status: DRAFT, awaiting owner ratification (`wamn-7qtw`). Non-normative until ratified.**
+On approval this is a Phase-A-style deletion wave, not a refactor.
+
+Everything below is measured at `10bbe597` unless marked as a judgement. Where the
+directive's expectation and the tree disagree, the tree is reported.
+
+---
+
+## 1. The premise, and how much of it the tree already holds
+
+Wirings are documents with content-hash identity. A draft is a client-side file — a
+studio buffer, a git working tree — not server state. Two verbs plus reads:
+
+| verb | shape |
+| --- | --- |
+| `gate(document) -> report` | stateless; report immutable, keyed by wiring-hash; idempotent by construction (same hash → same report). No run-row protocol, no retry-resumption, no Pending convergence, no draft tables. |
+| `publish(document, report-id)` | catalog row + activation, as landed. |
+
+**Half the premise is already law in the tree.** `deploy/sql/control-portable-store.sql`
+carries this comment above the draft section:
+
+> No validated-draft relation (`wamn-pm7k`): the draft concept died with the pivot. The
+> wiring document IS the validated artifact and its hash IS the identity.
+
+`catalog.validated_flow_drafts` is already gone. `catalog.wirings` already carries
+`wiring_hash text NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$')`, is immutable
+under triggers on both UPDATE and DELETE, and has no mutable state.
+
+So this is not a new direction. It is finishing one the tree started.
+
+---
+
+## 2. The seven ops mapped
+
+The contract is five commands plus two queries (`crates/authoring/model/src/lib.rs`).
+
+| op | kind | directive says | measured verdict |
+| --- | --- | --- | --- |
+| `publish` | command | survives | **survives.** Unchanged. |
+| `get-report` | query | survives | **survives**, re-keyed — see §2.1. |
+| `gate` | — | survives | **does not exist yet.** New verb. See §2.2. |
+| `save-draft` | command | collapses | **collapses**, client-side. |
+| `read-draft` | query | collapses | **collapses**, client-side. Already returns 501. |
+| `validate` | command | collapses | **collapses**, absorbed into `gate`. Already unmounted. |
+| `draft-run` | command | collapses | **collapses**, absorbed into `gate`. Already unmounted. |
+| `test-set-run` | command | **unstated** | **becomes `gate`.** See §2.2. |
+
+### 2.1 `get-report` survives but its key changes
+
+Reports today are keyed by an opaque `report_id`. `crates/execution/run-state/src/admission.rs`
+forces `report_id` to equal the candidate's `gate_report_id`, and requires that to equal
+`catalog.wirings.gate_report_id`. The report identity is therefore already *derived from
+the candidate*, never minted by the caller.
+
+**`catalog.wirings.gate_report_id` is bare `text NOT NULL` with no foreign key to anything.**
+It sits on the same immutable row as `wiring_hash`, which is a real content hash. Two
+identifiers for one fact.
+
+**Ruling asked: `gate_report_id` collapses into `wiring_hash`.** A report keyed by the
+hash needs no second identifier, and the one it has references no table. This is the single
+highest-value simplification in the spec and it touches `catalog.wirings`,
+`services/ctl/src/author_wiring.rs`, and the admission statement's 17-parameter shape.
+
+### 2.2 `gate` is `test-set-run`, restated
+
+The directive names `gate` as a survivor and does not mention `test-set-run`. They are the
+same verb: `test-set-run` takes a candidate wiring, executes its cases, and produces a
+pass/fail report — which is gating. Nothing else in the contract produces a report.
+
+`validate` and `draft-run` are the two unmounted commands whose purpose `gate` absorbs:
+`validate` checked a document without executing it, `draft-run` executed one case ad hoc.
+Both are strictly weaker than "execute the document's cases and report."
+
+**Judgement, not measurement:** renaming `test-set-run` to `gate` is a wire change. It
+should ride the deletion wave rather than precede it, because the wave deletes four of the
+seven ops and the contract crate is a registered drift gate.
+
+---
+
+## 3. What deletes
+
+### 3.1 Draft-persistence tables
+
+| relation | note |
+| --- | --- |
+| `catalog.flow_drafts` | The draft store. Server-side revision counter, `edited_at` ordering, `definition`/`graph_json` content. Entirely client-side under the premise. |
+| `catalog.guard_flow_draft_update()` | PL/pgSQL trigger function enforcing monotonic `revision` and `edited_at`. Dies with the table under the deletion rule. |
+
+`catalog.validated_flow_drafts` is **already gone** — do not re-file it.
+
+### 3.2 Composition machinery
+
+`services/scenario-worker/src` totals 5,067 lines. Under the stateless model:
+
+| file | lines | fate |
+| --- | --- | --- |
+| `store/test_orchestration.rs` | 845 | **deletes.** Reservation/case-run/report lifecycle. |
+| `test_set.rs` | 538 | **mostly deletes.** The sequential per-ordinal loop is the resumption protocol. |
+| `store/admission.rs` | 528 | **contested — see §5.** |
+| `store/drafts.rs` | 70 | **deletes.** |
+| `management.rs` | 2,032 | **partially deletes**: `lock_retry_identity`, `read_retry_outcome`, `settle_retry`, `classify_retry`, `test_set_reuse`, `save_draft_route`. |
+
+The retry-identity machinery (`classify_retry` at `management.rs:243`, and the three
+`*_retry` helpers) exists solely to make a re-submitted command converge. **Hash-keyed
+idempotency makes it dead weight**: the report either exists for that hash or it does not.
+
+### 3.3 Run-plane tables
+
+| relation | fate |
+| --- | --- |
+| `wamn_run.authoring_test_run_reservations` | **deletes.** `state`, `whole_deadline_at`, `finalized_at`, `command_hash` are all resumption-protocol state. |
+| `wamn_run.authoring_test_case_runs` | **contested — see §5.** |
+| `wamn_run.authoring_test_reports` | **survives, re-keyed** by wiring-hash. It is already immutable and finalized-only. |
+
+### 3.4 Contract surface
+
+Deletes from `crates/authoring/model/src/lib.rs` (939 lines): `SaveDraft`,
+`ValidateDraft`, `DraftRun`, `DraftRunCapture`, `DraftRunReceipt`, `ReadDraft`,
+`SaveDraftRefusal`, `DraftRunRefusal`, `ReadDraftRefusal`, and the `SaveDraft`/`Validate`/
+`DraftRun`/`ReadDraft` variants of `AuthoringCommand`, `AuthoringCommandKind`,
+`AuthoringQuery`, `AuthoringQueryKind`.
+
+Survives: `PublishValidatedDraft`, `GetReport`, `GetReportRefusal`, `TestSetRun` (as
+`gate`), `TestSetRunReceipt`, `TestSetRunRefusal`, `ReportProjection`.
+
+**`ReportProjection::Pending` deletes.** There is no pending state in a stateless gate.
+This is what supersedes the `last_attempt_at` rider.
+
+### 3.5 Not in scope, do not sweep
+
+`catalog.authoring_command_audit` survives — it audits *who ran what*, which is orthogonal
+to draft persistence.
+
+`catalog.draft_safe_connection_grants` is a **separate finding, not a survivor.** It has
+**zero production DML** — no INSERT, UPDATE, or SELECT anywhere in the tree. Its only
+appearances are inside the authoring role's privilege probe
+(`services/scenario-worker/src/authoring.rs`): one positive assertion that the role holds
+SELECT on it, and two negative assertions that the role holds neither INSERT nor UPDATE.
+It is a table whose entire purpose is to be named in an assertion about privileges on it.
+
+That makes it a deletion candidate on its own merits, independent of this spec, and it is
+**not** a reason to keep gate-run machinery. It is called out here only so the wave does not
+inherit it by accident. Note also that `architecture/state-owners.json` lists
+`scenario-worker` as its reader, which is true only in the `has_table_privilege` sense —
+worth re-measuring against the phantom-reader class when the row is touched.
+
+---
+
+## 4. What `wamn-0h0g.8.5.4` reduces to
+
+`8.5.4` landed 2,171 lines at `523750fc`. Under hash-keyed stateless reports:
+
+**Survives** — candidate resolution by wiring hash (`store/admission.rs`), and the
+finding that keying on `wiring_hash` yields every admission parameter from
+`catalog.wirings`. That is exactly the stateless model's lookup, built early.
+
+**Survives** — the behavioural route guard that replaced the self-scanning source scan.
+It asserts unmounted kinds return an empty-bodied 501 after authorization. The wave deletes
+four kinds, so the guard's inventory shrinks; the guard itself is correct and stays.
+
+**Deletes** — the sequential per-ordinal reserve→admit→poll→evaluate→finalize→reconcile
+loop, at-most-once-per-ordinal bookkeeping, and crash-after-commit convergence. All three
+are the resumption protocol.
+
+**Deletes** — `run_deadline_at` read-back and the frozen `platform_revision` constant.
+Both exist only so an exact retry does not diverge.
+
+**Honest accounting: roughly 350–400 of the 528 lines in `store/admission.rs` survive; the
+~900 lines of composition and retry machinery do not.** The bead's most valuable output was
+never the loop — it was the measurement that `wiring_hash` is a sufficient key, which is
+the premise of this spec.
+
+---
+
+## 5. The open question: does case execution need server-side state beyond the report row?
+
+**Answer: yes, one thing — and it is not what the current machinery provides.**
+
+Three sub-questions, measured separately.
+
+**(a) Does producing a report need stored state? No.** Cases ride the document itself
+(`WiringDocument.cases` in `catalog.wirings.graph_json`). Inputs, expectations, and the
+binding world are all derivable from the document plus the catalog. Nothing needs a
+reservation to *know what to run*.
+
+**(b) Does idempotency need stored state? Only a uniqueness constraint.** "Same hash → same
+report" is enforceable by a primary key on the report row. Two concurrent `gate()` calls for
+one hash race; the loser's INSERT conflicts and it returns the winner's report. That is one
+constraint, not a protocol — no `command_hash`, no `state` column, no deadline.
+
+**(c) Does *partial execution* need stored state? This is the real question, and the
+answer depends on a fact the directive does not settle.**
+
+Test cases invoke real components, which perform real effects. If `gate()` executes ten
+cases and the process dies after case seven, a retry with no stored state re-runs all ten —
+**re-performing seven cases' effects.** The current per-ordinal machinery exists precisely
+to prevent that, and `wamn_run.authoring_test_case_runs` is where it remembers.
+
+So there are exactly two coherent positions, and they are not equally cheap:
+
+1. **Cases are effect-free by contract.** Gate execution runs against components in a
+   sandbox that refuses effects, so re-execution is free and `authoring_test_case_runs`
+   deletes with everything else. Truly stateless. **This requires a contract statement the
+   tree does not currently make, and an enforcement point that does not exist.**
+2. **Cases may perform effects.** Then per-case durable state survives in some form, and
+   "stateless" describes the *report identity*, not the execution. `authoring_test_case_runs`
+   survives, re-keyed by wiring-hash instead of by reservation.
+
+**Recommendation: position 1, ratified as a contract, is the only one that delivers the
+directive's actual goal.** Position 2 keeps the machinery the directive exists to delete
+and merely re-keys it. But position 1 is a real constraint on what a test case may do, and
+it must be stated and enforced rather than assumed — otherwise the first effectful case
+silently double-fires on a retry.
+
+**This is the ratification question. Everything else in the spec follows from it.**
+
+---
+
+## 6. Risks and refuted expectations
+
+- **`gate` does not exist and `test-set-run` was unlisted.** §2.2 treats them as one verb.
+  If that is wrong, the mapping changes and §4 changes with it.
+- **The wave is a wire change on a registered drift gate.** The authoring contract crate is
+  a drift gate; deleting four of seven ops moves it deliberately. The generated authoring
+  client regenerates in the same commit.
+- **`gate_report_id` → `wiring_hash` touches the admission statement's parameter shape**,
+  which `crates/execution/run-state/tests/admission_live.rs` pins at 17 parameters. Expect
+  that pin to move.
+- **`ReportProjection` is `deny_unknown_fields` with a frozen-literal contract test.** The
+  test currently covers the `Finalized` variant only; deleting `Pending` is still a wire
+  change and the survivor should be frozen as a whole-value literal.
+- **Deletion rule 9 applies**: each subject takes its tests, guards, fixtures, registry rows
+  and doc references in the same commit. One bead per subsystem, not per file.
+- **`architecture/state-owners.json` rows delete with their relations**, and
+  `tests/conformance/tests/state_ownership.rs` moves with them. That file's write-set pin
+  already fails at `:1612`, so **a correction there is invisible until the unregistered
+  relations are resolved** — do not read a green run as proof.
+
+---
+
+## 7. What ratification decides
+
+1. **§5: are gate cases effect-free by contract?** Position 1 or 2. Everything follows.
+2. **§2.2: is `gate` the renamed `test-set-run`?** If yes, the rename rides the wave.
+3. **§2.1: does `gate_report_id` collapse into `wiring_hash`?** Recommended yes.
+4. Whether `catalog.draft_safe_connection_grants` is deleted **by this wave or a separate
+   one**. It has no production DML at all (§3.5), so its fate does not depend on §5 — it is
+   a free-standing deletion that merely happens to sit in the same neighbourhood.
+
+On approval: one bead per subsystem — contract surface, draft persistence, composition
+machinery, report re-keying — dispatched as a deletion wave under the Phase-A rules.
