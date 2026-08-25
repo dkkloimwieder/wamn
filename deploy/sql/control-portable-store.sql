@@ -483,6 +483,25 @@ CREATE OR REPLACE FUNCTION catalog.register_release_flow_test_evidence(
 )
 RETURNS timestamptz
 LANGUAGE plpgsql
+-- SECURITY DEFINER so the control author can register evidence WITHOUT holding
+-- any privilege on catalog.release_flow_test_evidence itself. Under the previous
+-- SECURITY INVOKER semantics the body ran as the caller, so EXECUTE alone let a
+-- caller into the function and then failed inside it on the table; the only way
+-- to make it work as INVOKER was to grant the table directly, which would let
+-- that principal INSERT straight past the insert-or-verify-identical check
+-- below and retire it to advisory. Definer keeps this function the SOLE path.
+--
+-- wamn-0h0g.7.5 held that there is no separate RPC or SECURITY DEFINER path for
+-- management admission. That holding is about not minting a SECOND
+-- run-creation path into the PROJECT plane. This is the sole EXISTING writer of
+-- a CONTROL-plane evidence table, keeping an invariant enforced rather than
+-- advisory, so the re-proposal rule is satisfied by the plane distinction
+-- rather than bypassed. Same pattern as wamn_authority.session_author_tenant()
+-- below: definer, pinned search_path, revoked from PUBLIC, one named grantee.
+SECURITY DEFINER
+-- Fixed search path: the relation this resolves must not depend on a caller's
+-- search_path, and every reference in the body is schema-qualified anyway.
+SET search_path = pg_catalog, catalog
 AS $$
 DECLARE
     existing_created_at timestamptz;
@@ -526,6 +545,10 @@ $$;
 REVOKE ALL ON FUNCTION catalog.register_release_flow_test_evidence(
     text, text, int, text, text, text, text, bytea, text
 ) FROM PUBLIC;
+-- Exactly one grantee. The control author reaches the evidence table ONLY
+-- through this definer function; catalog.release_flow_test_evidence itself stays
+-- denied to it, and the scenario-worker startup probe asserts that denial.
+GRANT EXECUTE ON FUNCTION catalog.register_release_flow_test_evidence(text, text, int, text, text, text, text, bytea, text) TO wamn_control_author;
 
 CREATE OR REPLACE FUNCTION catalog.register_deployment_attestation(
     p_tenant_id text,
@@ -1162,10 +1185,10 @@ BEGIN
        OR pg_catalog.has_schema_privilege('wamn_control_author', 'wamn_run', 'CREATE')
        OR pg_catalog.has_schema_privilege('wamn_control_author', 'wamn_authority',
                                           'CREATE')
-       OR pg_catalog.has_function_privilege(
-            'wamn_control_author',
-            'catalog.register_release_flow_test_evidence(text,text,int,text,text,text,text,bytea,text)',
-            'EXECUTE')
+       -- register_release_flow_test_evidence is DELIBERATELY ABSENT here: the
+       -- control author now holds EXECUTE on it as the sole path to the evidence
+       -- table (see the definer function above). The table itself stays denied,
+       -- and that denial is what this boundary still proves.
        OR pg_catalog.has_function_privilege(
             'wamn_control_author',
             'catalog.register_deployment_attestation(text,text,int,text,text,text,text,timestamptz)',

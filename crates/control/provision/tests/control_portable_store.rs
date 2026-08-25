@@ -336,7 +336,13 @@ fn control_author_authority_is_the_exact_ratified_class() {
     for schema in ["catalog", "wamn_run", "wamn_authority"] {
         expected.insert((schema.to_owned(), "USAGE".to_owned()));
     }
-    for routine in ["wamn_authority.session_author_tenant()"] {
+    // Both definer routines the author may call. Neither gives it any privilege
+    // on the relation behind the routine — that is the point of the pattern, and
+    // the withheld list below is what proves it.
+    for routine in [
+        "wamn_authority.session_author_tenant()",
+        "catalog.register_release_flow_test_evidence(text, text, int, text, text, text, text, bytea, text)",
+    ] {
         expected.insert((routine.to_owned(), "EXECUTE".to_owned()));
     }
     for relation in read_only {
@@ -377,7 +383,10 @@ fn control_author_authority_is_the_exact_ratified_class() {
         );
     }
     for routine in [
-        "catalog.register_release_flow_test_evidence",
+        // register_release_flow_test_evidence is NO LONGER withheld: wamn-0jsr
+        // grants the author EXECUTE on it as the sole path to the evidence
+        // table. catalog.release_flow_test_evidence stays in the withheld
+        // RELATION list above, which is what keeps that path sole.
         "catalog.register_deployment_attestation",
         "catalog.reject_immutable_row_change",
         "catalog.guard_flow_draft_update",
@@ -481,7 +490,16 @@ fn control_author_authority_is_the_exact_ratified_class() {
         "the tenant resolver consulted the caller-set GUC"
     );
     assert!(!stripped.contains("wamn_run.lock_catalog_head"));
-    assert!(!stripped.contains("SECURITY DEFINER\nSET search_path = pg_catalog, catalog"));
+    // wamn-0h0g.7.5's "no second SECURITY DEFINER path" is NOT asserted here any
+    // more. It used to be a newline-exact `contains` over the DDL text, which is
+    // brittle in both directions: reformatting breaks it, and it cannot tell a
+    // real second definer from a comment mentioning one. This file is STATIC
+    // checked-in DDL, not builder output, so a text pin over it mostly asserts
+    // that a file contains what the file contains — the drift-guard rationale
+    // applies to generated SQL, where a text pin catches a Rust builder moving.
+    // The invariant is now asserted where it is decidable: against pg_proc on a
+    // real server, in
+    // evidence_registrar_is_definer_reachable_only_by_the_control_author_on_postgres.
 
     // The mapping relation itself is owner-only and carries no policy, because
     // FORCE ROW LEVEL SECURITY applies to the owner the resolver runs as.
@@ -860,6 +878,222 @@ RESET ROLE;
 /// `tenant-a` and `(acme, shipping, dev)` maps to `tenant-b`. Each proof stage
 /// authenticates as its own author login, because the mapping resolves on
 /// `session_user` and `SET ROLE` leaves `session_user` alone.
+/// wamn-0jsr's probe arm: the definer registrar is reachable by the control
+/// author and by nobody else, and it does NOT hand the author the table.
+///
+/// SECURITY DEFINER runs the body as the function owner, so the whole safety of
+/// wamn-0h0g.7.5's exception rests on the grant being exactly one principal
+/// wide. That is asserted here against a real server rather than pinned as SQL
+/// text, because a text pin cannot prove PostgreSQL agrees.
+#[test]
+fn evidence_registrar_is_definer_reachable_only_by_the_control_author_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
+        eprintln!(
+            "skipping evidence_registrar_is_definer_reachable_only_by_the_control_author_on_postgres \
+             (set WAMN_CONTROL_PORTABLE_PG_URL)"
+        );
+        return;
+    };
+    let database = {
+        let parsed = url::Url::parse(&url).expect("the control PG URL parses");
+        parsed.path().trim_start_matches('/').to_owned()
+    };
+    assert!(!database.is_empty(), "the URL must name a database");
+
+    let author = wamn_control_provision::control_author_generation_role(
+        "acme",
+        "receiving",
+        "dev",
+        &database,
+        wamn_control_provision::CredentialGeneration::A,
+    );
+    const PASSWORD: &str = "evidence-registrar-live-proof";
+    const OUTSIDER: &str = "wamn_evidence_outsider";
+
+    let mut install = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
+    install.push_str(
+        "DROP SCHEMA IF EXISTS catalog CASCADE;\n\
+         DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
+         DROP SCHEMA IF EXISTS wamn_authority CASCADE;\n\
+         DO $$ BEGIN\n\
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN\n\
+             CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
+           END IF;\n\
+         END $$;\n",
+    );
+    install.push_str(&wamn_control_provision::sql::ensure_control_author_acl_role_sql());
+    install.push('\n');
+    install.push_str(
+        &wamn_control_provision::sql::prepare_control_author_generation_sql(
+            &database,
+            &author,
+            PASSWORD,
+            "2099-01-01T00:00:00Z",
+        ),
+    );
+    install.push('\n');
+    // A login that is NOT the control author and holds no membership in it.
+    install.push_str(&format!(
+        // Hermetic preamble: roles are CLUSTER-wide, so a bare DROP ROLE fails on
+        // a cluster where a previous run left the role holding a grant, and the
+        // suite then dies in setup instead of measuring anything.
+        "DO $$ BEGIN \n\
+           IF EXISTS (SELECT FROM pg_roles WHERE rolname='{OUTSIDER}') THEN \n\
+             EXECUTE 'DROP OWNED BY {OUTSIDER}'; \n\
+             EXECUTE 'DROP ROLE {OUTSIDER}'; \n\
+           END IF; \n\
+         END $$;\n\
+         CREATE ROLE {OUTSIDER} LOGIN PASSWORD '{PASSWORD}' NOSUPERUSER NOCREATEDB \
+           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
+         DO $$ BEGIN EXECUTE format('GRANT CONNECT ON DATABASE %I TO {OUTSIDER}', \
+           current_database()); END $$;\n"
+    ));
+    install.push_str(
+        "DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
+           current_database()); END $$;\n\
+         SET ROLE wamn_system;\n",
+    );
+    install.push_str(&ddl());
+    // One mapping row, so the author's claim can agree with a tenant. Without it
+    // session_author_tenant() resolves NULL and every restrictive policy refuses
+    // — which is correct, but would make the refusal arms below prove nothing.
+    install.push_str(&format!(
+        "\nINSERT INTO wamn_authority.author_login_tenants \
+           (login_identity, tenant_id, org_id, project_id, environment) \
+         VALUES ('{author}', 'tenant-probe', 'acme', 'receiving', 'dev');\n"
+    ));
+    psql_ok(&url, "install", &install);
+
+    // wamn-0h0g.7.5's holding, asserted semantically: the installed store has
+    // EXACTLY these two definer routines and no third. This replaces a
+    // newline-exact text `contains` that broke on reformatting and could not
+    // distinguish a real definer from a comment mentioning one. pg_proc.prosecdef
+    // is the server's own answer, so formatting, comments and whitespace are
+    // irrelevant to it.
+    psql_ok(
+        &url,
+        "exactly two ratified definer routines",
+        "DO $$ DECLARE found text[]; BEGIN \
+           SELECT array_agg(namespace.nspname || '.' || routine.proname ORDER BY \
+                            namespace.nspname, routine.proname) INTO found \
+             FROM pg_catalog.pg_proc AS routine \
+             JOIN pg_catalog.pg_namespace AS namespace \
+               ON namespace.oid = routine.pronamespace \
+            WHERE routine.prosecdef \
+              AND namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority'); \
+           IF found IS DISTINCT FROM ARRAY[ \
+                'catalog.register_release_flow_test_evidence', \
+                'wamn_authority.session_author_tenant'] THEN \
+             RAISE EXCEPTION 'definer routine set drifted: %', found; \
+           END IF; \
+         END $$;",
+    );
+
+    // The registrar really is SECURITY DEFINER on the server, not just in text.
+    psql_ok(
+        &url,
+        "definer posture",
+        "DO $$ BEGIN \
+           IF NOT (SELECT prosecdef FROM pg_catalog.pg_proc \
+                    WHERE oid = 'catalog.register_release_flow_test_evidence(text,text,int,\
+text,text,text,text,bytea,text)'::regprocedure) THEN \
+             RAISE EXCEPTION 'registrar is not SECURITY DEFINER'; \
+           END IF; \
+         END $$;",
+    );
+
+    let author_url = as_role(&url, &author, PASSWORD);
+    let outsider_url = as_role(&url, OUTSIDER, PASSWORD);
+
+    // NARROWNESS: the author reaches the relation ONLY through the routine.
+    // This is the same fact the scenario-worker startup probe asserts, proven
+    // here against the server.
+    psql_ok(
+        &url,
+        "author holds the routine and not the relation",
+        &format!(
+            "DO $$ BEGIN \
+               IF NOT pg_catalog.has_function_privilege('{author}', \
+                 'catalog.register_release_flow_test_evidence(text,text,int,text,text,text,\
+text,bytea,text)', 'EXECUTE') THEN \
+                 RAISE EXCEPTION 'the control author cannot execute the registrar'; \
+               END IF; \
+               IF pg_catalog.has_table_privilege('{author}', \
+                 'catalog.release_flow_test_evidence', 'INSERT') \
+                  OR pg_catalog.has_table_privilege('{author}', \
+                 'catalog.release_flow_test_evidence', 'SELECT') THEN \
+                 RAISE EXCEPTION 'the control author reached the evidence table directly'; \
+               END IF; \
+             END $$;"
+        ),
+    );
+
+    // REFUSAL: a caller outside the one grant cannot execute it at all.
+    let refused = psql(
+        &outsider_url,
+        "SELECT catalog.register_release_flow_test_evidence('t','c',1,'f','d','r','h',\
+'\\x00'::bytea,'h');",
+    );
+    assert!(
+        !refused.status.success(),
+        "a non-author caller executed the definer registrar"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("permission denied"),
+        "the refusal must be a privilege refusal, not an incidental error: {stderr}"
+    );
+
+    // POSITIVE, without needing the evidence table's FK parents: call with a
+    // deliberately WRONG map hash. If the author were still refused at the
+    // privilege gate this raises insufficient_privilege; getting a CONSTRAINT
+    // error instead proves execution entered the definer body and reached the
+    // table. That is the whole capability wamn-0jsr exists to deliver.
+    psql_ok(
+        &author_url,
+        "the author reaches the definer body",
+        "SET app.tenant = 'tenant-probe'; \
+         DO $$ DECLARE reached boolean := false; BEGIN \
+           BEGIN \
+             PERFORM catalog.register_release_flow_test_evidence( \
+               'tenant-probe','cat',1,'flow-a','vd','rep','art', \
+               convert_to('{}','UTF8'), 'sha256:'||repeat('4',64)); \
+             reached := true; \
+           EXCEPTION \
+             WHEN insufficient_privilege THEN \
+               RAISE EXCEPTION 'the control author was refused before the body'; \
+             WHEN OTHERS THEN NULL; \
+           END; \
+           IF reached THEN \
+             RAISE EXCEPTION 'a mismatched map hash must not register'; \
+           END IF; \
+         END $$;",
+    );
+
+    // THE PROPERTY THAT MAKES DEFINER SAFE HERE: the body runs as the owner, so
+    // the only thing standing between the author and another tenant's evidence
+    // is row-level security. Prove it still binds THROUGH the definer, with a
+    // hash that satisfies the check constraint so RLS is what refuses.
+    psql_ok(
+        &author_url,
+        "the definer does not cross tenants",
+        "SET app.tenant = 'tenant-probe'; \
+         DO $$ DECLARE crossed boolean := false; BEGIN \
+           BEGIN \
+             PERFORM catalog.register_release_flow_test_evidence( \
+               'tenant-elsewhere','cat',1,'flow-a','vd','rep','art', \
+               convert_to('{}','UTF8'), \
+               'sha256:'||encode(sha256(convert_to('{}','UTF8')),'hex')); \
+             crossed := true; \
+           EXCEPTION WHEN insufficient_privilege THEN NULL; END; \
+           IF crossed THEN \
+             RAISE EXCEPTION 'the definer wrote another tenant evidence row'; \
+           END IF; \
+         END $$;",
+    );
+}
+
 #[test]
 fn control_author_two_tenant_authority_holds_on_postgres() {
     let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
@@ -1114,10 +1348,17 @@ DO $denials$ BEGIN
   BEGIN PERFORM 1 FROM catalog.deployment_attestations;
     ASSERT false, 'the author read deployment attestations';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  -- wamn-0jsr FLIPPED THIS ARM. The author may now EXECUTE the registrar - it
+  -- is the sole path to a table it still cannot touch, asserted just above. What
+  -- survives is the stronger claim: SECURITY DEFINER runs the body as the owner,
+  -- so row-level security is the only thing standing between this author and
+  -- another tenant's evidence. The hash is valid here so the check constraint
+  -- passes and RLS is what refuses.
   BEGIN PERFORM catalog.register_release_flow_test_evidence(
-      'tenant-a','cat',1,'flow-a','validated-tenant-a','report-a','artifact-tenant-a',
-      convert_to('{{}}','UTF8'),'sha256:'||repeat('4',64));
-    ASSERT false, 'the author published evidence';
+      'tenant-b','cat',1,'flow-a','validated-tenant-b','report-a','artifact-tenant-b',
+      convert_to('{{}}','UTF8'),
+      'sha256:'||encode(sha256(convert_to('{{}}','UTF8')),'hex'));
+    ASSERT false, 'the author published another tenant evidence through the definer';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN PERFORM catalog.register_deployment_attestation(
       'tenant-a','cat',1,'acme','receiving','dev','sha256:'||repeat('5',64),now());
