@@ -840,7 +840,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       'PLACEHOLDER_RECOMPUTE_AT_INTEGRATION'
+       '1475daebde6d32ee0256ac90b5cf40cda67711f8bd294b434e7df40981c8c142'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';
