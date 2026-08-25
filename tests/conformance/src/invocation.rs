@@ -35,7 +35,7 @@ mod tests {
     ];
 
     /// Tiers holding executable, bindable WIT. `docs/` is deliberately excluded:
-    /// `docs/archive/contracts/wamn-node.wit` is the FROZEN 0.1.0 archive this
+    /// `docs/reference/contracts/wamn-node.wit` is the FROZEN 0.1.0 archive this
     /// package was revived from, not a vendored copy of it.
     const CODE_TIERS: [&str; 5] = ["components", "crates", "services", "test-support", "tests"];
 

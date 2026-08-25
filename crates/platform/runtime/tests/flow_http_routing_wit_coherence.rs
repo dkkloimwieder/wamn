@@ -2,7 +2,7 @@
 //! (wamn-0h0g.15.120).
 //!
 //! Unlike `wamn:jetstream` and `wamn:connection` this package has no
-//! doc-of-record under `docs/archive/contracts/`. It exists only as two vendored
+//! doc-of-record under `docs/reference/contracts/`. It exists only as two vendored
 //! copies, one per bindgen that compiles it: the host plugin's
 //! (`crates/platform/runtime/wit/deps/`, see `plugins/flow_http_routing.rs`) and
 //! the flow-http guest's (`components/ingress/http-route/wit/deps/`, see

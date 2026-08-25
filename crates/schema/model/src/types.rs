@@ -36,7 +36,7 @@ pub const SCHEMA_VERSION: &str = "0.1";
 //     prints an id with `{:?}` reads `"foo"`, not `EntityId("foo")`.
 //   - schema-transparent: `#[serde(transparent)]` also drives schemars' own
 //     transparent derive (non-referenceable, inlined as a plain string), so the
-//     published `docs/archive/contracts/catalog-model.schema.json` contract is byte-unchanged.
+//     published `docs/reference/contracts/catalog-model.schema.json` contract is byte-unchanged.
 macro_rules! id_newtype {
     ($(#[$doc:meta])* $name:ident) => {
         $(#[$doc])*
@@ -383,7 +383,7 @@ mod tests {
     fn id_serializes_transparently_as_a_bare_string() {
         // `#[serde(transparent)]` round-trips as a plain JSON string; it also
         // drives schemars' transparent (inline, non-referenceable) derive that
-        // keeps docs/archive/contracts/catalog-model.schema.json byte-unchanged (see the
+        // keeps docs/reference/contracts/catalog-model.schema.json byte-unchanged (see the
         // `committed_schema_matches_types` integration test).
         let e = EntityId::from("sites");
         assert_eq!(serde_json::to_string(&e).unwrap(), "\"sites\"");
