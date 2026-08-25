@@ -1,11 +1,15 @@
 // The composed edit-to-publish cycle gate for the headless CLI (wamn-ftfc.14).
 //
-// WHAT THIS IS. The whole authoring loop driven from a real checkout by the
-// shipped `wamn` CLI and nothing else: edit a flow file, `validate` (save the
-// exact bytes, then validate the exact saved revision), edit it again,
-// `draft-run`, `test-set-run`, `promote`. Every leg is a subprocess
-// invocation of scripts/wamn.mjs whose stdout document is read as the result, so
-// the gate proves the CLI's public behaviour rather than its internals.
+// WHAT THIS IS. The whole authoring loop driven by the shipped `wamn` CLI and
+// nothing else: `test-set-run` (the `gate` verb), `promote`, `get-report`. Every
+// leg is a subprocess invocation of scripts/wamn.mjs whose stdout document is
+// read as the result, so the gate proves the CLI's public behaviour rather than
+// its internals.
+//
+// THERE IS NO EDIT LEG (wamn-0h0g.8.5.5). A draft is a CLIENT-SIDE FILE, so the
+// platform stores no working-tree document and the CLI has no save, validate,
+// ad-hoc-run or read-back verb to drive. The loop starts from a candidate that
+// is already gated, named by its content hash.
 //
 // WHAT THIS IS NOT. Pure HTTP, like the wamn-jvzx.4 smoke: the caller supplies a
 // base URL and ONE pre-issued PAT file and nothing else. No database URL, no
@@ -30,17 +34,16 @@
 // an environment block, or this gate's output.
 
 import { spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
   closeSync,
-  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -54,13 +57,10 @@ const REFUSAL_BODY = '{"kind":"authorization-denied"}';
 const PAT_PATTERN = /^(wamn_pat_[0-9a-f]{16}_)([0-9a-f]{64})$/;
 
 const WIRING_ID = "receive-material";
-const DEFINITION = `{"schema-version":"0.1","flow-id":"${WIRING_ID}","version":1,"nodes":[{"id":"request","type":"request","config":{"input-schema":true}},{"id":"respond","type":"respond","config":{"status":200}}],"edges":[{"from":"request","to":"respond"}]}`;
-const AUTHORED_INPUT = '{"receipt-id":"receipt-1042","material":"aluminum"}';
 
-// A validated draft and report the retained commands cannot always own yet.
-// When `validate` is unmounted there is no draft identity to carry forward;
-// replacement report orchestration is not part of this contract cut. The
-// downstream legs use contract-shaped placeholders purely to reach transport.
+// The candidate this loop gates, and the report a gate has not produced yet.
+// The caller names a real candidate with `--validated-draft`; absent one, the
+// legs use a contract-shaped placeholder purely to reach transport.
 const PLACEHOLDER_VALIDATED_DRAFT = "sha256:validated-draft-not-yet-issued";
 const PLACEHOLDER_REPORT = "report-not-yet-reserved";
 
@@ -68,16 +68,6 @@ const PLACEHOLDER_REPORT = "report-not-yet-reserved";
 /// command that answers with a different identity fails here rather than being
 /// accepted because it returned 200.
 const RESULT_KEYS = {
-  "save-draft": ["draft-id", "wiring-id", "revision"],
-  validate: [
-    "artifact-hash",
-    "catalog",
-    "draft",
-    "environment",
-    "runtime-flow-version",
-    "validated-draft-id",
-  ],
-  "draft-run": ["run-id", "validated-draft"],
   "test-set-run": ["report-id", "validated-draft"],
   publish: ["artifact-hash", "wiring-id", "version"],
 };
@@ -113,7 +103,7 @@ function require_(check, condition, detail) {
 /// This gate's ENTIRE input surface. A storage URL, a platform credential, or a
 /// trusted-context switch has no spelling here, which is why `--check` can assert
 /// the surface itself rather than scanning for forbidden words.
-const NAMED_ARGUMENTS = ["--base-url", "--token-file", "--project", "--environment", "--checkout"];
+const NAMED_ARGUMENTS = ["--base-url", "--token-file", "--project", "--environment", "--validated-draft"];
 
 function parseArguments(argv) {
   const options = { check: false };
@@ -181,13 +171,6 @@ function forge(token) {
   return forged;
 }
 
-function git(args, cwd) {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new CheckFailure("checkout", `git ${args.join(" ")} failed: ${result.stderr.trim()}`);
-  }
-  return result.stdout.trim();
-}
 
 /// The step's answer, checked against the contract before it is recorded.
 function record(steps, leg, verb, answer, expectedCommands) {
@@ -242,14 +225,7 @@ async function staticHalf() {
   const compiled = await compiledPackage();
   const help = launchWamn(["--help"]);
   require_("cli-compiles", help.status === 0, `wamn --help exited ${help.status}`);
-  for (const verb of [
-    "validate",
-    "draft-run",
-    "test-set-run",
-    "promote",
-    "read-draft",
-    "get-report",
-  ]) {
+  for (const verb of ["test-set-run", "promote", "get-report"]) {
     require_(`cli-verb-${verb}`, help.stderr.includes(`  ${verb} `), `--help does not document ${verb}`);
   }
   // The cycle covers the whole public command inventory: every kind in the
@@ -258,13 +234,7 @@ async function staticHalf() {
   const { authoringSchema: schema } = await import(
     pathToFileURL(join(compiled, "index.js")).href
   );
-  const covered = [
-    "save-draft",
-    "validate",
-    "draft-run",
-    "test-set-run",
-    "publish",
-  ];
+  const covered = ["test-set-run", "publish"];
   const commandKinds = schema.definitions.AuthoringCommand.oneOf.map(
     (variant) => variant.properties.kind.enum[0],
   );
@@ -279,7 +249,8 @@ async function staticHalf() {
   // argument to supply, so a run cannot smuggle one in.
   require_(
     "gate-input-surface",
-    NAMED_ARGUMENTS.join(" ") === "--base-url --token-file --project --environment --checkout",
+    NAMED_ARGUMENTS.join(" ") ===
+      "--base-url --token-file --project --environment --validated-draft",
     `the gate grew an argument: ${NAMED_ARGUMENTS.join(" ")}`,
   );
   for (const rejected of ["--database-url", "--system-url", "--pg-url", "--token", "--tenant"]) {
@@ -312,38 +283,19 @@ async function main() {
   secrets.add(token);
   secrets.add(PAT_PATTERN.exec(token)[2]);
   const runId = `${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
-  const draftId = `draft-${options.project}-cycle-${runId}`;
-  const checkout = options.checkout ?? (await mkdtemp(join(tmpdir(), `wamn-ftfc14-cycle-${runId}-`)));
-  const state = join(checkout, ".wamn", "state.json");
-  const definitionPath = join(checkout, "flows", `${WIRING_ID}.flow.json`);
-  const inputPath = join(checkout, "input.json");
+  // A scratch directory for the client-local state file and the forged-token
+  // fixture. It is NOT a checkout: nothing here is a working tree any more.
+  const scratch = await mkdtemp(join(tmpdir(), `wamn-ftfc14-cycle-${runId}-`));
+  const state = join(scratch, ".wamn", "state.json");
 
   emit(`surface ${baseUrl}`);
-  emit(`checkout ${checkout}`);
-  emit(`run-id=${runId} draft-id=${draftId} wiring-id=${WIRING_ID}`);
+  emit(`run-id=${runId} wiring-id=${WIRING_ID}`);
 
-  // ---- a real checkout, so the client's provenance claim is a real claim ----
-  mkdirSync(join(checkout, "flows"), { recursive: true });
-  await writeFile(definitionPath, DEFINITION);
-  await writeFile(inputPath, AUTHORED_INPUT);
-  git(["init", "--quiet", "--initial-branch=main"], checkout);
-  git(["add", "-A"], checkout);
-  git(
-    [
-      "-c",
-      "user.email=cycle@example.invalid",
-      "-c",
-      "user.name=ftfc14 cycle",
-      "-c",
-      "commit.gpgsign=false",
-      "commit",
-      "--quiet",
-      "-m",
-      "cycle fixture",
-    ],
-    checkout,
-  );
-  const commit = git(["rev-parse", "HEAD"], checkout);
+  // wamn-0h0g.8.5.5: there is no checkout, no git repository and no working-tree
+  // fixture here. Those existed to feed `save-draft` and `draft-run`, and both
+  // commands left the contract with the draft concept. The loop below starts
+  // from a candidate that is already gated, named by its content hash.
+  const validatedDraftId = options["validated-draft"] ?? PLACEHOLDER_VALIDATED_DRAFT;
 
   const scope = [
     "--base-url",
@@ -360,93 +312,7 @@ async function main() {
   const steps = [];
   const commandIds = { authorized: [], refused: [] };
 
-  // ---- leg 1: edit -> save -> validate -------------------------------------
-  emit("leg edit-1 (committed working tree)");
-  const first = record(
-    steps,
-    "edit-1",
-    "validate",
-    wamn("validate", [
-      ...scope,
-      "--command-id",
-      `cycle-${runId}-edit-1`,
-      "--file",
-      definitionPath,
-      "--draft-id",
-      draftId,
-      "--wiring-id",
-      WIRING_ID,
-    ]),
-    ["save-draft", "validate"],
-  );
-  const firstSave = stepOf(first, "save-draft");
-  require_(
-    "save-first-revision",
-    firstSave.status === "completed" && firstSave.result.revision === 1,
-    `the first save did not create revision 1: ${JSON.stringify(firstSave)}`,
-  );
-  commandIds.authorized.push(firstSave["command-id"]);
-
-  // ---- leg 2: the editor changes one literal and saves again ---------------
-  const editedText = DEFINITION.replace('"status":200', '"status":201');
-  if (editedText === DEFINITION) throw new CheckFailure("checkout", "the fixture edit changed nothing");
-  await writeFile(definitionPath, editedText);
-  emit("leg edit-2 (dirty working tree)");
-  const second = record(
-    steps,
-    "edit-2",
-    "validate",
-    wamn("validate", [
-      ...scope,
-      "--command-id",
-      `cycle-${runId}-edit-2`,
-      "--file",
-      definitionPath,
-      "--draft-id",
-      draftId,
-      "--wiring-id",
-      WIRING_ID,
-    ]),
-    ["save-draft", "validate"],
-  );
-  const secondSave = stepOf(second, "save-draft");
-  require_(
-    "save-second-revision",
-    secondSave.status === "completed" && secondSave.result.revision === 2,
-    `the second save did not advance to revision 2: ${JSON.stringify(secondSave)}`,
-  );
-  require_(
-    "save-optimistic-concurrency-threaded",
-    secondSave.result["draft-id"] === draftId && secondSave.result["wiring-id"] === WIRING_ID,
-    "the second save did not target the same draft identity",
-  );
-  commandIds.authorized.push(secondSave["command-id"]);
-
-  const validated = stepOf(second, "validate");
-  const validatedDraftId =
-    validated.status === "completed"
-      ? validated.result["validated-draft-id"]
-      : PLACEHOLDER_VALIDATED_DRAFT;
-
-  // ---- leg 3: draft-run ----------------------------------------------------
-  emit("leg draft-run");
-  const draftRun = record(
-    steps,
-    "draft-run",
-    "draft-run",
-    wamn("draft-run", [
-      ...scope,
-      "--command-id",
-      `cycle-${runId}-draft-run`,
-      "--input",
-      inputPath,
-      "--validated-draft",
-      validatedDraftId,
-    ]),
-    ["draft-run"],
-  );
-
-  // ---- leg 4: test-set-run -------------------------------------------------
+  // ---- leg 1: test-set-run, the gate verb ---------------------------------
   emit("leg test-set-run");
   const testSetRun = record(
     steps,
@@ -465,7 +331,7 @@ async function main() {
   const reportId =
     testSetStep.status === "completed" ? testSetStep.result["report-id"] : PLACEHOLDER_REPORT;
 
-  // ---- leg 5: promote ------------------------------------------------------
+  // ---- leg 2: promote ------------------------------------------------------
   emit("leg promote");
   const promote = record(
     steps,
@@ -483,17 +349,6 @@ async function main() {
     ["publish"],
   );
 
-  // ---- edit-to-run latency -------------------------------------------------
-  const latency = draftRun["edit-to-run-ms"];
-  if (typeof latency === "number") {
-    emit(`  time  edit-to-run-ms=${latency} (working-tree edit -> run receipt)`);
-  } else {
-    emit(
-      "  time  edit-to-run-ms=unmeasurable — no run receipt was issued because the " +
-        "draft-run is unmounted on this surface",
-    );
-  }
-
   // ---- shortcut probes: every one of these must fail -----------------------
   emit("probes (each of these must fail)");
   const probeDocument = (change) => {
@@ -503,13 +358,10 @@ async function main() {
         "schema-version": "0.1",
         "command-id": `cycle-${runId}-probe`,
         command: {
-          kind: "save-draft",
+          kind: "test-set-run",
           input: {
-            definition: editedText,
-            "draft-id": `${draftId}-probe`,
-            "expected-revision": 0,
-            "wiring-id": WIRING_ID,
             scope: { environment: options.environment, "project-id": options.project },
+            "validated-draft": { "validated-draft-id": validatedDraftId },
           },
         },
       },
@@ -550,9 +402,9 @@ async function main() {
   );
 
   // A forged token through the CLI proves the typed refusal a caller sees.
-  const forgedPath = join(checkout, "forged.token");
+  const forgedPath = join(scratch, "forged.token");
   writeFileSync(forgedPath, `${forge(token)}\n`, { mode: 0o600 });
-  const forgedRun = wamn("validate", [
+  const forgedRun = wamn("test-set-run", [
     "--base-url",
     baseUrl,
     "--token-file",
@@ -564,12 +416,8 @@ async function main() {
     "--no-state",
     "--command-id",
     `cycle-${runId}-forged`,
-    "--file",
-    definitionPath,
-    "--draft-id",
-    `${draftId}-forged`,
-    "--wiring-id",
-    WIRING_ID,
+    "--validated-draft",
+    validatedDraftId,
   ]);
   rmSync(forgedPath, { force: true });
   require_(
@@ -635,22 +483,17 @@ async function main() {
       "run-id": runId,
       project: options.project,
       environment: options.environment,
-      "draft-id": draftId,
       "wiring-id": WIRING_ID,
-      "must-appear": commandIds.authorized.map((id, index) => ({
+      "validated-draft-id": validatedDraftId,
+      "must-appear": commandIds.authorized.map((id) => ({
         "command-id": id,
-        "command-kind": "save-draft",
-        revision: index + 1,
-        "provenance-commit": commit,
-        "provenance-ref": "refs/heads/main",
-        "provenance-dirty": index === 1,
+        "command-kind": "test-set-run",
+        "target-ref": validatedDraftId,
       })),
       "must-not-appear": commandIds.refused,
-      "definition-sha256": createHash("sha256").update(editedText).digest("hex"),
-      "definition-bytes": editedText.length,
     })}`,
   );
-  if (options.checkout === undefined) rmSync(checkout, { force: true, recursive: true });
+  rmSync(scratch, { force: true, recursive: true });
 }
 
 let status = 0;

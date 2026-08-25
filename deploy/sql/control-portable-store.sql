@@ -287,8 +287,7 @@ CREATE TABLE IF NOT EXISTS catalog.authoring_command_audit (
     CONSTRAINT authoring_command_audit_outcome_present
         CHECK (octet_length(outcome_bytes) > 0),
     CONSTRAINT authoring_command_audit_command_kind_check
-        CHECK (command_kind IN ('save-draft', 'validate', 'draft-run',
-                                'test-set-run', 'publish')),
+        CHECK (command_kind IN ('test-set-run', 'publish')),
     CONSTRAINT authoring_command_audit_principal_kind_check
         CHECK (principal_kind IN ('human', 'service')),
     CONSTRAINT authoring_command_audit_effective_role_check
@@ -302,9 +301,9 @@ CREATE TABLE IF NOT EXISTS catalog.authoring_command_audit (
 );
 CREATE INDEX IF NOT EXISTS authoring_command_audit_recorded
     ON catalog.authoring_command_audit (tenant_id, recorded_at);
--- wamn-0h0g.26.18: the command ledger's vocabulary is the contract's, so the
--- The ledger's command vocabulary is the CONTRACT's, and wamn-0h0g.8.5.5
--- collapsed five commands to two. CREATE TABLE IF NOT EXISTS cannot reach a
+-- The ledger's command vocabulary is the CONTRACT's (wamn-0h0g.26.18), and
+-- wamn-0h0g.8.5.5 collapsed five commands to two. The declaration above already
+-- carries the narrowed vocabulary, but CREATE TABLE IF NOT EXISTS cannot reach a
 -- store provisioned before the narrowing, and
 -- `control-portable-retained-shape-drift` hashes this constraint's definition,
 -- so the converging ALTER is what keeps an existing store applying. ADD
