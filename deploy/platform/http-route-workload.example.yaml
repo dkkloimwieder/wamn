@@ -3,7 +3,7 @@
 # imports no PostgreSQL, graph, or run-queue interface.
 #
 # Push the locked build artifact before applying:
-#   wash push localhost:5000/wamn/flow-http:dev /bench/flow-http.wasm \
+#   wash push localhost:5000/wamn/http-route:dev /bench/http-route.wasm \
 #     --insecure --allow-latest
 #
 # The host group must supply wamn:flow-http-routing@0.1.0 and

@@ -49,7 +49,7 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             "/component-output/connection_http_standard.wasm",
             "/bench/connection-http-standard.wasm",
         ),
-        ("/component-output/flow_http.wasm", "/bench/flow-http.wasm"),
+        ("/component-output/http_route.wasm", "/bench/http-route.wasm"),
         (
             "/component-output/materializer.wasm",
             "/bench/materializer.wasm",

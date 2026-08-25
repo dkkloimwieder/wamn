@@ -170,11 +170,11 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-component-target,target=/build/components/target,sharing=locked \
     cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
-      -p flow-http -p materializer \
+      -p http-route -p materializer \
       -p busyloop -p connection-http-standard -p sockprobe \
  && install -d /component-output \
  && for artifact in \
-      flow_http materializer \
+      http_route materializer \
       busyloop connection_http_standard sockprobe; do \
       install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm" \
         "/component-output/${artifact}.wasm"; \
@@ -253,7 +253,7 @@ COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wa
 COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm
 # Callable-flow HTTP ingress: bounded routing/auth/mapping adapter over the
 # native wamn:router-delivery provider contract.
-COPY --from=component-builder /component-output/flow_http.wasm /bench/flow-http.wasm
+COPY --from=component-builder /component-output/http_route.wasm /bench/http-route.wasm
 # l5i9.17 materializer Service guest (wasi:cli/run; imports wamn:postgres +
 # wamn:jetstream; the matbench gate drives it via CommandPre — the same wasm the
 # WorkloadDeployment pulls from the registry in production).
