@@ -67,8 +67,8 @@
     "product_components": {
       "root_packages": [],
       "component_packages": [
-        "flow-http",
         "http-request",
+        "http-route",
         "materializer",
         "transform"
       ],
@@ -132,8 +132,8 @@
       "component_packages": [
         "busyloop",
         "connection-http-standard",
-        "flow-http",
         "http-request",
+        "http-route",
         "materializer",
         "sockprobe",
         "transform"
@@ -160,8 +160,8 @@
       "component_packages": [
         "busyloop",
         "connection-http-standard",
-        "flow-http",
         "http-request",
+        "http-route",
         "materializer",
         "sockprobe",
         "transform"
@@ -181,8 +181,8 @@
         "wamn-waker"
       ],
       "component_packages": [
-        "flow-http",
         "http-request",
+        "http-route",
         "materializer",
         "transform"
       ],

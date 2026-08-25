@@ -364,7 +364,7 @@ fn carries_http_route(kind: AttachmentKind) -> bool {
 }
 
 /// Exactly the host and method predicates the adapter's own `select_route`
-/// applies (`components/ingress/flow-http/src/lib.rs`).
+/// applies (`components/ingress/http-route/src/lib.rs`).
 ///
 /// Mirrored rather than tightened on purpose: this provider returns candidates and
 /// the adapter performs final selection and path matching, so a candidate dropped

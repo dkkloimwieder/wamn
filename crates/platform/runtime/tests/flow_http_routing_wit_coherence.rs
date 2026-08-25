@@ -5,7 +5,7 @@
 //! doc-of-record under `docs/archive/contracts/`. It exists only as two vendored
 //! copies, one per bindgen that compiles it: the host plugin's
 //! (`crates/platform/runtime/wit/deps/`, see `plugins/flow_http_routing.rs`) and
-//! the flow-http guest's (`components/ingress/flow-http/wit/deps/`, see
+//! the flow-http guest's (`components/ingress/http-route/wit/deps/`, see
 //! `src/guest.rs`). Neither outranks the other, so the surface is pinned in both,
 //! and the two are kept BYTE-IDENTICAL on the `wamn:jetstream` precedent: editing
 //! one without the other fails a named test here instead of shipping a host and a
@@ -16,15 +16,15 @@ use std::path::{Path, PathBuf};
 
 const HOST_COPY: &str = include_str!("../wit/deps/wamn-flow-http-routing/package.wit");
 const HTTP_COPY: &str = include_str!(
-    "../../../../components/ingress/flow-http/wit/deps/wamn-flow-http-routing/package.wit"
+    "../../../../components/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit"
 );
 const HTTP_DELIVERY_COPY: &str = include_str!(
-    "../../../../components/ingress/flow-http/wit/deps/wamn-router-delivery/package.wit"
+    "../../../../components/ingress/http-route/wit/deps/wamn-router-delivery/package.wit"
 );
 const HTTP_RANDOM_COPY: &str =
-    include_str!("../../../../components/ingress/flow-http/wit/deps/wasi-random/package.wit");
+    include_str!("../../../../components/ingress/http-route/wit/deps/wasi-random/package.wit");
 const HOST_WORLD: &str = include_str!("../wit/world.wit");
-const HTTP_WORLD: &str = include_str!("../../../../components/ingress/flow-http/wit/world.wit");
+const HTTP_WORLD: &str = include_str!("../../../../components/ingress/http-route/wit/world.wit");
 const PLUGIN: &str = include_str!("../src/plugins/flow_http_routing.rs");
 const HOST: &str = include_str!("../../../../services/host/src/host.rs");
 
@@ -35,7 +35,7 @@ const HOST: &str = include_str!("../../../../services/host/src/host.rs");
 /// be a copy nobody compares, which is the failure this bead exists for, so the
 /// tree is enumerated as well (the `wamn:connection` guard does the same).
 const REGISTERED_COPIES: [&str; 2] = [
-    "components/ingress/flow-http/wit/deps/wamn-flow-http-routing/package.wit",
+    "components/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit",
     "crates/platform/runtime/wit/deps/wamn-flow-http-routing/package.wit",
 ];
 
@@ -95,7 +95,7 @@ fn the_two_vendored_copies_stay_byte_identical() {
     assert_eq!(
         HOST_COPY, HTTP_COPY,
         "crates/platform/runtime/wit/deps/wamn-flow-http-routing/package.wit and \
-         components/ingress/flow-http/wit/deps/wamn-flow-http-routing/package.wit drifted — \
+         components/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit drifted — \
          the host plugin and the guest bind the same package from their own vendored copy \
          and must stay byte-identical (edit both, or neither)"
     );

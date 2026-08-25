@@ -298,7 +298,7 @@ fn profile_contract_matches_locked_metadata() {
     assert_exact_set(
         "component m1",
         &component_m1,
-        &["flow-http", "http-request", "materializer", "transform"],
+        &["http-route", "http-request", "materializer", "transform"],
     );
     assert_exact_set(
         "component proof",
@@ -306,7 +306,7 @@ fn profile_contract_matches_locked_metadata() {
         &[
             "busyloop",
             "connection-http-standard",
-            "flow-http",
+            "http-route",
             "http-request",
             "materializer",
             "sockprobe",

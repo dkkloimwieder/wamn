@@ -7,7 +7,7 @@ resolver = "2"
 # additive-only, and members here reach `serde_json/std`, which collides with a
 # guest-supplied `#[panic_handler]`. They live in the second workspace at
 # `no-std/`, whose manifest carries the full reason (wamn-0h0g.11.56).
-members = ["ingress/flow-http", "execution/materializer", "fixtures/busyloop", "fixtures/connection-http-standard", "fixtures/sockprobe"]
+members = ["ingress/http-route", "execution/materializer", "fixtures/busyloop", "fixtures/connection-http-standard", "fixtures/sockprobe"]
 exclude = ["no-std"]
 
 [workspace.package]

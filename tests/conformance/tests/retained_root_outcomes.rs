@@ -45,7 +45,7 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-schema-model", "crates/schema/model/src/lib.rs"),
     ("wamn-test-infrastructure", "test-support/infrastructure/lib.rs"),
     ("wamn-waker", "services/waker/src/lib.rs"),
-    ("flow-http", "components/ingress/flow-http/src/lib.rs"),
+    ("http-route", "components/ingress/http-route/src/lib.rs"),
     ("materializer", "components/execution/materializer/src/main.rs"),
     ("busyloop", "components/fixtures/busyloop/src/main.rs"),
     ("connection-http-standard", "components/fixtures/connection-http-standard/src/lib.rs"),

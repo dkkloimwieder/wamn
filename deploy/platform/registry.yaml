@@ -76,7 +76,7 @@
 # repo path (wamn/materializer:dev) resolve to the same manifest/blobs.
 #
 # STILL STALE, AND NOT THIS LEG'S TO FIX: the recipe at
-# deploy/platform/flow-http-workload.example.yaml:6-7 still publishes
+# deploy/platform/http-route-workload.example.yaml:6-7 still publishes
 # `wash push localhost:5000 ... --insecure`, which this file breaks. The ctl
 # publish path is wamn-0h0g.15.155 leg C.
 #

@@ -32,14 +32,14 @@ readonly -a WAMN_AUTHORING=(
   -p wamn-authoring-model --test contract
 )
 # wamn-0h0g.15.120: wamn:flow-http-routing has no doc-of-record, only the two
-# vendored copies the host plugin and the flow-http guest each bind.
+# vendored copies the host plugin and the http-route guest each bind.
 readonly -a WAMN_RUNTIME_ROUTING=(
   test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
   -p wamn-runtime --test flow_http_routing_wit_coherence
 )
 readonly -a WAMN_FLOW_HTTP=(
   test --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --offline
-  -p flow-http --test adversarial
+  -p http-route --test adversarial
 )
 wamn_print_plan() {
   local -r label="$1"
@@ -53,7 +53,7 @@ wamn_dry_run() {
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
   wamn_print_plan authoring "${WAMN_AUTHORING[@]}"
   wamn_print_plan runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
-  wamn_print_plan flow-http "${WAMN_FLOW_HTTP[@]}"
+  wamn_print_plan http-route "${WAMN_FLOW_HTTP[@]}"
 }
 
 wamn_require_cargo() {
@@ -87,7 +87,7 @@ case "$WAMN_COMMAND" in
     cd -- "$WAMN_REPOSITORY_ROOT"
     wamn_run authoring "${WAMN_AUTHORING[@]}"
     wamn_run runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
-    wamn_run flow-http "${WAMN_FLOW_HTTP[@]}"
+    wamn_run http-route "${WAMN_FLOW_HTTP[@]}"
     ;;
   *)
     wamn_usage_error "unknown command '$WAMN_COMMAND'"

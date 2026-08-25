@@ -158,7 +158,7 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
             "--locked".into(),
             "--offline".into(),
             "-p".into(),
-            "flow-http".into(),
+            "http-route".into(),
             "--test".into(),
             "adversarial".into(),
         ],
@@ -216,7 +216,7 @@ fn contract_diff_dry_run_prints_the_complete_plan_without_cargo() {
     for (line, label) in lines[1..].iter().zip([
         "authoring",
         "runtime-vendored-flow-http-routing",
-        "flow-http",
+        "http-route",
     ]) {
         assert!(line.starts_with(&format!("{label}: ")), "{line}");
         assert!(line.contains(" --locked --offline "), "{line}");

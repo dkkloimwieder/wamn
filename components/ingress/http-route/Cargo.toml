@@ -1,5 +1,5 @@
 [package]
-name = "flow-http"
+name = "http-route"
 version.workspace = true
 edition.workspace = true
 

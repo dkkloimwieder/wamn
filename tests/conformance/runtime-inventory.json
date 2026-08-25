@@ -37,7 +37,7 @@
   ],
   "workload_manifests": [
     {
-      "path": "deploy/platform/flow-http-workload.example.yaml",
+      "path": "deploy/platform/http-route-workload.example.yaml",
       "deployment_state": "template",
       "abi": "p2-components"
     },

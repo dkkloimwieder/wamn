@@ -386,8 +386,8 @@
     },
     {
       "workspace": "components",
-      "name": "flow-http",
-      "manifest_path": "components/ingress/flow-http/Cargo.toml",
+      "name": "http-route",
+      "manifest_path": "components/ingress/http-route/Cargo.toml",
       "role": "component",
       "target_class": "guest",
       "bounded_context": "execution",

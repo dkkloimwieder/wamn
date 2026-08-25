@@ -25,7 +25,7 @@ const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
 /// The component workloads the operator schedules onto the host tier — the only
 /// two in scope for operator management (ruling wamn-0h0g.13.46).
 const WORKLOADS: [&str; 2] = [
-    "deploy/platform/flow-http-workload.example.yaml",
+    "deploy/platform/http-route-workload.example.yaml",
     "deploy/platform/materializer.example.yaml",
 ];
 

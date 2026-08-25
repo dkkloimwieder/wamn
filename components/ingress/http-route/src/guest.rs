@@ -1,7 +1,7 @@
 //! WASI HTTP shell over authoritative routing, auth, and router delivery.
 
 wit_bindgen::generate!({
-    world: "flow-http",
+    world: "http-route",
     path: "wit",
     generate_all,
 });
