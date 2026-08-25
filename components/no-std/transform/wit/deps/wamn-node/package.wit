@@ -13,10 +13,10 @@ package wamn:node@0.1.0;
 /// Wholesale supersession is why the archived package's own compatibility clause
 /// ("0.1.x admits only additive or clarifying changes; any breaking change waits
 /// for 0.2") is not violated here. That clause governs the EVOLUTION of a live
-/// package, and the archived one is not live: it was deleted, nothing in the tree
-/// binds it, and its name is banned outright by the two ingress guards in
-/// `crates/execution/flow-invocation/tests/wit_coherence.rs`. There is no
-/// deployed 0.1.0 consumer for a version bump to protect. So the MVP
+/// package, and the archived one is not live: it was deleted, and the
+/// vendored-copy registry walk in `tests/conformance/src/invocation.rs` proves
+/// nothing in the tree binds the archived shape. There is no deployed 0.1.0
+/// consumer for a version bump to protect. So the MVP
 /// version-identity rule governs instead — every first-party `wamn:*` WIT
 /// package sits at @0.1.0 for the MVP identity window
 /// (`tests/conformance/src/version_identity.rs`) — and no exception is carved

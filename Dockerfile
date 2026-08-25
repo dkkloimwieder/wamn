@@ -252,7 +252,7 @@ COPY --from=build-dispatcher /native-output/wamn-dispatcher /usr/local/bin/wamn-
 COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
 COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm
 # Callable-flow HTTP ingress: bounded routing/auth/mapping adapter over the
-# frozen flow-invocation provider contract.
+# native wamn:router-delivery provider contract.
 COPY --from=component-builder /component-output/flow_http.wasm /bench/flow-http.wasm
 # l5i9.17 materializer Service guest (wasi:cli/run; imports wamn:postgres +
 # wamn:jetstream; the matbench gate drives it via CommandPre — the same wasm the

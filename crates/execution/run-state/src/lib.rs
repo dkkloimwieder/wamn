@@ -42,7 +42,6 @@ pub mod effect_writer_credential;
 // The attempt-ledger adapter remains unmounted in production. See the module doc.
 #[cfg(feature = "native")]
 mod effect_writer;
-/// Durable lookup and bounded-wait queries for flow invocation.
 /// Versioned identity shared by persisted admission and trusted effect calls.
 pub mod invocation_context;
 /// Operator resolution of an effect-uncertain run.

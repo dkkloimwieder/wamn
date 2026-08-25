@@ -4,8 +4,8 @@
 //! # Why the shared thing is a macro and not a function
 //!
 //! Every guest-visible effect this host performs — a DB call, an outbound HTTP
-//! request, a JetStream publish or ack, a flow invocation — leaves the guest and
-//! touches something outside it. Before `wamn-0h0g.24.3` only `wamn:postgres`
+//! request, a JetStream publish or ack — leaves the guest and touches
+//! something outside it. Before `wamn-0h0g.24.3` only `wamn:postgres`
 //! said so in a span, so "what did this component do off box" had no answer.
 //!
 //! What every one of those spans should agree on is the ENRICHMENT: which
