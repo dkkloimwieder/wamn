@@ -40,6 +40,16 @@ struct Scope {
 struct Principal {
     path: String,
     role: String,
+    /// Why a principal touches state it is deliberately not a writer of.
+    ///
+    /// `ctl-copy` drives a generic `pg_dump`/`pg_restore` that carries every
+    /// relation without naming one, so listing it as a writer everywhere would
+    /// be a tautology that drowns the registry's signal. The manifest records
+    /// authorship of shape and content by named SQL; a replication channel
+    /// authors nothing. This field makes that exemption written law rather
+    /// than an unexamined gap.
+    #[serde(default)]
+    note: Option<String>,
     #[serde(default)]
     temporary: Option<TemporaryWriter>,
 }
@@ -2241,4 +2251,28 @@ fn effect_ledger_lifecycle_is_run_state_owned() {
         let error = validate_discovered_writers(&manifest, &[discovery]).unwrap_err();
         assert!(error.contains("undeclared insert writer"), "{error}");
     }
+}
+
+/// A replication channel is exempt from writer attribution, and the exemption
+/// is written down.
+///
+/// `ctl-copy` drives `pg_dump`/`pg_restore` over whole schemas, so it touches
+/// every relation without naming one. Listing it as a writer of each would be a
+/// tautology; leaving it unlisted with no explanation is an unexamined gap.
+/// Owner ruling (`wamn-kxf8`): record it as a channel, not an author. This
+/// keeps that record from being dropped silently.
+#[test]
+fn the_generic_copy_channel_declares_why_it_authors_nothing() {
+    let manifest = read_manifest(&repository());
+    let principal = &manifest.principals["ctl-copy"];
+
+    let note = principal
+        .note
+        .as_deref()
+        .expect("ctl-copy declares why it is not a writer");
+
+    assert!(
+        note.contains("authors none"),
+        "ctl-copy note must state that it authors nothing: {note:?}"
+    );
 }
