@@ -3811,7 +3811,6 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // catalog record only, so from-zero must NOT produce them.
     for table in [
         "flow_drafts",
-        "validated_flow_drafts",
         "draft_safe_connection_grants",
         "authoring_command_audit",
     ] {
@@ -4182,10 +4181,15 @@ async fn current_noop_leg(su: &Client) {
         "current schema dry-run is a no-op: {:#?}",
         dry.actions
     );
+    // The record is the six `run-state.sql` tables plus `run_queue`, pinned by
+    // `record_tables_are_pinned`. The authoring-test orchestration relations that
+    // used to make this twelve left the record with wamn-0h0g.9.11.3 (805701ec);
+    // this assertion had been unreachable behind an earlier leg's abort ever since.
     assert_eq!(
         dry.at_target.len(),
-        12,
-        "all twelve run-plane tables at target"
+        7,
+        "all seven run-plane record tables at target: {:?}",
+        dry.at_target
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)
@@ -4368,6 +4372,25 @@ async fn stored_suite_cutover_leg(su: &Client) {
     ))
     .await
     .expect("install retired stored-suite persistence");
+    // The authoring-test orchestration relations left the run-plane record with
+    // wamn-0h0g.9.11.3 (805701ec) and now live only in the control database's
+    // portable store, which this verb must never apply. A legacy run plane
+    // carries them in its own schema, and that is the shape this cutover exists
+    // to reach — so synthesize it here, exactly as the stored-suite tables above
+    // are synthesized.
+    su.batch_execute(&format!(
+        "CREATE TABLE {SCHEMA}.authoring_test_run_reservations ( \
+           tenant_id text NOT NULL, report_id text NOT NULL, \
+           PRIMARY KEY (tenant_id, report_id)); \
+         CREATE TABLE {SCHEMA}.authoring_test_reports ( \
+           tenant_id text NOT NULL, report_id text NOT NULL, \
+           PRIMARY KEY (tenant_id, report_id)); \
+         CREATE TABLE {SCHEMA}.authoring_test_case_runs ( \
+           tenant_id text NOT NULL, report_id text NOT NULL, ordinal int NOT NULL, \
+           PRIMARY KEY (tenant_id, report_id, ordinal));"
+    ))
+    .await
+    .expect("synthesize the legacy run-plane authoring-test orchestration shape");
     // The pre-wamn-0h0g.15.27 test-set store, with the live grant that made it
     // invisible to the privilege reconciler once the relation left the record,
     // and the two FK columns on RETAINED tables that block its drop.
@@ -4395,33 +4418,6 @@ async fn stored_suite_cutover_leg(su: &Client) {
     ))
     .await
     .expect("install the retired test-set store and its FK columns");
-    su.batch_execute(
-        "ALTER TABLE catalog.validated_flow_drafts \
-           DROP CONSTRAINT validated_flow_drafts_exact_pin, \
-           ADD COLUMN suite_flow_version int NOT NULL DEFAULT 1 \
-             CHECK (suite_flow_version > 0), \
-           ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
-             tenant_id,draft_id,draft_revision,draft_content_hash,catalog_id, \
-             catalog_version,environment,suite_flow_version,runtime_flow_version, \
-             draft_artifact_hash,binding_base_artifact_hash); \
-         ALTER TABLE catalog.authoring_command_audit \
-           DROP CONSTRAINT authoring_command_audit_pkey, \
-           DROP CONSTRAINT authoring_command_audit_audit_id_key, \
-           DROP CONSTRAINT authoring_command_audit_command_kind_check, \
-           DROP CONSTRAINT authoring_command_audit_request_hash_check, \
-           DROP CONSTRAINT authoring_command_audit_outcome_present, \
-           DROP COLUMN request_hash, \
-           DROP COLUMN outcome_bytes, \
-           ADD CONSTRAINT authoring_command_audit_pkey PRIMARY KEY (tenant_id,audit_id), \
-           ADD CONSTRAINT authoring_command_audit_command_kind_check CHECK ( \
-             command_kind IN ('save-flow-draft','validate','draft-run','suite-run', \
-                              'publish','suite-projection', \
-                              'grant-draft-safe-generation', \
-                              'revoke-draft-safe-generation'))",
-    )
-    .await
-    .expect("restore retired persisted authoring protocol");
-
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
         .expect("stored-suite cutover applies");
@@ -4483,29 +4479,6 @@ async fn stored_suite_cutover_leg(su: &Client) {
         .expect("count retired stored-suite functions")
         .get(0);
     assert_eq!(retired_functions, 0);
-    assert!(
-        !catalog_column_exists(su, "validated_flow_drafts", "suite_flow_version").await,
-        "retired validation dimension is absent"
-    );
-    let command_check: String = su
-        .query_one(
-            "SELECT pg_get_constraintdef(con.oid, true) \
-               FROM pg_constraint AS con \
-               JOIN pg_class AS relation ON relation.oid = con.conrelid \
-               JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-              WHERE namespace.nspname='catalog' \
-                AND relation.relname='authoring_command_audit' \
-                AND con.conname='authoring_command_audit_command_kind_check'",
-            &[],
-        )
-        .await
-        .expect("read narrowed authoring command CHECK")
-        .get(0);
-    assert!(!command_check.contains("suite-run"), "{command_check}");
-    assert!(
-        !command_check.contains("suite-projection"),
-        "{command_check}"
-    );
 
     let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
@@ -4515,118 +4488,6 @@ async fn stored_suite_cutover_leg(su: &Client) {
         "stored-suite cutover converged: {:#?}",
         again.actions
     );
-
-    su.batch_execute(
-        "ALTER TABLE catalog.validated_flow_drafts \
-           DROP CONSTRAINT validated_flow_drafts_exact_pin, \
-           ADD COLUMN suite_flow_version int NOT NULL DEFAULT 1 \
-             CHECK (suite_flow_version > 0), \
-           ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
-             tenant_id,draft_id,draft_revision,draft_content_hash,catalog_id, \
-             catalog_version,environment,suite_flow_version,runtime_flow_version, \
-             draft_artifact_hash,binding_base_artifact_hash); \
-         INSERT INTO catalog.catalogs \
-           (tenant_id,catalog_id,version,environment,schema_version) \
-           VALUES ('legacy-authoring','cat',1,'dev','0.1'); \
-         INSERT INTO catalog.validated_flow_drafts ( \
-           tenant_id,draft_id,draft_revision,draft_edited_at,draft_content_hash, \
-           catalog_id,catalog_version,environment,suite_flow_version,flow_id, \
-           runtime_flow_version,graph_json,graph_hash,draft_artifact_hash, \
-           binding_base_artifact_hash,validated_draft_hash) \
-         VALUES ( \
-           'legacy-authoring','draft',1,now(),'content','cat',1,'dev',1,'flow', \
-           1,'{}'::jsonb,'graph','artifact', \
-           'base','validated')",
-    )
-    .await
-    .expect("seed populated retired validation identity");
-    let error = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("populated retired validation identity must refuse");
-    assert_db_code(
-        error.downcast().expect("postgres refusal"),
-        "55000",
-        "retired validation identity cutover",
-    );
-    assert!(
-        catalog_column_exists(su, "validated_flow_drafts", "suite_flow_version").await,
-        "refusal rolls back the catalog cutover"
-    );
-
-    reset(su).await;
-    reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("install canonical state for retired command-history refusal");
-    su.batch_execute(
-        "ALTER TABLE catalog.validated_flow_drafts \
-           DROP CONSTRAINT validated_flow_drafts_exact_pin, \
-           ADD COLUMN suite_flow_version int NOT NULL DEFAULT 1 \
-             CHECK (suite_flow_version > 0), \
-           ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
-             tenant_id,draft_id,draft_revision,draft_content_hash,catalog_id, \
-             catalog_version,environment,suite_flow_version,runtime_flow_version, \
-             draft_artifact_hash,binding_base_artifact_hash); \
-         ALTER TABLE catalog.authoring_command_audit \
-           DROP CONSTRAINT authoring_command_audit_pkey, \
-           DROP CONSTRAINT authoring_command_audit_audit_id_key, \
-           DROP CONSTRAINT authoring_command_audit_command_kind_check, \
-           DROP CONSTRAINT authoring_command_audit_request_hash_check, \
-           DROP CONSTRAINT authoring_command_audit_outcome_present, \
-           DROP COLUMN request_hash, \
-           DROP COLUMN outcome_bytes, \
-           ADD CONSTRAINT authoring_command_audit_pkey PRIMARY KEY (tenant_id,audit_id), \
-           ADD CONSTRAINT authoring_command_audit_command_kind_check CHECK ( \
-             command_kind IN ('save-flow-draft','validate','draft-run','suite-run', \
-                              'publish','suite-projection', \
-                              'grant-draft-safe-generation', \
-                              'revoke-draft-safe-generation')); \
-         INSERT INTO catalog.authoring_command_audit ( \
-           tenant_id,command_id,command_kind,principal_id,principal_kind, \
-           principal_subject,effective_role,org,project,environment,target_ref) \
-         VALUES \
-           ('legacy-authoring','legacy-grant','grant-draft-safe-generation', \
-            'principal','human','author@example.com','project-author', \
-            'org','project','dev','legacy'), \
-           ('legacy-authoring','legacy-revoke','revoke-draft-safe-generation', \
-            'principal','human','author@example.com','project-author', \
-            'org','project','dev','legacy')",
-    )
-    .await
-    .expect("seed retired immutable authoring command history");
-    let error = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("retired immutable authoring command history must refuse");
-    let database_error: tokio_postgres::Error = error.downcast().expect("postgres refusal");
-    assert_eq!(
-        database_error.as_db_error().map(|error| error.message()),
-        Some(
-            "authoring-command-retry-ledger-cutover-requires-empty-audit-or-archive-and-reprovision"
-        )
-    );
-    assert_db_code(
-        database_error,
-        "55000",
-        "populated legacy authoring retry-ledger cutover",
-    );
-    assert!(
-        catalog_column_exists(su, "validated_flow_drafts", "suite_flow_version").await,
-        "later history refusal rolls back the earlier validation-column cutover"
-    );
-    let command_check: String = su
-        .query_one(
-            "SELECT pg_get_constraintdef(con.oid, true) \
-               FROM pg_constraint AS con \
-               JOIN pg_class AS relation ON relation.oid = con.conrelid \
-               JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-              WHERE namespace.nspname='catalog' \
-                AND relation.relname='authoring_command_audit' \
-                AND con.conname='authoring_command_audit_command_kind_check'",
-            &[],
-        )
-        .await
-        .expect("read rolled-back authoring command CHECK")
-        .get(0);
-    assert!(command_check.contains("suite-run"), "{command_check}");
 }
 
 /// PLAN 6A additive storage and the host/guest authority boundary. This proves

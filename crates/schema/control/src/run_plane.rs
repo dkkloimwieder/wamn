@@ -845,17 +845,6 @@ const FLOW_AUTHOR_CHECK_DEF: &str =
 const RELEASE_PUBLISHER_CHECK_NAME: &str = "releases_verified_publisher_principal_check";
 const RELEASE_PUBLISHER_CHECK_DEF: &str =
     "CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)";
-const AUTHORING_COMMAND_KIND_CHECK_NAME: &str = "authoring_command_audit_command_kind_check";
-const AUTHORING_COMMAND_KIND_CHECK_DEF: &str = "CHECK (command_kind = ANY (ARRAY['save-flow-draft'::text, 'validate'::text, 'draft-run'::text, 'test-set-run'::text, 'publish'::text]))";
-const AUTHORING_COMMAND_REQUEST_HASH_CHECK_NAME: &str =
-    "authoring_command_audit_request_hash_check";
-const AUTHORING_COMMAND_REQUEST_HASH_CHECK_DEF: &str =
-    "CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'::text)";
-const AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_NAME: &str =
-    "authoring_command_audit_outcome_present";
-const AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_DEF: &str = "CHECK (octet_length(outcome_bytes) > 0)";
-const AUTHORING_COMMAND_PRIMARY_INDEX_DEF: &str = "CREATE UNIQUE INDEX authoring_command_audit_pkey ON catalog.authoring_command_audit USING btree (tenant_id, principal_id, command_id)";
-const AUTHORING_COMMAND_AUDIT_ID_INDEX_DEF: &str = "CREATE UNIQUE INDEX authoring_command_audit_audit_id_key ON catalog.authoring_command_audit USING btree (tenant_id, audit_id)";
 
 const RETIRED_EFFECT_ATTEMPT_COLUMNS: &[&str] = &[
     "attempt_key",
@@ -1765,52 +1754,6 @@ fn retired_test_set_reference_columns(obs: &RunPlaneObservation) -> Vec<&'static
         .collect()
 }
 
-fn authoring_retry_ledger_ready(obs: &RunPlaneObservation) -> bool {
-    let Some(columns) = obs.catalog_columns.get("authoring_command_audit") else {
-        return false;
-    };
-    for (column, column_type) in [("request_hash", "text"), ("outcome_bytes", "bytea")] {
-        let key = ("authoring_command_audit".to_string(), column.to_string());
-        if !columns.contains(column)
-            || !obs.catalog_non_nullable_columns.contains(&key)
-            || obs
-                .catalog_column_types
-                .get(&key)
-                .is_none_or(|actual| actual != column_type)
-        {
-            return false;
-        }
-    }
-    obs.catalog_checks
-        .get(&(
-            "authoring_command_audit".to_string(),
-            AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
-        ))
-        .is_some_and(|definition| definition == AUTHORING_COMMAND_KIND_CHECK_DEF)
-        && obs
-            .catalog_checks
-            .get(&(
-                "authoring_command_audit".to_string(),
-                AUTHORING_COMMAND_REQUEST_HASH_CHECK_NAME.to_string(),
-            ))
-            .is_some_and(|definition| definition == AUTHORING_COMMAND_REQUEST_HASH_CHECK_DEF)
-        && obs
-            .catalog_checks
-            .get(&(
-                "authoring_command_audit".to_string(),
-                AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_NAME.to_string(),
-            ))
-            .is_some_and(|definition| definition == AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_DEF)
-        && obs
-            .catalog_indexes
-            .get("authoring_command_audit_pkey")
-            .is_some_and(|definition| definition == AUTHORING_COMMAND_PRIMARY_INDEX_DEF)
-        && obs
-            .catalog_indexes
-            .get("authoring_command_audit_audit_id_key")
-            .is_some_and(|definition| definition == AUTHORING_COMMAND_AUDIT_ID_INDEX_DEF)
-}
-
 fn stored_suite_cutover_needed(obs: &RunPlaneObservation) -> bool {
     RETIRED_STORED_SUITE_TABLES
         .iter()
@@ -1822,95 +1765,10 @@ fn stored_suite_cutover_needed(obs: &RunPlaneObservation) -> bool {
             .catalog_tables
             .contains(RETIRED_STORED_SUITE_CATALOG_TABLE)
         || !retired_test_set_reference_columns(obs).is_empty()
-        || obs
-            .catalog_columns
-            .get("validated_flow_drafts")
-            .is_some_and(|columns| columns.contains("suite_flow_version"))
-        || (obs.catalog_tables.contains("authoring_command_audit")
-            && !authoring_retry_ledger_ready(obs))
 }
 
 fn stored_suite_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
-    let validation_dimension_present = obs
-        .catalog_columns
-        .get("validated_flow_drafts")
-        .is_some_and(|columns| columns.contains("suite_flow_version"));
-    let audit_retry_drifted = obs.catalog_tables.contains("authoring_command_audit")
-        && !authoring_retry_ledger_ready(obs);
     let mut statements = Vec::new();
-    let mut lock_targets = Vec::new();
-    if validation_dimension_present {
-        lock_targets.push("catalog.validated_flow_drafts");
-    }
-    if audit_retry_drifted {
-        lock_targets.push("catalog.authoring_command_audit");
-    }
-    if !lock_targets.is_empty() {
-        statements.push(format!(
-            "LOCK TABLE {} IN ACCESS EXCLUSIVE MODE",
-            lock_targets.join(", ")
-        ));
-    }
-    if validation_dimension_present {
-        statements.push(
-            "DO $retired_validation_dimension$ BEGIN \
-               IF EXISTS ( \
-                    SELECT 1 FROM pg_catalog.pg_attribute \
-                     WHERE attrelid = 'catalog.validated_flow_drafts'::regclass \
-                       AND attname = 'suite_flow_version' AND NOT attisdropped) \
-                  AND EXISTS (SELECT 1 FROM catalog.validated_flow_drafts) \
-               THEN RAISE EXCEPTION USING ERRCODE = '55000', \
-                    MESSAGE = 'retired-validation-identity-requires-reprovision'; \
-               END IF; \
-             END $retired_validation_dimension$"
-                .to_string(),
-        );
-        statements.push(
-            "ALTER TABLE catalog.validated_flow_drafts \
-               DROP CONSTRAINT IF EXISTS validated_flow_drafts_exact_pin, \
-               DROP COLUMN IF EXISTS suite_flow_version, \
-               ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
-                   tenant_id, draft_id, draft_revision, draft_content_hash, \
-                   catalog_id, catalog_version, environment, runtime_flow_version, \
-                   draft_artifact_hash, binding_base_artifact_hash)"
-                .to_string(),
-        );
-    }
-    if audit_retry_drifted {
-        statements.push(
-            "DO $authoring_retry_ledger_cutover$ BEGIN \
-               IF EXISTS (SELECT 1 FROM catalog.authoring_command_audit) \
-               THEN RAISE EXCEPTION USING ERRCODE = '55000', \
-                    MESSAGE = 'authoring-command-retry-ledger-cutover-requires-empty-audit-or-archive-and-reprovision'; \
-               END IF; \
-             END $authoring_retry_ledger_cutover$"
-                .to_string(),
-        );
-        statements.push(
-            "ALTER TABLE catalog.authoring_command_audit \
-               DROP CONSTRAINT IF EXISTS authoring_command_audit_pkey, \
-               DROP CONSTRAINT IF EXISTS authoring_command_audit_audit_id_key, \
-               DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check, \
-               DROP CONSTRAINT IF EXISTS authoring_command_audit_request_hash_check, \
-               DROP CONSTRAINT IF EXISTS authoring_command_audit_outcome_present, \
-               DROP COLUMN IF EXISTS request_hash, \
-               DROP COLUMN IF EXISTS outcome_bytes, \
-               ADD COLUMN request_hash text NOT NULL, \
-               ADD COLUMN outcome_bytes bytea NOT NULL, \
-               ADD CONSTRAINT authoring_command_audit_pkey \
-                   PRIMARY KEY (tenant_id, principal_id, command_id), \
-               ADD CONSTRAINT authoring_command_audit_audit_id_key \
-                   UNIQUE (tenant_id, audit_id), \
-               ADD CONSTRAINT authoring_command_audit_command_kind_check \
-               CHECK (command_kind IN ('save-flow-draft', 'validate', 'draft-run', \
-                                       'test-set-run', 'publish')), \
-               ADD CONSTRAINT authoring_command_audit_request_hash_check \
-                   CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'), \
-               ADD CONSTRAINT authoring_command_audit_outcome_present \
-                   CHECK (octet_length(outcome_bytes) > 0)"
-                .to_string(),
-        );
-    }
     // The FK-carrying columns go FIRST: `authoring_test_sets` is the parent of
     // both, and a plain DROP TABLE on a referenced relation refuses. Dropping
     // the column takes its dependent FK with it, so no separate constraint drop
@@ -2397,11 +2255,8 @@ pub struct RunPlanePlan {
 const RETIRED_RERUN_LINEAGE_COLUMNS: &[&str] = &["replay_of", "root_run_id"];
 const RETIRED_FAILURE_DETAIL_COLUMNS: &[&str] = &["fail_node", "fail_reason"];
 const RETIRED_EXECUTION_BUNDLE_COLUMN: &str = "execution_bundle_hash";
-const RETIRED_EXECUTION_BUNDLE_CATALOG_TABLES: &[&str] = &[
-    "release_flows",
-    "validated_flow_drafts",
-    "release_flow_test_evidence",
-];
+const RETIRED_EXECUTION_BUNDLE_CATALOG_TABLES: &[&str] =
+    &["release_flows", "release_flow_test_evidence"];
 const RETIRED_EFFECT_DISPOSITION_TABLES: [&str; 2] =
     ["effect_disposition_requests", "effect_dispositions"];
 const RETIRED_EFFECT_DISPOSITION_HELPER: &str = "guard_effect_disposition_append";
@@ -5271,55 +5126,6 @@ COMMIT;
             ),
             RELEASE_PUBLISHER_CHECK_DEF.to_string(),
         );
-        // The authoring retry ledger left `catalog-schema.sql` with
-        // wamn-0h0g.9.11.3 (805701ec) but still lands in the SAME `catalog`
-        // schema from `deploy/sql/control-portable-store.sql`, so a provisioned
-        // database observes it. Only the columns `authoring_retry_ledger_ready`
-        // names are modelled; the rest are never read by the reconciler.
-        obs.catalog_tables
-            .insert("authoring_command_audit".to_string());
-        obs.catalog_columns.insert(
-            "authoring_command_audit".to_string(),
-            ["request_hash".to_string(), "outcome_bytes".to_string()]
-                .into_iter()
-                .collect(),
-        );
-        obs.catalog_checks.insert(
-            (
-                "authoring_command_audit".to_string(),
-                AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
-            ),
-            AUTHORING_COMMAND_KIND_CHECK_DEF.to_string(),
-        );
-        for (name, definition) in [
-            (
-                AUTHORING_COMMAND_REQUEST_HASH_CHECK_NAME,
-                AUTHORING_COMMAND_REQUEST_HASH_CHECK_DEF,
-            ),
-            (
-                AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_NAME,
-                AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_DEF,
-            ),
-        ] {
-            obs.catalog_checks.insert(
-                ("authoring_command_audit".to_string(), name.to_string()),
-                definition.to_string(),
-            );
-        }
-        for (column, column_type) in [("request_hash", "text"), ("outcome_bytes", "bytea")] {
-            let key = ("authoring_command_audit".to_string(), column.to_string());
-            obs.catalog_non_nullable_columns.insert(key.clone());
-            obs.catalog_column_types
-                .insert(key, column_type.to_string());
-        }
-        obs.catalog_indexes.insert(
-            "authoring_command_audit_pkey".to_string(),
-            AUTHORING_COMMAND_PRIMARY_INDEX_DEF.to_string(),
-        );
-        obs.catalog_indexes.insert(
-            "authoring_command_audit_audit_id_key".to_string(),
-            AUTHORING_COMMAND_AUDIT_ID_INDEX_DEF.to_string(),
-        );
         for spec in CHECK_SPECS {
             obs.checks.insert(
                 (spec.table.to_string(), spec.name.to_string()),
@@ -5567,13 +5373,12 @@ COMMIT;
         ] {
             assert!(catalog.contains(&connection_table.to_string()));
         }
-        // The project-authoring relations (`flow_drafts`, `validated_flow_drafts`,
+        // The project-authoring relations (`flow_drafts`,
         // `draft_safe_connection_grants`, `authoring_command_audit`) left this
         // file with wamn-0h0g.9.11.3 (805701ec) — `deploy/sql/control-portable-store.sql`
         // owns them now and `control_portable_store` is their pin.
         for retired_here in [
             "flow_drafts",
-            "validated_flow_drafts",
             "draft_safe_connection_grants",
             "authoring_command_audit",
         ] {
@@ -5733,13 +5538,10 @@ COMMIT;
         assert_eq!(
             action.sql,
             "LOCK TABLE \"demo\".runs, catalog.\"release_flows\", \
-             catalog.\"validated_flow_drafts\", \
              catalog.\"release_flow_test_evidence\" IN ACCESS EXCLUSIVE MODE;\n\
              ALTER TABLE \"demo\".runs DROP COLUMN IF EXISTS \
              execution_bundle_hash RESTRICT;\n\
              ALTER TABLE catalog.\"release_flows\" DROP COLUMN IF EXISTS \
-             execution_bundle_hash RESTRICT;\n\
-             ALTER TABLE catalog.\"validated_flow_drafts\" DROP COLUMN IF EXISTS \
              execution_bundle_hash RESTRICT;\n\
              ALTER TABLE catalog.\"release_flow_test_evidence\" DROP COLUMN IF EXISTS \
              execution_bundle_hash RESTRICT;\n\
@@ -6326,129 +6128,6 @@ COMMIT;
     }
 
     #[test]
-    fn retired_validation_dimension_is_empty_only_and_idempotent() {
-        let mut legacy = observation_at_record();
-        legacy
-            .catalog_columns
-            .entry("validated_flow_drafts".to_string())
-            .or_default()
-            .insert("suite_flow_version".to_string());
-
-        let plan = plan_run_plane(&schema("demo"), &legacy);
-        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
-        let cutover = &plan.actions[0];
-        assert_eq!(cutover.kind, RunPlaneActionKind::StoredSuiteCutover);
-        for required in [
-            "LOCK TABLE catalog.validated_flow_drafts IN ACCESS EXCLUSIVE MODE",
-            "retired-validation-identity-requires-reprovision",
-            "AND EXISTS (SELECT 1 FROM catalog.validated_flow_drafts)",
-            "DROP CONSTRAINT IF EXISTS validated_flow_drafts_exact_pin",
-            "DROP COLUMN IF EXISTS suite_flow_version",
-            "ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE",
-        ] {
-            assert!(
-                cutover.sql.contains(required),
-                "missing {required}: {}",
-                cutover.sql
-            );
-        }
-        assert!(cutover.sql.contains("pg_catalog.pg_attribute"));
-        assert!(!cutover.sql.contains("CASCADE"));
-        assert!(
-            cutover
-                .sql
-                .find("retired-validation-identity-requires-reprovision")
-                < cutover.sql.find("DROP COLUMN IF EXISTS suite_flow_version")
-        );
-
-        legacy
-            .catalog_columns
-            .get_mut("validated_flow_drafts")
-            .expect("legacy table was inserted above")
-            .remove("suite_flow_version");
-        assert!(plan_run_plane(&schema("demo"), &legacy).is_noop());
-    }
-
-    #[test]
-    fn authoring_retry_ledger_cutover_is_empty_only_exact_and_idempotent() {
-        let mut legacy = observation_at_record();
-        legacy
-            .catalog_columns
-            .get_mut("authoring_command_audit")
-            .unwrap()
-            .retain(|column| !["request_hash", "outcome_bytes"].contains(&column.as_str()));
-        for column in ["request_hash", "outcome_bytes"] {
-            let key = ("authoring_command_audit".to_string(), column.to_string());
-            legacy.catalog_non_nullable_columns.remove(&key);
-            legacy.catalog_column_types.remove(&key);
-        }
-        for name in [
-            AUTHORING_COMMAND_KIND_CHECK_NAME,
-            AUTHORING_COMMAND_REQUEST_HASH_CHECK_NAME,
-            AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_NAME,
-        ] {
-            legacy
-                .catalog_checks
-                .remove(&("authoring_command_audit".to_string(), name.to_string()));
-        }
-        legacy.catalog_indexes.insert(
-            "authoring_command_audit_pkey".to_string(),
-            "legacy".to_string(),
-        );
-        legacy
-            .catalog_indexes
-            .remove("authoring_command_audit_audit_id_key");
-
-        let plan = plan_run_plane(&schema("demo"), &legacy);
-        let cutover = plan
-            .actions
-            .iter()
-            .find(|action| action.kind == RunPlaneActionKind::StoredSuiteCutover)
-            .expect("legacy audit shape plans a retry-ledger cutover");
-        for required in [
-            "LOCK TABLE catalog.authoring_command_audit IN ACCESS EXCLUSIVE MODE",
-            "IF EXISTS (SELECT 1 FROM catalog.authoring_command_audit)",
-            "authoring-command-retry-ledger-cutover-requires-empty-audit-or-archive-and-reprovision",
-            "DROP CONSTRAINT IF EXISTS authoring_command_audit_pkey",
-            "DROP COLUMN IF EXISTS request_hash",
-            "ADD COLUMN request_hash text NOT NULL",
-            "ADD COLUMN outcome_bytes bytea NOT NULL",
-            "PRIMARY KEY (tenant_id, principal_id, command_id)",
-            "UNIQUE (tenant_id, audit_id)",
-            "ADD CONSTRAINT authoring_command_audit_command_kind_check",
-            "ADD CONSTRAINT authoring_command_audit_request_hash_check",
-            "ADD CONSTRAINT authoring_command_audit_outcome_present",
-        ] {
-            assert!(
-                cutover.sql.contains(required),
-                "missing {required}: {}",
-                cutover.sql
-            );
-        }
-        assert!(
-            cutover
-                .sql
-                .find(
-                    "authoring-command-retry-ledger-cutover-requires-empty-audit-or-archive-and-reprovision",
-                )
-                < cutover
-                    .sql
-                    .find("DROP CONSTRAINT IF EXISTS authoring_command_audit_pkey")
-        );
-        assert!(
-            !cutover
-                .sql
-                .contains("DELETE FROM catalog.authoring_command_audit")
-        );
-        assert!(
-            !cutover
-                .sql
-                .contains("UPDATE catalog.authoring_command_audit")
-        );
-        assert!(plan_run_plane(&schema("demo"), &observation_at_record()).is_noop());
-    }
-
-    #[test]
     fn retired_legacy_admission_surface_is_dropped_exactly_once() {
         let mut legacy = observation_at_record();
         legacy.tables.insert(
@@ -6527,7 +6206,7 @@ COMMIT;
     #[test]
     fn effective_indirect_or_owner_authority_never_plans_false_clean() {
         // The project-authoring relations this once drifted (`flow_drafts`,
-        // `draft_safe_connection_grants`, `validated_flow_drafts`) left
+        // `draft_safe_connection_grants`) left
         // `AUTHORING_PRIVILEGE_SPECS` with wamn-0h0g.9.11.2 (38860fab). Each
         // drift SHAPE — ownership, effective table privilege, effective column
         // privilege — is re-pinned on a relation the reconciler still owns.

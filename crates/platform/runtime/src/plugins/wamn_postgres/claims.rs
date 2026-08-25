@@ -2055,7 +2055,6 @@ mod tests {
             "plan_hash",
             "frame_id",
             "flow_id",
-            "validated_flow_drafts",
             "artifact_hash =",
             "requirement_name =",
         ] {

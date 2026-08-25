@@ -37,7 +37,6 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.release_flows",
         "catalog.catalog_heads",
         "catalog.flow_drafts",
-        "catalog.validated_flow_drafts",
         "catalog.release_exposure_manifests",
         "catalog.release_sources",
         "catalog.release_attachments",
@@ -59,6 +58,9 @@ fn portable_store_record_is_exact_and_storage_only() {
     }
 
     for excluded in [
+        // wamn-pm7k: the draft concept died with the pivot — the wiring
+        // document IS the validated artifact and its hash IS the identity.
+        "catalog.validated_flow_drafts",
         "catalog.attachment_activation",
         "catalog.attachment_tombstones",
         "catalog.connection_instances",
@@ -80,10 +82,11 @@ fn portable_store_record_is_exact_and_storage_only() {
     assert!(sql.contains("tested_resolution_map_bytes bytea NOT NULL"));
     assert!(sql.contains("sha256(tested_resolution_map_bytes)"));
     assert!(sql.contains("tested_resolution_map_bytes = p_tested_resolution_map_bytes"));
-    assert!(
-        sql.contains("REFERENCES catalog.validated_flow_drafts (tenant_id, validated_draft_hash)")
-    );
+    // wamn-pm7k: `validated_draft_id` is read as the WIRING HASH, so the
+    // evidence row resolves its identity without a lineage relation to point at.
+    assert!(!sql.contains("REFERENCES catalog.validated_flow_drafts"));
     assert!(sql.contains("REFERENCES wamn_run.authoring_test_reports (tenant_id, report_id)"));
+    assert!(sql.contains("DROP TABLE catalog.validated_flow_drafts RESTRICT"));
     assert!(!sql.contains("CREATE TABLE IF NOT EXISTS catalog.execution_bundles"));
     assert!(sql.contains("DROP TABLE catalog.execution_bundles RESTRICT"));
     assert!(!sql.contains("REFERENCES registry."));
@@ -151,7 +154,8 @@ fn portable_store_record_is_exact_and_storage_only() {
         E'\n' ORDER BY (con.contype::text || ':'
         || pg_get_constraintdef(con.oid, true)) COLLATE "C""#
     ));
-    assert!(sql.contains("96216cbdb364cd136ed8d1e925673cc8870beb1d15f9b016c7268b78066ac0a7"));
+    assert!(sql.contains("ca7165425f601f1ae9e6140b53aa49c2d83a24add8b2192c8474f9bfa5d75eaf"));
+    assert!(!sql.contains("96216cbdb364cd136ed8d1e925673cc8870beb1d15f9b016c7268b78066ac0a7"));
     assert!(!sql.contains("ab4c8a54366eab426d72c31c81531e929a4b615d051f300be7c993c628699f78"));
     assert!(!sql.contains("06bf7790877f52c2094511dc368d605f7de4b112383fc6b857d8886844160c85"));
     assert!(!sql.contains("7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed"));
@@ -318,7 +322,6 @@ fn control_author_authority_is_the_exact_ratified_class() {
         "catalog.catalog_heads",
         "catalog.connection_requirements",
         "catalog.draft_safe_connection_grants",
-        "catalog.validated_flow_drafts",
     ];
     // Append-only facts: immutable after append.
     let append_only = [
@@ -690,16 +693,16 @@ fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype <> 'n') = 13,
-         'release evidence must retain exactly 13 governed constraints';
+            AND contype <> 'n') = 12,
+         'release evidence must retain exactly 12 governed constraints';
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
             AND contype = 'c') = 9,
          'release evidence must retain exactly nine CHECK constraints';
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype = 'f') = 3,
-         'release evidence must retain exactly three local foreign keys';
+            AND contype = 'f') = 2,
+         'release evidence must retain exactly two local foreign keys';
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
             AND contype = 'p') = 1,
@@ -712,7 +715,7 @@ DO $$ BEGIN
           FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
             AND contype <> 'n') =
-         '96216cbdb364cd136ed8d1e925673cc8870beb1d15f9b016c7268b78066ac0a7',
+         'ca7165425f601f1ae9e6140b53aa49c2d83a24add8b2192c8474f9bfa5d75eaf',
          'release evidence constraint fingerprint must be version-stable';
 END $$;
 
@@ -732,13 +735,6 @@ VALUES ('tenant-a','cat',1,'flow-a',1);
 INSERT INTO catalog.flow_drafts
   (tenant_id,draft_id,flow_id,revision,definition)
 VALUES ('tenant-a','draft-a','flow-a',1,'{{}}');
-INSERT INTO catalog.validated_flow_drafts
-  (tenant_id,draft_id,draft_revision,draft_edited_at,draft_content_hash,
-   catalog_id,catalog_version,environment,flow_id,runtime_flow_version,
-   graph_json,graph_hash,draft_artifact_hash,binding_base_artifact_hash,
-   validated_draft_hash)
-VALUES ('tenant-a','draft-a',1,now(),'draft-content','cat',1,'dev','flow-a',1,
-        '{{}}','graph','artifact-a','artifact-a','validated-a');
 INSERT INTO wamn_run.authoring_test_run_reservations
   (tenant_id,report_id,command_hash,validated_draft_id,
    catalog_id,catalog_version,case_count,whole_deadline_at)
@@ -1394,9 +1390,6 @@ DO $denials$ BEGIN
   -- No UPDATE or DELETE over an immutable fact, and no DELETE anywhere.
   BEGIN UPDATE catalog.authoring_command_audit SET target_ref = 'moved';
     ASSERT false, 'the author mutated the command ledger';
-  EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
-  BEGIN UPDATE catalog.validated_flow_drafts SET flow_id = 'moved';
-    ASSERT false, 'the author mutated an immutable validation';
   EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
   BEGIN UPDATE wamn_run.authoring_test_reports SET passed = false;
     ASSERT false, 'the author mutated a finalized report';

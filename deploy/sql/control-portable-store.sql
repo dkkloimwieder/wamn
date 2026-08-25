@@ -154,32 +154,10 @@ END
 $$;
 REVOKE ALL ON FUNCTION catalog.guard_flow_draft_update() FROM PUBLIC;
 
-CREATE TABLE IF NOT EXISTS catalog.validated_flow_drafts (
-    tenant_id                  text NOT NULL CHECK (tenant_id <> ''),
-    draft_id                   text NOT NULL CHECK (draft_id <> ''),
-    draft_revision             bigint NOT NULL CHECK (draft_revision > 0),
-    draft_edited_at            timestamptz NOT NULL,
-    draft_content_hash         text NOT NULL CHECK (draft_content_hash <> ''),
-    catalog_id                 text NOT NULL CHECK (catalog_id <> ''),
-    catalog_version            int NOT NULL CHECK (catalog_version > 0),
-    environment                text NOT NULL CHECK (environment <> ''),
-    flow_id                    text NOT NULL CHECK (flow_id <> ''),
-    runtime_flow_version       int NOT NULL CHECK (runtime_flow_version > 0),
-    graph_json                 jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object'),
-    graph_hash                 text NOT NULL CHECK (graph_hash <> ''),
-    draft_artifact_hash        text NOT NULL CHECK (draft_artifact_hash <> ''),
-    binding_base_artifact_hash text NOT NULL CHECK (binding_base_artifact_hash <> ''),
-    validated_draft_hash       text NOT NULL CHECK (validated_draft_hash <> ''),
-    validated_at               timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, validated_draft_hash),
-    CONSTRAINT validated_flow_drafts_exact_pin UNIQUE (
-        tenant_id, draft_id, draft_revision, draft_content_hash,
-        catalog_id, catalog_version, environment,
-        runtime_flow_version, draft_artifact_hash, binding_base_artifact_hash
-    ),
-    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
-);
+-- No validated-draft relation (wamn-pm7k): the draft concept died with the
+-- pivot. The wiring document IS the validated artifact and its hash IS the
+-- identity, so `validated_draft_id` below is read as the wiring hash and needs
+-- no separate lineage row to resolve it.
 
 CREATE TABLE IF NOT EXISTS catalog.release_exposure_manifests (
     tenant_id        text NOT NULL CHECK (tenant_id <> ''),
@@ -437,8 +415,6 @@ CREATE TABLE IF NOT EXISTS catalog.release_flow_test_evidence (
     FOREIGN KEY (tenant_id, catalog_id, catalog_version, flow_id)
         REFERENCES catalog.release_flows
             (tenant_id, catalog_id, catalog_version, flow_id),
-    FOREIGN KEY (tenant_id, validated_draft_id)
-        REFERENCES catalog.validated_flow_drafts (tenant_id, validated_draft_hash),
     FOREIGN KEY (tenant_id, report_id)
         REFERENCES wamn_run.authoring_test_reports (tenant_id, report_id),
     CONSTRAINT release_flow_test_evidence_map_hash_check CHECK (
@@ -609,11 +585,9 @@ REVOKE ALL ON FUNCTION catalog.register_deployment_attestation(
 -- dependency tripwire, not an instruction to amputate an un-inventoried object.
 DO $retire_execution_bundles$
 BEGIN
-    LOCK TABLE catalog.release_flows, catalog.validated_flow_drafts,
+    LOCK TABLE catalog.release_flows,
         catalog.release_flow_test_evidence IN ACCESS EXCLUSIVE MODE;
     ALTER TABLE catalog.release_flows
-        DROP COLUMN IF EXISTS execution_bundle_hash RESTRICT;
-    ALTER TABLE catalog.validated_flow_drafts
         DROP COLUMN IF EXISTS execution_bundle_hash RESTRICT;
     ALTER TABLE catalog.release_flow_test_evidence
         DROP COLUMN IF EXISTS execution_bundle_hash RESTRICT;
@@ -634,7 +608,7 @@ BEGIN
         'catalog.catalogs', 'catalog.flow_artifacts',
         'catalog.releases',
         'catalog.release_flows', 'catalog.catalog_heads',
-        'catalog.flow_drafts', 'catalog.validated_flow_drafts',
+        'catalog.flow_drafts',
         'catalog.release_exposure_manifests', 'catalog.release_sources',
         'catalog.release_attachments', 'catalog.component_library',
         'catalog.connection_requirements',
@@ -670,7 +644,7 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.flow_artifacts',
         'catalog.releases', 'catalog.release_flows',
-        'catalog.validated_flow_drafts', 'catalog.release_exposure_manifests',
+        'catalog.release_exposure_manifests',
         'catalog.release_sources', 'catalog.release_attachments',
         'catalog.component_library',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
@@ -734,7 +708,31 @@ DROP FUNCTION IF EXISTS catalog.register_deployment_attestation(
 );
 
 DO $retire$
+DECLARE
+    retired_constraint text;
 BEGIN
+    -- wamn-pm7k: the draft concept died with the pivot. The wiring document IS
+    -- the validated artifact and its hash IS the identity, so the relation has
+    -- no writer and its rows name nothing — they are deliberately discarded
+    -- without archive, exactly like the bundle bytes above. The evidence
+    -- foreign key that used to resolve an identity through it goes first, or
+    -- the RESTRICT drop refuses on the dependency.
+    IF to_regclass('catalog.validated_flow_drafts') IS NOT NULL THEN
+        FOR retired_constraint IN
+            SELECT conname FROM pg_constraint
+             WHERE conrelid = to_regclass('catalog.release_flow_test_evidence')
+               AND contype = 'f'
+               AND confrelid = to_regclass('catalog.validated_flow_drafts')
+        LOOP
+            EXECUTE format(
+                'ALTER TABLE catalog.release_flow_test_evidence DROP CONSTRAINT %I',
+                retired_constraint
+            );
+        END LOOP;
+        LOCK TABLE catalog.validated_flow_drafts IN ACCESS EXCLUSIVE MODE;
+        DROP TABLE catalog.validated_flow_drafts RESTRICT;
+    END IF;
+
     -- wamn-0h0g.15.27 retired the test-set store, leaving both RETAINED record
     -- tables with a NOT NULL foreign-key column that has no default and
     -- therefore refuses every reservation and report INSERT.
@@ -837,7 +835,7 @@ BEGIN
         'draft_safe_connection_grants', 'flow_artifacts',
         'flow_drafts', 'release_attachments', 'release_exposure_manifests',
         'release_flow_test_evidence', 'release_flows', 'release_sources',
-        'releases', 'validated_flow_drafts'
+        'releases'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-catalog-inventory-drift';
@@ -901,7 +899,7 @@ BEGIN
     WHERE con.conrelid = 'catalog.release_flow_test_evidence'::regclass
       AND con.contype <> 'n';
     IF evidence_constraints_fingerprint <>
-       '96216cbdb364cd136ed8d1e925673cc8870beb1d15f9b016c7268b78066ac0a7'
+       'ca7165425f601f1ae9e6140b53aa49c2d83a24add8b2192c8474f9bfa5d75eaf'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'release-flow-test-evidence-constraint-drift';
@@ -929,7 +927,7 @@ BEGIN
             ('catalog.releases'),
             ('catalog.release_flows'), ('catalog.catalog_heads'),
             ('catalog.component_library'),
-            ('catalog.flow_drafts'), ('catalog.validated_flow_drafts'),
+            ('catalog.flow_drafts'),
             ('catalog.release_exposure_manifests'), ('catalog.release_sources'),
             ('catalog.release_attachments'), ('catalog.connection_requirements'),
             ('catalog.draft_safe_connection_grants'),
@@ -967,7 +965,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       'c5530dee86104d972985d9d3337c5f41a34b845c647b0c6f6cb3c3801af91071'
+       '571354ef77bcab1287893206acee9ce51b9f09b3146580aab88e7d944596dc0d'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';
@@ -1057,7 +1055,7 @@ BEGIN
         'catalog.flow_artifacts',
         'catalog.releases', 'catalog.release_flows',
         'catalog.catalog_heads', 'catalog.flow_drafts',
-        'catalog.validated_flow_drafts', 'catalog.connection_requirements',
+        'catalog.connection_requirements',
         'catalog.draft_safe_connection_grants', 'catalog.authoring_command_audit',
         'wamn_run.authoring_test_run_reservations',
         'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
@@ -1101,10 +1099,9 @@ GRANT SELECT, INSERT, UPDATE ON catalog.flow_drafts TO wamn_control_author;
 
 -- Append-only facts: immutable after append, enforced by their own triggers as
 -- well as by the absence of UPDATE and DELETE here.
-REVOKE ALL PRIVILEGES ON catalog.validated_flow_drafts,
+REVOKE ALL PRIVILEGES ON
     catalog.authoring_command_audit, wamn_run.authoring_test_reports
     FROM wamn_control_author;
-GRANT SELECT ON catalog.validated_flow_drafts TO wamn_control_author;
 GRANT SELECT, INSERT ON catalog.authoring_command_audit,
     wamn_run.authoring_test_reports
     TO wamn_control_author;
@@ -1159,7 +1156,6 @@ BEGIN
                  ('catalog', 'flow_drafts', 'SELECT'),
                  ('catalog', 'flow_drafts', 'INSERT'),
                  ('catalog', 'flow_drafts', 'UPDATE'),
-                 ('catalog', 'validated_flow_drafts', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'INSERT'),
                  ('wamn_run', 'authoring_test_reports', 'SELECT'),
