@@ -324,16 +324,6 @@ WAMN_SCS_OFF_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
 The test asserts the server genuinely reports `off` before proceeding, so a
 stock server makes it fail rather than pass vacuously.
 
-### `[6A / wamn-ftfc.14]` — the authoring-client gates
-
-`clients/authoring-client`, documented in `clients/README.md`. Run from that
-directory:
-
-```bash
-node scripts/test.mjs    # drift, typed answers, no-shortcut checks; network-free
-node scripts/cycle.mjs   # composed edit-to-publish cycle against a live surface
-```
-
 ### Other live gates that carry their command in-source
 
 These have no section tag; the file's own doc comment is the recipe of record.

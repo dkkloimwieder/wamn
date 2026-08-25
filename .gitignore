@@ -13,8 +13,6 @@
 
 # Client workspace artifacts
 /node_modules/
-/clients/*/node_modules/
-/clients/*/dist/
 
 # bv (beads viewer) local config and caches
 .bv/

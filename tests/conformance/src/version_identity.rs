@@ -115,20 +115,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     // CheckSpec below is the only governed `0.1` reconciliation identity left in
     // that file.
     GovernedLiteral {
-        path: "clients/authoring-client/src/generated/authoring.ts",
-        // Four pinned envelopes, one per `schema_version` field in
-        // crates/authoring/model/src/lib.rs: AuthoringRequest,
-        // AuthoringResponse, and the AuthoringQuery{Request,Response} pair that
-        // wamn-0h0g.7.3 (ce919195) added to the wire contract.
-        exact: r#""schema-version": "0.1";"#,
-        expected_count: 4,
-    },
-    GovernedLiteral {
-        path: "clients/authoring-client/src/generated/authoring.ts",
-        exact: r#"export const AUTHORING_SCHEMA_VERSION = "0.1" as const;"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "crates/execution/run-state/src/invocation_context.rs",
         exact: r#"pub const INVOCATION_CONTEXT_VERSION: &str = "0.1";"#,
         expected_count: 1,
