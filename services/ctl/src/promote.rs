@@ -529,7 +529,7 @@ async fn load_components(
 
 fn decode_component(row: Row, scope: &ComponentCatalogScope) -> anyhow::Result<AdmittedComponent> {
     let component: String = row.get(0);
-    Ok(AdmittedComponent {
+    let decoded = AdmittedComponent {
         scope: scope.clone(),
         component: component.clone(),
         interface_version: row.get(1),
@@ -553,7 +553,17 @@ fn decode_component(row: Row, scope: &ComponentCatalogScope) -> anyhow::Result<A
             "parameters",
         )?,
         effects: decode_json::<Vec<AdmittedComponentEffect>>(row.get(9), &component, "effects")?,
-    })
+    };
+    // wamn-0h0g.21.10: promotion copies this stored fact verbatim into the
+    // target catalog version, so an effect projection no validator derived
+    // would be laundered forward as a fresh admission. Refuse it here instead.
+    wamn_catalog::verify_stored_effect_projection(&decoded).with_context(|| {
+        format!(
+            "component {component:?} stores an effect projection its audited imports do not \
+             derive; re-admit it through the validator"
+        )
+    })?;
+    Ok(decoded)
 }
 
 fn decode_json<T: DeserializeOwned>(

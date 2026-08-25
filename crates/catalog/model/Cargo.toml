@@ -23,6 +23,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2 = { workspace = true }
 url = { workspace = true }
+wamn-component-policy = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-event-wire = { workspace = true }
 

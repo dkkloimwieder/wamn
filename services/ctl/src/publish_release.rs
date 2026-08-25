@@ -538,7 +538,7 @@ pub async fn load_component_facts(
     rows.into_iter()
         .map(|row| {
             let component: String = row.get(0);
-            Ok(AdmittedComponent {
+            let decoded = AdmittedComponent {
                 scope: scope.clone(),
                 component: component.clone(),
                 interface_version: row.get(1),
@@ -566,7 +566,21 @@ pub async fn load_component_facts(
                     &component,
                     "effects",
                 )?,
-            })
+            };
+            // wamn-0h0g.21.10: a row whose effects its own audited imports do
+            // not derive was never produced by the validator, so no release may
+            // be minted over it until the component is re-admitted.
+            wamn_catalog::verify_stored_effect_projection(&decoded).map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::Component,
+                    format!(
+                        "component {component:?} stores an effect projection its audited imports \
+                         do not derive; re-admit it through the validator"
+                    ),
+                    error,
+                )
+            })?;
+            Ok(decoded)
         })
         .collect()
 }

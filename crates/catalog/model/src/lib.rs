@@ -21,7 +21,7 @@ pub use component_library::{
     AdmittedComponentPort, ComponentCatalogScope, ComponentConnection, ComponentConnectionType,
     ComponentDeclaration, ComponentFactError, ComponentFactErrorKind,
     ComponentParameterDeclaration, ComponentPortDeclaration, ComponentSchema,
-    normalize_component_fact, schema_digests_match,
+    normalize_component_fact, schema_digests_match, verify_stored_effect_projection,
 };
 pub use serving_manifest::{
     MAX_SERVING_MANIFEST_BYTES, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,

@@ -167,6 +167,7 @@ pub enum ComponentFactErrorKind {
     InvalidSchema,
     RemoteSchemaReference,
     UnimportedEffect,
+    UnprojectedEffect,
     DuplicateConnection,
     UnimportedConnection,
     UndeclaredConnection,
@@ -279,7 +280,28 @@ pub fn schema_digests_match(left: &ComponentSchema, right: &ComponentSchema) -> 
     left.schema_digest == right.schema_digest
 }
 
-/// Sort and deduplicate derived effects, refusing any not backed by an import.
+/// Refuse a stored component fact whose effects its own imports do not derive.
+///
+/// `effects` is a total function of the audited imports, and `imports` is the
+/// half the OCI artifact config digest attests, so re-running the admission
+/// rules over a stored pair decides whether a validator ever derived that
+/// projection — without the component bytes. A row that fails here was written
+/// by something other than the validator (wamn-0h0g.21.10: the converge ALTER
+/// that defaulted pre-existing rows to `'[]'`, the positive claim of purity)
+/// and its component is unpublishable until it is re-admitted.
+pub fn verify_stored_effect_projection(
+    component: &AdmittedComponent,
+) -> Result<(), ComponentFactError> {
+    normalize_effects(component.effects.clone(), &component.imports).map(|_| ())
+}
+
+/// Sort and deduplicate derived effects, pinning them to exactly the imports.
+///
+/// Both directions are checked: no effect interface may be absent from the
+/// audited imports, and no import that leaves the host may be absent from the
+/// projection. Together they admit exactly one `effects` value per import set,
+/// which is what lets [`verify_stored_effect_projection`] recognize a value no
+/// validator produced.
 fn normalize_effects(
     effects: Vec<AdmittedComponentEffect>,
     imports: &[String],
@@ -305,6 +327,25 @@ fn normalize_effects(
     }
     normalized.sort_by(|left, right| left.package.cmp(&right.package));
     normalized.dedup_by(|left, right| left.package == right.package);
+
+    for import in imports {
+        let package = wamn_component_policy::import_pkg(import);
+        if !wamn_component_policy::is_effect_package(package) {
+            continue;
+        }
+        if !normalized.iter().any(|effect| {
+            effect.package == package
+                && effect
+                    .interfaces
+                    .iter()
+                    .any(|interface| interface == import)
+        }) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::UnprojectedEffect,
+                format!("audited import {import:?} is absent from the effect projection"),
+            ));
+        }
+    }
     Ok(normalized)
 }
 
@@ -571,6 +612,68 @@ mod tests {
 
         assert!(facts.component.effects.is_empty());
         assert_eq!(facts.component.imports.len(), 1);
+    }
+
+    /// A stored row exactly as the wamn-0h0g.21.9 converge ALTER leaves one:
+    /// the audited imports it was admitted with, and the `'[]'` the DEFAULT
+    /// wrote over them.
+    fn migration_defaulted_fact(imports: &[&str]) -> AdmittedComponent {
+        AdmittedComponent {
+            scope: ComponentCatalogScope {
+                tenant_id: "tenant-a".to_string(),
+                catalog_id: "orders".to_string(),
+                catalog_version: 7,
+            },
+            component: "transform".to_string(),
+            interface_version: "0.1.0".to_string(),
+            operation: "map".to_string(),
+            component_digest: format!("sha256:{}", "a".repeat(64)),
+            imports: imports.iter().map(|name| (*name).to_string()).collect(),
+            imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            effects: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+        }
+    }
+
+    /// wamn-0h0g.21.10. The converge ALTER defaulted every pre-existing row to
+    /// `'[]'` — the positive claim of purity — for a component whose own
+    /// audited imports prove it reaches Postgres. No validator derived that, so
+    /// reading the row must refuse rather than trust it.
+    #[test]
+    fn a_migration_defaulted_effect_projection_is_refused() {
+        let stored = migration_defaulted_fact(&["wamn:postgres/client@0.1.0"]);
+
+        let error = verify_stored_effect_projection(&stored)
+            .expect_err("an underived purity claim is refused");
+
+        assert_eq!(error.kind(), ComponentFactErrorKind::UnprojectedEffect);
+    }
+
+    /// The other half of the same guard: a row whose `'[]'` happens to be the
+    /// value its imports do derive is not a fabricated claim, and stays
+    /// readable. That is what keeps the refusal scoped to exactly the rows a
+    /// validator never produced.
+    #[test]
+    fn a_stored_pure_projection_its_imports_derive_stays_readable() {
+        let stored = migration_defaulted_fact(&["wasi:clocks/monotonic-clock@0.2.3"]);
+
+        verify_stored_effect_projection(&stored).expect("a derived pure projection verifies");
+    }
+
+    /// Admission itself must never mint the shape the migration fabricated.
+    #[test]
+    fn admission_refuses_an_effect_projection_narrower_than_the_imports() {
+        let error = normalize_component_fact(
+            declaration(),
+            format!("sha256:{}", "a".repeat(64)),
+            ["wamn:postgres/client@0.1.0".to_string()],
+            Vec::new(),
+        )
+        .expect_err("an under-claimed projection is refused at admission");
+
+        assert_eq!(error.kind(), ComponentFactErrorKind::UnprojectedEffect);
     }
 
     #[test]

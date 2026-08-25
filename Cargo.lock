@@ -4165,6 +4165,7 @@ dependencies = [
  "sha2 0.11.0",
  "url",
  "wamn-catalog",
+ "wamn-component-policy",
  "wamn-event-wire",
  "wamn-execution-contract",
 ]

@@ -125,8 +125,13 @@ CREATE TABLE IF NOT EXISTS catalog.component_library (
 );
 -- wamn-0h0g.21.9: the derived effect projection, additive onto a store created
 -- before it existed. Rows admitted earlier read as '[]' — "pure" — which their
--- validator never derived; nothing reads this column yet, and such a component
--- must be re-admitted before the first consumer of it ships.
+-- validator never derived. wamn-0h0g.21.10 refuses that claim instead of
+-- rewriting it, which an immutable relation could not accept anyway: every
+-- reader re-derives the projection from the row's own audited imports and
+-- refuses a row the two do not agree on. A pre-migration component importing
+-- nothing that leaves the host keeps its '[]' — now derived rather than
+-- asserted; one that does is unpublishable until re-admitted through the
+-- validator. See wamn_catalog::verify_stored_effect_projection.
 ALTER TABLE catalog.component_library
     ADD COLUMN IF NOT EXISTS effects jsonb NOT NULL DEFAULT '[]'::jsonb
         CHECK (jsonb_typeof(effects) = 'array');

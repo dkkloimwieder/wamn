@@ -1689,9 +1689,14 @@ FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 -- an immutable relation whose rows cannot be rewritten afterwards.
 --
 -- A row admitted before this migration therefore reads as '[]' — "pure" — which
--- its validator never derived. Nothing reads `effects` yet, so no authority
--- decision rests on that today; a component admitted earlier must be re-admitted
--- before the first consumer of this column ships.
+-- its validator never derived. wamn-0h0g.21.10 refuses that claim rather than
+-- rewriting it: `effects` is a total function of `imports`, and `imports` is the
+-- half the OCI artifact config digest attests, so every reader re-derives the
+-- projection from the row's own audited imports and refuses a row the two do not
+-- agree on. A pre-migration component that imports nothing leaving the host
+-- keeps its '[]' — now derived rather than asserted; one that does is
+-- unpublishable until it is re-admitted through the validator, which is why no
+-- backfill appears here. See wamn_catalog::verify_stored_effect_projection.
 ALTER TABLE catalog.component_library
     ADD COLUMN IF NOT EXISTS effects jsonb NOT NULL DEFAULT '[]'::jsonb
         CHECK (jsonb_typeof(effects) = 'array');
