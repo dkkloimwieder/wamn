@@ -533,7 +533,7 @@
       "migration_owners": ["control-portable-store-installer"],
       "schema_source": "deploy/sql/control-portable-store.sql",
       "writers": ["control-portable-store-installer"],
-      "readers": ["scenario-worker"],
+      "readers": [],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
       "drift_gate": "SR13:control-portable-live"
     },
@@ -555,7 +555,7 @@
       "migration_owners": ["control-portable-store-installer"],
       "schema_source": "deploy/sql/control-portable-store.sql",
       "writers": ["control-portable-store-installer"],
-      "readers": ["scenario-worker"],
+      "readers": [],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:control-portable-live"
     },
@@ -636,7 +636,7 @@
       "migration_owners": ["control-portable-store-installer"],
       "schema_source": "deploy/sql/control-portable-store.sql",
       "writers": ["control-portable-store-installer"],
-      "readers": ["scenario-worker"],
+      "readers": [],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
       "drift_gate": "SR13:control-portable-live"
     },
@@ -752,9 +752,7 @@
         "ctl-copy"
       ],
       "readers": [
-        "ctl-copy",
-        "materializer",
-        "scenario-worker"
+        "ctl-copy"
       ],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
       "drift_gate": "SR13:catalog-live"
@@ -797,9 +795,7 @@
       ],
       "readers": [
         "ctl-copy",
-        "ctl-migrate",
-        "materializer",
-        "scenario-worker"
+        "ctl-migrate"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:catalog-live"
