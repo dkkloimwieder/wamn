@@ -97,7 +97,7 @@ follows the wiring vocabulary sweep (`wamn-0h0g.26.18`).
 | file | lines | fate |
 | --- | --- | --- |
 | `store/test_orchestration.rs` | 845 | **deletes.** Reservation/case-run/report lifecycle. |
-| `test_set.rs` | 538 | **mostly deletes.** The sequential per-ordinal loop is the resumption protocol. |
+| `test_set.rs` | 538 | **deletes.** The sequential per-ordinal loop is the resumption protocol, and `evaluate()`'s one production caller lives inside it. |
 | `store/admission.rs` | 528 | **~350-400 survive**, re-homed under the gate verb; see §4. |
 | `store/drafts.rs` | 70 | **deletes.** |
 | `management.rs` | 2,032 | **partially deletes**: `lock_retry_identity`, `read_retry_outcome`, `settle_retry`, `classify_retry`, `test_set_reuse`, `save_draft_route`. |
@@ -112,7 +112,42 @@ idempotency makes it dead weight**: the report either exists for that hash or it
 | --- | --- |
 | `wamn_run.authoring_test_run_reservations` | **deletes.** `state`, `whole_deadline_at`, `finalized_at`, `command_hash` are all resumption-protocol state. |
 | `wamn_run.authoring_test_case_runs` | **deletes.** Resolved by §5.1: effect-free cases make re-execution free, so per-case progress is not worth remembering. |
-| `wamn_run.authoring_test_reports` | **survives, re-keyed** by wiring-hash. It is already immutable and finalized-only. |
+| `wamn_run.authoring_test_reports` | **deletes.** ~~survives, re-keyed by wiring-hash~~ — struck by the owner ruling of 2026-08-25; see §3.3.1. |
+
+#### 3.3.1 The struck survivor-clause (owner ruling, 2026-08-25)
+
+The two struck clauses above — `test_set.rs` "mostly deletes" and
+`authoring_test_reports` "survives, re-keyed by wiring-hash" — were contradictions,
+and the wave-65 lane was correct to refuse them rather than force the bead.
+
+**The measurement that refuted them.** `authoring_test_reports`' only production writer
+is `insert_finalized_test_report_sql()` in `store/test_orchestration.rs`, which this
+same section deletes; its only production reader drives off
+`authoring_test_run_reservations`, which this same section also deletes. A table whose
+writer, reader and keying all die does not *survive* — preserving its identity while
+every one of its collaborators is deleted is a rename wearing a survival ruling. And
+"re-keyed by wiring-hash" is `wamn-0h0g.8.5.6`, which is sequenced *after* this bead, so
+the clause was circular as well as contradictory.
+
+**Re-derived from the ratified premise.** An effect-free gate's report is *reproducible
+from the document*: same hash, same verdict, byte-stable. So this table as durable state
+protects nothing — it was the composition machinery's memory for per-ordinal resumption
+across effectful cases, and §5.1's effect-free clause deleted the thing it remembered.
+The gate's one durable fact is the report row keyed by `wiring_hash` that publish
+consumes, which has its own ruled home in the report-on-the-wiring lineage. Persisted
+case-level detail is a cache, and a cache for a reproducible computation is not built
+ahead of demand.
+
+**Consequences.** All three run-plane `authoring_test_*` tables delete together.
+`ReportProjection::Pending` deletes with them — it was reachable only while the
+reservation protocol stood. `wamn-0h0g.8.5.6` re-scopes from *re-key the table* to
+*the gate verb writes the report row keyed by `wiring_hash`*: construction against the
+surviving row, not migration of a corpse. The circularity dissolves because the thing
+that made it circular is gone.
+
+**The standing rule this produced, owner-stated:** any "survives" or "re-keys" clause on
+flow-era state must name its post-collapse **writer and reader in the same sentence**, or
+it is a deletion.
 
 ### 3.4 Contract surface
 
@@ -132,6 +167,12 @@ This is what supersedes the `last_attempt_at` rider.
 
 `catalog.authoring_command_audit` **survives** — it audits *who ran what*, which is
 orthogonal to draft persistence. Do not sweep it.
+
+Per the 2026-08-25 standing rule (§3.3.1), a survivor-clause must name its post-collapse
+writer and reader in the same sentence, so: it is **written** by `INSERT_COMMAND_AUDIT_SQL`
+at `services/scenario-worker/src/management.rs:56` and **read** by the query at
+`management.rs:70`, both under the `scenario-worker` principal, and both survive the
+collapse because they record command attribution rather than draft or composition state.
 
 `catalog.draft_safe_connection_grants` is a **separate finding, not a survivor.** It has
 **zero production DML** — no INSERT, UPDATE, or SELECT anywhere in the tree. Its only
