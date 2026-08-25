@@ -20,9 +20,9 @@ use clap::Args;
 use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, IsolationLevel, NoTls, Row, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentParameter, AdmittedComponentPort, ComponentCatalogScope,
-    ServingManifest, WiringDocument, flip_activation, record_activation_event,
-    validate_wiring_compatibility,
+    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentParameter, AdmittedComponentPort,
+    ComponentCatalogScope, ServingManifest, WiringDocument, flip_activation,
+    record_activation_event, validate_wiring_compatibility,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -56,7 +56,7 @@ SELECT snapshot.manifest_digest, snapshot.canonical_bytes, catalog.document::tex
 const SELECT_COMPONENTS_SQL: &str = "\
 SELECT component, interface_version, operation, component_digest, \
        imports::text, imports_fingerprint, input_ports::text, \
-       output_ports::text, parameters::text \
+       output_ports::text, parameters::text, effects::text \
   FROM catalog.component_library \
  WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
  ORDER BY component COLLATE \"C\", interface_version COLLATE \"C\"";
@@ -64,7 +64,7 @@ SELECT component, interface_version, operation, component_digest, \
 const SELECT_COMPONENT_SQL: &str = "\
 SELECT component, interface_version, operation, component_digest, \
        imports::text, imports_fingerprint, input_ports::text, \
-       output_ports::text, parameters::text \
+       output_ports::text, parameters::text, effects::text \
   FROM catalog.component_library \
  WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
    AND component = $4 AND interface_version = $5";
@@ -94,14 +94,6 @@ SELECT component_digest, store_alias, requirement_json::text, requirement_hash \
   FROM catalog.connection_requirements \
  WHERE tenant_id = $1 AND component_digest IS NOT NULL \
  ORDER BY component_digest COLLATE \"C\", store_alias COLLATE \"C\"";
-
-const EXACT_COMPONENT_REQUIREMENT_SQL: &str = "\
-SELECT EXISTS (\
-    SELECT 1 FROM catalog.connection_requirements \
-     WHERE tenant_id = $1 AND component_digest = $2 AND store_alias = $3 \
-       AND artifact_hash IS NULL AND requirement_name IS NULL \
-       AND requirement_json = $4::text::jsonb AND requirement_hash = $5\
-    )";
 
 const TARGET_BINDING_READY_SQL: &str = "\
 SELECT EXISTS (\
@@ -560,6 +552,7 @@ fn decode_component(row: Row, scope: &ComponentCatalogScope) -> anyhow::Result<A
             &component,
             "parameters",
         )?,
+        effects: decode_json::<Vec<AdmittedComponentEffect>>(row.get(9), &component, "effects")?,
     })
 }
 
@@ -1038,7 +1031,10 @@ async fn persist_requirement(
         .await
         .context("append portable component requirement")?;
     let exact: bool = transaction
-        .query_one(EXACT_COMPONENT_REQUIREMENT_SQL, &params)
+        .query_one(
+            wamn_schema_control::connections::exact_component_connection_requirement_sql(),
+            &params,
+        )
         .await
         .context("verify portable component requirement")?
         .get(0);
@@ -1235,7 +1231,10 @@ mod tests {
             assert!(insert.contains("ON CONFLICT DO NOTHING"));
             assert!(!insert.contains("DO UPDATE"));
         }
-        assert!(EXACT_COMPONENT_REQUIREMENT_SQL.contains("requirement_hash = $5"));
+        assert!(
+            wamn_schema_control::connections::exact_component_connection_requirement_sql()
+                .contains("requirement_hash = $5")
+        );
         assert!(EXACT_TARGET_WIRING_SQL.contains("gate_report_id = $8"));
         assert!(flip_activation().contains("INTO catalog.wiring_activation"));
         assert!(record_activation_event().contains("INTO catalog.wiring_activation_events"));

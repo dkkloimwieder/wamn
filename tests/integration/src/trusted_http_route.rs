@@ -129,7 +129,8 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
             ]),
         },
     )
-    .context("admit the http-request guest")?;
+    .context("admit the http-request guest")?
+    .component;
 
     publish_component(&options.artifact_base, &admitted, &component_bytes)
         .await
@@ -385,9 +386,16 @@ async fn seed_with_client(
     let output_ports =
         serde_json::to_string(&component.output_ports).context("serialize outputs")?;
     let parameters = serde_json::to_string(&component.parameters).context("serialize params")?;
+    let effects = serde_json::to_string(&component.effects).context("serialize effects")?;
+    // The whole portable record component admission mints, not just its
+    // descriptor: `requirement_hash` is the SHA-256 of exactly these bytes.
     let requirement_json = serde_json::json!({
-        "requirement-type": "http",
-        "contract": CONTRACT,
+        "component-digest": component.component_digest,
+        "store-alias": STORE_ALIAS,
+        "requirement": {
+            "requirement-type": "http",
+            "contract": CONTRACT,
+        },
     })
     .to_string();
     // `require_direct_transport` demands an EXPLICIT null proxy-transport: an
@@ -454,10 +462,10 @@ async fn seed_with_client(
         .execute(
             "INSERT INTO catalog.component_library (\
                  tenant_id, catalog_id, catalog_version, component, interface_version, operation, \
-                 component_digest, imports, imports_fingerprint, input_ports, output_ports, \
-                 parameters\
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9, \
-                 $10::text::jsonb, $11::text::jsonb, $12::text::jsonb)",
+                 component_digest, imports, imports_fingerprint, effects, input_ports, \
+                 output_ports, parameters\
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9, $10::text::jsonb, \
+                 $11::text::jsonb, $12::text::jsonb, $13::text::jsonb)",
             &[
                 &TENANT,
                 &CATALOG,
@@ -468,6 +476,7 @@ async fn seed_with_client(
                 &component.component_digest,
                 &imports,
                 &component.imports_fingerprint,
+                &effects,
                 &input_ports,
                 &output_ports,
                 &parameters,

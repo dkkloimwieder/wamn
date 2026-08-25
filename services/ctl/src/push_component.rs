@@ -16,7 +16,9 @@ use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, Config as PgConfig, NoTls};
-use wamn_catalog::{AdmittedComponent, ComponentDeclaration};
+use wamn_catalog::{
+    AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
+};
 use wamn_runtime::component_admission::validate_component_admission;
 use wamn_runtime::component_artifact::{
     component_artifact_config_bytes, component_artifact_layout, component_artifact_reference,
@@ -25,6 +27,8 @@ use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
+use wamn_schema_control::connections::ComponentConnectionRequirement;
+use wamn_schema_model::ConnectionTypeDescriptor;
 
 /// Bound each registry connect/read phase without adding a second deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -33,10 +37,11 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
 const INSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
          tenant_id, catalog_id, catalog_version, component, interface_version, operation, \
-         component_digest, imports, imports_fingerprint, input_ports, output_ports, parameters\
+         component_digest, imports, imports_fingerprint, effects, input_ports, output_ports, \
+         parameters\
      ) VALUES (\
-         $1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9, \
-         $10::text::jsonb, $11::text::jsonb, $12::text::jsonb\
+         $1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9, $10::text::jsonb, \
+         $11::text::jsonb, $12::text::jsonb, $13::text::jsonb\
      ) ON CONFLICT DO NOTHING RETURNING admitted_at";
 
 const EXACT_COMPONENT_SQL: &str = "SELECT EXISTS (\
@@ -44,8 +49,9 @@ const EXACT_COMPONENT_SQL: &str = "SELECT EXISTS (\
           WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
             AND component = $4 AND interface_version = $5 AND operation = $6 \
             AND component_digest = $7 AND imports = $8::text::jsonb \
-            AND imports_fingerprint = $9 AND input_ports = $10::text::jsonb \
-            AND output_ports = $11::text::jsonb AND parameters = $12::text::jsonb\
+            AND imports_fingerprint = $9 AND effects = $10::text::jsonb \
+            AND input_ports = $11::text::jsonb AND output_ports = $12::text::jsonb \
+            AND parameters = $13::text::jsonb\
      )";
 
 #[derive(Debug, Args)]
@@ -94,7 +100,7 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
 
     let engine = wamn_runtime::build_engine(&[]).context("build component admission engine")?;
-    let admitted = validate_component_admission(
+    let facts = validate_component_admission(
         &engine,
         &component_bytes,
         wamn_runtime::component_admission::ComponentAdmissionRequest {
@@ -106,6 +112,12 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
         },
     )
     .context("validate exact component bytes")?;
+    let admitted = facts.component;
+    let requirements = facts
+        .connections
+        .iter()
+        .map(|connection| portable_requirement(&admitted.component_digest, connection))
+        .collect::<Vec<_>>();
     let catalog_version = i32::try_from(admitted.scope.catalog_version)
         .context("catalog-version exceeds the PostgreSQL integer carrier")?;
     let database_config: PgConfig = args
@@ -135,9 +147,24 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
     )
     .await?;
 
-    persist_admitted_component(&database_config, &admitted, catalog_version).await?;
+    persist_admitted_component(&database_config, &admitted, &requirements, catalog_version).await?;
     println!("{}", admitted.component_digest);
     Ok(())
+}
+
+/// Translate one admitted connection into its platform-owned portable record.
+///
+/// This is the single place a declared alias becomes connection SEMANTICS. The
+/// descriptor is minted from the platform's own constructor, never authored, so
+/// field ownership and credential injection cannot be widened by a declaration.
+fn portable_requirement(
+    component_digest: &str,
+    connection: &ComponentConnection,
+) -> ComponentConnectionRequirement {
+    let descriptor = match connection.requirement_type {
+        ComponentConnectionType::Http => ConnectionTypeDescriptor::http_v1(),
+    };
+    ComponentConnectionRequirement::new(component_digest, &connection.store_alias, descriptor)
 }
 
 async fn publish_and_verify(
@@ -213,6 +240,7 @@ fn artifact_layout(
 async fn persist_admitted_component(
     database_config: &PgConfig,
     component: &AdmittedComponent,
+    requirements: &[ComponentConnectionRequirement],
     catalog_version: i32,
 ) -> anyhow::Result<()> {
     let (mut client, connection) = database_config
@@ -220,7 +248,7 @@ async fn persist_admitted_component(
         .await
         .context("connect to T1 control database")?;
     let connection_task = tokio::spawn(connection);
-    let stored = persist_with_client(&mut client, component, catalog_version).await;
+    let stored = persist_with_client(&mut client, component, requirements, catalog_version).await;
     match stored {
         Ok(()) => {
             drop(client);
@@ -239,6 +267,7 @@ async fn persist_admitted_component(
 async fn persist_with_client(
     client: &mut PgClient,
     component: &AdmittedComponent,
+    requirements: &[ComponentConnectionRequirement],
     catalog_version: i32,
 ) -> anyhow::Result<()> {
     let transaction = client
@@ -250,10 +279,51 @@ async fn persist_with_client(
         .await
         .context("claim component-library tenant")?;
     append_or_verify_admitted_component(&transaction, component, catalog_version).await?;
+    // One transaction, because a library fact whose connection requirements are
+    // missing is a component no environment can bind, and the reverse is a
+    // requirement no admitted digest owns.
+    for requirement in requirements {
+        append_or_verify_requirement(&transaction, &component.scope.tenant_id, requirement).await?;
+    }
     transaction
         .commit()
         .await
         .context("commit component-library admission")
+}
+
+/// Append one portable connection requirement, or prove an exact retry.
+async fn append_or_verify_requirement(
+    transaction: &tokio_postgres::Transaction<'_>,
+    tenant_id: &str,
+    requirement: &ComponentConnectionRequirement,
+) -> anyhow::Result<()> {
+    let canonical_json = String::from_utf8(requirement.canonical_bytes())
+        .context("portable connection requirement is not UTF-8")?;
+    let requirement_hash = requirement.requirement_hash();
+    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 5] = [
+        &tenant_id,
+        &requirement.component_digest(),
+        &requirement.store_alias(),
+        &canonical_json,
+        &requirement_hash,
+    ];
+    transaction
+        .execute(
+            wamn_schema_control::connections::insert_component_connection_requirement_sql(),
+            &params,
+        )
+        .await
+        .context("append portable component connection requirement")?;
+    let exact: bool = transaction
+        .query_one(
+            wamn_schema_control::connections::exact_component_connection_requirement_sql(),
+            &params,
+        )
+        .await
+        .context("verify portable component connection requirement")?
+        .get(0);
+    ensure!(exact, "component-connection-requirement-conflict");
+    Ok(())
 }
 
 /// Append one admitted component fact, or prove an exact retry.
@@ -267,13 +337,15 @@ pub(crate) async fn append_or_verify_admitted_component(
 ) -> anyhow::Result<()> {
     let imports =
         serde_json::to_string(&component.imports).context("serialize admitted imports")?;
+    let effects =
+        serde_json::to_string(&component.effects).context("serialize admitted effects")?;
     let input_ports =
         serde_json::to_string(&component.input_ports).context("serialize admitted input ports")?;
     let output_ports = serde_json::to_string(&component.output_ports)
         .context("serialize admitted output ports")?;
     let parameters =
         serde_json::to_string(&component.parameters).context("serialize admitted parameters")?;
-    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 12] = [
+    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 13] = [
         &component.scope.tenant_id,
         &component.scope.catalog_id,
         &catalog_version,
@@ -283,6 +355,7 @@ pub(crate) async fn append_or_verify_admitted_component(
         &component.component_digest,
         &imports,
         &component.imports_fingerprint,
+        &effects,
         &input_ports,
         &output_ports,
         &parameters,
@@ -316,9 +389,33 @@ mod tests {
         assert!(!INSERT_COMPONENT_SQL.contains("DO UPDATE"));
         assert!(EXACT_COMPONENT_SQL.contains("component_digest = $7"));
         assert!(EXACT_COMPONENT_SQL.contains("imports = $8::text::jsonb"));
+        assert!(EXACT_COMPONENT_SQL.contains("effects = $10::text::jsonb"));
         assert_eq!(
             CLAIM_TENANT_SQL,
             "SELECT set_config('app.tenant', $1, true)"
+        );
+    }
+
+    /// The exact bytes this publisher stores in `requirement_json`, frozen
+    /// whole. `requirement_hash` is the SHA-256 of these same bytes, so an
+    /// added, removed, or renamed field moves the persisted identity of every
+    /// component connection and must not pass silently.
+    #[test]
+    fn the_minted_portable_requirement_document_is_frozen() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let requirement = portable_requirement(
+            &digest,
+            &ComponentConnection {
+                store_alias: "erp".to_owned(),
+                requirement_type: ComponentConnectionType::Http,
+            },
+        );
+
+        assert_eq!(
+            String::from_utf8(requirement.canonical_bytes()).expect("canonical bytes are UTF-8"),
+            format!(
+                r#"{{"component-digest":"{digest}","store-alias":"erp","requirement":{{"descriptor-version":"1","requirement-type":"http","contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","field-ownership":[{{"field":"method","owner":"author"}},{{"field":"relative-target","owner":"author"}},{{"field":"headers","owner":"author"}},{{"field":"body","owner":"author"}},{{"field":"authority","owner":"environment"}},{{"field":"tls","owner":"environment"}},{{"field":"redirect","owner":"environment"}},{{"field":"proxy","owner":"environment"}},{{"field":"credential","owner":"environment"}}],"credential-injection":"environment-selected-http-header"}}}}"#
+            )
         );
     }
 
@@ -398,11 +495,13 @@ mod tests {
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
+                    connections: Vec::new(),
                 },
                 admitted_platform_packages: std::collections::BTreeSet::new(),
             },
         )
-        .expect("fixture bytes admit");
+        .expect("fixture bytes admit")
+        .component;
         let artifact = component_artifact_reference(&artifact_base, &component.component_digest)
             .expect("fixture artifact reference derives");
         let reference = Reference::with_tag(

@@ -236,6 +236,20 @@ pub fn insert_component_connection_requirement_sql() -> &'static str {
      ON CONFLICT DO NOTHING"
 }
 
+/// Prove an existing component requirement row is byte-identical to this one.
+///
+/// The parameters are exactly [`insert_component_connection_requirement_sql`]'s,
+/// so a writer whose insert converged away can tell whether it converged onto
+/// its own record or collided with a different one at the same coordinate.
+pub fn exact_component_connection_requirement_sql() -> &'static str {
+    "SELECT EXISTS (\
+       SELECT 1 FROM catalog.connection_requirements \
+        WHERE tenant_id = $1 AND component_digest = $2 AND store_alias = $3 \
+          AND artifact_hash IS NULL AND requirement_name IS NULL \
+          AND requirement_json = $4::text::jsonb AND requirement_hash = $5\
+     )"
+}
+
 /// Insert one environment-owned stable instance identity.
 pub fn insert_connection_instance_sql() -> &'static str {
     "INSERT INTO catalog.connection_instances \

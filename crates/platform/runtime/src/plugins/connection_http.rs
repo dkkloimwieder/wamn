@@ -464,14 +464,18 @@ fn authorize_snapshot(snapshot: &ConnectionEffectSnapshot) -> Result<(), Connect
     {
         return Err(ConnectionError::CredentialUnavailable);
     }
+    // `requirement_json` is the WHOLE portable record component admission
+    // minted — `{component-digest, store-alias, requirement}` — because that is
+    // the value `requirement_hash` is the SHA-256 of. The connection SEMANTICS
+    // therefore sit one level down, under `requirement`.
     if snapshot.requirement_type.as_deref() != Some("http")
         || snapshot.contract.as_deref() != Some(HTTP_CONTRACT)
         || requirement
-            .pointer("/requirement-type")
+            .pointer("/requirement/requirement-type")
             .and_then(serde_json::Value::as_str)
             != Some("http")
         || requirement
-            .pointer("/contract")
+            .pointer("/requirement/contract")
             .and_then(serde_json::Value::as_str)
             != Some(HTTP_CONTRACT)
     {
@@ -756,8 +760,12 @@ mod tests {
             component: Some("http-request".to_string()),
             interface_version: Some("0.1".to_string()),
             requirement_json: Some(serde_json::json!({
-                "requirement-type": "http",
-                "contract": HTTP_CONTRACT,
+                "component-digest": digest('a'),
+                "store-alias": "erp",
+                "requirement": {
+                    "requirement-type": "http",
+                    "contract": HTTP_CONTRACT,
+                },
             })),
             requirement_hash: Some(digest('d')),
             node_permitted: true,
