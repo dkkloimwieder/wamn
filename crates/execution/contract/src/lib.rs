@@ -7,8 +7,10 @@
 //!
 //! - **canonical JSON** — [`canonical_json_bytes`] / [`canonical_json_sha256`],
 //!   the byte-exact identity every durable boundary binds;
-//! - **node contract** — [`node_contract`], the pure execution and publication
-//!   contract plus portable HTTP request-target normalization;
+//! - **node contract** — [`node_contract`], the emission, failure and
+//!   connection-requirement vocabulary plus portable HTTP request-target
+//!   normalization, all that outlived the standard-node registry
+//!   (wamn-0h0g.26.14);
 //! - **ports** — [`MAIN_PORT`] / [`ERROR_PORT`] / [`EntryKind`], persisted names
 //!   the walk and the exposure row both read;
 //! - **cases** — [`TestSetCase`] and [`Expect`], the publish gate's bounded test

@@ -49,7 +49,6 @@ crates/                 shared Rust workspace packages
     router              wamn-router: host-side graph walk
     run-state           wamn-run-state: run history, queue, lease, and timer state
     scheduler           wamn-scheduler: pure cron, due-tick, and cadence decisions
-    standard-nodes      wamn-standard-nodes: standard node library
   events/
     wire                wamn-event-wire: event envelope contract
     registration        wamn-event-reg: event registration model

@@ -75,25 +75,9 @@ pub enum CatalogIdentityError {
     MutableIdentityInput {
         field: String,
     },
-    DuplicateInterface {
-        node_type: String,
-    },
-    NonCanonicalInterfaceOrder {
-        node_type: String,
-    },
-    InvalidInterface {
-        node_type: String,
-        message: String,
-    },
     GraphHashMismatch,
     ArtifactIdMismatch,
     ArtifactHashMismatch,
-    UnresolvedInterface {
-        node_type: String,
-    },
-    UnexpectedInterface {
-        node_type: String,
-    },
     FlowInvalid {
         codes: Vec<&'static str>,
     },
@@ -153,21 +137,6 @@ impl fmt::Display for CatalogIdentityError {
                     "mutable field {field:?} cannot enter definition identity"
                 )
             }
-            Self::DuplicateInterface { node_type } => {
-                write!(formatter, "node interface {node_type:?} is duplicated")
-            }
-            Self::NonCanonicalInterfaceOrder { node_type } => {
-                write!(
-                    formatter,
-                    "node interface {node_type:?} is not in canonical order"
-                )
-            }
-            Self::InvalidInterface { node_type, message } => {
-                write!(
-                    formatter,
-                    "node interface {node_type:?} is invalid: {message}"
-                )
-            }
             Self::GraphHashMismatch => write!(formatter, "flow graph hash does not match"),
             Self::ArtifactIdMismatch => {
                 write!(
@@ -176,18 +145,6 @@ impl fmt::Display for CatalogIdentityError {
                 )
             }
             Self::ArtifactHashMismatch => write!(formatter, "flow artifact hash does not match"),
-            Self::UnresolvedInterface { node_type } => {
-                write!(
-                    formatter,
-                    "node type {node_type:?} has no resolved interface"
-                )
-            }
-            Self::UnexpectedInterface { node_type } => {
-                write!(
-                    formatter,
-                    "node type {node_type:?} is not used by the graph"
-                )
-            }
             Self::FlowInvalid { codes } => {
                 write!(formatter, "flow validation failed: {}", codes.join(", "))
             }
