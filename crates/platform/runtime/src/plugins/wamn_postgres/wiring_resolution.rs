@@ -773,6 +773,7 @@ fn decode_active_wiring(
     let components: Vec<AdmittedComponent> =
         serde_json::from_str(&components).context("parse active wiring component facts")?;
     let components = components_used_by_document(&document, components);
+    verify_served_effect_projections(&components)?;
     let gate_report_id: String = row.try_get(5).context("decode wiring gate report id")?;
     anyhow::ensure!(!gate_report_id.is_empty(), "wiring-gate-report-id-empty");
     let scope = WiringScope {
@@ -803,6 +804,28 @@ fn decode_active_wiring(
         components: components.into(),
         gate_report_id: gate_report_id.into(),
     })
+}
+
+/// Refuse to serve a component fact whose effects its own audited imports do
+/// not derive.
+///
+/// This is the DELIVERY path. The ctl readers refuse the same row at
+/// publication time, where an operator sees the failure and can act on it; here
+/// a fabricated projection would simply be trusted. `wamn-0h0g.21.10` defaulted
+/// every pre-migration row to `'[]'` — the positive claim of purity — so the
+/// projection is re-derived from the row's own attested imports rather than
+/// believed.
+fn verify_served_effect_projections(components: &[AdmittedComponent]) -> anyhow::Result<()> {
+    for component in components {
+        wamn_catalog::verify_stored_effect_projection(component).with_context(|| {
+            format!(
+                "component {:?} stores an effect projection its audited imports do not derive; \
+                 re-admit it through the validator",
+                component.component
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn components_used_by_document(
@@ -951,5 +974,55 @@ mod tests {
                 "missing readiness predicate {predicate:?}"
             );
         }
+    }
+
+    /// A component fact exactly as the wamn-0h0g.21.9 converge ALTER leaves
+    /// one: the audited imports it was admitted with, and the `'[]'` the
+    /// DEFAULT wrote over them. Built by hand because admission itself now
+    /// refuses this shape.
+    fn migration_defaulted(imports: &[&str]) -> AdmittedComponent {
+        AdmittedComponent {
+            scope: ComponentCatalogScope {
+                tenant_id: "tenant-a".to_owned(),
+                catalog_id: "orders".to_owned(),
+                catalog_version: 7,
+            },
+            component: "transform".to_owned(),
+            interface_version: "0.1.0".to_owned(),
+            operation: "map".to_owned(),
+            component_digest: format!("sha256:{}", "a".repeat(64)),
+            imports: imports.iter().map(|name| (*name).to_owned()).collect(),
+            imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            effects: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+        }
+    }
+
+    /// wamn-0h0g.21.11. The delivery path must refuse the fabricated purity
+    /// claim, not merely the publication path. Deleting the call in
+    /// `resolve_active_wiring` leaves this failing.
+    #[test]
+    fn the_serving_path_refuses_an_effect_projection_no_validator_derived() {
+        let served = vec![migration_defaulted(&["wamn:postgres/client@0.1.0"])];
+
+        let error = verify_served_effect_projections(&served)
+            .expect_err("an underived purity claim is refused before it is served");
+
+        assert!(
+            error.to_string().contains("re-admit it through the validator"),
+            "unexpected refusal: {error}"
+        );
+    }
+
+    /// The other half: a row whose `'[]'` is the value its own imports derive
+    /// is not fabricated, and must keep serving. This is what scopes the
+    /// refusal to exactly the rows a validator never produced.
+    #[test]
+    fn the_serving_path_admits_a_projection_its_imports_derive() {
+        let served = vec![migration_defaulted(&["wasi:clocks/monotonic-clock@0.2.3"])];
+
+        verify_served_effect_projections(&served).expect("a derived pure projection serves");
     }
 }
