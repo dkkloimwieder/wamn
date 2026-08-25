@@ -5,7 +5,7 @@
 --
 -- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql, the
 -- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 gate
--- fixtures carry their own `runs`/`node_runs` copies (postgres-init.sql schema
+-- fixtures carry their own `runs` copy (postgres-init.sql schema
 -- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
 -- target of the crate's live-apply gate. Assumes pre-existing `wamn_app`,
 -- `wamn_scenario_author` and stable `wamn_effect_writer` ACL roles. Role and

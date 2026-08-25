@@ -15,7 +15,7 @@
 -- Project-environment provisioning and schema reconciliation apply this artifact
 -- after `run-state.sql`; it is not an independent durability domain.
 --
--- Security shape mirrors the rest of the platform (runs/node_runs, s2/s3, catalog):
+-- Security shape mirrors the rest of the platform (runs, s2/s3, catalog):
 -- tenant separation purely via the `app.tenant` claim the wamn:postgres plugin
 -- injects with SET LOCAL. FORCE RLS keyed on
 -- NULLIF(current_setting('app.tenant', true), ''), NULL (=> zero rows) when no

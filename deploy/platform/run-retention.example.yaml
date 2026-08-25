@@ -3,10 +3,10 @@
 # project-env's run-plane schema, so terminal run history older than the
 # retention window is pruned on a cadence — no new long-lived service, no queue.
 #
-# WHY (platform-plan risk #5): node I/O snapshots in `node_runs` are the biggest
-# storage-cost driver, so the hot `runs`/`node_runs` store must be bounded. This
-# verb DELETEs the tenant's runs in a TERMINAL state (completed / failed /
-# infrastructure-failure) older than `--retention-days`; retained run-child rows
+# WHY (platform-plan risk #5): accumulated run history is a storage-cost driver,
+# so the hot `runs` store must be bounded. This verb DELETEs the tenant's runs
+# in a TERMINAL state (completed / failed / infrastructure-failure) older than
+# `--retention-days`; retained run-child rows
 # cascade through their canonical `ON DELETE CASCADE` FKs. It is idempotent and
 # safe to repeat.
 #

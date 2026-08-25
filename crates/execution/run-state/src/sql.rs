@@ -1,15 +1,13 @@
 //! The single source of run-state SQL (docs/archive/structure-review.md SR2).
 //!
-//! Pure text builders over the `runs` / `node_runs` tables this crate owns
+//! Pure text builders over the `runs` table this crate owns
 //! (`deploy/sql/run-state.sql`), in the house shape: values are ALWAYS `$n`
 //! parameters, identifiers are pinned, table names are UNQUALIFIED (the host
 //! injects the schema via `search_path` — the S6 schema-as-fixture pattern),
 //! and the tenant comes from the session claim
-//! (`current_setting('app.tenant', true)`). These are run-level statements;
-//! mutable `node_runs` projection writes live only in the private native
-//! adapter. Status literals
-//! interpolate from [`crate::RunStatus`] so the builders cannot drift
-//! from the model (the same discipline this crate's `queue` module uses).
+//! (`current_setting('app.tenant', true)`). These are run-level statements.
+//! Status literals interpolate from [`crate::RunStatus`] so the builders cannot
+//! drift from the model (the same discipline this crate's `queue` module uses).
 //!
 //! This module is guest-compilable by construction: `String` builders only,
 //! no DB driver, no clock, no tokio in the dependency closure.
@@ -40,7 +38,7 @@ pub(crate) fn execution_input_sql(run_alias: &str) -> String {
 /// `prune-run-history` verb's statement. DELETE the current tenant's `runs` rows
 /// in a TERMINAL state ([`RunStatus::is_terminal`] — completed / failed /
 /// infrastructure-failure) whose `created_at` predates `$1` days ago.
-/// `node_runs` (and any surviving `run_queue` rows) cascade
+/// Any surviving `run_queue` rows cascade
 /// via their `ON DELETE CASCADE` FK to `runs`. A `dispatched`/`running` run is
 /// never pruned (it may still complete). Age-based
 /// only in v0; no execution-lineage metadata participates.
@@ -101,8 +99,8 @@ mod tests {
         }
     }
 
-    /// The 9.6 prune statement targets `runs` (cascading to `node_runs`), scoped
-    /// to the claim, and only TERMINAL statuses over an age predicate — never a
+    /// The 9.6 prune statement targets `runs`, scoped to the claim, and only
+    /// TERMINAL statuses over an age predicate — never a
     /// `running`/`dispatched` run.
     #[test]
     fn prune_targets_terminal_runs_only() {

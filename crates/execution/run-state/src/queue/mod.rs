@@ -38,7 +38,7 @@
 //! The host-only Postgres adapter composes the transaction and hands the exact
 //! frozen wiring identity plus payload to the router driver.
 //! Does **not** own: the router walk / retry (the claimed run drives it);
-//! the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
+//! the `runs` schema (5.7 — 5.14 co-transacts
 //! and reuses the reserved `dispatched`/`infrastructure-failure` statuses via
 //! [`crate::RunStatus`]); the payload byte store (5.10).
 //!

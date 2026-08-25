@@ -2,16 +2,15 @@
 //! for the pure `wamn_run_state::sql::prune_terminal_runs_sql` builder.
 //!
 //! Deletes a project-env's TERMINAL run history older than a retention window so
-//! the `runs`/`node_runs` HOT store stays bounded (node I/O snapshots are the
-//! biggest storage-cost driver — platform-plan risk #5). Only runs in a terminal
-//! state (completed / failed / infrastructure-failure) are eligible; a
+//! the `runs` HOT store stays bounded (platform-plan risk #5). Only runs in a
+//! terminal state (completed / failed / infrastructure-failure) are eligible; a
 //! `dispatched`/`running` run is never pruned.
 //!
 //! **Role:** connects as the APP role (`wamn_app`, NOSUPERUSER/NOBYPASSRLS) under
 //! the tenant floor — unlike the schema-owning verbs, this is an ordinary
 //! DELETE the app role is granted. The delete is scoped to `--tenant`'s
-//! `app.tenant` claim (RLS + the explicit predicate), and `node_runs` plus any
-//! stale `run_queue` row cascade via their `ON DELETE CASCADE` FK to `runs`.
+//! `app.tenant` claim (RLS + the explicit predicate), and any stale `run_queue`
+//! row cascades via its `ON DELETE CASCADE` FK to `runs`.
 //! Idempotent and safe to repeat on a cadence
 //! (`deploy/platform/run-retention.example.yaml`).
 //!
@@ -30,8 +29,8 @@ pub struct PruneRunHistoryArgs {
     #[arg(long, env = "WAMN_PG_URL")]
     pub database_url: String,
 
-    /// The run-plane schema the `runs`/`node_runs` tables live in (set as the
-    /// session `search_path`). Bare identifier, and REQUIRED: the statement this
+    /// The run-plane schema the `runs` table lives in (set as the session
+    /// `search_path`). Bare identifier, and REQUIRED: the statement this
     /// verb drives is `DELETE FROM runs` — UNQUALIFIED — so it resolves through
     /// that session `search_path`. A default would let an invocation that omits
     /// the flag prune a relation the operator never named and still report
@@ -90,7 +89,7 @@ pub async fn run(args: PruneRunHistoryArgs) -> anyhow::Result<()> {
     } else {
         println!(
             "prune-run-history: pruned {pruned} terminal run(s) older than {} day(s) in schema {} \
-             (tenant {}) — node_runs cascaded",
+             (tenant {})",
             args.retention_days, args.schema, args.tenant
         );
     }
@@ -101,7 +100,8 @@ pub async fn run(args: PruneRunHistoryArgs) -> anyhow::Result<()> {
 /// claim), then run the pure prune statement. When `apply`, the delete commits;
 /// otherwise it runs inside a rolled-back transaction so `dry_run` reports the
 /// exact affected count without mutating. Returns the number of `runs` rows
-/// removed. Shared by the CLI verb and the capturebench retention gate so both
+/// removed. The live retention gate (`tests/integration/src/retention.rs`)
+/// drives this same path through the `wamn-ctl-ops` process, so verb and gate
 /// exercise ONE code path.
 pub async fn prune(
     client: &mut tokio_postgres::Client,

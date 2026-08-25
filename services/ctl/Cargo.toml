@@ -73,7 +73,7 @@ wamn-platform-identity = { workspace = true }
 # the immutable OCI media/reference contract with the runtime pull side.
 wamn-runtime = { workspace = true }
 # 9.6 prune-run-history: the single-source run-state SQL builder
-# (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
+# (`prune_terminal_runs_sql`) the retention verb and its live gate share.
 wamn-run-state = { workspace = true }
 # 11.8 ops-only impact-report: the PURE schema-change impact analysis
 # (entities → flows via registration + node config → generated API).

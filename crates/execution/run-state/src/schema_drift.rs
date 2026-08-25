@@ -15,7 +15,7 @@
 //! silent rot.
 //!
 //! wamn-y8wd: the guard covered `run-queue.sql` only, so the same drift class in
-//! the `runs`/`node_runs` half of the run plane (which lives in `run-state.sql`)
+//! the `runs` half of the run plane (which lives in `run-state.sql`)
 //! evaded it structurally — wamn-thvs is exactly that miss, hand-patched per
 //! gate. [`assert_run_state_stand_in`] is the run-state entry point; both share
 //! one parenthesis-aware parse of the schema of record and of the stand-in, so
@@ -217,7 +217,7 @@ pub fn assert_stand_in(gate: &str, standin: &str, spec: &[(&str, Need)]) {
     assert_stand_in_against(SchemaOfRecord::RunQueue, gate, standin, spec);
 }
 
-/// The same guard for `deploy/sql/run-state.sql` — the `runs`/`node_runs` half of
+/// The same guard for `deploy/sql/run-state.sql` — the `runs` half of
 /// the run plane, plus the invocation and effect ledgers.
 ///
 /// When `runs` is Required, every `RunStatus` literal must appear, for the same

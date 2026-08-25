@@ -15,7 +15,7 @@
 //! or altered (the shared-cluster guardrail).
 //!
 //! POC-F1 extended this into the one project-provisioning tool: `--runstate`
-//! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs)
+//! applies the run-state storage (`deploy/sql/run-state.sql`: runs)
 //! into the project schema — the canonical deploy file, embedded at compile time
 //! and rewritten from `wamn_run` to the target schema — when its tables are
 //! absent (the authoring-test orchestration tables are the run-plane
@@ -663,7 +663,7 @@ pub(crate) async fn ensure_wamn_app_role(client: &tokio_postgres::Client) -> any
         .context("separate guest and scenario-author roles")
 }
 
-/// Apply `deploy/sql/run-state.sql` (runs + node_runs) into `schema` when its
+/// Apply `deploy/sql/run-state.sql` (the `runs` plane) into `schema` when its
 /// `runs` table is absent. Returns whether it applied (false = already there).
 pub async fn ensure_runstate(
     client: &tokio_postgres::Client,
