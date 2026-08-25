@@ -371,15 +371,13 @@ pub struct PublishedWiringIdentity {
     pub artifact_hash: String,
 }
 
-/// Pending or immutable finalized gate report.
+/// One immutable finalized gate report.
 ///
-/// `Pending` survives this collapse deliberately. It is not a stateless-gate
-/// concept, but it is still a REACHABLE one: the reservation protocol behind
-/// `get-report` is intact until `wamn-0h0g.8.5.6` re-keys the report row on
-/// `wiring_hash`, and while a reservation can exist without its immutable report
-/// the only truthful answer for that pair is `Pending`. Deleting the variant
-/// first would force `get-report` to answer `report-not-found` for a report the
-/// store demonstrably holds a reservation for.
+/// `Pending` is DELETED (wamn-0h0g.8.5.5). There is no pending state in a
+/// stateless gate: the variant was reachable only while the reservation protocol
+/// stood, and the owner ruling of 2026-08-25 struck the whole run-plane report
+/// lineage — reservation included. A report either exists for its key or it does
+/// not, and `report-not-found` is the truthful answer for the second case.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "state",
@@ -388,11 +386,6 @@ pub struct PublishedWiringIdentity {
     deny_unknown_fields
 )]
 pub enum ReportProjection {
-    #[schemars(rename_all = "kebab-case")]
-    Pending {
-        report_id: String,
-        validated_draft: ValidatedDraftRef,
-    },
     #[schemars(rename_all = "kebab-case")]
     Finalized {
         report_id: String,

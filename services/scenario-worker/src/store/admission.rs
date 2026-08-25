@@ -1,41 +1,41 @@
-//! The PROJECT-database half of sequential test-case composition.
+//! The gate verb, and the PROJECT-database reads it judges a candidate from.
 //!
 //! Residency (wamn-0h0g.8.5.4): everything here runs on the SECOND connection —
 //! a scoped `wamn_management_admitter` generation on this environment's PROJECT
-//! database (wamn-0h0g.8.5.3 landed the input). The control store in
-//! [`super::test_orchestration`] runs on the FIRST connection, and nothing here
-//! opens a transaction that touches both: it cannot, and the in-module statement
-//! there that says so remains exactly true. Project facts this composition needs
-//! leave this module as already-observed values.
+//! database (wamn-0h0g.8.5.3 landed the input).
 //!
-//! The surface is deliberately narrow — resolve one candidate, admit one
-//! ordinal, observe one run — because that is the whole of what the admitter
+//! # What wamn-0h0g.8.5.5 left standing
+//!
+//! A gate is a JUDGMENT ABOUT A DOCUMENT, not an execution of it (ratified spec
+//! §5.1). The sequential per-ordinal reserve→admit→poll→evaluate→finalize loop
+//! was the resumption protocol for effectful cases, and the effect-free clause
+//! deleted the thing it remembered; the control-database half it wrote to went
+//! with it, under the owner ruling of 2026-08-25 that a relation whose writer,
+//! reader and keying all die does not survive. So the gate verb lives HERE now,
+//! on the one connection it still needs, and it opens no transaction at all.
+//!
+//! The surface is deliberately narrow — resolve one candidate, read the two
+//! postures that can refuse it — because that is the whole of what the admitter
 //! credential is granted (`MANAGEMENT_ADMITTER_*` in
 //! `crates/control/provision/src/sql.rs`). A column absent from those lists is
 //! DENIED, not merely unmentioned, so a wider read here would fail closed at
 //! runtime rather than compile-time.
 
-use std::time::SystemTime;
-
 use anyhow::{Context as _, bail};
 use serde_json::Value;
 use tokio_postgres::{Client, NoTls};
 
+use wamn_authoring_model::GateRefusal;
 use wamn_control_provision::parse_management_admission_url;
-use wamn_execution_contract::TestSetCase;
-use wamn_run_state::RunStatus;
-use wamn_run_state::admission::{
-    AdmissionResult, AdmissionTransaction, ManagementProducerKey, RunStateSchema,
-    management_admission_transaction,
-};
+use wamn_execution_contract::{TestSetCase, validate_cases};
 
 /// Inject the tenant every project-plane row policy resolves against.
 ///
-/// `catalog.wirings` and `wamn_run.runs` both FORCE row-level security keyed on
-/// `NULLIF(current_setting('app.tenant', true), '')`, and the admission
-/// statement reads the same setting for its own tenant. One session-level
-/// injection therefore scopes the reads and the write identically; an
-/// uninjected session sees zero rows rather than another tenant's.
+/// Every relation this connection reads — `catalog.wirings`,
+/// `catalog.component_library`, and the connection records — FORCES row-level
+/// security keyed on `NULLIF(current_setting('app.tenant', true), '')`. One
+/// session-level injection therefore scopes them all identically; an uninjected
+/// session sees zero rows rather than another tenant's.
 const ADMISSION_SCOPE_SQL: &str = "SELECT \
     pg_catalog.set_config('app.tenant', $1, false), \
     pg_catalog.set_config('search_path', 'pg_catalog', false)";
@@ -184,26 +184,11 @@ impl CandidateWiring {
     }
 }
 
-/// The terminal facts one admitted run makes available to case evaluation.
-///
-/// Exactly the granted observation and evaluation columns: `status` says a run
-/// reached terminal, the other four say what it produced.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ObservedRun {
-    pub status: RunStatus,
-    pub caller_outcome_kind: Option<String>,
-    pub caller_outcome_json: Option<Value>,
-    pub caller_http_status: Option<i32>,
-    pub fail_kind: Option<String>,
-}
-
 /// One running management surface's project-database admission connection.
 pub struct AdmissionSurface {
     client: Client,
     connection_task: tokio::task::JoinHandle<()>,
     tenant_id: Box<str>,
-    schema: RunStateSchema,
-    recipe: AdmissionTransaction,
 }
 
 impl Drop for AdmissionSurface {
@@ -226,7 +211,6 @@ impl AdmissionSurface {
         project: &str,
         environment: &str,
         tenant_id: &str,
-        schema: RunStateSchema,
     ) -> anyhow::Result<Self> {
         let connection = parse_management_admission_url(
             management_admission_database_url,
@@ -255,8 +239,6 @@ impl AdmissionSurface {
             client,
             connection_task,
             tenant_id: tenant_id.into(),
-            recipe: management_admission_transaction(&schema),
-            schema,
         };
         surface.scope().await?;
         Ok(surface)
@@ -349,151 +331,94 @@ impl AdmissionSurface {
             .context("name the candidate's unresolvable store aliases")?;
         Ok(rows.iter().map(|row| row.get(0)).collect())
     }
-
-    /// Admit one ordinal's deterministic run under the private management
-    /// authority.
-    ///
-    /// Both ordinary statements run in ONE transaction, in the order the recipe
-    /// fixes: the advisory lock serializes this producer coordinate before the
-    /// admitting statement takes its snapshot. `prior_binding_world` is the
-    /// frozen world the report's first ordinal returned; admission REFUSES an
-    /// ordinal above zero that does not carry one, which is what makes the
-    /// per-case worlds identical by construction rather than by convention.
-    pub async fn admit_test_case(
-        &mut self,
-        request: &TestCaseAdmission<'_>,
-    ) -> anyhow::Result<AdmissionResult> {
-        let key = ManagementProducerKey::TestCase {
-            report_id: request.report_id,
-            ordinal: request.ordinal,
-        };
-        let transaction = self
-            .client
-            .transaction()
-            .await
-            .context("begin the management admission transaction")?;
-        transaction
-            .query(
-                self.recipe.lock_producer(),
-                &[
-                    &key.producer().as_sql(),
-                    &Option::<&str>::None,
-                    &request.report_id,
-                    &request.ordinal,
-                ],
-            )
-            .await
-            .context("serialize the management producer coordinate")?;
-        let row = transaction
-            .query_one(
-                self.recipe.admit(),
-                &[
-                    &key.producer().as_sql(),
-                    &request.catalog_id,
-                    &request.environment,
-                    &request.catalog_version,
-                    &request.run_id,
-                    &request.input_json.to_string(),
-                    &EMPTY_INVOCATION_CONTEXT,
-                    &ADMITTED_PLATFORM_REVISION,
-                    &request.run_deadline_at,
-                    &Option::<&str>::None,
-                    &request.report_id,
-                    &request.ordinal,
-                    &request.wiring_id,
-                    &request.wiring_version,
-                    &request.wiring_hash,
-                    &request.gate_report_id,
-                    &request.prior_binding_world.map(Value::to_string),
-                ],
-            )
-            .await
-            .context("admit one test-case run")?;
-        transaction
-            .commit()
-            .await
-            .context("commit the management admission transaction")?;
-        let code: String = row.get(0);
-        let binding_world: Option<String> = row.get(2);
-        let binding_world = binding_world
-            .map(|json| serde_json::from_str(&json))
-            .transpose()
-            .context("decode the admitted binding world")?;
-        AdmissionResult::from_parts(&code, row.get(1), binding_world)
-            .with_context(|| format!("management admission returned an unknown result {code:?}"))
-    }
-
-    /// Read one admitted run's terminal facts.
-    pub async fn observe_run(&self, run_id: &str) -> anyhow::Result<Option<ObservedRun>> {
-        let statement = format!(
-            "SELECT status, caller_outcome_kind, caller_outcome_json, \
-                    caller_http_status, fail_kind \
-               FROM {}.runs WHERE tenant_id = $1 AND run_id = $2",
-            self.schema.as_str(),
-        );
-        let Some(row) = self
-            .client
-            .query_opt(&statement, &[&self.tenant_id.as_ref(), &run_id])
-            .await
-            .context("observe one admitted test-case run")?
-        else {
-            return Ok(None);
-        };
-        let status: String = row.get(0);
-        let status = RunStatus::from_sql(&status)
-            .with_context(|| format!("run status {status:?} is outside the stored vocabulary"))?;
-        Ok(Some(ObservedRun {
-            status,
-            caller_outcome_kind: row.get(1),
-            caller_outcome_json: row.get(2),
-            caller_http_status: row.get(3),
-            fail_kind: row.get(4),
-        }))
-    }
 }
 
-/// The invocation context a test-case run is admitted with.
-///
-/// Test-case admission does NOT set `producer`: the statement classifies an
-/// `invocation_context` carrying `producer: draft-scenario` as invalid input for
-/// this producer, and adds no key of its own the way the draft-run leg does.
-const EMPTY_INVOCATION_CONTEXT: &str = "{}";
-
-/// The `runs.platform_revision` every test-case admission is written under.
-///
-/// FROZEN, not derived from the build. An exact retry re-runs the admitting
-/// statement against a run row that already exists, and that statement refuses
-/// with `conflicting-run-identity` if ANY pinned column — `platform_revision`
-/// included — differs from the stored one. A build-derived value would therefore
-/// turn a redeploy mid-report into a permanent refusal instead of the
-/// convergence this composition is required to have. The cost is that this
-/// column records the admission dialect rather than the binary; the run's
-/// `invocation_context` already carries the pins that matter.
-const ADMITTED_PLATFORM_REVISION: &str = "management-admission-0.1";
-
-/// Everything one ordinal's admission is parameterized by.
-///
-/// EVERY field is derived from the reservation or the candidate, never from the
-/// clock or the process: an exact retry rebuilds this struct identically or the
-/// admitting statement refuses it.
+/// One gate command's inputs, already reconciled with the fixed scope.
 #[derive(Clone, Copy, Debug)]
-pub struct TestCaseAdmission<'a> {
-    pub report_id: &'a str,
-    pub ordinal: i32,
-    pub run_id: &'a str,
-    pub catalog_id: &'a str,
-    pub catalog_version: i32,
+pub struct GateRequest<'a> {
     pub environment: &'a str,
-    pub wiring_id: &'a str,
-    pub wiring_version: i32,
-    pub wiring_hash: &'a str,
-    pub gate_report_id: &'a str,
-    pub input_json: &'a Value,
-    /// The ordinal's stored `case_deadline_at`, read back from the control
-    /// reservation rather than recomputed. The reservation fixed it once; a
-    /// clock-derived value here would differ on every retry and refuse.
-    pub run_deadline_at: SystemTime,
-    pub prior_binding_world: Option<&'a Value>,
+    /// The wiring hash. The owner ruled `validated_draft_id` IS the wiring hash:
+    /// the draft concept died with the pivot, the wiring document is the
+    /// validated artifact, and its hash is the identity.
+    pub validated_draft_id: &'a str,
+}
+
+/// What one gate command judged.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GateJudgment {
+    /// The candidate is gateable, under the report identity it already carries.
+    Accepted {
+        report_id: String,
+    },
+    Refused(GateRefusal),
+}
+
+/// Judge one candidate document against the postures that can refuse it.
+///
+/// A gate is a JUDGMENT ABOUT A DOCUMENT, not an execution of it (wamn-0h0g.8.5.5,
+/// ratified spec §5.1), so this reads and refuses; it writes nothing anywhere.
+/// The durable report row keyed by `wiring_hash` is `wamn-0h0g.8.5.6`'s to
+/// construct.
+///
+/// The order of the four legs is load-bearing and is the order they landed in:
+/// a candidate that does not resolve cannot be judged, a malformed `cases` array
+/// is refused before any posture is read, and **the effect-free clause fires
+/// before anything else can act on the candidate**.
+pub async fn run_gate(
+    admission: &AdmissionSurface,
+    request: &GateRequest<'_>,
+) -> anyhow::Result<GateJudgment> {
+    let Some(candidate) = admission
+        .candidate_by_hash(request.validated_draft_id)
+        .await?
+    else {
+        return Ok(GateJudgment::Refused(GateRefusal::ValidatedDraftNotFound {
+            validated_draft_id: request.validated_draft_id.to_owned(),
+        }));
+    };
+    if let Err(error) = validate_cases(&candidate.cases) {
+        return Ok(GateJudgment::Refused(GateRefusal::InvalidTestSet {
+            detail: error.to_string(),
+        }));
+    }
+
+    // THE CONSTITUTIONAL CLAUSE (wamn-0h0g.8.5.5): gate cases are EFFECT-FREE BY
+    // CONTRACT. Effects belong to admitted runs under run identity, and a report
+    // keyed by content hash must be reproducible from the document alone or that
+    // identity is a lie. This refuses BEFORE the candidate is accepted and before
+    // any other posture is read, so nothing is performed and then regretted.
+    // Assume the clause instead of checking it and the first effectful case
+    // silently double-fires. This is the clause's ONE firing point in the tree:
+    // it moved here with the gate verb when the composition machinery that used
+    // to hold it was deleted, and it did not move out of the way.
+    let effectful = admission.effectful_components(&candidate).await?;
+    if !effectful.is_empty() {
+        return Ok(GateJudgment::Refused(
+            GateRefusal::EffectfulComponentReached {
+                components: effectful,
+            },
+        ));
+    }
+
+    // A candidate whose store aliases this environment cannot resolve reaches no
+    // binding world, so it cannot be judged against one. This used to be read
+    // out of the admission statement's `binding-world-unavailable`; with the
+    // admission leg deleted the diagnostic that always named the same aliases is
+    // the judgment itself.
+    let unresolved = admission
+        .unresolved_store_aliases(&candidate, request.environment)
+        .await?;
+    if !unresolved.is_empty() {
+        return Ok(GateJudgment::Refused(GateRefusal::DraftConnectionsDenied {
+            connection_names: unresolved,
+        }));
+    }
+
+    // The report identity is DERIVED, never minted: it is the candidate row's
+    // own gate report.
+    Ok(GateJudgment::Accepted {
+        report_id: candidate.gate_report_id,
+    })
 }
 
 /// Read a candidate's `cases` array out of its stored graph.
@@ -537,6 +462,43 @@ mod tests {
         // here rather than silently narrowed.
         assert!(
             candidate_cases(&json!({"cases": [{"case-id": "x", "input": {}, "why": 1}]})).is_err()
+        );
+    }
+
+    /// The constitutional clause fires before the gate verb can accept anything.
+    ///
+    /// POSITION, not presence: a posture read that runs after the judgment has
+    /// already been made refuses nothing, and the clause's whole content is that
+    /// it precedes what would otherwise act on the candidate. This is the one
+    /// property the live gate cannot see cheaply, because a re-ordered check
+    /// still refuses -- it just refuses too late.
+    ///
+    /// Scanned over the IMPLEMENTATION half only ([`crate::source_scan`]), so a
+    /// deleted subject panics here rather than matching this test's own spelling
+    /// of the marker.
+    #[test]
+    fn the_effect_free_clause_precedes_everything_the_gate_verb_can_accept() {
+        let body = crate::source_scan::between(
+            include_str!("admission.rs"),
+            "pub async fn run_gate(",
+            "/// Read a candidate's",
+        );
+        let posture = body
+            .find("effectful_components(")
+            .expect("the gate verb reads the effect posture");
+        let aliases = body
+            .find("unresolved_store_aliases(")
+            .expect("the gate verb reads the store aliases");
+        let accepted = body
+            .find("GateJudgment::Accepted")
+            .expect("the gate verb can accept a candidate");
+        assert!(
+            posture < aliases,
+            "another posture is read before the effect-free clause"
+        );
+        assert!(
+            posture < accepted,
+            "the gate verb accepts a candidate before the effect-free clause"
         );
     }
 
@@ -617,66 +579,5 @@ mod tests {
         assert_eq!(candidate(json!({"nodes": []})).nodes_object(), json!({}));
         let nodes = json!({"a": {"component": "c", "interface-version": "1", "operation": "op"}});
         assert_eq!(candidate(json!({"nodes": nodes})).nodes_object(), nodes);
-    }
-
-    /// The admission statement's own classification, restated as the reason this
-    /// module never mints a report identity: `report_id` MUST equal
-    /// `gate_report_id`, and `gate_report_id` MUST equal the candidate row's.
-    #[test]
-    fn the_admission_recipe_forces_the_report_to_be_the_candidates_gate_report() {
-        let recipe = management_admission_transaction(&RunStateSchema::default());
-        assert!(recipe.admit().contains(
-            "WHEN e.producer = 'test-case' \
-             AND e.report_id IS DISTINCT FROM e.gate_report_id \
-             THEN 'gate-report-mismatch'"
-        ));
-        assert!(
-            recipe
-                .admit()
-                .contains("e.actual_gate_report_id IS DISTINCT FROM e.gate_report_id")
-        );
-        // And the candidate is selected by the gated catalog version, so
-        // `expected_catalog_version` cannot be anything else.
-        assert!(
-            recipe
-                .admit()
-                .contains("wiring.gated_catalog_version = k.expected_catalog_version")
-        );
-    }
-
-    /// Every parameter the admission statement declares is supplied positionally
-    /// by [`AdmissionSurface::admit_test_case`], so a reordered recipe is a
-    /// compile-time-invisible fault this pins.
-    #[test]
-    fn the_admission_call_matches_the_recipes_declared_parameters() {
-        let admit = management_admission_transaction(&RunStateSchema::default());
-        let admit = admit.admit();
-        for (index, name) in [
-            (1, "producer"),
-            (2, "catalog_id"),
-            (3, "environment"),
-            (4, "expected_catalog_version"),
-            (5, "run_id"),
-            (6, "input_json"),
-            (7, "invocation_context"),
-            (8, "platform_revision"),
-            (9, "run_deadline_at"),
-            (10, "command_id"),
-            (11, "report_id"),
-            (12, "case_ordinal"),
-            (13, "wiring_id"),
-            (14, "wiring_version"),
-            (15, "wiring_hash"),
-            (16, "gate_report_id"),
-            (17, "prior_binding_world_json"),
-        ] {
-            assert!(
-                admit.contains(&format!("${index}::text AS {name}"))
-                    || admit.contains(&format!("${index}::int AS {name}"))
-                    || admit.contains(&format!("${index}::timestamptz AS {name}"))
-                    || admit.contains(&format!("${index}::text::jsonb AS {name}")),
-                "parameter ${index} is no longer {name}"
-            );
-        }
     }
 }

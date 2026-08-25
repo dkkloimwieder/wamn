@@ -1624,9 +1624,6 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
         BTreeSet::from([
             "catalog.authoring_command_audit",
             "catalog.execution_bundles",
-            "wamn_run.authoring_test_case_runs",
-            "wamn_run.authoring_test_reports",
-            "wamn_run.authoring_test_run_reservations",
         ])
     );
 
@@ -1647,9 +1644,6 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
             "catalog.catalog_heads",
             "catalog.execution_bundles",
             "catalog.releases",
-            "wamn_run.authoring_test_case_runs",
-            "wamn_run.authoring_test_reports",
-            "wamn_run.authoring_test_run_reservations",
         ])
     );
 }

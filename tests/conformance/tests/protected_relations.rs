@@ -353,12 +353,6 @@ fn control_author_sql_exposure_is_exact() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         actual,
-        BTreeSet::from([
-            "catalog.authoring_command_audit",
-            "catalog.flow_drafts",
-            "wamn_run.authoring_test_case_runs",
-            "wamn_run.authoring_test_reports",
-            "wamn_run.authoring_test_run_reservations",
-        ])
+        BTreeSet::from(["catalog.authoring_command_audit", "catalog.flow_drafts"])
     );
 }

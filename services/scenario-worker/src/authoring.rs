@@ -15,8 +15,6 @@ use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_control_provision::parse_control_authoring_url;
 use wamn_schema_control::BareSchemaName;
 
-use crate::store::test_orchestration;
-
 /// Startup authority probe for the CONTROL database's author credential
 /// (wamn-0h0g.8.18).
 ///
@@ -42,7 +40,10 @@ use crate::store::test_orchestration;
 /// so the statement errors and the process refuses instead of quietly authoring
 /// into the wrong plane.
 ///
-/// Params: `$1` run schema, `$2` reservations, `$3` case runs, `$4` reports.
+/// Params: `$1` run schema. wamn-0h0g.8.5.5 deleted the whole gate-report
+/// lineage, so the only relation this credential may still mutate is the
+/// command ledger, and the run schema survives as a name the schema-level and
+/// blanket-exclusion legs still resolve against.
 const AUTHORING_ROLE_PROBE_SQL: &str = "\
 WITH session_role AS ( \
     SELECT oid, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls \
@@ -51,12 +52,7 @@ WITH session_role AS ( \
     SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls \
       FROM pg_catalog.pg_roles WHERE rolname = 'wamn_control_author' \
 ), allowed_mutation(schema_name, table_name, privilege) AS ( \
-    VALUES ('catalog', 'authoring_command_audit', 'INSERT'), \
-           ($1::text, 'authoring_test_run_reservations', 'INSERT'), \
-           ($1::text, 'authoring_test_run_reservations', 'UPDATE'), \
-           ($1::text, 'authoring_test_case_runs', 'INSERT'), \
-           ($1::text, 'authoring_test_case_runs', 'UPDATE'), \
-           ($1::text, 'authoring_test_reports', 'INSERT') \
+    VALUES ('catalog', 'authoring_command_audit', 'INSERT') \
 ) \
 SELECT current_user = session_user, \
        COALESCE(NOT session_role.rolsuper AND NOT session_role.rolcreatedb \
@@ -85,18 +81,6 @@ SELECT current_user = session_user, \
              current_user, 'catalog.authoring_command_audit', 'UPDATE') \
          AND NOT pg_catalog.has_table_privilege( \
              current_user, 'catalog.authoring_command_audit', 'DELETE'), \
-       pg_catalog.has_table_privilege(current_user, $2, 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, $2, 'INSERT') \
-         AND pg_catalog.has_table_privilege(current_user, $2, 'UPDATE') \
-         AND NOT pg_catalog.has_table_privilege(current_user, $2, 'DELETE'), \
-       pg_catalog.has_table_privilege(current_user, $3, 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, $3, 'INSERT') \
-         AND pg_catalog.has_table_privilege(current_user, $3, 'UPDATE') \
-         AND NOT pg_catalog.has_table_privilege(current_user, $3, 'DELETE'), \
-       pg_catalog.has_table_privilege(current_user, $4, 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, $4, 'INSERT') \
-         AND NOT pg_catalog.has_table_privilege(current_user, $4, 'UPDATE') \
-         AND NOT pg_catalog.has_table_privilege(current_user, $4, 'DELETE'), \
        pg_catalog.has_function_privilege( \
            current_user, 'wamn_authority.session_author_tenant()', 'EXECUTE'), \
        NOT EXISTS ( \
@@ -275,15 +259,8 @@ impl InternalAuthoringBackend {
             )
             .await
             .context("pin trusted search path before authoring authority probe")?;
-        let qualified = |table: &str| format!("{}.{}", source_schema.as_str(), table);
-        let reservations = qualified("authoring_test_run_reservations");
-        let case_runs = qualified("authoring_test_case_runs");
-        let reports = qualified("authoring_test_reports");
         let role_row = client
-            .query_one(
-                AUTHORING_ROLE_PROBE_SQL,
-                &[&source_schema.as_str(), &reservations, &case_runs, &reports],
-            )
+            .query_one(AUTHORING_ROLE_PROBE_SQL, &[&source_schema.as_str()])
             .await
             .context("verify effective dedicated control authoring authority")?;
         for index in 0..role_row.len() {
@@ -338,19 +315,6 @@ impl InternalAuthoringBackend {
         Ok(())
     }
 
-    /// Reassert the fixed tenant scope and lend the control connection.
-    ///
-    /// For the compositions that CANNOT be one transaction because their other
-    /// half lives in another database (wamn-0h0g.8.5.4). Such a caller owns its
-    /// own commit boundaries, and the scope reassertion here is the same one
-    /// [`Self::begin_command_transaction`] performs, so neither path can run
-    /// against a stale tenant setting.
-    pub(crate) async fn scoped_client(&mut self, tenant_id: &str) -> anyhow::Result<&mut Client> {
-        self.require_tenant(tenant_id)?;
-        self.scope().await?;
-        Ok(&mut self.client)
-    }
-
     /// Begin one command transaction after reasserting the fixed tenant scope.
     ///
     /// The returned capability copy and transaction must stay together: the
@@ -379,13 +343,16 @@ impl Drop for InternalAuthoringBackend {
 }
 
 /// Control-store projection of one test report.
+///
+/// wamn-0h0g.8.5.5 deleted the run-plane report lineage: `Pending` was
+/// reachable ONLY while the reservation protocol stood, and the reservation is
+/// gone. What survives is the two answers the wire contract still has —
+/// `report-not-found` and one immutable finalized projection.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GetReportResult {
-    /// No reservation is visible in the backend's fixed tenant.
+    /// No report is visible in the backend's fixed tenant.
     NotFound,
-    /// The reservation exists but its immutable report does not yet exist.
-    Pending { validated_draft_id: String },
-    /// The immutable report exists and agrees with its reservation identity.
+    /// The immutable report exists.
     Finalized {
         validated_draft_id: String,
         passed: bool,
@@ -394,7 +361,14 @@ pub enum GetReportResult {
 }
 
 impl InternalAuthoringBackend {
-    /// Read one pending or finalized report from the fixed control-store scope.
+    /// Read one finalized report from the fixed control-store scope.
+    ///
+    /// The store holds NO reports between wamn-0h0g.8.5.5 and wamn-0h0g.8.5.6.
+    /// The relation this used to read is deleted, and the surviving report row
+    /// keyed by `wiring_hash` is `8.5.6`'s to construct — so `NotFound` is the
+    /// truthful answer here, not a stub: there is nothing for any report id to
+    /// select. The identity checks still run, because a malformed query must
+    /// refuse on its own terms rather than be answered.
     pub async fn get_report(
         &self,
         tenant_id: &str,
@@ -402,43 +376,7 @@ impl InternalAuthoringBackend {
     ) -> anyhow::Result<GetReportResult> {
         self.require_tenant(tenant_id)?;
         validate_identity(report_id, "report-id")?;
-        self.scope().await?;
-        let row = self
-            .client
-            .query_opt(
-                test_orchestration::select_test_report_projection_sql(),
-                &[&tenant_id, &report_id],
-            )
-            .await
-            .context("read control-store test report")?;
-        let Some(row) = row else {
-            return Ok(GetReportResult::NotFound);
-        };
-        report_result(row.get(0), row.get(1), row.get(2), row.get(3), row.get(4))
-    }
-}
-
-fn report_result(
-    state: String,
-    reservation_validated_draft_id: String,
-    report_validated_draft_id: Option<String>,
-    passed: Option<bool>,
-    summary: Option<Value>,
-) -> anyhow::Result<GetReportResult> {
-    match (state.as_str(), report_validated_draft_id, passed, summary) {
-        ("pending", None, None, None) => Ok(GetReportResult::Pending {
-            validated_draft_id: reservation_validated_draft_id,
-        }),
-        ("finalized", Some(report_validated_draft_id), Some(passed), Some(summary))
-            if report_validated_draft_id == reservation_validated_draft_id =>
-        {
-            Ok(GetReportResult::Finalized {
-                validated_draft_id: reservation_validated_draft_id,
-                passed,
-                summary,
-            })
-        }
-        _ => bail!("control-store test report state is internally inconsistent"),
+        Ok(GetReportResult::NotFound)
     }
 }
 
@@ -453,63 +391,6 @@ fn validate_identity(value: &str, name: &str) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn report_projection_requires_one_complete_state_grain() {
-        assert_eq!(
-            report_result("pending".into(), "validated-1".into(), None, None, None).unwrap(),
-            GetReportResult::Pending {
-                validated_draft_id: "validated-1".into(),
-            }
-        );
-        assert_eq!(
-            report_result(
-                "finalized".into(),
-                "validated-1".into(),
-                Some("validated-1".into()),
-                Some(false),
-                Some(serde_json::json!({"cases": []})),
-            )
-            .unwrap(),
-            GetReportResult::Finalized {
-                validated_draft_id: "validated-1".into(),
-                passed: false,
-                summary: serde_json::json!({"cases": []}),
-            }
-        );
-
-        for corrupt in [
-            report_result(
-                "pending".into(),
-                "validated-1".into(),
-                Some("validated-1".into()),
-                Some(true),
-                Some(serde_json::json!({})),
-            ),
-            report_result("finalized".into(), "validated-1".into(), None, None, None),
-            report_result(
-                "finalized".into(),
-                "validated-1".into(),
-                Some("validated-other".into()),
-                Some(true),
-                Some(serde_json::json!({})),
-            ),
-            report_result("unknown".into(), "validated-1".into(), None, None, None),
-        ] {
-            assert!(
-                corrupt.is_err(),
-                "partial or mismatched report state was accepted"
-            );
-        }
-    }
-
-    /// The capability token carries no client identity.
-    ///
-    /// This scanned the whole file for `pub struct InternalDevAdmin`, which the
-    /// declaration below has never matched — it is `pub(crate) struct`. The only
-    /// occurrence was this test's own search literal, so the span was a slice of
-    /// the test source and all three assertions passed vacuously. Scanning the
-    /// implementation half makes the literal real: it is the declaration or it
-    /// is nothing (wamn-3o3a).
     #[test]
     fn internal_adapter_carries_no_client_principal() {
         let token = crate::source_scan::between(
@@ -620,36 +501,30 @@ mod tests {
         // refuse every startup.
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("flow_drafts"));
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("authoring_test_sets"));
-        // The retired validator and its catalog-head bridge no longer add a fifth parameter.
-        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("$5"));
+        // wamn-0h0g.8.5.5: the whole run-plane gate-report lineage is deleted,
+        // so the probe may not name any of its three relations -- not as a
+        // privilege leg, not as an allowed mutation, and not as a parameter. A
+        // surviving arm would query a relation that does not exist and refuse
+        // every startup, which is the same failure mode the draft store had.
+        for retired in [
+            "authoring_test_run_reservations",
+            "authoring_test_case_runs",
+            "authoring_test_reports",
+        ] {
+            assert!(!AUTHORING_ROLE_PROBE_SQL.contains(retired), "{retired}");
+        }
+        // Only the run schema remains: the retired legs took $2 through $4 with
+        // them, and the retired validator never added a fifth.
+        for parameter in ["$2", "$3", "$4", "$5"] {
+            assert!(!AUTHORING_ROLE_PROBE_SQL.contains(parameter), "{parameter}");
+        }
+        assert!(AUTHORING_ROLE_PROBE_SQL.contains("$1"));
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("run_mutation"));
+        // The command ledger is the ONE mutation this credential retains.
         assert!(
             AUTHORING_ROLE_PROBE_SQL
-                .contains("pg_catalog.has_table_privilege(current_user, $3, 'UPDATE')")
+                .contains("VALUES ('catalog', 'authoring_command_audit', 'INSERT')")
         );
-        for allowed in [
-            "($1::text, 'authoring_test_run_reservations', 'INSERT')",
-            "($1::text, 'authoring_test_run_reservations', 'UPDATE')",
-            "($1::text, 'authoring_test_case_runs', 'INSERT')",
-            "($1::text, 'authoring_test_case_runs', 'UPDATE')",
-            "($1::text, 'authoring_test_reports', 'INSERT')",
-        ] {
-            assert!(
-                AUTHORING_ROLE_PROBE_SQL.contains(allowed),
-                "missing {allowed}"
-            );
-        }
-        for forbidden in [
-            "($1::text, 'authoring_test_run_reservations', 'DELETE')",
-            "($1::text, 'authoring_test_case_runs', 'DELETE')",
-            "($1::text, 'authoring_test_reports', 'UPDATE')",
-            "($1::text, 'authoring_test_reports', 'DELETE')",
-        ] {
-            assert!(
-                !AUTHORING_ROLE_PROBE_SQL.contains(forbidden),
-                "unexpected {forbidden}"
-            );
-        }
         assert!(
             !AUTHORING_ROLE_PROBE_SQL
                 .to_ascii_uppercase()

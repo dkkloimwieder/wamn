@@ -580,11 +580,6 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
         &scope.project,
         &scope.environment,
         &scope.tenant_id,
-        // The project run-plane schema is the canonical one. It is not
-        // `source_schema`: that names the CONTROL store's authoring relations,
-        // in the other database. Neither is configurable here, and inventing a
-        // second knob would let an operator point them at each other.
-        wamn_run_state::admission::RunStateSchema::default(),
     )
     .await?;
     let surface = Arc::new(Surface {
@@ -738,14 +733,6 @@ async fn get_report(
                 report_id: input.report_id.clone(),
             },
         )),
-        GetReportResult::Pending { validated_draft_id } => {
-            AuthoringQueryOutcome::Completed(Box::new(AuthoringQuerySuccess::GetReport(
-                ReportProjection::Pending {
-                    report_id: input.report_id.clone(),
-                    validated_draft: ValidatedDraftRef { validated_draft_id },
-                },
-            )))
-        }
         GetReportResult::Finalized {
             validated_draft_id,
             passed,
@@ -836,8 +823,8 @@ async fn gate_route(
         return Ok(empty(StatusCode::BAD_REQUEST));
     }
     let mut backend = surface.backend.lock().await;
-    let mut admission = surface.admission.lock().await;
-    let outcome_bytes = gate(&mut backend, &mut admission, author, &scope, command, input).await?;
+    let admission = surface.admission.lock().await;
+    let outcome_bytes = gate(&mut backend, &admission, author, &scope, command, input).await?;
     drop(admission);
     drop(backend);
     Ok(json_bytes(StatusCode::OK, outcome_bytes))
@@ -846,23 +833,22 @@ async fn gate_route(
 /// Judge one candidate against its own `cases` array, attributing the judgment
 /// to its verified author.
 ///
-/// # Why this is not one transaction, and what replaces atomicity
+/// # The judgment writes nothing, so the ledger row is the whole mutation
 ///
-/// This command's mutation spans two databases: the report and its case verdicts
-/// are control-database rows while the runs they observe are project-database
-/// rows, and a transaction cannot span the two. Rather than claim an atomicity
-/// the platform does not have, the ledger row is written LAST — a completed
-/// outcome is recorded only once the composition has produced one.
+/// wamn-0h0g.8.5.5: a gate is a judgment about a document, not an execution of
+/// it, so [`run_gate`](crate::store::admission::run_gate) reads the project
+/// database and mutates nothing anywhere. The only row this command writes is
+/// the attribution ledger entry, and it is written LAST — an outcome is recorded
+/// only once one has been produced.
 ///
-/// That ordering is what makes an exact retry converge. A pass interrupted after
-/// a commit on either database leaves no ledger row, so the retry classifies as
-/// `Execute` and re-drives the composition, which is idempotent at every step
-/// (see [`crate::test_set`]) and reaches the same report instead of admitting a
-/// second run. Once the ledger row exists the composition is finished, and the
-/// retry replays the stored receipt.
+/// An exact retry therefore converges trivially: a pass interrupted before the
+/// ledger commit leaves no row, so the retry classifies as `Execute` and
+/// re-derives the same judgment from the same immutable candidate. Once the
+/// ledger row exists the command is finished, and the retry replays the stored
+/// receipt.
 async fn gate(
     backend: &mut InternalAuthoringBackend,
-    admission: &mut crate::store::admission::AdmissionSurface,
+    admission: &crate::store::admission::AdmissionSurface,
     author: &AuthorizedAuthor,
     scope: &CommandScope,
     command: &AuthoringRequest,
@@ -884,24 +870,22 @@ async fn gate(
         return Ok(settled);
     }
 
-    let composition = crate::test_set::run_test_set(
-        backend.scoped_client(audit.tenant_id()).await?,
+    let judgment = crate::store::admission::run_gate(
         admission,
-        &crate::test_set::TestSetRunRequest {
-            tenant_id: audit.tenant_id(),
+        &crate::store::admission::GateRequest {
             environment: &scope.environment,
             validated_draft_id: &input.validated_draft.validated_draft_id,
         },
     )
     .await?;
-    let outcome = match composition {
-        crate::test_set::TestSetComposition::Accepted { report_id, .. } => {
+    let outcome = match judgment {
+        crate::store::admission::GateJudgment::Accepted { report_id } => {
             AuthoringOutcome::Completed(Box::new(AuthoringSuccess::Gate(GateReceipt {
                 report_id,
                 validated_draft: input.validated_draft.clone(),
             })))
         }
-        crate::test_set::TestSetComposition::Refused(refusal) => {
+        crate::store::admission::GateJudgment::Refused(refusal) => {
             AuthoringOutcome::Refused(CommandRefusal::Gate(refusal))
         }
     };

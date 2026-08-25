@@ -658,39 +658,6 @@
       "drift_gate": "SR13:control-portable-live"
     },
     {
-      "id": "wamn_run.authoring_test_run_reservations",
-      "plane": "control",
-      "semantic_owner": "scenario-worker",
-      "migration_owners": ["control-portable-store-installer"],
-      "schema_source": "deploy/sql/control-portable-store.sql",
-      "writers": ["control-portable-store-installer", "scenario-worker"],
-      "readers": ["scenario-worker"],
-      "compatibility_horizon": "platform-schema-major",
-      "drift_gate": "SR13:control-portable-live"
-    },
-    {
-      "id": "wamn_run.authoring_test_case_runs",
-      "plane": "control",
-      "semantic_owner": "scenario-worker",
-      "migration_owners": ["control-portable-store-installer"],
-      "schema_source": "deploy/sql/control-portable-store.sql",
-      "writers": ["control-portable-store-installer", "scenario-worker"],
-      "readers": ["scenario-worker"],
-      "compatibility_horizon": "platform-schema-major",
-      "drift_gate": "SR13:control-portable-live"
-    },
-    {
-      "id": "wamn_run.authoring_test_reports",
-      "plane": "control",
-      "semantic_owner": "scenario-worker",
-      "migration_owners": ["control-portable-store-installer"],
-      "schema_source": "deploy/sql/control-portable-store.sql",
-      "writers": ["control-portable-store-installer", "scenario-worker"],
-      "readers": ["scenario-worker"],
-      "compatibility_horizon": "platform-schema-major",
-      "drift_gate": "SR13:control-portable-live"
-    },
-    {
       "id": "wamn_authority.author_login_tenants",
       "plane": "control",
       "semantic_owner": "provision-store",

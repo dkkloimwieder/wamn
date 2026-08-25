@@ -12,18 +12,25 @@
 //! document as any other, so the surface is no route-existence oracle, and an
 //! admitted author gets a bare `501` that audits nothing and mutates nothing.
 //! `test-set-run` LEFT that set in wamn-0h0g.8.5.4 — it is mounted, so this gate
-//! now proves the composition it reaches instead of the 501 it used to answer.
+//! now proves the judgment it reaches instead of the 501 it used to answer.
 //! wamn-0h0g.8.5.5 then collapsed `save-draft`, `validate`, `draft-run` and
 //! `read-draft` OUT OF THE CONTRACT, so `publish` is the whole unmounted
 //! inventory and there is no unmounted query at all.
 //!
-//! Proving that composition takes a SECOND database. The project-environment
-//! database this gate creates alongside the control one is where runs, the run
-//! queue, and the catalog live; the surface reaches it through the scoped
-//! `wamn_management_admitter` generation, and a transaction never spans the two.
-//! There is no executor in this gate, so a stand-in completes each admitted run
-//! in place — it cannot complete one before the composition admits it, which is
-//! what makes the sequencing assertions meaningful.
+//! Proving that judgment takes a SECOND database. The project-environment
+//! database this gate creates alongside the control one is where the candidate
+//! wirings and the component library's effect posture live; the surface reaches
+//! it through the scoped `wamn_management_admitter` generation.
+//!
+//! # What wamn-0h0g.8.5.5 took out of this gate
+//!
+//! The sequential per-ordinal composition — reserve, admit, poll, evaluate,
+//! finalize — and the three control-plane relations it wrote to are DELETED. A
+//! gate is a judgment about a document, not an execution of it, so what remains
+//! to prove is that the verb judges, refuses typed, attributes exactly once, and
+//! **executes nothing**: no run, no queue row, no stored report. The run and
+//! queue reads below are kept precisely to prove that emptiness, so a
+//! resurrection of the composition would fail here rather than pass silently.
 //!
 //! It NO LONGER owns `wamn-ftfc.2`'s S1 write path. That half proved a checkout
 //! client's submitted definition reached a server-side draft store, its exact
@@ -569,87 +576,11 @@ fn test_set_run_document(command_id: &str) -> String {
     .to_string()
 }
 
-/// Stand in for the executor: release one caller outcome per admitted ordinal.
+/// Every test-case run present in the project plane.
 ///
-/// It waits for each ordinal's run to EXIST before completing it, and completes
-/// them strictly in ordinal order. That is the whole point: the composition
-/// admits ordinal `n + 1` only after ordinal `n` has a stored verdict, so if it
-/// ever admitted them together this task would complete them out of the order
-/// the composition observes and the sequencing assertions would fail.
-async fn complete_admitted_case_runs(url: String, outcomes: Vec<(i32, serde_json::Value)>) {
-    let (project, task) = connect(&url)
-        .await
-        .expect("connect the project plane as the gate admin");
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    for (ordinal, (status, body)) in outcomes.iter().enumerate() {
-        let key = format!("case:{CANDIDATE_GATE_REPORT}:{ordinal}");
-        loop {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "ordinal {ordinal} was never admitted"
-            );
-            let updated = project
-                .execute(
-                    "UPDATE wamn_run.runs \
-                        SET status = 'completed', caller_outcome_kind = 'responded', \
-                            caller_http_status = $1, caller_outcome_json = $2::text::jsonb, \
-                            caller_release_node_id = 'node', \
-                            caller_released_at = clock_timestamp(), \
-                            updated_at = clock_timestamp() \
-                      WHERE tenant_id = $3 AND idempotency_key = $4 AND status = 'dispatched'",
-                    &[status, &body.to_string(), &TENANT, &key],
-                )
-                .await
-                .expect("complete one admitted case run");
-            if updated == 1 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    }
-    task.abort();
-}
-
-/// Every stored case verdict of the composed report, in ordinal order.
-type CaseVerdict = (
-    i32,
-    String,
-    String,
-    bool,
-    Option<String>,
-    serde_json::Value,
-    SystemTime,
-);
-
-async fn control_case_verdicts(admin: &Client) -> Vec<CaseVerdict> {
-    admin
-        .query(
-            &format!(
-                "SELECT ordinal, case_id, run_id, passed, failure_kind, summary, finalized_at \
-                   FROM {SOURCE_SCHEMA}.authoring_test_case_runs \
-                  WHERE tenant_id = $1 AND report_id = $2 ORDER BY ordinal"
-            ),
-            &[&TENANT, &CANDIDATE_GATE_REPORT],
-        )
-        .await
-        .expect("read the composed case verdicts")
-        .iter()
-        .map(|row| {
-            (
-                row.get(0),
-                row.get(1),
-                row.get(2),
-                row.get::<_, Option<bool>>(3).unwrap_or(false),
-                row.get(4),
-                row.get(5),
-                row.get(6),
-            )
-        })
-        .collect()
-}
-
-/// Every run this composition admitted into the project plane, in admission
-/// order.
+/// wamn-0h0g.8.5.5: the gate admits none, so this must stay EMPTY for the whole
+/// gate. It is read rather than assumed, because "the composition came back" is
+/// exactly the regression this file has to be able to see.
 async fn project_case_runs(project: &Client) -> Vec<(String, String, String, SystemTime)> {
     project
         .query(
@@ -763,68 +694,20 @@ async fn ledger_rows(admin: &Client) -> Vec<(String, String, String, String)> {
         .collect()
 }
 
+/// Every durable authoring row the control store still holds.
+///
+/// wamn-0h0g.8.5.5 left exactly ONE relation: the command ledger. The three
+/// gate-report relations this used to count are deleted, so naming them here
+/// would query relations that do not exist.
 async fn authoring_durable_counts(admin: &Client) -> Vec<i64> {
     let row = admin
         .query_one(
-            &format!(
-                "SELECT (SELECT count(*) FROM catalog.authoring_command_audit), \
-                        (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_run_reservations), \
-                        (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_case_runs), \
-                        (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_reports)"
-            ),
+            "SELECT (SELECT count(*) FROM catalog.authoring_command_audit)",
             &[],
         )
         .await
         .expect("count every authoring durable relation");
     (0..row.len()).map(|index| row.get(index)).collect()
-}
-
-async fn insert_pending_report(
-    admin: &Client,
-    tenant_id: &str,
-    report_id: &str,
-    validated_draft_id: &str,
-) {
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SOURCE_SCHEMA}.authoring_test_run_reservations \
-                    (tenant_id, report_id, command_hash, validated_draft_id, catalog_id, \
-                     catalog_version, case_count, whole_deadline_at) \
-                 VALUES ($1, $2, 'sha256:' || repeat('0', 64), $3, 'catalog-a', 1, 1, \
-                         clock_timestamp() + interval '1 hour')"
-            ),
-            &[&tenant_id, &report_id, &validated_draft_id],
-        )
-        .await
-        .expect("insert one pending control-store report reservation");
-}
-
-async fn finalize_report(admin: &Client, report_id: &str, validated_draft_id: &str) {
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SOURCE_SCHEMA}.authoring_test_reports \
-                    (tenant_id, report_id, validated_draft_id, catalog_id, catalog_version, \
-                     passed, summary) \
-                 VALUES ($1, $2, $3, 'catalog-a', 1, false, \
-                         '{{\"cases\":[{{\"case-id\":\"case-a\",\"passed\":false}}]}}'::jsonb)"
-            ),
-            &[&TENANT, &report_id, &validated_draft_id],
-        )
-        .await
-        .expect("insert one immutable control-store report");
-    admin
-        .execute(
-            &format!(
-                "UPDATE {SOURCE_SCHEMA}.authoring_test_run_reservations \
-                    SET state = 'finalized', finalized_at = clock_timestamp() \
-                  WHERE tenant_id = $1 AND report_id = $2"
-            ),
-            &[&TENANT, &report_id],
-        )
-        .await
-        .expect("finalize the report reservation");
 }
 
 #[tokio::test]
@@ -1082,90 +965,46 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         })
     );
 
-    insert_pending_report(
-        &admin,
-        "foreign-management-tenant",
-        "report-foreign",
-        "validated-foreign",
-    )
-    .await;
-    let before_foreign_read = authoring_durable_counts(&admin).await;
-    let foreign = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &get_report_document("foreign-report", PROJECT, "report-foreign"),
-    )
-    .await;
-    assert_eq!(foreign.status, 200, "{}", foreign.body);
-    assert_eq!(
-        outcome(&foreign.body)["value"]["reason"],
-        serde_json::json!({"kind": "report-not-found", "report-id": "report-foreign"})
-    );
-    assert_eq!(
-        authoring_durable_counts(&admin).await,
-        before_foreign_read,
-        "cross-tenant get-report mutated control authoring state"
-    );
-
-    insert_pending_report(&admin, TENANT, "report-a", "validated-a").await;
-    let before_pending_read = authoring_durable_counts(&admin).await;
-    let pending = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &get_report_document("pending-report", PROJECT, "report-a"),
-    )
-    .await;
-    assert_eq!(pending.status, 200, "{}", pending.body);
-    let pending_document: serde_json::Value = serde_json::from_str(&pending.body).unwrap();
-    assert_eq!(pending_document["body"]["query-id"], "pending-report");
-    assert_eq!(
-        pending_document["body"]["outcome"]["value"]["result"],
-        serde_json::json!({
-            "state": "pending",
-            "report-id": "report-a",
-            "validated-draft": {"validated-draft-id": "validated-a"},
-        })
-    );
+    // wamn-0h0g.8.5.5: the control store holds NO reports. The reservation
+    // relation this section used to seed, the immutable report relation it used
+    // to finalize, and the `pending` projection between them are all deleted --
+    // a relation whose only writer and only reader die with the same change does
+    // not survive it (owner ruling, 2026-08-25). So `report-not-found` is the
+    // one truthful answer for every report id, and the query is still proved to
+    // be non-mutating and non-ledgered, which is what it always owned here.
+    let before_reads = authoring_durable_counts(&admin).await;
+    for (query_id, principal, report_id) in [
+        ("foreign-report", alice.token(), "report-foreign"),
+        ("absent-report", alice.token(), "report-a"),
+        ("absent-report-by-bob", bob.token(), "report-a"),
+    ] {
+        let response = post(
+            "/authoring",
+            Some(principal),
+            &[],
+            &get_report_document(query_id, PROJECT, report_id),
+        )
+        .await;
+        assert_eq!(response.status, 200, "{}", response.body);
+        let document: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(document["body"]["query-id"], query_id);
+        assert_eq!(
+            outcome(&response.body)["value"]["reason"],
+            serde_json::json!({"kind": "report-not-found", "report-id": report_id}),
+            "get-report answered from a store that no longer exists: {}",
+            response.body
+        );
+        // `pending` is off the wire entirely, not merely unreached.
+        assert!(
+            !response.body.contains("pending"),
+            "get-report answered a pending projection: {}",
+            response.body
+        );
+    }
     assert_eq!(
         authoring_durable_counts(&admin).await,
-        before_pending_read,
-        "pending get-report mutated control authoring state"
-    );
-
-    finalize_report(&admin, "report-a", "validated-a").await;
-    let before_finalized_read = authoring_durable_counts(&admin).await;
-    let finalized = post(
-        "/authoring",
-        Some(bob.token()),
-        &[],
-        &get_report_document("finalized-report", PROJECT, "report-a"),
-    )
-    .await;
-    assert_eq!(finalized.status, 200, "{}", finalized.body);
-    let finalized_document: serde_json::Value = serde_json::from_str(&finalized.body).unwrap();
-    assert_eq!(
-        finalized_document["body"]["outcome"]["value"]["result"],
-        serde_json::json!({
-            "state": "finalized",
-            "report-id": "report-a",
-            "validated-draft": {"validated-draft-id": "validated-a"},
-            "passed": false,
-            "summary": {"cases": [{"case-id": "case-a", "passed": false}]},
-        })
-    );
-    assert!(
-        finalized_document
-            .to_string()
-            .find("resolution-map")
-            .is_none(),
-        "get-report fabricated the retired resolution map"
-    );
-    assert_eq!(
-        authoring_durable_counts(&admin).await,
-        before_finalized_read,
-        "finalized get-report mutated control authoring state"
+        before_reads,
+        "get-report mutated control authoring state"
     );
     assert!(
         ledger_rows(&admin).await.is_empty(),
@@ -1267,7 +1106,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a pre-dispatch refusal was audited"
     );
 
-    // ---- test-set-run IS mounted, and composes a real report ---------------
+    // ---- test-set-run IS mounted, and judges a real candidate --------------
     // wamn-0h0g.8.5.4. This is the assertion that replaced the bare 501: the
     // very document that used to be in `unmounted` above now reaches the
     // composition. `validate`, `draft-run`, `publish`, and `read-draft` kept
@@ -1301,16 +1140,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "an untrusted test-set-run probe was attributed"
     );
 
-    // Ordinal 0 gets the status its case expects; ordinal 1 deliberately does
-    // not, so the report's verdict comes from real per-case evaluation rather
-    // than from everything trivially passing.
-    let stand_in = tokio::spawn(complete_admitted_case_runs(
-        project_admin_url(&url),
-        vec![
-            (201, serde_json::json!({"id": "first"})),
-            (500, serde_json::json!({"error": "second"})),
-        ],
-    ));
     // The headers assert another principal and a wider role. Neither is read:
     // identity is settled from the bearer token alone, before the body.
     let accepted = post(
@@ -1323,16 +1152,13 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         &test_set_run_document("test-set-1"),
     )
     .await;
-    stand_in
-        .await
-        .expect("the stand-in executor completed every admitted run");
     assert_eq!(
         accepted.status, 200,
         "test-set-run did not reach its handler: {}",
         accepted.body
     );
-    // The receipt names the report the composition DERIVED — the candidate's
-    // gate report — not one the caller chose.
+    // The receipt names the report identity the judgment DERIVED — the
+    // candidate's own gate report — not one the caller chose.
     assert_eq!(
         outcome(&accepted.body),
         serde_json::json!({
@@ -1370,115 +1196,46 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a header attributed a command to the wrong principal: {attributed:?}"
     );
 
-    // Exactly one run per ordinal, each under its derived producer key, each
-    // with its queue row.
+    // NOTHING WAS EXECUTED. A gate is a judgment about a document (ratified
+    // spec §5.1), so an accepted candidate admits no run, enqueues nothing, and
+    // stores no report. These are the reads the deleted composition used to make
+    // non-empty; keeping them is what makes its resurrection visible here.
     let runs = project_case_runs(&project).await;
+    assert!(
+        runs.is_empty(),
+        "an accepted gate admitted a test-case run: {runs:?}"
+    );
     assert_eq!(
-        runs.iter()
-            .map(|(_, key, status, _)| (key.as_str(), status.as_str()))
-            .collect::<Vec<_>>(),
-        [
-            (
-                format!("case:{CANDIDATE_GATE_REPORT}:0").as_str(),
-                "completed"
-            ),
-            (
-                format!("case:{CANDIDATE_GATE_REPORT}:1").as_str(),
-                "completed"
-            ),
-        ],
-        "the admitted runs are not one per ordinal"
+        project_queue_count(&project).await,
+        0,
+        "an accepted gate enqueued a run"
     );
-    assert_eq!(project_queue_count(&project).await, 2);
 
-    // Each case's asserted facts AND its frozen binding world reached the
-    // immutable control summary, and the verdicts are the ones evaluation
-    // produced rather than a blanket pass.
-    let verdicts = control_case_verdicts(&admin).await;
+    // The mounted query still finds no report: the gate writes none, and the
+    // durable report row keyed by `wiring_hash` is wamn-0h0g.8.5.6's to build.
+    let projected = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &get_report_document("judged-report", PROJECT, CANDIDATE_GATE_REPORT),
+    )
+    .await;
+    assert_eq!(projected.status, 200, "{}", projected.body);
     assert_eq!(
-        verdicts.len(),
-        2,
-        "the report did not finalize both ordinals"
+        outcome(&projected.body)["value"]["reason"]["kind"],
+        serde_json::json!("report-not-found")
     );
-    assert_eq!(verdicts[0].1, "creates");
-    assert_eq!(verdicts[1].1, "rejects");
-    assert!(
-        verdicts[0].3,
-        "the passing case was not recorded as passing"
-    );
-    assert!(!verdicts[1].3, "the failing case was recorded as passing");
-    assert_eq!(verdicts[0].4, None);
-    assert_eq!(verdicts[1].4, Some("assertion-failed".to_owned()));
-    for (ordinal, verdict) in verdicts.iter().enumerate() {
-        assert_eq!(
-            verdict.5["case"]["actual"]["response"]["status"],
-            serde_json::json!(if ordinal == 0 { 201 } else { 500 }),
-            "ordinal {ordinal} recorded facts that are not its run's"
-        );
-        assert_eq!(
-            verdict.5["binding-world"],
-            serde_json::json!([]),
-            "ordinal {ordinal} recorded no frozen binding world"
-        );
-    }
-    assert!(
-        verdicts[1].5["case"]["detail"].is_string(),
-        "the failing case recorded no diff"
-    );
-
-    // SEQUENTIAL, and it is the ordering that proves it: ordinal 1's run did
-    // not exist in the project plane until ordinal 0's verdict was committed to
-    // the control plane. Both instants come from the one server clock.
-    assert!(
-        runs[1].3 >= verdicts[0].6,
-        "ordinal 1 was admitted before ordinal 0's summary was stored"
-    );
-    assert!(
-        verdicts[1].6 >= verdicts[0].6,
-        "the case verdicts were not stored in ordinal order"
-    );
-
-    // The report is the conjunction of the cases, and it was attributed once.
-    let report = admin
-        .query_one(
-            &format!(
-                "SELECT passed, validated_draft_id FROM {SOURCE_SCHEMA}.authoring_test_reports \
-                  WHERE tenant_id = $1 AND report_id = $2"
-            ),
-            &[&TENANT, &CANDIDATE_GATE_REPORT],
-        )
-        .await
-        .expect("the composed report finalized");
-    assert!(
-        !report.get::<_, bool>(0),
-        "a failing case passed the report"
-    );
-    assert_eq!(report.get::<_, String>(1), CANDIDATE_WIRING_HASH);
     assert_eq!(
         ledger_rows(&admin).await[ledger_before_composition..]
             .iter()
             .map(|(_, _, kind, _)| kind.clone())
             .collect::<Vec<_>>(),
         ["test-set-run".to_owned()],
-        "the composed command was not attributed exactly once"
+        "the judged command was not attributed exactly once"
     );
 
-    // The mounted query reads the report the mounted command produced.
-    let projected = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &get_report_document("composed-report", PROJECT, CANDIDATE_GATE_REPORT),
-    )
-    .await;
-    assert_eq!(projected.status, 200, "{}", projected.body);
-    assert_eq!(
-        outcome(&projected.body)["value"]["result"]["state"],
-        serde_json::json!("finalized")
-    );
-
-    // ---- an exact retry converges rather than double-admitting -------------
-    // The same command id replays the stored receipt. Nothing is admitted.
+    // ---- an exact retry converges on the same judgment ---------------------
+    // The same command id replays the stored receipt.
     let replay = post(
         "/authoring",
         Some(alice.token()),
@@ -1489,11 +1246,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(replay.status, 200, "{}", replay.body);
     assert_eq!(outcome(&replay.body), outcome(&accepted.body));
 
-    // A DIFFERENT command id for the same candidate re-drives the whole
-    // composition against durable state that already exists. Every step
-    // converges — the reservation is its own, every ordinal admits `duplicate`,
-    // every case already has its immutable verdict — so it reaches the same
-    // report without a second run, a second queue row, or a changed verdict.
+    // A DIFFERENT command id for the same candidate re-derives the judgment
+    // from scratch. It converges trivially now that the judgment reads and
+    // writes nothing: the candidate row is immutable and the postures are the
+    // same, so the same document yields the same answer.
     let rerun = post(
         "/authoring",
         Some(bob.token()),
@@ -1506,14 +1262,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(
         project_case_runs(&project).await,
         runs,
-        "a re-driven composition admitted a second run"
+        "a re-derived judgment admitted a run"
     );
-    assert_eq!(project_queue_count(&project).await, 2);
-    assert_eq!(
-        control_case_verdicts(&admin).await,
-        verdicts,
-        "a re-driven composition rewrote an immutable case verdict"
-    );
+    assert_eq!(project_queue_count(&project).await, 0);
     // Two principals ran the same command against the same candidate. Both are
     // attributed, and they stay distinguishable in the append-only ledger --
     // each under the role it actually holds.
@@ -1553,7 +1304,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(
         project_case_runs(&project).await,
         runs,
-        "a service-token re-drive admitted a second run"
+        "a service-token re-drive admitted a run"
     );
 
     // ---- THE CONSTITUTIONAL CLAUSE FIRES ------------------------------------
@@ -1568,7 +1319,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // own wiring hash and its own gate report -- and differs ONLY in the
     // `effects` value of the component its node resolves to. It therefore
     // cannot be refused for any other reason, and if the posture read were
-    // deleted this candidate would compose a report instead.
+    // deleted this candidate would be ACCEPTED instead -- which is exactly what
+    // the mandatory mutation of this bead neuters the check to prove.
     let runs_before_effectful = project_case_runs(&project).await;
     let ledger_before_effectful = ledger_rows(&admin).await.len();
     let effectful = post(
@@ -1605,28 +1357,14 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "an effectful candidate was not refused by its effect posture: {}",
         effectful.body
     );
-    // Nothing executed. The refusal precedes the first admission AND the
-    // reservation, so there is no run, no queue row, and no report to find.
+    // Nothing executed. The refusal precedes everything the verb could do with
+    // the candidate, so there is no run and no queue row.
     assert_eq!(
         project_case_runs(&project).await,
         runs_before_effectful,
         "an effectful candidate admitted a run before being refused"
     );
-    assert_eq!(project_queue_count(&project).await, 2);
-    let effectful_report = admin
-        .query_opt(
-            &format!(
-                "SELECT 1 FROM {SOURCE_SCHEMA}.authoring_test_run_reservations \
-                  WHERE tenant_id = $1 AND report_id = $2"
-            ),
-            &[&TENANT, &EFFECTFUL_GATE_REPORT],
-        )
-        .await
-        .expect("read any reservation for the effectful candidate");
-    assert!(
-        effectful_report.is_none(),
-        "an effectful candidate reserved a report before being refused"
-    );
+    assert_eq!(project_queue_count(&project).await, 0);
     // A refusal is still an authorized command, so it IS attributed.
     assert_eq!(
         ledger_rows(&admin).await.len(),
@@ -1634,12 +1372,14 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a typed gate refusal was not attributed"
     );
 
-    // The PURE candidate composed a real report a few lines above, against the
-    // very same catalog version and the very same posture read. That is what
-    // makes this a predicate rather than a blanket refusal.
-    assert!(
-        !runs_before_effectful.is_empty(),
-        "the effect-free predicate never admitted the pure candidate either"
+    // The PURE candidate was ACCEPTED a few lines above, against the very same
+    // catalog version and the very same posture read. That is what makes this a
+    // predicate rather than a blanket refusal: one document passes the clause
+    // and one does not, and the effects projection is the only difference.
+    assert_eq!(
+        outcome(&accepted.body)["status"],
+        serde_json::json!("completed"),
+        "the effect-free predicate refused the pure candidate too"
     );
 
     // A candidate this plane does not hold is a typed product refusal, not a
@@ -1684,6 +1424,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         runs,
         "a refused test-set command admitted a run"
     );
+    assert_eq!(project_queue_count(&project).await, 0);
 
     // ---- the ledger is append-only -----------------------------------------
     let rewrite = admin

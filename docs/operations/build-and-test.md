@@ -156,7 +156,9 @@ and exits non-zero if any failed, rather than stopping at the first.
 Eight files carry the diffs: `crates/catalog/model/src/serving_manifest.rs`,
 `crates/catalog/model/src/wiring.rs`, `crates/catalog/model/tests/identity.rs`,
 `services/ctl/tests/verb_surface.rs`,
-`services/scenario-worker/src/store/test_orchestration.rs`,
+`services/scenario-worker/src/store/test_orchestration.rs` (DELETED by
+wamn-0h0g.8.5.5 — the row stays because the table is a measurement dated to
+`1bffa614`, not a live inventory),
 `tests/conformance/tests/gate_registry.rs`,
 `tests/conformance/tests/retained_root_outcomes.rs`,
 `tests/integration/src/trusted_http_route.rs`.

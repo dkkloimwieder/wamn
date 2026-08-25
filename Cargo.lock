@@ -4633,9 +4633,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-execution-contract",
  "wamn-platform-identity",
- "wamn-run-state",
  "wamn-runtime",
- "wamn-scenario-model",
  "wamn-schema-control",
  "wash-runtime",
 ]

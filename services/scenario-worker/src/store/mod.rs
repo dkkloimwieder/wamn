@@ -1,18 +1,17 @@
-//! Management-owned authoring persistence.
+//! Management-owned authoring reads.
 //!
-//! The two stores here live in DIFFERENT DATABASES and nothing joins them:
-//! [`test_orchestration`] is the control-database half, [`admission`] is the
-//! project-database half. A fact one needs from the other crosses as an
-//! already-observed value.
+//! One store remains: [`admission`], the project-database half, which is where
+//! the gate verb now lives. Its control-database counterpart went with the
+//! composition machinery (wamn-0h0g.8.5.5) — a store whose only writer and only
+//! reader were both deleted by the same change is not a store.
 //!
-//! There is no draft store (wamn-0h0g.8.5.5). A draft is a CLIENT-SIDE file — a
-//! studio buffer, a git working tree — and the wiring document's own content
-//! hash is its identity, so nothing here persists a mutable authored document.
+//! There is no draft store either. A draft is a CLIENT-SIDE file — a studio
+//! buffer, a git working tree — and the wiring document's own content hash is
+//! its identity, so nothing here persists a mutable authored document.
 
 use sha2::{Digest as _, Sha256};
 
 pub mod admission;
-pub mod test_orchestration;
 
 pub(crate) fn sha256(input: &[u8]) -> String {
     let digest = Sha256::digest(input);

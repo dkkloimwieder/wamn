@@ -39,9 +39,6 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.release_attachments",
         "catalog.connection_requirements",
         "catalog.authoring_command_audit",
-        "wamn_run.authoring_test_run_reservations",
-        "wamn_run.authoring_test_case_runs",
-        "wamn_run.authoring_test_reports",
         "catalog.deployment_attestations",
         // wamn-0h0g.8.18: the owner-maintained login-identity-to-tenant mapping.
         "wamn_authority.author_login_tenants",
@@ -78,6 +75,13 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.event_registrations",
         "wamn_run.runs",
         "wamn_run.authoring_test_sets",
+        // wamn-0h0g.8.5.5: the whole run-plane gate-report lineage deletes. A
+        // relation whose only production writer and only production reader are
+        // both removed by the same change does not survive it (owner ruling,
+        // 2026-08-25), so `wamn_run` is now declared EMPTY.
+        "wamn_run.authoring_test_run_reservations",
+        "wamn_run.authoring_test_case_runs",
+        "wamn_run.authoring_test_reports",
     ] {
         assert!(
             !sql.contains(&format!("CREATE TABLE IF NOT EXISTS {excluded}")),
@@ -137,7 +141,9 @@ fn portable_store_record_is_exact_and_storage_only() {
         "DROP TABLE catalog.release_flow_test_evidence RESTRICT;",
         "AND routine.proname = 'register_release_flow_test_evidence'",
         "DROP COLUMN deployed_resolution_map;",
-        "'control-portable-retired-test-set-lineage-requires-reprovision'",
+        "DROP TABLE wamn_run.authoring_test_reports RESTRICT;",
+        "DROP TABLE wamn_run.authoring_test_case_runs RESTRICT;",
+        "DROP TABLE wamn_run.authoring_test_run_reservations RESTRICT;",
         "'control-portable-retired-audit-ledger-requires-reprovision'",
         "'control-portable-retired-release-members-requires-reprovision'",
     ] {
@@ -338,16 +344,11 @@ fn control_author_authority_is_the_exact_ratified_class() {
         "catalog.catalog_heads",
         "catalog.connection_requirements",
     ];
-    // Append-only facts: immutable after append.
-    let append_only = [
-        "catalog.authoring_command_audit",
-        "wamn_run.authoring_test_reports",
-    ];
-    // Landed state machines: exactly the transitions they shipped with.
-    let state_machines = [
-        "wamn_run.authoring_test_run_reservations",
-        "wamn_run.authoring_test_case_runs",
-    ];
+    // Append-only facts: immutable after append. wamn-0h0g.8.5.5 left exactly
+    // one: the gate-report lineage was the author's only state-machine
+    // authority, and its three relations are deleted, so the author now holds
+    // nothing but reads and one append.
+    let append_only = ["catalog.authoring_command_audit"];
 
     let mut expected = BTreeSet::new();
     for schema in ["catalog", "wamn_run", "wamn_authority"] {
@@ -365,11 +366,6 @@ fn control_author_authority_is_the_exact_ratified_class() {
     }
     for relation in append_only {
         for privilege in ["SELECT", "INSERT"] {
-            expected.insert((relation.to_owned(), privilege.to_owned()));
-        }
-    }
-    for relation in state_machines {
-        for privilege in ["SELECT", "INSERT", "UPDATE"] {
             expected.insert((relation.to_owned(), privilege.to_owned()));
         }
     }
@@ -470,7 +466,7 @@ fn control_author_authority_is_the_exact_ratified_class() {
         "the author policy derived tenant authority from app.tenant"
     );
     let mut policied = 0;
-    for relation in read_only.iter().chain(&append_only).chain(&state_machines) {
+    for relation in read_only.iter().chain(&append_only) {
         assert!(
             author_policies.contains(&format!("'{relation}'")),
             "{relation} has no applicable restrictive author policy"
@@ -714,15 +710,6 @@ VALUES ('tenant-a','cat',1);
 INSERT INTO catalog.release_flows
   (tenant_id,catalog_id,catalog_version,flow_id,flow_version)
 VALUES ('tenant-a','cat',1,'flow-a',1);
-INSERT INTO wamn_run.authoring_test_run_reservations
-  (tenant_id,report_id,command_hash,validated_draft_id,
-   catalog_id,catalog_version,case_count,whole_deadline_at)
-VALUES ('tenant-a','report-a','sha256:'||repeat('1',64),'validated-a',
-        'cat',1,1,clock_timestamp()+interval '1 hour');
-INSERT INTO wamn_run.authoring_test_reports
-  (tenant_id,report_id,validated_draft_id,catalog_id,
-   catalog_version,passed,summary)
-VALUES ('tenant-a','report-a','validated-a','cat',1,true,'{{}}'::jsonb);
 
 DO $$ DECLARE
   first_attested_at timestamptz;
@@ -767,6 +754,18 @@ DO $$ BEGIN
   -- behind by an earlier apply that the retirement block failed to converge.
   ASSERT to_regclass('catalog.draft_safe_connection_grants') IS NULL,
     'the retired draft-safe connection grant relation is still installed';
+  -- wamn-0h0g.8.5.5: the whole run-plane gate-report lineage is deleted, and
+  -- `wamn_run` is declared EMPTY. Asserted on the SERVER, not over the file
+  -- text, because the convergence arm is what an already-provisioned store
+  -- takes and a fresh apply never does.
+  ASSERT to_regclass('wamn_run.authoring_test_reports') IS NULL,
+    'the retired gate report relation is still installed';
+  ASSERT to_regclass('wamn_run.authoring_test_case_runs') IS NULL,
+    'the retired gate case-run relation is still installed';
+  ASSERT to_regclass('wamn_run.authoring_test_run_reservations') IS NULL,
+    'the retired gate reservation relation is still installed';
+  ASSERT NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'wamn_run'),
+    'the control store declares no portable wamn_run relation';
 END $$;
 RESET ROLE;
 "#
@@ -958,16 +957,6 @@ DO $seed$ DECLARE tenant text; BEGIN
     INSERT INTO catalog.release_flows
       (tenant_id,catalog_id,catalog_version,flow_id,flow_version)
     VALUES (tenant,'cat',1,'flow-a',1);
-    INSERT INTO wamn_run.authoring_test_run_reservations
-      (tenant_id,report_id,command_hash,validated_draft_id,
-       catalog_id,catalog_version,case_count,whole_deadline_at)
-    VALUES (tenant,'report-a','sha256:'||repeat('1',64),'validated-'||tenant,
-            'cat',1,1,clock_timestamp()+interval '1 hour');
-    INSERT INTO wamn_run.authoring_test_case_runs
-      (tenant_id,report_id,ordinal,case_id,run_id,catalog_id,catalog_version,
-       validated_draft_id,case_deadline_at)
-    VALUES (tenant,'report-a',0,'case-a','run-'||tenant,'cat',1,
-            'validated-'||tenant,clock_timestamp()+interval '1 minute');
   END LOOP;
   PERFORM set_config('app.tenant', '', false);
 END $seed$;
@@ -997,8 +986,6 @@ DO $positive$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.release_flows) = 1;
   ASSERT (SELECT count(*) FROM catalog.flow_artifacts) = 1;
   ASSERT (SELECT count(*) FROM catalog.releases) = 1;
-  ASSERT (SELECT count(*) FROM wamn_run.authoring_test_run_reservations) = 1;
-  ASSERT (SELECT count(*) FROM wamn_run.authoring_test_case_runs) = 1;
 END $positive$;
 
 INSERT INTO catalog.authoring_command_audit
@@ -1007,13 +994,6 @@ INSERT INTO catalog.authoring_command_audit
 VALUES ('tenant-a','command-1','test-set-run','principal-1','human','someone',
         'project-author','acme','receiving','dev','validated-tenant-a',
         'sha256:'||repeat('2',64),'\x7b7d'::bytea);
-UPDATE wamn_run.authoring_test_case_runs
-   SET state = 'finalized', passed = true, summary = '{{}}'::jsonb,
-       finalized_at = clock_timestamp()
- WHERE tenant_id = 'tenant-a' AND report_id = 'report-a' AND ordinal = 0;
-UPDATE wamn_run.authoring_test_run_reservations
-   SET state = 'finalized', finalized_at = clock_timestamp()
- WHERE tenant_id = 'tenant-a' AND report_id = 'report-a';
 
 -- WIDENING MATRIX: `app.tenant` is a consistency assertion only. Rewriting it
 -- cannot reach another tenant's rows, and cannot write one either.
@@ -1021,7 +1001,7 @@ SET app.tenant = 'tenant-b';
 DO $no_widening$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.catalog_heads) = 0,
          'app.tenant widened a read to another tenant';
-  ASSERT (SELECT count(*) FROM wamn_run.authoring_test_run_reservations) = 0;
+  ASSERT (SELECT count(*) FROM catalog.release_flows) = 0;
   BEGIN
     INSERT INTO catalog.authoring_command_audit
       (tenant_id,command_id,command_kind,principal_id,principal_kind,
@@ -1083,15 +1063,9 @@ DO $denials$ BEGIN
   BEGIN UPDATE catalog.authoring_command_audit SET target_ref = 'moved';
     ASSERT false, 'the author mutated the command ledger';
   EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
-  BEGIN UPDATE wamn_run.authoring_test_reports SET passed = false;
-    ASSERT false, 'the author mutated a finalized report';
+  BEGIN DELETE FROM catalog.authoring_command_audit;
+    ASSERT false, 'the author deleted a ledger row';
   EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
-  BEGIN DELETE FROM wamn_run.authoring_test_run_reservations;
-    ASSERT false, 'the author deleted a reservation';
-  EXCEPTION WHEN insufficient_privilege OR SQLSTATE '55000' THEN NULL; END;
-  BEGIN DELETE FROM wamn_run.authoring_test_case_runs;
-    ASSERT false, 'the author deleted a case mapping';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   -- The head pointer moves only through the narrow bridge, never by UPDATE.
   BEGIN UPDATE catalog.catalog_heads SET applied_catalog_version = 2;
     ASSERT false, 'the author moved the applied catalog head';
@@ -1160,12 +1134,10 @@ DO $second$ BEGIN
   ASSERT wamn_authority.session_author_tenant() = 'tenant-b';
   -- tenant-a's author appended a ledger row above; tenant-b must not see it,
   -- and must see exactly its own seeded rows.
-  ASSERT (SELECT count(*) FROM wamn_run.authoring_test_case_runs) = 1,
-         'the second tenant observed the first tenant''s authored rows';
+  ASSERT (SELECT count(*) FROM catalog.release_flows) = 1,
+         'the second tenant lost its own seeded rows';
   ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0,
          'the second tenant read the first tenant''s command ledger';
-  ASSERT (SELECT state FROM wamn_run.authoring_test_run_reservations) = 'pending',
-         'the second tenant observed the first tenant''s finalization';
 END $second$;
 "#
     );

@@ -374,12 +374,7 @@ const SHARED_PORTABLE_RELATIONS: [&str; 10] = [
 /// project-side and no project installer recreates these, so they have no
 /// project fingerprint by design. Comparing them across planes is what
 /// manufactured the seven-relation drift this list retires.
-const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 4] = [
-    "catalog.authoring_command_audit",
-    "wamn_run.authoring_test_run_reservations",
-    "wamn_run.authoring_test_case_runs",
-    "wamn_run.authoring_test_reports",
-];
+const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 1] = ["catalog.authoring_command_audit"];
 
 async fn portable_fingerprints(
     client: &Client,

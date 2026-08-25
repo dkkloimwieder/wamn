@@ -228,25 +228,24 @@ fn finalized_report_projects_only_current_control_store_facts() {
         "the public schema retained a fact the control report no longer records"
     );
 
-    // The other surviving projection state, frozen whole for the same reason.
-    // `Pending` outlives this collapse deliberately: the reservation protocol
-    // behind `get-report` is intact until wamn-0h0g.8.5.6 re-keys the report row
-    // on `wiring_hash`, and a reservation without its immutable report has no
-    // other truthful answer.
-    let pending = ReportProjection::Pending {
-        report_id: "report-1".to_owned(),
-        validated_draft: ValidatedDraftRef {
-            validated_draft_id: "validated-1".to_owned(),
-        },
-    };
-    assert_eq!(
-        serde_json::to_value(pending).expect("report serializes"),
-        json!({
-            "state": "pending",
-            "report-id": "report-1",
-            "validated-draft": {"validated-draft-id": "validated-1"},
-        })
+    // wamn-0h0g.8.5.5: `finalized` is the WHOLE projection now. `Pending` was
+    // reachable only while the reservation protocol stood, and the owner ruling
+    // of 2026-08-25 struck that lineage entire -- so a report either exists for
+    // its key or `report-not-found` answers. Pinned as an absence on the public
+    // schema as well as on the type, because re-adding the variant is a wire
+    // change and must fail here rather than ship.
+    // Quoted, because the type's own doc comment reaches the schema as a
+    // `description` and says the word; what must be absent is the STATE TAG.
+    assert!(
+        !wamn_authoring_model::json_schema_string().contains("\"pending\""),
+        "the public schema retained the deleted pending report state"
     );
+    let refused: Result<ReportProjection, _> = serde_json::from_value(json!({
+        "state": "pending",
+        "report-id": "report-1",
+        "validated-draft": {"validated-draft-id": "validated-1"},
+    }));
+    assert!(refused.is_err(), "a pending projection still decodes");
 }
 
 /// The constitutional clause's refusal, frozen as a whole wire document.

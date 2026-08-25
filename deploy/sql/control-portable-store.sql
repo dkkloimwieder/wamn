@@ -4,9 +4,11 @@
 -- role access and installs no project/runtime compatibility path.
 --
 -- The qualified names are intentionally unchanged from the project copies.
--- During the one-cutover train both databases can therefore carry catalog.*
--- and wamn_run.authoring_test_*; database residency, not a renamed schema,
--- distinguishes them.
+-- During the one-cutover train both databases can therefore carry catalog.*;
+-- database residency, not a renamed schema, distinguishes them. `wamn_run` is
+-- declared here and left EMPTY: wamn-0h0g.8.5.5 deleted the whole gate-report
+-- lineage that used to live in it, and the drift guard below asserts the
+-- emptiness so the schema stays this artifact's exclusively.
 --
 -- `control-portable-retained-shape-drift` and the deployment-attestation
 -- constraint fingerprint below are apply-time digests: they must be regenerated
@@ -319,80 +321,6 @@ ALTER TABLE catalog.authoring_command_audit
     ADD CONSTRAINT authoring_command_audit_command_kind_check
         CHECK (command_kind IN ('test-set-run', 'publish'));
 
-CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_run_reservations (
-    tenant_id          text NOT NULL CHECK (tenant_id <> ''),
-    report_id          text NOT NULL CHECK (report_id <> ''),
-    command_hash       text NOT NULL CHECK (command_hash ~ '^sha256:[0-9a-f]{64}$'),
-    validated_draft_id text NOT NULL CHECK (validated_draft_id <> ''),
-    catalog_id         text NOT NULL CHECK (catalog_id <> ''),
-    catalog_version    int NOT NULL CHECK (catalog_version > 0),
-    case_count         int NOT NULL CHECK (case_count BETWEEN 1 AND 256),
-    state             text NOT NULL DEFAULT 'pending'
-        CHECK (state IN ('pending', 'finalized')),
-    created_at        timestamptz NOT NULL DEFAULT clock_timestamp(),
-    whole_deadline_at timestamptz NOT NULL,
-    finalized_at      timestamptz,
-    PRIMARY KEY (tenant_id, report_id),
-    UNIQUE (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id),
-    CHECK (whole_deadline_at > created_at),
-    CHECK (
-        (state = 'pending' AND finalized_at IS NULL)
-        OR (state = 'finalized' AND finalized_at IS NOT NULL
-            AND finalized_at >= created_at)
-    )
-);
-
-CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_case_runs (
-    tenant_id          text NOT NULL CHECK (tenant_id <> ''),
-    report_id          text NOT NULL CHECK (report_id <> ''),
-    ordinal            int NOT NULL CHECK (ordinal BETWEEN 0 AND 255),
-    case_id            text NOT NULL CHECK (case_id <> ''),
-    run_id             text NOT NULL CHECK (run_id <> ''),
-    catalog_id         text NOT NULL CHECK (catalog_id <> ''),
-    catalog_version    int NOT NULL CHECK (catalog_version > 0),
-    validated_draft_id text NOT NULL CHECK (validated_draft_id <> ''),
-    state              text NOT NULL DEFAULT 'pending'
-        CHECK (state IN ('pending', 'finalized')),
-    passed             boolean,
-    failure_kind       text CHECK (
-        failure_kind IN ('assertion-failed', 'deadline-exhausted',
-                         'effect-uncertain')
-    ),
-    summary             jsonb CHECK (summary IS NULL OR jsonb_typeof(summary) = 'object'),
-    case_deadline_at    timestamptz NOT NULL,
-    created_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
-    finalized_at        timestamptz,
-    PRIMARY KEY (tenant_id, report_id, ordinal),
-    UNIQUE (tenant_id, report_id, case_id),
-    UNIQUE (tenant_id, run_id),
-    FOREIGN KEY (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id)
-        REFERENCES wamn_run.authoring_test_run_reservations
-            (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id),
-    CHECK (case_deadline_at > created_at),
-    CHECK (
-        (state = 'pending' AND passed IS NULL AND failure_kind IS NULL
-         AND summary IS NULL AND finalized_at IS NULL)
-        OR (state = 'finalized' AND passed IS NOT NULL AND summary IS NOT NULL
-            AND finalized_at IS NOT NULL AND finalized_at >= created_at
-            AND ((passed AND failure_kind IS NULL)
-                 OR (NOT passed AND failure_kind IS NOT NULL)))
-    )
-);
-
-CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_reports (
-    tenant_id           text NOT NULL CHECK (tenant_id <> ''),
-    report_id           text NOT NULL CHECK (report_id <> ''),
-    validated_draft_id  text NOT NULL CHECK (validated_draft_id <> ''),
-    catalog_id          text NOT NULL CHECK (catalog_id <> ''),
-    catalog_version     int NOT NULL CHECK (catalog_version > 0),
-    passed              boolean NOT NULL,
-    summary             jsonb NOT NULL CHECK (jsonb_typeof(summary) = 'object'),
-    finalized_at        timestamptz NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY (tenant_id, report_id),
-    FOREIGN KEY (tenant_id, report_id)
-        REFERENCES wamn_run.authoring_test_run_reservations (tenant_id, report_id)
-);
-
 CREATE TABLE IF NOT EXISTS catalog.deployment_attestations (
     tenant_id               text NOT NULL CHECK (tenant_id <> ''),
     catalog_id              text NOT NULL CHECK (catalog_id <> ''),
@@ -522,9 +450,7 @@ BEGIN
         'catalog.release_attachments', 'catalog.component_library',
         'catalog.connection_requirements',
         'catalog.authoring_command_audit',
-        'catalog.deployment_attestations',
-        'wamn_run.authoring_test_run_reservations',
-        'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
+        'catalog.deployment_attestations'
     ]
     LOOP
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
@@ -557,8 +483,7 @@ BEGIN
         'catalog.release_sources', 'catalog.release_attachments',
         'catalog.component_library',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
-        'catalog.deployment_attestations',
-        'wamn_run.authoring_test_reports'
+        'catalog.deployment_attestations'
     ]
     LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
@@ -634,20 +559,31 @@ BEGIN
     END IF;
     DROP FUNCTION IF EXISTS catalog.guard_flow_draft_update();
 
-    -- wamn-0h0g.15.27 retired the test-set store, leaving both RETAINED record
-    -- tables with a NOT NULL foreign-key column that has no default and
-    -- therefore refuses every reservation and report INSERT.
-    IF EXISTS (
-        SELECT 1 FROM pg_attribute
-        WHERE attrelid = to_regclass('wamn_run.authoring_test_run_reservations')
-          AND attname = 'test_set_hash' AND NOT attisdropped
-    ) OR EXISTS (
-        SELECT 1 FROM pg_attribute
-        WHERE attrelid = to_regclass('wamn_run.authoring_test_reports')
-          AND attname = 'test_set_hash' AND NOT attisdropped
-    ) THEN
-        RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'control-portable-retired-test-set-lineage-requires-reprovision';
+    -- wamn-0h0g.8.5.5: the whole run-plane gate-report lineage deletes. The
+    -- owner ruling of 2026-08-25 struck the surviving-table clause: a relation
+    -- whose only production writer (`insert_finalized_test_report_sql`) and only
+    -- production reader (`select_test_report_projection_sql`) are deleted by the
+    -- same change does not survive it. An effect-free gate's report is
+    -- reproducible from the document, so none of this was durable state worth
+    -- keeping -- it was the composition machinery's memory for per-ordinal
+    -- resumption, and the effect-free clause deleted the thing it remembered.
+    --
+    -- Child first: both records carry a foreign key into the reservation, so the
+    -- parent's RESTRICT drop would refuse while either stands. RESTRICT
+    -- throughout, never CASCADE: it proves nothing else came to depend on them.
+    -- The rows are discarded without archive exactly like the draft rows above.
+    IF to_regclass('wamn_run.authoring_test_reports') IS NOT NULL THEN
+        LOCK TABLE wamn_run.authoring_test_reports IN ACCESS EXCLUSIVE MODE;
+        DROP TABLE wamn_run.authoring_test_reports RESTRICT;
+    END IF;
+    IF to_regclass('wamn_run.authoring_test_case_runs') IS NOT NULL THEN
+        LOCK TABLE wamn_run.authoring_test_case_runs IN ACCESS EXCLUSIVE MODE;
+        DROP TABLE wamn_run.authoring_test_case_runs RESTRICT;
+    END IF;
+    IF to_regclass('wamn_run.authoring_test_run_reservations') IS NOT NULL THEN
+        LOCK TABLE wamn_run.authoring_test_run_reservations
+            IN ACCESS EXCLUSIVE MODE;
+        DROP TABLE wamn_run.authoring_test_run_reservations RESTRICT;
     END IF;
 
     -- wamn-0h0g.15.159 dropped the sealed member snapshot from the release
@@ -686,21 +622,6 @@ BEGIN
             DROP COLUMN deployed_resolution_map;
     END IF;
 
-    -- wamn-0h0g.15.27 also narrowed the case outcome domain. ADD CONSTRAINT
-    -- validates the heap directly instead of through the policy, so a surviving
-    -- retired outcome refuses here without a row guard RLS would blind.
-    IF EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid = to_regclass('wamn_run.authoring_test_case_runs')
-          AND conname = 'authoring_test_case_runs_failure_kind_check'
-          AND pg_get_constraintdef(oid, true) LIKE '%resolution-map-mismatch%'
-    ) THEN
-        ALTER TABLE wamn_run.authoring_test_case_runs
-            DROP CONSTRAINT authoring_test_case_runs_failure_kind_check,
-            ADD CONSTRAINT authoring_test_case_runs_failure_kind_check
-            CHECK (failure_kind IN ('assertion-failed', 'deadline-exhausted',
-                                    'effect-uncertain'));
-    END IF;
 END
 $retire$;
 
@@ -730,12 +651,18 @@ BEGIN
             MESSAGE = 'control-portable-catalog-inventory-drift';
     END IF;
 
+    -- wamn-0h0g.8.5.5: this artifact now declares ZERO portable tables in
+    -- `wamn_run`, so the inventory it asserts is the EMPTY one. Kept as a
+    -- positive assertion rather than deleted: the guard's job is to refuse an
+    -- inventory this artifact did not put there, and that job survives the
+    -- collapse -- the schema still belongs exclusively to this store, so a
+    -- relation appearing in it is drift whether the declared set is three names
+    -- or none. Spelled `IS NOT NULL` rather than against `ARRAY[]::text[]`
+    -- because `array_agg` over zero rows returns NULL, not an empty array, so
+    -- an empty-array literal would make this refuse on every apply.
     SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
     FROM pg_tables WHERE schemaname = 'wamn_run';
-    IF run_tables IS DISTINCT FROM ARRAY[
-        'authoring_test_case_runs', 'authoring_test_reports',
-        'authoring_test_run_reservations'
-    ]::text[] THEN
+    IF run_tables IS NOT NULL THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-run-inventory-drift';
     END IF;
@@ -782,10 +709,7 @@ BEGIN
             ('catalog.component_library'),
             ('catalog.release_exposure_manifests'), ('catalog.release_sources'),
             ('catalog.release_attachments'), ('catalog.connection_requirements'),
-            ('catalog.authoring_command_audit'),
-            ('wamn_run.authoring_test_run_reservations'),
-            ('wamn_run.authoring_test_case_runs'),
-            ('wamn_run.authoring_test_reports')
+            ('catalog.authoring_command_audit')
     ), facts AS (
         SELECT r.relation,
                'column:' || a.attnum || ':' || a.attname || ':'
@@ -812,7 +736,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '5d70ff98ccc9a334119074b54d1fd0383235d517a3d4d604e77fd06f0bf19bca'
+       'c8985781241db7613966597c84f0c4b7477a7c5b9e146447d30b170edcd8114a'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';
@@ -902,9 +826,7 @@ BEGIN
         'catalog.releases', 'catalog.release_flows',
         'catalog.catalog_heads',
         'catalog.connection_requirements',
-        'catalog.authoring_command_audit',
-        'wamn_run.authoring_test_run_reservations',
-        'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
+        'catalog.authoring_command_audit'
     ]
     LOOP
         policy_name := split_part(relation_name, '.', 2) || '_author_tenant';
@@ -940,23 +862,19 @@ GRANT SELECT ON catalog.flow_artifacts, catalog.releases,
 
 -- The author holds NO mutable-document authority at all (wamn-0h0g.8.5.5): the
 -- one relation it could write in place is deleted, so every grant below is over
--- an append-only fact or a bounded state machine.
+-- a read or an append-only fact.
 
 -- Append-only facts: immutable after append, enforced by their own triggers as
 -- well as by the absence of UPDATE and DELETE here.
-REVOKE ALL PRIVILEGES ON
-    catalog.authoring_command_audit, wamn_run.authoring_test_reports
+--
+-- wamn-0h0g.8.5.5 left exactly one. The gate-report lineage was the author's
+-- only other authority here and its three relations are deleted above, so the
+-- author now holds NO state-machine authority at all: every grant it has is
+-- either a read or an append.
+REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit
     FROM wamn_control_author;
-GRANT SELECT, INSERT ON catalog.authoring_command_audit,
-    wamn_run.authoring_test_reports
+GRANT SELECT, INSERT ON catalog.authoring_command_audit
     TO wamn_control_author;
-
--- Reservation and case-map state machines: exactly the transitions they landed
--- with, never DELETE.
-REVOKE ALL PRIVILEGES ON wamn_run.authoring_test_run_reservations,
-    wamn_run.authoring_test_case_runs FROM wamn_control_author;
-GRANT SELECT, INSERT, UPDATE ON wamn_run.authoring_test_run_reservations,
-    wamn_run.authoring_test_case_runs TO wamn_control_author;
 
 -- Owner-only is an explicit contract, not merely an absence of grants inherited
 -- from a fresh database. Default PUBLIC function execution is revoked above.
@@ -998,15 +916,7 @@ BEGIN
                  ('catalog', 'catalog_heads', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
-                 ('catalog', 'authoring_command_audit', 'INSERT'),
-                 ('wamn_run', 'authoring_test_reports', 'SELECT'),
-                 ('wamn_run', 'authoring_test_reports', 'INSERT'),
-                 ('wamn_run', 'authoring_test_run_reservations', 'SELECT'),
-                 ('wamn_run', 'authoring_test_run_reservations', 'INSERT'),
-                 ('wamn_run', 'authoring_test_run_reservations', 'UPDATE'),
-                 ('wamn_run', 'authoring_test_case_runs', 'SELECT'),
-                 ('wamn_run', 'authoring_test_case_runs', 'INSERT'),
-                 ('wamn_run', 'authoring_test_case_runs', 'UPDATE')
+                 ('catalog', 'authoring_command_audit', 'INSERT')
                ) AS allowed(schema_name, table_name, privilege)
               WHERE allowed.schema_name = namespace.nspname
                 AND allowed.table_name = relation.relname
