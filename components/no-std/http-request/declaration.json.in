@@ -40,5 +40,8 @@
       },
       "required": false
     }
+  ],
+  "connections": [
+    { "store-alias": "upstream", "requirement-type": "http" }
   ]
 }

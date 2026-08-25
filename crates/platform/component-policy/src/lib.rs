@@ -73,6 +73,25 @@ pub fn analyze(
 pub const TENANT_WASI_PACKAGES: [&str; 4] =
     ["wasi:io", "wasi:clocks", "wasi:random", "wasi:logging"];
 
+/// Platform packages that grant a component no authority leaving the host.
+///
+/// `wamn:node` is the router's own invocation seam — the host calls INTO the
+/// guest through it — so importing it reaches nothing outside the host. It is
+/// the only platform package with that shape, which is what keeps the
+/// complement rule in [`is_effect_package`] fail-safe: a platform package added
+/// later is classified as an effect until it is listed here deliberately.
+pub const NON_EFFECT_PLATFORM_PACKAGES: [&str; 1] = ["wamn:node"];
+
+/// Whether importing this exact `namespace:package` reaches outside the host.
+///
+/// This is the complement of the two authority-free lists over an inventory
+/// [`analyze_tenant`] has already accepted: every package left is an admitted
+/// platform capability, and an admitted platform capability is an effect
+/// surface unless [`NON_EFFECT_PLATFORM_PACKAGES`] says otherwise.
+pub fn is_effect_package(package: &str) -> bool {
+    !TENANT_WASI_PACKAGES.contains(&package) && !NON_EFFECT_PLATFORM_PACKAGES.contains(&package)
+}
+
 /// Stable classification for a refused tenant import inventory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TenantImportErrorKind {
@@ -207,7 +226,7 @@ impl std::error::Error for EgressGuardError {}
 /// like `wasi:sockets/tcp@0.2.3` (an interface) or `wasi:sockets@0.2.3` (a bare
 /// package); both key on `wasi:sockets`. Strip the interface segment (`/…`)
 /// first, then any package version (`@…`).
-fn import_pkg(import_name: &str) -> &str {
+pub fn import_pkg(import_name: &str) -> &str {
     let head = import_name.split('/').next().unwrap_or(import_name);
     head.split('@').next().unwrap_or(head)
 }
@@ -358,6 +377,34 @@ mod tests {
             .expect_err("unlisted packages must refuse");
         assert_eq!(error.kind(), TenantImportErrorKind::UnadmittedImport);
         assert_eq!(error.imports().len(), 6);
+    }
+
+    /// The whole admitted vocabulary, classified. Every package the tenant
+    /// policy can accept is either authority-free or an effect, and an
+    /// unrecognized platform package falls to the effect side rather than
+    /// disappearing from a component's recorded authority.
+    #[test]
+    fn effect_classification_is_the_complement_of_the_authority_free_lists() {
+        for authority_free in TENANT_WASI_PACKAGES
+            .iter()
+            .chain(NON_EFFECT_PLATFORM_PACKAGES.iter())
+        {
+            assert!(
+                !is_effect_package(authority_free),
+                "{authority_free:?} must not be recorded as an effect"
+            );
+        }
+        for effect in [
+            "wamn:postgres",
+            "wamn:connection",
+            "wamn:jetstream",
+            "wamn:not-yet-invented",
+        ] {
+            assert!(
+                is_effect_package(effect),
+                "{effect:?} must be recorded as an effect"
+            );
+        }
     }
 
     #[test]

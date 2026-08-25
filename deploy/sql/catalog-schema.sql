@@ -1636,6 +1636,14 @@ GRANT SELECT ON catalog.seed_datasets TO wamn_app;
 -- it audited, and normalized typed port/parameter JSON containing each schema's
 -- RFC 8785 digest. Environment is intentionally absent: environment selects a
 -- wiring pointer; it never changes what bytes or interface a catalog admitted.
+--
+-- `effects` (wamn-0h0g.21.9) is the validator's projection of `imports` onto the
+-- authority packages that leave the host, grouped as
+-- [{"package", "interfaces"}]. It is derived, never declared: an author cannot
+-- claim fewer effects than the bytes import, and an empty array is the positive
+-- statement that the component is pure. Its portable connection requirements
+-- land in catalog.connection_requirements at (component_digest, store_alias),
+-- which is why no alias column appears here.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.component_library (
     tenant_id          text NOT NULL CHECK (tenant_id <> ''),
@@ -1649,6 +1657,7 @@ CREATE TABLE catalog.component_library (
     imports            jsonb NOT NULL CHECK (jsonb_typeof(imports) = 'array'),
     imports_fingerprint text NOT NULL
         CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+    effects            jsonb NOT NULL CHECK (jsonb_typeof(effects) = 'array'),
     input_ports        jsonb NOT NULL CHECK (jsonb_typeof(input_ports) = 'array'),
     output_ports       jsonb NOT NULL CHECK (jsonb_typeof(output_ports) = 'array'),
     parameters         jsonb NOT NULL CHECK (jsonb_typeof(parameters) = 'array'),
@@ -1672,6 +1681,23 @@ CREATE TRIGGER component_library_immutable
 BEFORE UPDATE OR DELETE ON catalog.component_library
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 -- END COMPONENT LIBRARY STORAGE MIGRATION (wamn-0h0g.21.1)
+
+-- BEGIN COMPONENT LIBRARY EFFECTS MIGRATION (wamn-0h0g.21.9)
+-- Converge the derived effect projection onto a library installed before it
+-- existed. On a fresh install the column is already present and every clause
+-- below is a no-op; the DEFAULT exists only so the additive ALTER can land on
+-- an immutable relation whose rows cannot be rewritten afterwards.
+--
+-- A row admitted before this migration therefore reads as '[]' — "pure" — which
+-- its validator never derived. Nothing reads `effects` yet, so no authority
+-- decision rests on that today; a component admitted earlier must be re-admitted
+-- before the first consumer of this column ships.
+ALTER TABLE catalog.component_library
+    ADD COLUMN IF NOT EXISTS effects jsonb NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(effects) = 'array');
+ALTER TABLE catalog.component_library
+    ALTER COLUMN effects DROP DEFAULT;
+-- END COMPONENT LIBRARY EFFECTS MIGRATION (wamn-0h0g.21.9)
 
 -- BEGIN WIRING STORAGE MIGRATION (wamn-0h0g.18.2)
 -- ---------------------------------------------------------------------------

@@ -19,5 +19,6 @@
       "schema": { "type": "string", "pattern": "^(|/.*)$" },
       "required": true
     }
-  ]
+  ],
+  "connections": []
 }

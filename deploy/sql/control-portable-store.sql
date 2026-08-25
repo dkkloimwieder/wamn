@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS catalog.component_library (
     imports            jsonb NOT NULL CHECK (jsonb_typeof(imports) = 'array'),
     imports_fingerprint text NOT NULL
         CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+    effects            jsonb NOT NULL CHECK (jsonb_typeof(effects) = 'array'),
     input_ports        jsonb NOT NULL CHECK (jsonb_typeof(input_ports) = 'array'),
     output_ports       jsonb NOT NULL CHECK (jsonb_typeof(output_ports) = 'array'),
     parameters         jsonb NOT NULL CHECK (jsonb_typeof(parameters) = 'array'),
@@ -122,6 +123,15 @@ CREATE TABLE IF NOT EXISTS catalog.component_library (
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
 );
+-- wamn-0h0g.21.9: the derived effect projection, additive onto a store created
+-- before it existed. Rows admitted earlier read as '[]' — "pure" — which their
+-- validator never derived; nothing reads this column yet, and such a component
+-- must be re-admitted before the first consumer of it ships.
+ALTER TABLE catalog.component_library
+    ADD COLUMN IF NOT EXISTS effects jsonb NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(effects) = 'array');
+ALTER TABLE catalog.component_library
+    ALTER COLUMN effects DROP DEFAULT;
 
 CREATE TABLE IF NOT EXISTS catalog.flow_drafts (
     tenant_id  text NOT NULL CHECK (tenant_id <> ''),
@@ -830,7 +840,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       'eea855389a6122c9a4850e0a1f11b9029eac1cbc6b7d18a5608b9cbf1171fd25'
+       'PLACEHOLDER_RECOMPUTE_AT_INTEGRATION'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';

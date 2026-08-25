@@ -66,6 +66,7 @@ SELECT selected.version, \
                    'component-digest', component.component_digest, \
                    'imports', component.imports, \
                    'imports-fingerprint', component.imports_fingerprint, \
+                   'effects', component.effects, \
                    'input-ports', component.input_ports, \
                    'output-ports', component.output_ports, \
                    'parameters', component.parameters \
@@ -140,6 +141,7 @@ SELECT selected.version, selected.gated_catalog_version, \
                    'component-digest', component.component_digest, \
                    'imports', component.imports, \
                    'imports-fingerprint', component.imports_fingerprint, \
+                   'effects', component.effects, \
                    'input-ports', component.input_ports, \
                    'output-ports', component.output_ports, \
                    'parameters', component.parameters \
@@ -277,6 +279,7 @@ SELECT selected.version, selected.gated_catalog_version, \
                    'component-digest', component.component_digest, \
                    'imports', component.imports, \
                    'imports-fingerprint', component.imports_fingerprint, \
+                   'effects', component.effects, \
                    'input-ports', component.input_ports, \
                    'output-ports', component.output_ports, \
                    'parameters', component.parameters \
@@ -845,11 +848,14 @@ mod tests {
                 }],
                 output_ports: Vec::new(),
                 parameters: Vec::new(),
+                connections: Vec::new(),
             },
             format!("sha256:{}", digest_byte.to_string().repeat(64)),
             ["wasi:logging/logging@0.1.0".to_owned()],
+            Vec::new(),
         )
         .expect("fixture component admits")
+        .component
     }
 
     fn document() -> WiringDocument {

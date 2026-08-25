@@ -17,7 +17,8 @@ mod wiring_activation;
 mod wiring_compatibility;
 
 pub use component_library::{
-    AdmittedComponent, AdmittedComponentParameter, AdmittedComponentPort, ComponentCatalogScope,
+    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentParameter,
+    AdmittedComponentPort, ComponentCatalogScope, ComponentConnection, ComponentConnectionType,
     ComponentDeclaration, ComponentFactError, ComponentFactErrorKind,
     ComponentParameterDeclaration, ComponentPortDeclaration, ComponentSchema,
     normalize_component_fact, schema_digests_match,

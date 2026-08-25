@@ -314,11 +314,14 @@ mod tests {
                 }],
                 output_ports: Vec::new(),
                 parameters: Vec::new(),
+                connections: Vec::new(),
             },
             format!("sha256:{}", "a".repeat(64)),
             ["wasi:io/streams@0.2.3".to_owned()],
+            Vec::new(),
         )
         .expect("fixture admits")
+        .component
     }
 
     #[test]

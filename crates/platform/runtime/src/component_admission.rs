@@ -1,10 +1,12 @@
 //! Pure byte admission for tenant component-library entries.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use sha2::{Digest as _, Sha256};
-use wamn_catalog::{AdmittedComponent, ComponentDeclaration, normalize_component_fact};
+use wamn_catalog::{
+    AdmittedComponentEffect, AdmittedComponentFacts, ComponentDeclaration, normalize_component_fact,
+};
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 
@@ -66,17 +68,18 @@ impl std::error::Error for ComponentAdmissionError {
     }
 }
 
-/// Validate exact component bytes and mint their complete catalog fact.
+/// Validate exact component bytes and mint their complete catalog facts.
 ///
 /// This function performs no network, storage, clock, or publication work. The
 /// caller supplies the configured validation engine, exact bytes, declaration,
 /// and the closed platform-capability set. Publication is the separate owner of
-/// persisting a successful result.
+/// persisting a successful result — both halves of it: the library fact and the
+/// portable connection requirements the declaration's aliases mint.
 pub fn validate_component_admission(
     engine: &Engine,
     component_bytes: &[u8],
     request: ComponentAdmissionRequest,
-) -> Result<AdmittedComponent, ComponentAdmissionError> {
+) -> Result<AdmittedComponentFacts, ComponentAdmissionError> {
     let component_name = request.declaration.component.clone();
     let component = Component::new(engine.inner(), component_bytes).map_err(|source| {
         ComponentAdmissionError::new(
@@ -110,6 +113,7 @@ pub fn validate_component_admission(
         request.declaration,
         component_digest,
         imports.iter().map(str::to_owned),
+        derive_effects(&imports),
     )
     .map_err(|source| {
         ComponentAdmissionError::new(
@@ -118,6 +122,31 @@ pub fn validate_component_admission(
             source,
         )
     })
+}
+
+/// Group the audited imports into the authority packages that leave the host.
+///
+/// Called only after [`wamn_component_policy::analyze_tenant`] has accepted the
+/// inventory, so every package here is either authority-free or an admitted
+/// platform capability, and the classification is a total function of the
+/// bytes — an author declares no part of it.
+fn derive_effects(
+    imports: &wamn_component_policy::ComponentImports,
+) -> Vec<AdmittedComponentEffect> {
+    let mut grouped: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+    for name in imports.iter() {
+        let package = wamn_component_policy::import_pkg(name);
+        if wamn_component_policy::is_effect_package(package) {
+            grouped.entry(package).or_default().insert(name.to_owned());
+        }
+    }
+    grouped
+        .into_iter()
+        .map(|(package, interfaces)| AdmittedComponentEffect {
+            package: package.to_owned(),
+            interfaces: interfaces.into_iter().collect(),
+        })
+        .collect()
 }
 
 /// SHA-256 identity of exact component bytes.
@@ -165,6 +194,7 @@ mod tests {
                     schema: json!({"type": "object"}),
                     required: true,
                 }],
+                connections: Vec::new(),
             },
             admitted_platform_packages: BTreeSet::new(),
         }
@@ -176,7 +206,8 @@ mod tests {
         let bytes = wat::parse_str("(component)").expect("fixture component encodes");
 
         let admitted = validate_component_admission(&engine, &bytes, request())
-            .expect("empty-import component admits");
+            .expect("empty-import component admits")
+            .component;
 
         assert_eq!(admitted.component_digest, component_digest(&bytes));
         assert_eq!(admitted.operation, "map");
@@ -221,6 +252,77 @@ mod tests {
         assert_eq!(
             error.kind(),
             ComponentAdmissionErrorKind::ImportPolicyRefused
+        );
+    }
+
+    /// The three classes in one inventory: an authority-free WASI package, the
+    /// router's own invocation seam, and two real effect packages. Only the
+    /// last two are recorded, grouped by package with their exact interfaces.
+    #[test]
+    fn effects_record_only_the_imports_that_leave_the_host() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let bytes = wat::parse_str(
+            r#"(component
+                (type $empty (instance))
+                (import "wasi:clocks/monotonic-clock@0.2.3" (instance (type $empty)))
+                (import "wamn:node/types@0.1.0" (instance (type $empty)))
+                (import "wamn:postgres/client@0.1.0" (instance (type $empty)))
+                (import "wamn:connection/http@0.1.0" (instance (type $empty)))
+            )"#,
+        )
+        .expect("fixture component encodes");
+        let mut request = request();
+        request.admitted_platform_packages = BTreeSet::from([
+            "wamn:node".to_string(),
+            "wamn:postgres".to_string(),
+            "wamn:connection".to_string(),
+        ]);
+        request.declaration.connections = vec![wamn_catalog::ComponentConnection {
+            store_alias: "erp".to_string(),
+            requirement_type: wamn_catalog::ComponentConnectionType::Http,
+        }];
+
+        let facts = validate_component_admission(&engine, &bytes, request)
+            .expect("an effectful component with a declared connection admits");
+
+        assert_eq!(
+            facts.component.effects,
+            vec![
+                AdmittedComponentEffect {
+                    package: "wamn:connection".to_string(),
+                    interfaces: vec!["wamn:connection/http@0.1.0".to_string()],
+                },
+                AdmittedComponentEffect {
+                    package: "wamn:postgres".to_string(),
+                    interfaces: vec!["wamn:postgres/client@0.1.0".to_string()],
+                },
+            ]
+        );
+        assert_eq!(facts.component.imports.len(), 4);
+        assert_eq!(facts.connections.len(), 1);
+        assert_eq!(facts.connections[0].store_alias, "erp");
+    }
+
+    /// Connection authority the environment could never bind is refused at
+    /// admission, not discovered when a delivery reaches the effect.
+    #[test]
+    fn connection_authority_without_a_declared_alias_refuses() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let bytes = wat::parse_str(
+            r#"(component
+                (type $empty (instance))
+                (import "wamn:connection/http@0.1.0" (instance (type $empty)))
+            )"#,
+        )
+        .expect("fixture component encodes");
+        let mut request = request();
+        request.admitted_platform_packages = BTreeSet::from(["wamn:connection".to_string()]);
+
+        let error = validate_component_admission(&engine, &bytes, request)
+            .expect_err("undeclared connection authority must refuse");
+        assert_eq!(
+            error.kind(),
+            ComponentAdmissionErrorKind::InvalidComponentFacts
         );
     }
 }

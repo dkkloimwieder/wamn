@@ -26,6 +26,7 @@ fn both_catalog_carriers_preserve_complete_component_facts() {
             "component_digest",
             "imports",
             "imports_fingerprint",
+            "effects",
             "input_ports",
             "output_ports",
             "parameters",
@@ -57,6 +58,34 @@ fn project_storage_is_immutable_tenant_scoped_and_converged() {
         ".find(\"-- BEGIN COMPONENT LIBRARY STORAGE MIGRATION\")",
         ".find(\"-- END COMPONENT LIBRARY STORAGE MIGRATION\")",
         ".context(\"install component library storage\")",
+    ] {
+        assert!(RECONCILER.contains(required), "missing {required:?}");
+    }
+}
+
+/// The effect projection reaches a library installed before it existed. The
+/// relation-existence check that installs the base migration cannot add a
+/// column, so the additive ALTER is its own converged block in both carriers.
+#[test]
+fn the_effect_projection_converges_onto_an_existing_component_library() {
+    for required in [
+        "-- BEGIN COMPONENT LIBRARY EFFECTS MIGRATION",
+        "-- END COMPONENT LIBRARY EFFECTS MIGRATION",
+        "ADD COLUMN IF NOT EXISTS effects jsonb NOT NULL DEFAULT '[]'::jsonb",
+        "ALTER COLUMN effects DROP DEFAULT",
+    ] {
+        assert!(PROJECT_SCHEMA.contains(required), "missing {required:?}");
+    }
+    for required in [
+        "ADD COLUMN IF NOT EXISTS effects jsonb NOT NULL DEFAULT '[]'::jsonb",
+        "ALTER COLUMN effects DROP DEFAULT",
+    ] {
+        assert!(CONTROL_SCHEMA.contains(required), "missing {required:?}");
+    }
+    for required in [
+        "AND column_name = 'effects')",
+        ".find(\"-- BEGIN COMPONENT LIBRARY EFFECTS MIGRATION\")",
+        ".context(\"install component library effect projection\")",
     ] {
         assert!(RECONCILER.contains(required), "missing {required:?}");
     }

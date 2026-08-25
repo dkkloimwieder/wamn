@@ -36,6 +36,38 @@ pub struct ComponentParameterDeclaration {
     pub required: bool,
 }
 
+/// The closed set of connection types an admitted component may require.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ComponentConnectionType {
+    Http,
+}
+
+/// Every connection type. A new variant does not compile until it is listed.
+const CONNECTION_TYPES: [ComponentConnectionType; 1] = [ComponentConnectionType::Http];
+
+impl ComponentConnectionType {
+    /// Exact WIT `namespace:package` whose import this connection type needs.
+    pub fn import_package(self) -> &'static str {
+        match self {
+            Self::Http => "wamn:connection",
+        }
+    }
+}
+
+/// One portable connection the component reaches under an author-chosen alias.
+///
+/// The alias is the author-owned half: it is the `requirement` string the guest
+/// names at the `wamn:connection` boundary, and the coordinate an environment
+/// binds to a concrete instance. Connection SEMANTICS are platform-owned and
+/// selected whole by `requirement-type`, never authored field by field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ComponentConnection {
+    pub store_alias: String,
+    pub requirement_type: ComponentConnectionType,
+}
+
 /// Component-owned facts presented with exact component bytes for admission.
 ///
 /// The operation is singular by construction. A digest therefore cannot hide
@@ -50,6 +82,7 @@ pub struct ComponentDeclaration {
     pub input_ports: Vec<ComponentPortDeclaration>,
     pub output_ports: Vec<ComponentPortDeclaration>,
     pub parameters: Vec<ComponentParameterDeclaration>,
+    pub connections: Vec<ComponentConnection>,
 }
 
 /// Canonical JSON Schema document and its exact RFC 8785 digest.
@@ -77,6 +110,18 @@ pub struct AdmittedComponentParameter {
     pub required: bool,
 }
 
+/// One authority leaving the host, proved by the component's audited imports.
+///
+/// Effects are a projection of `imports`, never a second declaration: an author
+/// cannot claim fewer effects than the bytes import, and an empty list is the
+/// positive statement that the occurrence is pure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AdmittedComponentEffect {
+    pub package: String,
+    pub interfaces: Vec<String>,
+}
+
 /// Complete component-owned fact persisted in `catalog.component_library`.
 ///
 /// Environment is deliberately absent: an environment selects a wiring, while
@@ -92,9 +137,21 @@ pub struct AdmittedComponent {
     pub component_digest: String,
     pub imports: Vec<String>,
     pub imports_fingerprint: String,
+    pub effects: Vec<AdmittedComponentEffect>,
     pub input_ports: Vec<AdmittedComponentPort>,
     pub output_ports: Vec<AdmittedComponentPort>,
     pub parameters: Vec<AdmittedComponentParameter>,
+}
+
+/// Everything one byte-verified component admission mints.
+///
+/// The two halves land in two relations — the library row and the portable
+/// connection requirements keyed by `(component-digest, store-alias)` — so they
+/// are returned together rather than persisted from two independent decisions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmittedComponentFacts {
+    pub component: AdmittedComponent,
+    pub connections: Vec<ComponentConnection>,
 }
 
 /// Stable classification for component-fact normalization refusal.
@@ -109,6 +166,10 @@ pub enum ComponentFactErrorKind {
     DuplicateParameter,
     InvalidSchema,
     RemoteSchemaReference,
+    UnimportedEffect,
+    DuplicateConnection,
+    UnimportedConnection,
+    UndeclaredConnection,
 }
 
 /// Refusal to mint a complete normalized component-library fact.
@@ -141,11 +202,17 @@ impl fmt::Display for ComponentFactError {
 impl std::error::Error for ComponentFactError {}
 
 /// Normalize one byte-verified component declaration for catalog persistence.
+///
+/// `imports` and `effects` are both derived from the exact bytes by the caller
+/// that audited them; this function re-checks that every effect interface is
+/// one of those imports, and that declared connections and effect-bearing
+/// imports account for each other in both directions.
 pub fn normalize_component_fact(
     declaration: ComponentDeclaration,
     component_digest: String,
     imports: impl IntoIterator<Item = String>,
-) -> Result<AdmittedComponent, ComponentFactError> {
+    effects: Vec<AdmittedComponentEffect>,
+) -> Result<AdmittedComponentFacts, ComponentFactError> {
     validate_identity(&declaration.scope.tenant_id, "tenant-id")?;
     validate_identity(&declaration.scope.catalog_id, "catalog-id")?;
     if declaration.scope.catalog_version == 0 {
@@ -182,18 +249,24 @@ pub fn normalize_component_fact(
     let imports_fingerprint = wamn_execution_contract::canonical_json_sha256(
         &serde_json::to_value(&imports).expect("a string list serializes"),
     );
+    let effects = normalize_effects(effects, &imports)?;
+    let connections = normalize_connections(declaration.connections, &effects)?;
 
-    Ok(AdmittedComponent {
-        scope: declaration.scope,
-        component: declaration.component,
-        interface_version: declaration.interface_version,
-        operation: declaration.operation,
-        component_digest,
-        imports,
-        imports_fingerprint,
-        input_ports,
-        output_ports,
-        parameters,
+    Ok(AdmittedComponentFacts {
+        component: AdmittedComponent {
+            scope: declaration.scope,
+            component: declaration.component,
+            interface_version: declaration.interface_version,
+            operation: declaration.operation,
+            component_digest,
+            imports,
+            imports_fingerprint,
+            effects,
+            input_ports,
+            output_ports,
+            parameters,
+        },
+        connections,
     })
 }
 
@@ -204,6 +277,83 @@ pub fn normalize_component_fact(
 /// widening today.
 pub fn schema_digests_match(left: &ComponentSchema, right: &ComponentSchema) -> bool {
     left.schema_digest == right.schema_digest
+}
+
+/// Sort and deduplicate derived effects, refusing any not backed by an import.
+fn normalize_effects(
+    effects: Vec<AdmittedComponentEffect>,
+    imports: &[String],
+) -> Result<Vec<AdmittedComponentEffect>, ComponentFactError> {
+    let mut normalized = Vec::with_capacity(effects.len());
+    for effect in effects {
+        validate_identity(&effect.package, "effect-package")?;
+        let mut interfaces = effect.interfaces;
+        interfaces.sort();
+        interfaces.dedup();
+        for interface in &interfaces {
+            if !imports.iter().any(|import| import == interface) {
+                return Err(ComponentFactError::new(
+                    ComponentFactErrorKind::UnimportedEffect,
+                    format!("effect interface {interface:?} is not an audited import"),
+                ));
+            }
+        }
+        normalized.push(AdmittedComponentEffect {
+            package: effect.package,
+            interfaces,
+        });
+    }
+    normalized.sort_by(|left, right| left.package.cmp(&right.package));
+    normalized.dedup_by(|left, right| left.package == right.package);
+    Ok(normalized)
+}
+
+/// Normalize declared connections against the effects the bytes actually prove.
+fn normalize_connections(
+    declarations: Vec<ComponentConnection>,
+    effects: &[AdmittedComponentEffect],
+) -> Result<Vec<ComponentConnection>, ComponentFactError> {
+    let mut seen = BTreeSet::new();
+    let mut connections = Vec::with_capacity(declarations.len());
+    for declaration in declarations {
+        validate_identity(&declaration.store_alias, "store-alias")?;
+        if !seen.insert(declaration.store_alias.clone()) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::DuplicateConnection,
+                format!("store-alias {:?} is duplicated", declaration.store_alias),
+            ));
+        }
+        let package = declaration.requirement_type.import_package();
+        if !effects.iter().any(|effect| effect.package == package) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::UnimportedConnection,
+                format!(
+                    "store-alias {:?} requires package {package:?}, which these bytes do not import",
+                    declaration.store_alias
+                ),
+            ));
+        }
+        connections.push(declaration);
+    }
+    connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
+
+    // The reverse direction: connection authority nothing binds is authority
+    // the environment can never satisfy, so it is refused at admission rather
+    // than surfacing as an unresolvable effect at delivery time.
+    for connection_type in CONNECTION_TYPES {
+        let package = connection_type.import_package();
+        if effects.iter().any(|effect| effect.package == package)
+            && !connections
+                .iter()
+                .any(|connection| connection.requirement_type == connection_type)
+        {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::UndeclaredConnection,
+                format!("package {package:?} is imported but no store-alias declares it"),
+            ));
+        }
+    }
+    Ok(connections)
 }
 
 fn normalize_ports(
@@ -369,20 +519,30 @@ mod tests {
                 schema: json!({"type": "object"}),
                 required: true,
             }],
+            connections: Vec::new(),
+        }
+    }
+
+    fn postgres_effect() -> AdmittedComponentEffect {
+        AdmittedComponentEffect {
+            package: "wamn:postgres".to_string(),
+            interfaces: vec!["wamn:postgres/client@0.1.0".to_string()],
         }
     }
 
     #[test]
     fn normalization_is_sorted_and_carries_every_component_owned_fact() {
-        let fact = normalize_component_fact(
+        let facts = normalize_component_fact(
             declaration(),
             format!("sha256:{}", "a".repeat(64)),
             [
                 "wasi:io/streams@0.2.3".to_string(),
                 "wamn:postgres/client@0.1.0".to_string(),
             ],
+            vec![postgres_effect()],
         )
         .expect("component fact normalizes");
+        let fact = facts.component;
 
         assert_eq!(fact.scope.catalog_version, 7);
         assert_eq!(fact.operation, "map");
@@ -392,6 +552,111 @@ mod tests {
         assert_eq!(fact.component_digest, format!("sha256:{}", "a".repeat(64)));
         assert_eq!(fact.imports.len(), 2);
         assert!(fact.imports_fingerprint.starts_with("sha256:"));
+        assert_eq!(fact.effects, vec![postgres_effect()]);
+        assert!(facts.connections.is_empty());
+    }
+
+    /// A component with no effect-bearing import records the POSITIVE fact that
+    /// it is pure, rather than an absent one — this is what a caller reads to
+    /// decide an occurrence writes no effect-ledger row.
+    #[test]
+    fn a_component_importing_no_authority_admits_as_pure() {
+        let facts = normalize_component_fact(
+            declaration(),
+            format!("sha256:{}", "a".repeat(64)),
+            ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
+            Vec::new(),
+        )
+        .expect("a pure component normalizes");
+
+        assert!(facts.component.effects.is_empty());
+        assert_eq!(facts.component.imports.len(), 1);
+    }
+
+    #[test]
+    fn connections_and_effect_imports_must_account_for_each_other() {
+        let http_effect = AdmittedComponentEffect {
+            package: "wamn:connection".to_string(),
+            interfaces: vec!["wamn:connection/http@0.1.0".to_string()],
+        };
+        let imports = ["wamn:connection/http@0.1.0".to_string()];
+        let connection = ComponentConnection {
+            store_alias: "erp".to_string(),
+            requirement_type: ComponentConnectionType::Http,
+        };
+
+        let mut declared = declaration();
+        declared.connections = vec![connection.clone()];
+        let facts = normalize_component_fact(
+            declared.clone(),
+            format!("sha256:{}", "a".repeat(64)),
+            imports.clone(),
+            vec![http_effect.clone()],
+        )
+        .expect("a declared connection backed by its import admits");
+        assert_eq!(facts.connections, vec![connection.clone()]);
+
+        // Imported authority nothing declares.
+        let mut undeclared = declaration();
+        undeclared.connections = Vec::new();
+        assert_eq!(
+            normalize_component_fact(
+                undeclared,
+                format!("sha256:{}", "b".repeat(64)),
+                imports.clone(),
+                vec![http_effect],
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::UndeclaredConnection
+        );
+
+        // Declared authority the bytes never import.
+        assert_eq!(
+            normalize_component_fact(
+                declared.clone(),
+                format!("sha256:{}", "c".repeat(64)),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::UnimportedConnection
+        );
+
+        let mut duplicate = declared;
+        duplicate.connections.push(connection);
+        assert_eq!(
+            normalize_component_fact(
+                duplicate,
+                format!("sha256:{}", "d".repeat(64)),
+                imports,
+                vec![AdmittedComponentEffect {
+                    package: "wamn:connection".to_string(),
+                    interfaces: vec!["wamn:connection/http@0.1.0".to_string()],
+                }],
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::DuplicateConnection
+        );
+    }
+
+    /// Effects are a projection of the audited imports and can never widen
+    /// beyond them, whatever the caller that derived them passes in.
+    #[test]
+    fn an_effect_interface_absent_from_the_audited_imports_refuses() {
+        assert_eq!(
+            normalize_component_fact(
+                declaration(),
+                format!("sha256:{}", "a".repeat(64)),
+                ["wasi:io/streams@0.2.3".to_string()],
+                vec![postgres_effect()],
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::UnimportedEffect
+        );
     }
 
     #[test]
@@ -423,11 +688,22 @@ mod tests {
         right.input_ports[0].schema =
             json!({"properties":{"a":{"type":"string"},"b":{"type":"number"}},"type":"object"});
 
-        let left = normalize_component_fact(left, format!("sha256:{}", "b".repeat(64)), Vec::new())
-            .unwrap();
-        let right =
-            normalize_component_fact(right, format!("sha256:{}", "c".repeat(64)), Vec::new())
-                .unwrap();
+        let left = normalize_component_fact(
+            left,
+            format!("sha256:{}", "b".repeat(64)),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap()
+        .component;
+        let right = normalize_component_fact(
+            right,
+            format!("sha256:{}", "c".repeat(64)),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap()
+        .component;
         assert!(schema_digests_match(
             &left.input_ports[0].schema,
             &right.input_ports[0].schema
@@ -445,18 +721,28 @@ mod tests {
         let mut duplicate = declaration();
         duplicate.input_ports.push(duplicate.input_ports[0].clone());
         assert_eq!(
-            normalize_component_fact(duplicate, format!("sha256:{}", "d".repeat(64)), Vec::new(),)
-                .unwrap_err()
-                .kind(),
+            normalize_component_fact(
+                duplicate,
+                format!("sha256:{}", "d".repeat(64)),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
             ComponentFactErrorKind::DuplicateInputPort
         );
 
         let mut remote = declaration();
         remote.parameters[0].schema = json!({"$ref": "https://example.invalid/schema"});
         assert_eq!(
-            normalize_component_fact(remote, format!("sha256:{}", "e".repeat(64)), Vec::new(),)
-                .unwrap_err()
-                .kind(),
+            normalize_component_fact(
+                remote,
+                format!("sha256:{}", "e".repeat(64)),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
             ComponentFactErrorKind::RemoteSchemaReference
         );
     }

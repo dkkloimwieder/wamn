@@ -507,11 +507,14 @@ mod tests {
                 }],
                 output_ports: Vec::new(),
                 parameters: Vec::new(),
+                connections: Vec::new(),
             },
             component_digest(bytes),
             ["wasi:logging/logging@0.1.0".to_owned()],
+            Vec::new(),
         )
         .expect("fixture admits")
+        .component
     }
 
     fn descriptor(media_type: &str, digest: &str, size: i64) -> OciDescriptor {

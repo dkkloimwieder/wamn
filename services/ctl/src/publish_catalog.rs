@@ -230,6 +230,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .await
                 .context("install component library storage")?;
         }
+        ensure_component_library_effects(client).await?;
 
         let release_component_objects = [
             release_row.get::<_, bool>(26),
@@ -290,6 +291,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
     ] {
         install_catalog_migration_if_missing(client, relation, begin, end, context).await?;
     }
+    ensure_component_library_effects(client).await?;
     ensure_authoring_catalog_privileges(client).await?;
     Ok(())
 }
@@ -319,6 +321,34 @@ async fn install_catalog_migration_if_missing(
         .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
         .await
         .context(context)
+}
+
+/// Converge the derived effect projection onto an existing component library.
+async fn ensure_component_library_effects(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    let present: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                             WHERE table_schema = 'catalog' \
+                               AND table_name = 'component_library' \
+                               AND column_name = 'effects')",
+            &[],
+        )
+        .await?
+        .get(0);
+    if present {
+        return Ok(());
+    }
+
+    let start = CATALOG_SCHEMA_SQL
+        .find("-- BEGIN COMPONENT LIBRARY EFFECTS MIGRATION")
+        .expect("component library effects migration start");
+    let end = CATALOG_SCHEMA_SQL
+        .find("-- END COMPONENT LIBRARY EFFECTS MIGRATION")
+        .expect("component library effects migration end");
+    client
+        .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+        .await
+        .context("install component library effect projection")
 }
 
 /// Preserve legacy connection facts while converging the component-owned grain.

@@ -35,10 +35,10 @@ use clap::Args;
 use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentParameter, AdmittedComponentPort, ArtifactHash,
-    ComponentCatalogScope, ManifestDigest, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
-    ServingComponent, ServingManifest, ServingRegistration, ServingRelease, ServingWiring,
-    WiringDocument, validate_wiring_compatibility,
+    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentParameter, AdmittedComponentPort,
+    ArtifactHash, ComponentCatalogScope, ManifestDigest, SERVING_MANIFEST_FORMAT_VERSION,
+    ServingAttachment, ServingComponent, ServingManifest, ServingRegistration, ServingRelease,
+    ServingWiring, WiringDocument, validate_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 
@@ -58,7 +58,7 @@ SELECT catalog.environment \
 const SELECT_COMPONENT_FACTS_SQL: &str = "\
 SELECT component, interface_version, operation, component_digest, \
        imports::text, imports_fingerprint, input_ports::text, \
-       output_ports::text, parameters::text \
+       output_ports::text, parameters::text, effects::text \
   FROM catalog.component_library \
  WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
  ORDER BY component COLLATE \"C\", interface_version COLLATE \"C\" \
@@ -560,6 +560,11 @@ pub async fn load_component_facts(
                     row.get(8),
                     &component,
                     "parameters",
+                )?,
+                effects: decode_json::<Vec<AdmittedComponentEffect>>(
+                    row.get(9),
+                    &component,
+                    "effects",
                 )?,
             })
         })

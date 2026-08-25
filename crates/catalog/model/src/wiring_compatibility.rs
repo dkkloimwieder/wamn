@@ -330,6 +330,7 @@ mod tests {
             component_digest: format!("sha256:{}", "a".repeat(64)),
             imports: Vec::new(),
             imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            effects: Vec::new(),
             input_ports: vec![AdmittedComponentPort {
                 name: input_name.to_string(),
                 schema: schema(input_schema),
