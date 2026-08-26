@@ -12,7 +12,9 @@
 
 use std::process::Command;
 
-use wamn_control_provision::tenant_key::{authority_derivations_sql, tenant_key};
+use wamn_control_provision::tenant_key::{
+    authority_derivations_bootstrap_sql, authority_derivations_sql, tenant_key,
+};
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
@@ -39,6 +41,32 @@ impl Scope {
             app: format!("wamn_app_{slug}"),
         }
     }
+
+    /// A scope whose DATABASE NAME is multi-byte, with ASCII role names.
+    ///
+    /// The bootstrap rendering computes the name's length ON THE SERVER, and
+    /// `length()` counts CHARACTERS while `octet_length(convert_to(...))` counts
+    /// BYTES. For an ASCII database name the two agree exactly — so an
+    /// ASCII-only gate cannot tell a correct implementation from a broken one,
+    /// and the disagreement it would miss is every guest read refusing.
+    fn multibyte(slug: &str) -> Self {
+        let mut scope = Self::new(slug);
+        scope.db = format!("wamn-db-acme--billing--{slug}-\u{f6}\u{e4}");
+        scope
+    }
+}
+
+/// Percent-encode the non-ASCII bytes of a database name for a connection URI.
+fn encode_path(name: &str) -> String {
+    name.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }
 
 /// Tenants spanning the charset `valid_tenant` admits (ASCII alphanumeric plus
@@ -114,7 +142,7 @@ fn reset(admin_url: &str, scope: &Scope) -> String {
     );
 
     let base = admin_url.rsplit_once('/').expect("url names a database").0;
-    format!("{base}/{db}")
+    format!("{base}/{}", encode_path(db))
 }
 
 /// The DDL under test, rendered for one isolated scope.
@@ -493,5 +521,99 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
 
     for role in [&login, &head_attack, &tail_attack] {
         psql_file(&admin, &format!("DROP ROLE \"{role}\""));
+    }
+}
+
+/// THE TWO APPLIERS PRODUCE ONE OBJECT.
+///
+/// `catalog-schema.sql` and `app-schema.sql` cannot carry the database literal
+/// (`wamn-0h0g.22.6.6`), so they install through the bootstrap rendering while
+/// provisioning installs through the literal one. Nothing about sharing a Rust
+/// template proves the SERVER ends up with the same function — this does, by
+/// applying both into one database and comparing what `pg_get_functiondef`
+/// reports. It is the digest probe `wamn-0h0g.22.6.1` created, doing the job it
+/// was created for.
+#[test]
+fn the_bootstrap_and_literal_renderings_install_the_same_object() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_KEY_PG_URL") else {
+        eprintln!(
+            "skipping the_bootstrap_and_literal_renderings_install_the_same_object \
+             (set WAMN_TENANT_KEY_PG_URL to run)"
+        );
+        return;
+    };
+    // MULTI-BYTE ON PURPOSE — see `Scope::multibyte`.
+    let scope = Scope::multibyte("boot");
+    let db_url = reset(&admin, &scope);
+
+    let definitions = |url: &str| {
+        psql(
+            url,
+            None,
+            "SELECT string_agg(md5(pg_get_functiondef(p.oid)), ' ' ORDER BY p.proname) \
+               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+              WHERE n.nspname = 'wamn_authority' \
+                AND p.proname IN ('tenant_key', 'current_tenant_key')",
+        )
+    };
+
+    let bootstrap = authority_derivations_bootstrap_sql()
+        .replace("\"wamn_db_owner\"", &format!("\"{}\"", scope.owner))
+        .replace("\"wamn_app\"", &format!("\"{}\"", scope.app));
+    psql_file(&db_url, &bootstrap);
+    let from_bootstrap = definitions(&db_url);
+    assert_eq!(
+        from_bootstrap.split(' ').count(),
+        2,
+        "the bootstrap must install both derivations, got {from_bootstrap:?}"
+    );
+
+    // The bootstrap read the database name off the server. The literal
+    // rendering is handed the same name from Rust. If the two disagree by one
+    // byte — a length computed over chars instead of octets, a name that lost
+    // its quoting — the digests differ and every guest read on this database
+    // would refuse.
+    psql_file(&db_url, &ddl(&scope));
+    assert_eq!(
+        definitions(&db_url),
+        from_bootstrap,
+        "the bootstrap rendering and the literal rendering installed DIFFERENT \
+         functions, so a database provisioned by one applier and re-applied by \
+         the other would silently change its tenant keys"
+    );
+
+    // A bootstrapped function that quietly lost IMMUTABLE applies cleanly and
+    // breaks every expression index built on it, so the flags come from the
+    // catalog and the index is actually built.
+    let flags = psql(
+        &db_url,
+        None,
+        "SELECT p.provolatile::text || p.proparallel::text \
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+          WHERE n.nspname = 'wamn_authority' AND p.proname = 'tenant_key'",
+    );
+    assert_eq!(
+        flags, "is",
+        "the bootstrapped derivation must be IMMUTABLE SAFE"
+    );
+    psql_file(
+        &db_url,
+        "CREATE TABLE boot_probe (tenant_id text NOT NULL); \
+         CREATE INDEX boot_probe_tkey ON boot_probe ((wamn_authority.tenant_key(tenant_id)))",
+    );
+
+    // And the value it computes is the Rust value for THIS database — the
+    // bootstrap's whole job.
+    for tenant in TENANTS {
+        let observed = psql(
+            &db_url,
+            None,
+            &format!("SELECT wamn_authority.tenant_key('{tenant}')"),
+        );
+        assert_eq!(
+            observed,
+            tenant_key(tenant, &scope.db),
+            "tenant {tenant:?}: the bootstrapped derivation disagrees with Rust"
+        );
     }
 }

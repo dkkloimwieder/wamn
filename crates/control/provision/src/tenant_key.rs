@@ -94,22 +94,25 @@ pub fn current_tenant_key_pattern() -> String {
     )
 }
 
+/// Placeholder the bootstrap rendering substitutes with the quoted database name.
+const DATABASE_LITERAL_PLACEHOLDER: &str = "@wamn_database_literal@";
+
+/// Placeholder the bootstrap rendering substitutes with the database name's
+/// octet length.
+const DATABASE_OCTETS_PLACEHOLDER: &str = "@wamn_database_octets@";
+
 /// The DDL creating both authority derivations in one project-environment
-/// database.
+/// database, over pre-rendered database fragments.
 ///
-/// Idempotent by construction (`CREATE OR REPLACE`, `IF NOT EXISTS`), which is
-/// what lets it converge on `wamn-0h0g.11.49`'s path for existing databases
-/// while `catalog-schema.sql` carries fresh installs. Idempotence is not the
-/// proof, though: the converge arm asserts POST-STATE — the definition digest,
-/// the volatility and parallel-safety flags read from `pg_proc`, and exact
-/// grants.
-///
-/// Both functions land in ONE builder because both must reach both appliers;
-/// two builders would be two places to remember and one place to forget.
+/// ONE TEMPLATE, TWO RENDERINGS. [`authority_derivations_sql`] substitutes a
+/// real database name; [`authority_derivations_bootstrap_sql`] substitutes
+/// placeholders the server fills in at apply time. Sharing the template is not
+/// the proof they agree — a live test applies both and compares the digests
+/// `pg_get_functiondef` reports.
 ///
 /// `SET search_path = pg_catalog` pins every builtin these bodies call, so
 /// neither derivation can be redirected by a caller's search path.
-pub fn authority_derivations_sql(database: &str) -> String {
+fn derivations_template(database_literal: &str, database_octets: &str) -> String {
     let domain = WorkloadRoleFamily::App.scope_domain();
     let domain_text = std::str::from_utf8(domain).expect("the scope domain is ASCII");
     format!(
@@ -130,7 +133,7 @@ pub fn authority_derivations_sql(database: &str) -> String {
          || int8send(octet_length(convert_to(tenant, 'UTF8'))::bigint) \
          || convert_to(tenant, 'UTF8')\n        \
          || int8send({database_tag_len}::bigint) || convert_to('database', 'UTF8')\n        \
-         || int8send({database_len}::bigint) || convert_to({database_lit}, 'UTF8')\n       \
+         || int8send({database_octets}::bigint) || convert_to({database_literal}, 'UTF8')\n       \
          ), 'hex'), 1, {hex_len})\n\
          $$;\n\
          ALTER FUNCTION {schema}.tenant_key(text) OWNER TO {owner};\n\
@@ -155,17 +158,59 @@ pub fn authority_derivations_sql(database: &str) -> String {
         domain_lit = quote_literal(domain_text),
         tenant_tag_len = "tenant".len(),
         database_tag_len = "database".len(),
-        database_len = database.len(),
-        database_lit = quote_literal(database),
         hex_len = SCOPE_HASH_HEX_LEN,
         pattern_lit = quote_literal(&current_tenant_key_pattern()),
+    )
+}
+
+/// The DDL creating both authority derivations for a KNOWN database.
+///
+/// Idempotent by construction (`CREATE OR REPLACE`, `IF NOT EXISTS`), which is
+/// what lets it converge on `wamn-0h0g.11.49`'s path for existing databases
+/// while `catalog-schema.sql` carries fresh installs. Idempotence is not the
+/// proof, though: the converge arm asserts POST-STATE — the definition digest,
+/// the volatility and parallel-safety flags read from `pg_proc`, and exact
+/// grants.
+///
+/// Both functions land in ONE builder because both must reach both appliers;
+/// two builders would be two places to remember and one place to forget.
+pub fn authority_derivations_sql(database: &str) -> String {
+    derivations_template(&quote_literal(database), &database.len().to_string())
+}
+
+/// The same DDL for a database whose name is NOT known at authoring time.
+///
+/// `catalog-schema.sql` and `app-schema.sql` are static files applied to
+/// project-environment databases named per project and environment, so neither
+/// can carry the literal [`authority_derivations_sql`] needs. The database
+/// cannot simply be read at call time either: `current_database()` is `STABLE`,
+/// so a function calling it is not indexable and the whole sargability argument
+/// for option (c) collapses.
+///
+/// So the name is substituted at APPLY time and baked into the body as a
+/// literal, leaving the installed function `IMMUTABLE` exactly as the
+/// known-database rendering does. `quote_literal` runs on the server, so a
+/// database name containing a quote cannot break out of the body.
+pub fn authority_derivations_bootstrap_sql() -> String {
+    format!(
+        "DO $wamn_authority_bootstrap$\n\
+         BEGIN\n    \
+         EXECUTE replace(replace($wamn_authority_derivations${template}$wamn_authority_derivations$,\n        \
+         '{literal}', quote_literal(current_database())),\n        \
+         '{octets}', octet_length(convert_to(current_database(), 'UTF8'))::text);\n\
+         END\n\
+         $wamn_authority_bootstrap$;",
+        template = derivations_template(DATABASE_LITERAL_PLACEHOLDER, DATABASE_OCTETS_PLACEHOLDER),
+        literal = DATABASE_LITERAL_PLACEHOLDER,
+        octets = DATABASE_OCTETS_PLACEHOLDER,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CURRENT_TENANT_KEY_FUNCTION, TENANT_KEY_FUNCTION, authority_derivations_sql,
+        CURRENT_TENANT_KEY_FUNCTION, DATABASE_LITERAL_PLACEHOLDER, DATABASE_OCTETS_PLACEHOLDER,
+        TENANT_KEY_FUNCTION, authority_derivations_bootstrap_sql, authority_derivations_sql,
         current_tenant_key_pattern, tenant_key,
     };
     use crate::workload_role::{
@@ -307,5 +352,51 @@ mod tests {
                 "an unqualified name would resolve through the caller's search_path"
             );
         }
+    }
+
+    /// The bootstrap rendering must differ from the literal one in EXACTLY the
+    /// two database fragments and nothing else. Substituting the placeholders
+    /// by hand reproduces the literal rendering byte for byte — so anything
+    /// else that drifted between the two would surface here rather than as a
+    /// key that silently disagrees on one deployment.
+    #[test]
+    fn the_bootstrap_substitutes_the_database_and_changes_nothing_else() {
+        let bootstrap = authority_derivations_bootstrap_sql();
+        let substituted = bootstrap
+            .replace(DATABASE_LITERAL_PLACEHOLDER, "'wamn-db-acme--billing--dev'")
+            .replace(DATABASE_OCTETS_PLACEHOLDER, "26");
+        assert!(
+            substituted.contains(&authority_derivations_sql(DATABASE)),
+            "the bootstrap must carry the literal rendering verbatim once its \
+             two database fragments are filled in"
+        );
+
+        // The PAIRING, not just the presence: a placeholder that the template
+        // carries but the replace argument misspells survives into the emitted
+        // DDL, and the installed function then hashes the placeholder text
+        // instead of the database name. Only the live gate saw that until this
+        // assertion existed, and the ordinary sweep runs no live gate.
+        assert!(
+            bootstrap.contains(&format!(
+                "'{DATABASE_LITERAL_PLACEHOLDER}', quote_literal(current_database())"
+            )),
+            "the database literal must be substituted THROUGH quote_literal"
+        );
+        assert!(
+            bootstrap.contains(&format!(
+                "'{DATABASE_OCTETS_PLACEHOLDER}', octet_length(convert_to(current_database(), 'UTF8'))"
+            )),
+            "the length must be counted in OCTETS, matching Rust's str::len"
+        );
+    }
+
+    /// A placeholder that survived into the emitted DDL would install a
+    /// function whose preimage contains the placeholder text — a key that
+    /// matches no minted role name, and therefore every guest read refusing.
+    #[test]
+    fn the_literal_rendering_carries_no_placeholder() {
+        let sql = authority_derivations_sql(DATABASE);
+        assert!(!sql.contains(DATABASE_LITERAL_PLACEHOLDER));
+        assert!(!sql.contains(DATABASE_OCTETS_PLACEHOLDER));
     }
 }
