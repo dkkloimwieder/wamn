@@ -14,10 +14,19 @@
 //! so a wiring authored here and a wiring promoted into this environment are
 //! admitted by exactly the same predicates.
 //!
-//! There is no gate-report argument (wamn-0h0g.8.5.6). The gate report keys on
-//! the wiring hash, which the document itself determines, so a report id in argv
-//! would be a second name for an identity the artifact already carries — and
-//! `catalog.wirings` no longer has a column to put it in.
+//! There is no gate-report argument (wamn-0h0g.8.5.6), but there IS a gate
+//! report REQUIREMENT. The report keys on the wiring hash, which the document
+//! itself determines, so a report id in argv would be a second name for an
+//! identity the artifact already carries — and `catalog.wirings` no longer has a
+//! column to put it in. What that collapsed column can no longer say, the verb
+//! says instead: [`author_wiring`] reads `wamn_run.gate_reports` under the hash
+//! its own gate just produced and refuses unless a row exists there and passed.
+//! The report lives in the CONTROL database and `catalog.wirings` in the PROJECT
+//! database, so this is a two-connection verb; no single statement, and no
+//! project-plane fact, could carry the check. Because the VERB performs the
+//! read, the requirement is not caller discipline: there is no argument to omit,
+//! no proof value to forge or replay, and no path through this module that
+//! reaches the INSERT with the read skipped.
 //!
 //! An exact resubmission converges. The same `(wiring, version)` carrying any
 //! other document, hash, or gate scope refuses rather than being replaced,
@@ -36,6 +45,26 @@ use wamn_catalog::{
 use crate::publish_release::load_component_facts;
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
+
+/// Claim the tenant for the WHOLE control connection.
+///
+/// `wamn_run.gate_reports` is FORCE-RLS, so an unclaimed session reads zero rows
+/// and would refuse every authorship as ungated. The control read runs outside
+/// any explicit transaction, where the local form would expire with the
+/// statement that set it, so the claim is session-scoped here — the same shape
+/// [`crate::promote`] uses for a connection it opened for one tenant's work.
+const CLAIM_CONTROL_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, false)";
+
+/// Read the gate verdict recorded for exactly one document's hash.
+///
+/// `report_id` IS the wiring hash (wamn-0h0g.8.5.6), so this key is the whole
+/// hash binding: a green report over other bytes lives under another key and is
+/// simply not found here.
+///
+/// Params: `$1` tenant, `$2` wiring hash.
+const SELECT_GATE_REPORT_SQL: &str = "\
+SELECT passed FROM wamn_run.gate_reports \
+ WHERE tenant_id = $1 AND wiring_hash = $2";
 
 const INSERT_WIRING_SQL: &str = "\
 INSERT INTO catalog.wirings (\
@@ -61,6 +90,8 @@ pub enum AuthorWiringErrorKind {
     Storage,
     Document,
     Gate,
+    /// No GREEN gate report covers this document's own hash.
+    Report,
     Conflict,
 }
 
@@ -70,6 +101,7 @@ impl AuthorWiringErrorKind {
             Self::Storage => "storage",
             Self::Document => "document",
             Self::Gate => "gate",
+            Self::Report => "report",
             Self::Conflict => "conflict",
         }
     }
@@ -147,6 +179,15 @@ pub struct AuthorWiringArgs {
     #[arg(long)]
     pub database_url: String,
 
+    /// Owner URL to the CONTROL database holding `wamn_run.gate_reports`.
+    ///
+    /// A separate URL because the report is a separate plane's fact: it is not
+    /// in `catalog.wirings` and never was after wamn-0h0g.8.5.6. Pointing this
+    /// at the project database refuses rather than passing — the relation is
+    /// not there.
+    #[arg(long)]
+    pub control_database_url: String,
+
     /// Tenant claim carried by the authored wiring.
     #[arg(long)]
     pub tenant: String,
@@ -176,29 +217,47 @@ pub async fn run(args: AuthorWiringArgs) -> anyhow::Result<()> {
         document: &document,
     };
 
-    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
+    let (control, control_connection) = tokio_postgres::connect(&args.control_database_url, NoTls)
         .await
-        .context("connect to the authoring project environment")?;
+        .context("connect to the control store holding the gate reports")?;
+    let control_task = tokio::spawn(control_connection);
+    let opened = tokio_postgres::connect(&args.database_url, NoTls)
+        .await
+        .context("connect to the authoring project environment");
+    let (mut client, connection) = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            control_task.abort();
+            return Err(error);
+        }
+    };
     let connection_task = tokio::spawn(connection);
-    let authored = author_in_transaction(&mut client, &request).await;
+    let authored = author_in_transaction(&control, &mut client, &request).await;
     match authored {
         Ok(hash) => {
             drop(client);
+            drop(control);
             connection_task
                 .await
                 .context("join the wiring authorship connection")?
                 .context("drive the wiring authorship connection")?;
+            control_task
+                .await
+                .context("join the gate-report connection")?
+                .context("drive the gate-report connection")?;
             println!("{hash}");
             Ok(())
         }
         Err(error) => {
             connection_task.abort();
+            control_task.abort();
             Err(error)
         }
     }
 }
 
 async fn author_in_transaction(
+    control: &Client,
     client: &mut Client,
     request: &AuthorWiringRequest<'_>,
 ) -> anyhow::Result<DefinitionHash> {
@@ -206,7 +265,7 @@ async fn author_in_transaction(
         .transaction()
         .await
         .context("begin the wiring authorship")?;
-    let hash = author_wiring(&transaction, request).await?;
+    let hash = author_wiring(control, &transaction, request).await?;
     transaction
         .commit()
         .await
@@ -265,8 +324,71 @@ pub fn gate_wiring_document(
     Ok(document.wiring_hash())
 }
 
+/// Read the control store's verdict for one wiring hash.
+///
+/// `None` means the control store holds NO report under this key. That is the
+/// one answer a never-gated document, a gate-refused document, and a green
+/// report over different bytes all produce, because the gate writes one row per
+/// document it judges and keys it by that document's own hash.
+async fn read_gate_verdict(
+    control: &Client,
+    tenant_id: &str,
+    wiring_hash: &DefinitionHash,
+) -> Result<Option<bool>, AuthorWiringError> {
+    control
+        .query_one(CLAIM_CONTROL_TENANT_SQL, &[&tenant_id])
+        .await
+        .map_err(|error| storage("claim the gate-report tenant", error))?;
+    let hash = wiring_hash.as_str();
+    let report = control
+        .query_opt(SELECT_GATE_REPORT_SQL, &[&tenant_id, &hash])
+        .await
+        .map_err(|error| storage("read the wiring's gate report", error))?;
+    Ok(report.map(|row| row.get(0)))
+}
+
+/// Require a GREEN verdict from the report read under this document's own hash.
+///
+/// The hash is the whole binding. This decides only what the control store
+/// answered for that exact key, so a green report belonging to another document
+/// cannot reach here as `Some(true)` — it is not under this key at all, and
+/// arrives as the same `None` a never-gated document does.
+fn require_green_report(
+    verdict: Option<bool>,
+    document: &WiringDocument,
+    wiring_hash: &DefinitionHash,
+) -> Result<(), AuthorWiringError> {
+    match verdict {
+        Some(true) => Ok(()),
+        Some(false) => Err(AuthorWiringError::new(
+            AuthorWiringErrorKind::Report,
+            format!(
+                "wiring {:?} version {} was gated and REFUSED at {}",
+                document.wiring_id,
+                document.version,
+                wiring_hash.as_str()
+            ),
+        )),
+        None => Err(AuthorWiringError::new(
+            AuthorWiringErrorKind::Report,
+            format!(
+                "wiring {:?} version {} has no gate report at {}",
+                document.wiring_id,
+                document.version,
+                wiring_hash.as_str()
+            ),
+        )),
+    }
+}
+
 /// Gate and append one immutable wiring definition in the caller's transaction.
+///
+/// `control` is the CONTROL-database connection the gate report is read on. It
+/// is a parameter and not an option: the read happens on every call, between the
+/// compatibility gate and the INSERT, so no caller can author a wiring the
+/// control store has not passed under that wiring's own hash.
 pub async fn author_wiring(
+    control: &Client,
     transaction: &Transaction<'_>,
     request: &AuthorWiringRequest<'_>,
 ) -> Result<DefinitionHash, AuthorWiringError> {
@@ -300,6 +422,8 @@ pub async fn author_wiring(
             )
         })?;
     let wiring_hash = gate_wiring_document(request.document, &scope, &components)?;
+    let verdict = read_gate_verdict(control, request.tenant_id, &wiring_hash).await?;
+    require_green_report(verdict, request.document, &wiring_hash)?;
 
     let version = i32::try_from(request.document.version).map_err(|error| {
         AuthorWiringError::with_source(
@@ -366,9 +490,11 @@ mod tests {
         args: AuthorWiringArgs,
     }
 
-    const COORDINATE: [&str; 8] = [
+    const COORDINATE: [&str; 10] = [
         "--database-url",
         "postgres://author.invalid/env",
+        "--control-database-url",
+        "postgres://author.invalid/control",
         "--tenant",
         "tenant-a",
         "--catalog-id",
@@ -433,12 +559,29 @@ mod tests {
     ///
     /// The gate-report argument this used to require is gone (wamn-0h0g.8.5.6):
     /// the report keys on the wiring hash the document itself determines, so
-    /// there is no report id left for a caller to supply or mis-supply.
+    /// there is no report id left for a caller to supply or mis-supply. What
+    /// argv still carries is WHERE to read that report — a database URL, not an
+    /// identity — and it is required, so no invocation can omit the check.
     #[test]
     fn the_document_is_the_whole_artifact_and_argv_restates_nothing() {
         let complete =
             parse(&["--wiring-document", "wiring.json"]).expect("the submission surface parses");
         assert_eq!(complete.wiring_document, PathBuf::from("wiring.json"));
+        assert_eq!(
+            complete.control_database_url,
+            "postgres://author.invalid/control"
+        );
+
+        // The control store is not optional: drop its URL and the verb cannot
+        // be invoked at all, so there is no ungated authoring invocation.
+        let mut without_control = vec!["author-wiring"];
+        without_control.extend_from_slice(&COORDINATE[..2]);
+        without_control.extend_from_slice(&COORDINATE[4..]);
+        without_control.extend_from_slice(&["--wiring-document", "wiring.json"]);
+        assert!(
+            AuthorProbe::try_parse_from(without_control).is_err(),
+            "authoring parsed with no control store to read the gate report from"
+        );
 
         let refusals: [Vec<&str>; 3] = [
             // There is no artifact to submit.
@@ -547,6 +690,59 @@ mod tests {
             gate.contains("names missing component \"http-request\""),
             "the gate's own words were not surfaced: {gate}"
         );
+    }
+
+    /// Only a GREEN verdict authorizes, and each refusal says which state it is.
+    ///
+    /// The absent arm is also the wrong-document arm: the read is keyed by the
+    /// hash the gate produced, so a green report over other bytes is never
+    /// offered to this decision as `Some(true)`. The test below pins that key,
+    /// and `author_wiring_gate_report_live.rs` exercises it against a real
+    /// report row in a real control database.
+    #[test]
+    fn only_a_green_report_for_this_document_authorizes_authorship() {
+        let document = document();
+        let hash = document.wiring_hash();
+
+        require_green_report(Some(true), &document, &hash)
+            .expect("a green report at the document's own hash authorizes it");
+
+        let red = require_green_report(Some(false), &document, &hash)
+            .expect_err("a report whose gate refused the document refuses authorship");
+        assert_eq!(red.kind(), AuthorWiringErrorKind::Report);
+        assert!(
+            format!("{red}").starts_with(WIRING_AUTHORSHIP_REFUSAL),
+            "refusal is unlabelled: {red}"
+        );
+
+        let absent = require_green_report(None, &document, &hash)
+            .expect_err("an ungated document refuses authorship");
+        assert_eq!(absent.kind(), AuthorWiringErrorKind::Report);
+        assert_ne!(
+            format!("{absent}"),
+            format!("{red}"),
+            "a red report and no report read as the same refusal"
+        );
+        assert!(format!("{absent}").contains(hash.as_str()));
+    }
+
+    /// The report is read under the gated hash, in the plane that holds it.
+    #[test]
+    fn the_report_is_read_under_the_hash_the_gate_produced() {
+        assert!(SELECT_GATE_REPORT_SQL.contains("FROM wamn_run.gate_reports"));
+        assert!(SELECT_GATE_REPORT_SQL.contains("WHERE tenant_id = $1 AND wiring_hash = $2"));
+        // The control read is a READ. Authorship must not be able to mint the
+        // permission it is asking for.
+        for forbidden in ["INSERT", "UPDATE", "DELETE"] {
+            assert!(
+                !SELECT_GATE_REPORT_SQL.contains(forbidden),
+                "the gate-report read carries {forbidden}"
+            );
+        }
+        // The report relation is a CONTROL-plane fact: the project schema this
+        // verb writes into has no such column or relation to check instead
+        // (wamn-0h0g.8.5.6).
+        assert!(!CATALOG_SCHEMA.contains("wamn_run.gate_reports"));
     }
 
     #[test]

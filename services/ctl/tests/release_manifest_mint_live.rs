@@ -45,6 +45,8 @@ const COMPONENT_A: &str = "sha256:1111111111111111111111111111111111111111111111
 const COMPONENT_B: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 const WRONG_GRAPH: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
 const DEFINITION: &str = "sha256:5555555555555555555555555555555555555555555555555555555555555555";
+/// The deployed control-plane DDL, read for its gate-report declaration alone.
+const CONTROL_PORTABLE_STORE: &str = include_str!("../../../deploy/sql/control-portable-store.sql");
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
 
@@ -302,16 +304,60 @@ fn wiring(id: &str, version: u32, component: &str, terminal: WiringTerminal) -> 
     .expect("fixture wiring is structurally valid")
 }
 
+/// Install ONLY the gate-report relation the authorship verb reads.
+///
+/// The report is a CONTROL-plane fact and `catalog.wirings` a PROJECT-plane one,
+/// so production reaches two databases for it. This fixture co-locates them in
+/// the one disposable database this test owns, because its subject is the mint,
+/// not the residency; the relation is created from the deployed DDL's own text,
+/// and the two-database proof of the authorship guard itself lives in
+/// `author_wiring_gate_report_live.rs`.
+async fn provision_gate_reports(admin: &Client) {
+    let declaration = CONTROL_PORTABLE_STORE
+        .split_once("CREATE TABLE IF NOT EXISTS wamn_run.gate_reports (")
+        .expect("the control portable store declares the gate-report relation")
+        .1
+        .split_once("\n);")
+        .expect("the gate-report declaration is terminated")
+        .0;
+    admin
+        .batch_execute(&format!(
+            "DROP SCHEMA IF EXISTS wamn_run CASCADE; \
+             CREATE SCHEMA wamn_run; \
+             CREATE TABLE wamn_run.gate_reports ({declaration});"
+        ))
+        .await
+        .expect("install the gate-report relation authorship reads");
+}
+
+/// Record the green verdict one document must carry before it can be authored.
+async fn record_green_report(control: &Client, document: &WiringDocument) {
+    let hash = document.wiring_hash();
+    control
+        .execute(
+            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+             VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
+            &[&TENANT, &hash.as_str()],
+        )
+        .await
+        .expect("record the document's green gate verdict");
+}
+
 /// Author one gated wiring through the production authorship verb.
 ///
 /// `seed_wiring`'s hand SQL retired with wamn-1xb5: the fixtures are documents
 /// now, admitted by exactly the predicates a first release is authored under.
-async fn author(admin: &mut Client, document: &WiringDocument) -> DefinitionHash {
+/// One of those predicates is now a GREEN gate report at the document's own
+/// hash, which is why the fixture records one first: an unreported document is
+/// unauthorable, so no released wiring can exist without a passing gate.
+async fn author(control: &Client, admin: &mut Client, document: &WiringDocument) -> DefinitionHash {
+    record_green_report(control, document).await;
     let transaction = admin
         .transaction()
         .await
         .expect("open the wiring authorship transaction");
     let hash = author_wiring(
+        control,
         &transaction,
         &AuthorWiringRequest {
             tenant_id: TENANT,
@@ -410,7 +456,11 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
     let url = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL")
         .expect("WAMN_RELEASE_MANIFEST_MINT_PG_URL names a disposable PostgreSQL 18 database");
     let (mut admin, task) = connect(&url).await;
+    // The authorship verb reads the gate report on its own connection, so the
+    // fixture holds a second one; a `Transaction` borrows `admin` exclusively.
+    let (control, control_task) = connect(&url).await;
     provision(&admin).await;
+    provision_gate_reports(&admin).await;
     seed_release(&admin, CATALOG_VERSION, "applied").await;
     seed_component(&admin, "http-request", COMPONENT_A).await;
     seed_component(&admin, "transform", COMPONENT_B).await;
@@ -423,21 +473,25 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
     );
     // The authorship verb derives the stored hash from the document it stores,
     // so the fixture's own hash is what a gated wiring row must carry.
-    let orders_hash = author(&mut admin, &orders).await;
-    let shipping_hash = author(&mut admin, &shipping).await;
+    let orders_hash = author(&control, &mut admin, &orders).await;
+    let shipping_hash = author(&control, &mut admin, &shipping).await;
     assert_eq!(orders_hash, orders.wiring_hash());
     assert_eq!(shipping_hash, shipping.wiring_hash());
 
     // Authorship is one idempotent act. An exact resubmission converges, while
     // a second document at one authored coordinate refuses: the stored
     // definition is immutable, so there is nothing to replace it with.
-    assert_eq!(author(&mut admin, &orders).await, orders_hash);
+    assert_eq!(author(&control, &mut admin, &orders).await, orders_hash);
     let rewired = wiring("orders", 1, "transform", WiringTerminal::Respond);
+    // Green-reported on its own terms, so the coordinate conflict below is what
+    // refuses it — not the report guard standing in front of it.
+    record_green_report(&control, &rewired).await;
     let transaction = admin
         .transaction()
         .await
         .expect("open the conflicting authorship transaction");
     let refusal = author_wiring(
+        &control,
         &transaction,
         &AuthorWiringRequest {
             tenant_id: TENANT,
@@ -458,13 +512,16 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
     // a document whose node names a component with no admitted fact in the gate
     // scope refuses as `Gate`, and nothing reaches `catalog.wirings`. Deriving
     // the stored hash from the document instead of from the gate's return
-    // writes this row, so this arm is what pins the call site.
+    // writes this row, so this arm is what pins the call site. No report is
+    // recorded for it, and none is needed: the compatibility gate runs first,
+    // so `Gate` is still the predicate that names the fault.
     let ungated = wiring("ungated", 4, "unadmitted", WiringTerminal::Respond);
     let transaction = admin
         .transaction()
         .await
         .expect("open the ungated authorship transaction");
     let refusal = author_wiring(
+        &control,
         &transaction,
         &AuthorWiringRequest {
             tenant_id: TENANT,
@@ -715,7 +772,9 @@ async fn current_component_and_wiring_facts_freeze_one_v2_manifest() {
     transaction.rollback().await.expect("close the refusal");
 
     drop(admin);
+    drop(control);
     let _ = task.await;
+    let _ = control_task.await;
 }
 
 /// The mint does not merely sit next to the wiring/component compatibility
@@ -802,6 +861,7 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
 
     let (admin, task) = connect(&url).await;
     provision(&admin).await;
+    provision_gate_reports(&admin).await;
     seed_release(&admin, CATALOG_VERSION, "applied").await;
     seed_component(&admin, "http-request", COMPONENT_A).await;
     seed_component(&admin, "transform", COMPONENT_B).await;
@@ -823,8 +883,11 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
     // their documents. Nothing between an empty environment and a first release
     // is hand SQL any more (wamn-1xb5).
     for document in [&orders, &shipping] {
+        record_green_report(&admin, document).await;
         wamn_ctl::author_wiring::run(AuthorWiringArgs {
             database_url: url.clone(),
+            // Co-resident by fixture only; see `provision_gate_reports`.
+            control_database_url: url.clone(),
             tenant: TENANT.to_string(),
             catalog_id: CATALOG.to_string(),
             gated_catalog_version: CATALOG_VERSION as u32,
