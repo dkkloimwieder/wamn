@@ -32,6 +32,11 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.catalogs",
         "catalog.releases",
         "catalog.catalog_heads",
+        // wamn-nb2e registered the component library in BOTH planes. wamn-0h0g.12.1
+        // pins the control copy here: the artifact's own seven-name inventory
+        // guard asserts it and this list did not, so the record's presence half
+        // was one relation short of the record's exactness half.
+        "catalog.component_library",
         "catalog.connection_requirements",
         "catalog.authoring_command_audit",
         "catalog.deployment_attestations",
@@ -1354,4 +1359,796 @@ RESET ROLE;
             .to_string()
             .starts_with(wamn_schema_control::attestation::CONTENT_CONFLICT)
     );
+}
+
+// ---------------------------------------------------------------------------
+// wamn-0h0g.12.1 — the control half of the cut-3 record, proved as an UPGRADE.
+//
+// The artifact's retirement block exists to converge an ALREADY-PROVISIONED
+// store, and every one of its arms is guarded by a presence probe. A gate that
+// only ever applies to a fresh database therefore never takes a single true
+// branch: a mutation that stops retiring is invisible to it. The gate below
+// installs the legacy store first, so the convergence path is the path under
+// test, and then proves the converged store is byte-identical to a fresh one and
+// that replaying the artifact a third time changes nothing.
+// ---------------------------------------------------------------------------
+
+/// The legacy control store an already-provisioned database may still carry.
+///
+/// The foreign keys are not decoration: they are what fixes the artifact's drop
+/// ORDER, and a fixture without them would pass against a retirement block whose
+/// arms had been shuffled. `release_flows` sits on `execution_bundles` (the
+/// documented reason the flow-era release plane retires BEFORE the bundles), the
+/// evidence row sits on both `validated_flow_drafts` and `execution_bundles`
+/// (the documented reason it retires before either), and the gate-report
+/// children sit on the reservation (the documented child-first order). Every
+/// drop in the artifact is `RESTRICT`, so a wrong order refuses instead of
+/// amputating.
+const LEGACY_CONTROL_STORE_SQL: &str = r"
+SET ROLE wamn_system;
+
+CREATE TABLE catalog.execution_bundles (
+    tenant_id text NOT NULL,
+    execution_bundle_hash text NOT NULL,
+    bundle_bytes bytea NOT NULL,
+    PRIMARY KEY (tenant_id, execution_bundle_hash)
+);
+CREATE TABLE catalog.flow_artifacts (
+    tenant_id text NOT NULL,
+    artifact_hash text NOT NULL,
+    PRIMARY KEY (tenant_id, artifact_hash)
+);
+CREATE TABLE catalog.release_flows (
+    tenant_id text NOT NULL,
+    flow_id text NOT NULL,
+    artifact_hash text NOT NULL,
+    execution_bundle_hash text NOT NULL,
+    PRIMARY KEY (tenant_id, flow_id),
+    FOREIGN KEY (tenant_id, artifact_hash)
+        REFERENCES catalog.flow_artifacts (tenant_id, artifact_hash),
+    FOREIGN KEY (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
+);
+CREATE TABLE catalog.release_exposure_manifests (
+    tenant_id text NOT NULL,
+    manifest_id text NOT NULL,
+    PRIMARY KEY (tenant_id, manifest_id)
+);
+CREATE TABLE catalog.release_sources (
+    tenant_id text NOT NULL,
+    source_id text NOT NULL,
+    manifest_id text NOT NULL,
+    PRIMARY KEY (tenant_id, source_id),
+    FOREIGN KEY (tenant_id, manifest_id)
+        REFERENCES catalog.release_exposure_manifests (tenant_id, manifest_id)
+);
+CREATE TABLE catalog.release_attachments (
+    tenant_id text NOT NULL,
+    attachment_id text NOT NULL,
+    flow_id text NOT NULL,
+    source_id text NOT NULL,
+    PRIMARY KEY (tenant_id, attachment_id),
+    FOREIGN KEY (tenant_id, flow_id)
+        REFERENCES catalog.release_flows (tenant_id, flow_id),
+    FOREIGN KEY (tenant_id, source_id)
+        REFERENCES catalog.release_sources (tenant_id, source_id)
+);
+
+CREATE TABLE catalog.validated_flow_drafts (
+    tenant_id text NOT NULL,
+    draft_id text NOT NULL,
+    PRIMARY KEY (tenant_id, draft_id)
+);
+CREATE TABLE catalog.draft_safe_connection_grants (
+    tenant_id text NOT NULL,
+    draft_id text NOT NULL,
+    PRIMARY KEY (tenant_id, draft_id)
+);
+CREATE FUNCTION catalog.guard_flow_draft_update() RETURNS trigger
+LANGUAGE plpgsql AS $legacy$ BEGIN RETURN NEW; END $legacy$;
+CREATE TABLE catalog.flow_drafts (
+    tenant_id text NOT NULL,
+    draft_id text NOT NULL,
+    revision int NOT NULL,
+    PRIMARY KEY (tenant_id, draft_id)
+);
+CREATE TRIGGER flow_drafts_controlled_update BEFORE UPDATE ON catalog.flow_drafts
+FOR EACH ROW EXECUTE FUNCTION catalog.guard_flow_draft_update();
+
+CREATE TABLE catalog.release_flow_test_evidence (
+    tenant_id text NOT NULL,
+    catalog_id text NOT NULL,
+    catalog_version int NOT NULL,
+    flow_id text NOT NULL,
+    draft_id text NOT NULL,
+    execution_bundle_hash text NOT NULL,
+    tested_resolution_map jsonb NOT NULL,
+    PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id),
+    FOREIGN KEY (tenant_id, draft_id)
+        REFERENCES catalog.validated_flow_drafts (tenant_id, draft_id),
+    FOREIGN KEY (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
+);
+-- Two overloads on purpose: the artifact drops the registrar by NAME over every
+-- overload, and a pinned-signature drop would leave the second standing as an
+-- owner-only entry point onto a dropped relation.
+CREATE FUNCTION catalog.register_release_flow_test_evidence(
+    p_tenant_id text, p_catalog_id text, p_catalog_version int, p_flow_id text)
+RETURNS void LANGUAGE plpgsql AS $legacy$ BEGIN RETURN; END $legacy$;
+CREATE FUNCTION catalog.register_release_flow_test_evidence(
+    p_tenant_id text, p_catalog_id text)
+RETURNS void LANGUAGE plpgsql AS $legacy$ BEGIN RETURN; END $legacy$;
+
+CREATE TABLE wamn_run.authoring_test_run_reservations (
+    tenant_id text NOT NULL,
+    reservation_id text NOT NULL,
+    PRIMARY KEY (tenant_id, reservation_id)
+);
+CREATE TABLE wamn_run.authoring_test_case_runs (
+    tenant_id text NOT NULL,
+    reservation_id text NOT NULL,
+    ordinal int NOT NULL,
+    PRIMARY KEY (tenant_id, reservation_id, ordinal),
+    FOREIGN KEY (tenant_id, reservation_id)
+        REFERENCES wamn_run.authoring_test_run_reservations
+            (tenant_id, reservation_id)
+);
+CREATE TABLE wamn_run.authoring_test_reports (
+    tenant_id text NOT NULL,
+    reservation_id text NOT NULL,
+    PRIMARY KEY (tenant_id, reservation_id),
+    FOREIGN KEY (tenant_id, reservation_id)
+        REFERENCES wamn_run.authoring_test_run_reservations
+            (tenant_id, reservation_id)
+);
+
+ALTER TABLE catalog.deployment_attestations
+    ADD COLUMN deployed_resolution_map jsonb;
+CREATE FUNCTION catalog.register_deployment_attestation(
+    p_tenant_id text, p_catalog_id text, p_catalog_version int, p_org_id text,
+    p_project_id text, p_environment text, p_deployed_manifest_hash text,
+    p_deployed_resolution_map jsonb, p_attested_at timestamptz)
+RETURNS timestamptz LANGUAGE plpgsql
+AS $legacy$ BEGIN RETURN p_attested_at; END $legacy$;
+RESET ROLE;
+";
+
+/// The legacy fixture really landed, asked of the server rather than assumed
+/// from the fixture's own exit status: an injection that silently no-opped would
+/// turn the upgrade proof back into the virgin install it exists to replace.
+const LEGACY_CONTROL_STORE_PRESENT_SQL: &str = r"
+DO $legacy_present$
+DECLARE
+    legacy text;
+BEGIN
+    FOREACH legacy IN ARRAY ARRAY[
+        'catalog.execution_bundles', 'catalog.flow_artifacts',
+        'catalog.release_flows', 'catalog.release_exposure_manifests',
+        'catalog.release_sources', 'catalog.release_attachments',
+        'catalog.validated_flow_drafts', 'catalog.draft_safe_connection_grants',
+        'catalog.flow_drafts', 'catalog.release_flow_test_evidence',
+        'wamn_run.authoring_test_run_reservations',
+        'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
+    ]
+    LOOP
+        ASSERT to_regclass(legacy) IS NOT NULL,
+            format('the legacy fixture did not install %s', legacy);
+    END LOOP;
+    ASSERT (SELECT count(*) FROM pg_catalog.pg_proc AS routine
+             JOIN pg_catalog.pg_namespace AS namespace
+               ON namespace.oid = routine.pronamespace
+            WHERE namespace.nspname = 'catalog'
+              AND routine.proname = 'register_release_flow_test_evidence') = 2,
+        'the legacy fixture did not install both evidence registrar overloads';
+    ASSERT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
+                    WHERE attrelid = 'catalog.deployment_attestations'::regclass
+                      AND attname = 'deployed_resolution_map'
+                      AND NOT attisdropped),
+        'the legacy fixture did not install the superseded attestation column';
+    ASSERT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS routine
+                    JOIN pg_catalog.pg_namespace AS namespace
+                      ON namespace.oid = routine.pronamespace
+                   WHERE namespace.nspname = 'catalog'
+                     AND routine.proname = 'register_deployment_attestation'
+                     AND routine.pronargs = 9),
+        'the legacy fixture did not install the superseded attestation overload';
+    ASSERT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS routine
+                    JOIN pg_catalog.pg_namespace AS namespace
+                      ON namespace.oid = routine.pronamespace
+                   WHERE namespace.nspname = 'catalog'
+                     AND routine.proname = 'guard_flow_draft_update'),
+        'the legacy fixture did not install the draft guard function';
+END
+$legacy_present$;
+";
+
+/// Not one legacy object survives the upgrade — relation, routine overload, or
+/// column. Asked of the server, because the convergence arm is the one an
+/// already-provisioned store takes and a fresh apply never does.
+const LEGACY_CONTROL_STORE_ABSENT_SQL: &str = r"
+DO $legacy_absent$
+DECLARE
+    legacy text;
+BEGIN
+    FOREACH legacy IN ARRAY ARRAY[
+        'catalog.execution_bundles', 'catalog.flow_artifacts',
+        'catalog.release_flows', 'catalog.release_exposure_manifests',
+        'catalog.release_sources', 'catalog.release_attachments',
+        'catalog.validated_flow_drafts', 'catalog.draft_safe_connection_grants',
+        'catalog.flow_drafts', 'catalog.release_flow_test_evidence',
+        'wamn_run.authoring_test_run_reservations',
+        'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
+    ]
+    LOOP
+        ASSERT to_regclass(legacy) IS NULL,
+            format('the retirement block left %s installed', legacy);
+    END LOOP;
+    ASSERT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS routine
+                        JOIN pg_catalog.pg_namespace AS namespace
+                          ON namespace.oid = routine.pronamespace
+                       WHERE namespace.nspname = 'catalog'
+                         AND routine.proname IN (
+                               'register_release_flow_test_evidence',
+                               'guard_flow_draft_update')),
+        'a retired routine survived the upgrade';
+    ASSERT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS routine
+                        JOIN pg_catalog.pg_namespace AS namespace
+                          ON namespace.oid = routine.pronamespace
+                       WHERE namespace.nspname = 'catalog'
+                         AND routine.proname = 'register_deployment_attestation'
+                         AND routine.pronargs <> 8),
+        'a superseded attestation overload survived the upgrade';
+    ASSERT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
+                        WHERE attrelid = 'catalog.deployment_attestations'::regclass
+                          AND attname = 'deployed_resolution_map'
+                          AND NOT attisdropped),
+        'the superseded attestation column survived the upgrade';
+END
+$legacy_absent$;
+";
+
+/// The whole installed record as the SERVER reports it, in one digest.
+///
+/// This is deliberately NOT compared against a pinned literal. A pinned digest
+/// over a static checked-in artifact is near-tautological and breaks on
+/// reformatting; what it cannot be is wrong about EQUALITY, which is the
+/// property the upgrade proof needs: a converged legacy store must reach exactly
+/// the record a fresh install reaches, and a replay must move nothing. Relation,
+/// owner, row security, column, constraint, index, trigger, policy, table grant,
+/// column grant, routine and routine grant are all folded in, so any of them
+/// moving separates two digests that must be equal.
+const CONTROL_RECORD_FINGERPRINT_SQL: &str = r#"
+WITH scope AS (
+    SELECT relation.oid, namespace.nspname, relation.relname, relation.relkind
+      FROM pg_catalog.pg_class AS relation
+      JOIN pg_catalog.pg_namespace AS namespace
+        ON namespace.oid = relation.relnamespace
+     WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+       AND relation.relkind IN ('r', 'p', 'i', 'S', 'v', 'm')
+), facts AS (
+    SELECT format('relation|%s.%s|%s|%s|%s|%s', scope.nspname, scope.relname,
+                  scope.relkind, pg_catalog.pg_get_userbyid(relation.relowner),
+                  relation.relrowsecurity, relation.relforcerowsecurity) AS fact
+      FROM scope JOIN pg_catalog.pg_class AS relation ON relation.oid = scope.oid
+    UNION ALL
+    SELECT format('column|%s.%s|%s|%s|%s|%s|%s', scope.nspname, scope.relname,
+                  att.attnum, att.attname,
+                  pg_catalog.format_type(att.atttypid, att.atttypmod),
+                  att.attnotnull,
+                  COALESCE(pg_catalog.pg_get_expr(def.adbin, def.adrelid, true), '-'))
+      FROM scope
+      JOIN pg_catalog.pg_attribute AS att
+        ON att.attrelid = scope.oid AND att.attnum > 0 AND NOT att.attisdropped
+      LEFT JOIN pg_catalog.pg_attrdef AS def
+        ON def.adrelid = att.attrelid AND def.adnum = att.attnum
+    UNION ALL
+    SELECT format('constraint|%s.%s|%s|%s', scope.nspname, scope.relname,
+                  con.conname, pg_catalog.pg_get_constraintdef(con.oid, true))
+      FROM scope JOIN pg_catalog.pg_constraint AS con ON con.conrelid = scope.oid
+    UNION ALL
+    SELECT format('index|%s.%s|%s', scope.nspname, scope.relname,
+                  pg_catalog.pg_get_indexdef(idx.indexrelid))
+      FROM scope JOIN pg_catalog.pg_index AS idx ON idx.indrelid = scope.oid
+    UNION ALL
+    SELECT format('trigger|%s.%s|%s|%s', scope.nspname, scope.relname, trg.tgname,
+                  pg_catalog.pg_get_triggerdef(trg.oid, true))
+      FROM scope
+      JOIN pg_catalog.pg_trigger AS trg
+        ON trg.tgrelid = scope.oid AND NOT trg.tgisinternal
+    UNION ALL
+    SELECT format('policy|%s.%s|%s|%s|%s|%s|%s|%s', scope.nspname, scope.relname,
+                  pol.polname, pol.polcmd, pol.polpermissive,
+                  (SELECT string_agg(role_name, ',' ORDER BY role_name COLLATE "C")
+                     FROM (SELECT CASE grantee WHEN 0 THEN 'PUBLIC'
+                                  ELSE pg_catalog.pg_get_userbyid(grantee) END
+                             FROM unnest(pol.polroles) AS grantee)
+                          AS roles(role_name)),
+                  COALESCE(pg_catalog.pg_get_expr(pol.polqual, pol.polrelid, true), '-'),
+                  COALESCE(pg_catalog.pg_get_expr(pol.polwithcheck, pol.polrelid, true), '-'))
+      FROM scope JOIN pg_catalog.pg_policy AS pol ON pol.polrelid = scope.oid
+    UNION ALL
+    SELECT format('table-grant|%s.%s|%s|%s|%s', scope.nspname, scope.relname,
+                  CASE acl.grantee WHEN 0 THEN 'PUBLIC'
+                  ELSE pg_catalog.pg_get_userbyid(acl.grantee) END,
+                  acl.privilege_type, acl.is_grantable)
+      FROM scope
+      JOIN pg_catalog.pg_class AS relation ON relation.oid = scope.oid
+     CROSS JOIN LATERAL pg_catalog.aclexplode(
+       COALESCE(relation.relacl,
+                pg_catalog.acldefault('r', relation.relowner))) AS acl
+     WHERE scope.relkind IN ('r', 'p')
+    UNION ALL
+    SELECT format('column-grant|%s.%s|%s|%s|%s|%s', scope.nspname, scope.relname,
+                  att.attname,
+                  CASE acl.grantee WHEN 0 THEN 'PUBLIC'
+                  ELSE pg_catalog.pg_get_userbyid(acl.grantee) END,
+                  acl.privilege_type, acl.is_grantable)
+      FROM scope
+      JOIN pg_catalog.pg_attribute AS att
+        ON att.attrelid = scope.oid AND att.attnum > 0 AND NOT att.attisdropped
+     CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) AS acl
+     WHERE att.attacl IS NOT NULL
+    UNION ALL
+    SELECT format('routine|%s|%s|%s|%s', routine.oid::regprocedure::text,
+                  pg_catalog.pg_get_userbyid(routine.proowner), routine.prosecdef,
+                  COALESCE(array_to_string(routine.proconfig, ','), '-'))
+      FROM pg_catalog.pg_proc AS routine
+      JOIN pg_catalog.pg_namespace AS namespace
+        ON namespace.oid = routine.pronamespace
+     WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+    UNION ALL
+    SELECT format('routine-grant|%s|%s|%s|%s', routine.oid::regprocedure::text,
+                  CASE acl.grantee WHEN 0 THEN 'PUBLIC'
+                  ELSE pg_catalog.pg_get_userbyid(acl.grantee) END,
+                  acl.privilege_type, acl.is_grantable)
+      FROM pg_catalog.pg_proc AS routine
+      JOIN pg_catalog.pg_namespace AS namespace
+        ON namespace.oid = routine.pronamespace
+     CROSS JOIN LATERAL pg_catalog.aclexplode(
+       COALESCE(routine.proacl,
+                pg_catalog.acldefault('f', routine.proowner))) AS acl
+     WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+    UNION ALL
+    SELECT format('schema-grant|%s|%s|%s|%s', namespace.nspname,
+                  CASE acl.grantee WHEN 0 THEN 'PUBLIC'
+                  ELSE pg_catalog.pg_get_userbyid(acl.grantee) END,
+                  acl.privilege_type, acl.is_grantable)
+      FROM pg_catalog.pg_namespace AS namespace
+     CROSS JOIN LATERAL pg_catalog.aclexplode(
+       COALESCE(namespace.nspacl,
+                pg_catalog.acldefault('n', namespace.nspowner))) AS acl
+     WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+)
+SELECT encode(sha256(convert_to(
+         string_agg(fact, E'\n' ORDER BY fact COLLATE "C"), 'UTF8')), 'hex')
+  FROM facts;
+"#;
+
+/// The independent drift check over the installed control record: the exact
+/// relation, owner, row-security, trigger, policy, table-grant and column-grant
+/// inventories, each asserted as a SET so a missing entry and an excess entry
+/// fail alike.
+///
+/// Independent of the artifact in two senses. It asks pg_catalog, aclexplode and
+/// pg_policy rather than reading the DDL text — a scan over static checked-in SQL
+/// cannot tell a declaration from a comment mentioning one, and near enough only
+/// asserts that a file contains what the file contains. And it pins what the
+/// artifact does NOT self-guard: `$drift$` covers the relation inventory, the
+/// retained column and constraint facts and the attestation shape, but nothing
+/// in the artifact asserts an owner, an enabled-and-forced row-security
+/// inventory, a trigger inventory or a policy inventory, and `$author_bounds$`
+/// bounds exactly one principal rather than the whole grant surface.
+const CONTROL_RECORD_INVENTORY_SQL: &str = r#"
+DO $record$
+DECLARE
+    observed text[];
+BEGIN
+    SELECT array_agg(tablename ORDER BY tablename) INTO observed
+      FROM pg_catalog.pg_tables WHERE schemaname = 'catalog';
+    ASSERT observed = ARRAY[
+        'authoring_command_audit', 'catalog_heads', 'catalogs',
+        'component_library', 'connection_requirements',
+        'deployment_attestations', 'releases']::text[],
+        format('control catalog relation inventory drifted: %s', observed);
+
+    SELECT array_agg(tablename ORDER BY tablename) INTO observed
+      FROM pg_catalog.pg_tables WHERE schemaname = 'wamn_run';
+    ASSERT observed = ARRAY['gate_reports']::text[],
+        format('control wamn_run relation inventory drifted: %s', observed);
+
+    SELECT array_agg(tablename ORDER BY tablename) INTO observed
+      FROM pg_catalog.pg_tables WHERE schemaname = 'wamn_authority';
+    ASSERT observed = ARRAY['author_login_tenants']::text[],
+        format('control wamn_authority relation inventory drifted: %s', observed);
+
+    -- Owner. Nothing in the artifact asserts this, and a relation created by
+    -- anyone but the store owner would still satisfy every CREATE ... IF NOT
+    -- EXISTS above it while escaping FORCE ROW LEVEL SECURITY's owner arm.
+    SELECT array_agg(entry ORDER BY entry COLLATE "C") INTO observed FROM (
+      SELECT format('%s.%s:%s', namespace.nspname, relation.relname,
+                    pg_catalog.pg_get_userbyid(relation.relowner)) AS entry
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+       WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+         AND relation.relkind IN ('r', 'p')
+         AND pg_catalog.pg_get_userbyid(relation.relowner) <> 'wamn_system'
+    ) AS entries;
+    ASSERT observed IS NULL,
+        format('a control relation is not owned by the store owner: %s', observed);
+
+    -- Row security, as an exact inventory of the relations that carry it. The
+    -- mapping relation deliberately carries none: the resolver over it is
+    -- SECURITY DEFINER and FORCE would make every author session resolve NULL.
+    SELECT array_agg(entry ORDER BY entry COLLATE "C") INTO observed FROM (
+      SELECT format('%s.%s', namespace.nspname, relation.relname) AS entry
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+       WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+         AND relation.relkind IN ('r', 'p')
+         AND relation.relrowsecurity AND relation.relforcerowsecurity
+    ) AS entries;
+    ASSERT observed = ARRAY[
+        'catalog.authoring_command_audit', 'catalog.catalog_heads',
+        'catalog.catalogs', 'catalog.component_library',
+        'catalog.connection_requirements', 'catalog.deployment_attestations',
+        'catalog.releases', 'wamn_run.gate_reports']::text[],
+        format('the enabled-and-forced row-security inventory drifted: %s', observed);
+    ASSERT NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_class AS relation
+          JOIN pg_catalog.pg_namespace AS namespace
+            ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+           AND relation.relkind IN ('r', 'p')
+           AND relation.relrowsecurity <> relation.relforcerowsecurity),
+        'a control relation enables row security without forcing it';
+
+    -- Trigger inventory. `catalog.catalogs` is the one record relation with no
+    -- immutability trigger, because the lifecycle rewrites its state column.
+    SELECT array_agg(entry ORDER BY entry COLLATE "C") INTO observed FROM (
+      SELECT format('%s.%s:%s', namespace.nspname, relation.relname,
+                    trg.tgname) AS entry
+        FROM pg_catalog.pg_trigger AS trg
+        JOIN pg_catalog.pg_class AS relation ON relation.oid = trg.tgrelid
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+       WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+         AND NOT trg.tgisinternal
+    ) AS entries;
+    ASSERT observed = ARRAY[
+        'catalog.authoring_command_audit:authoring_command_audit_immutable',
+        'catalog.component_library:component_library_immutable',
+        'catalog.connection_requirements:connection_requirements_immutable',
+        'catalog.deployment_attestations:deployment_attestations_immutable',
+        'catalog.releases:releases_immutable',
+        'wamn_run.gate_reports:gate_reports_immutable']::text[],
+        format('the control trigger inventory drifted: %s', observed);
+
+    -- Policy inventory: one tenant policy per row-secured relation, and one
+    -- restrictive author policy per relation the author may reach.
+    SELECT array_agg(entry ORDER BY entry COLLATE "C") INTO observed FROM (
+      SELECT format('%s.%s:%s', namespace.nspname, relation.relname,
+                    pol.polname) AS entry
+        FROM pg_catalog.pg_policy AS pol
+        JOIN pg_catalog.pg_class AS relation ON relation.oid = pol.polrelid
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+       WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+    ) AS entries;
+    ASSERT observed = ARRAY[
+        'catalog.authoring_command_audit:authoring_command_audit_author_tenant',
+        'catalog.authoring_command_audit:authoring_command_audit_tenant',
+        'catalog.catalog_heads:catalog_heads_author_tenant',
+        'catalog.catalog_heads:catalog_heads_tenant',
+        'catalog.catalogs:catalogs_tenant',
+        'catalog.component_library:component_library_tenant',
+        'catalog.connection_requirements:connection_requirements_author_tenant',
+        'catalog.connection_requirements:connection_requirements_tenant',
+        'catalog.deployment_attestations:deployment_attestations_tenant',
+        'catalog.releases:releases_author_tenant',
+        'catalog.releases:releases_tenant',
+        'wamn_run.gate_reports:gate_reports_author_tenant',
+        'wamn_run.gate_reports:gate_reports_tenant']::text[],
+        format('the control policy inventory drifted: %s', observed);
+
+    -- Table grants, to every grantee that is not the relation's own owner, so
+    -- an added grantee and a widened privilege both surface. PUBLIC is inside
+    -- this set, not excluded from it.
+    SELECT array_agg(entry ORDER BY entry COLLATE "C") INTO observed FROM (
+      SELECT format('%s.%s:%s:%s', namespace.nspname, relation.relname,
+                    CASE acl.grantee WHEN 0 THEN 'PUBLIC'
+                    ELSE pg_catalog.pg_get_userbyid(acl.grantee) END,
+                    acl.privilege_type) AS entry
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+       CROSS JOIN LATERAL pg_catalog.aclexplode(
+         COALESCE(relation.relacl,
+                  pg_catalog.acldefault('r', relation.relowner))) AS acl
+       WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+         AND relation.relkind IN ('r', 'p')
+         AND acl.grantee <> relation.relowner
+    ) AS entries;
+    ASSERT observed = ARRAY[
+        'catalog.authoring_command_audit:wamn_control_author:INSERT',
+        'catalog.authoring_command_audit:wamn_control_author:SELECT',
+        'catalog.catalog_heads:wamn_control_author:SELECT',
+        'catalog.connection_requirements:wamn_control_author:SELECT',
+        'catalog.releases:wamn_control_author:SELECT',
+        'wamn_run.gate_reports:wamn_control_author:INSERT',
+        'wamn_run.gate_reports:wamn_control_author:SELECT']::text[],
+        format('the control table-grant surface drifted: %s', observed);
+
+    -- Column grants: the control record holds none at all. A column grant is
+    -- invisible to has_table_privilege, so a store that acquired one would pass
+    -- every relation-level check above it.
+    SELECT array_agg(entry ORDER BY entry COLLATE "C") INTO observed FROM (
+      SELECT format('%s.%s.%s:%s:%s', namespace.nspname, relation.relname,
+                    att.attname,
+                    CASE acl.grantee WHEN 0 THEN 'PUBLIC'
+                    ELSE pg_catalog.pg_get_userbyid(acl.grantee) END,
+                    acl.privilege_type) AS entry
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        JOIN pg_catalog.pg_attribute AS att
+          ON att.attrelid = relation.oid AND att.attnum > 0
+         AND NOT att.attisdropped
+       CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) AS acl
+       WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+         AND att.attacl IS NOT NULL
+    ) AS entries;
+    ASSERT observed IS NULL,
+        format('the control record acquired a column grant: %s', observed);
+
+    -- Schema and routine grants, same rule: everything that is not the owner's.
+    SELECT array_agg(entry ORDER BY entry COLLATE "C") INTO observed FROM (
+      SELECT format('%s:%s:%s', namespace.nspname,
+                    CASE acl.grantee WHEN 0 THEN 'PUBLIC'
+                    ELSE pg_catalog.pg_get_userbyid(acl.grantee) END,
+                    acl.privilege_type) AS entry
+        FROM pg_catalog.pg_namespace AS namespace
+       CROSS JOIN LATERAL pg_catalog.aclexplode(
+         COALESCE(namespace.nspacl,
+                  pg_catalog.acldefault('n', namespace.nspowner))) AS acl
+       WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+         AND acl.grantee <> namespace.nspowner
+    ) AS entries;
+    ASSERT observed = ARRAY[
+        'catalog:wamn_control_author:USAGE',
+        'wamn_authority:wamn_control_author:USAGE',
+        'wamn_run:wamn_control_author:USAGE']::text[],
+        format('the control schema-grant surface drifted: %s', observed);
+
+    SELECT array_agg(entry ORDER BY entry COLLATE "C") INTO observed FROM (
+      SELECT format('%s:%s:%s', routine.oid::regprocedure::text,
+                    CASE acl.grantee WHEN 0 THEN 'PUBLIC'
+                    ELSE pg_catalog.pg_get_userbyid(acl.grantee) END,
+                    acl.privilege_type) AS entry
+        FROM pg_catalog.pg_proc AS routine
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = routine.pronamespace
+       CROSS JOIN LATERAL pg_catalog.aclexplode(
+         COALESCE(routine.proacl,
+                  pg_catalog.acldefault('f', routine.proowner))) AS acl
+       WHERE namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+         AND acl.grantee <> routine.proowner
+    ) AS entries;
+    ASSERT observed = ARRAY[
+        'wamn_authority.session_author_tenant():wamn_control_author:EXECUTE'
+        ]::text[],
+        format('the control routine-grant surface drifted: %s', observed);
+END
+$record$;
+"#;
+
+/// Run one script through `psql` in unaligned tuples-only mode and return the
+/// single value it produced.
+fn psql_scalar(url: &str, stage: &str, script: &str) -> String {
+    let mut child = Command::new("psql")
+        .arg(url)
+        .args(["-v", "ON_ERROR_STOP=1", "-A", "-t", "-q", "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn psql");
+    child
+        .stdin
+        .take()
+        .expect("psql stdin")
+        .write_all(script.as_bytes())
+        .expect("write psql script");
+    let output = child.wait_with_output().expect("wait for psql");
+    assert!(
+        output.status.success(),
+        "{stage} failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    assert!(!value.is_empty(), "{stage} produced no value");
+    value
+}
+
+/// Drop the three control schemas and every privilege the artifact granted, so a
+/// leftover healthy object cannot satisfy a `CREATE ... IF NOT EXISTS` and mask
+/// a mutated artifact. `DROP OWNED BY` runs inside an existence check because
+/// the ACL role is created by ctl, not by this gate, and it is never dropped:
+/// the two-tenant gate's scoped generations are members of it.
+fn control_store_reset_sql() -> String {
+    let mut sql = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
+    sql.push_str(
+        "CREATE EXTENSION IF NOT EXISTS pgcrypto;\n\
+         DROP SCHEMA IF EXISTS catalog CASCADE;\n\
+         DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
+         DROP SCHEMA IF EXISTS wamn_authority CASCADE;\n\
+         DO $reset$ BEGIN\n\
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN\n\
+             CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
+           END IF;\n\
+           IF EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_control_author') THEN\n\
+             DROP OWNED BY wamn_control_author;\n\
+           END IF;\n\
+         END $reset$;\n",
+    );
+    sql.push_str(&wamn_control_provision::sql::ensure_control_author_acl_role_sql());
+    sql.push_str(
+        "\nDO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
+           current_database()); END $grant$;\n",
+    );
+    sql
+}
+
+/// One apply of the artifact, as the store owner — the same text and the same
+/// principal provisioning uses.
+fn control_store_apply_sql() -> String {
+    format!("SET ROLE wamn_system;\n{}", ddl())
+}
+
+/// wamn-0h0g.12.1: the control record proved as an UPGRADE, not a virgin
+/// install.
+///
+/// A fresh store, then the legacy store an already-provisioned database still
+/// carries, then the artifact — twice. Three properties, none of which an
+/// exit-status-only convergence test can see:
+///
+/// 1. the converged legacy store reaches EXACTLY the record a fresh install
+///    reaches, so retirement is a convergence and not a second shape;
+/// 2. a third apply moves nothing at all, so replay is genuinely a no-op rather
+///    than merely non-failing;
+/// 3. no legacy relation, routine overload or column survives.
+///
+/// Then the independent record inventory: owner, row security, trigger, policy
+/// and grant surface, asked of pg_catalog rather than read off the DDL text.
+#[test]
+fn control_portable_store_converges_a_legacy_store_to_the_fresh_record_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
+        eprintln!(
+            "skipping control_portable_store_converges_a_legacy_store_to_the_fresh_record_on_postgres \
+             (set WAMN_CONTROL_PORTABLE_PG_URL)"
+        );
+        return;
+    };
+
+    let apply = control_store_apply_sql();
+    psql_ok(
+        &url,
+        "reset the control schemas",
+        &control_store_reset_sql(),
+    );
+    psql_ok(&url, "the fresh apply", &apply);
+    let fresh = psql_scalar(
+        &url,
+        "the fresh record fingerprint",
+        CONTROL_RECORD_FINGERPRINT_SQL,
+    );
+
+    psql_ok(&url, "install the legacy store", LEGACY_CONTROL_STORE_SQL);
+    psql_ok(
+        &url,
+        "the legacy store is really installed",
+        LEGACY_CONTROL_STORE_PRESENT_SQL,
+    );
+
+    psql_ok(&url, "the upgrade apply", &apply);
+    let upgraded = psql_scalar(
+        &url,
+        "the upgraded record fingerprint",
+        CONTROL_RECORD_FINGERPRINT_SQL,
+    );
+    psql_ok(&url, "the replay apply", &apply);
+    let replayed = psql_scalar(
+        &url,
+        "the replayed record fingerprint",
+        CONTROL_RECORD_FINGERPRINT_SQL,
+    );
+
+    assert_eq!(
+        upgraded, fresh,
+        "converging a legacy store did not reach the fresh control record"
+    );
+    assert_eq!(
+        replayed, upgraded,
+        "replaying the artifact over a converged store was not a no-op"
+    );
+
+    psql_ok(
+        &url,
+        "no legacy object survived the upgrade",
+        LEGACY_CONTROL_STORE_ABSENT_SQL,
+    );
+    psql_ok(
+        &url,
+        "the control record inventory",
+        CONTROL_RECORD_INVENTORY_SQL,
+    );
+}
+
+/// The two legacy shapes the artifact deliberately REFUSES rather than
+/// half-migrates, because neither can be reached by an `ALTER` on a retained
+/// relation: a dropped column keeps its `attnum` and an added one lands past the
+/// tail, and `control-portable-retained-shape-drift` hashes `attnum` itself.
+///
+/// Both arms are invisible to any gate that applies to a fresh database, and an
+/// arm that stopped refusing would let a store past the retirement block and
+/// into the drift guard, where it would fail under a DIFFERENT name — so the
+/// refusal is asserted by message, not merely by non-zero exit.
+#[test]
+fn control_portable_store_refuses_legacy_shapes_that_cannot_converge_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
+        eprintln!(
+            "skipping control_portable_store_refuses_legacy_shapes_that_cannot_converge_on_postgres \
+             (set WAMN_CONTROL_PORTABLE_PG_URL)"
+        );
+        return;
+    };
+    let apply = control_store_apply_sql();
+
+    for (label, legacy, refusal) in [
+        (
+            "the sealed member snapshot on the release identity row",
+            "SET ROLE wamn_system;\n\
+             ALTER TABLE catalog.releases ADD COLUMN members_json jsonb NOT NULL \
+               DEFAULT '[]'::jsonb;\n\
+             RESET ROLE;\n",
+            "control-portable-retired-release-members-requires-reprovision",
+        ),
+        (
+            "an audit ledger predating the ratified retry columns",
+            "SET ROLE wamn_system;\n\
+             ALTER TABLE catalog.authoring_command_audit DROP COLUMN request_hash;\n\
+             RESET ROLE;\n",
+            "control-portable-retired-audit-ledger-requires-reprovision",
+        ),
+    ] {
+        psql_ok(
+            &url,
+            "reset the control schemas",
+            &control_store_reset_sql(),
+        );
+        psql_ok(&url, "the fresh apply", &apply);
+        psql_ok(&url, label, legacy);
+
+        let refused = psql(&url, &apply);
+        assert!(
+            !refused.status.success(),
+            "{label} was accepted instead of refused"
+        );
+        let stderr = String::from_utf8_lossy(&refused.stderr).into_owned();
+        assert!(
+            stderr.contains(refusal),
+            "{label} refused under the wrong name; wanted {refusal} in:\n{stderr}"
+        );
+    }
+
+    // Leave the shared database on the record, not on a deliberately broken
+    // shape: the suite runs single-threaded against one cluster.
+    psql_ok(
+        &url,
+        "reset the control schemas",
+        &control_store_reset_sql(),
+    );
+    psql_ok(&url, "the fresh apply", &apply);
 }
