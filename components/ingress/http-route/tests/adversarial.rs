@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::{Value, json};
 
-use flow_http::{
+use http_route::{
     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
     DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryRequest, Emission, Header,
     Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition, handle_request,
@@ -215,7 +215,7 @@ fn limits() -> AdapterLimits {
     }
 }
 
-fn request(backend: &mut FakeBackend, head: &RequestHead, bytes: &[u8]) -> flow_http::HttpResponse {
+fn request(backend: &mut FakeBackend, head: &RequestHead, bytes: &[u8]) -> http_route::HttpResponse {
     let mut body = Chunks::json(&[bytes]);
     handle_request(backend, &mut body, head, limits())
 }

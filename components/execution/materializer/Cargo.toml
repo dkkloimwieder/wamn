@@ -14,3 +14,6 @@ wamn-event-wire = { workspace = true }
 
 # A COMMAND component (wasi:cli/run via `main`), not a cdylib: the Service
 # workload shape (E12) runs it in the host's restart loop.
+
+[lints]
+workspace = true
