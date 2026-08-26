@@ -1494,51 +1494,6 @@ fn repository_state_ownership_manifest_is_complete() {
 }
 
 #[test]
-fn catalog_execution_bundles_state_ownership_is_ratified() {
-    let repository = repository();
-    let manifest = read_manifest(&repository);
-    let object = manifest
-        .objects
-        .iter()
-        .find(|object| {
-            object.id == "catalog.execution_bundles" && object.ownership.plane == "project"
-        })
-        .expect("catalog.execution_bundles is registered");
-
-    assert_eq!(object.ownership.plane, "project");
-    assert_eq!(object.ownership.semantic_owner, "catalog-model");
-    assert_eq!(object.ownership.migration_owners, ["schema-control"]);
-    assert_eq!(
-        object.ownership.schema_source,
-        "deploy/sql/catalog-schema.sql"
-    );
-    assert_eq!(
-        object.ownership.writers,
-        [
-            "catalog-schema-installer",
-            "schema-control",
-            "scenario-worker",
-            "ctl-copy",
-        ]
-    );
-    assert_eq!(
-        object.ownership.readers,
-        [
-            "schema-control",
-            "scenario-worker",
-            "run-state",
-            "execution-host",
-            "ctl-copy",
-        ]
-    );
-    assert_eq!(
-        object.ownership.compatibility_horizon,
-        "catalog-format-and-platform-schema-major"
-    );
-    assert_eq!(object.ownership.drift_gate, "SR13:catalog-live");
-}
-
-#[test]
 fn durability_policy_projection_ownership_is_explicit_and_bounded() {
     let manifest = read_manifest(&repository());
     let object = manifest
@@ -1623,7 +1578,6 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
         writes,
         BTreeSet::from([
             "catalog.authoring_command_audit",
-            "catalog.execution_bundles",
             // wamn-0h0g.8.5.6: the gate verb appends one report per accepted
             // document, keyed by that document's wiring hash.
             "wamn_run.gate_reports",
@@ -1644,9 +1598,7 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
         reads,
         BTreeSet::from([
             "catalog.authoring_command_audit",
-            "catalog.catalog_heads",
-            "catalog.execution_bundles",
-            "catalog.releases",
+            "catalog.deployment_attestations",
             // `get-report` resolves what the gate wrote. A writer without this
             // reader is the capability hole wamn-0h0g.8.5.6 closed.
             "wamn_run.gate_reports",
@@ -1696,7 +1648,6 @@ fn host_owned_production_claim_authority_is_explicit_and_bounded() {
             "catalog.connection_bindings",
             "catalog.connection_generations",
             "catalog.connection_instances",
-            "catalog.execution_bundles",
             "wamn_run.effect_attempts",
             "wamn_run.run_queue",
             "wamn_run.runs",
@@ -1978,7 +1929,6 @@ fn generated_tenant_family_is_covered() {
         dynamic_paths,
         BTreeSet::from([
             "crates/data/entity-access/src/planner.rs",
-            "crates/execution/standard-nodes/src/postgres.rs",
             "crates/schema/compiler/src/seed/emit.rs"
         ])
     );

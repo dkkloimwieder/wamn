@@ -1594,6 +1594,81 @@
     },
     {
       "scope": "production-project-database",
+      "relation": "catalog.release_components",
+      "ops": false,
+      "installer": "schema-control",
+      "owner": "catalog-model",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:release_components_catalog_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text)",
+        "constraint:release_components_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_version > 0)",
+        "constraint:release_components_component_digest_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
+        "constraint:release_components_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, catalog_version, wiring_id, wiring_version, component_digest)",
+        "constraint:release_components_tenant_id_catalog_id_catalog_version_co_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version, component_digest) REFERENCES catalog.component_library(tenant_id, catalog_id, catalog_version, component_digest)",
+        "constraint:release_components_tenant_id_catalog_id_catalog_version_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.releases(tenant_id, catalog_id, catalog_version)",
+        "constraint:release_components_tenant_id_catalog_id_wiring_id_wiring_v_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, wiring_id, wiring_version) REFERENCES catalog.wirings(tenant_id, catalog_id, wiring_id, version)",
+        "constraint:release_components_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "constraint:release_components_wiring_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (wiring_id <> ''::text)",
+        "constraint:release_components_wiring_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (wiring_version > 0)",
+        "policy:release_components_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
+        "row-security:enabled=true;forced=true",
+        "trigger:release_components_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER release_components_immutable BEFORE DELETE OR UPDATE ON catalog.release_components FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()",
+        "trigger:release_components_snapshot_seal;mode=origin;function=catalog.guard_release_component_insert();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER release_components_snapshot_seal BEFORE INSERT ON catalog.release_components FOR EACH ROW EXECUTE FUNCTION catalog.guard_release_component_insert()"
+      ]
+    },
+    {
+      "scope": "production-project-database",
+      "relation": "catalog.release_manifest_v2_snapshots",
+      "ops": false,
+      "installer": "schema-control",
+      "owner": "catalog-model",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:release_manifest_v2_snapshots_canonical_bytes_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (octet_length(canonical_bytes) > 0)",
+        "constraint:release_manifest_v2_snapshots_catalog_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_id <> ''::text)",
+        "constraint:release_manifest_v2_snapshots_catalog_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (catalog_version > 0)",
+        "constraint:release_manifest_v2_snapshots_exact_hash;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (manifest_digest = ('sha256:'::text || encode(sha256(canonical_bytes), 'hex'::text)))",
+        "constraint:release_manifest_v2_snapshots_manifest_digest_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
+        "constraint:release_manifest_v2_snapshots_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, catalog_version)",
+        "constraint:release_manifest_v2_snapshots_tenant_id_catalog_id_catalog_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.releases(tenant_id, catalog_id, catalog_version)",
+        "constraint:release_manifest_v2_snapshots_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:release_manifest_v2_snapshots_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
+        "row-security:enabled=true;forced=true",
+        "trigger:release_manifest_v2_snapshots_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER release_manifest_v2_snapshots_immutable BEFORE DELETE OR UPDATE ON catalog.release_manifest_v2_snapshots FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
+      ]
+    },
+    {
+      "scope": "production-project-database",
       "relation": "catalog.releases",
       "ops": false,
       "installer": "schema-control",

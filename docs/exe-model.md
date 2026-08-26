@@ -142,7 +142,7 @@ retirement beads remove the package and its marker together.
 | publish gate |
 | provisioning · publish · additive schema · tenant isolation (T1 minting) |
 | management auth |
-| the Postgres standard node (`standard-nodes/src/postgres.rs`) |
+| catalog-derived PostgreSQL entity access (`entity-access/src/planner.rs`) |
 | egress confinement (import allowlist, mutation-proofed) |
 | M0 node set |
 | proof floor |
