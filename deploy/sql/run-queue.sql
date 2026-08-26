@@ -15,13 +15,20 @@
 -- Project-environment provisioning and schema reconciliation apply this artifact
 -- after `run-state.sql`; it is not an independent durability domain.
 --
--- Security shape mirrors the rest of the platform (runs, s2/s3, catalog):
--- tenant separation purely via the `app.tenant` claim the wamn:postgres plugin
--- injects with SET LOCAL. FORCE RLS keyed on
+-- Security shape DELIBERATELY DIVERGES from the rest of the platform, and this
+-- is the determination rather than an oversight (wamn-0h0g.22.6.3): the guest
+-- ACL role holds NO privilege on `run_queue` — measured from
+-- has_table_privilege, and this file contains no GRANT to it — so the claim
+-- here is HOST-INJECTED, not guest-settable. Re-keying it onto `current_user`
+-- would be change without a threat, and would break the host writers that do
+-- reach it. FORCE RLS therefore stays keyed on
 -- NULLIF(current_setting('app.tenant', true), ''), NULL (=> zero rows) when no
 -- claim was injected — PG resets a custom GUC to '' (not NULL) after SET LOCAL,
 -- and CHECK (tenant_id <> '') forbids a ''-tenant row, so an empty claim
 -- matches nothing structurally.
+--
+-- `wamn_run.operator_run_actions` (deploy/sql/run-state.sql) is the only other
+-- relation in this class.
 --
 -- SCOPE: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
 -- reconciliation. Every row shares one tenant-global FIFO ordered by

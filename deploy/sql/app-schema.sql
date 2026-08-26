@@ -29,13 +29,12 @@
 -- production and as the live-apply gate provisions.
 --
 -- SECURITY SHAPE mirrors deploy/sql/catalog-schema.sql exactly (the 3.2 tenant
--- floor + the a45 empty-claim hardening): one application role (wamn_app, not
--- owner), tenant separation purely via the `app.tenant` claim the wamn:postgres
--- plugin injects with SET LOCAL. Every table FORCEs RLS keyed on
--- NULLIF(current_setting('app.tenant', true), ''), which is NULL (⇒ zero rows)
--- when no claim was injected — Postgres resets a custom GUC to '' (not NULL)
--- after SET LOCAL, and CHECK (tenant_id <> '') forbids a ''-tenant row, so an
--- empty claim matches nothing structurally.
+-- floor): one stable ACL role (wamn_app, not owner), tenant separation from
+-- `current_user` (wamn-0h0g.22.6). Every table FORCEs RLS keyed on
+--   wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()
+-- and carries the matching `<table>_tkey` expression index. A role outside the
+-- guest generation convention derives NULL and matches no row, and
+-- CHECK (tenant_id <> '') forbids a ''-tenant row, so the floor is structural.
 --
 -- WRITE AUTHORITY (R11) splits these seven tables into three classes. RLS answers
 -- "which rows"; the GRANT answers "which relations at all", and the two questions
@@ -79,6 +78,62 @@ CREATE SCHEMA app_system AUTHORIZATION postgres;
 GRANT USAGE ON SCHEMA app_system TO wamn_app;
 
 -- ---------------------------------------------------------------------------
+-- The per-database authority derivations every tenant policy below calls
+-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not
+-- from a claim the session can set: a session that can set its own tenant can
+-- read every tenant.
+--
+-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
+-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;
+-- change the builder.
+--
+-- It is the BOOTSTRAP rendering because this file is applied to databases whose
+-- names are not known here, and `tenant_key` must bake the name in as a literal
+-- to stay `IMMUTABLE` — without which the expression indexes below are not even
+-- creatable.
+-- ---------------------------------------------------------------------------
+DO $wamn_authority_bootstrap$
+BEGIN
+    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
+REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
+GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(tenant text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+STRICT
+SET search_path = pg_catalog
+AS $$
+    SELECT substr(encode(sha256(
+           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
+        || int8send(6::bigint) || convert_to('tenant', 'UTF8')
+        || int8send(octet_length(convert_to(tenant, 'UTF8'))::bigint) || convert_to(tenant, 'UTF8')
+        || int8send(8::bigint) || convert_to('database', 'UTF8')
+        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
+       ), 'hex'), 1, 40)
+$$;
+ALTER FUNCTION "wamn_authority".tenant_key(text) OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".tenant_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".tenant_key(text) TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".current_tenant_key()
+RETURNS text
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SET search_path = pg_catalog
+AS $$
+    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')
+$$;
+ALTER FUNCTION "wamn_authority".current_tenant_key() OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".current_tenant_key() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".current_tenant_key() TO "wamn_app";$wamn_authority_derivations$,
+        '@wamn_database_literal@', quote_literal(current_database())),
+        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);
+END
+$wamn_authority_bootstrap$;
+
+-- ---------------------------------------------------------------------------
 -- Users — application accounts. `id` (uuid) is the app.user_id ownership target
 -- (3.5). Identity only: no credential material lives here (auth is 4.2/8.1).
 -- `status` gates whether the account may authenticate (enforced by 4.2, not this
@@ -100,8 +155,10 @@ CREATE TABLE app_system.users (
 ALTER TABLE app_system.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.users FORCE ROW LEVEL SECURITY;
 CREATE POLICY users_tenant ON app_system.users
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX users_tkey
+    ON app_system.users ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.users TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -121,8 +178,10 @@ CREATE TABLE app_system.roles (
 ALTER TABLE app_system.roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.roles FORCE ROW LEVEL SECURITY;
 CREATE POLICY roles_tenant ON app_system.roles
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX roles_tkey
+    ON app_system.roles ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.roles TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -144,8 +203,10 @@ CREATE TABLE app_system.user_roles (
 ALTER TABLE app_system.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.user_roles FORCE ROW LEVEL SECURITY;
 CREATE POLICY user_roles_tenant ON app_system.user_roles
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX user_roles_tkey
+    ON app_system.user_roles ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.user_roles TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -164,8 +225,10 @@ CREATE TABLE app_system.permissions (
 ALTER TABLE app_system.permissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.permissions FORCE ROW LEVEL SECURITY;
 CREATE POLICY permissions_tenant ON app_system.permissions
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX permissions_tkey
+    ON app_system.permissions ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.permissions TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -183,8 +246,10 @@ CREATE TABLE app_system.configurations (
 ALTER TABLE app_system.configurations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.configurations FORCE ROW LEVEL SECURITY;
 CREATE POLICY configurations_tenant ON app_system.configurations
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX configurations_tkey
+    ON app_system.configurations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON app_system.configurations TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -211,8 +276,10 @@ CREATE TABLE app_system.audit_log (
 ALTER TABLE app_system.audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.audit_log FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_log_tenant ON app_system.audit_log
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX audit_log_tkey
+    ON app_system.audit_log ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT ON app_system.audit_log TO wamn_app;
 CREATE INDEX audit_log_occurred ON app_system.audit_log (tenant_id, occurred_at);
 
@@ -242,6 +309,8 @@ CREATE TABLE app_system.api_keys (
 ALTER TABLE app_system.api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.api_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY api_keys_tenant ON app_system.api_keys
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX api_keys_tkey
+    ON app_system.api_keys ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.api_keys TO wamn_app;

@@ -15,11 +15,13 @@
 -- Security shape mirrors the rest of the platform (s2/s3): the guest-visible
 -- application role (`wamn_app`, not owner, no BYPASSRLS) and the distinct
 -- host-only `wamn_scenario_author` NOLOGIN role are provisioned before this
--- file. Tenant separation is the `app.tenant` claim injected with SET LOCAL. Every
--- table FORCEs RLS keyed on NULLIF(current_setting('app.tenant', true), ''),
--- which is NULL (=> zero rows) when no claim was injected — Postgres resets a
--- custom GUC to '' (not NULL) after SET LOCAL, and CHECK (tenant_id <> '')
--- forbids a ''-tenant row, so an empty claim matches nothing structurally.
+-- file. Tenant separation comes from `current_user` (wamn-0h0g.22.6): every
+-- table FORCEs RLS keyed on
+--   wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()
+-- and carries the matching `<table>_tkey` expression index, without which that
+-- predicate would sequential-scan every relation. A role outside the guest
+-- generation convention derives NULL and matches no row, and
+-- CHECK (tenant_id <> '') forbids a ''-tenant row, so the floor is structural.
 -- (In production the catalog may live
 -- in the control plane rather than a project DB; the tenant-scoped RLS shape is
 -- the same either way.)
@@ -40,6 +42,62 @@ BEGIN;
 CREATE SCHEMA catalog AUTHORIZATION postgres;
 GRANT USAGE ON SCHEMA catalog TO wamn_app;
 GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author;
+
+-- ---------------------------------------------------------------------------
+-- The per-database authority derivations every tenant policy below calls
+-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not
+-- from a claim the session can set: a session that can set its own tenant can
+-- read every tenant.
+--
+-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
+-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;
+-- change the builder.
+--
+-- It is the BOOTSTRAP rendering because this file is applied to databases whose
+-- names are not known here, and `tenant_key` must bake the name in as a literal
+-- to stay `IMMUTABLE` — without which the expression indexes below are not even
+-- creatable.
+-- ---------------------------------------------------------------------------
+DO $wamn_authority_bootstrap$
+BEGIN
+    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
+REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
+GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(tenant text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+STRICT
+SET search_path = pg_catalog
+AS $$
+    SELECT substr(encode(sha256(
+           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
+        || int8send(6::bigint) || convert_to('tenant', 'UTF8')
+        || int8send(octet_length(convert_to(tenant, 'UTF8'))::bigint) || convert_to(tenant, 'UTF8')
+        || int8send(8::bigint) || convert_to('database', 'UTF8')
+        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
+       ), 'hex'), 1, 40)
+$$;
+ALTER FUNCTION "wamn_authority".tenant_key(text) OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".tenant_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".tenant_key(text) TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".current_tenant_key()
+RETURNS text
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SET search_path = pg_catalog
+AS $$
+    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')
+$$;
+ALTER FUNCTION "wamn_authority".current_tenant_key() OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".current_tenant_key() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".current_tenant_key() TO "wamn_app";$wamn_authority_derivations$,
+        '@wamn_database_literal@', quote_literal(current_database())),
+        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);
+END
+$wamn_authority_bootstrap$;
 
 -- ---------------------------------------------------------------------------
 -- Catalog header: one row per (catalog_id, version) — the unit versioned and
@@ -87,8 +145,10 @@ CREATE TABLE catalog.catalogs (
 ALTER TABLE catalog.catalogs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.catalogs FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalogs_tenant ON catalog.catalogs
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX catalogs_tkey
+    ON catalog.catalogs ((wamn_authority.tenant_key(tenant_id)));
 -- wamn-0h0g.12.20: every production writer is the superuser publish/migrate
 -- shell, so the guest-reachable app LOGIN reads this relation and never writes it.
 GRANT SELECT ON catalog.catalogs TO wamn_app;
@@ -143,8 +203,10 @@ CREATE TABLE catalog.releases (
 ALTER TABLE catalog.releases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.releases FORCE ROW LEVEL SECURITY;
 CREATE POLICY releases_tenant ON catalog.releases
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX releases_tkey
+    ON catalog.releases ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.releases TO wamn_app;
 GRANT SELECT ON catalog.releases TO wamn_scenario_author;
 CREATE TRIGGER releases_immutable
@@ -240,8 +302,10 @@ CREATE TABLE catalog.catalog_heads (
 ALTER TABLE catalog.catalog_heads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.catalog_heads FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalog_heads_tenant ON catalog.catalog_heads
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX catalog_heads_tkey
+    ON catalog.catalog_heads ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.catalog_heads TO wamn_app;
 GRANT SELECT ON catalog.catalog_heads TO wamn_scenario_author;
 
@@ -277,8 +341,10 @@ CREATE UNIQUE INDEX connection_requirements_component_key
 ALTER TABLE catalog.connection_requirements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_requirements FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_requirements_tenant ON catalog.connection_requirements
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX connection_requirements_tkey
+    ON catalog.connection_requirements ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_requirements TO wamn_app;
 GRANT SELECT ON catalog.connection_requirements TO wamn_scenario_author;
 CREATE TRIGGER connection_requirements_immutable
@@ -305,8 +371,10 @@ CREATE TABLE catalog.connection_instances (
 ALTER TABLE catalog.connection_instances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_instances FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_instances_tenant ON catalog.connection_instances
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX connection_instances_tkey
+    ON catalog.connection_instances ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_instances TO wamn_app;
 GRANT SELECT ON catalog.connection_instances TO wamn_scenario_author;
 
@@ -353,8 +421,10 @@ CREATE TABLE catalog.connection_generations (
 ALTER TABLE catalog.connection_generations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_generations FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_generations_tenant ON catalog.connection_generations
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX connection_generations_tkey
+    ON catalog.connection_generations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_generations TO wamn_app;
 GRANT SELECT ON catalog.connection_generations TO wamn_scenario_author;
 CREATE TRIGGER connection_generations_update_immutable
@@ -407,8 +477,10 @@ CREATE UNIQUE INDEX connection_bindings_component_key
 ALTER TABLE catalog.connection_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_bindings FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_bindings_tenant ON catalog.connection_bindings
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX connection_bindings_tkey
+    ON catalog.connection_bindings ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_bindings TO wamn_app;
 GRANT SELECT ON catalog.connection_bindings TO wamn_scenario_author;
 CREATE TRIGGER connection_bindings_immutable
@@ -436,8 +508,10 @@ ALTER TABLE catalog.connection_generation_retention ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_generation_retention FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_generation_retention_tenant
     ON catalog.connection_generation_retention
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX connection_generation_retention_tkey
+    ON catalog.connection_generation_retention ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_generation_retention TO wamn_app;
 
 CREATE FUNCTION catalog.guard_connection_retention_update()
@@ -676,8 +750,10 @@ CREATE TABLE catalog.schema_migrations (
 ALTER TABLE catalog.schema_migrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.schema_migrations FORCE ROW LEVEL SECURITY;
 CREATE POLICY schema_migrations_tenant ON catalog.schema_migrations
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX schema_migrations_tkey
+    ON catalog.schema_migrations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.schema_migrations TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -700,8 +776,10 @@ CREATE TABLE catalog.entities (
 ALTER TABLE catalog.entities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.entities FORCE ROW LEVEL SECURITY;
 CREATE POLICY entities_tenant ON catalog.entities
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX entities_tkey
+    ON catalog.entities ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.entities TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -734,8 +812,10 @@ CREATE TABLE catalog.fields (
 ALTER TABLE catalog.fields ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.fields FORCE ROW LEVEL SECURITY;
 CREATE POLICY fields_tenant ON catalog.fields
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX fields_tkey
+    ON catalog.fields ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.fields TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -764,8 +844,10 @@ CREATE TABLE catalog.relations (
 ALTER TABLE catalog.relations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.relations FORCE ROW LEVEL SECURITY;
 CREATE POLICY relations_tenant ON catalog.relations
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX relations_tkey
+    ON catalog.relations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.relations TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -786,8 +868,10 @@ CREATE TABLE catalog.indexes (
 ALTER TABLE catalog.indexes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.indexes FORCE ROW LEVEL SECURITY;
 CREATE POLICY indexes_tenant ON catalog.indexes
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX indexes_tkey
+    ON catalog.indexes ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.indexes TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -811,8 +895,10 @@ CREATE TABLE catalog.constraints (
 ALTER TABLE catalog.constraints ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.constraints FORCE ROW LEVEL SECURITY;
 CREATE POLICY constraints_tenant ON catalog.constraints
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX constraints_tkey
+    ON catalog.constraints ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.constraints TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -837,8 +923,10 @@ CREATE TABLE catalog.rls_policies (
 ALTER TABLE catalog.rls_policies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.rls_policies FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_policies_tenant ON catalog.rls_policies
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX rls_policies_tkey
+    ON catalog.rls_policies ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.rls_policies TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -860,8 +948,10 @@ CREATE TABLE catalog.seed_datasets (
 ALTER TABLE catalog.seed_datasets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.seed_datasets FORCE ROW LEVEL SECURITY;
 CREATE POLICY seed_datasets_tenant ON catalog.seed_datasets
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX seed_datasets_tkey
+    ON catalog.seed_datasets ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.seed_datasets TO wamn_app;
 
 -- BEGIN COMPONENT LIBRARY STORAGE MIGRATION (wamn-0h0g.21.1)
@@ -909,8 +999,10 @@ CREATE TABLE catalog.component_library (
 ALTER TABLE catalog.component_library ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.component_library FORCE ROW LEVEL SECURITY;
 CREATE POLICY component_library_tenant ON catalog.component_library
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX component_library_tkey
+    ON catalog.component_library ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.component_library TO wamn_app;
 CREATE TRIGGER component_library_immutable
 BEFORE UPDATE OR DELETE ON catalog.component_library
@@ -1000,8 +1092,10 @@ CREATE TABLE catalog.wirings (
 ALTER TABLE catalog.wirings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.wirings FORCE ROW LEVEL SECURITY;
 CREATE POLICY wirings_tenant ON catalog.wirings
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX wirings_tkey
+    ON catalog.wirings ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.wirings TO wamn_app;
 CREATE TRIGGER wirings_immutable
 BEFORE UPDATE ON catalog.wirings
@@ -1025,8 +1119,10 @@ CREATE TABLE catalog.wiring_tombstones (
 ALTER TABLE catalog.wiring_tombstones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.wiring_tombstones FORCE ROW LEVEL SECURITY;
 CREATE POLICY wiring_tombstones_tenant ON catalog.wiring_tombstones
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX wiring_tombstones_tkey
+    ON catalog.wiring_tombstones ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.wiring_tombstones TO wamn_app;
 
 -- The env-scoped enabled pointer. The primary key IS the "exactly one
@@ -1046,8 +1142,10 @@ CREATE TABLE catalog.wiring_activation (
 ALTER TABLE catalog.wiring_activation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.wiring_activation FORCE ROW LEVEL SECURITY;
 CREATE POLICY wiring_activation_tenant ON catalog.wiring_activation
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX wiring_activation_tkey
+    ON catalog.wiring_activation ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.wiring_activation TO wamn_app;
 
 CREATE FUNCTION catalog.validate_wiring_activation()
@@ -1163,8 +1261,10 @@ CREATE TABLE catalog.wiring_activation_events (
 ALTER TABLE catalog.wiring_activation_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.wiring_activation_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY wiring_activation_events_tenant ON catalog.wiring_activation_events
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX wiring_activation_events_tkey
+    ON catalog.wiring_activation_events ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.wiring_activation_events TO wamn_app;
 -- Append-only against the owning role too, not only against the grants: the
 -- same idiom used for provenance rows, because a rewritten provenance row is
@@ -1212,8 +1312,10 @@ CREATE TABLE catalog.release_components (
 ALTER TABLE catalog.release_components ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.release_components FORCE ROW LEVEL SECURITY;
 CREATE POLICY release_components_tenant ON catalog.release_components
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX release_components_tkey
+    ON catalog.release_components ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.release_components TO wamn_app;
 CREATE TRIGGER release_components_immutable
 BEFORE UPDATE OR DELETE ON catalog.release_components
@@ -1242,8 +1344,10 @@ ALTER TABLE catalog.release_manifest_v2_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.release_manifest_v2_snapshots FORCE ROW LEVEL SECURITY;
 CREATE POLICY release_manifest_v2_snapshots_tenant
 ON catalog.release_manifest_v2_snapshots
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX release_manifest_v2_snapshots_tkey
+    ON catalog.release_manifest_v2_snapshots ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.release_manifest_v2_snapshots TO wamn_app;
 CREATE TRIGGER release_manifest_v2_snapshots_immutable
 BEFORE UPDATE OR DELETE ON catalog.release_manifest_v2_snapshots
@@ -1316,8 +1420,10 @@ CREATE TABLE catalog.event_registrations (
 ALTER TABLE catalog.event_registrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.event_registrations FORCE ROW LEVEL SECURITY;
 CREATE POLICY event_registrations_tenant ON catalog.event_registrations
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX event_registrations_tkey
+    ON catalog.event_registrations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.event_registrations TO wamn_app;
 -- wamn-0h0g.12.29: callable-flow admission locks the live registration with
 -- `FOR KEY SHARE` as wamn_app, and PostgreSQL demands UPDATE on at least one

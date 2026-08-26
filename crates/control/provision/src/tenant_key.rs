@@ -94,6 +94,17 @@ pub fn current_tenant_key_pattern() -> String {
     )
 }
 
+/// Owner the bootstrap rendering gives the schema and both functions.
+///
+/// `CURRENT_USER`, not the named platform role. The static DDL files that carry
+/// this bootstrap already declare `AUTHORIZATION postgres` or `AUTHORIZATION
+/// CURRENT_USER`, and naming a role that may not exist would add a new
+/// precondition to every applier — seven live gates plus the production path in
+/// `services/ctl`. The applier IS the platform role in every real deployment,
+/// so `CURRENT_USER` satisfies the ownership rider without inventing a
+/// requirement.
+const BOOTSTRAP_OWNER: &str = "CURRENT_USER";
+
 /// Placeholder the bootstrap rendering substitutes with the quoted database name.
 const DATABASE_LITERAL_PLACEHOLDER: &str = "@wamn_database_literal@";
 
@@ -112,7 +123,7 @@ const DATABASE_OCTETS_PLACEHOLDER: &str = "@wamn_database_octets@";
 ///
 /// `SET search_path = pg_catalog` pins every builtin these bodies call, so
 /// neither derivation can be redirected by a caller's search path.
-fn derivations_template(database_literal: &str, database_octets: &str) -> String {
+fn derivations_template(database_literal: &str, database_octets: &str, owner: &str) -> String {
     let domain = WorkloadRoleFamily::App.scope_domain();
     let domain_text = std::str::from_utf8(domain).expect("the scope domain is ASCII");
     format!(
@@ -152,7 +163,6 @@ fn derivations_template(database_literal: &str, database_octets: &str) -> String
          REVOKE ALL ON FUNCTION {schema}.current_tenant_key() FROM PUBLIC;\n\
          GRANT EXECUTE ON FUNCTION {schema}.current_tenant_key() TO {app};",
         schema = quote_ident(TENANT_KEY_SCHEMA),
-        owner = quote_ident(DB_OWNER_ROLE),
         app = quote_ident(APP_ROLE),
         domain_len = domain.len(),
         domain_lit = quote_literal(domain_text),
@@ -175,7 +185,11 @@ fn derivations_template(database_literal: &str, database_octets: &str) -> String
 /// Both functions land in ONE builder because both must reach both appliers;
 /// two builders would be two places to remember and one place to forget.
 pub fn authority_derivations_sql(database: &str) -> String {
-    derivations_template(&quote_literal(database), &database.len().to_string())
+    derivations_template(
+        &quote_literal(database),
+        &database.len().to_string(),
+        &quote_ident(DB_OWNER_ROLE),
+    )
 }
 
 /// The same DDL for a database whose name is NOT known at authoring time.
@@ -200,7 +214,11 @@ pub fn authority_derivations_bootstrap_sql() -> String {
          '{octets}', octet_length(convert_to(current_database(), 'UTF8'))::text);\n\
          END\n\
          $wamn_authority_bootstrap$;",
-        template = derivations_template(DATABASE_LITERAL_PLACEHOLDER, DATABASE_OCTETS_PLACEHOLDER),
+        template = derivations_template(
+            DATABASE_LITERAL_PLACEHOLDER,
+            DATABASE_OCTETS_PLACEHOLDER,
+            BOOTSTRAP_OWNER,
+        ),
         literal = DATABASE_LITERAL_PLACEHOLDER,
         octets = DATABASE_OCTETS_PLACEHOLDER,
     )
@@ -209,7 +227,8 @@ pub fn authority_derivations_bootstrap_sql() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CURRENT_TENANT_KEY_FUNCTION, DATABASE_LITERAL_PLACEHOLDER, DATABASE_OCTETS_PLACEHOLDER,
+        BOOTSTRAP_OWNER, CURRENT_TENANT_KEY_FUNCTION, DATABASE_LITERAL_PLACEHOLDER,
+        DATABASE_OCTETS_PLACEHOLDER,
         TENANT_KEY_FUNCTION, authority_derivations_bootstrap_sql, authority_derivations_sql,
         current_tenant_key_pattern, tenant_key,
     };
@@ -364,11 +383,12 @@ mod tests {
         let bootstrap = authority_derivations_bootstrap_sql();
         let substituted = bootstrap
             .replace(DATABASE_LITERAL_PLACEHOLDER, "'wamn-db-acme--billing--dev'")
-            .replace(DATABASE_OCTETS_PLACEHOLDER, "26");
+            .replace(DATABASE_OCTETS_PLACEHOLDER, "26")
+            .replace(BOOTSTRAP_OWNER, "\"wamn_db_owner\"");
         assert!(
             substituted.contains(&authority_derivations_sql(DATABASE)),
             "the bootstrap must carry the literal rendering verbatim once its \
-             two database fragments are filled in"
+             two database fragments and its owner are filled in"
         );
 
         // The PAIRING, not just the presence: a placeholder that the template

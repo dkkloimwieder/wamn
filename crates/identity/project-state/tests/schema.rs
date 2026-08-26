@@ -114,17 +114,35 @@ fn app_schema_sql_mirrors_the_model() {
     }
 }
 
-/// The tenant floor is the a45-hardened shape: the read is NULLIF-wrapped (empty
-/// claim ⇒ NULL ⇒ no match) and every table forbids a ''-tenant row. Pinned by
-/// expression, not just presence (the drift-guard lesson).
+/// The tenant floor derives from `current_user`, not from a claim the session
+/// can set (`wamn-0h0g.22.6.3`). Pinned by expression, not just presence (the
+/// drift-guard lesson), and pinned in BOTH directions: the retired boundary
+/// must be absent, because a policy that kept it would hand every tenant's rows
+/// to whoever sets the GUC.
 #[test]
-fn tenant_floor_is_the_hardened_shape() {
+fn tenant_floor_derives_from_the_connected_role() {
     let sql = code_only(&app_schema_sql());
     assert!(
-        sql.contains("NULLIF(current_setting('app.tenant', true), '')"),
-        "the tenant read must be NULLIF-wrapped (a45 empty-claim hardening)"
+        sql.contains("wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()"),
+        "the tenant read must derive from current_user"
     );
-    // Every table forbids a ''-tenant row (one CHECK per table).
+    assert!(
+        !sql.contains("app.tenant"),
+        "a settable tenant claim survived in the app schema"
+    );
+    // The expression index rides the predicate: without it the derivation
+    // sequential-scans every relation. One per table, same count as the CHECKs.
+    let indexes = sql
+        .matches("((wamn_authority.tenant_key(tenant_id)))")
+        .count();
+    assert_eq!(
+        indexes,
+        TABLES.len(),
+        "every table must carry its tenant-key expression index — one per table"
+    );
+    // Every table still forbids a ''-tenant row (one CHECK per table). This
+    // half of the a45 hardening SURVIVES the re-key: it is what makes a
+    // ''-tenant row structurally impossible rather than merely unmatched.
     let checks = sql.matches("CHECK (tenant_id <> '')").count();
     assert_eq!(
         checks,

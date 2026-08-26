@@ -80,8 +80,12 @@ const RUNS_RELEASE_FK_DEF: &str = "FOREIGN KEY (tenant_id, catalog_id, catalog_v
 const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs USING btree (tenant_id, catalog_id, catalog_version)";
 const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
 const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment, capture_mode, durability_class, wiring_id, wiring_version, wiring_hash, binding_world_json, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
+/// The qual `wamn_run.environment_policies` must carry, as `pg_policy` renders
+/// it. Re-keyed onto `current_user` with the rest of the guest-reachable floor
+/// (`wamn-0h0g.22.6.3`); if this drifts from `deploy/sql/run-state.sql` the
+/// reconciler REVERTS the sweep on every existing run-plane database.
 const ENVIRONMENT_POLICY_TENANT_QUAL: &str =
-    "tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)";
+    "wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()";
 
 #[derive(Clone, Copy)]
 enum CheckOrigin {
@@ -4016,7 +4020,8 @@ fn repair_environment_policy_row_security_sql(schema: &BareSchemaName) -> String
            END LOOP; \
          END $environment_policy_rows$; \
          CREATE POLICY environment_policies_tenant ON {qualified} \
-           FOR SELECT USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))"
+           FOR SELECT USING (wamn_authority.tenant_key(tenant_id) \
+             = wamn_authority.current_tenant_key())"
     )
 }
 
@@ -4853,8 +4858,10 @@ mod tests {
     // and unreviewed objects appended after the canonical tail.
     const EVENT_REGISTRATIONS_TAIL: &str = "\
 CREATE POLICY event_registrations_tenant ON catalog.event_registrations
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX event_registrations_tkey
+    ON catalog.event_registrations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.event_registrations TO wamn_app;
 -- wamn-0h0g.12.29: callable-flow admission locks the live registration with
 -- `FOR KEY SHARE` as wamn_app, and PostgreSQL demands UPDATE on at least one
@@ -5645,7 +5652,16 @@ COMMIT;
         assert_eq!(
             names,
             [
+                // The tenant-key expression indexes ride the re-keyed
+                // predicates (`wamn-0h0g.22.6.3`): one per guest-reachable
+                // run-plane relation, and the predicate sequential-scans
+                // without them. `run_queue` and `operator_run_actions` carry no
+                // guest grant, so they keep their claim and gain no index.
+                "effect_attempt_dispatches_tkey",
+                "effect_attempt_outcomes_tkey",
                 "effect_attempts_bulk_scope",
+                "effect_attempts_tkey",
+                "environment_policies_tkey",
                 "run_queue_claimable",
                 "runs_event_root",
                 "runs_flow",
@@ -5653,6 +5669,7 @@ COMMIT;
                 "runs_release",
                 "runs_response_deadline",
                 "runs_run_deadline",
+                "runs_tkey",
             ]
         );
         let (_, table, stmt) = index_statements(RUN_QUEUE_SQL, "wamn_run")
@@ -6179,7 +6196,12 @@ COMMIT;
             .insert("UPDATE".to_string());
 
         let plan = plan_run_plane(&schema("demo"), &obs);
-        for table in ["catalogs", "connection_bindings", "releases", "catalog_heads"] {
+        for table in [
+            "catalogs",
+            "connection_bindings",
+            "releases",
+            "catalog_heads",
+        ] {
             let repair = plan
                 .actions
                 .iter()
@@ -7259,9 +7281,9 @@ COMMIT;
             .find(|action| action.kind == RunPlaneActionKind::EnsureCatalogProvenance)
             .expect("catalog provenance CHECK repair");
         assert!(
-            action.sql.contains(
-                "DROP CONSTRAINT IF EXISTS releases_verified_publisher_principal_check"
-            )
+            action
+                .sql
+                .contains("DROP CONSTRAINT IF EXISTS releases_verified_publisher_principal_check")
         );
         assert!(
             action

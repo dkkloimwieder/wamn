@@ -2,13 +2,14 @@
 -- Runs once at database init (docker-entrypoint-initdb.d locally, ConfigMap
 -- mount in the kind cluster), as the postgres superuser.
 --
--- Security shape under test: ONE application role (wamn_app, not owner, no
--- BYPASSRLS) and tenant separation purely via the `app.tenant` claim the
--- plugin injects with SET LOCAL. RLS policies key on
--- NULLIF(current_setting('app.tenant', true), ''), which is NULL (=> zero rows)
--- when no claim was injected — Postgres resets a custom GUC to '' (not NULL)
--- after SET LOCAL, and CHECK (tenant_id <> '') forbids a ''-tenant row, so an
--- empty claim matches nothing structurally.
+-- Security shape under test: ONE stable ACL role (wamn_app, not owner, no
+-- BYPASSRLS) and tenant separation from `current_user` (wamn-0h0g.22.6). RLS
+-- policies key on
+--   wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()
+-- so a session that can set its own claim gains nothing: the connected role is
+-- the one thing it cannot rewrite. A role outside the guest generation
+-- convention derives NULL and matches no row, and CHECK (tenant_id <> '')
+-- forbids a ''-tenant row, so the floor is structural rather than conventional.
 
 CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 
@@ -49,6 +50,62 @@ CREATE SCHEMA s2 AUTHORIZATION postgres;
 GRANT USAGE ON SCHEMA s2 TO wamn_app;
 
 -- ---------------------------------------------------------------------------
+-- The per-database authority derivations every tenant policy below calls
+-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not
+-- from a claim the session can set: a session that can set its own tenant can
+-- read every tenant.
+--
+-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
+-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;
+-- change the builder.
+--
+-- It is the BOOTSTRAP rendering because this file is applied to databases whose
+-- names are not known here, and `tenant_key` must bake the name in as a literal
+-- to stay `IMMUTABLE` — without which the expression indexes below are not even
+-- creatable.
+-- ---------------------------------------------------------------------------
+DO $wamn_authority_bootstrap$
+BEGIN
+    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
+REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
+GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(tenant text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+STRICT
+SET search_path = pg_catalog
+AS $$
+    SELECT substr(encode(sha256(
+           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
+        || int8send(6::bigint) || convert_to('tenant', 'UTF8')
+        || int8send(octet_length(convert_to(tenant, 'UTF8'))::bigint) || convert_to(tenant, 'UTF8')
+        || int8send(8::bigint) || convert_to('database', 'UTF8')
+        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
+       ), 'hex'), 1, 40)
+$$;
+ALTER FUNCTION "wamn_authority".tenant_key(text) OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".tenant_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".tenant_key(text) TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".current_tenant_key()
+RETURNS text
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SET search_path = pg_catalog
+AS $$
+    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')
+$$;
+ALTER FUNCTION "wamn_authority".current_tenant_key() OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".current_tenant_key() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".current_tenant_key() TO "wamn_app";$wamn_authority_derivations$,
+        '@wamn_database_literal@', quote_literal(current_database())),
+        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);
+END
+$wamn_authority_bootstrap$;
+
+-- ---------------------------------------------------------------------------
 -- Bench target: single-statement query with 8 params returning 10 rows.
 -- 20 rows per (tenant, g) group so LIMIT 10 always has headroom.
 -- ---------------------------------------------------------------------------
@@ -81,8 +138,10 @@ CREATE INDEX bench_tenant_g_id ON s2.bench (tenant_id, g, id);
 ALTER TABLE s2.bench ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.bench FORCE ROW LEVEL SECURITY;
 CREATE POLICY bench_tenant ON s2.bench
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX bench_tkey
+    ON s2.bench ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.bench TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -102,8 +161,10 @@ FROM generate_series(1, 1000) gs,
 ALTER TABLE s2.rls_secrets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.rls_secrets FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_secrets_tenant ON s2.rls_secrets
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX rls_secrets_tkey
+    ON s2.rls_secrets ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.rls_secrets TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -126,8 +187,10 @@ CREATE TABLE s2.scratch (
 ALTER TABLE s2.scratch ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.scratch FORCE ROW LEVEL SECURITY;
 CREATE POLICY scratch_tenant ON s2.scratch
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX scratch_tkey
+    ON s2.scratch ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.scratch TO wamn_app;
 
 -- FK-violation fixture (FK checks run as table owner and bypass RLS; the
@@ -141,8 +204,10 @@ CREATE TABLE s2.fkchild (
 ALTER TABLE s2.fkchild ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.fkchild FORCE ROW LEVEL SECURITY;
 CREATE POLICY fkchild_tenant ON s2.fkchild
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX fkchild_tkey
+    ON s2.fkchild ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.fkchild TO wamn_app;
 
 -- Identity columns: inserts by wamn_app need the backing sequences.
@@ -151,7 +216,7 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA s2 TO wamn_app;
 -- ===========================================================================
 -- S3 fixture: flow catalog, production-shaped run history, and an idempotent
 -- sink for the runner PoC (docs/archive/p0-exit-criteria.md S3). Same security
--- shape as s2: one app role, tenant separation via the app.tenant claim + RLS.
+-- shape as s2: one ACL role, tenant separation from current_user + RLS.
 -- The runner reads the catalog and writes run history and the sink entirely
 -- through the wamn:postgres capability under its injected claim.
 -- ===========================================================================
@@ -174,8 +239,10 @@ CREATE TABLE s3.flows (
 ALTER TABLE s3.flows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.flows FORCE ROW LEVEL SECURITY;
 CREATE POLICY flows_tenant ON s3.flows
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX flows_tkey
+    ON s3.flows ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.flows TO wamn_app;
 
 -- Business side-effect sink. The idempotency key (tenant_id, run_id, step)
@@ -191,8 +258,10 @@ CREATE TABLE s3.sink (
 ALTER TABLE s3.sink ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.sink FORCE ROW LEVEL SECURITY;
 CREATE POLICY sink_tenant ON s3.sink
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX sink_tkey
+    ON s3.sink ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.sink TO wamn_app;
 
 -- Production-shaped run history (5.7). This s3-schema copy lets flowbench
@@ -221,8 +290,10 @@ CREATE TABLE s3.runs (
 ALTER TABLE s3.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_tenant ON s3.runs
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX runs_tkey
+    ON s3.runs ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, DELETE ON s3.runs TO wamn_app;
 GRANT INSERT (
     tenant_id, run_id, flow_id, flow_version, status, trigger_source,

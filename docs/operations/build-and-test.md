@@ -360,6 +360,40 @@ creates fine and breaks every expression index built on it.
 near-miss role names (`x<login>`, `<login>x`) that prove the pattern's anchors.
 Unanchored, either one would read another tenant's rows.
 
+### `[TENANT-FLOOR]` — the swept hand-written tenant floor
+
+`crates/control/provision/tests/deploy_sql_authority.rs` (`wamn-0h0g.22.6.3`).
+Applies the REAL `deploy/sql` files and asks the server, not the file text.
+
+```bash
+docker run -d --name wamn-floor-pg -e POSTGRES_PASSWORD=probe \
+  -p 127.0.0.1:5434:5432 postgres:18
+until psql postgres://postgres:probe@localhost:5434/postgres -Atqc 'select 1'; do :; done
+WAMN_TENANT_FLOOR_PG_URL=postgres://postgres:probe@localhost:5434/postgres \
+  cargo test -p wamn-control-provision --test deploy_sql_authority
+docker rm -f wamn-floor-pg      # BY EXPLICIT NAME. Never prune.
+```
+
+Three arms: no guest-reachable relation keys on a settable claim; all 43
+re-keyed relations carry their `<table>_tkey` expression index (from
+`pg_index`); and a login composed by `workload_generation_role` reads its own
+tenant and only its own from `catalog.catalogs` — while setting `app.tenant` to
+the other tenant, which now buys nothing.
+
+The two relations that KEEP the claim (`wamn_run.operator_run_actions`,
+`wamn_run.run_queue`) are asserted as an exact set, so the sweep cannot pass by
+granting the guest access to them instead.
+
+**This gate OWNS its server.** `postgres-init.sql` carries a bare
+`CREATE DATABASE wamn` and bare `CREATE ROLE`s, so the gate drops the database
+and all three roles before applying — and roles are cluster-wide. Point it only
+at a disposable server, never at one another suite is using. It passes twice in
+a row against a surviving cluster; that is the hermeticity check.
+
+**Host-side readiness only.** `docker exec … psql` returns success during
+postgres:18's init-then-restart while the published port is still down; the only
+honest probe is connecting from the host.
+
 ### `[DDL]` — the generated-DDL apply gates
 
 `crates/schema/compiler/tests/ddl.rs` (seven gates, `WAMN_DDL_PG_URL`). They

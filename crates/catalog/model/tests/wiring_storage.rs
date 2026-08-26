@@ -60,10 +60,27 @@ fn every_wiring_relation_is_tenant_isolated_and_read_only_to_the_app_role() {
         for half in ["USING", "WITH CHECK"] {
             assert_declares(
                 policy,
-                &format!("{half} (tenant_id = NULLIF(current_setting('app.tenant', true), ''))"),
-                &format!("catalog.{relation}'s policy must key on the app.tenant claim"),
+                &format!(
+                    "{half} (wamn_authority.tenant_key(tenant_id) \
+                     = wamn_authority.current_tenant_key())"
+                ),
+                &format!(
+                    "catalog.{relation}'s policy must derive the tenant from \
+                     current_user, not from a claim the session can set"
+                ),
             );
         }
+        // The expression index rides the predicate. Without it the derivation
+        // sequential-scans this relation on every guest read, which is the
+        // cliff `wamn-0h0g.22.6`'s option (c) had to answer for.
+        assert_declares(
+            SCHEMA,
+            &format!(
+                "CREATE INDEX {relation}_tkey\n    ON catalog.{relation} \
+                 ((wamn_authority.tenant_key(tenant_id)));"
+            ),
+            &format!("catalog.{relation} is missing its tenant-key expression index"),
+        );
 
         for required in [
             format!("ALTER TABLE catalog.{relation} ENABLE ROW LEVEL SECURITY;"),

@@ -14,13 +14,17 @@
 -- narrow run columns needed for its fenced runnable-state recheck.
 --
 -- Security shape mirrors the rest of the platform (s2/s3, catalog): tenant
--- separation purely via the `app.tenant` claim the wamn:postgres plugin injects
--- with SET LOCAL. Every table FORCEs RLS keyed on
--- NULLIF(current_setting('app.tenant', true), ''), which is NULL (=> zero rows)
--- when no claim was injected. Postgres resets a custom GUC to '' (not NULL)
--- after SET LOCAL scope ends, so NULLIF folds an empty claim to NULL; and
--- CHECK (tenant_id <> '') forbids a ''-tenant row, so an empty claim matches
--- nothing structurally, not just by convention.
+-- separation from `current_user` (wamn-0h0g.22.6). Every guest-reachable table
+-- FORCEs RLS keyed on
+--   wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()
+-- and carries the matching `<table>_tkey` expression index; CHECK
+-- (tenant_id <> '') forbids a ''-tenant row, so the floor is structural.
+--
+-- `operator_run_actions` deliberately KEEPS its `app.tenant` predicate: the
+-- guest ACL role holds no privilege on it (measured from has_table_privilege,
+-- wamn-0h0g.22.6.3), so its claim is HOST-INJECTED and re-keying it would be
+-- change without a threat. `wamn_run.run_queue` is the same case in
+-- deploy/sql/run-queue.sql.
 --
 -- SCOPE (what 5.7 does NOT own, reserved as nullable seams below): the durable
 -- run QUEUE + leases + doorbell (5.14) co-transact with these INSERTs but own
@@ -35,6 +39,62 @@ REVOKE ALL PRIVILEGES ON SCHEMA wamn_run
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_scenario_author;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_effect_writer;
+
+-- ---------------------------------------------------------------------------
+-- The per-database authority derivations every tenant policy below calls
+-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not
+-- from a claim the session can set: a session that can set its own tenant can
+-- read every tenant.
+--
+-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
+-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;
+-- change the builder.
+--
+-- It is the BOOTSTRAP rendering because this file is applied to databases whose
+-- names are not known here, and `tenant_key` must bake the name in as a literal
+-- to stay `IMMUTABLE` — without which the expression indexes below are not even
+-- creatable.
+-- ---------------------------------------------------------------------------
+DO $wamn_authority_bootstrap$
+BEGIN
+    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
+REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
+GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(tenant text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+STRICT
+SET search_path = pg_catalog
+AS $$
+    SELECT substr(encode(sha256(
+           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
+        || int8send(6::bigint) || convert_to('tenant', 'UTF8')
+        || int8send(octet_length(convert_to(tenant, 'UTF8'))::bigint) || convert_to(tenant, 'UTF8')
+        || int8send(8::bigint) || convert_to('database', 'UTF8')
+        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
+       ), 'hex'), 1, 40)
+$$;
+ALTER FUNCTION "wamn_authority".tenant_key(text) OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".tenant_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".tenant_key(text) TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".current_tenant_key()
+RETURNS text
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SET search_path = pg_catalog
+AS $$
+    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')
+$$;
+ALTER FUNCTION "wamn_authority".current_tenant_key() OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".current_tenant_key() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".current_tenant_key() TO "wamn_app";$wamn_authority_derivations$,
+        '@wamn_database_literal@', quote_literal(current_database())),
+        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);
+END
+$wamn_authority_bootstrap$;
 
 -- Closed run-queue operation classes are database facts derived from the
 -- authenticated current_user. These assertion functions are ordinary
@@ -271,7 +331,9 @@ ALTER TABLE wamn_run.environment_policies FORCE ROW LEVEL SECURITY;
 CREATE POLICY environment_policies_tenant
 ON wamn_run.environment_policies
 FOR SELECT
-USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX environment_policies_tkey
+    ON wamn_run.environment_policies ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.environment_policies
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
@@ -459,8 +521,10 @@ CREATE INDEX runs_run_deadline ON wamn_run.runs (tenant_id, run_deadline_at)
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_tenant ON wamn_run.runs
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX runs_tkey
+    ON wamn_run.runs ((wamn_authority.tenant_key(tenant_id)));
 
 CREATE TRIGGER runs_pin_durability_class
 BEFORE INSERT ON wamn_run.runs
@@ -582,8 +646,10 @@ CREATE INDEX effect_attempts_bulk_scope
 ALTER TABLE wamn_run.effect_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempts FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempts_tenant ON wamn_run.effect_attempts
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX effect_attempts_tkey
+    ON wamn_run.effect_attempts ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempts TO wamn_app;
@@ -625,8 +691,10 @@ CREATE TABLE wamn_run.effect_attempt_dispatches (
 ALTER TABLE wamn_run.effect_attempt_dispatches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempt_dispatches FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempt_dispatches_tenant ON wamn_run.effect_attempt_dispatches
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX effect_attempt_dispatches_tkey
+    ON wamn_run.effect_attempt_dispatches ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_dispatches
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempt_dispatches TO wamn_app;
@@ -658,8 +726,10 @@ CREATE TABLE wamn_run.effect_attempt_outcomes (
 ALTER TABLE wamn_run.effect_attempt_outcomes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempt_outcomes FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempt_outcomes_tenant ON wamn_run.effect_attempt_outcomes
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE INDEX effect_attempt_outcomes_tkey
+    ON wamn_run.effect_attempt_outcomes ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_outcomes
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempt_outcomes TO wamn_app;

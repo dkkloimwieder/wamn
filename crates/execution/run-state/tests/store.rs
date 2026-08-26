@@ -212,7 +212,15 @@ fn run_state_sql_matches_the_model() {
     assert!(sql.contains("PRIMARY KEY (tenant_id)"));
     assert!(sql.contains("ALTER TABLE wamn_run.environment_policies FORCE ROW LEVEL SECURITY"));
     assert!(sql.contains("CREATE POLICY environment_policies_tenant"));
-    assert!(sql.contains("FOR SELECT\nUSING (tenant_id = NULLIF(current_setting('app.tenant'"));
+    // Re-keyed onto `current_user` with the rest of the guest-reachable floor
+    // (`wamn-0h0g.22.6.3`), and carrying the expression index without which the
+    // derivation sequential-scans.
+    assert!(sql.contains(
+        "FOR SELECT\nUSING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())"
+    ));
+    assert!(sql.contains(
+        "CREATE INDEX environment_policies_tkey\n    ON wamn_run.environment_policies ((wamn_authority.tenant_key(tenant_id)))"
+    ));
     assert!(sql.contains("CREATE FUNCTION wamn_run.pin_run_durability_class()"));
     assert!(sql.contains("WHERE policy.tenant_id = NEW.tenant_id"));
     assert!(sql.contains("IF NOT FOUND THEN"));
