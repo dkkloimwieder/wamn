@@ -51,34 +51,6 @@ fn export_index_from_one_digest_does_not_resolve_against_another() {
     );
 }
 
-#[test]
-fn production_node_instances_keep_the_generated_typed_export_descriptor() {
-    const DRIVER: &str = include_str!("../../../crates/execution/host/src/router_driver.rs");
-    // `split_once` on BOTH markers, never `split(..).next()`: that idiom yields
-    // the whole remaining file when the closing marker is gone, so the section
-    // silently grows to the end of the driver and the `forbidden` scan below
-    // starts reading unrelated code (wamn-0h0g.15.137).
-    let node_instance = DRIVER
-        .split_once("struct NodeInstance {")
-        .and_then(|(_, rest)| rest.split_once("impl Drop for NodeInstance"))
-        .map(|(section, _)| section)
-        .expect("production NodeInstance section");
-
-    for required in [
-        "node: bindings::Node",
-        "bindings::Node::instantiate_async",
-        ".wamn_node_handler()",
-        ".call_run(",
-    ] {
-        assert!(
-            node_instance.contains(required),
-            "NodeInstance stopped using its typed export descriptor at {required:?}"
-        );
-    }
-    for forbidden in ["get_export_index", "get_func(", "export_name"] {
-        assert!(
-            !node_instance.contains(forbidden),
-            "NodeInstance added a name-keyed export path at {forbidden:?}"
-        );
-    }
-}
+// wamn-hopk R5: a test that split router_driver.rs on two source markers and
+// grepped the slice is deleted, along with the marker-drift hazard its own
+// comment documented. The behavioural arm above instantiates real components.

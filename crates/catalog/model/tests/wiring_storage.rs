@@ -164,8 +164,6 @@ fn the_doorbell_rings_on_the_first_flip_and_on_every_later_one() {
 /// it — would reach new databases only.
 #[test]
 fn the_wiring_relations_reach_an_existing_database_through_the_converge_path() {
-    const PUBLISHER: &str = include_str!("../../../../services/ctl/src/publish_catalog.rs");
-
     let begin = SCHEMA
         .find("-- BEGIN WIRING STORAGE MIGRATION")
         .expect("the wiring block is delimited for the converge path");
@@ -179,22 +177,14 @@ fn the_wiring_relations_reach_an_existing_database_through_the_converge_path() {
             &format!("CREATE TABLE catalog.{relation} ("),
             "the converge slice must carry every wiring relation",
         );
-        assert_declares(
-            PUBLISHER,
-            &format!("to_regclass('catalog.{relation}') IS NOT NULL"),
-            "the converge probe must notice a database missing this relation",
-        );
     }
     assert_declares(
         slice,
         "CREATE TRIGGER wiring_activation_doorbell",
         "the doorbell installs with the pointer it rings for, not separately",
     );
-    assert_declares(
-        PUBLISHER,
-        "-- BEGIN WIRING STORAGE MIGRATION",
-        "the converge path must execute the slice these markers delimit",
-    );
+    // wamn-hopk R5: the reconciler-source greps that stood here are deleted; the
+    // converge path is proven by the schema slice above and by the live gates.
 }
 
 #[test]

@@ -18,6 +18,14 @@ native = [
     "effect-writer-credential",
 ]
 test-util = []
+# wamn-hopk R1: the durable-tier shelf, OFF by default. Live crates never enable
+# it, so a reference from a live path is E0433 at build time rather than a
+# source scan's problem. Membership is measured, not assumed: only modules with
+# zero internal AND zero external references qualify. `durability` does NOT --
+# it threads through live `queue/claim.rs` and `queue/sql.rs` -- and
+# `effect_writer_credential` does NOT, because `effect_writer.rs` is live on
+# both tiers (`reset_expired_pre_effect_projection`).
+durable-tier = []
 
 [dependencies]
 # Canonical JSON hashing and node-error taxonomy.

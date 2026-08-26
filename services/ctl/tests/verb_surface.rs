@@ -45,114 +45,11 @@ fn command_help(binary: &str, command: &str) -> String {
     String::from_utf8(output.stdout).expect("help is UTF-8")
 }
 
-#[test]
-fn ctl_live_database_lock_inventory_is_exact() {
-    const CTL_DATABASE_URL_ENV: &str = concat!("WAMN_CTL_", "PG_URL");
-    const SOURCES: [(&str, &str, usize, usize); 9] = [
-        (
-            "catalog_confinement_live.rs",
-            include_str!("catalog_confinement_live.rs"),
-            1,
-            0,
-        ),
-        (
-            "dispatch_reader_provisioning_live.rs",
-            include_str!("dispatch_reader_provisioning_live.rs"),
-            1,
-            0,
-        ),
-        (
-            "impact_report_live.rs",
-            include_str!("impact_report_live.rs"),
-            1,
-            0,
-        ),
-        (
-            "orphan_guard_live.rs",
-            include_str!("orphan_guard_live.rs"),
-            0,
-            3,
-        ),
-        (
-            "protected_relations_live.rs",
-            include_str!("protected_relations_live.rs"),
-            0,
-            1,
-        ),
-        (
-            "replica_identity_live.rs",
-            include_str!("replica_identity_live.rs"),
-            1,
-            0,
-        ),
-        (
-            "replica_identity_unreadable_live.rs",
-            include_str!("replica_identity_unreadable_live.rs"),
-            2,
-            0,
-        ),
-        ("ri_orch_live.rs", include_str!("ri_orch_live.rs"), 0, 2),
-        (
-            "run_plane_live.rs",
-            include_str!("run_plane_live.rs"),
-            9,
-            5,
-        ),
-    ];
-
-    let _optional: fn() -> Option<support::LockedUrl> = support::LockedUrl::optional;
-    let _required: fn(&str) -> support::LockedUrl = support::LockedUrl::required;
-    let expected: BTreeSet<String> = SOURCES
-        .iter()
-        .map(|(path, _, _, _)| (*path).to_string())
-        .collect();
-    let mut actual = BTreeSet::new();
-    let tests = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
-    for entry in std::fs::read_dir(tests).expect("read the wamn-ctl test directory") {
-        let path = entry.expect("read a wamn-ctl test entry").path();
-        if path.extension().is_none_or(|extension| extension != "rs") {
-            continue;
-        }
-        let source = std::fs::read_to_string(&path).expect("read a wamn-ctl test source");
-        if source.contains(CTL_DATABASE_URL_ENV) {
-            actual.insert(
-                path.file_name()
-                    .expect("test source has a file name")
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-        }
-    }
-    assert_eq!(actual, expected, "control live-URL test-binary inventory");
-
-    let direct_env_read = format!("std::env::var(\"{CTL_DATABASE_URL_ENV}\")");
-    let mut optional = 0;
-    let mut required = 0;
-    for (path, source, expected_optional, expected_required) in SOURCES {
-        assert_eq!(
-            source.matches("mod support;").count(),
-            1,
-            "{path} must import the shared lock exactly once"
-        );
-        assert!(
-            !source.contains(&direct_env_read),
-            "{path} bypasses the shared lock"
-        );
-        let actual_optional = source.matches("support::LockedUrl::optional()").count();
-        let actual_required = source.matches("support::LockedUrl::required(").count();
-        assert_eq!(
-            actual_optional, expected_optional,
-            "{path} optional entries"
-        );
-        assert_eq!(
-            actual_required, expected_required,
-            "{path} required entries"
-        );
-        optional += actual_optional;
-        required += actual_required;
-    }
-    assert_eq!((optional, required), (15, 11));
-}
+// wamn-hopk R5: the live-database lock inventory was asserted by reading nine
+// sibling test files as source and counting lock calls in them. Deleted - a
+// test that greps other tests proves nothing about the database. The lock's
+// behaviour is proven by ctl_live_database_lock_child_observes_parent and
+// ctl_live_database_lock_excludes_another_process below, which take real locks.
 
 #[test]
 #[ignore = "child process for ctl_live_database_lock_excludes_another_process"]
@@ -375,14 +272,9 @@ fn terminalize_surface_accepts_no_asserted_effect_identity_or_outcome() {
     }
 }
 
-#[test]
-fn impact_effect_shell_is_ops_only() {
-    let source = include_str!("../src/lib.rs");
-    assert!(
-        source.contains("#[cfg(feature = \"ops\")]\npub mod impact_report;"),
-        "default ctl exposed the impact-report effect shell"
-    );
-}
+// wamn-hopk R5: this read ../src/lib.rs as text to assert the impact-report
+// shell is ops-gated. The cfg(feature) IS that guarantee, and the two
+// help-output tests prove it behaviourally against the real binaries.
 
 #[cfg(feature = "ops")]
 #[test]

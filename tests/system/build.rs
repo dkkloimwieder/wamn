@@ -29,34 +29,10 @@ fn main() {
             package
         );
     }
-    scan_sources(Path::new("src"));
+    // wamn-hopk R5: a recursive source scan for forbidden `use` lines stood
+    // here, complete with its own hand-rolled comment skip. It is deleted. The
+    // manifest check above is the same rule at the only layer that can enforce
+    // it absolutely: a crate absent from [dependencies] cannot be imported at
+    // all, and trying is E0432 at build time.
 }
 
-fn scan_sources(dir: &Path) {
-    for entry in fs::read_dir(dir).expect("system source directory reads") {
-        let path = entry.expect("system source entry reads").path();
-        if path.is_dir() {
-            scan_sources(&path);
-            continue;
-        }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
-            continue;
-        }
-        let source = fs::read_to_string(&path).expect("system source reads");
-        for (line_number, line) in source.lines().enumerate() {
-            let code = line.trim_start();
-            if code.starts_with("//") {
-                continue;
-            }
-            for forbidden in FORBIDDEN_CRATES {
-                assert!(
-                    !code.contains(&format!("{forbidden}::"))
-                        && !code.contains(&format!("use {forbidden}")),
-                    "{}:{} imports forbidden service crate `{forbidden}`",
-                    path.display(),
-                    line_number + 1
-                );
-            }
-        }
-    }
-}

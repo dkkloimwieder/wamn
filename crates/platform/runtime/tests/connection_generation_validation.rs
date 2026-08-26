@@ -359,13 +359,6 @@ async fn both_snapshotted_outer_policy_ceiling_denials_are_typed() {
     );
 }
 
-#[test]
-fn validator_explicitly_preserves_dispatch_time_enforcement() {
-    let source = include_str!("../src/connection_generation.rs");
-    for current_check in ["current DNS", "redirect", "proxy", "outer-policy"] {
-        assert!(
-            source.contains(current_check),
-            "validator must preserve dispatch-time {current_check} enforcement"
-        );
-    }
-}
+// wamn-hopk R5: a test grepping this crate's own source for the words "current
+// DNS", "redirect", "proxy" and "outer-policy" is deleted. Dispatch-time
+// enforcement is proven by the behavioural arms above, which call the validator.

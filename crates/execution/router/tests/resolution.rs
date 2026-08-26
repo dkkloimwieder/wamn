@@ -414,15 +414,6 @@ fn an_evicted_entry_leaves_behind_no_pointer() {
 
 // ---- the instrument --------------------------------------------------------
 
-/// The cache-hit series is a dashboard contract, so its name and its one
-/// attribute are pinned here — the same way `services/executor` pins
-/// `wamn.run.drain.failures`. Renaming either breaks a chart, not a build.
-#[test]
-fn the_cache_reports_hits_and_misses_beside_the_run_instruments() {
-    let source = include_str!("../src/resolution.rs");
-    assert!(source.contains(r#"u64_counter("wamn.run.wiring.cache.lookups")"#));
-    assert!(source.contains(r#"KeyValue::new("#));
-    for label in [r#""hit""#, r#""miss""#] {
-        assert!(source.contains(label), "the {label} bucket disappeared");
-    }
-}
+// wamn-hopk R5: the cache-hit series was pinned by grepping this crate's source
+// for the instrument name. Deleted; a metric-name contract is a live-probe
+// question, never a text search.

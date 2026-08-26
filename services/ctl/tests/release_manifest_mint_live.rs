@@ -175,41 +175,9 @@ fn release_membership_is_exact_wiring_to_admitted_digest() {
     assert!(CATALOG_SCHEMA.contains("MESSAGE = 'release-component-membership-frozen'"));
 }
 
-#[test]
-fn the_production_mint_has_no_legacy_conversion_arm() {
-    const SOURCE: &str = include_str!("../src/publish_release.rs");
-    for retired in [
-        "catalog.release_flows",
-        "catalog.execution_bundles",
-        "ExecutionPlan",
-        "ServingFlow",
-        "candidate_draft",
-        "reachable_flows",
-    ] {
-        assert!(
-            !SOURCE.contains(retired),
-            "v2 mint contains legacy conversion token {retired:?}"
-        );
-    }
-    assert_eq!(SOURCE.matches("validate_wiring_compatibility(").count(), 1);
-    for current in [
-        "FROM catalog.component_library",
-        "FROM catalog.wirings",
-        "INSERT INTO catalog.release_components",
-        "INSERT INTO catalog.release_manifest_v2_snapshots",
-        "document.wiring_hash()",
-    ] {
-        assert!(SOURCE.contains(current), "v2 mint omits {current:?}");
-    }
-    assert_eq!(
-        RELEASE_MANIFEST_MINT_REFUSAL,
-        "release-manifest-mint-refused"
-    );
-    assert_eq!(
-        MintManifestErrorKind::ClosureConflict.as_str(),
-        "closure-conflict"
-    );
-}
+// wamn-hopk R5: this test read services/ctl/src/publish_release.rs as text and
+// grepped it for retired tokens. Deleted. The mint's behaviour is proven by the
+// live arms in this file, which actually mint against a database.
 
 async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
     let (client, connection) = tokio_postgres::connect(url, NoTls)

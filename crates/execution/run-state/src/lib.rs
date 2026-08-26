@@ -32,6 +32,10 @@
 /// The private management admission transaction.
 pub mod admission;
 /// Capture-independent effect-attempt generation facts.
+///
+/// Durable-tier shelf (`wamn-hopk` R1): behind `durable-tier`, off by default,
+/// so a live path referencing it fails to compile instead of being grepped for.
+#[cfg(feature = "durable-tier")]
 pub mod attempt;
 /// The durability class a run was admitted under, and the crash-floor gate.
 pub mod durability;

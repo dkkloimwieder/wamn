@@ -25,8 +25,6 @@ const HTTP_RANDOM_COPY: &str =
     include_str!("../../../../components/ingress/http-route/wit/deps/wasi-random/package.wit");
 const HOST_WORLD: &str = include_str!("../wit/world.wit");
 const HTTP_WORLD: &str = include_str!("../../../../components/ingress/http-route/wit/world.wit");
-const PLUGIN: &str = include_str!("../src/plugins/flow_http_routing.rs");
-const HOST: &str = include_str!("../../../../services/host/src/host.rs");
 
 /// Every vendored copy of the package, repository-relative and sorted.
 ///
@@ -174,7 +172,6 @@ fn the_three_bound_functions_and_the_refusal_shape_are_unchanged() {
         assert_eq!(item_body(copy, "record auth-rejection {"), AUTH_REJECTION);
         assert!(copy.contains("resource route-permit {}"));
     }
-    assert!(PLUGIN.contains("impl routing::HostRoutePermit for ActiveCtx<'_>"));
 }
 
 #[test]
@@ -251,14 +248,10 @@ fn both_worlds_import_the_routing_interface_and_the_production_host_links_it() {
     // missed it would produce a plugin whose import resolves to nothing.
     assert!(HOST_WORLD.contains("world flow-http-routing-plugin {"));
     assert_eq!(HOST_WORLD.matches(IMPORT).count(), 1);
-    assert!(PLUGIN.contains("world: \"flow-http-routing-plugin\","));
-    assert!(PLUGIN.contains("\"wamn:flow-http-routing/routing@0.1.0\""));
-    assert!(PLUGIN.contains("contains(\"wamn\", \"flow-http-routing\", &[\"routing\"])"));
-    assert!(PLUGIN.contains("routing::add_to_linker"));
+    // wamn-hopk R5: the bindgen-side spellings and the host's linker call were
+    // asserted by grepping two .rs files. Deleted; the WIT world is the contract
+    // and a bindgen mismatch is a compile error, not a missing substring.
 
     assert!(HTTP_WORLD.contains("world flow-http {"));
     assert_eq!(HTTP_WORLD.matches(IMPORT).count(), 1);
-
-    // The production host links the plugin for the flow-http workload.
-    assert!(HOST.contains("FlowHttpRouting::from_env(release.clone())"));
 }
