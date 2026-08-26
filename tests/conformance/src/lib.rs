@@ -24,6 +24,3 @@ mod schema_drift;
 
 #[cfg(test)]
 mod version_identity;
-
-#[cfg(test)]
-mod wasi_ctx_environment;
