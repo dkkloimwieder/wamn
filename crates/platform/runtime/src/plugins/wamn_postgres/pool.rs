@@ -17,6 +17,10 @@ use tokio_postgres::{AsyncMessage, Client, Config, Error, NoTls};
 use wamn_run_state::AuthorityClass;
 
 use super::DEFAULT_PROJECT;
+use super::credential_exactness::{
+    AmbientCredentialState, ExpectedCredentialIdentity, MembershipExpectation, MembershipMode,
+    credential_exactness_probe, explicit_credential_source,
+};
 use crate::engine::MAX_HOST_CALL_DURATION;
 
 /// Async traffic surfaced by connections created inside the existing platform
@@ -474,6 +478,80 @@ fn standard_conforming_strings_ok(setting: &str) -> bool {
 /// physical connection — one cheap round trip. A server with
 /// `standard_conforming_strings` off (or an unreadable setting) fails the
 /// connection create, which surfaces to the guest as `connection-unavailable`.
+/// Refuse any newly-created physical connection whose identity is not exactly
+/// the credential this pool resolved (`wamn-0h0g.22.8.4`).
+///
+/// Wired as a `post_create` hook, the same place the R18
+/// `standard_conforming_strings` assertion lives, because that is where a NEW
+/// PHYSICAL CONNECTION exists and has not yet been used. deadpool PUSHES
+/// post-create hooks rather than replacing them, so both checks run.
+///
+/// This is what closes the loop that split B opened. B keys the pool on
+/// (project, class, generation) taken from the resolved url; the url is a
+/// CLAIM about who will connect. The probe is the server's own answer to
+/// whether that claim is true: it compares `session_user`, `current_user` and
+/// the database against the expectation, and asks the server whether the
+/// principal really holds the class's ACL role. A generation mismatch
+/// therefore fails the connection rather than serving under a stale principal.
+///
+/// `AmbientCredentialState::Absent` is asserted, not assumed: split B removed
+/// the ambient `WAMN_PG_URL` read, so the url reaching here is the one named
+/// explicit source. If a second source is ever reintroduced, this refuses.
+pub(super) fn credential_exactness_hook(
+    database_url: &str,
+    class: AuthorityClass,
+    project: &str,
+) -> anyhow::Result<Hook> {
+    let source = explicit_credential_source(database_url, project, AmbientCredentialState::Absent)
+        .map_err(|error| anyhow::anyhow!("explicit credential source refused: {error}"))?;
+    let generation_role = credential_generation_role(database_url)?;
+    let config: Config = database_url
+        .parse()
+        .context("parse the project database url")?;
+    let database = config
+        .get_dbname()
+        .context("the project database url names no database")?
+        .to_string();
+
+    let expected = ExpectedCredentialIdentity::new(
+        // Both users are the generation role: nothing issues SET ROLE between
+        // connect and this hook, so a differing `current_user` means the
+        // session is not the principal the url named.
+        generation_role.clone(),
+        generation_role,
+        database,
+        project,
+        vec![MembershipExpectation::new(
+            class.acl_role(),
+            MembershipMode::Member,
+            true,
+        )],
+        // ACL expectations are the per-family denial matrix and need a live
+        // server to be meaningful; membership is the arm that is checkable on
+        // every connection.
+        Vec::new(),
+    );
+    let probe = Arc::new(
+        credential_exactness_probe(source, expected)
+            .map_err(|error| anyhow::anyhow!("credential exactness refused the source: {error}"))?,
+    );
+
+    Ok(Hook::async_fn(move |client, _metrics| {
+        let probe = Arc::clone(&probe);
+        Box::pin(async move {
+            // deadpool hands a `ClientWrapper`; the probe wants the
+            // `tokio_postgres::Client` it derefs to.
+            probe.probe_pooled(&**client).await.map_err(|error| {
+                // The error carries a predicate and a kind, never credential
+                // material or server detail.
+                HookError::message(format!(
+                    "credential exactness refused the connection: {error}"
+                ))
+            })
+        })
+    }))
+}
+
 pub(super) fn standard_conforming_strings_hook() -> Hook {
     Hook::async_fn(|client, _metrics| {
         Box::pin(async move {
@@ -640,6 +718,58 @@ mod tests {
                 "{class} is host-owned platform work"
             );
         }
+    }
+
+    /// A url that names no credential cannot produce a probe: there would be
+    /// nothing to compare the server's answer against.
+    #[test]
+    fn the_exactness_hook_refuses_a_url_that_names_no_credential() {
+        assert!(
+            credential_exactness_hook("postgres://host:5432/db", AuthorityClass::GuestSql, "acme")
+                .is_err(),
+            "a url with no user names no principal"
+        );
+    }
+
+    /// The binding must name the project it was resolved for. An empty binding
+    /// would make the probe agree with anything.
+    #[test]
+    fn the_exactness_hook_refuses_an_unbound_project() {
+        assert!(
+            credential_exactness_hook(
+                "postgres://wamn_app_9f3c_a:pw@host:5432/db",
+                AuthorityClass::GuestSql,
+                "",
+            )
+            .is_err(),
+            "an empty tenant binding must refuse"
+        );
+    }
+
+    /// Every authority can be probed, and each expects ITS OWN acl role. The
+    /// role strings are the arm that makes the probe a per-family check rather
+    /// than a generic connection test.
+    #[test]
+    fn every_authority_probes_for_its_own_acl_role() {
+        let mut roles = Vec::new();
+        for class in AuthorityClass::ALL {
+            assert!(
+                credential_exactness_hook(
+                    "postgres://wamn_gen_9f3c_a:pw@host:5432/billingdb",
+                    class,
+                    "billing",
+                )
+                .is_ok(),
+                "{class} must produce a probe"
+            );
+            assert!(
+                !roles.contains(&class.acl_role()),
+                "{class} shares an acl role with an earlier authority; the \
+                 per-family arm would not distinguish them"
+            );
+            roles.push(class.acl_role());
+        }
+        assert_eq!(roles.len(), 4);
     }
 
     /// The ambient credential source is gone.

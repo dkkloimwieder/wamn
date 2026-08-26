@@ -45,6 +45,23 @@ impl AuthorityClass {
         Self::EventMaterializer,
     ];
 
+    /// The stable NOLOGIN ACL role this authority's generations inherit.
+    ///
+    /// Duplicated here rather than reached through `WorkloadRoleFamily` because
+    /// `wamn-control-provision` is a DEV-ONLY dependency of the runtime — the
+    /// shipped runtime links no provisioner — and the runtime must be able to
+    /// name the role it expects a connection to actually hold. The provisioning
+    /// projection carries a drift guard asserting the two agree, so the
+    /// duplication cannot diverge silently.
+    pub const fn acl_role(self) -> &'static str {
+        match self {
+            Self::GuestSql => "wamn_app",
+            Self::ExecutorPlatform => "wamn_executor_platform",
+            Self::CallableHttp => "wamn_http_admitter",
+            Self::EventMaterializer => "wamn_event_materializer",
+        }
+    }
+
     /// Stable label for cache keys, telemetry and error text.
     ///
     /// One-way by design: no inverse exists, so a label can never be turned

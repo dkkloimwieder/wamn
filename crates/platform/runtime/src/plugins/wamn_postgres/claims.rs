@@ -22,7 +22,8 @@ use wamn_run_state::AuthorityClass;
 use super::pool::{
     CheckoutProbe, CredentialProvider, PlatformAsyncMessage, PlatformConnect, PoolKey,
     PoolLifecycle, ProjectConfig, ProjectPool, StaticCredentialProvider, WamnPostgresConfig,
-    credential_generation_role, destroy_connection, standard_conforming_strings_hook,
+    credential_exactness_hook, credential_generation_role, destroy_connection,
+    standard_conforming_strings_hook,
 };
 use super::resources::{run_execute, run_query};
 use super::types::map_pg_error;
@@ -636,9 +637,11 @@ impl WamnPostgres {
     /// Build a deadpool pool for one project's connection config.
     fn build_pool(
         cfg: &ProjectConfig,
-        lifecycle: PoolLifecycle,
+        class: AuthorityClass,
+        project: &str,
         platform_messages: &tokio::sync::mpsc::UnboundedSender<PlatformAsyncMessage>,
     ) -> anyhow::Result<Pool> {
+        let lifecycle = PoolLifecycle::for_class(class);
         let pg_config: tokio_postgres::Config = cfg
             .database_url
             .parse()
@@ -664,6 +667,13 @@ impl WamnPostgres {
             })
             // R18: assert standard_conforming_strings=on once per new connection.
             .post_create(standard_conforming_strings_hook())
+            // wamn-0h0g.22.8.4: and assert the connection IS the credential
+            // this pool resolved. deadpool pushes hooks, so both run.
+            .post_create(credential_exactness_hook(
+                &cfg.database_url,
+                class,
+                project,
+            )?)
             .runtime(Runtime::Tokio1)
             .build()?)
     }
@@ -736,7 +746,7 @@ impl WamnPostgres {
         if let Some(pp) = pools.read().expect("pools lock poisoned").get(&key) {
             return Ok(pp.clone());
         }
-        let pp = match Self::build_pool(&cfg, lifecycle, &self.platform_messages) {
+        let pp = match Self::build_pool(&cfg, class, project, &self.platform_messages) {
             Ok(pool) => Arc::new(ProjectPool {
                 pool,
                 statement_timeout_ms: cfg.statement_timeout_ms,
@@ -1809,6 +1819,37 @@ mod tests {
         ] {
             assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(predicate));
         }
+    }
+
+    /// Building a pool must REQUIRE a probeable credential.
+    ///
+    /// Without this, removing the exactness hook from `build_pool` would be an
+    /// inert change: every other test constructs the hook directly, so nothing
+    /// would notice the pool no longer carries it. Here the hook's construction
+    /// is the only thing that can reject this url, so its absence is visible.
+    #[test]
+    fn building_a_pool_requires_a_probeable_credential() {
+        let (messages, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let unprobeable = ProjectConfig {
+            // Parses as a manager config, but names no principal, so the
+            // exactness hook cannot be built for it.
+            database_url: "postgres://host:5432/db".to_string(),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 100,
+            statement_timeout_ms: 100,
+            row_limit: 10,
+        };
+        assert!(
+            WamnPostgres::build_pool(
+                &unprobeable,
+                AuthorityClass::GuestSql,
+                DEFAULT_PROJECT,
+                &messages,
+            )
+            .is_err(),
+            "a pool whose credential cannot be probed must not be built"
+        );
     }
 
     /// Guest-sql must never be usable as a platform authority, and the refusal
@@ -3151,10 +3192,14 @@ mod tests {
                 statement_timeout_ms: 5_000,
                 row_limit: 1_000,
             },
-            PoolLifecycle::Guest,
+            AuthorityClass::GuestSql,
+            DEFAULT_PROJECT,
             &platform_messages,
         )
-        .expect("pool builds (url parses; the hook runs at checkout, not build)");
+        // Hook ORDER matters to this test: R18 is pushed first, so a scs=off
+        // server fails on standard_conforming_strings before the
+        // wamn-0h0g.22.8.4 exactness hook is reached.
+        .expect("pool builds (url parses; the hooks run at checkout, not build)");
         let raw_err = match pool.get().await {
             Ok(_) => panic!("raw checkout unexpectedly SUCCEEDED against a scs=off server"),
             Err(e) => e,

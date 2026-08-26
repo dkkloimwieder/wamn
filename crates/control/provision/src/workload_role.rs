@@ -370,6 +370,25 @@ fn frame(preimage: &mut Vec<u8>, value: &[u8]) {
 mod tests {
     use super::*;
 
+    /// THE DRIFT GUARD for a deliberate duplication (`wamn-0h0g.22.8.4`).
+    ///
+    /// `AuthorityClass::acl_role` repeats these role names inside
+    /// `wamn-run-state`, because the shipped runtime links no provisioner and
+    /// still has to name the role it expects a connection to hold. Two copies
+    /// of a security-relevant string is a drift risk, so this is the assertion
+    /// that they are one vocabulary. If it ever fails, the runtime is probing
+    /// for a role the provisioner no longer grants.
+    #[test]
+    fn the_runtime_role_vocabulary_matches_the_provisioning_families() {
+        for class in AuthorityClass::ALL {
+            assert_eq!(
+                class.acl_role(),
+                WorkloadRoleFamily::from(class).acl_role(),
+                "{class}: the runtime expects a different role than the provisioner grants"
+            );
+        }
+    }
+
     /// The four rows `wamn-0h0g.22.14` ruled, pinned end to end: class ->
     /// family -> the stable ACL role name the ruling actually named. Going all
     /// the way to the role string is the point — asserting only the family
