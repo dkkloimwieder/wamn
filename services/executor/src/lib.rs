@@ -13,6 +13,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use clap::Args;
 use tracing::Instrument as _;
+use wash_runtime::engine::host_memory::{HostMemoryBudgets, parse_bytes};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 use wamn_event_wire::Causation;
@@ -25,9 +26,7 @@ use wamn_run_state::FailKind;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::engine::{
-    DEFAULT_EPOCH_TICK, PoolSizing, build_engine_sized, spawn_epoch_ticker,
-};
+use wamn_runtime::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
@@ -159,29 +158,42 @@ pub struct ExecutorArgs {
     #[arg(long, default_value_t = DEFAULT_LEASE_TTL_MS)]
     pub lease_ttl_ms: u64,
 
-    /// Pooling-allocator instance slots: the concurrent live instances this
-    /// executor admits. Spelled exactly as the host's, so one capacity posture
-    /// reads the same on both deployables (`services/host/src/host.rs`).
-    #[arg(long = "pool-slots", env = "WAMN_POOL_SLOTS", default_value_t = PoolSizing::default().slots)]
-    pub pool_slots: u32,
+    /// Total guest-memory budget reported by the executor.
+    #[arg(long = "max-guest-memory", env = "WASH_HOST_MAX_GUEST_MEMORY")]
+    pub max_guest_memory: Option<String>,
 
-    /// Pooling-allocator memory ceiling: the largest budget any one component
-    /// may hold. Spelled exactly as the host's, so one capacity posture reads
-    /// the same on both deployables (`services/host/src/host.rs`).
-    #[arg(long = "pool-memory-cap-bytes", env = "WAMN_POOL_MEMORY_CAP_BYTES", default_value_t = PoolSizing::default().memory_cap_bytes)]
-    pub pool_memory_cap_bytes: usize,
+    /// Largest linear memory a guest may allocate.
+    #[arg(
+        long = "default-heap-memory",
+        env = "WASH_DEFAULT_HEAP_MEMORY",
+        default_value = "256MiB"
+    )]
+    pub default_heap_memory: String,
+
+    /// Core-instance slots reserved by Wasmtime's pooling allocator.
+    #[arg(
+        long = "core-instances",
+        env = "WASH_CORE_INSTANCES",
+        default_value_t = DEFAULT_CORE_INSTANCES
+    )]
+    pub core_instances: u32,
 }
 
-/// This executor's parsed pooling sizing.
-///
-/// A named function rather than a struct literal at the build site so a test
-/// can cross the flag-to-sizing boundary: an argument that parses and is then
-/// dropped on the floor is exactly the inert knob `wamn-t883` closed.
-fn pool_sizing(args: &ExecutorArgs) -> PoolSizing {
-    PoolSizing {
-        slots: args.pool_slots,
-        memory_cap_bytes: args.pool_memory_cap_bytes,
-    }
+/// Resolve the native wash-runtime memory settings carried by the executor CLI.
+fn host_memory(args: &ExecutorArgs) -> anyhow::Result<HostMemoryBudgets> {
+    let max_guest_memory = args
+        .max_guest_memory
+        .as_deref()
+        .map(parse_bytes)
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
+    let default_heap_memory = parse_bytes(&args.default_heap_memory).map_err(anyhow::Error::msg)?;
+    HostMemoryBudgets::resolve(
+        max_guest_memory,
+        Some(default_heap_memory),
+        Some(args.core_instances),
+    )
+    .map_err(anyhow::Error::msg)
 }
 
 /// Pull, verify and weld this process's one release.
@@ -317,8 +329,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     .with_ca_paths(&args.oci_ca_paths)
     .context("trust the configured OCI CA bundles for component pulls")?;
     let source = ComponentArtifactSource::new(source_config);
-    let engine = Arc::new(build_engine_sized(&[], pool_sizing(&args))?);
-    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
+    let engine = Arc::new(build_engine_with_host_memory(&[], host_memory(&args)?)?);
     let driver = Arc::new(RouterDriver::new(
         engine,
         Arc::clone(&postgres),
@@ -332,7 +343,6 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             project: args.project.clone(),
             schema: args.schema.clone(),
             cache_capacity: args.wiring_cache_capacity,
-            epoch_tick: DEFAULT_EPOCH_TICK,
         },
     )?);
     let readiness_probe = Arc::new(RouterReadinessProbe::new(Arc::clone(&driver)));
@@ -367,7 +377,6 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         "executor router driver stopping"
     );
     postgres.revoke_session_claims(QUEUE_CLAIM_SCOPE);
-    ticker.abort();
     result
 }
 
@@ -733,13 +742,9 @@ mod tests {
         assert_eq!(cli.args.readiness_bind.to_string(), readiness::DEFAULT_BIND);
     }
 
-    /// wamn-t883: the pooling flags reach the ENGINE SIZING, not just the parsed
-    /// struct — the executor's half of the host guard of the same name.
-    ///
-    /// Both flags are given explicitly on the argv: each also carries an `env`,
-    /// and an ambient `WAMN_POOL_SLOTS` would otherwise decide half the answer.
+    /// The native memory settings reach `HostMemoryBudgets` intact.
     #[test]
-    fn the_parsed_pooling_flags_reach_the_engine_sizing() {
+    fn the_native_memory_flags_reach_host_memory_budgets() {
         #[derive(clap::Parser)]
         struct TestCli {
             #[command(flatten)]
@@ -756,25 +761,51 @@ mod tests {
             "registry.invalid/wamn/components",
             "--registry-auth-file",
             "/registry/config.json",
-            "--pool-slots",
+            "--max-guest-memory",
+            "512Mi",
+            "--default-heap-memory",
+            "64MiB",
+            "--core-instances",
             "7",
-            "--pool-memory-cap-bytes",
-            "67108864",
         ])
-        .expect("the pooling flags parse");
-        assert_ne!(
-            cli.args.pool_memory_cap_bytes,
-            PoolSizing::default().memory_cap_bytes,
-            "the configured cap must differ from the default or this proves nothing"
-        );
+        .expect("the native memory flags parse");
         assert_eq!(
-            pool_sizing(&cli.args),
-            PoolSizing {
-                slots: 7,
-                memory_cap_bytes: 64 << 20,
+            host_memory(&cli.args).expect("memory settings resolve"),
+            HostMemoryBudgets {
+                max_guest_memory: 512 << 20,
+                default_heap_memory: 64 << 20,
+                core_instances: 7,
             },
-            "both halves of the parsed sizing must reach the engine"
+            "all native memory settings must reach the engine"
         );
+    }
+
+    #[test]
+    fn the_removed_pooling_flags_are_not_accepted() {
+        #[derive(clap::Parser)]
+        struct TestCli {
+            #[command(flatten)]
+            args: ExecutorArgs,
+        }
+
+        for flag in ["--pool-slots", "--pool-memory-cap-bytes"] {
+            let mut arguments = vec![
+                "wamn-executor",
+                "--release-artifact-base",
+                "registry.invalid/wamn/releases",
+                "--release-manifest-digest",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "--component-artifact-base",
+                "registry.invalid/wamn/components",
+                "--registry-auth-file",
+                "/registry/config.json",
+            ];
+            arguments.extend([flag, "1"]);
+            assert!(
+                TestCli::try_parse_from(arguments).is_err(),
+                "legacy runtime flag {flag} must not remain an accepted contract"
+            );
+        }
     }
 
     #[test]

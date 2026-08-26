@@ -8,7 +8,6 @@ pub mod component_artifact_source;
 pub mod connection_authority;
 pub mod connection_generation;
 pub mod engine;
-pub mod memory_metrics;
 pub mod plugins;
 pub mod registry_credentials;
 pub mod release_manifest;
@@ -21,8 +20,8 @@ use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 
 pub use engine::{
-    DEFAULT_EPOCH_TICK, MEMORY_CAP_BYTES, advertise_memory_ceiling, build_engine,
-    spawn_epoch_ticker,
+    DEFAULT_CORE_INSTANCES, HostMemoryBudgets, MEMORY_CAP_BYTES, build_engine,
+    build_engine_with_host_memory, default_host_memory_budgets, host_memory_budgets,
 };
 
 /// Compile a component and return its ordered top-level world imports.

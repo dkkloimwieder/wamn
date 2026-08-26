@@ -26,7 +26,7 @@ use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_
 use wamn_control_registry::sql as registry_sql;
 use wamn_event_wire::Op;
 use wamn_run_state::queue::mint_evt_run_id;
-use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::wamn_jetstream::{
     self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
 };
@@ -1405,8 +1405,6 @@ async fn build_materializer(
         report_owner == resources.owner,
         "materializer report directory lacks the exact durable owner record"
     );
-    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
-    std::mem::forget(ticker);
     Ok(MaterializerHarness {
         engine,
         pre,

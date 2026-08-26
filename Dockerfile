@@ -83,8 +83,9 @@ COPY .cargo/config.toml ./.cargo/config.toml
 # The canonical deploy DDL (sql/run-state.sql) is include_str!'d by
 # publish-catalog's provisioning helpers — single source of truth, no clones.
 COPY deploy ./deploy
-# wash-runtime resolves as a git dep from the fork pinned in Cargo.toml
-# (docs/archive/platform/wash-runtime-fork.md); cargo fetches it during the cook/build.
+# wash-runtime resolves as a git dependency at the zero-delta fork revision
+# recorded in Cargo.toml and docs/architecture/native-alignment-ledger.md;
+# cargo fetches it during the cook/build.
 # rust-toolchain.toml is deliberately absent: the base image already ships the
 # pinned Rust line, and copying it would force a rustup download in the image.
 

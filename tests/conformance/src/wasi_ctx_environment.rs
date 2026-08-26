@@ -4,9 +4,9 @@
 //! inject a credentialed `WAMN_PG_URL` into the host process environment from a
 //! `secretKeyRef`. Whether a guest that held `wasi:cli/environment` would observe
 //! it is decided by how the pinned runtime builds the guest `WasiCtx`, and that
-//! construction lives in the fork, not in-tree.
+//! construction lives in the pinned upstream runtime, not in-tree.
 //!
-//! Measured at the pin: it would observe nothing. The fork builds a guest
+//! Measured at the pin: it would observe nothing. Vanilla v2.8 builds a guest
 //! environment in exactly two places — a fallback carrying no environment at all,
 //! and a workload path populated solely from `localResources.environment` — and
 //! never calls `inherit_env`, the one `wasmtime-wasi` call that copies
@@ -14,10 +14,10 @@
 //!
 //! That makes the `wasi:cli` import denial defence in depth rather than the sole
 //! control, which is only true for as long as it stays true: this guard pins both
-//! constructions as literals so a fork bump that adds inheritance fails loudly
+//! constructions as literals so a runtime bump that adds inheritance fails loudly
 //! instead of silently widening the blast radius behind the denial.
 //!
-//! The fork is located through [`super::ip_name_lookup::runtime_package`], the
+//! The runtime is located through [`super::ip_name_lookup::runtime_package`], the
 //! one mechanism this crate uses to resolve the pinned checkout.
 
 use std::fs;
@@ -58,7 +58,7 @@ const LINKED_CALL_INSTALL: &str = ".with_wasi_ctx(wasi_ctx_builder.build())";
 const ROUTER_DRIVER_FILE: &str = "crates/execution/host/src/router_driver.rs";
 
 /// The executor's guest context: plugins only, no `WasiCtx`, so it resolves to the
-/// fork's empty fallback.
+/// runtime's empty fallback.
 const ROUTER_DRIVER_CTX: &str =
     "letctx=Ctx::builder(scope.to_string(),scope.to_string()).with_plugins(plugins).build();";
 
@@ -104,7 +104,7 @@ fn source<'a>(sources: &'a RuntimeSources, path: &str) -> Result<&'a str, String
         .iter()
         .find(|(candidate, _)| candidate == path)
         .map(|(_, body)| body.as_str())
-        .ok_or_else(|| format!("fork WasiCtx seam: {path} is gone from the pinned runtime"))
+        .ok_or_else(|| format!("runtime WasiCtx seam: {path} is gone from the pinned runtime"))
 }
 
 fn validate_revision(package: &RuntimePackage, revision: &str) -> Result<(), String> {
@@ -114,7 +114,7 @@ fn validate_revision(package: &RuntimePackage, revision: &str) -> Result<(), Str
         Ok(())
     } else {
         Err(format!(
-            "wash-runtime must resolve to fork revision {revision}, got {}",
+            "wash-runtime must resolve to pinned revision {revision}, got {}",
             package.source
         ))
     }
@@ -129,7 +129,7 @@ fn validate_wasi_ctx_environment(sources: &RuntimeSources) -> Result<(), String>
         .collect::<Vec<_>>();
     if !inheriting.is_empty() {
         return Err(format!(
-            "fork WasiCtx seam: `{INHERIT_ENV}` must appear nowhere in the pinned runtime, or a \
+            "runtime WasiCtx seam: `{INHERIT_ENV}` must appear nowhere in the pinned runtime, or a \
              guest sees the host process environment; found in {}",
             inheriting.join(", ")
         ));
@@ -148,7 +148,7 @@ fn validate_wasi_ctx_environment(sources: &RuntimeSources) -> Result<(), String>
         .sum::<usize>();
     if constructing != [CTX_FILE, LINKED_CALL_FILE] || constructions != 2 {
         return Err(format!(
-            "fork WasiCtx seam: the pinned runtime must build a guest environment only in \
+            "runtime WasiCtx seam: the pinned runtime must build a guest environment only in \
              {CTX_FILE} and {LINKED_CALL_FILE}; found {constructions} construction(s) in \
              {constructing:?}"
         ));
@@ -157,19 +157,19 @@ fn validate_wasi_ctx_environment(sources: &RuntimeSources) -> Result<(), String>
     require(
         &compact(source(sources, CTX_FILE)?),
         CTX_FALLBACK_EMPTY_ENVIRONMENT,
-        "fork WasiCtx fallback",
+        "runtime WasiCtx fallback",
     )?;
 
     let linked_call = compact(source(sources, LINKED_CALL_FILE)?);
     require(
         &linked_call,
         LINKED_CALL_EXPLICIT_ENVIRONMENT,
-        "fork WasiCtx workload environment",
+        "runtime WasiCtx workload environment",
     )?;
     require(
         &linked_call,
         LINKED_CALL_INSTALL,
-        "fork WasiCtx workload install",
+        "runtime WasiCtx workload install",
     )
 }
 
@@ -191,7 +191,7 @@ fn validate_executor_takes_the_fallback(router_driver: &str) -> Result<(), Strin
     if production.contains(WASI_CTX_INSTALL) {
         return Err(format!(
             "executor guest context: {ROUTER_DRIVER_FILE} must never call `{WASI_CTX_INSTALL}`; \
-             installing a context would take the executor off the fork's empty fallback"
+             installing a context would take the executor off the runtime's empty fallback"
         ));
     }
     require(&production, ROUTER_DRIVER_CTX, "executor guest context")
@@ -209,7 +209,7 @@ fn router_driver_source() -> String {
 /// Splices `fault` in place of `original` in one file of an in-memory copy of the
 /// pinned runtime and returns the error the guard must raise. The checkout itself is
 /// a shared read-only cache and is never written.
-fn fork_fault_error(file: &str, original: &str, fault: &str) -> String {
+fn runtime_fault_error(file: &str, original: &str, fault: &str) -> String {
     let package = runtime_package();
     let mut sources = runtime_sources(&package.root);
     let target = sources
@@ -257,7 +257,7 @@ fn injected_environment_inheritance_fails_the_wasi_ctx_guard() {
     // The smallest real widening available: the fallback keeps its args and stderr
     // and gains the host process environment, which is the shape a careless fork
     // bump would take.
-    let error = fork_fault_error(
+    let error = runtime_fault_error(
         CTX_FILE,
         ".inherit_stderr()",
         ".inherit_stderr().inherit_env()",
@@ -273,13 +273,13 @@ fn a_hand_rolled_host_environment_copy_fails_the_wasi_ctx_guard() {
     // `inherit_env` is the obvious spelling of the leak, not the only one: the same
     // copy can be written out by hand. The pinned literal, not the name scan, is
     // what has to catch that — so this fault deliberately avoids the name.
-    let error = fork_fault_error(
+    let error = runtime_fault_error(
         CTX_FILE,
         ".args(&[\"main.wasm\"])",
         ".args(&[\"main.wasm\"]).envs(&std::env::vars().collect::<Vec<_>>())",
     );
     assert!(
-        error.contains("fork WasiCtx fallback"),
+        error.contains("runtime WasiCtx fallback"),
         "fault must fail at the pinned fallback literal, got: {error}"
     );
 }
@@ -288,13 +288,13 @@ fn a_hand_rolled_host_environment_copy_fails_the_wasi_ctx_guard() {
 fn a_widened_workload_environment_fails_the_wasi_ctx_guard() {
     // The workload path is the one that already calls `.envs(...)`, so the leak
     // there is an extra source spliced into the same chain rather than a new call.
-    let error = fork_fault_error(
+    let error = runtime_fault_error(
         LINKED_CALL_FILE,
         ".inherit_stdout()",
         ".envs(&std::env::vars().collect::<Vec<_>>()).inherit_stdout()",
     );
     assert!(
-        error.contains("fork WasiCtx workload environment"),
+        error.contains("runtime WasiCtx workload environment"),
         "fault must fail at the pinned workload environment literal, got: {error}"
     );
 }
@@ -303,13 +303,13 @@ fn a_widened_workload_environment_fails_the_wasi_ctx_guard() {
 fn an_uninstalled_workload_context_fails_the_wasi_ctx_guard() {
     // The pinned environment chain only describes what a guest sees for as long as
     // the builder it belongs to is the one installed.
-    let error = fork_fault_error(
+    let error = runtime_fault_error(
         LINKED_CALL_FILE,
         ".with_wasi_ctx(wasi_ctx_builder.build())",
         ".with_wasi_ctx(other_ctx_builder.build())",
     );
     assert!(
-        error.contains("fork WasiCtx workload install"),
+        error.contains("runtime WasiCtx workload install"),
         "fault must fail at the pinned workload install, got: {error}"
     );
 }

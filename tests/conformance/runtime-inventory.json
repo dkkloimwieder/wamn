@@ -1,11 +1,11 @@
 {
   "schema_version": "0.1",
   "wash_runtime": {
-    "cargo_tree_root": "wash-runtime v2.7.0 (https://github.com/dkkloimwieder/wasmCloud?rev=daba602901507338e99f277e07a8e923c61dc557#daba6029)",
+    "cargo_tree_root": "wash-runtime v2.8.0 (https://github.com/dkkloimwieder/wasmCloud?rev=5c4ec4a3d008b3f401d9e763515f434deebc9936#5c4ec4a3)",
     "default_features": false
   },
   "live_store_paths": [
-    "fork: new_store_from_templates (single production site)",
+    "runtime: new_store_from_templates (single production site)",
     "wamn: ExecutionHost store (crates/execution/host)"
   ],
   "consumers": [
@@ -32,7 +32,9 @@
     {
       "package": "wamn-scenario-worker",
       "manifest": "services/scenario-worker/Cargo.toml",
-      "features": []
+      "features": [
+        "oci"
+      ]
     }
   ],
   "workload_manifests": [

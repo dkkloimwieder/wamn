@@ -12,7 +12,7 @@
 # half of it switched off:
 #
 #   helm upgrade --install -n wamn-system wamn-host \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.7.0 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
 #     -f deploy/platform/values-host-default.yaml
 #   kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
 #
@@ -29,7 +29,7 @@
 #
 # WHY THIS ENVIRONMENT'S HOST NAMESPACE EQUALS THE OPERATOR'S RELEASE NAMESPACE.
 # Giving the host tier a namespace of its own is not free at the pinned chart
-# (fork rev daba6029 = chart 2.7.0), and both failure modes are in the chart
+# (vanilla rev 5c4ec4a3 = chart 2.8.0), and both failure modes are in the chart
 # source rather than in anything we wrote:
 #   * templates/certificates.yaml:24 looks the CA up in `.Release.Namespace`
 #     only. A host release in its own namespace, at the chart defaults
@@ -146,23 +146,6 @@ runtime:
         # Absent, the plugin still links and returns connection-unavailable.
         - name: WAMN_EVT_NATS_URL
           value: nats://evt-nats.wamn-system.svc.cluster.local:4222
-        # [wamn-0h0g.15.134] Belt and braces on per-run isolation. The fork
-        # clamps every component to InstancePolicy::Ephemeral at the single
-        # wire-decode point while this is set, whatever pool_size a manifest
-        # asks for (carried commit fc4d2b22,
-        # crates/wash-runtime/src/engine/instance_pool.rs:117-142). Reuse is
-        # already off three other ways — no manifest here sets poolSize, the
-        # fork decodes an absent/zero pool_size to Ephemeral, and
-        # tests/conformance/src/runtime_inventory.rs fails the build on a
-        # nonzero one — so this adds no behavior today. It makes the guarantee
-        # host-enforced rather than a manifest convention.
-        #
-        # Deliberately env-only, with no per-workload config: the point is that
-        # a manifest cannot override it. A hardening flag also fails closed, so
-        # a value that is set but unparseable disables pooling rather than
-        # silently allowing it — "true" is the parseable spelling of what that
-        # failure would do anyway.
-        - { name: WAMN_DISABLE_INSTANCE_POOLING, value: "true" }
       volumes:
         - name: registry-pull
           secret:
@@ -177,7 +160,7 @@ runtime:
           readOnly: true
       # [wamn-0h0g.15.155] Verify the in-cluster registry instead of dropping to
       # plain HTTP. This replaces `extraArgs: [--allow-insecure-registries]`,
-      # which chart 2.7.0 argues against in exactly these terms (chart
+      # which chart 2.8.0 argues against in exactly these terms (chart
       # values.yaml:270-272): the flag "does not relax verification but replaces
       # it: every registry drops to plain HTTP, so nothing is verified and
       # credentials travel in the clear".
@@ -199,29 +182,6 @@ runtime:
       #     fails until wamn-0h0g.15.155 leg B lands. Apply that first.
       ociCaPaths:
         - "/runtime-cert/ca.crt"
-      # [wamn-0h0g.17.3] THIS ENVIRONMENT'S POOLING CAPACITY, stated here rather
-      # than compiled in. Slots are per LIVE INSTANCE — stores are created per
-      # invocation — so this bounds concurrency, not resident density. 512 is the
-      # value that was hardcoded; naming it makes the capacity reviewable and
-      # changeable per host group.
-      #
-      # `extraArgs` is the interim carrier and the resting answer is a first-class
-      # chart key pair, `runtime.pool.slots` / `runtime.pool.memoryCapBytes`,
-      # absorbed by the next fork-chart touch. The chart passes each entry through
-      # verbatim into the container args (values.yaml:357 →
-      # templates/runtime/deployment.yaml:209-216).
-      #
-      # A FLAG RATHER THAN AN `env` ENTRY, and that is the whole reason this
-      # carrier was chosen: clap exits nonzero on an unknown flag, so `--pool-slot`
-      # crashloops the pod, while `WAMN_POOL_SLOT` would deploy cleanly and do
-      # nothing. The binary keeps `WAMN_POOL_SLOTS` too, so flags are a superset.
-      #
-      # The memory cap now has the same carrier, `--pool-memory-cap-bytes`
-      # (wamn-t883). It was held back because the cap is ALSO read per store from
-      # WAMN_MEMORY_CEILING_MB; the binary now parses its arguments and advertises
-      # the configured cap from that entry before its Tokio runtime exists, so a
-      # value set here is no longer silently re-clamped. Unset below, so this
-      # environment keeps the compiled 256 MiB platform ceiling.
       # [wamn-3ceu] THE HOST'S RELEASE, AND ITS FIRST ONE. Until now this file
       # set no release at all, so `load_release(None, None, ..)` was the live
       # path and every release-gated interface served nothing. This is an
@@ -240,7 +200,6 @@ runtime:
       # crashloops. Set both to the values the mint prints, or drop these two
       # entries to go back to a host that carries no release.
       extraArgs:
-        - "--pool-slots=512"
         - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
         - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
       resources:
@@ -252,3 +211,8 @@ runtime:
           # wasmtime's 256 MiB per-component cap, not the K8s OOM killer.
           memory: "4Gi"
           cpu: "2"
+        # Native v2.8 Wasmtime controls. The chart removes these two keys from
+        # the Kubernetes resources block and renders WASH_DEFAULT_HEAP_MEMORY /
+        # WASH_CORE_INSTANCES; limits.memory becomes WASH_HOST_MAX_GUEST_MEMORY.
+        defaultHeapMemory: "256MiB"
+        coreInstances: 512

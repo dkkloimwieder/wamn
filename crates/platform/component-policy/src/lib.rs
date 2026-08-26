@@ -3,15 +3,16 @@
 //! MVP outcome: egress confinement (import allowlist, mutation-proofed).
 //!
 //! This admission rule rejects every P2 or P3 `wasi:sockets` interface before
-//! publication. It is independent of the pinned wasmCloud v2.7.0 runtime
-//! policy: `TcpConnect`, `UdpConnect`, and `UdpOutgoingDatagram` deny by default
-//! and proceed only with explicit raw-socket opt-in. `UdpBind` remains
-//! service-loopback-only, and raw-socket opt-in never widens bind authority.
-//! `AllowedIPNameLookups` and the `allowed_hosts` allowlist are independent of
-//! that authority; `allowed_hosts` governs `wasi:http` only. See
+//! publication. It is stronger than, and independent of, the pinned vanilla
+//! wasmCloud v2.8.0 runtime defense: WAMN installs the centralized
+//! `SocketPolicy` with `EgressMode::Enforce`, but tenant artifacts never reach
+//! that path because this admission rule rejects the package outright. There
+//! is no WAMN raw-socket opt-in. `AllowedIPNameLookups`, `allowed_hosts`, and
+//! the vanilla address-range defaults remain runtime policy layers; none grants
+//! publication authority. See
 //! `docs/archive/data-path/security-db-path.md` for the layered boundary and
-//! `docs/archive/platform/wash-runtime-fork.md` for the authoritative branch, revision, and
-//! carried-policy details.
+//! `docs/architecture/native-alignment-ledger.md` for the authoritative branch,
+//! revision, and patch dispositions.
 //!
 //! This module is that enforcement: a single structural rule — reject a
 //! component that imports any interface of the `wasi:sockets` package — reusable

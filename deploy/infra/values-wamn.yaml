@@ -15,7 +15,7 @@
 # Install, in this order — the CRDs must exist before any host release or
 # WorkloadDeployment is applied:
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.7.0 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
 #     -f deploy/infra/values-wamn.yaml
 #   # then this environment's host tier — deploy/platform/values-host-default.yaml
 #
@@ -50,18 +50,15 @@
 # sets either key yet; when ruling 4's mount lands it goes on the host-tier
 # file's host group, since this release has no host group to hang it on.
 #
-# Pinned: fork rev daba6029 = chart 2.7.0. Both expressions verified present
-# and unrenamed there — the grep below was re-run at this pin (wamn-0h0g.15.20),
-# not carried over from the previous record — and they held at 2.5.2, 2.6.0 and
-# 2.6.1 before it; the 2.6.1 -> 2.7.0 bump rewrote both surrounding blocks and
-# left them byte-identical.
-# The install above pulls chart 2.7.0, the chart the pinned fork rev carries:
-# wamn-0h0g.15.15 realigned it from 2.5.2, which was two minors behind. The
-# seam holds at both. Not yet exercised against a cluster — the kind cluster is
-# frozen, so this install is proved at the RC's fresh-namespace convergence.
+# Pinned: vanilla rev 5c4ec4a3 = chart 2.8.0. Both expressions were re-verified
+# present and unrenamed at this pin; this is a fresh check, not a carry-forward
+# from the 2.7.0 record. The install above pulls chart 2.8.0, the chart the
+# pinned runtime rev carries. Not yet exercised against a cluster — the kind
+# cluster is frozen, so this install is proved at the RC's fresh-namespace
+# convergence.
 #
 # Re-verify — the chart ships inside the pinned fork checkout:
-#   grep -n 'with \.volumes\|with \.volumeMounts' ~/.cargo/git/checkouts/wasmcloud-*/daba602/charts/runtime-operator/templates/runtime/deployment.yaml
+#   git -C ../wasmcloud grep -n 'with \.volumes\|with \.volumeMounts' v2.8.0 -- charts/runtime-operator/templates/runtime/deployment.yaml
 
 # Deprecated HTTP gateway off, and never adopted: HTTP exposure rides
 # operator-managed EndpointSlices on standard Services (chart

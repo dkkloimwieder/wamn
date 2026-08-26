@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly WAMN_USAGE='usage: tools/fork-sync-check [run|dry-run] [fork-checkout]'
+readonly WAMN_EXPECTED_BRANCH='wamn/2.8.0'
+readonly WAMN_EXPECTED_TAG='v2.8.0'
+readonly WAMN_EXPECTED_REVISION='5c4ec4a3d008b3f401d9e763515f434deebc9936'
+
+wamn_fail() {
+  local -r exit_code="$1"
+  shift
+  printf 'fork-sync-check: %s\n' "$*" >&2
+  exit "$exit_code"
+}
+
+wamn_usage_error() {
+  printf '%s\n' "$WAMN_USAGE" >&2
+  wamn_fail 64 "$*"
+}
+
+readonly WAMN_TOOL_DIRECTORY="$(
+  CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_REPOSITORY_ROOT="$(
+  CDPATH= cd -- "$WAMN_TOOL_DIRECTORY/.." >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_CARGO="${CARGO:-cargo}"
+
+(($# <= 2)) || wamn_usage_error 'expected at most a command and fork checkout'
+readonly WAMN_COMMAND="${1:-run}"
+readonly WAMN_FORK_CHECKOUT="${2:-$WAMN_REPOSITORY_ROOT/../wasmcloud}"
+
+case "$WAMN_COMMAND" in
+  run | dry-run) ;;
+  *) wamn_usage_error "unknown command '$WAMN_COMMAND'" ;;
+esac
+
+readonly -a WAMN_RUNTIME_TEST=(
+  test --manifest-path "$WAMN_FORK_CHECKOUT/Cargo.toml" --locked
+  -p wash-runtime --no-fail-fast
+)
+readonly -a WAMN_GIT_FIXTURE_TEST=(
+  test --manifest-path "$WAMN_FORK_CHECKOUT/Cargo.toml" --locked
+  -p wash --lib clone_template_ -- --test-threads=1
+)
+readonly -a WAMN_FORMAT=(
+  fmt --manifest-path "$WAMN_FORK_CHECKOUT/Cargo.toml" --all -- --check
+)
+
+wamn_print_command() {
+  local -r label="$1"
+  shift
+  printf '%s:' "$label"
+  printf ' %q' "$WAMN_CARGO" "$@"
+  printf '\n'
+}
+
+wamn_dry_run() {
+  printf 'fork-checkout: %q\n' "$WAMN_FORK_CHECKOUT"
+  printf 'expected-branch: %s\n' "$WAMN_EXPECTED_BRANCH"
+  printf 'expected-tag: %s\n' "$WAMN_EXPECTED_TAG"
+  printf 'expected-revision: %s\n' "$WAMN_EXPECTED_REVISION"
+  printf 'git-config-global: /dev/null\n'
+  printf 'git-config-nosystem: 1\n'
+  wamn_print_command format "${WAMN_FORMAT[@]}"
+  wamn_print_command wash-runtime "${WAMN_RUNTIME_TEST[@]}"
+  wamn_print_command git-template-fixture "${WAMN_GIT_FIXTURE_TEST[@]}"
+}
+
+wamn_require_cargo() {
+  if [[ "$WAMN_CARGO" == */* ]]; then
+    [[ -x "$WAMN_CARGO" ]] || {
+      wamn_fail 127 "Cargo executable is not executable: $WAMN_CARGO"
+    }
+  else
+    command -v "$WAMN_CARGO" >/dev/null 2>&1 || {
+      wamn_fail 127 "Cargo executable was not found: $WAMN_CARGO"
+    }
+  fi
+}
+
+wamn_git() {
+  git -C "$WAMN_FORK_CHECKOUT" "$@"
+}
+
+wamn_assert_identity() {
+  [[ -r "$WAMN_FORK_CHECKOUT/Cargo.toml" ]] || {
+    wamn_fail 66 "fork checkout has no readable Cargo.toml: $WAMN_FORK_CHECKOUT"
+  }
+  [[ "$(wamn_git rev-parse --is-inside-work-tree 2>/dev/null)" == true ]] || {
+    wamn_fail 65 "fork checkout is not a Git worktree: $WAMN_FORK_CHECKOUT"
+  }
+
+  local tag_revision branch_revision head_revision
+  tag_revision="$(wamn_git rev-parse "$WAMN_EXPECTED_TAG^{}")"
+  branch_revision="$(wamn_git rev-parse "refs/heads/$WAMN_EXPECTED_BRANCH")"
+  head_revision="$(wamn_git rev-parse HEAD)"
+  [[ "$tag_revision" == "$WAMN_EXPECTED_REVISION" ]] || {
+    wamn_fail 65 "$WAMN_EXPECTED_TAG peels to $tag_revision, expected $WAMN_EXPECTED_REVISION"
+  }
+  [[ "$branch_revision" == "$WAMN_EXPECTED_REVISION" ]] || {
+    wamn_fail 65 "$WAMN_EXPECTED_BRANCH is $branch_revision, expected zero patches at $WAMN_EXPECTED_REVISION"
+  }
+  [[ "$head_revision" == "$branch_revision" ]] || {
+    wamn_fail 65 "checkout HEAD $head_revision is not $WAMN_EXPECTED_BRANCH at $branch_revision"
+  }
+  [[ -z "$(wamn_git status --porcelain --untracked-files=all)" ]] || {
+    wamn_fail 65 'fork checkout is dirty; the gate must run against the exact branch tip'
+  }
+}
+
+wamn_run() {
+  local -r label="$1"
+  shift
+  printf 'fork-sync-check: %s\n' "$label" >&2
+  "$WAMN_CARGO" "$@"
+}
+
+case "$WAMN_COMMAND" in
+  dry-run)
+    wamn_dry_run
+    ;;
+  run)
+    wamn_require_cargo
+    command -v git >/dev/null 2>&1 || wamn_fail 127 'Git executable was not found'
+    # g2br.19 existed only because a developer's tag.gpgsign setting leaked
+    # into the upstream template fixture. Keep the fork pristine and isolate
+    # the gate process instead; every fixture child inherits these values.
+    export GIT_CONFIG_GLOBAL=/dev/null
+    export GIT_CONFIG_NOSYSTEM=1
+    wamn_assert_identity
+    wamn_run format "${WAMN_FORMAT[@]}"
+    wamn_run wash-runtime "${WAMN_RUNTIME_TEST[@]}"
+    wamn_run git-template-fixture "${WAMN_GIT_FIXTURE_TEST[@]}"
+    ;;
+esac

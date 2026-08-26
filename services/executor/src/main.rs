@@ -19,11 +19,7 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Parse first: the ceiling the fork's per-store limiter reads is the
-    // CONFIGURED cap (wamn-t883). Advertise second, still on the single startup
-    // thread — `set_var` is sound only before the tokio runtime exists.
     let cli = Cli::parse();
-    wamn_runtime::advertise_memory_ceiling(cli.args.pool_memory_cap_bytes);
     async_main(cli)
 }
 

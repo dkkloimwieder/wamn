@@ -1,5 +1,6 @@
 # Component+wiring router executor. One process owns the durable queue claim,
-# the single RouterDriver, its wiring cache, and its digest-keyed instance pool.
+# the single RouterDriver and its wiring cache. Wasmtime's pooling allocator
+# serves fresh per-invocation instances; reusable guest stores remain disabled.
 # It does not accept execution plans.
 #
 # Prerequisites are deliberately separate lifecycle objects:
@@ -107,6 +108,16 @@ spec:
               value: registry.wamn-system.svc.cluster.local:5000/wamn/components
             - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
             - { name: WAMN_READINESS_BIND, value: "0.0.0.0:8089" }
+            # Native wash-runtime v2.8 memory contract. Keep the existing pod
+            # limit as the total guest budget; the heap ceiling and allocator
+            # slots preserve WAMN's prior engine sizing without a fork limiter.
+            - name: WASH_HOST_MAX_GUEST_MEMORY
+              valueFrom:
+                resourceFieldRef:
+                  containerName: executor
+                  resource: limits.memory
+            - { name: WASH_DEFAULT_HEAP_MEMORY, value: "256MiB" }
+            - { name: WASH_CORE_INSTANCES, value: "512" }
           args:
             - --log-level=info
             # [wamn-0h0g.15.155] Verify the in-cluster registry instead of

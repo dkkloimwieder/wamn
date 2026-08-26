@@ -3,7 +3,7 @@
 # WHAT THIS UNBLOCKS. Ruling wamn-0h0g.13.50 makes the host tier one Helm
 # release per environment. That shape does not converge when the host release
 # gets a namespace of its own, and both failure modes are in the pinned chart
-# (fork rev daba6029 = chart 2.7.0) rather than in anything we wrote:
+# (vanilla rev 5c4ec4a3 = chart 2.8.0) rather than in anything we wrote:
 #   * at the chart defaults (`global.tls.enabled: true` +
 #     `global.certificates.generate: true`), templates/certificates.yaml:24 looks
 #     the CA up with `lookup "v1" "Secret" .Release.Namespace …`. A second

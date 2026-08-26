@@ -1512,6 +1512,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
+name = "humantime"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
+
+[[package]]
 name = "hybrid-array"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2658,8 +2664,6 @@ dependencies = [
  "prettyplease 0.2.37",
  "prost",
  "prost-types",
- "pulldown-cmark",
- "pulldown-cmark-to-cmark",
  "regex",
  "syn 2.0.119",
  "tempfile",
@@ -2685,26 +2689,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
  "prost",
-]
-
-[[package]]
-name = "pulldown-cmark"
-version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
-dependencies = [
- "bitflags",
- "memchr",
- "unicase",
-]
-
-[[package]]
-name = "pulldown-cmark-to-cmark"
-version = "22.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab1ad36992cead65f02aa399a373a42730922f1525d988172634fdefdecb8a60"
-dependencies = [
- "pulldown-cmark",
 ]
 
 [[package]]
@@ -3589,7 +3573,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -3852,18 +3835,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tonic-build"
-version = "0.14.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c68f61875ac5293cf72e6c8cf0158086428c82c37229e98c840878f1706b0322"
-dependencies = [
- "prettyplease 0.2.37",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "tonic-prost"
 version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3872,22 +3843,6 @@ dependencies = [
  "bytes",
  "prost",
  "tonic",
-]
-
-[[package]]
-name = "tonic-prost-build"
-version = "0.14.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "654e5643eff75d7f8c99197ce1440ed19a3474eada74c12bbac488b2cafdae27"
-dependencies = [
- "prettyplease 0.2.37",
- "proc-macro2",
- "prost-build",
- "prost-types",
- "quote",
- "syn 2.0.119",
- "tempfile",
- "tonic-build",
 ]
 
 [[package]]
@@ -4737,8 +4692,8 @@ dependencies = [
 
 [[package]]
 name = "wash-runtime"
-version = "2.7.0"
-source = "git+https://github.com/dkkloimwieder/wasmCloud?rev=daba602901507338e99f277e07a8e923c61dc557#daba602901507338e99f277e07a8e923c61dc557"
+version = "2.8.0"
+source = "git+https://github.com/dkkloimwieder/wasmCloud?rev=5c4ec4a3d008b3f401d9e763515f434deebc9936#5c4ec4a3d008b3f401d9e763515f434deebc9936"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4756,6 +4711,7 @@ dependencies = [
  "hostname",
  "http",
  "http-body-util",
+ "humantime",
  "hyper",
  "hyper-rustls",
  "hyper-util",
@@ -4771,7 +4727,6 @@ dependencies = [
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
  "pbjson",
- "pbjson-build",
  "pbjson-types",
  "prost",
  "redis",
@@ -4789,7 +4744,6 @@ dependencies = [
  "tokio-util",
  "tonic",
  "tonic-prost",
- "tonic-prost-build",
  "tower-service",
  "tracing",
  "tracing-opentelemetry",

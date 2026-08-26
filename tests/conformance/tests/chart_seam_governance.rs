@@ -3,7 +3,7 @@
 //! The chart is pulled from OCI at install time and is not in this repository,
 //! so no hermetic test can render it. What is guarded instead is the coupling
 //! that makes a chart move visible: `deploy/infra/values-wamn.yaml` records the
-//! seam the mount depends on against the fork revision whose chart was
+//! seam the mount depends on against the pinned runtime revision whose chart was
 //! inspected, and that revision is the pin in the root `Cargo.toml`. Moving the
 //! pin without re-inspecting the chart fails here (wamn-0h0g.15.54).
 //!
@@ -21,6 +21,10 @@ use std::path::{Path, PathBuf};
 
 const VALUES: &str = "deploy/infra/values-wamn.yaml";
 const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
+const EXECUTOR: &str = "deploy/platform/executor.yaml";
+const SOCKPROBE: &str = "components/fixtures/sockprobe/src/main.rs";
+const EXPECTED_CHART_VERSION: &str = "2.8.0";
+const EXPECTED_RUNTIME_REVISION: &str = "5c4ec4a3";
 
 /// The component workloads the operator schedules onto the host tier — the only
 /// two in scope for operator management (ruling wamn-0h0g.13.46).
@@ -164,6 +168,10 @@ fn seam_record_names_both_undeclared_passthrough_keys() {
         "{VALUES} must record the upstream commit that introduced the passthrough keys"
     );
     assert!(
+        values.contains(EXPECTED_RUNTIME_REVISION),
+        "{VALUES} must record that the seam was re-verified at the pinned runtime revision"
+    );
+    assert!(
         values.contains("no values.schema.json"),
         "{VALUES} must record why a rename is silent rather than an install error"
     );
@@ -179,6 +187,10 @@ fn install_command_and_seam_record_agree_on_the_installed_chart() {
     let values = read_repository_file(&root, VALUES);
 
     let installed = installed_chart_version(&values);
+    assert_eq!(
+        installed, EXPECTED_CHART_VERSION,
+        "{VALUES} must install the chart matching the pinned vanilla runtime"
+    );
     let expected = format!("pulls chart {installed},");
 
     assert!(
@@ -186,6 +198,63 @@ fn install_command_and_seam_record_agree_on_the_installed_chart() {
         "{VALUES} install command pulls chart {installed}, which its seam record \
          does not state; expected {expected:?}"
     );
+}
+
+#[test]
+fn host_and_executor_use_the_native_v2_8_memory_contract() {
+    let root = repository_root();
+    let host_values = read_repository_file(&root, HOST_VALUES);
+    let executor = read_repository_file(&root, EXECUTOR);
+
+    for marker in [
+        "memory: \"4Gi\"",
+        "defaultHeapMemory: \"256MiB\"",
+        "coreInstances: 512",
+    ] {
+        assert!(
+            host_values.contains(marker),
+            "{HOST_VALUES} must carry the native v2.8 memory setting {marker:?}"
+        );
+    }
+    for marker in [
+        "name: WASH_HOST_MAX_GUEST_MEMORY",
+        "resource: limits.memory",
+        "name: WASH_DEFAULT_HEAP_MEMORY",
+        "value: \"256MiB\"",
+        "name: WASH_CORE_INSTANCES",
+        "value: \"512\"",
+    ] {
+        assert!(
+            executor.contains(marker),
+            "{EXECUTOR} must carry the native v2.8 memory setting {marker:?}"
+        );
+    }
+
+    for legacy in [
+        "WAMN_MEMORY_CEILING_MB",
+        "WAMN_DISABLE_INSTANCE_POOLING",
+        "--pool-slots",
+        "--pool-memory-cap-bytes",
+    ] {
+        assert!(
+            !host_values.contains(legacy) && !executor.contains(legacy),
+            "the native memory cutover must remove legacy setting {legacy:?}"
+        );
+    }
+}
+
+#[test]
+fn legacy_raw_socket_opt_in_is_absent_from_the_shipped_contract() {
+    let root = repository_root();
+    for path in [HOST_VALUES, EXECUTOR, SOCKPROBE] {
+        let source = read_repository_file(&root, path);
+        for legacy in ["wamn.allow-raw-sockets", "WAMN_ALLOW_RAW_SOCKETS"] {
+            assert!(
+                !source.contains(legacy),
+                "{path} must not retain the removed raw-socket opt-in {legacy:?}"
+            );
+        }
+    }
 }
 
 #[test]

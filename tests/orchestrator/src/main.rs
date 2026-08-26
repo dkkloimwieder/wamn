@@ -49,13 +49,6 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    // The bench harnesses create stores through the same fork limiter the prod
-    // host does; advertise the ceiling exactly like the prod binary. The
-    // compiled default, explicitly: these harnesses build their engines with
-    // `build_engine(&[])`, so they carry no sizing argument to pass (wamn-t883).
-    wamn_runtime::advertise_memory_ceiling(
-        wamn_runtime::engine::PoolSizing::default().memory_cap_bytes,
-    );
     async_main()
 }
 

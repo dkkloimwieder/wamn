@@ -738,6 +738,7 @@ mod tests {
     use wamn_catalog::{SERVING_MANIFEST_FORMAT_VERSION, ServingRelease};
 
     use super::*;
+    use crate::plugins::wamn_postgres::WamnPostgresConfig;
 
     fn digest(byte: char) -> String {
         format!("sha256:{}", byte.to_string().repeat(64))
@@ -752,6 +753,54 @@ mod tests {
             component_digest: digest('a'),
             closure: ConnectionExecutionClosure::Released,
         }
+    }
+
+    fn offline_postgres() -> WamnPostgres {
+        WamnPostgres::new(WamnPostgresConfig {
+            database_url: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 1,
+            statement_timeout_ms: 1,
+            row_limit: 1,
+        })
+        .expect("an offline postgres plugin does not open a connection")
+    }
+
+    #[tokio::test]
+    async fn revoked_invocation_refuses_send_and_can_be_rebound() {
+        let plugin = ConnectionHttp::new(
+            Arc::new(offline_postgres()),
+            Arc::new(WamnCredentials::empty()),
+            "tenant-a",
+            "project-a",
+            Vec::<AllowedHost>::new().into(),
+            None,
+        );
+        let component_id = "component-store-7";
+        let invocation = invocation();
+        plugin
+            .bind_invocation(component_id, invocation.clone())
+            .expect("the fresh store accepts its invocation");
+
+        plugin.revoke_invocation(component_id);
+
+        let request = Request {
+            requirement: "manager".to_string(),
+            method: "POST".to_string(),
+            path_and_query: "/notify".to_string(),
+            headers: Vec::new(),
+            body: None,
+            idempotency_key: None,
+        };
+        assert!(matches!(
+            plugin.send(component_id, &request).await,
+            Err(ConnectionError::AttestationInvalid)
+        ));
+        plugin
+            .bind_invocation(component_id, invocation.clone())
+            .expect("revocation makes the store safe to bind again");
+        assert_eq!(plugin.invocation(component_id), Some(invocation));
     }
 
     fn snapshot() -> ConnectionEffectSnapshot {

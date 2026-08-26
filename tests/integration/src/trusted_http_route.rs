@@ -44,7 +44,7 @@ use wamn_runtime::component_artifact::{
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
@@ -97,8 +97,6 @@ pub struct TrustedHttpRoute {
     /// the activation pointer's `confirmed_definition_hash`, and the release
     /// manifest's `graph-hash`, which must all agree.
     pub wiring_hash: String,
-    /// The engine's epoch ticker. Dropping it would stop deadlines advancing.
-    _ticker: tokio::task::JoinHandle<()>,
 }
 
 /// Seed the closure and build the production driver over it.
@@ -115,7 +113,6 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
     })?;
 
     let engine = build_engine(&[]).context("build the router engine")?;
-    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let engine = Arc::new(engine);
 
     let admitted = validate_component_admission(
@@ -189,7 +186,6 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
                 project: PROJECT.to_owned(),
                 schema: None,
                 cache_capacity: WiringCacheCapacity::default(),
-                epoch_tick: DEFAULT_EPOCH_TICK,
             },
         )
         .context("build the router driver")?,
@@ -199,7 +195,6 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
         driver,
         component_digest: admitted.component_digest.clone(),
         wiring_hash,
-        _ticker: ticker,
     })
 }
 

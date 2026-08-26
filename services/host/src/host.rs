@@ -11,6 +11,7 @@ use anyhow::Context as _;
 use clap::Args;
 use opentelemetry::global;
 use wash_runtime::engine::WasmProposal;
+use wash_runtime::engine::host_memory::{HostMemoryBudgets, parse_bytes};
 use wash_runtime::host::HostConfig;
 use wash_runtime::host::http::{DynamicRouter, Ingress};
 use wash_runtime::plugin;
@@ -23,12 +24,11 @@ use wamn_execution_host::{
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::engine::{PoolSizing, build_engine_sized};
+use wamn_runtime::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
-use wamn_runtime::spawn_epoch_ticker;
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -125,32 +125,28 @@ pub struct HostArgs {
     #[arg(long = "wasm-proposal", value_delimiter = ',')]
     pub wasm_proposals: Vec<WasmProposal>,
 
-    /// Epoch tick period in milliseconds (0 disables the ticker, so store
-    /// epoch deadlines never fire)
-    #[arg(long = "epoch-tick-ms", default_value_t = 10)]
-    pub epoch_tick_ms: u64,
-
-    /// Pooling-allocator instance slots for this host group: the concurrent
-    /// live instances this host admits. Slots are per live instance, not per
-    /// resident workload, so this bounds concurrency, not density.
+    /// Total guest-memory budget reported by the host.
     ///
-    /// Carried per host group by `hostGroups[].extraArgs` until the chart gains
-    /// `runtime.pool.slots` (`wamn-0h0g.17.3`). A flag rather than an env entry
-    /// on purpose: clap refuses an unknown flag at startup, so a misspelling
-    /// crashloops the pod instead of deploying cleanly and doing nothing.
-    #[arg(long = "pool-slots", env = "WAMN_POOL_SLOTS", default_value_t = PoolSizing::default().slots)]
-    pub pool_slots: u32,
+    /// The cgroup is the aggregate enforcement boundary; wash-runtime uses
+    /// this value for budget diagnostics.
+    #[arg(long = "max-guest-memory", env = "WASH_HOST_MAX_GUEST_MEMORY")]
+    pub max_guest_memory: Option<String>,
 
-    /// Pooling-allocator memory ceiling for this host group: the largest budget
-    /// any one component may hold. Per-component budgets are enforced BELOW it
-    /// by the fork's per-store ResourceLimiter.
-    ///
-    /// Same carrier and same reasoning as `--pool-slots` above. Real in both
-    /// tiers only because `main` advertises the PARSED value to that limiter
-    /// before starting the Tokio runtime (`wamn-t883`); advertising the
-    /// compiled constant instead would re-clamp a raised cap per store.
-    #[arg(long = "pool-memory-cap-bytes", env = "WAMN_POOL_MEMORY_CAP_BYTES", default_value_t = PoolSizing::default().memory_cap_bytes)]
-    pub pool_memory_cap_bytes: usize,
+    /// Largest linear memory a guest may allocate.
+    #[arg(
+        long = "default-heap-memory",
+        env = "WASH_DEFAULT_HEAP_MEMORY",
+        default_value = "256MiB"
+    )]
+    pub default_heap_memory: String,
+
+    /// Core-instance slots reserved by Wasmtime's pooling allocator.
+    #[arg(
+        long = "core-instances",
+        env = "WASH_CORE_INSTANCES",
+        default_value_t = DEFAULT_CORE_INSTANCES
+    )]
+    pub core_instances: u32,
 
     /// Registry/repository holding this environment's release-manifest
     /// artifacts, paired with [`HostArgs::release_manifest_digest`].
@@ -284,16 +280,21 @@ async fn load_release(
     Ok(Some(Arc::new(weld)))
 }
 
-/// This host group's parsed pooling sizing.
-///
-/// A named function rather than a struct literal at the build site so a test
-/// can cross the flag-to-sizing boundary: an argument that parses and is then
-/// dropped on the floor is exactly the inert knob `wamn-t883` closed.
-fn pool_sizing(args: &HostArgs) -> PoolSizing {
-    PoolSizing {
-        slots: args.pool_slots,
-        memory_cap_bytes: args.pool_memory_cap_bytes,
-    }
+/// Resolve the native wash-runtime memory settings carried by the host CLI.
+fn host_memory(args: &HostArgs) -> anyhow::Result<HostMemoryBudgets> {
+    let max_guest_memory = args
+        .max_guest_memory
+        .as_deref()
+        .map(parse_bytes)
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
+    let default_heap_memory = parse_bytes(&args.default_heap_memory).map_err(anyhow::Error::msg)?;
+    HostMemoryBudgets::resolve(
+        max_guest_memory,
+        Some(default_heap_memory),
+        Some(args.core_instances),
+    )
+    .map_err(anyhow::Error::msg)
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
@@ -331,10 +332,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         &args.oci_ca_paths,
     )
     .await?;
-    anyhow::ensure!(
-        release.is_none() || args.epoch_tick_ms > 0,
-        "a release-backed router requires --epoch-tick-ms greater than zero"
-    );
     let router_owner = args
         .runner
         .clone()
@@ -363,13 +360,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // shared execution-target doorbell subject) — no second connection.
     let doorbell_client = scheduler_nats_client.clone();
 
-    let engine = Arc::new(build_engine_sized(
+    let engine = Arc::new(build_engine_with_host_memory(
         &args.wasm_proposals,
-        pool_sizing(&args),
+        host_memory(&args)?,
     )?);
-    if args.epoch_tick_ms > 0 {
-        spawn_epoch_ticker(&engine, Duration::from_millis(args.epoch_tick_ms));
-    }
     let postgres = Arc::new(WamnPostgres::from_env().context("wamn:postgres plugin init")?);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let router_driver = match release.as_ref() {
@@ -414,7 +408,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     project: args.project.clone(),
                     schema: args.schema.clone(),
                     cache_capacity: args.wiring_cache_capacity,
-                    epoch_tick: Duration::from_millis(args.epoch_tick_ms),
                 },
             )?))
         }
@@ -435,6 +428,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         allow_oci_insecure: args.allow_insecure_registries,
         oci_pull_timeout: Some(Duration::from_secs(30)),
         oci_cache_dir: args.oci_cache_dir.clone(),
+        oci_ca_paths: args.oci_ca_paths.clone(),
     };
     let jetstream = Arc::new(
         WamnJetstream::from_env()
@@ -606,36 +600,38 @@ mod tests {
         );
     }
 
-    /// wamn-t883: the pooling flags reach the ENGINE SIZING, not just the parsed
-    /// struct. `--pool-memory-cap-bytes` shipped late precisely because a flag
-    /// can parse cleanly and then be dropped at the build site, so this crosses
-    /// that boundary rather than reading the field back.
-    ///
-    /// Both flags are given explicitly on the argv: each also carries an `env`,
-    /// and an ambient `WAMN_POOL_SLOTS` would otherwise decide half the answer.
+    /// The chart's native memory settings reach `HostMemoryBudgets` intact.
     #[test]
-    fn the_parsed_pooling_flags_reach_the_engine_sizing() {
+    fn the_native_memory_flags_reach_host_memory_budgets() {
         let cli = TestCli::try_parse_from([
             "wamn-host",
-            "--pool-slots",
+            "--max-guest-memory",
+            "512Mi",
+            "--default-heap-memory",
+            "64MiB",
+            "--core-instances",
             "7",
-            "--pool-memory-cap-bytes",
-            "67108864",
         ])
-        .expect("the pooling flags parse");
-        assert_ne!(
-            cli.args.pool_memory_cap_bytes,
-            PoolSizing::default().memory_cap_bytes,
-            "the configured cap must differ from the default or this proves nothing"
-        );
+        .expect("the native memory flags parse");
         assert_eq!(
-            pool_sizing(&cli.args),
-            PoolSizing {
-                slots: 7,
-                memory_cap_bytes: 64 << 20,
+            host_memory(&cli.args).expect("memory settings resolve"),
+            HostMemoryBudgets {
+                max_guest_memory: 512 << 20,
+                default_heap_memory: 64 << 20,
+                core_instances: 7,
             },
-            "both halves of the parsed sizing must reach the engine"
+            "all native memory settings must reach the engine"
         );
+    }
+
+    #[test]
+    fn the_removed_runtime_flags_are_not_accepted() {
+        for flag in ["--pool-slots", "--pool-memory-cap-bytes", "--epoch-tick-ms"] {
+            assert!(
+                TestCli::try_parse_from(["wamn-host", flag, "1"]).is_err(),
+                "legacy runtime flag {flag} must not remain an accepted contract"
+            );
+        }
     }
 
     /// The third state a base-plus-digest pair invents — one half without the

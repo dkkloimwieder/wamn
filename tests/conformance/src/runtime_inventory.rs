@@ -410,12 +410,12 @@ fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
     assert_one(
         &linked_call,
         "pub(crate) async fn new_store_from_templates(",
-        "fork store constructor",
+        "runtime store constructor",
     );
     assert_one(
         &linked_call,
         "let mut store = wasmtime::Store::new(engine, shared_ctx);",
-        "fork store constructor",
+        "runtime store constructor",
     );
 
     let component_plugin_path = wash_runtime.join("src/plugin/component_host/mod.rs");
@@ -441,7 +441,7 @@ fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
     validate_execution_host_store_constructor(&execution).unwrap_or_else(|error| panic!("{error}"));
 
     BTreeSet::from([
-        "fork: new_store_from_templates (single production site)".to_string(),
+        "runtime: new_store_from_templates (single production site)".to_string(),
         "wamn: ExecutionHost store (crates/execution/host)".to_string(),
     ])
 }
@@ -457,17 +457,28 @@ fn resolved_features(tree: &str) -> BTreeSet<String> {
 }
 
 fn service_consumers(root: &Path) -> BTreeSet<String> {
-    let tree = cargo_tree(
-        root,
-        &["--workspace", "-e", "features", "-i", "wash-runtime"],
-    );
-    let service_prefix = format!("{}/services/", root.display());
-
-    tree.lines()
-        .filter_map(|line| {
-            let (_, path) = line.split_once(&service_prefix)?;
-            let service = path.split(')').next()?.split('/').next()?;
-            Some(format!("services/{service}/Cargo.toml"))
+    let services = root.join("services");
+    fs::read_dir(&services)
+        .unwrap_or_else(|error| panic!("read {}: {error}", services.display()))
+        .filter_map(|entry| {
+            let directory = entry.expect("read services entry").path();
+            let manifest = directory.join("Cargo.toml");
+            if !manifest.is_file() {
+                return None;
+            }
+            let source = fs::read_to_string(&manifest)
+                .unwrap_or_else(|error| panic!("read {}: {error}", manifest.display()));
+            let directly_declares_runtime = source.lines().any(|line| {
+                let line = line.trim();
+                !line.starts_with('#') && line.starts_with("wash-runtime =")
+            });
+            directly_declares_runtime.then(|| {
+                manifest
+                    .strip_prefix(root)
+                    .expect("service manifest must be repository-relative")
+                    .to_string_lossy()
+                    .to_string()
+            })
         })
         .collect()
 }
@@ -706,7 +717,7 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
     assert_eq!(
         inventory.live_store_paths,
         observed_store_paths(&root, &wash_runtime_source(&root)),
-        "the base upgrade has exactly three live store paths"
+        "the inventory must retain both live store paths"
     );
     assert_eq!(
         inventory.consumers.len(),

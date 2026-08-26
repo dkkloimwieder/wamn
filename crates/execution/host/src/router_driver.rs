@@ -24,7 +24,7 @@ use wamn_router::{
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactFetchErrorKind, ComponentArtifactSource,
 };
-use wamn_runtime::engine::{MAX_HOST_CALL_DURATION, MEMORY_CAP_BYTES};
+use wamn_runtime::engine::MAX_HOST_CALL_DURATION;
 use wamn_runtime::plugins::connection_http::{
     self, CONNECTION_HTTP_ID, ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
 };
@@ -38,7 +38,7 @@ use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::InstancePolicy;
-use wash_runtime::engine::ctx::{Ctx, SharedCtx, WamnStoreLimiter};
+use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -66,6 +66,13 @@ pub const WIRING_CACHE_CAPACITY_ENV: &str = "WAMN_WIRING_CACHE_CAPACITY";
 /// environment. 1,024 therefore costs single-digit MiB and cheaply avoids hot
 /// path re-parsing; the hit/eviction metrics make the choice evidence-tunable.
 pub const DEFAULT_WIRING_CACHE_CAPACITY: usize = 1_024;
+
+/// Cadence of the epoch ticker owned by wash-runtime v2.8.
+///
+/// Manual stores set deadlines in ticks, while wash-runtime keeps its ticker
+/// private. Keep this conversion beside the only manual store construction
+/// site and revalidate it on every runtime sync.
+const MANUAL_STORE_EPOCH_TICK: Duration = Duration::from_millis(10);
 
 /// A non-zero wiring cache bound, parsed once at process construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,8 +127,6 @@ pub struct RouterDriverConfig {
     pub project: String,
     pub schema: Option<String>,
     pub cache_capacity: WiringCacheCapacity,
-    /// The exact cadence of the engine epoch ticker owned by this process.
-    pub epoch_tick: Duration,
 }
 
 /// Which resolution authority one delivery carries.
@@ -486,7 +491,6 @@ impl RouterDriver {
             "invalid router owner {:?}: 1-128 chars of [A-Za-z0-9_-] required",
             config.owner_prefix
         );
-        anyhow::ensure!(!config.epoch_tick.is_zero(), "router-epoch-tick-zero");
         let cache = Arc::new(WiringCache::new(config.cache_capacity.get()));
         let doorbell = WiringDoorbellListener::postgres(
             Arc::clone(&postgres),
@@ -1250,7 +1254,6 @@ struct NodeInstance {
     logging: Arc<WamnLogging>,
     connection_http: Arc<ConnectionHttp>,
     scope: Box<str>,
-    epoch_tick: Duration,
 }
 
 impl fmt::Debug for NodeInstance {
@@ -1356,8 +1359,6 @@ impl NodeInstance {
             .with_plugins(plugins)
             .build();
         let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
-        store.data_mut().wamn_limiter = WamnStoreLimiter::new(MEMORY_CAP_BYTES, Arc::from(&*scope));
-        store.limiter(|ctx| &mut ctx.wamn_limiter);
         store.set_epoch_deadline(1);
         let compiled = workload.component().clone();
         let node = bindings::Node::instantiate_async(&mut store, &compiled, workload.linker())
@@ -1370,7 +1371,6 @@ impl NodeInstance {
             logging,
             connection_http,
             scope,
-            epoch_tick: config.epoch_tick,
         })
     }
 
@@ -1380,8 +1380,7 @@ impl NodeInstance {
         input: &String,
         deadline_ms: u64,
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-        self.store
-            .set_epoch_deadline(deadline_ticks(deadline_ms, self.epoch_tick));
+        self.store.set_epoch_deadline(deadline_ticks(deadline_ms));
         self.node
             .wamn_node_handler()
             .call_run(&mut self.store, context, input)
@@ -1436,10 +1435,10 @@ impl Drop for NodeInstance {
     }
 }
 
-fn deadline_ticks(deadline_ms: u64, epoch_tick: Duration) -> u64 {
+fn deadline_ticks(deadline_ms: u64) -> u64 {
     let ticks = Duration::from_millis(deadline_ms)
         .as_nanos()
-        .div_ceil(epoch_tick.as_nanos());
+        .div_ceil(MANUAL_STORE_EPOCH_TICK.as_nanos());
     u64::try_from(ticks).unwrap_or(u64::MAX).max(1)
 }
 
@@ -1611,8 +1610,8 @@ mod tests {
         assert_eq!(bounded_node_deadline_ms(Some(0)), 1);
         assert_eq!(bounded_node_deadline_ms(Some(ceiling + 1)), ceiling);
         assert_eq!(bounded_node_deadline_ms(Some(17)), 17);
-        assert_eq!(deadline_ticks(30, Duration::from_millis(7)), 5);
-        assert_eq!(deadline_ticks(1, Duration::from_millis(10)), 1);
+        assert_eq!(deadline_ticks(30), 3);
+        assert_eq!(deadline_ticks(1), 1);
     }
 
     #[test]

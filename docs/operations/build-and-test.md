@@ -83,6 +83,28 @@ inventory in `architecture/workspace-tiers.json` instead of by hand; it
 requires `jq`. `tools/workspace-tier list|dry-run|run TIER WORKSPACE MODE`
 resolves a named tier's package selectors from the same manifest.
 
+## Fork sync
+
+The fork-sync gate takes an explicit wasmCloud checkout and refuses unless
+`wamn/2.8.0`, the peeled `v2.8.0` tag, and the recorded upstream revision are
+the same commit:
+
+```bash
+tools/fork-sync-check dry-run ../wasmcloud
+tools/fork-sync-check run ../wasmcloud
+```
+
+The run requires a clean checkout, runs the fork formatter and wash-runtime
+tests, then runs wash's template-clone fixture. It exports
+`GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1` for every Git and
+Cargo child, so developer settings such as `tag.gpgsign=true` cannot change
+the fixture. Keep that isolation in this WAMN-owned gate; do not carry a
+fixture-only patch in the wasmCloud branch.
+
+The gate deliberately does not elevate upstream rustdoc warnings into a WAMN
+fork requirement. The branch policy is vanilla source plus only a consumed,
+red behavior patch; local documentation strictness is not such a behavior.
+
 ## The full sweep
 
 ```bash

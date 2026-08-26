@@ -5,25 +5,24 @@
 //! A `wasi:cli` command that ATTEMPTS each raw outbound TCP + UDP egress arm via
 //! `wasi:sockets` (reached through `std::net` on wasm32-wasip2 — the default
 //! command world imports the whole `wasi:sockets` package) and reports the
-//! POLICY verdict of each attempt, so the egressbench runtime phase can assert
-//! the fork's `linked_call` raw-socket policy (docs/archive/platform/wash-runtime-fork.md, pins
-//! 8b76869 E13 / eef76cd E15/E16) WITHOUT matching on error text:
+//! POLICY verdict of each attempt, so the runtime phase can assert vanilla
+//! wasmCloud's centralized `SocketPolicy` under WAMN's host-selected
+//! `EgressMode::Enforce`, WITHOUT matching on error text. There is no WAMN raw
+//! socket opt-in: every guest receives the same host policy, and tenant
+//! admission separately rejects `wasi:sockets` imports.
 //!
-//!   - deny-by-default: with no `wamn.allow-raw-sockets`, `socket_addr_check`
-//!     fails the connect and the guest sees `access-denied` (`std`
-//!     `ErrorKind::PermissionDenied`) → verdict `denied`.
-//!   - opted-in: with `wamn.allow-raw-sockets=true`, the check permits the op
-//!     and the connect proceeds — then fails for an unrelated reason against a
-//!     dead local port → verdict `connected` / `allowed-failed` (NOT `denied`).
+//! An undeclared destination fails with `access-denied` (`std`
+//! `ErrorKind::PermissionDenied`) and this fixture reports `denied`. Any
+//! `connected` or `allowed-failed` result on a denial arm is a gate failure.
 //!
-//! HOST-LOOPBACK ARMS (wamn-0h0g.15.52). `host.wasmcloud.internal` — the fork's
+//! HOST-LOOPBACK ARMS (wamn-0h0g.15.52). `host.wasmcloud.internal` — the runtime's
 //! sentinel address — names the *machine's* own loopback, a separate door from
 //! raw egress with its own two-part grant: the workload's
 //! `allowedHostLoopbackPorts` AND the host's own `--allow-host-loopback`. Two
 //! arms dial that sentinel: `host-loopback-listed` at the port the gate's grant
 //! list names when it supplies one, and `host-loopback-unlisted` at a port no
 //! run ever lists. The gate names both addresses in the environment, built from
-//! the linked fork's own sentinel constant, so this fixture never spells the
+//! the linked runtime's own sentinel constant, so this fixture never spells the
 //! address and the two cannot drift.
 //!
 //! The verdict for each arm is written to the file named by
@@ -91,7 +90,7 @@ fn udp_bind_verdict(address: SocketAddr) -> &'static str {
 }
 
 /// Attempt a raw outbound TCP connect to the host sentinel address the gate
-/// names in `var` — the machine's own loopback, reached through the fork's
+/// names in `var` — the machine's own loopback, reached through the runtime's
 /// `host.wasmcloud.internal` zone rather than through `127.0.0.1` (which means
 /// the guest's own virtual network).
 ///

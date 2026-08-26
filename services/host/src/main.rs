@@ -38,14 +38,7 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Parse first: the ceiling the fork's per-store limiter reads is this host
-    // group's CONFIGURED cap (wamn-t883). Advertise second, still on the single
-    // startup thread — `set_var` is sound only before the Tokio runtime exists.
     let cli = Cli::parse();
-    let memory_cap_bytes = match &cli.command {
-        Command::Host(args) => args.pool_memory_cap_bytes,
-    };
-    wamn_runtime::advertise_memory_ceiling(memory_cap_bytes);
     async_main(cli)
 }
 
