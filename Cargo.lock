@@ -4625,6 +4625,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-control-provision",
  "wamn-pg-core",
  "wamn-schema-model",
 ]

@@ -51,17 +51,13 @@ use crate::{APP_ROLE, DB_OWNER_ROLE};
 ///
 /// Same name as the control plane's `wamn_authority`, and deliberately a
 /// SEPARATE OBJECT in a separate database — the two-plane residency pattern.
-pub const TENANT_KEY_SCHEMA: &str = "wamn_authority";
-
-/// The schema-qualified name of the row-side derivation.
 ///
-/// Every predicate MUST use this qualified form. An unqualified call resolves
-/// through the caller's `search_path`, which is the settable hijack the whole
-/// design exists to remove.
-pub const TENANT_KEY_FUNCTION: &str = "wamn_authority.tenant_key";
-
-/// The schema-qualified name of the session-side derivation.
-pub const CURRENT_TENANT_KEY_FUNCTION: &str = "wamn_authority.current_tenant_key";
+/// Re-exported, not redefined: the schema compiler EMITS CALLS to these
+/// functions and this crate CREATES them, so the names live in the leaf both
+/// depend on rather than once per crate.
+pub use wamn_pg_core::{
+    AUTHORITY_SCHEMA as TENANT_KEY_SCHEMA, CURRENT_TENANT_KEY_FUNCTION, TENANT_KEY_FUNCTION,
+};
 
 /// The tenant key for one tenant in one project-environment database.
 ///

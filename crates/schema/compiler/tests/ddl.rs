@@ -8,8 +8,47 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use wamn_control_provision::CredentialGeneration;
+use wamn_control_provision::tenant_key::authority_derivations_sql;
+use wamn_control_provision::workload_role::{
+    WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+};
 use wamn_schema_compiler::{CompileError, Migration};
 use wamn_schema_model::{Catalog, Constraint, Entity, Field, FieldType, Index};
+
+/// The database name baked into the gate's tenant-key derivation.
+///
+/// `tenant_key` takes its database from a literal at CREATE time, so the gate
+/// and the roles it mints must agree on one string. Its VALUE is arbitrary here
+/// — what matters is that the same string feeds both sides.
+const GATE_DATABASE: &str = "wamn-db-ddl-gate";
+
+/// Install what generated DDL now DEPENDS ON.
+///
+/// Every generated policy and tenant-key index calls
+/// `wamn_authority.tenant_key`, so the function must exist before any generated
+/// DDL applies at all. Built from the ONE builder provisioning uses: a second
+/// definition of a security-critical function, even in a test, is exactly the
+/// drift `wamn-0h0g.22.6` cannot absorb.
+///
+/// Advisory-locked because the gates in this file run in PARALLEL and share one
+/// database: two sessions racing `CREATE OR REPLACE FUNCTION` on the same
+/// object fail with `tuple concurrently updated`. Isolation by construction,
+/// not by remembering `--test-threads=1`.
+fn authority_preamble() -> String {
+    format!(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_db_owner') THEN \
+         BEGIN CREATE ROLE wamn_db_owner NOLOGIN; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
+         DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
+         BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
+         SELECT pg_advisory_lock(722602);\n\
+         {derivations}\n\
+         SELECT pg_advisory_unlock(722602);\n",
+        derivations = authority_derivations_sql(GATE_DATABASE)
+    )
+}
 
 /// The POC catalog fixture lives in the sibling wamn-schema-model crate.
 fn poc_fixture() -> PathBuf {
@@ -104,16 +143,21 @@ fn create_plan_is_additive_and_tenant_safe() {
     // Tenant floor + managed PK.
     assert!(sql.contains("CREATE TABLE \"receipts\""));
     assert!(sql.contains("id uuid PRIMARY KEY DEFAULT gen_random_uuid()"));
-    // Tenant column is NOT NULL and structurally non-empty (an empty tenant_id
-    // collides with the '' a reset GUC carries — see wamn-a45).
+    // Tenant column is NOT NULL and structurally non-empty: no tenant is the
+    // empty string, so a ''-tenant row is refused rather than reasoned about.
     assert!(sql.contains("tenant_id text NOT NULL CHECK (tenant_id <> '')"));
     assert!(sql.contains("FORCE ROW LEVEL SECURITY"));
-    // The policy reads the claim through NULLIF so an empty claim => NULL =>
-    // matches no row, in BOTH the USING and WITH CHECK clauses.
-    assert!(sql.contains("USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))"));
-    assert!(
-        sql.contains("WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''))")
-    );
+    // The policy derives the tenant from `current_user`, in BOTH the USING and
+    // WITH CHECK clauses, through the SCHEMA-QUALIFIED derivations.
+    let predicate = "wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()";
+    assert!(sql.contains(&format!("USING ({predicate})")));
+    assert!(sql.contains(&format!("WITH CHECK ({predicate})")));
+    // The expression index rides the same emission, so sargability cannot be
+    // forgotten per table.
+    assert!(sql.contains(
+        "CREATE INDEX \"receipts_tkey\" ON \"receipts\" \
+         ((wamn_authority.tenant_key(tenant_id)))"
+    ));
     assert!(sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON \"receipts\" TO wamn_app"));
     // Composite unique is tenant-scoped.
     assert!(sql.contains("UNIQUE (tenant_id, \"receipt_no\", \"supplier_id\")"));
@@ -123,6 +167,74 @@ fn create_plan_is_additive_and_tenant_safe() {
     assert!(sql.contains("CHECK (\"status\" IN ('open', 'disposed', 'escalated'))"));
     // Reference -> uuid column + FK.
     assert!(sql.contains("FOREIGN KEY (\"supplier_id\") REFERENCES \"suppliers\" (id)"));
+}
+
+/// GENERATED SQL FROM A RUST BUILDER, and a security boundary, so the whole
+/// operation is pinned rather than sampled. `contains` cannot see a clause that
+/// was ADDED — a second permissive policy, a wider grant, a dropped FORCE — and
+/// on this operation an addition is as dangerous as a removal.
+#[test]
+fn the_emitted_tenant_floor_is_frozen() {
+    let notes = entity("en", "notes", vec![text_field("body")]);
+    let plan = Migration::create(&mini(1, vec![notes])).expect("compiles");
+    let floor = plan
+        .operations
+        .iter()
+        .map(|o| o.ops_sql())
+        .find(|sql| sql.contains("ROW LEVEL SECURITY"))
+        .expect("the create plan carries the tenant floor");
+    assert_eq!(
+        floor,
+        "ALTER TABLE \"notes\" ENABLE ROW LEVEL SECURITY;\n\
+         ALTER TABLE \"notes\" FORCE ROW LEVEL SECURITY;\n\
+         CREATE POLICY \"notes_tenant\" ON \"notes\"\n    \
+         USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())\n    \
+         WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());\n\
+         CREATE INDEX \"notes_tkey\" ON \"notes\" ((wamn_authority.tenant_key(tenant_id)));\n\
+         GRANT SELECT, INSERT, UPDATE, DELETE ON \"notes\" TO wamn_app"
+    );
+}
+
+/// The acceptance criterion stated as a refusal: NO emitted tenant predicate
+/// reads a claim the session can write. `current_setting` and `app.tenant` are
+/// the two spellings of the boundary this bead removes, and they must be absent
+/// from the CREATE plan and from every migration plan alike — a predicate that
+/// survived only on the migration path would be invisible to a create-only
+/// assertion.
+#[test]
+fn no_emitted_tenant_predicate_reads_a_settable_claim() {
+    let v1 = poc();
+    let mut v2 = v1.clone();
+    v2.version = 2;
+    v2.entities
+        .push(entity("late", "late_arrivals", vec![text_field("note")]));
+
+    let plans = [
+        Migration::create(&v1).expect("create compiles"),
+        Migration::migrate(&v1, &v2).expect("migrate compiles"),
+    ];
+    for plan in &plans {
+        for op in &plan.operations {
+            let sql = op.ops_sql();
+            assert!(
+                !sql.contains("app.tenant"),
+                "a settable tenant claim survived in: {sql}"
+            );
+            assert!(
+                !sql.contains("current_setting"),
+                "a settable claim read survived in: {sql}"
+            );
+        }
+    }
+    // And the replacement is actually present, so this test cannot pass by the
+    // predicate having been dropped altogether.
+    assert!(
+        plans[0]
+            .operations
+            .iter()
+            .any(|o| o.ops_sql().contains("wamn_authority.current_tenant_key()")),
+        "the current_user-derived predicate must be emitted"
+    );
 }
 
 /// A field of an arbitrary type (for the special-value CHECK test).
@@ -1181,7 +1293,7 @@ fn emitted_sql_applies_on_postgres() {
     suppliers.fields.retain(|f| f.id != "contact_email");
     let drop = Migration::migrate(&v2, &v3).unwrap();
 
-    let mut script = String::new();
+    let mut script = authority_preamble();
     // Provision role + isolate in a fresh schema, then apply the three plans.
     script.push_str(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
@@ -1381,7 +1493,7 @@ fn migration_with_name_reuse_applies_on_postgres() {
     let rename_redefine = Migration::migrate(&v3, &v4).unwrap();
     let column_reuse = Migration::migrate(&v4, &v5).unwrap();
 
-    let mut script = String::new();
+    let mut script = authority_preamble();
     script.push_str(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
          BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
@@ -1490,7 +1602,7 @@ fn removed_entity_drops_apply_on_postgres() {
     let create = Migration::create(&v1).unwrap();
     let drop_all = Migration::migrate(&v1, &v2).unwrap();
 
-    let mut script = String::new();
+    let mut script = authority_preamble();
     script.push_str(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
          BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
@@ -1542,22 +1654,28 @@ fn removed_entity_drops_apply_on_postgres() {
     );
 }
 
-/// Live verification of the empty-tenant floor hardening (wamn-a45) on a
-/// throwaway Postgres (gated on `WAMN_DDL_PG_URL`, skips cleanly when unset).
-/// Postgres resets a custom GUC to `''` (not NULL) once `SET LOCAL` scope ends,
-/// so an idle claimless pooled connection carries `app.tenant = ''`. This gate
-/// proves BOTH halves of the structural fix independently, in its own schema so
-/// it parallelizes with the other gates:
+/// Live verification of the generated tenant floor (`wamn-0h0g.22.6.2`) on a
+/// throwaway Postgres (gated on `WAMN_DDL_PG_URL`, skips cleanly when unset),
+/// in its own schema so it parallelizes with the other gates.
+///
+/// The old shape of this gate proved that an empty `app.tenant` claim matched
+/// no row. That subject is GONE: authority no longer comes from a claim the
+/// session can set. Its surviving half — `CHECK (tenant_id <> '')`, still
+/// carried by `create_table_op` — is kept, and the claim half is replaced by
+/// the proof the new floor actually needs:
 ///   (a) `CHECK (tenant_id <> '')` forbids a `''`-tenant row even for a
 ///       superuser / BYPASSRLS writer (the exact attack path);
-///   (b) the policy's `NULLIF(current_setting('app.tenant', true), '')` hides a
-///       `''`-tenant row from an empty claim — proven after the CHECK is dropped
-///       so a `''`-row can actually be planted, isolating the policy read.
+///   (b) a role that is NOT a guest generation derives NO tenant key, so it
+///       sees nothing — the floor fails CLOSED for the stable ACL role itself;
+///   (c) a role the MINT produced for tenant `t1` sees exactly `t1`'s row;
+///   (d) and does NOT see another tenant's row. That last one is the whole
+///       point of the construction, and no pure test can reach it.
 #[test]
-fn empty_tenant_claim_matches_no_row_on_postgres() {
+fn the_generated_tenant_floor_admits_only_the_connected_guest_on_postgres() {
     let Ok(url) = std::env::var("WAMN_DDL_PG_URL") else {
         eprintln!(
-            "skipping empty_tenant_claim_matches_no_row_on_postgres (set WAMN_DDL_PG_URL to run)"
+            "skipping the_generated_tenant_floor_admits_only_the_connected_guest_on_postgres \
+             (set WAMN_DDL_PG_URL to run)"
         );
         return;
     };
@@ -1566,20 +1684,50 @@ fn empty_tenant_claim_matches_no_row_on_postgres() {
     let v1 = mini(1, vec![notes]);
     let create = Migration::create(&v1).unwrap();
 
-    let mut script = String::new();
-    script.push_str(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-         BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+    // The guest login for `t1`, composed by the MINT rather than by hand: the
+    // predicate recovers the key from `current_user`, so a hand-written role
+    // name would prove only that this test can copy a format string.
+    let guest = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: "t1",
+            database: GATE_DATABASE,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("App takes a tenant scope");
+
+    let mut script = authority_preamble();
+    script.push_str(&format!(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{guest}') THEN \
+         BEGIN CREATE ROLE \"{guest}\" NOLOGIN; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
+         GRANT wamn_app TO \"{guest}\";\n\
          DROP SCHEMA IF EXISTS wamn_schema_compiler_empty_tenant_test CASCADE;\n\
          CREATE SCHEMA wamn_schema_compiler_empty_tenant_test AUTHORIZATION CURRENT_USER;\n\
          GRANT USAGE ON SCHEMA wamn_schema_compiler_empty_tenant_test TO wamn_app;\n\
-         SET search_path TO wamn_schema_compiler_empty_tenant_test;\n",
-    );
+         SET search_path TO wamn_schema_compiler_empty_tenant_test;\n"
+    ));
     script.push_str(&create.sql().unwrap());
-    // Seed one legitimate row (as superuser — BYPASSRLS; the CHECK still applies
-    // and 't1' <> '' passes).
-    script.push_str("INSERT INTO notes (tenant_id, body) VALUES ('t1', 'hello');\n");
+    // Seed two tenants (as superuser — BYPASSRLS; the CHECK still applies and
+    // neither tenant is '').
+    script
+        .push_str("INSERT INTO notes (tenant_id, body) VALUES ('t1', 'hello'), ('t2', 'other');\n");
+    // The expression index the predicate depends on for sargability. Asserted
+    // from pg_index, not from the emitted text: an index the server refused to
+    // build is indistinguishable from one that was never emitted, and only the
+    // catalog can tell them apart. (wamn-0h0g.22.15 checks this coverage across
+    // every governed relation; here it is per generated table.)
+    script.push_str(
+        "DO $$ BEGIN\n\
+             ASSERT (SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid \
+                      WHERE c.relname = 'notes_tkey') = 1, 'the tenant-key index must exist';\n\
+             ASSERT (SELECT pg_get_indexdef(i.indexrelid) FROM pg_index i \
+                       JOIN pg_class c ON c.oid = i.indexrelid \
+                      WHERE c.relname = 'notes_tkey') LIKE '%tenant_key%', \
+                    'the index must be built on the derivation';\n\
+         END $$;\n",
+    );
     // (a) The CHECK rejects a ''-tenant row even for a superuser writer.
     script.push_str(
         "DO $$ BEGIN\n\
@@ -1590,40 +1738,32 @@ fn empty_tenant_claim_matches_no_row_on_postgres() {
              END;\n\
          END $$;\n",
     );
-    // An empty or unset claim (the reset-GUC value) sees no rows; a real claim
-    // sees its own — proving RLS is active and the table is not simply empty.
+    // (b) The stable ACL role is not a guest generation, so it derives no key
+    // and sees nothing. Setting the retired claim changes nothing — proof that
+    // authority no longer passes through anything the session can write.
     script.push_str(
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
-         SET LOCAL app.tenant = '';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM notes) = 0, 'empty claim sees no rows'; END $$;\n\
-         COMMIT;\n\
-         BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM notes) = 0, 'unset claim sees no rows'; END $$;\n\
-         COMMIT;\n\
-         BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
          SET LOCAL app.tenant = 't1';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM notes) = 1, 'legit claim sees its row'; END $$;\n\
+         DO $$ BEGIN\n\
+             ASSERT wamn_authority.current_tenant_key() IS NULL, 'the ACL role holds no tenant key';\n\
+             ASSERT (SELECT count(*) FROM notes) = 0, 'a settable claim buys nothing';\n\
+         END $$;\n\
          COMMIT;\n",
     );
-    // (b) Isolate the policy's NULLIF: drop the belt-and-braces CHECK (proven
-    // above), plant a ''-tenant row, and confirm an empty claim STILL sees
-    // nothing. Bare current_setting would match the ghost here; NULLIF => NULL
-    // => no match. This is what fails if rls_op loses its NULLIF.
-    script.push_str(
-        "ALTER TABLE notes DROP CONSTRAINT notes_tenant_id_check;\n\
-         INSERT INTO notes (tenant_id, body) VALUES ('', 'ghost');\n\
-         BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
-         SET LOCAL app.tenant = '';\n\
+    // (c) and (d): the minted guest sees its own tenant and only its own. This
+    // is the acceptance criterion of the whole construction.
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE \"{guest}\";\n\
          DO $$ BEGIN\n\
-             ASSERT (SELECT count(*) FROM notes) = 0, 'empty claim hides a ''-tenant row (NULLIF, not just the CHECK)';\n\
+             ASSERT (SELECT count(*) FROM notes) = 1, 'the guest sees its own tenant';\n\
+             ASSERT (SELECT count(*) FROM notes WHERE tenant_id = 't2') = 0, 'CROSS-TENANT READ';\n\
+             ASSERT (SELECT body FROM notes) = 'hello', 'the guest sees the RIGHT row';\n\
          END $$;\n\
          COMMIT;\n\
-         DROP SCHEMA wamn_schema_compiler_empty_tenant_test CASCADE;\n",
-    );
+         DROP SCHEMA wamn_schema_compiler_empty_tenant_test CASCADE;\n"
+    ));
 
     let mut child = Command::new("psql")
         .arg(&url)
@@ -1680,7 +1820,7 @@ fn special_values_are_rejected_on_postgres() {
     );
     let create = Migration::create(&mini(1, vec![readings])).unwrap();
 
-    let mut script = String::new();
+    let mut script = authority_preamble();
     script.push_str(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
          BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
@@ -1775,7 +1915,7 @@ fn reference_retype_fk_lifecycle_applies_on_postgres() {
     let create_b = Migration::create(&b_v1).unwrap();
     let retype_add = Migration::migrate(&b_v1, &b_v2).unwrap();
 
-    let mut script = String::new();
+    let mut script = authority_preamble();
     script.push_str(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
          BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
@@ -1931,11 +2071,7 @@ fn chaining_check_expression_never_reaches_postgres() {
 
     // Provision role + a fresh schema + the sentinel table the exploit targets,
     // then apply a legitimate Check (proving the guard does not over-reject).
-    let mut setup = String::from(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-         BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
-         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n",
-    );
+    let mut setup = authority_preamble();
     setup.push_str(&format!(
         "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;\n\
          CREATE SCHEMA {SCHEMA} AUTHORIZATION CURRENT_USER;\n\
@@ -2021,10 +2157,16 @@ fn synthesized_identifiers_cover_every_emitted_relation_and_constraint() {
             assert!(is_relation(t), "table {t:?} not in synthesized relations");
             saw_table = true;
         }
-        if sql.starts_with("CREATE INDEX ") || sql.starts_with("CREATE UNIQUE INDEX ") {
-            let n = quoted_after(sql, "INDEX ").expect("index name");
-            assert!(is_relation(n), "index {n:?} not in synthesized relations");
-            saw_index = true;
+        // Per LINE, not per operation: the tenant-key expression index is
+        // emitted INSIDE the multi-statement RLS floor, whose first line is an
+        // ALTER TABLE — so a starts_with check on the operation would miss it
+        // entirely and report full coverage it does not have.
+        for line in sql.lines() {
+            if line.starts_with("CREATE INDEX ") || line.starts_with("CREATE UNIQUE INDEX ") {
+                let n = quoted_after(line, "INDEX ").expect("index name");
+                assert!(is_relation(n), "index {n:?} not in synthesized relations");
+                saw_index = true;
+            }
         }
         if let Some(n) = quoted_after(sql, "ADD CONSTRAINT ") {
             assert!(
@@ -2047,6 +2189,17 @@ fn synthesized_identifiers_cover_every_emitted_relation_and_constraint() {
         saw_table && saw_index && saw_unique && saw_fk,
         "the POC fixture must exercise every emitted identifier class"
     );
+    // The tenant-key index is synthesized per entity from the entity name
+    // alone, exactly as `<table>_pkey` is, and BOTH crates derive it
+    // independently. Name it explicitly so the drift guard cannot pass because
+    // the compiler quietly stopped emitting it.
+    for e in &c.entities {
+        let tkey = format!("{}_tkey", e.name);
+        assert!(
+            is_relation(&tkey),
+            "tenant-key index {tkey:?} not in synthesized relations"
+        );
+    }
 
     // `<table>_pkey` is implicit in a CREATE — it only surfaces as a named
     // identifier on a table rename. Rename an entity and confirm the renamed

@@ -183,11 +183,15 @@ fn check_expression(issues: &mut Vec<Issue>, code: &'static str, path: String, e
 pub const MAX_IDENTIFIER_BYTES: usize = 63;
 
 /// The byte budget for an entity's logical name. Every generated table carries an
-/// implicit `<name>_pkey` index in Postgres's schema-wide relation namespace
-/// (`pg_class`), so an entity name must leave room for the 5-byte `_pkey` suffix
-/// or that index name is truncated — drifting the name the migration compiler
-/// renames (`rename_pkey_op`) and reclaims (the `wamn_mig_drop_*` aside logic).
-/// `_pkey` is the tightest *collision-critical* suffix derived from the entity
+/// implicit `<name>_pkey` index and a `<name>_tkey` tenant-key expression index
+/// in Postgres's schema-wide relation namespace (`pg_class`), so an entity name
+/// must leave room for a 5-byte suffix or those index names are truncated —
+/// drifting the names the migration compiler renames (`rename_pkey_op`,
+/// `rename_tenant_key_index_op`) and reclaims (the `wamn_mig_drop_*` aside
+/// logic). Both are 5 bytes, which is why `wamn-0h0g.22.6.2` could add a second
+/// synthesized relation name without moving this budget; a wider suffix would
+/// have shrunk it and invalidated catalogs that are valid today.
+/// These are the tightest *collision-critical* suffixes derived from the entity
 /// name alone; the per-table `<name>_tenant` RLS policy (7 bytes) may still
 /// truncate but stays unique per table, and the *composite*
 /// `<table>_<field>_fkey` is guarded by comparing PG-visible (truncated) names
@@ -254,6 +258,14 @@ fn derive_identifiers(catalog: &Catalog) -> DerivedIdentifiers {
             Derived {
                 name: format!("{}_pkey", e.name),
                 path: format!("{ep} (implicit primary-key index)"),
+            },
+            // The tenant-key expression index the DDL compiler emits with the
+            // RLS floor. Derived here, without depending on that crate, exactly
+            // as `<table>_pkey` is — and the compiler's drift guard proves the
+            // two derivations agree.
+            Derived {
+                name: format!("{}_tkey", e.name),
+                path: format!("{ep} (tenant-key expression index)"),
             },
         ];
         let mut cons = vec![Derived {

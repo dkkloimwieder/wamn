@@ -146,6 +146,22 @@ pub use value::SqlValue;
 
 use std::fmt;
 
+/// Schema hosting the per-database authority derivations (`wamn-0h0g.22.6`).
+pub const AUTHORITY_SCHEMA: &str = "wamn_authority";
+
+/// The schema-qualified derivation from a row's `tenant_id` to its tenant key.
+///
+/// Lives in this leaf so the provisioner that CREATES it and the schema
+/// compiler that EMITS CALLS TO IT name one object. An unqualified call would
+/// resolve through the caller's `search_path`, which is the settable hijack
+/// `wamn-0h0g.22.6`'s option (c) exists to remove — so this constant carries
+/// the qualification and every use site takes it whole.
+pub const TENANT_KEY_FUNCTION: &str = "wamn_authority.tenant_key";
+
+/// The schema-qualified derivation from `current_user` to the connected role's
+/// tenant key (`wamn-0h0g.22.6.5`).
+pub const CURRENT_TENANT_KEY_FUNCTION: &str = "wamn_authority.current_tenant_key";
+
 /// Quote a PostgreSQL identifier without changing its contents.
 pub fn quote_ident(ident: &str) -> String {
     format!("\"{}\"", ident.replace('"', "\"\""))

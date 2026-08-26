@@ -28,5 +28,13 @@ wamn-pg-core = { workspace = true }
 # path is the migration engine 2.5 / hosting). The apply-verification test shells
 # out to `psql` against a throwaway Postgres, gated on WAMN_DDL_PG_URL.
 
+[dev-dependencies]
+# TESTS ONLY, and a deliberate dev-only cycle (cargo permits it): the DDL this
+# crate emits calls `wamn_authority.tenant_key`, so every live gate that APPLIES
+# generated DDL needs that function installed first. Building the statement from
+# the ONE builder that provisioning uses is the only way to install it without a
+# second definition of a security-critical function.
+wamn-control-provision = { workspace = true }
+
 [lints]
 workspace = true

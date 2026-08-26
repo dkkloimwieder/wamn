@@ -360,6 +360,33 @@ creates fine and breaks every expression index built on it.
 near-miss role names (`x<login>`, `<login>x`) that prove the pattern's anchors.
 Unanchored, either one would read another tenant's rows.
 
+### `[DDL]` — the generated-DDL apply gates
+
+`crates/schema/compiler/tests/ddl.rs` (seven gates, `WAMN_DDL_PG_URL`). They
+apply real generated DDL to a throwaway Postgres.
+
+```bash
+WAMN_DDL_PG_URL=postgres://postgres:probe@localhost:5433/postgres \
+  cargo test -p wamn-schema-compiler --features ops --test ddl
+```
+
+**Generated DDL now has a database precondition** (`wamn-0h0g.22.6.2`): every
+emitted policy and tenant-key index calls `wamn_authority.tenant_key`, so the
+function must exist or nothing applies. Each gate installs it from
+`authority_derivations_sql` — the same builder provisioning uses, so no test
+carries a second definition of a security-critical function. The install is
+advisory-locked because these gates share one database and run in parallel.
+
+`the_generated_tenant_floor_admits_only_the_connected_guest_on_postgres`
+replaces the retired empty-claim gate: it mints a guest login with
+`workload_generation_role`, `SET ROLE`s to it, and proves the guest sees its own
+tenant's row and **not** another tenant's — plus that the stable `wamn_app` ACL
+role derives no key and sees nothing even while setting the retired
+`app.tenant`.
+
+`--nocapture` and a grep for `skipping` is the only proof these ran: with the
+variable set the count is 0, without it 7.
+
 ### Other live gates that carry their command in-source
 
 These have no section tag; the file's own doc comment is the recipe of record.

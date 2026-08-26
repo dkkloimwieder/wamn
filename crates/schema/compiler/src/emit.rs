@@ -1,14 +1,16 @@
 //! Postgres DDL emission from the catalog model.
 //!
 //! Generated tables carry the platform multi-tenancy floor: a managed
-//! `id uuid` primary key, a `tenant_id` column, `FORCE ROW LEVEL SECURITY`, and
-//! the `app.tenant` tenant policy (the S2 / 2.2 shape). Uniqueness and indexes
-//! are tenant-scoped (prefixed with `tenant_id`). Per-role row rules are layered
-//! on later by the RLS policy builder (3.5).
+//! `id uuid` primary key, a `tenant_id` column, `FORCE ROW LEVEL SECURITY`, the
+//! `current_user`-derived tenant policy, and the expression index that keeps
+//! that policy sargable. Uniqueness and indexes are tenant-scoped (prefixed
+//! with `tenant_id`). Per-role row rules are layered on later by the RLS policy
+//! builder (3.5).
 
 use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
+use wamn_pg_core::{CURRENT_TENANT_KEY_FUNCTION, TENANT_KEY_FUNCTION};
 use wamn_schema_model::{Catalog, Constraint, Entity, FieldType, Index, MAX_IDENTIFIER_BYTES};
 
 use crate::CompileError;
@@ -17,6 +19,17 @@ use crate::plan::{MigrationPlan, Operation, Safety};
 /// The managed columns every generated table carries. A user field may not reuse
 /// these names.
 pub(crate) const RESERVED_COLUMNS: &[&str] = &["id", "tenant_id"];
+
+/// The tenant-key expression index of a generated table: `<table>_tkey`.
+///
+/// Exactly the width of `<table>_pkey`, which is what `ENTITY_NAME_BUDGET`
+/// already reserves — so the whole developer surface gains a second synthesized
+/// relation name with no change to the catalog's length budget. A wider suffix
+/// would push a maximum-length entity name past 63 bytes, and Postgres
+/// truncates an over-long identifier with a NOTICE rather than refusing.
+pub(crate) fn tenant_key_index_name(table: &str) -> String {
+    format!("{table}_tkey")
+}
 
 /// Transient-name prefix for a dropped table (and its indexes) renamed aside
 /// because the name is reclaimed in the same migration (see [`migrate_plan`]).
@@ -209,12 +222,12 @@ fn create_table_op(entity: &Entity) -> Operation {
     let t = &entity.name;
     let mut cols = vec![
         "id uuid PRIMARY KEY DEFAULT gen_random_uuid()".to_string(),
-        // `CHECK (tenant_id <> '')`: Postgres resets a custom GUC to the empty
-        // string (not NULL) once SET LOCAL scope ends, so `''` is the value an
-        // idle claimless pooled connection carries. The policy below reads it
-        // through NULLIF (=> NULL => matches no row); this CHECK makes the
-        // guarantee structural by forbidding a `''`-tenant row from ever
-        // existing (a superuser/BYPASSRLS write path could otherwise land one).
+        // `CHECK (tenant_id <> '')`: no tenant is the empty string, and a
+        // `''`-tenant row is unreachable rather than merely unclaimed — its key
+        // is a real digest, so it would belong to whichever role were ever
+        // minted for the empty tenant. Structural refusal is cheaper than
+        // reasoning about that; a superuser/BYPASSRLS write path could
+        // otherwise land such a row.
         "tenant_id text NOT NULL CHECK (tenant_id <> '')".to_string(),
     ];
     for f in &entity.fields {
@@ -231,27 +244,40 @@ fn create_table_op(entity: &Entity) -> Operation {
     }
 }
 
-/// The RLS floor for a table: enable + force RLS, the tenant policy, and the
-/// wamn_app grant — one multi-statement operation.
+/// The RLS floor for a table: enable + force RLS, the tenant policy, its
+/// expression index, and the wamn_app grant — one multi-statement operation.
+///
+/// The predicate derives the tenant from `current_user` (`wamn-0h0g.22.6`,
+/// option (c)) instead of from a `SET`-able claim: a session that can set its
+/// own tenant can read every tenant, and the connected role is the one thing
+/// the session cannot rewrite. Both halves are schema-qualified, because an
+/// unqualified call resolves through the caller's `search_path` — the same
+/// hijack one level down.
+///
+/// THE INDEX RIDES THIS EMISSION DELIBERATELY. `tenant_key` is IMMUTABLE, so
+/// the call is indexable; PostgreSQL matches that index only against the BARE
+/// call, which is why the predicate compares it to a scalar rather than
+/// rebuilding a role name around it. Emitted here, sargability moves with the
+/// developer surface in one site and cannot be forgotten per table;
+/// `wamn-0h0g.22.15` checks the coverage from `pg_index`.
 fn rls_op(entity: &Entity) -> Operation {
     let t = &entity.name;
     let policy = format!("{t}_tenant");
+    let predicate = format!("{TENANT_KEY_FUNCTION}(tenant_id) = {CURRENT_TENANT_KEY_FUNCTION}()");
     let sql = format!(
-        // NULLIF(..., '') so an empty `app.tenant` claim reads as NULL and
-        // matches no row — including a hypothetical `''`-tenant row (see the
-        // CHECK (tenant_id <> '') in create_table_op). Bare current_setting
-        // would let `''` match a `''`-tenant row that a superuser write left.
         "ALTER TABLE {tbl} ENABLE ROW LEVEL SECURITY;\n\
          ALTER TABLE {tbl} FORCE ROW LEVEL SECURITY;\n\
          CREATE POLICY {pol} ON {tbl}\n    \
-         USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))\n    \
-         WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));\n\
+         USING ({predicate})\n    \
+         WITH CHECK ({predicate});\n\
+         CREATE INDEX {idx} ON {tbl} (({TENANT_KEY_FUNCTION}(tenant_id)));\n\
          GRANT SELECT, INSERT, UPDATE, DELETE ON {tbl} TO wamn_app",
         tbl = q(t),
         pol = q(&policy),
+        idx = q(&tenant_key_index_name(t)),
     );
     Operation {
-        summary: format!("enable tenant RLS on {t}"),
+        summary: format!("enable tenant RLS and its key index on {t}"),
         sql,
         safety: Safety::Additive,
         entity: entity.id.to_string(),
@@ -514,6 +540,7 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
         .flat_map(|e| {
             std::iter::once(e.name.clone())
                 .chain(std::iter::once(format!("{}_pkey", e.name)))
+                .chain(std::iter::once(tenant_key_index_name(&e.name)))
                 .chain(e.indexes.iter().map(|i| i.name.clone()))
                 .chain(
                     e.constraints
@@ -538,6 +565,7 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
         // only an index name is reclaimed, just those.
         let index_asides: Vec<String> = if table_reclaimed {
             std::iter::once(format!("{}_pkey", e.name))
+                .chain(std::iter::once(tenant_key_index_name(&e.name)))
                 .chain(e.indexes.iter().map(|i| i.name.clone()))
                 .chain(
                     e.constraints
@@ -687,6 +715,7 @@ pub(crate) fn migrate_plan(old: &Catalog, new: &Catalog) -> Result<MigrationPlan
         for (o, n) in ready {
             plan.push(rename_table_op(o, n));
             plan.push(rename_pkey_op(o, n));
+            plan.push(rename_tenant_key_index_op(o, n));
         }
         pending = blocked;
     }
@@ -918,6 +947,30 @@ fn rename_pkey_op(old_e: &Entity, new_e: &Entity) -> Operation {
         entity: new_e.id.to_string(),
         field: None,
         note: Some("keeps the implicit primary-key index name canonical".into()),
+    }
+}
+
+/// The `<table>_tkey` expression index follows its table's hoisted rename, for
+/// the same reason [`rename_pkey_op`] exists: index names do not follow a table
+/// rename, and a stale one would be grabbed by a later migration's aside-rename
+/// while the index is still LIVE on the recreated table. `IF EXISTS` because a
+/// table generated before `wamn-0h0g.22.6.2` carries no such index at all.
+fn rename_tenant_key_index_op(old_e: &Entity, new_e: &Entity) -> Operation {
+    let (old_name, new_name) = (
+        tenant_key_index_name(&old_e.name),
+        tenant_key_index_name(&new_e.name),
+    );
+    Operation {
+        summary: format!("rename index {old_name} -> {new_name} (follows the table rename)"),
+        sql: format!(
+            "ALTER INDEX IF EXISTS {} RENAME TO {}",
+            q(&old_name),
+            q(&new_name),
+        ),
+        safety: Safety::Destructive,
+        entity: new_e.id.to_string(),
+        field: None,
+        note: Some("keeps the tenant-key expression index name canonical".into()),
     }
 }
 
