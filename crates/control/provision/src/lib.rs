@@ -69,6 +69,8 @@ pub mod secret;
 pub mod sql;
 #[cfg(feature = "ops")]
 pub mod state;
+/// The pure derivation guest RLS uses to reach a tenant from `current_user`.
+pub mod tenant_key;
 pub mod workload_role;
 
 #[cfg(feature = "ops")]

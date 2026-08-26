@@ -48,7 +48,7 @@ pub const EVENT_MATERIALIZER_ROLE: &str = "wamn_event_materializer";
 /// shorter frozen prefix keeps the derived login at 60 bytes.
 const EVENT_MATERIALIZER_GENERATION_PREFIX: &str = "wamn_materializer";
 
-const SCOPE_HASH_HEX_LEN: usize = 40;
+pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 
 /// Exhaustive provisioning families. Adding authority requires a code change.
 ///
@@ -124,7 +124,7 @@ impl WorkloadRoleFamily {
         }
     }
 
-    const fn scope_domain(self) -> &'static [u8] {
+    pub(crate) const fn scope_domain(self) -> &'static [u8] {
         match self {
             Self::EffectWriter => b"wamn.effect-writer.scope.v0.1",
             Self::ControlAuthor => b"wamn.control-author.scope.v0.1",
