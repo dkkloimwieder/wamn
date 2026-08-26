@@ -420,6 +420,18 @@ docker `postgres:18`, above.
 
 ## Traps
 
+**PostgreSQL identifier truncation is silent.** An identifier of 64 bytes or
+more is TRUNCATED to 63 with a `NOTICE` — the statement still succeeds. Any
+name that embeds a tenant-controlled or otherwise unbounded value must
+therefore **refuse at mint** when it would reach 64 bytes, never rely on the
+server to reject it. Measured on `wamn-0h0g.22.6`: `valid_tenant` admits 64
+bytes, so embedding a tenant id verbatim in a role name would let two long
+tenants collapse onto **one role** — a cross-tenant breach wearing a naming
+bug. The standing answer is the scope-digest convention
+(`workload_role_scope_hash`, 40 hex characters), which is bounded by
+construction. This is a hazard *class*, not one bead's finding: it applies to
+every future name derived from user-supplied length.
+
 **Never share a `CARGO_TARGET_DIR` between parallel worktrees.** Three
 measured failure modes: `env!("CARGO_MANIFEST_DIR")` resolves to *another*
 worktree, so a test validates the wrong tree; artifact collision overwrites in
