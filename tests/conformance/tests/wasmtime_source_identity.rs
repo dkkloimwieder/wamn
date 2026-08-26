@@ -7,7 +7,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
-const WASMTIME_VERSION: &str = "47.0.3";
+// Two DIFFERENT facts that a patch release pulls apart, so they cannot share a
+// constant. `RESOLVED` is what the lockfile actually resolves the family to;
+// `REQUIREMENT` is the caret requirement the workspace manifest declares, which
+// upstream wasmCloud owns and which a patch bump must NOT move (wamn-ufjr is
+// lockfile-only). Before 47.0.4 they were equal, which is why one constant
+// served both and hid the distinction.
+const WASMTIME_RESOLVED: &str = "47.0.4";
+const WASMTIME_REQUIREMENT: &str = "47.0.3";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 
 const DIRECT_CONSUMERS: [(&str, &[&str]); 5] = [
@@ -189,7 +196,7 @@ fn assert_single_wasmtime_family<'a>(
     let versions: BTreeSet<_> = family.iter().map(|(_, version, _)| *version).collect();
     assert_eq!(
         versions,
-        BTreeSet::from([WASMTIME_VERSION]),
+        BTreeSet::from([WASMTIME_RESOLVED]),
         "{origin} resolves multiple or non-canonical Wasmtime versions"
     );
 
@@ -240,7 +247,7 @@ fn direct_wasmtime_consumers_inherit_workspace_source_contract() {
     let workspace = dependency_declarations(&root.join("Cargo.toml"), "workspace.dependencies");
 
     for dependency in ["wasmtime-wasi", "wasmtime-wasi-http"] {
-        let expected = format!("\"{WASMTIME_VERSION}\"");
+        let expected = format!("\"{WASMTIME_REQUIREMENT}\"");
         assert_eq!(
             workspace.get(dependency),
             Some(&expected),

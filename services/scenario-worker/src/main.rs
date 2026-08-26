@@ -48,7 +48,7 @@ async fn async_main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory as _, Parser as _};
+    use clap::CommandFactory as _;
 
     use super::*;
 
