@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
 // Two DIFFERENT facts that a patch release pulls apart, so they cannot share a
@@ -18,10 +19,12 @@ const WASMTIME_REQUIREMENT: &str = "47.0.3";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 
 const DIRECT_CONSUMERS: [(&str, &[&str]); 5] = [
-    (
-        "crates/execution/host/Cargo.toml",
-        &["wasmtime-wasi", "wasmtime-wasi-http"],
-    ),
+    // execution/host takes `wasmtime-wasi` ONLY. It carried `wasmtime-wasi-http`
+    // once and this table was not repointed when the dependency was dropped, so
+    // the guard demanded a dep the crate does not declare and no source under
+    // it references. Re-adding the dependency to satisfy this row would declare
+    // a dead dep to silence a false assertion (wamn-0h0g.15.191).
+    ("crates/execution/host/Cargo.toml", &["wasmtime-wasi"]),
     ("tests/conformance/Cargo.toml", &["wasmtime-wasi"]),
     (
         "crates/platform/runtime/Cargo.toml",
@@ -122,7 +125,20 @@ fn expected_direct_dependencies() -> BTreeMap<String, BTreeSet<String>> {
         .collect()
 }
 
-fn cargo_metadata(root: &Path) -> CargoMetadata {
+/// Resolved ONCE per test binary and shared.
+///
+/// `cargo metadata` takes the cargo PACKAGE CACHE LOCK. Three tests here need it
+/// and `cargo test` runs them in parallel, so calling it per test made them
+/// contend with each other -- and the failure text is `Blocking waiting for file
+/// lock on package cache` followed by a panic, which is indistinguishable from a
+/// real assertion failure. One `OnceLock` collapses three invocations into one
+/// (wamn-0h0g.15.191).
+fn cargo_metadata(root: &Path) -> &'static CargoMetadata {
+    static METADATA: OnceLock<CargoMetadata> = OnceLock::new();
+    METADATA.get_or_init(|| cargo_metadata_uncached(root))
+}
+
+fn cargo_metadata_uncached(root: &Path) -> CargoMetadata {
     let output = Command::new(env!("CARGO"))
         .current_dir(root)
         .args(["metadata", "--locked", "--offline", "--format-version", "1"])
