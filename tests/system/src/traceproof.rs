@@ -1,48 +1,53 @@
-//! traceproof (9.2): prove outbound `traceparent` injection is host-enforced
-//! independently on wash-runtime's P2 and P3 HTTP surfaces.
+//! traceproof (9.2): prove outbound `traceparent` injection is host-enforced on
+//! `wamn:connection/http`, the surface that carries production egress.
 //!
 //! Topology:
 //!
 //! ```text
 //!   controlled parent trace 00-T-S0-01
 //!             |
-//!             +--> HostHandler::outgoing_request (P2) ----+
-//!             |                                            |
-//!             +--> HostHandler::outgoing_request_p3 (P3) --+--> capture-only
-//!                                                                transport
-//!                                                                 |
-//!               serve-echo (separate pod) <-- raw GET built only -+
-//!                                             from that surface's
-//!                                             captured header
+//!             +--> wamn.connection_http effect span
+//!                             |
+//!                             +--> inject_trace_context fills the outbound
+//!                                  header map (the shipped injector)
+//!                                                 |
+//!               serve-echo (separate pod) <-- raw GET built only -----+
+//!                                             from that injected header
 //! ```
 //!
-//! No guest participates. The custom transport only captures what each public
-//! host surface hands it; it never injects. A network request is refused unless
-//! that surface produced a valid host-injected header. Sending only that
-//! captured header to `serve-echo` composes the host-boundary proof with the
-//! cross-process proof. P2 and P3 have separate named assertions, so removing
-//! either inject cannot hide behind the other surface.
-
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+//! No guest participates. The header is produced by the production injector
+//! [`inject_trace_context`] — the same function [`ConnectionHttp::send`] reaches
+//! through `outbound_headers` — never by this proof, so an injector that stops
+//! injecting fails here exactly as it would in production. A network request is
+//! refused unless that injector produced a valid header; sending only that
+//! header to `serve-echo` composes the host-boundary proof with the
+//! cross-process proof.
+//!
+//! RE-AIMED 2026-08-26 (`wamn-k9ea`). This gate previously drove wash-runtime's
+//! P2 and P3 `wasi:http` host surfaces. That injection WAS fork patch `g2br.4`,
+//! which `docs/architecture/native-alignment-ledger.md` records as **Dropped**
+//! at the v2.8.0 sync: WAMN's real outbound-effect path is
+//! `wamn:connection/http`, which injects the active span context itself, and the
+//! `wasi:http` egress surface has no WAMN production call site. The two
+//! host-surface arms were that drop's untaken test tail. The gate keeps a
+//! cross-process subject rather than retiring, because the surviving unit proofs
+//! on the live path are all in-process.
+//!
+//! [`ConnectionHttp::send`]: wamn_runtime::plugins::connection_http::ConnectionHttp
 
 use anyhow::{Context, bail};
-use bytes::Bytes;
 use clap::Args;
-use http_body_util::BodyExt as _;
 use opentelemetry::trace::{
     SpanContext, SpanId, TraceContextExt as _, TraceFlags, TraceId, TraceState,
 };
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-use wash_runtime::host::allowed_hosts::AllowedHost;
-use wash_runtime::host::http::{DevRouter, HostHandler as _, Ingress, OutgoingHandler};
-use wash_runtime::host::http_p3::{P3Body, P3RequestErrorFuture, P3SendFuture};
-use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode as P2ErrorCode;
-use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
-use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
-use wasmtime_wasi_http::p2::{HttpError, HttpResult};
+use wamn_runtime::plugins::connection_http::inject_trace_context;
+
+/// The egress surface this gate proves, named once so every assertion message
+/// and the overall verdict cannot drift apart.
+const SURFACE: &str = "wamn:connection/http";
 
 // ---------------------------------------------------------------------------
 // serve-echo: the reflecting upstream (plain HTTP, not wash-served)
@@ -58,7 +63,7 @@ pub struct ServeEchoArgs {
 /// A tiny HTTP/1.1 server that answers
 /// every request 200 with `{"traceparent": <received|null>, "tracestate":
 /// <received|null>}`. It reflects exactly the trace headers it was sent, so
-/// traceproof can read what each host surface injected.
+/// traceproof can read what the effect surface injected.
 pub async fn serve_echo(args: ServeEchoArgs) -> anyhow::Result<()> {
     let listener = TcpListener::bind(("0.0.0.0", args.port)).await?;
     println!(
@@ -156,92 +161,72 @@ pub async fn run(args: TraceproofArgs) -> anyhow::Result<()> {
     println!("controlled parent traceparent = {sent_tp}");
 
     let parent = parent_context(&trace_id, &sent_span)?;
-    let mut failures = Vec::new();
-    for surface in [HttpSurface::P2, HttpSurface::P3] {
-        match prove_surface(surface, &args.upstream, &parent, &trace_id, &sent_span).await {
-            Ok(()) => println!(
-                "PASS [{surface} trace id threads across process boundary without guest help]"
-            ),
-            Err(error) => {
-                eprintln!("{error:#}");
-                failures.push(surface);
-            }
+    match prove_effect_surface(&args.upstream, &parent, &trace_id, &sent_span).await {
+        Ok(()) => {
+            println!(
+                "PASS [{SURFACE} trace id threads across process boundary without guest help]"
+            );
+            println!(
+                "traceproof: overall PASS (host-enforced effect-span inject on the production \
+                 egress surface)"
+            );
+            Ok(())
         }
-    }
-    if failures.is_empty() {
-        println!("traceproof: overall PASS (independent P2 + P3 host-enforced inject)");
-        Ok(())
-    } else {
-        bail!("traceproof: overall FAIL (failed surfaces: {failures:?})")
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum HttpSurface {
-    P2,
-    P3,
-}
-
-impl std::fmt::Display for HttpSurface {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::P2 => f.write_str("P2"),
-            Self::P3 => f.write_str("P3"),
+        Err(error) => {
+            eprintln!("{error:#}");
+            bail!("traceproof: overall FAIL ({SURFACE})")
         }
     }
 }
 
-async fn prove_surface(
-    surface: HttpSurface,
+async fn prove_effect_surface(
     upstream: &str,
     parent: &opentelemetry::Context,
     sent_trace_id: &str,
     sent_span_id: &str,
 ) -> anyhow::Result<()> {
-    let captured = capture_host_traceparent(surface, upstream, parent)
-        .await
-        .with_context(|| format!("FAIL [{surface} host surface executes]"))?
+    let captured = capture_effect_traceparent(parent)
+        .with_context(|| format!("FAIL [{SURFACE} effect span executes]"))?
         .with_context(|| {
-            format!("FAIL [{surface} host surface injected traceparent without guest help]")
+            format!("FAIL [{SURFACE} effect span injected traceparent without guest help]")
         })?;
-    validate_traceparent(surface, &captured, sent_trace_id, sent_span_id)
-        .with_context(|| format!("FAIL [{surface} host surface injected valid traceparent]"))?;
+    validate_traceparent(&captured, sent_trace_id, sent_span_id)
+        .with_context(|| format!("FAIL [{SURFACE} effect span injected valid traceparent]"))?;
 
-    // The cross-process request is constructed exclusively from this surface's
-    // post-HostHandler capture. No fallback to the caller's original header is
+    // The cross-process request is constructed exclusively from what the
+    // production injector wrote. No fallback to the caller's original header is
     // allowed: absent/invalid injection returns above without touching the net.
     let body = http_get_with_headers(upstream, &[("traceparent".to_string(), captured.clone())])
         .await
-        .with_context(|| format!("FAIL [{surface} captured header crosses process boundary]"))?;
+        .with_context(|| format!("FAIL [{SURFACE} injected header crosses process boundary]"))?;
     let reflected: serde_json::Value = serde_json::from_str(&body)
-        .with_context(|| format!("FAIL [{surface} parse serve-echo body {body:?}]"))?;
+        .with_context(|| format!("FAIL [{SURFACE} parse serve-echo body {body:?}]"))?;
     let reflected_tp = reflected
         .get("traceparent")
         .and_then(|value| value.as_str())
         .with_context(|| {
             format!(
-                "FAIL [{surface} downstream received captured traceparent]: serve-echo body {body}"
+                "FAIL [{SURFACE} downstream received injected traceparent]: serve-echo body {body}"
             )
         })?;
     let reflected_trace = w3c_field(reflected_tp, 1);
     if reflected_trace.as_deref() != Some(sent_trace_id) {
         bail!(
-            "FAIL [{surface} trace id threads across process boundary]: \
+            "FAIL [{SURFACE} trace id threads across process boundary]: \
              reflected trace id {reflected_trace:?} != sent {sent_trace_id}"
         );
     }
     if reflected_tp != captured {
         bail!(
-            "FAIL [{surface} downstream received exactly the captured host header]: \
+            "FAIL [{SURFACE} downstream received exactly the injected host header]: \
              reflected {reflected_tp:?} != captured {captured:?}"
         );
     }
-    println!("{surface} captured traceparent = {captured}");
+    println!("{SURFACE} injected traceparent = {captured}");
     Ok(())
 }
 
 fn validate_traceparent(
-    surface: HttpSurface,
     traceparent: &str,
     sent_trace_id: &str,
     sent_span_id: &str,
@@ -256,16 +241,16 @@ fn validate_traceparent(
             .iter()
             .all(|field| field.bytes().all(|byte| byte.is_ascii_hexdigit()))
     {
-        bail!("{surface} produced malformed traceparent {traceparent:?}");
+        bail!("{SURFACE} produced malformed traceparent {traceparent:?}");
     }
     if fields[1] != sent_trace_id {
         bail!(
-            "{surface} injected trace id {} != sent {sent_trace_id}",
+            "{SURFACE} injected trace id {} != sent {sent_trace_id}",
             fields[1]
         );
     }
     if fields[2] == sent_span_id {
-        bail!("{surface} injected caller span id {sent_span_id} instead of a host child span");
+        bail!("{SURFACE} injected caller span id {sent_span_id} instead of a host child span");
     }
     Ok(())
 }
@@ -284,115 +269,28 @@ fn parent_context(trace_id: &str, span_id: &str) -> anyhow::Result<opentelemetry
     )
 }
 
-#[derive(Clone, Default)]
-struct CaptureOutgoing {
-    traceparent: Arc<Mutex<Option<String>>>,
-}
-
-impl CaptureOutgoing {
-    fn record<B>(&self, request: &hyper::Request<B>) {
-        let value = request
-            .headers()
-            .get("traceparent")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-        *self
-            .traceparent
-            .lock()
-            .expect("traceproof capture mutex must not be poisoned") = value;
-    }
-
-    fn captured(&self) -> Option<String> {
-        self.traceparent
-            .lock()
-            .expect("traceproof capture mutex must not be poisoned")
-            .clone()
-    }
-}
-
-impl OutgoingHandler for CaptureOutgoing {
-    fn send_request(
-        &self,
-        _workload_id: &str,
-        request: hyper::Request<HyperOutgoingBody>,
-        _config: OutgoingRequestConfig,
-    ) -> HttpResult<HostFutureIncomingResponse> {
-        self.record(&request);
-        Err(HttpError::trap(P2ErrorCode::InternalError(Some(
-            "traceproof capture transport stops after the P2 host boundary".to_string(),
-        ))))
-    }
-
-    fn send_request_p3(
-        &self,
-        _workload_id: &str,
-        request: hyper::Request<P3Body>,
-        _options: Option<wasmtime_wasi_http::p3::RequestOptions>,
-        _fut: P3RequestErrorFuture,
-    ) -> P3SendFuture {
-        self.record(&request);
-        let body: P3Body = http_body_util::Empty::<Bytes>::new()
-            .map_err(|never| match never {})
-            .boxed_unsync();
-        let response = hyper::Response::new(body);
-        Box::new(async move {
-            let io: P3RequestErrorFuture = Box::new(async { Ok(()) });
-            Ok((response, io))
-        })
-    }
-}
-
-async fn capture_host_traceparent(
-    surface: HttpSurface,
-    upstream: &str,
+/// The `traceparent` the production injector puts on an outbound effect
+/// request, under a `wamn.connection_http` span parented to `parent`.
+///
+/// Nothing here writes a header. [`inject_trace_context`] is the shipped
+/// function `ConnectionHttp::outbound_headers` calls, so an injector that stops
+/// injecting returns `None` here exactly as it would in production, and the
+/// caller refuses to touch the network. Reading the header back out of the map
+/// is how this proof observes what leaves the host.
+fn capture_effect_traceparent(
     parent: &opentelemetry::Context,
 ) -> anyhow::Result<Option<String>> {
-    let capture = CaptureOutgoing::default();
-    let server = Ingress::builder(DevRouter::default(), "127.0.0.1:0".parse()?)
-        .outgoing_handler(capture.clone())
-        .build()
-        .await
-        .context("build traceproof host HTTP surface")?;
-    let span = tracing::info_span!("traceproof.host_outbound", surface = %surface);
+    let span = tracing::info_span!("wamn.connection_http");
     span.set_parent(parent.clone())
-        .context("attach controlled parent to host span")?;
+        .context("attach controlled parent to the effect span")?;
     let _entered = span.enter();
-    let allow_any = [AllowedHost::Any];
 
-    match surface {
-        HttpSurface::P2 => {
-            let request = hyper::Request::builder()
-                .uri(upstream)
-                .body(HyperOutgoingBody::default())
-                .context("build P2 outgoing request")?;
-            let config = OutgoingRequestConfig {
-                use_tls: false,
-                connect_timeout: Duration::from_secs(5),
-                first_byte_timeout: Duration::from_secs(5),
-                between_bytes_timeout: Duration::from_secs(5),
-            };
-            let _ = server.outgoing_request("traceproof-p2", request, config, &allow_any);
-        }
-        HttpSurface::P3 => {
-            let body: P3Body = http_body_util::Empty::<Bytes>::new()
-                .map_err(|never| match never {})
-                .boxed_unsync();
-            let request = hyper::Request::builder()
-                .uri(upstream)
-                .body(body)
-                .context("build P3 outgoing request")?;
-            let request_error: P3RequestErrorFuture = Box::new(async { Ok(()) });
-            let send = server.outgoing_request_p3(
-                "traceproof-p3",
-                request,
-                None,
-                request_error,
-                &allow_any,
-            );
-            drop(send);
-        }
-    }
-    Ok(capture.captured())
+    let mut headers = reqwest::header::HeaderMap::new();
+    inject_trace_context(&mut headers);
+    Ok(headers
+        .get("traceparent")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string))
 }
 
 /// Extract field `idx` (0=version,1=trace-id,2=parent-id,3=flags) of a W3C
@@ -471,6 +369,8 @@ async fn http_get_with_headers(url: &str, extra: &[(String, String)]) -> anyhow:
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use opentelemetry::trace::TracerProvider as _;
     use tracing_subscriber::layer::SubscriberExt as _;
@@ -489,41 +389,36 @@ mod tests {
         (provider, guard)
     }
 
-    async fn captured_for(surface: HttpSurface) -> String {
+    /// The in-process half of the gate, named so the cross-process half is not
+    /// the only thing standing between a silent injector and a green run.
+    ///
+    /// The property is a CHILD, not an echo: the controlled parent's trace id
+    /// must survive onto the wire under a span id that is NOT the caller's.
+    /// That is what lets a downstream service parent to the effect rather than
+    /// to whatever invoked the host. Driving the shipped
+    /// [`inject_trace_context`] rather than a copy is what makes it a proof of
+    /// production behaviour.
+    #[test]
+    fn the_effect_span_injects_a_child_of_the_controlled_parent() {
         const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
         const SPAN_ID: &str = "00f067aa0ba902b7";
+
+        let (provider, guard) = install_test_tracer();
         let parent = parent_context(TRACE_ID, SPAN_ID).expect("valid controlled parent");
-        let captured = capture_host_traceparent(surface, "http://example.com/", &parent)
-            .await
-            .expect("host surface executes")
-            .unwrap_or_else(|| panic!("{surface} host surface must inject traceparent"));
-        validate_traceparent(surface, &captured, TRACE_ID, SPAN_ID).unwrap_or_else(|error| {
-            panic!("{surface} host surface traceparent invalid: {error:#}")
-        });
-        captured
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn p2_host_surface_injects_traceparent_without_guest_help() {
-        let (provider, guard) = install_test_tracer();
-        let captured = captured_for(HttpSurface::P2).await;
+        let captured = capture_effect_traceparent(&parent)
+            .expect("the effect span executes")
+            .expect("the production injector must inject traceparent");
+        validate_traceparent(&captured, TRACE_ID, SPAN_ID)
+            .unwrap_or_else(|error| panic!("{SURFACE} traceparent invalid: {error:#}"));
         assert_eq!(
             w3c_field(&captured, 1).as_deref(),
-            Some("4bf92f3577b34da6a3ce929d0e0e4736")
+            Some(TRACE_ID),
+            "the controlled parent's trace id must reach the wire"
         );
-        drop(guard);
-        provider
-            .shutdown()
-            .expect("traceproof test tracer must shut down");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn p3_host_surface_injects_traceparent_without_guest_help() {
-        let (provider, guard) = install_test_tracer();
-        let captured = captured_for(HttpSurface::P3).await;
-        assert_eq!(
-            w3c_field(&captured, 1).as_deref(),
-            Some("4bf92f3577b34da6a3ce929d0e0e4736")
+        assert_ne!(
+            w3c_field(&captured, 2).as_deref(),
+            Some(SPAN_ID),
+            "the effect span, not its caller, must be the outbound parent"
         );
         drop(guard);
         provider

@@ -10,7 +10,6 @@
 //! is no WAMN raw-socket opt-in. `AllowedIPNameLookups`, `allowed_hosts`, and
 //! the vanilla address-range defaults remain runtime policy layers; none grants
 //! publication authority. See
-//! `docs/archive/data-path/security-db-path.md` for the layered boundary and
 //! `docs/architecture/native-alignment-ledger.md` for the authoritative branch,
 //! revision, and patch dispositions.
 //!

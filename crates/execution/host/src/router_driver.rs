@@ -72,6 +72,15 @@ pub const DEFAULT_WIRING_CACHE_CAPACITY: usize = 1_024;
 /// Manual stores set deadlines in ticks, while wash-runtime keeps its ticker
 /// private. Keep this conversion beside the only manual store construction
 /// site and revalidate it on every runtime sync.
+///
+/// THE UPSTREAM HALF IS `EPOCH_TICK` in wash-runtime's `src/engine/mod.rs`,
+/// declared `pub(crate)` — it cannot be imported, only restated here, so this
+/// is a mirror and not a reference. A cadence change upstream that is not
+/// mirrored here rescales EVERY node deadline silently, because both halves
+/// keep compiling and deadlines still fire, just at the wrong wall time. Both
+/// literals are pinned together by
+/// `tests/conformance/src/runtime_inventory.rs::the_manual_store_epoch_tick_still_mirrors_the_runtime_ticker`
+/// (`wamn-k9ea`), which is what makes the next sync notice.
 const MANUAL_STORE_EPOCH_TICK: Duration = Duration::from_millis(10);
 
 /// A non-zero wiring cache bound, parsed once at process construction.

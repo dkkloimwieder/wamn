@@ -4493,20 +4493,19 @@ name = "wamn-proof-system"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytes",
  "clap",
- "http-body-util",
  "hyper",
  "opentelemetry",
  "opentelemetry_sdk",
+ "reqwest",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "wamn-run-state",
+ "wamn-runtime",
  "wash-runtime",
- "wasmtime-wasi-http",
 ]
 
 [[package]]

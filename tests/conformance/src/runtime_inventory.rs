@@ -700,6 +700,43 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
     Ok(())
 }
 
+/// The manual-store deadline conversion mirrors a wash-runtime constant, and
+/// the two must move together (`wamn-k9ea`).
+///
+/// wash-runtime owns the epoch ticker and keeps its cadence `pub(crate)`, so
+/// WAMN cannot import it and compare. `router_driver.rs` therefore restates the
+/// value to turn a millisecond deadline into ticks. If upstream retunes its
+/// ticker and this restatement stays at 10 ms, **every node deadline silently
+/// rescales** — a 30 ms budget becomes 30 ticks of whatever the new cadence is —
+/// and nothing else in the tree notices, because both halves still compile and
+/// every deadline still fires eventually.
+///
+/// Pinning both literals is the only mechanical check available. The upstream
+/// half is the load-bearing one; the WAMN half is here so the guard cannot pass
+/// on upstream alone after someone edits ours.
+#[test]
+fn the_manual_store_epoch_tick_still_mirrors_the_runtime_ticker() {
+    const RUNTIME_EPOCH_TICK: &str =
+        "pub(crate) const EPOCH_TICK: Duration = Duration::from_millis(10);";
+    const MANUAL_STORE_EPOCH_TICK: &str =
+        "const MANUAL_STORE_EPOCH_TICK: Duration = Duration::from_millis(10);";
+
+    let root = repository_root();
+    let engine_path = wash_runtime_source(&root).join("src/engine/mod.rs");
+    let engine = fs::read_to_string(&engine_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", engine_path.display()));
+    assert_one(&engine, RUNTIME_EPOCH_TICK, "runtime epoch ticker cadence");
+
+    let driver_path = root.join(EXECUTION_HOST_STORE_FILE);
+    let driver = fs::read_to_string(&driver_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", driver_path.display()));
+    assert_one(
+        &driver,
+        MANUAL_STORE_EPOCH_TICK,
+        "manual store deadline cadence",
+    );
+}
+
 #[test]
 fn resolved_feature_and_deployed_workload_inventory_is_current() {
     let root = repository_root();

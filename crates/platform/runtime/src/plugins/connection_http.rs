@@ -600,7 +600,12 @@ impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
 /// the fork's `initialize_observability` installs a `tracing-opentelemetry`
 /// layer and a propagator but NO global tracer provider, so the global tracer
 /// silently answers with a no-op span.
-fn inject_trace_context(headers: &mut reqwest::header::HeaderMap) {
+///
+/// Public because the `traceproof` gate drives THIS function rather than a
+/// copy of it (`wamn-k9ea`): the gate's whole claim is that what crosses the
+/// process boundary is what production injects, so a reimplementation there
+/// would prove nothing about this one.
+pub fn inject_trace_context(headers: &mut reqwest::header::HeaderMap) {
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
     let context = tracing::Span::current().context();

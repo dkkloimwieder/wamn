@@ -18,7 +18,7 @@ const WASMTIME_RESOLVED: &str = "47.0.4";
 const WASMTIME_REQUIREMENT: &str = "47.0.3";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 
-const DIRECT_CONSUMERS: [(&str, &[&str]); 5] = [
+const DIRECT_CONSUMERS: [(&str, &[&str]); 4] = [
     // execution/host takes `wasmtime-wasi` ONLY. It carried `wasmtime-wasi-http`
     // once and this table was not repointed when the dependency was dropped, so
     // the guard demanded a dep the crate does not declare and no source under
@@ -31,7 +31,12 @@ const DIRECT_CONSUMERS: [(&str, &[&str]); 5] = [
         &["wasmtime-wasi", "wasmtime-wasi-http"],
     ),
     ("tests/integration/Cargo.toml", &["wasmtime-wasi"]),
-    ("tests/system/Cargo.toml", &["wasmtime-wasi-http"]),
+    // `tests/system/Cargo.toml` held a fifth row until `wamn-k9ea`. traceproof
+    // reached `wasmtime-wasi-http` only to drive wash-runtime's P2/P3 `wasi:http`
+    // host surfaces; re-aiming that gate at `wamn:connection/http` deleted the
+    // last reference, so the dependency went with it. Removed here for the same
+    // reason `wamn-0h0g.15.191` gives above — a row kept alive by re-declaring a
+    // dead dep asserts nothing.
 ];
 
 #[derive(Debug, Deserialize)]
