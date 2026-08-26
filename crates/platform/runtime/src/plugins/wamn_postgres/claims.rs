@@ -600,14 +600,28 @@ impl WamnPostgres {
         }
     }
 
-    /// Build from the environment: the default project from `WAMN_PG_URL`, plus
-    /// explicit projects listed in `WAMN_PG_PROJECTS_FILE` JSON.
-    pub fn from_env() -> anyhow::Result<Self> {
+    /// Build from the deployment's configuration: the default project from the
+    /// credential the COMPOSITION ROOT names, plus explicit projects listed in
+    /// `WAMN_PG_PROJECTS_FILE` JSON.
+    ///
+    /// # Why the caller passes the credential (`wamn-0h0g.22.8.3`)
+    ///
+    /// `wamn-0h0g.22.8.2` removed the ambient `WAMN_PG_URL` read from
+    /// [`WamnPostgresConfig::from_env`], because a credential picked up
+    /// implicitly there made the runtime a SECOND credential source competing
+    /// with whatever a caller supplied — the conflict
+    /// [`AmbientCredentialState`](super::credential_exactness::AmbientCredentialState)
+    /// already declares.
+    ///
+    /// The environment is still the TRANSPORT; that is how Kubernetes injects a
+    /// Secret, and `deploy/platform` does exactly that via `secretKeyRef`. What
+    /// changed is WHERE it is read: once, at trusted composition, where it is
+    /// the named explicit source rather than a silent fallback buried in the
+    /// config layer. `services/executor` already composed this way; this is the
+    /// host taking the same shape.
+    pub fn from_env(database_url: Option<String>) -> anyhow::Result<Self> {
         let cfg = WamnPostgresConfig::from_env();
-        let default = cfg
-            .database_url
-            .clone()
-            .map(|url| ProjectConfig::from_global(url, &cfg));
+        let default = database_url.map(|url| ProjectConfig::from_global(url, &cfg));
         let mut projects = HashMap::new();
         if let Ok(path) = std::env::var("WAMN_PG_PROJECTS_FILE") {
             let text = std::fs::read_to_string(&path)
@@ -1574,10 +1588,18 @@ impl WamnPostgres {
         project: &str,
         class: AuthorityClass,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
-        debug_assert!(
-            !matches!(class, AuthorityClass::GuestSql),
-            "guest-sql is not a platform authority"
-        );
+        // A HARD refusal, not a debug_assert: a debug_assert compiles out of
+        // release, so the one build where this matters would be the build
+        // without the check. Guest-sql is not a platform authority, and a
+        // caller asking for platform work under it is a bug that must fail
+        // closed rather than quietly draw a guest credential for host work.
+        if matches!(class, AuthorityClass::GuestSql) {
+            tracing::error!(
+                project,
+                "wamn:postgres: guest-sql is not a platform authority; refusing the checkout"
+            );
+            return Err(PgError::ConnectionUnavailable);
+        }
         self.checkout_class(class, project).await
     }
 
@@ -1787,6 +1809,60 @@ mod tests {
         ] {
             assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(predicate));
         }
+    }
+
+    /// Guest-sql must never be usable as a platform authority, and the refusal
+    /// must survive `--release`, where a `debug_assert` would not exist.
+    #[tokio::test]
+    async fn a_platform_checkout_refuses_the_guest_authority() {
+        let postgres = WamnPostgres::from_env(Some(
+            "postgres://wamn_app_refusal_a@localhost/refusal-proof".to_string(),
+        ))
+        .expect("compose");
+        let refused = postgres
+            .checkout_platform(DEFAULT_PROJECT, AuthorityClass::GuestSql)
+            .await;
+        assert!(
+            refused.is_err(),
+            "platform work under the guest authority must fail closed"
+        );
+    }
+
+    /// REGRESSION GUARD (`wamn-0h0g.22.8.3`).
+    ///
+    /// Removing the ambient read in split B silently cut the HOST's default
+    /// project, because `from_env` derived it from the config field that split
+    /// had just forced to `None`. Nothing in the sweep exercised that path, so
+    /// the only thing standing between that and a deployed host with no
+    /// database is this test. It asserts the composed credential actually
+    /// reaches resolution, and that composing without one resolves NOTHING
+    /// rather than falling back.
+    #[test]
+    fn the_composed_credential_becomes_the_default_project() {
+        let composed = WamnPostgres::from_env(Some(
+            "postgres://wamn_app_host_a:pw@db/host-default".to_string(),
+        ))
+        .expect("compose with a credential");
+        assert!(
+            composed
+                .provider
+                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql)
+                .expect("resolve default")
+                .is_some(),
+            "a host composed WITH a credential must resolve the default project; \
+             deploy/platform injects it via secretKeyRef and a host that cannot \
+             resolve it has no database at all"
+        );
+
+        let bare = WamnPostgres::from_env(None).expect("compose without a credential");
+        assert!(
+            bare.provider
+                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql)
+                .expect("resolve default")
+                .is_none(),
+            "composing without a credential must resolve nothing, not reach for \
+             an ambient one"
+        );
     }
 
     #[test]

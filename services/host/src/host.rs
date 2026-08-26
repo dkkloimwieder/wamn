@@ -364,7 +364,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         &args.wasm_proposals,
         host_memory(&args)?,
     )?);
-    let postgres = Arc::new(WamnPostgres::from_env().context("wamn:postgres plugin init")?);
+    // wamn-0h0g.22.8.3: the host NAMES its own credential source here rather
+    // than letting the config layer pick one up implicitly. deploy/platform
+    // injects WAMN_PG_URL via secretKeyRef (values-host-default.yaml ->
+    // host-db.example.yaml), so the environment is the transport; reading it at
+    // composition is what makes it the explicit source instead of a fallback.
+    let postgres = Arc::new(
+        WamnPostgres::from_env(std::env::var("WAMN_PG_URL").ok())
+            .context("wamn:postgres plugin init")?,
+    );
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let router_driver = match release.as_ref() {
         Some(release) => {
