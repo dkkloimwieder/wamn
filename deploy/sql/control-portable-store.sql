@@ -765,6 +765,20 @@ CREATE TABLE IF NOT EXISTS wamn_authority.author_login_tenants (
 );
 REVOKE ALL ON TABLE wamn_authority.author_login_tenants FROM PUBLIC;
 
+-- DATED DECISION, wamn-0h0g.9.14 (2026-08-26). This is a MAPPING TABLE, and the
+-- guest-path ruling on wamn-0h0g.22.6 BANS that shape: it rejected mapping
+-- tables because the prohibition targets mutable, settable state between
+-- identity and authority, and gave guests a pure immutable derivation
+-- (`wamn.tenant_key`) instead. That argument is about the SHAPE, so it applies
+-- here on its face. It is ACCEPTED FOR MVP on the bounded-principal argument —
+-- control-plane authors are a bounded, platform-administered set, where tenant
+-- guest code is unbounded and adversarial — and because the real remedy is
+-- per-author login generations carrying the tenant in the role identity, not a
+-- rename (a table-reading function cannot become IMMUTABLE). It REOPENS on
+-- either trigger: any widening of who can hold author logins, or the first
+-- control-plane multi-tenancy expansion. This is a recorded decision, not an
+-- oversight; read wamn-0h0g.9.14 before "fixing" it.
+--
 -- Fixed search path: the resolved tenant must not depend on a caller's
 -- `search_path`, and the author has no privilege on the mapping relation itself.
 -- An unmapped login resolves NULL, so `tenant_id = NULL` is NULL, so every
