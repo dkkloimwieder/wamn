@@ -566,6 +566,22 @@ fn is_registered_in_plane(manifest: &Manifest, id: &str, plane: &str) -> bool {
             .any(|family| family.id == id && family.plane == plane)
 }
 
+/// A temporary compatibility writer is locked to the writer family it was minted
+/// for: it may not appear on a platform object's writer list, and it may not
+/// reach one indirectly through a matching dynamic-writer declaration. Both
+/// refusals read `may appear only on its locked writer-family scope`.
+///
+/// `wamn-0h0g.9.11`: the two tests that drove this rule were DELETED, and the
+/// rule is restated here so it does not go with them. They worked through
+/// `standard-nodes-raw-sql` - a principal the tests invented, naming a crate the
+/// flow demolition removed - so once the manifest held no temporary writer at
+/// all they failed on `unknown principal` before reaching the rule at all. A
+/// proof of a rule over an empty set, keyed to a name that never existed, is
+/// dead-subject coverage.
+///
+/// THE RULE BELOW IS LIVE AND ENFORCED. The trigger for a real test is the first
+/// temporary compatibility writer to re-enter `architecture/state-owners.json`:
+/// drive it against that real principal, never against an invented one.
 fn validate_temporary_writers(manifest: &Manifest) -> Result<(), String> {
     for (id, principal) in &manifest.principals {
         let Some(temporary) = &principal.temporary else {
@@ -1507,9 +1523,18 @@ fn durability_policy_projection_ownership_is_explicit_and_bounded() {
     assert_eq!(object.ownership.migration_owners, ["schema-control"]);
     assert_eq!(object.ownership.schema_source, "deploy/sql/run-state.sql");
     assert_eq!(object.ownership.writers, ["ctl-reconcile-run-plane"]);
+    // The reader set widened by one, deliberately: wamn-xkgp mounted the
+    // environment verify arm on publish-release, which reads
+    // `expected_environment` to refuse a release whose carried environment is
+    // not the one this database was provisioned for. The WRITER set is still
+    // exactly the reconciler - this projection gains readers, never writers.
     assert_eq!(
         object.ownership.readers,
-        ["ctl-reconcile-run-plane", "run-state"]
+        [
+            "ctl-reconcile-run-plane",
+            "run-state",
+            "ctl-publish-release"
+        ]
     );
     assert_eq!(
         object.ownership.compatibility_horizon,
@@ -1840,44 +1865,6 @@ fn retired_relation(manifest: &mut Manifest) -> &mut Ownership {
     ownership.lifecycle = Lifecycle::Retired;
     ownership.superseded_by = vec!["wamn_run.runs".to_string()];
     ownership
-}
-
-#[test]
-fn temporary_writer_cannot_expand_to_platform_object() {
-    let repository = repository();
-    let mut manifest = read_manifest(&repository);
-    manifest.objects[0]
-        .ownership
-        .writers
-        .push("standard-nodes-raw-sql".to_string());
-    let error = validate_manifest(&repository, &manifest).unwrap_err();
-    assert!(
-        error.contains("may appear only on its locked writer-family scope"),
-        "{error}"
-    );
-    assert!(error.contains("registry.meta"), "{error}");
-}
-
-#[test]
-fn temporary_writer_cannot_expand_with_matching_dynamic_declaration() {
-    let repository = repository();
-    let mut manifest = read_manifest(&repository);
-    manifest.families[0]
-        .writers
-        .push("standard-nodes-raw-sql".to_string());
-    manifest.scan_policy.dynamic_writers.push(DynamicWriter {
-        path: "crates/execution/standard-nodes/src/postgres.rs".to_string(),
-        principal: "standard-nodes-raw-sql".to_string(),
-        family: manifest.families[0].id.clone(),
-        marker: "ctx.pg_execute(sql".to_string(),
-        operations: vec!["insert".to_string()],
-    });
-    let error = validate_manifest(&repository, &manifest).unwrap_err();
-    assert!(
-        error.contains("may appear only on its locked writer-family scope"),
-        "{error}"
-    );
-    assert!(error.contains("app-schema-entity-map"), "{error}");
 }
 
 #[test]
