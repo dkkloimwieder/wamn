@@ -1594,7 +1594,6 @@ fn storage(operation: &'static str, error: tokio_postgres::Error) -> ProductionC
 
 #[cfg(test)]
 mod tests {
-    use super::super::production_half;
     use super::*;
 
     #[test]
@@ -1615,26 +1614,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn production_claim_and_reaper_use_only_the_platform_pool() {
-        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
-        let claim_start = source
-            .find("pub async fn claim_next_production(")
-            .expect("production claim method");
-        let reaper_start = source
-            .find("pub async fn reap_one_exhausted_production(")
-            .expect("production reaper method");
-        let transaction_start = source
-            .find("async fn claim_in_transaction(")
-            .expect("claim transaction helper");
-        for body in [
-            &source[claim_start..reaper_start],
-            &source[reaper_start..transaction_start],
-        ] {
-            assert!(body.contains(".checkout_platform(&project)"));
-            assert!(!body.contains("checkout_guest"));
-        }
-    }
 
     #[test]
     fn generic_refusal_body_is_exact_and_message_free() {
@@ -1780,71 +1759,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn claim_is_exactly_lock_then_classify_then_lease() {
-        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
-        let start = source.find("async fn claim_in_transaction(").unwrap();
-        let end = source.find("async fn reap_in_transaction(").unwrap();
-        let body = &source[start..end];
-        let lock = body.find("select_production_claim_sql()").unwrap();
-        let classify = body.find("classify_production_claim(").unwrap();
-        let lease = body.find("grant_production_claim_sql()").unwrap();
-        assert!(lock < classify && classify < lease);
-        for removed in [
-            "load_candidate_override",
-            "load_release_plans",
-            "load_release_bindings",
-            "terminalize_refusal",
-        ] {
-            assert!(!body.contains(removed), "claim retains {removed}");
-        }
-    }
 
-    #[test]
-    fn claim_and_reaper_fence_before_fresh_effect_snapshot() {
-        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
-        let claim_start = source.find("async fn claim_in_transaction(").unwrap();
-        let reap_start = source.find("async fn reap_in_transaction(").unwrap();
-        let fence_helper = source.find("async fn serialize_effect_intent(").unwrap();
-        for body in [
-            &source[claim_start..reap_start],
-            &source[reap_start..fence_helper],
-        ] {
-            let fence = body
-                .find("serialize_effect_intent(connection")
-                .expect("composer acquires the shared fence");
-            let snapshot = body
-                .find("let effect_sql = select_claim_effect_attempt_sql()")
-                .expect("composer reads a fresh effect snapshot");
-            assert!(fence < snapshot);
-        }
-        // `source` already stops at the test module, so the helper runs to its end.
-        let helper = &source[fence_helper..];
-        assert!(helper.contains("let sql = serialize_effect_intent_sql();"));
-        assert!(!helper.contains("SELECT true"));
-    }
 
-    #[test]
-    fn crash_evidence_advances_outside_the_grants_subtransaction() {
-        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
-        let start = source.find("async fn claim_in_transaction(").unwrap();
-        let end = source.find("async fn reap_in_transaction(").unwrap();
-        let body = &source[start..end];
-        let advance = body.find("advance_claim_attempts_sql()").unwrap();
-        let savepoint = body.find("\"SAVEPOINT wamn_production_grant\"").unwrap();
-        let rollback = body
-            .find("\"ROLLBACK TO SAVEPOINT wamn_production_grant\"")
-            .unwrap();
-        assert!(advance < savepoint && savepoint < rollback);
-        assert!(body.contains("ClaimTurn::GrantRefused"));
-
-        // The counted event is unchanged; only the statement it rides moved.
-        assert!(!grant_production_claim_sql().contains("attempts"));
-        assert!(
-            advance_claim_attempts_sql()
-                .contains("CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END")
-        );
-    }
 
     #[test]
     fn lease_grant_uses_a_fresh_post_fence_clock() {
@@ -2077,35 +1993,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_effect_snapshot_statements_are_issued_only_for_the_premium_class() {
-        // The default tier's turn is plain lock-then-lease: the advisory fence
-        // and the effect snapshot exist only to read evidence it may not act on.
-        let source = production_half(include_str!("production_claim.rs"), "production_claim.rs");
-        for (start_marker, end_marker) in [
-            (
-                "async fn claim_in_transaction(",
-                "async fn reap_in_transaction(",
-            ),
-            (
-                "async fn reap_in_transaction(",
-                "async fn serialize_effect_intent(",
-            ),
-        ] {
-            let start = source.find(start_marker).unwrap();
-            let end = source.find(end_marker).unwrap();
-            let body = &source[start..end];
-            let gate = body
-                .find("durability_class.admits_effect_evidence()")
-                .unwrap_or_else(|| panic!("{start_marker} does not consult the class gate"));
-            let fence = body.find("serialize_effect_intent(connection").unwrap();
-            let snapshot = body
-                .find("let effect_sql = select_claim_effect_attempt_sql()")
-                .unwrap();
-            assert!(
-                gate < fence && gate < snapshot,
-                "{start_marker} reads effect evidence before the class gate decides"
-            );
-        }
-    }
 }

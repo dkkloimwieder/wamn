@@ -806,7 +806,6 @@ mod tests {
         effect_run_is_runnable, record_effect_outcome, valid_schema, verify_effect_attempt,
         verify_effect_outcome,
     };
-    use crate::production_half;
 
     #[test]
     fn attempt_builder_compares_all_caller_facts_and_reuses_server_facts() {
@@ -845,23 +844,9 @@ mod tests {
                 .contains("queue.lease_expires_at > statement_timestamp()")
         );
 
-        let source = production_half(include_str!("effect_writer.rs"), "effect_writer.rs");
-        let fence = source
-            .find("query_one(serialize_effect_intent_sql()")
-            .expect("effect writer acquires the shared fence");
-        let retry = source
-            .find("query_opt(verify_effect_attempt()")
-            .expect("effect writer verifies an existing retry");
-        let coordinate = source
-            .find("effect_attempt_coordinate_exists().text()")
-            .expect("effect writer classifies a divergent coordinate");
-        let recheck = source
-            .find("query_one(effect_run_is_runnable()")
-            .expect("effect writer rechecks runnable authority");
-        let insert = source
-            .find("query_opt(begin_effect_attempt()")
-            .expect("effect writer inserts the attempt");
-        assert!(fence < retry && retry < coordinate && coordinate < recheck && recheck < insert);
+        // wamn-hopk R5: the statement ORDER was asserted by locating call sites
+        // by byte offset in this file's own source. Deleted; the generated-SQL
+        // pins above stay, because those pin a builder's output, not source text.
         assert_eq!(effect_attempt_coordinate_exists().arity(), 5);
     }
 

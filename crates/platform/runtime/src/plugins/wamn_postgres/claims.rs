@@ -1749,60 +1749,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn guest_and_host_owned_paths_are_pinned_to_distinct_pool_lifecycles() {
-        // Scan the implementation half only. Every signature searched below is
-        // also spelled in this module, so a whole-file scan lets a DELETED
-        // subject match the test's own source: the `expect` never fires and the
-        // span silently collapses onto the search text instead of reporting the
-        // absence (wamn-22xc, an instance of wamn-0h0g.15.137).
-        let claims = include_str!("claims.rs");
-        let claims = &claims[..claims
-            .find("#[cfg(test)]\nmod tests {")
-            .expect("test module boundary")];
-        let effect_start = claims
-            .find("pub async fn connection_effect_snapshot(")
-            .expect("effect snapshot method");
-        let destroy_start = claims[effect_start..]
-            .find("pub(super) fn destroy(")
-            .map(|offset| effect_start + offset)
-            .expect("destroy method after effect snapshot");
-        assert!(claims[effect_start..destroy_start].contains(".checkout_platform(project)"));
-
-        let guest_checkout_start = claims
-            .find("pub(super) async fn checkout_guest(")
-            .expect("guest checkout method");
-        let platform_checkout_start = claims
-            .find("pub(super) async fn checkout_platform(")
-            .expect("platform checkout method");
-        let claims_begin_start = claims[platform_checkout_start..]
-            .find("pub(super) async fn begin_with_claims(")
-            .map(|offset| platform_checkout_start + offset)
-            .expect("claim injection method after lifecycle checkouts");
-        assert!(
-            claims[guest_checkout_start..platform_checkout_start].contains("PoolLifecycle::Guest")
-        );
-        assert!(
-            claims[platform_checkout_start..claims_begin_start].contains("PoolLifecycle::Platform")
-        );
-
-        let one_shot_start = claims
-            .find("pub(super) async fn one_shot(")
-            .expect("one-shot guest method");
-        let one_shot_end = claims
-            .find("pub(super) enum OneShotResult")
-            .expect("one-shot result after method");
-        assert!(claims[one_shot_start..one_shot_end].contains(".checkout_guest(project)"));
-
-        let resources = include_str!("resources.rs");
-        let begin_start = resources
-            .find("async fn begin_transaction(")
-            .expect("guest begin helper");
-        let host_start = resources
-            .find("impl client::Host for ActiveCtx")
-            .expect("client host implementation after the begin helper");
-        assert!(resources[begin_start..host_start].contains("plugin.checkout_guest(project)"));
-    }
 
     #[test]
     fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {

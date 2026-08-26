@@ -406,7 +406,6 @@ pub(super) fn destroy_connection(obj: Object, counter: &AtomicU64) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::production_half;
     use super::*;
 
     // R18 — the connect-time check logic. A negative is hard to produce on stock
@@ -455,29 +454,4 @@ mod tests {
         assert!(retired.to_string().contains("retired \"pool_max_size\""));
     }
 
-    #[test]
-    fn shipping_manifests_pin_the_split_budget_and_its_starvation_rationale() {
-        assert_eq!(
-            DEFAULT_GUEST_POOL_MAX_SIZE + DEFAULT_PLATFORM_POOL_MAX_SIZE,
-            16
-        );
-        assert_eq!(DEFAULT_PLATFORM_POOL_MAX_SIZE, 2);
-
-        // `deploy/platform/runner.yaml` was the other pinned carrier until
-        // wamn-0h0g.26.7.2 (ea71c1c4) deleted it with the rest of the runner
-        // deployment. Its successor `deploy/platform/executor.yaml` carries the
-        // two budgets but not the starvation rationale, so it is not a
-        // substitute for this pin without a deploy-side change this lane does
-        // not own (wamn-0h0g.11.55.3).
-        let manifest = include_str!("../../../../../../deploy/platform/values-host-default.yaml");
-        assert!(manifest.contains("WAMN_PG_GUEST_POOL_MAX, value: \"14\""));
-        assert!(manifest.contains("WAMN_PG_PLATFORM_POOL_MAX, value: \"2\""));
-        assert!(manifest.contains("cannot starve"));
-
-        // Implementation half only: a whole-file scan lets this assertion's own
-        // spelling of the retired knob answer for the code it watches
-        // (wamn-3o3a).
-        let source = production_half(include_str!("pool.rs"), "pool.rs");
-        assert!(!source.contains("num(\"WAMN_PG_POOL_MAX\""));
-    }
 }

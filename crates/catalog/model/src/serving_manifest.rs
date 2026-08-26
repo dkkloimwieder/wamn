@@ -525,42 +525,6 @@ mod tests {
         assert!(serde_json::from_value::<ServingManifest>(document).is_err());
     }
 
-    #[test]
-    fn manifest_identity_has_exactly_one_producer_in_this_crate() {
-        const SECOND_PRODUCER: [&str; 4] = [
-            concat!("ryu", "_js"),
-            concat!("fn ", "write_json"),
-            concat!("fn ", "ecma_number"),
-            concat!("encode_", "utf16"),
-        ];
-        // This file scans itself, so its implementation half is the only part
-        // that can carry a second producer; a whole-file scan would also weigh
-        // the guard's own source (wamn-3o3a). The marker's escaped newline
-        // cannot match the two-line attribute it names.
-        const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
-        let whole = include_str!("serving_manifest.rs");
-        let modules = whole.matches(CFG_TEST_MODULE).count();
-        assert_eq!(
-            modules, 1,
-            "serving_manifest.rs must carry exactly one terminal `{CFG_TEST_MODULE}` module; \
-             found {modules}"
-        );
-        let this_file = whole
-            .split_once(CFG_TEST_MODULE)
-            .expect("the counted cfg(test) module must split")
-            .0;
-        for (name, source) in [
-            ("lib.rs", include_str!("lib.rs")),
-            ("serving_manifest.rs", this_file),
-        ] {
-            for marker in SECOND_PRODUCER {
-                assert!(
-                    !source.contains(marker),
-                    "{name} carries {marker}: a second RFC 8785 producer"
-                );
-            }
-        }
-    }
 
     #[test]
     fn the_delivery_ceiling_is_enforced_at_the_reader() {

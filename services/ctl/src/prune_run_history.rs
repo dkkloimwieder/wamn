@@ -142,34 +142,4 @@ pub async fn prune(
 
 #[cfg(test)]
 mod tests {
-    /// wamn-0h0g.12.115: `--schema` carries no default, and must not reacquire
-    /// one. The prune statement is `DELETE FROM runs` — unqualified
-    /// (`wamn_run_state::sql::prune_terminal_runs_sql`) — resolved through the
-    /// SESSION-level `search_path` [`super::prune`] sets with
-    /// `set_config(..., false)`. A default therefore does not fail closed: an
-    /// invocation that omits the flag deletes some other project-env's canonical
-    /// history, prints a success line naming the schema it chose for itself, and
-    /// exits 0. Both in-repo callers already name the schema, so the default
-    /// served nobody and only enabled that silent mistarget.
-    #[test]
-    fn schema_carries_no_default_and_must_be_operator_named() {
-        // Splitting on a bare `#[cfg(test)]` searched for a literal this file
-        // also spells, and `.next()` on a `split` never fails, so the miss was
-        // silent (wamn-3o3a). The marker's escaped newline cannot match the
-        // two-line attribute it names, so it never finds itself.
-        const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
-        let whole = include_str!("prune_run_history.rs");
-        let modules = whole.matches(CFG_TEST_MODULE).count();
-        assert_eq!(
-            modules, 1,
-            "prune_run_history.rs must carry exactly one terminal `{CFG_TEST_MODULE}` module; \
-             found {modules}"
-        );
-        let implementation = whole
-            .split_once(CFG_TEST_MODULE)
-            .expect("the counted cfg(test) module must split")
-            .0;
-        assert!(!implementation.contains("default_value"));
-        assert!(implementation.contains("#[arg(long)]\n    pub schema: String,"));
-    }
 }

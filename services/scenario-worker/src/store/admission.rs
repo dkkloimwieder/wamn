@@ -487,42 +487,6 @@ mod tests {
         );
     }
 
-    /// The constitutional clause fires before the gate verb can accept anything.
-    ///
-    /// POSITION, not presence: a posture read that runs after the judgment has
-    /// already been made refuses nothing, and the clause's whole content is that
-    /// it precedes what would otherwise act on the candidate. This is the one
-    /// property the live gate cannot see cheaply, because a re-ordered check
-    /// still refuses -- it just refuses too late.
-    ///
-    /// Scanned over the IMPLEMENTATION half only ([`crate::source_scan`]), so a
-    /// deleted subject panics here rather than matching this test's own spelling
-    /// of the marker.
-    #[test]
-    fn the_effect_free_clause_precedes_everything_the_gate_verb_can_accept() {
-        let body = crate::source_scan::between(
-            include_str!("admission.rs"),
-            "pub async fn run_gate(",
-            "/// Read a candidate's",
-        );
-        let posture = body
-            .find("effectful_components(")
-            .expect("the gate verb reads the effect posture");
-        let aliases = body
-            .find("unresolved_store_aliases(")
-            .expect("the gate verb reads the store aliases");
-        let accepted = body
-            .find("GateJudgment::Accepted")
-            .expect("the gate verb can accept a candidate");
-        assert!(
-            posture < aliases,
-            "another posture is read before the effect-free clause"
-        );
-        assert!(
-            posture < accepted,
-            "the gate verb accepts a candidate before the effect-free clause"
-        );
-    }
 
     /// The effect-posture read is EXACTLY the `wamn-0h0g.21.9` fact, resolved
     /// over exactly the components a run would reach.

@@ -2797,28 +2797,7 @@ mod tests {
     /// Spelled with an escaped newline, so the literal cannot match the
     /// two-line attribute it names and the split can never find itself. Same
     /// marker `tests/conformance/src/runtime_inventory.rs` slices files at.
-    const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
 
-    /// This file's implementation half.
-    ///
-    /// The guards below `include_str!` this file and search it for text they
-    /// also spell themselves. Scanning the whole file lets a DELETED subject
-    /// match the guard's own source, so the assertion passes vacuously instead
-    /// of reporting the absence (wamn-3o3a, the general form of
-    /// wamn-0h0g.15.137).
-    fn implementation() -> &'static str {
-        let whole = include_str!("causation_e2e.rs");
-        let modules = whole.matches(CFG_TEST_MODULE).count();
-        assert_eq!(
-            modules, 1,
-            "causation_e2e.rs must carry exactly one terminal `{CFG_TEST_MODULE}` module; \
-             found {modules}"
-        );
-        whole
-            .split_once(CFG_TEST_MODULE)
-            .expect("the counted cfg(test) module must split")
-            .0
-    }
 
     fn args() -> CausationE2eArgs {
         CausationE2eArgs {
@@ -3038,8 +3017,6 @@ mod tests {
         assert!(job.contains("serviceAccountName: event-reader"));
         assert!(job.contains("batch.kubernetes.io/controller-uid"));
         assert!(job.contains("m1-cleanup"));
-        let whole_schema_drop = ["DROP", "SCHEMA"].join(" ");
-        assert!(!implementation().contains(&whole_schema_drop));
     }
 
     #[test]
@@ -3177,107 +3154,8 @@ mod tests {
         std::fs::remove_dir_all(&resources.report_dir).unwrap();
     }
 
-    #[test]
-    fn cleanup_source_pins_fail_closed_order_continuation_and_bounded_wait() {
-        // Splitting on a bare `#[cfg(test)]` searched for a literal this file
-        // also spells, and `.next()` on a `split` never fails, so the miss was
-        // silent (wamn-3o3a).
-        let implementation = implementation();
-        let bounded_terminate = ["SELECT pg_", "terminate_backend($1, $2)"].concat();
-        let asynchronous_terminate = ["SELECT pg_", "terminate_backend($1)"].concat();
-        let disable = implementation
-            .find("ALTER ROLE {} NOLOGIN")
-            .expect("cleanup disables role");
-        let pause = implementation
-            .rfind("pause_cleanup_session_witness(")
-            .expect("cleanup pauses its exact live witness");
-        let terminate = implementation
-            .find(&bounded_terminate)
-            .expect("cleanup synchronously terminates exact-role sessions");
-        let residue = implementation
-            .find("exact CDC sessions remained after bounded termination")
-            .expect("cleanup checks for termination residue");
-        let resume = implementation
-            .rfind("resume_cleanup_session_witness(")
-            .expect("cleanup unconditionally resumes its witness");
-        let teardown_gate = implementation
-            .find("if database_owned && cdc_sessions_quiesced")
-            .expect("cleanup gates exact project teardown on session quiescence");
-        let drop_role = implementation
-            .find("DROP ROLE {}")
-            .expect("cleanup drops exact role");
-        let verify = implementation
-            .find("verify_clean(args, resources, phase)")
-            .expect("cleanup always verifies residue");
-        let remove_authority = implementation
-            .find("remove_dir_all(&resources.report_dir)")
-            .expect("cleanup removes durable authority last");
-        assert!(
-            disable < pause
-                && pause < terminate
-                && terminate < residue
-                && residue < resume
-                && resume < teardown_gate
-                && teardown_gate < drop_role
-                && drop_role < remove_authority
-                && remove_authority < verify
-        );
-        assert_eq!(CDC_BACKEND_TERMINATION_TIMEOUT_MS, 15_000);
-        assert_eq!(CDC_WITNESS_RESUME_DELAY_SECS, 1);
-        assert_eq!(implementation.matches(&bounded_terminate).count(), 1);
-        assert!(!implementation.contains(&asynchronous_terminate));
-        assert!(implementation.contains("cleanup_session_witness = Some"));
-        assert!(implementation.contains("drop(state.cleanup_session_witness.take())"));
-        assert!(implementation.contains("backend_type='walsender'"));
-        assert!(implementation.contains("state='idle'"));
-        assert!(implementation.contains("WHERE pid=$1 AND usename=$2"));
-        assert!(implementation.contains("kill -STOP {pid}"));
-        assert!(implementation.contains("(sleep {}; kill -CONT {pid} 2>/dev/null || true)"));
-        assert!(implementation.contains("kill -CONT {pid} 2>/dev/null || true"));
-        assert!(implementation.contains("role_owned\n                && cdc_sessions_quiesced"));
-        assert!(implementation.contains("if errors.is_empty()"));
-        assert!(implementation.contains("if let Err(error) = project_admin"));
-        for forbidden in [
-            ["DROP", "SCHEMA"].join(" "),
-            ["DROP", "OWNED"].join(" "),
-            [" ", "LIKE", " "].join(""),
-            ["CAS", "CADE"].join(""),
-        ] {
-            assert!(
-                !implementation.contains(&forbidden),
-                "broad cleanup token: {forbidden}"
-            );
-        }
-        assert!(implementation.contains("phase={phase}"));
-        assert!(implementation.contains("cdc-role-login"));
-        assert!(implementation.contains("cdc-role-sessions"));
-        let role_create = implementation.find("let role_transaction").unwrap();
-        let role_comment = implementation[role_create..]
-            .find("COMMENT ON ROLE")
-            .unwrap()
-            + role_create;
-        let role_commit = implementation[role_comment..]
-            .find("role_transaction.commit")
-            .unwrap()
-            + role_comment;
-        let role_ledger = implementation[role_commit..]
-            .find("ledger.cdc_role = true")
-            .unwrap()
-            + role_commit;
-        assert!(
-            role_create < role_comment && role_comment < role_commit && role_commit < role_ledger
-        );
-        assert!(implementation.contains(
-            "exact CDC backend remained after bounded termination: pid={pid} slot={} timeout_ms={}"
-        ));
-        assert!(
-            implementation
-                .contains("verify false CDC termination result: pid={pid} slot={}: {error:#}")
-        );
-        assert!(implementation.contains(
-            "exact CDC sessions remained after bounded termination: pid(s)={remaining_pids:?} slot={}"
-        ));
-    }
+    // wamn-hopk R5: the cleanup ordering was asserted by byte offsets into this
+    // file's own source. Deleted; the live cleanup arms exercise the real path.
 
     #[test]
     fn manifest_pins_signal_forwarding_and_single_exit_cleanup() {

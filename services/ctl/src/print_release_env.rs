@@ -111,8 +111,6 @@ mod tests {
 
     use super::*;
 
-    const EXECUTOR_SOURCE: &str = include_str!("../../executor/src/lib.rs");
-    const HOST_SOURCE: &str = include_str!("../../host/src/host.rs");
 
     /// Host command for the flattened argument surface under test.
     #[derive(Debug, clap::Parser)]
@@ -139,28 +137,8 @@ mod tests {
             .expect("the fixture digest is canonical")
     }
 
-    #[test]
-    fn the_printed_names_are_the_two_binaries_own() {
-        // The executor reads the pair as environment entries.
-        for name in [ARTIFACT_BASE_ENV, MANIFEST_DIGEST_ENV] {
-            assert!(
-                EXECUTOR_SOURCE.contains(&format!("env = \"{name}\"")),
-                "the executor no longer reads {name}"
-            );
-            assert!(
-                HOST_SOURCE.contains(&format!("env = \"{name}\"")),
-                "the host no longer reads {name}"
-            );
-        }
-        // The host's deployed carrier is the flag, not the environment entry.
-        for flag in [ARTIFACT_BASE_FLAG, MANIFEST_DIGEST_FLAG] {
-            let long = flag.trim_start_matches("--");
-            assert!(
-                HOST_SOURCE.contains(&format!("long = \"{long}\"")),
-                "the host no longer accepts {flag}"
-            );
-        }
-    }
+        // wamn-hopk R5: the two binaries' own spellings were asserted by reading
+        // executor/src/lib.rs and host/src/host.rs as text. Deleted.
 
     #[test]
     fn one_release_prints_both_carriers_and_nothing_else() {

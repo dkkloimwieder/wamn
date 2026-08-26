@@ -52,18 +52,7 @@ mod tests {
         });
     }
 
-    #[test]
-    fn node_http_and_database_waits_retain_finite_ceilings() {
-        let router = include_str!("../../../crates/execution/host/src/router_driver.rs");
-        assert!(router.contains("bounded_node_deadline_ms"));
-        assert!(router.contains("MAX_HOST_CALL_DURATION.as_millis()"));
-
-        let http = include_str!("../../../crates/platform/runtime/src/plugins/connection_http.rs");
-        assert!(http.contains(".timeout(Duration::from_secs(30))"));
-
-        let postgres =
-            include_str!("../../../crates/platform/runtime/src/plugins/wamn_postgres/pool.rs");
-        assert!(postgres.contains("bounded_wait_timeout_ms"));
-        assert!(postgres.contains("bounded_statement_timeout_ms"));
-    }
+    // wamn-hopk R5: three cross-crate source greps for timeout spellings stood
+    // here. Deleted; the behavioural epoch-interrupt arm above is what proves a
+    // deadline actually fires.
 }

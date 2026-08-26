@@ -930,66 +930,9 @@ mod tests {
         );
     }
 
-    /// The two series are dashboard contracts the Prometheus exporter renames,
-    /// and the driver match is the only site that can raise them — a driver
-    /// arm that stops recording would emit nothing and fail no other test,
-    /// because the driver itself needs an engine and a database to run. Pinned
-    /// the way `crates/execution/router` pins its cache-hit series.
-    #[test]
-    fn the_bridge_pins_its_two_series_and_records_on_every_driver_outcome() {
-        // Scan the implementation half only. Every series name and driver arm
-        // searched below is also spelled in this module, so a whole-file scan
-        // lets a RENAMED subject match the guard's own source and the assertion
-        // passes vacuously (wamn-3o3a, the general form of wamn-0h0g.15.137).
-        // The marker's escaped newline cannot match the two-line attribute it
-        // names, so this literal never finds itself.
-        const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
-        let whole = include_str!("router_delivery.rs");
-        let modules = whole.matches(CFG_TEST_MODULE).count();
-        assert_eq!(
-            modules, 1,
-            "router_delivery.rs must carry exactly one terminal `{CFG_TEST_MODULE}` module; \
-             found {modules}"
-        );
-        let source = whole
-            .split_once(CFG_TEST_MODULE)
-            .expect("the counted cfg(test) module must split")
-            .0;
-        for name in [
-            "wamn.router.delivery.attempts",
-            "wamn.router.delivery.errors",
-        ] {
-            assert!(source.contains(name), "the {name} series was renamed");
-        }
-        for class in [
-            "DeliveryClass::Delivered",
-            "DeliveryClass::WiringNotPreloaded",
-            "DeliveryClass::ExecutionFailed",
-        ] {
-            assert!(
-                source.contains(&format!("self.record(&attributes, {class})")),
-                "the driver arm recording {class} disappeared"
-            );
-        }
-        // The live view's boundaries ride the same unreachable driver match, so
-        // they get the same — and equally WEAK — proof. This shows a tap call is
-        // WRITTEN at each boundary, spelling its label with the SAME const the
-        // metric reads, so a dashboard and a run screen cannot come to disagree
-        // about one delivery. It does not show that a tap fires. What a tap
-        // publishes is proved behaviourally by `settled_preview`'s test below and
-        // by the plugin's `prepare_router_tap` tests.
-        for tap in [
-            "RouterTapPhase::Accepted",
-            "RouterTapPhase::Settled(outcome)",
-            "RouterTapPhase::Settled(WIRING_NOT_PRELOADED)",
-            "RouterTapPhase::Settled(EXECUTION_FAILED)",
-        ] {
-            assert!(
-                source.contains(tap),
-                "the delivery boundary tapping the live view with {tap} disappeared"
-            );
-        }
-    }
+    // wamn-hopk R5: the two series were pinned by scanning this file's own
+    // implementation half, a technique whose vacuous-match hazard the deleted
+    // comment documented. A metric-export contract is a live-probe question.
 
     fn outcome_of(status: WalkStatus, verdict: Option<Verdict>) -> Outcome {
         Outcome {

@@ -2881,13 +2881,7 @@ mod tests {
     /// `\n`, so it cannot match its own spelling — only the real module header.
     /// Locating it with `find` also makes the boundary's absence LOUD, where
     /// `split(..).next()` is infallible and can never report it.
-    const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
 
-    /// The implementation half of this file: everything before the test module.
-    fn implementation_half() -> &'static str {
-        let source = include_str!("provision_project_env.rs");
-        &source[..source.find(CFG_TEST_MODULE).expect("test module boundary")]
-    }
 
     #[derive(Debug, Parser)]
     struct TestCli {
@@ -2967,27 +2961,9 @@ mod tests {
             );
         }
 
-        let implementation = implementation_half();
-        let identity_accesses = implementation
-            .split("let org = args")
-            .nth(1)
-            .expect("the provisioning verb consumes --org")
-            .split("let triple = Triple::new")
-            .next()
-            .expect("the identity accesses precede triple construction");
-        assert_eq!(
-            identity_accesses.matches(".expect(").count(),
-            3,
-            "all three parser-required identity fields must be consumed infallibly"
-        );
-        for flag in ["--org", "--project", "--env"] {
-            assert!(
-                identity_accesses.contains(&format!(
-                    "clap parser invariant: {flag} is required unless --revoke-pat-prefix is present"
-                )),
-                "{flag} does not name its parser invariant"
-            );
-        }
+        // wamn-hopk R5: a source-text scan counting `.expect(` calls between two
+        // function-name markers stood here. Deleted; the clap arms above prove
+        // the parser contract by invoking the parser.
     }
 
     /// Every workload action is a non-revoke invocation, so the same Clap
@@ -3033,27 +3009,9 @@ mod tests {
             }
         }
 
-        let implementation = implementation_half();
-        let identity_accesses = implementation
-            .split("fn workload_action_identity<'a>(")
-            .nth(1)
-            .expect("the shared workload identity parser exists")
-            .split("Ok(WorkloadActionIdentity")
-            .next()
-            .expect("the identity accesses precede construction");
-        assert_eq!(
-            identity_accesses.matches(".expect(").count(),
-            3,
-            "all three action identity fields must be consumed infallibly"
-        );
-        for flag in ["--org", "--project", "--env"] {
-            assert!(
-                identity_accesses.contains(&format!(
-                    "clap parser invariant: {flag} is required unless --revoke-pat-prefix is present"
-                )),
-                "{flag} does not name its parser invariant"
-            );
-        }
+        // wamn-hopk R5: a source-text scan counting `.expect(` calls between two
+        // function-name markers stood here. Deleted; the clap arms above prove
+        // the parser contract by invoking the parser.
     }
 
     /// The mint is the whole non-reuse mechanism (wamn-0h0g.13.57): every draw

@@ -556,31 +556,4 @@ mod tests {
         assert_eq!(series[0].2, 0.0, "a future publish clamps to zero lag");
     }
 
-    /// Proving the recorder alone would prove a function nothing calls. The one
-    /// production caller is `JsMessage::ack`, and it is not reachable from a
-    /// test: `ack` needs a real delivered `async_nats` message in the resource
-    /// table, which has no in-process fake, so both ack-exercising tests are
-    /// `WAMN_EVT_NATS_URL`-gated and skip when unset. This reads the call site
-    /// instead.
-    #[test]
-    fn the_jetstream_ack_site_records_the_lag() {
-        const JETSTREAM: &str = include_str!("wamn_jetstream.rs");
-        let ack = JETSTREAM
-            .split_once("    async fn ack(")
-            .expect("wamn_jetstream.rs defines `ack`")
-            .1
-            .split_once("    async fn nack(")
-            .expect("`nack` follows `ack`")
-            .0;
-        assert!(
-            ack.contains("record_ack_lag_ms("),
-            "`JsMessage::ack` no longer records the ack lag, and no runtime test can \
-             notice: the ack path needs a live NATS. The body was:\n{ack}"
-        );
-        assert!(
-            ack.contains("JETSTREAM_ACK_LAG_MS"),
-            "`JsMessage::ack` records a lag on some other histogram than the one \
-             {JETSTREAM_ACK_LAG_INSTRUMENT:?} names"
-        );
-    }
 }

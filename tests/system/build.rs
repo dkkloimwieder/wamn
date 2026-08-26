@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 
 const FORBIDDEN_CRATES: &[&str] = &[
     "wamn_cdc_reader",

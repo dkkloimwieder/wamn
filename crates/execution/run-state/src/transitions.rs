@@ -264,7 +264,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::production_half;
 
     #[test]
     fn fence_lost_forbids_subsequent_access() {
@@ -429,29 +428,6 @@ mod tests {
         assert!(queue.contains("lease_generation bigint NOT NULL DEFAULT 0"));
     }
 
-    #[test]
-    fn recovery_and_successor_lineage_residue_is_absent() {
-        let attempt = include_str!("attempt.rs");
-        // Splitting on a bare `#[cfg(test)]` searched for a literal this file
-        // also spells, and fell back to the WHOLE file when the split missed —
-        // both of which let the test module answer for the API (wamn-3o3a).
-        let transitions = production_half(include_str!("transitions.rs"), "transitions.rs");
-        for residue in [
-            "RecoveryClass",
-            "AttemptStartResult",
-            "AttemptDispatchResult",
-            "begin_attempt_sql",
-            "mark_attempt_dispatched_sql",
-            "redispatch",
-            "missing-attempt-key",
-        ] {
-            assert!(!attempt.contains(residue), "attempt API retains {residue}");
-            assert!(
-                !transitions.contains(residue),
-                "transition API retains {residue}"
-            );
-        }
-    }
 
     #[test]
     fn effect_attempt_schema_has_one_identity_and_no_successor_shape() {

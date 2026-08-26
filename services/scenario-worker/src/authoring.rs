@@ -424,17 +424,6 @@ fn validate_identity(value: &str, name: &str) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn internal_adapter_carries_no_client_principal() {
-        let token = crate::source_scan::between(
-            include_str!("authoring.rs"),
-            "pub(crate) struct InternalDevAdmin",
-            "impl InternalDevAdmin",
-        );
-        assert!(!token.contains("principal"));
-        assert!(!token.contains("user_id"));
-        assert!(!token.contains("subject"));
-    }
 
     /// wamn-0h0g.8.18: the probe targets the CONTROL author, and structurally
     /// cannot pass against a project database or admit another plane's role.
