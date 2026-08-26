@@ -51,29 +51,6 @@ read it.
 image with a caller-owned registry cache and loads it into kind. It refuses the
 protected tags `dev`, `latest`, and `callable-flow-base-*`.
 
-### The gates image does not build at `1bffa614`
-
-`Dockerfile:173` selects `-p flow-http` in the `component-builder` stage.
-`c935b88f` ("rename(wamn-0h0g.26.19)") renamed that package to `http-route` and
-moved it to `components/ingress/http-route`; the Dockerfile was last touched at
-`4b8c20ab`, which is an ancestor of the rename. Measured:
-
-```
-$ cargo build --target wasm32-wasip2 -p flow-http    # in components/
-error: package ID specification `flow-http` did not match any packages
-```
-
-`component-builder` is a required input of the `gates` stage
-(`Dockerfile:252-261`), so **`docker build --target gates .` fails** until
-`-p flow-http`, the `flow_http` artifact name (`Dockerfile:177`), and
-`/component-output/flow_http.wasm` (`Dockerfile:256`) are repointed at
-`http-route` / `http_route`. `docker build --target host .` is unaffected — the
-`host` stage does not consume `component-builder`.
-
-`c935b88f` fixed the same regression in `tools/contract-diff` and in
-`architecture/workspace-tiers.json` and missed the Dockerfile. **This has no
-bead as of `1bffa614`; it needs one before the gates image can be rebuilt.**
-
 ## Build
 
 **Debug by default.** `cargo build` / `cargo test`. Use `--release` only when a
@@ -482,8 +459,15 @@ declares the module `#[cfg(feature = "ops")]`. They run only under
 **`git grep` for a package name is not a rename check.** `c935b88f` renamed
 `flow-http` and repaired `tools/contract-diff` and
 `architecture/workspace-tiers.json` in the same commit, and still left three
-stale selectors in the `Dockerfile`. `cargo metadata --no-deps` and an actual
-`-p` resolution are the checks that catch this.
+stale selectors in the `Dockerfile` (fixed at `237085b3`). `cargo metadata
+--no-deps` and an actual `-p` resolution are the checks that catch this.
+
+It also swept one token that was **not** a package name: the `world:` argument
+to `wit_bindgen::generate!` in `components/ingress/http-route/src/guest.rs`,
+which must keep naming the world the crate's own `wit/world.wit` declares —
+`flow-http`, deliberately not renamed, because a versioned WIT package is a
+contract change. No `-p` resolution catches that one; only building the
+component does (`wamn-0h0g.26.22`).
 
 ## Not reconstructed
 
