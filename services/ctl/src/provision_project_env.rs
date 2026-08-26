@@ -68,15 +68,16 @@ use serde_json::{Value, json};
 use tokio_postgres::{Config as PgConfig, GenericClient, NoTls};
 use url::Url;
 
+use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EffectWriterCredentialScope,
     EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, WorkloadRoleFamily, WorkloadRoleScope,
     compose_url, effect_writer_credential, legacy_effect_writer_generation_role,
     project_env_database_name, project_env_namespace, project_env_secret_name,
     render_control_author_secret_manifest, render_effect_writer_secret_manifest,
-    render_management_admitter_secret_manifest, render_project_env_database,
-    render_project_env_secret_manifest, sql, validate_instance_suffix, validate_project_env,
-    workload_generation_role,
+    render_guest_secret_manifest, render_management_admitter_secret_manifest,
+    render_project_env_database, render_project_env_secret_manifest, sql, validate_instance_suffix,
+    validate_project_env, workload_generation_role,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_platform_identity::{
@@ -228,7 +229,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_control_author_generation",
             "prepare_management_admitter_generation",
             "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
         ]
     )]
     pub prepare_effect_writer_generation: Option<CredentialGeneration>,
@@ -245,7 +249,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_control_author_generation",
             "prepare_management_admitter_generation",
             "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
         ]
     )]
     pub retire_effect_writer_generation: Option<CredentialGeneration>,
@@ -265,7 +272,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_control_author_generation",
             "prepare_management_admitter_generation",
             "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
         ]
     )]
     pub abort_effect_writer_generation: Option<CredentialGeneration>,
@@ -280,6 +290,80 @@ pub struct ProvisionProjectEnvArgs {
     )]
     pub emit_effect_writer_secret: Option<PathBuf>,
 
+    /// Prepare and authenticate the inactive per-tenant guest-SQL generation.
+    ///
+    /// After `wamn-0h0g.22.6` the guest's tenant comes from `current_user`, so
+    /// this credential IS the tenant authority: no claim accompanies it, and a
+    /// generation minted for one tenant can read no other.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
+        ]
+    )]
+    pub prepare_guest_generation: Option<CredentialGeneration>,
+
+    /// Retire the old guest-SQL generation after replacement use.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "abort_guest_generation"
+        ]
+    )]
+    pub retire_guest_generation: Option<CredentialGeneration>,
+
+    /// Abort a prepared guest generation that was definitively not published.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation",
+            "prepare_control_author_generation",
+            "retire_control_author_generation",
+            "abort_control_author_generation",
+            "prepare_management_admitter_generation",
+            "retire_management_admitter_generation",
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation"
+        ]
+    )]
+    pub abort_guest_generation: Option<CredentialGeneration>,
+
+    /// Write the scoped guest-SQL Secret. Required with prepare and forbidden
+    /// otherwise; credentials are never written to stdout.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_parser = parse_secret_path,
+        requires = "prepare_guest_generation"
+    )]
+    pub emit_guest_secret: Option<PathBuf>,
+
     /// Prepare and authenticate the inactive control-author credential generation.
     #[arg(
         long,
@@ -292,7 +376,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_control_author_generation",
             "prepare_management_admitter_generation",
             "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
         ]
     )]
     pub prepare_control_author_generation: Option<CredentialGeneration>,
@@ -309,7 +396,10 @@ pub struct ProvisionProjectEnvArgs {
             "abort_control_author_generation",
             "prepare_management_admitter_generation",
             "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
         ]
     )]
     pub retire_control_author_generation: Option<CredentialGeneration>,
@@ -326,7 +416,10 @@ pub struct ProvisionProjectEnvArgs {
             "retire_control_author_generation",
             "prepare_management_admitter_generation",
             "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
         ]
     )]
     pub abort_control_author_generation: Option<CredentialGeneration>,
@@ -359,7 +452,10 @@ pub struct ProvisionProjectEnvArgs {
             "retire_control_author_generation",
             "abort_control_author_generation",
             "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
         ]
     )]
     pub prepare_management_admitter_generation: Option<CredentialGeneration>,
@@ -376,7 +472,10 @@ pub struct ProvisionProjectEnvArgs {
             "retire_control_author_generation",
             "abort_control_author_generation",
             "prepare_management_admitter_generation",
-            "abort_management_admitter_generation"
+            "abort_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
         ]
     )]
     pub retire_management_admitter_generation: Option<CredentialGeneration>,
@@ -393,7 +492,10 @@ pub struct ProvisionProjectEnvArgs {
             "retire_control_author_generation",
             "abort_control_author_generation",
             "prepare_management_admitter_generation",
-            "retire_management_admitter_generation"
+            "retire_management_admitter_generation",
+            "prepare_guest_generation",
+            "retire_guest_generation",
+            "abort_guest_generation"
         ]
     )]
     pub abort_management_admitter_generation: Option<CredentialGeneration>,
@@ -530,6 +632,12 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         || args.abort_effect_writer_generation.is_some()
     {
         return run_effect_writer_action(&args).await;
+    }
+    if args.prepare_guest_generation.is_some()
+        || args.retire_guest_generation.is_some()
+        || args.abort_guest_generation.is_some()
+    {
+        return run_guest_action(&args).await;
     }
     if args.prepare_control_author_generation.is_some()
         || args.retire_control_author_generation.is_some()
@@ -861,6 +969,21 @@ impl<'a> WorkloadLifecycle<'a> {
 fn effect_writer_lifecycle<'a>(tenant: &'a str, database: &'a str) -> WorkloadLifecycle<'a> {
     WorkloadLifecycle {
         family: WorkloadRoleFamily::EffectWriter,
+        scope: WorkloadRoleScope::Tenant { tenant, database },
+        control_tenant: None,
+    }
+}
+
+/// The guest-SQL family's pairing with its exact scope grain
+/// (`wamn-0h0g.22.6.4`).
+///
+/// Tenant scope, exactly as the effect writer's is, and for the same reason:
+/// the digest in the role name IS the tenant key, so the login the mint issues
+/// and the key `wamn_authority.tenant_key` computes are the same string. If
+/// they ever differ, every guest read refuses.
+fn app_guest_lifecycle<'a>(tenant: &'a str, database: &'a str) -> WorkloadLifecycle<'a> {
+    WorkloadLifecycle {
+        family: WorkloadRoleFamily::App,
         scope: WorkloadRoleScope::Tenant { tenant, database },
         control_tenant: None,
     }
@@ -1282,6 +1405,124 @@ async fn run_control_author_action(args: &ProvisionProjectEnvArgs) -> anyhow::Re
 /// `--tenant` is the shared workload-action identity contract, not an input to
 /// this family's derivation: management-admission scopes on `(org, project,
 /// environment, database)` alone.
+/// The per-tenant guest-SQL generation actions (`wamn-0h0g.22.6.4`).
+///
+/// The fourth stamp of one shape, not a fourth mechanism: tenant scope like the
+/// effect writer's, a plain URL Secret like the management admitter's.
+async fn run_guest_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.cluster.is_none()
+            && args.connection_limit.is_none()
+            && args.app_host.is_none()
+            && args.emit_database.is_none()
+            && args.emit_role_sql.is_none()
+            && args.emit_privilege_sql.is_none()
+            && args.emit_secret.is_none()
+            && args.emit_effect_writer_secret.is_none()
+            && args.emit_control_author_secret.is_none()
+            && args.emit_management_admitter_secret.is_none()
+            && args.emit_management_author_pat_secret.is_none()
+            && args.emit_route_caller_pat_secret.is_none(),
+        "guest generation actions cannot render ordinary provisioning, effect-writer, control-author, management-admitter, or PAT artifacts"
+    );
+    let identity = workload_action_identity(args, "guest")?;
+    let WorkloadActionIdentity {
+        org,
+        project,
+        environment,
+        tenant,
+    } = identity;
+    let system_url = args.system_database_url.as_deref().context(
+        "guest generation actions require --system-database-url to resolve the stored instance suffix",
+    )?;
+    let triple = Triple::new(org, project, environment);
+    let instance = read_project_env_instance(system_url, &triple).await?;
+    let database = project_env_database_name(org, project, environment, &instance);
+    let admin_url = args
+        .target_admin_database_url
+        .as_deref()
+        .context("guest generation actions require --target-admin-database-url")?;
+    let admin_config = exact_project_database_config(admin_url, &database)?;
+    let lifecycle = app_guest_lifecycle(tenant, &database);
+
+    if let Some(generation) = args.prepare_guest_generation {
+        let secret_path = args
+            .emit_guest_secret
+            .as_deref()
+            .context("--prepare-guest-generation requires --emit-guest-secret PATH")?;
+        ensure_secret_path(secret_path, "--emit-guest-secret")?;
+        let validity = workload_validity(Utc::now());
+        // The key the predicate computes, taken from the ONE Rust definition
+        // rather than re-derived here — the label must name the same tenant the
+        // role name's digest does.
+        let key = tenant_key(tenant, &database);
+        prepare_workload_generation(
+            &admin_config,
+            lifecycle,
+            None,
+            None,
+            generation,
+            &validity.expires_at,
+            |role, password, _predecessor_role| {
+                anyhow::ensure!(
+                    role.contains(&key),
+                    "the minted guest login does not carry the tenant key the RLS \
+                     predicate computes, so every guest read would refuse"
+                );
+                let credential_url = workload_url(admin_url, role, password, &database)?;
+                let secret = render_guest_secret_manifest(
+                    &triple,
+                    &args.namespace,
+                    tenant,
+                    &key,
+                    &credential_url,
+                );
+                write_secret_json(secret_path, &secret).context("write authenticated guest Secret")
+            },
+        )
+        .await?;
+        println!(
+            "prepared and authenticated guest credential generation {} for {}/{}/{}; wrote {}",
+            generation.as_str(),
+            org,
+            project,
+            environment,
+            secret_path.display()
+        );
+        Ok(())
+    } else if let Some(generation) = args.retire_guest_generation {
+        anyhow::ensure!(
+            args.emit_guest_secret.is_none(),
+            "--emit-guest-secret is valid only when preparing a generation"
+        );
+        retire_workload_generation(&admin_config, lifecycle, None, generation).await?;
+        println!(
+            "retired guest credential generation {} for {}/{}/{}",
+            generation.as_str(),
+            org,
+            project,
+            environment
+        );
+        Ok(())
+    } else if let Some(generation) = args.abort_guest_generation {
+        anyhow::ensure!(
+            args.emit_guest_secret.is_none(),
+            "--emit-guest-secret is valid only when preparing a generation"
+        );
+        abort_workload_generation(&admin_config, lifecycle, generation).await?;
+        println!(
+            "aborted unpublished guest credential generation {} for {}/{}/{}",
+            generation.as_str(),
+            org,
+            project,
+            environment
+        );
+        Ok(())
+    } else {
+        anyhow::bail!("no guest generation action selected")
+    }
+}
+
 async fn run_management_admitter_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     anyhow::ensure!(
         args.cluster.is_none()
@@ -2881,7 +3122,6 @@ mod tests {
     /// `\n`, so it cannot match its own spelling — only the real module header.
     /// Locating it with `find` also makes the boundary's absence LOUD, where
     /// `split(..).next()` is infallible and can never report it.
-
 
     #[derive(Debug, Parser)]
     struct TestCli {

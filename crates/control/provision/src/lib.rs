@@ -102,21 +102,21 @@ pub use management_admitter::{
 };
 pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, CONTROL_AUTHOR_SECRET_PREFIX, DB_OWNER_ROLE,
-    DB_PREFIX, DISPATCH_READER_ROLE, EFFECT_WRITER_SECRET_PREFIX, INSTANCE_SUFFIX_LEN,
-    MANAGEMENT_ADMITTER_SECRET_PREFIX, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
-    MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url, control_author_secret_name,
-    database_name, event_stream_name, management_admitter_secret_name, project_env_cdc_secret_name,
-    project_env_database_name, project_env_effect_writer_secret_name, project_env_namespace,
-    project_env_secret_name, secret_name, validate_instance_suffix, validate_project_env,
-    validate_project_env_cdc, validate_project_id,
+    DB_PREFIX, DISPATCH_READER_ROLE, EFFECT_WRITER_SECRET_PREFIX, GUEST_SECRET_PREFIX,
+    INSTANCE_SUFFIX_LEN, MANAGEMENT_ADMITTER_SECRET_PREFIX, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN,
+    MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url,
+    control_author_secret_name, database_name, event_stream_name, management_admitter_secret_name,
+    project_env_cdc_secret_name, project_env_database_name, project_env_effect_writer_secret_name,
+    project_env_guest_secret_name, project_env_namespace, project_env_secret_name, secret_name,
+    validate_instance_suffix, validate_project_env, validate_project_env_cdc, validate_project_id,
 };
 pub use org::{OrgClusters, render_org_cluster_set};
 #[cfg(feature = "ops")]
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use secret::{
     render_control_author_secret_manifest, render_effect_writer_secret_manifest,
-    render_management_admitter_secret_manifest, render_project_env_cdc_secret_manifest,
-    render_project_env_secret_manifest,
+    render_guest_secret_manifest, render_management_admitter_secret_manifest,
+    render_project_env_cdc_secret_manifest, render_project_env_secret_manifest,
 };
 pub use wamn_run_state::{
     CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_CREDENTIAL_PATH,

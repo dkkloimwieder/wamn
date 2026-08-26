@@ -228,9 +228,8 @@ pub fn authority_derivations_bootstrap_sql() -> String {
 mod tests {
     use super::{
         BOOTSTRAP_OWNER, CURRENT_TENANT_KEY_FUNCTION, DATABASE_LITERAL_PLACEHOLDER,
-        DATABASE_OCTETS_PLACEHOLDER,
-        TENANT_KEY_FUNCTION, authority_derivations_bootstrap_sql, authority_derivations_sql,
-        current_tenant_key_pattern, tenant_key,
+        DATABASE_OCTETS_PLACEHOLDER, TENANT_KEY_FUNCTION, authority_derivations_bootstrap_sql,
+        authority_derivations_sql, current_tenant_key_pattern, tenant_key,
     };
     use crate::workload_role::{
         SCOPE_HASH_HEX_LEN, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,

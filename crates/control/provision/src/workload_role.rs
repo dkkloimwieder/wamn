@@ -627,6 +627,50 @@ mod tests {
         }
     }
 
+    /// THE TRUNCATION HAZARD, CLOSED BY CONSTRUCTION rather than by a runtime
+    /// refusal (`wamn-0h0g.22.6.4`).
+    ///
+    /// `valid_tenant` admits 64 bytes and PostgreSQL caps identifiers at 63,
+    /// truncating with a NOTICE instead of refusing — so a name carrying the
+    /// tenant verbatim would collapse two long tenants onto ONE role, which is
+    /// a cross-tenant breach wearing a naming bug. The scope digest is
+    /// fixed-width, so the tenant contributes NOTHING to the length: asserted
+    /// here against the longest tenant the validator admits, so the property is
+    /// measured rather than assumed.
+    #[test]
+    fn the_longest_admitted_tenant_still_mints_a_bounded_role() {
+        let longest = "t".repeat(64);
+        let short = WorkloadRoleScope::Tenant {
+            tenant: "t",
+            database: "wamn-db-acme--billing--dev",
+        };
+        let long = WorkloadRoleScope::Tenant {
+            tenant: &longest,
+            database: "wamn-db-acme--billing--dev",
+        };
+        for family in [
+            WorkloadRoleFamily::App,
+            WorkloadRoleFamily::EffectWriter,
+            WorkloadRoleFamily::Retention,
+        ] {
+            for generation in [CredentialGeneration::A, CredentialGeneration::B] {
+                let from_short = workload_generation_role(family, short, generation).unwrap();
+                let from_long = workload_generation_role(family, long, generation).unwrap();
+                assert_eq!(
+                    from_short.len(),
+                    from_long.len(),
+                    "{family:?}: the tenant must not reach the role NAME's length"
+                );
+                assert!(from_long.len() <= 63, "{from_long}");
+                assert!(
+                    !from_long.contains(&longest),
+                    "{family:?}: the tenant id must never appear verbatim"
+                );
+                assert_ne!(from_short, from_long, "{family:?}: two tenants, two roles");
+            }
+        }
+    }
+
     #[test]
     fn management_admitter_generation_identity_is_frozen_and_distinct_from_its_acl_role() {
         assert_eq!(

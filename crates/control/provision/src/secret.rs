@@ -18,8 +18,8 @@ use wamn_run_state::{EFFECT_WRITER_CREDENTIAL_KEY, EffectWriterCredential};
 
 use crate::name::{
     APP_ROLE, cdc_object_name, control_author_secret_name, management_admitter_secret_name,
-    project_env_cdc_secret_name, project_env_effect_writer_secret_name, project_env_secret_name,
-    secret_name,
+    project_env_cdc_secret_name, project_env_effect_writer_secret_name,
+    project_env_guest_secret_name, project_env_secret_name, secret_name,
 };
 
 /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
@@ -234,6 +234,55 @@ pub fn render_management_admitter_secret_manifest(
                 "wamn.org": triple.org,
                 "wamn.project": triple.project,
                 "wamn.env": triple.env.as_str(),
+            },
+        },
+        "type": "Opaque",
+        "stringData": {
+            "url": url,
+        },
+    })
+}
+
+/// Render the scoped per-tenant guest-SQL credential `Secret`
+/// (`wamn-0h0g.22.6.4`).
+///
+/// `stringData.url` names the tenant's own LOGIN generation, which is the whole
+/// point: after the `wamn-0h0g.22.6` sweep the guest's tenant comes from
+/// `current_user`, so the credential IS the tenant authority and no claim
+/// accompanies it.
+///
+/// The TENANT KEY is a label and the tenant id an ANNOTATION, deliberately: a
+/// label value is capped at 63 characters and restricted to alphanumerics plus
+/// `-_.`, while `valid_tenant` admits 64 bytes — so a label carrying the tenant
+/// verbatim would be rejected by the API server for exactly the tenants the
+/// digest exists to handle.
+pub fn render_guest_secret_manifest(
+    triple: &Triple,
+    namespace: &str,
+    tenant: &str,
+    tenant_key: &str,
+    url: &str,
+) -> Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": project_env_guest_secret_name(
+                &triple.org,
+                &triple.project,
+                triple.env.as_str(),
+            ),
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "wamn",
+                "app.kubernetes.io/component": "guest-sql-credentials",
+                "wamn.org": triple.org,
+                "wamn.project": triple.project,
+                "wamn.env": triple.env.as_str(),
+                "wamn.tenant-key": tenant_key,
+            },
+            "annotations": {
+                "wamn.io/tenant": tenant,
             },
         },
         "type": "Opaque",

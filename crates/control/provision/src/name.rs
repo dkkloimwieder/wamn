@@ -71,6 +71,18 @@ pub const CONTROL_AUTHOR_SECRET_PREFIX: &str = "wamn-authoring-";
 /// helper exists to prevent.
 pub const MANAGEMENT_ADMITTER_SECRET_PREFIX: &str = "wamn-mgmt-admitter-";
 
+/// Prefix for the scoped per-tenant guest-SQL URL Secret (`wamn-0h0g.22.6.4`).
+///
+/// It mirrors the family's Postgres generation prefix in the hyphenated K8s
+/// convention, exactly as the management-admitter prefix does. The Secret is
+/// scoped to the project-environment, not to the tenant key: one management
+/// instance serves exactly one `(org, project, environment)` and that scope's
+/// single tenant, which is the same scoping the effect-writer Secret already
+/// uses for a role that is likewise minted per tenant. The tenant travels in the
+/// manifest's labels, never in the name — a tenant id may be 64 bytes and carry
+/// characters a DNS-1123 name cannot.
+pub const GUEST_SECRET_PREFIX: &str = "wamn-guest-";
+
 /// Prefix for the per-project database **and** Secret name: `wamn-db-<project>`.
 /// It is under the platform-reserved `wamn` prefix (wamn-66x) on purpose — the
 /// platform mints it, and project ids in that space are rejected.
@@ -319,6 +331,11 @@ pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
 /// The fixed-mount effect-writer credential Secret name.
 pub fn project_env_effect_writer_secret_name(org: &str, project: &str, env: &str) -> String {
     format!("{EFFECT_WRITER_SECRET_PREFIX}{org}--{project}--{env}")
+}
+
+/// The scoped per-tenant guest-SQL credential Secret name.
+pub fn project_env_guest_secret_name(org: &str, project: &str, env: &str) -> String {
+    format!("{GUEST_SECRET_PREFIX}{org}--{project}--{env}")
 }
 
 /// Validate that a `(org, project, env)` yields safe provisioned names: **all

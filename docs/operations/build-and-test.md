@@ -430,6 +430,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `crates/catalog/model/tests/wiring_activation_live.rs` | `WAMN_CATALOG_PG_URL` | `cargo test -p wamn-catalog --test wiring_activation_live -- --ignored` |
 | `crates/platform/runtime/tests/wiring_doorbell_live.rs` | `WAMN_CATALOG_PG_URL` | `cargo test -p wamn-runtime --test wiring_doorbell_live -- --ignored` |
 | `services/ctl/tests/effect_writer_generation_live.rs` | `WAMN_EFFECT_WRITER_PG18_URL` | `cargo test -p wamn-ctl --test effect_writer_generation_live -- --ignored --nocapture` |
+| `services/ctl/tests/guest_generation_live.rs` | `WAMN_GUEST_GENERATION_PG18_URL` | `cargo test -p wamn-ctl --features ops --test guest_generation_live -- --ignored --nocapture` |
 | `services/ctl/tests/management_admitter_generation_live.rs` | `WAMN_MANAGEMENT_ADMITTER_PG18_URL` | `cargo test -p wamn-ctl --test management_admitter_generation_live -- --ignored --nocapture` |
 | `services/ctl/tests/terminalize_effect_uncertain_live.rs` | `WAMN_OPERATOR_TERMINALIZE_PG18_URL` | `cargo test -p wamn-ctl --test terminalize_effect_uncertain_live` |
 | `services/ctl/tests/release_manifest_mint_live.rs` | `WAMN_RELEASE_MANIFEST_MINT_PG_URL` | `cargo test -p wamn-ctl --test release_manifest_mint_live -- --ignored` |
@@ -450,6 +451,8 @@ instead.
 
 The two `generation_live` tests revoke `PUBLIC CONNECT` on **every** non-template
 database in the cluster. Run them only against a disposable server.
+`guest_generation_live` drops and recreates the stable `wamn_app` ACL role,
+which is cluster-wide — the same warning applies with more force.
 
 ## The throwaway Postgres
 
