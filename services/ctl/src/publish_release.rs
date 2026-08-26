@@ -41,6 +41,7 @@ use wamn_catalog::{
     ServingWiring, WiringDocument, validate_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
+use wamn_schema_control::BareSchemaName;
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
@@ -101,6 +102,19 @@ const READ_RELEASE_SNAPSHOT_SQL: &str = "\
 SELECT canonical_bytes \
   FROM catalog.release_manifest_v2_snapshots \
  WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3";
+
+/// Read the provisioned environment fact out of the operator-named run-plane schema.
+///
+/// The relation is `environment_policies` (`deploy/sql/run-state.sql`), whose one
+/// row per tenant `reconcile-run-plane` projects from the control registry. The
+/// schema is composed rather than fixed because a project database's run plane is
+/// installed under an operator-chosen bare schema name, not always `wamn_run`.
+fn expected_environment_sql(run_schema: &BareSchemaName) -> String {
+    format!(
+        "SELECT expected_environment FROM {}.environment_policies WHERE tenant_id = $1",
+        run_schema.quoted()
+    )
+}
 
 /// One exact wiring version included in a release closure.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -193,6 +207,14 @@ pub enum MintManifestErrorKind {
     Component,
     ClosureConflict,
     Document,
+    /// The project database carries no provisioned environment fact for this
+    /// tenant, so the environment the release names cannot be checked at all.
+    /// Distinct from a mismatch: the remedy is to converge the policy, not to
+    /// republish somewhere else.
+    EnvironmentPolicyAbsent,
+    /// The release names an environment this project database was not
+    /// provisioned for.
+    EnvironmentPolicyMismatch,
 }
 
 impl MintManifestErrorKind {
@@ -204,6 +226,19 @@ impl MintManifestErrorKind {
             Self::Component => "component",
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
+            // wamn-xkgp, owner ruling 2026-08-26: ONE CONDITION, ONE LITERAL.
+            // These two strings are ADMISSION's, not ours. `pin_run_durability_class`
+            // (deploy/sql/run-state.sql, pinned in crates/schema/control/src/run_plane.rs)
+            // already refuses on exactly these conditions against exactly this relation,
+            // and it named them first. Publish reuses them so one condition never reports
+            // under two names depending on which door an operator hit.
+            //
+            // DO NOT "TIDY" THE STUTTER IN THE SECOND ONE. It reads oddly on its own and
+            // it is the price of a shared vocabulary; renaming it here forks the dialect
+            // this ruling exists to prevent. If it ever changes, it changes in BOTH
+            // places, in one commit.
+            Self::EnvironmentPolicyAbsent => "environment-policy-not-converged",
+            Self::EnvironmentPolicyMismatch => "environment-policy-environment-mismatch",
         }
     }
 }
@@ -299,6 +334,15 @@ pub struct PublishReleaseArgs {
     #[arg(long)]
     pub catalog_version: u32,
 
+    /// The run-plane schema in this project database holding the provisioned
+    /// environment fact — the same `--schema` `reconcile-run-plane` converged
+    /// (`wamn_run` in the schema of record). Bare identifier, and REQUIRED: a
+    /// default would let an invocation that omits the flag check the release
+    /// against a relation the operator never named, which is the trusted-carry
+    /// this verb exists to stop.
+    #[arg(long)]
+    pub run_schema: String,
+
     /// Exact wiring version in the closure. Repeat once per released wiring.
     #[arg(long = "wiring", value_name = "WIRING_ID=VERSION", required = true)]
     pub wirings: Vec<ReleaseWiringTarget>,
@@ -317,6 +361,12 @@ impl PublishReleaseArgs {
     fn deployment_coordinate(&self, release: &ServingRelease) -> DeploymentCoordinate {
         DeploymentCoordinate::new(&self.org, &self.project, release)
     }
+
+    /// The validated run-plane schema this invocation verifies its environment in.
+    fn verified_run_schema(&self) -> anyhow::Result<BareSchemaName> {
+        BareSchemaName::new(self.run_schema.clone())
+            .map_err(|error| anyhow::anyhow!("invalid --run-schema {:?}: {error}", self.run_schema))
+    }
 }
 
 /// Mint one v2 release from explicit wiring, attachment, and registration facts.
@@ -327,6 +377,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         read_document(&args.registrations, "registrations")?;
     let catalog_version = i32::try_from(args.catalog_version)
         .context("catalog-version exceeds the PostgreSQL integer carrier")?;
+    let run_schema = args.verified_run_schema()?;
     let wirings = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
     let request = MintReleaseManifest {
         tenant_id: &args.tenant,
@@ -341,7 +392,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         .await
         .context("connect to the release project environment")?;
     let connection_task = tokio::spawn(connection);
-    let minted = mint_in_transaction(&mut client, &request).await;
+    let minted = mint_in_transaction(&mut client, &request, &run_schema).await;
     match minted {
         Ok(minted) => {
             drop(client);
@@ -363,20 +414,100 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
     }
 }
 
+/// Mint one release and prove its carried environment before committing it.
+///
+/// The verify is the `publish-release` VERB's own precondition, not the shared
+/// mint's: `promote` mints into an environment it was told to target and resolves
+/// its placement differently, so the check is owned where the operator publishes
+/// rather than pushed into [`mint_release_manifest`]. Running inside the mint's
+/// own transaction makes the refusal fail-closed — nothing is committed, and the
+/// tenant claim [`mint_release_manifest`] set is still in force, so the policy
+/// read is row-security scoped to exactly the release's tenant.
 async fn mint_in_transaction(
     client: &mut Client,
     request: &MintReleaseManifest<'_>,
+    run_schema: &BareSchemaName,
 ) -> anyhow::Result<MintedReleaseManifest> {
     let transaction = client
         .transaction()
         .await
         .context("begin the release mint")?;
     let minted = mint_release_manifest(&transaction, request).await?;
+    let expected_environment =
+        read_expected_environment(&transaction, run_schema, request.tenant_id).await?;
+    verify_provisioned_environment(
+        expected_environment.as_deref(),
+        &minted.manifest.release,
+        run_schema,
+    )?;
     transaction
         .commit()
         .await
         .context("commit the release mint")?;
     Ok(minted)
+}
+
+/// Read the one provisioned environment fact this project database holds for a tenant.
+async fn read_expected_environment(
+    transaction: &Transaction<'_>,
+    run_schema: &BareSchemaName,
+    tenant_id: &str,
+) -> Result<Option<String>, MintManifestError> {
+    let policy = transaction
+        .query_opt(&expected_environment_sql(run_schema), &[&tenant_id])
+        .await
+        .map_err(|error| storage("read the provisioned environment policy", error))?;
+    Ok(policy.map(|row| row.get(0)))
+}
+
+/// Refuse unless the environment a release carries is the one this database is.
+///
+/// The carried value is `catalog.catalogs.environment`: a free per-catalog-row
+/// label that no constraint ties to any provisioned identity (`D18`,
+/// `deploy/sql/catalog-schema.sql`). The provisioned fact is
+/// `<run-schema>.environment_policies.expected_environment`, which
+/// `reconcile-run-plane` projects out of the control registry for exactly the
+/// `(org, project, env)` this database was created for. Carrying the label into
+/// the attestation key without checking it against the fact would key the write
+/// on whatever the catalog row happens to say.
+///
+/// The two refusals are deliberately distinct literals: an absent policy and a
+/// disagreeing one are different operator situations with different remedies, so
+/// the absent refusal names `reconcile-run-plane` — the verb that converges it.
+fn verify_provisioned_environment(
+    expected_environment: Option<&str>,
+    release: &ServingRelease,
+    run_schema: &BareSchemaName,
+) -> Result<(), MintManifestError> {
+    let Some(expected_environment) = expected_environment else {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::EnvironmentPolicyAbsent,
+            format!(
+                "tenant {:?} has no row in {}.environment_policies, so the environment {:?} \
+                 this release carries cannot be checked against the environment this project \
+                 database was provisioned for: run `reconcile-run-plane` for this tenant to \
+                 project its environment policy, then publish again",
+                release.tenant_id,
+                run_schema.as_str(),
+                release.environment,
+            ),
+        ));
+    };
+    if expected_environment != release.environment {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::EnvironmentPolicyMismatch,
+            format!(
+                "release names environment {:?}, but {}.environment_policies provisioned tenant \
+                 {:?} for environment {:?}: publishing would key the deployment attestation to \
+                 an environment this database is not",
+                release.environment,
+                run_schema.as_str(),
+                release.tenant_id,
+                expected_environment,
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Report the complete attestation key one published manifest is deployable under.
@@ -891,7 +1022,10 @@ mod tests {
         args: PublishReleaseArgs,
     }
 
-    const COORDINATE: [&str; 12] = [
+    /// The schema of record declaring the fact this verb's precondition reads.
+    const RUN_STATE_SCHEMA: &str = include_str!("../../../deploy/sql/run-state.sql");
+
+    const COORDINATE: [&str; 14] = [
         "--database-url",
         "postgres://release.invalid/env",
         "--org",
@@ -904,7 +1038,13 @@ mod tests {
         "orders",
         "--catalog-version",
         "3",
+        "--run-schema",
+        "wamn_run",
     ];
+
+    fn run_schema() -> BareSchemaName {
+        BareSchemaName::new("wamn_run").expect("the schema of record is a bare identifier")
+    }
 
     /// A minted release whose four manifest-fixed parts are all distinguishable.
     fn release(environment: &str) -> ServingRelease {
@@ -990,6 +1130,7 @@ mod tests {
                 "--catalog-version",
                 "3",
             ];
+            argv.extend_from_slice(&["--run-schema", "wamn_run"]);
             argv.extend_from_slice(&placement);
             argv.extend_from_slice(&closure);
             assert!(
@@ -1022,6 +1163,226 @@ mod tests {
         assert_eq!(coordinate.triple.project, "billing");
         assert_eq!(coordinate.triple.env.as_str(), "prod");
         assert_eq!(coordinate.tenant_id, "tenant-a");
+    }
+
+    #[test]
+    fn a_release_naming_the_provisioned_environment_is_published() {
+        // The match arm: the carried label and the provisioned fact agree, so the
+        // attestation key is checked rather than trusted and the mint stands.
+        verify_provisioned_environment(Some("prod"), &release("prod"), &run_schema())
+            .expect("a release published into the environment this database is");
+    }
+
+    #[test]
+    fn a_release_naming_another_environment_than_the_database_refuses() {
+        // The bead's whole point: `catalog.catalogs.environment` is a free label,
+        // so a release row saying `prod` in a database provisioned for `staging`
+        // must REFUSE — not warn, and not be coerced to either value.
+        let refusal =
+            verify_provisioned_environment(Some("staging"), &release("prod"), &run_schema())
+                .expect_err("a release keyed to an environment this database is not");
+
+        assert_eq!(
+            refusal.kind(),
+            MintManifestErrorKind::EnvironmentPolicyMismatch
+        );
+        let rendered = format!("{refusal}");
+        assert!(
+            rendered.starts_with(RELEASE_MANIFEST_MINT_REFUSAL),
+            "refusal is unlabelled: {rendered}"
+        );
+        assert!(
+            rendered.contains("environment-policy-environment-mismatch"),
+            "the mismatch refusal does not carry its own literal: {rendered}"
+        );
+        // Both sides are named, so the operator can tell which one is wrong.
+        assert!(
+            rendered.contains("\"prod\"") && rendered.contains("\"staging\""),
+            "the mismatch refusal hides one of the two environments: {rendered}"
+        );
+    }
+
+    #[test]
+    fn an_absent_environment_policy_refuses_and_names_the_verb_that_converges_it() {
+        // Owner ruling 2026-08-26: absent REFUSES, on its own literal, and the
+        // remedy is discoverable in the error text. A guard whose defeat is
+        // "delete the row" is weaker than the check this bead asks for.
+        let refusal = verify_provisioned_environment(None, &release("prod"), &run_schema())
+            .expect_err("a release published against an unprojected environment policy");
+
+        assert_eq!(
+            refusal.kind(),
+            MintManifestErrorKind::EnvironmentPolicyAbsent
+        );
+        let rendered = format!("{refusal}");
+        assert!(
+            rendered.starts_with(RELEASE_MANIFEST_MINT_REFUSAL),
+            "refusal is unlabelled: {rendered}"
+        );
+        assert!(
+            rendered.contains("environment-policy-not-converged"),
+            "the absent refusal does not carry its own literal: {rendered}"
+        );
+        // The load-bearing rider: a fail-closed refusal whose remedy is
+        // discoverable is a guard; one whose remedy is not is a trap.
+        assert!(
+            rendered.contains("reconcile-run-plane"),
+            "the absent refusal does not name the verb that converges the policy: {rendered}"
+        );
+        assert!(
+            rendered.contains("wamn_run.environment_policies"),
+            "the absent refusal does not name the relation it looked in: {rendered}"
+        );
+    }
+
+    #[test]
+    fn absent_and_mismatched_environment_policies_never_collapse_onto_one_literal() {
+        // Two different operator situations with two different remedies. If these
+        // ever render as one code, an operator reading the error learns nothing
+        // about which of the two happened.
+        let absent = verify_provisioned_environment(None, &release("prod"), &run_schema())
+            .expect_err("an absent policy refuses");
+        let mismatch =
+            verify_provisioned_environment(Some("staging"), &release("prod"), &run_schema())
+                .expect_err("a disagreeing policy refuses");
+
+        assert_eq!(
+            MintManifestErrorKind::EnvironmentPolicyAbsent.as_str(),
+            "environment-policy-not-converged"
+        );
+        assert_eq!(
+            MintManifestErrorKind::EnvironmentPolicyMismatch.as_str(),
+            "environment-policy-environment-mismatch"
+        );
+        assert_ne!(absent.kind(), mismatch.kind());
+        assert_ne!(
+            absent.kind().as_str(),
+            mismatch.kind().as_str(),
+            "the two environment refusals rendered as one literal"
+        );
+        // Only the absent arm carries a remedy verb: the mismatch remedy is to
+        // republish elsewhere or fix the catalog row, not to reconcile.
+        assert!(!format!("{mismatch}").contains("reconcile-run-plane"));
+    }
+
+    #[test]
+    fn the_provisioned_environment_fact_is_read_from_the_relation_of_record() {
+        let declaration = RUN_STATE_SCHEMA
+            .split_once("CREATE TABLE wamn_run.environment_policies (")
+            .expect("run-state.sql declares the provisioned environment relation")
+            .1
+            .split_once("\n);")
+            .expect("the provisioned environment declaration terminates")
+            .0;
+        for column in ["tenant_id", "expected_environment"] {
+            assert!(
+                declaration.contains(column),
+                "environment_policies no longer declares {column:?}: {declaration}"
+            );
+        }
+
+        // The read names exactly those two columns, in the schema the operator
+        // named rather than a `wamn_run` this verb assumed.
+        assert_eq!(
+            expected_environment_sql(&run_schema()),
+            "SELECT expected_environment FROM \"wamn_run\".environment_policies \
+             WHERE tenant_id = $1"
+        );
+        assert_eq!(
+            expected_environment_sql(
+                &BareSchemaName::new("poc_f1").expect("a deployed run-plane schema")
+            ),
+            "SELECT expected_environment FROM \"poc_f1\".environment_policies \
+             WHERE tenant_id = $1"
+        );
+
+        // The read runs under the tenant claim the mint already set, and is safe
+        // to do so only because the relation forces row security behind it. Lose
+        // the policy and this precondition starts reading another tenant's fact.
+        assert!(
+            RUN_STATE_SCHEMA
+                .contains("ALTER TABLE wamn_run.environment_policies FORCE ROW LEVEL SECURITY"),
+            "the provisioned environment relation no longer forces row security"
+        );
+        assert!(
+            RUN_STATE_SCHEMA.contains("CREATE POLICY environment_policies_tenant"),
+            "the provisioned environment relation no longer carries its tenant policy"
+        );
+    }
+
+    #[test]
+    fn a_release_cannot_be_minted_without_the_schema_holding_its_environment_fact() {
+        // The run-plane schema does not default: `wamn_run` is the schema of
+        // record, but deployed project databases install it under operator-chosen
+        // names, and a verify against a schema nobody named is not a verify.
+        let closure = [
+            "--wiring",
+            "orders=1",
+            "--attachments",
+            "a.json",
+            "--registrations",
+            "r.json",
+        ];
+        let mut argv = vec![
+            "publish-release",
+            "--database-url",
+            "postgres://release.invalid/env",
+            "--org",
+            "acme",
+            "--project",
+            "billing",
+            "--tenant",
+            "tenant-a",
+            "--catalog-id",
+            "orders",
+            "--catalog-version",
+            "3",
+        ];
+        argv.extend_from_slice(&closure);
+        assert!(
+            PublishProbe::try_parse_from(argv).is_err(),
+            "minted a release without naming the schema holding its environment fact"
+        );
+
+        // What the operator typed, not some other string in scope, is the schema
+        // the precondition reads: the wave-58 hole was exactly a parsed argument
+        // that no test followed to its use.
+        let args = parse(&closure).expect("the complete surface parses");
+        let named = args
+            .verified_run_schema()
+            .expect("the schema of record validates");
+        assert_eq!(named.as_str(), "wamn_run");
+        assert!(expected_environment_sql(&named).contains("\"wamn_run\".environment_policies"));
+
+        let mut argv = vec!["publish-release"];
+        argv.extend_from_slice(&COORDINATE);
+        argv.extend_from_slice(&closure);
+        let typed = argv
+            .iter()
+            .position(|argument| *argument == "--run-schema")
+            .expect("the coordinate names the run-plane schema");
+        argv[typed + 1] = "poc_f1";
+        let elsewhere = PublishProbe::try_parse_from(argv)
+            .expect("another deployed run-plane schema parses")
+            .args
+            .verified_run_schema()
+            .expect("a deployed run-plane schema validates");
+        assert_eq!(elsewhere.as_str(), "poc_f1");
+        assert!(expected_environment_sql(&elsewhere).contains("\"poc_f1\".environment_policies"));
+
+        // A name that cannot be a bare schema is refused before any connection.
+        let mut argv = vec!["publish-release"];
+        argv.extend_from_slice(&COORDINATE);
+        argv.extend_from_slice(&closure);
+        argv[typed + 1] = "Run Plane\"; DROP SCHEMA catalog";
+        assert!(
+            PublishProbe::try_parse_from(argv)
+                .expect("clap takes any string")
+                .args
+                .verified_run_schema()
+                .is_err(),
+            "an unvalidated schema name reached the composed statement"
+        );
     }
 
     #[test]

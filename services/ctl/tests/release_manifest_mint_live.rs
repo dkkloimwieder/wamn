@@ -23,8 +23,8 @@ use wamn_ctl::author_wiring::{
 };
 use wamn_ctl::publish_catalog::ensure_catalog_storage;
 use wamn_ctl::publish_release::{
-    MintManifestErrorKind, MintReleaseManifest, PublishReleaseArgs, RELEASE_MANIFEST_MINT_REFUSAL,
-    ReleaseWiringTarget, mint_release_manifest,
+    MintManifestError, MintManifestErrorKind, MintReleaseManifest, PublishReleaseArgs,
+    RELEASE_MANIFEST_MINT_REFUSAL, ReleaseWiringTarget, mint_release_manifest,
 };
 use wamn_ctl::push_release_manifest::{
     PushReleaseManifestArgs, ReleaseManifestPublishDisposition, publish_release_manifest,
@@ -47,6 +47,10 @@ const WRONG_GRAPH: &str = "sha256:3333333333333333333333333333333333333333333333
 const DEFINITION: &str = "sha256:5555555555555555555555555555555555555555555555555555555555555555";
 /// The deployed control-plane DDL, read for its gate-report declaration alone.
 const CONTROL_PORTABLE_STORE: &str = include_str!("../../../deploy/sql/control-portable-store.sql");
+/// The deployed run-plane DDL, read for the provisioned environment fact alone.
+const RUN_STATE_SCHEMA: &str = include_str!("../../../deploy/sql/run-state.sql");
+/// The run-plane schema of record, named on the publish surface like any deployed one.
+const RUN_SCHEMA: &str = "wamn_run";
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
 
@@ -234,6 +238,134 @@ async fn provision(admin: &Client) {
     ensure_catalog_storage(admin)
         .await
         .expect("install the production catalog schema");
+}
+
+/// One contiguous run of statements lifted verbatim out of a schema of record.
+fn statements_of_record(source: &'static str, first: &str, last: &str) -> &'static str {
+    let start = source
+        .find(first)
+        .unwrap_or_else(|| panic!("the schema of record no longer declares {first:?}"));
+    let end = source[start..]
+        .find(last)
+        .unwrap_or_else(|| panic!("the schema of record no longer declares {last:?}"))
+        + last.len();
+    &source[start..start + end]
+}
+
+/// Install the provisioned environment fact exactly as `run-state.sql` declares
+/// it — relation, forced row security, tenant policy and grants — so the live
+/// proof reads the relation production reads rather than a restatement of it.
+///
+/// `expected_environment` of `None` installs the relation with NO row for this
+/// tenant: the absent case is a real empty relation, not a dropped table.
+async fn provision_environment_policy(admin: &Client, expected_environment: Option<&str>) {
+    admin
+        .batch_execute(&format!(
+            "DROP SCHEMA IF EXISTS {RUN_SCHEMA} CASCADE; \
+             DO $$ BEGIN \
+               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
+                 CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+             END $$; \
+             {} \
+             {}",
+            statements_of_record(
+                RUN_STATE_SCHEMA,
+                "CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;",
+                "GRANT USAGE ON SCHEMA wamn_run TO wamn_effect_writer;",
+            ),
+            statements_of_record(
+                RUN_STATE_SCHEMA,
+                "CREATE TABLE wamn_run.environment_policies (",
+                "GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_scenario_author;",
+            ),
+        ))
+        .await
+        .expect("install the provisioned environment relation of record");
+    if let Some(expected_environment) = expected_environment {
+        admin
+            .execute(
+                "INSERT INTO wamn_run.environment_policies \
+                       (tenant_id, expected_environment, durability_class) \
+                 VALUES ($1, $2, 'standard')",
+                &[&TENANT, &expected_environment],
+            )
+            .await
+            .expect("project the provisioned environment fact");
+    }
+}
+
+/// Assert that this release left no frozen closure behind.
+async fn assert_no_release_was_frozen(admin: &Client) {
+    for relation in [
+        "catalog.release_manifest_v2_snapshots",
+        "catalog.release_components",
+    ] {
+        let frozen: i64 = admin
+            .query_one(
+                &format!(
+                    "SELECT count(*) FROM {relation} \
+                      WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3"
+                ),
+                &[&TENANT, &CATALOG, &CATALOG_VERSION],
+            )
+            .await
+            .expect("count the frozen release rows")
+            .get(0);
+        assert_eq!(frozen, 0, "a refused publish committed rows to {relation}");
+    }
+}
+
+/// Mint one first release through the CLI verb against a seeded environment.
+async fn publish_first_release(url: &str, documents: &Path) -> anyhow::Result<()> {
+    wamn_ctl::publish_release::run(PublishReleaseArgs {
+        database_url: url.to_owned(),
+        org: ORG.to_string(),
+        project: PROJECT.to_string(),
+        tenant: TENANT.to_string(),
+        catalog_id: CATALOG.to_string(),
+        catalog_version: CATALOG_VERSION as u32,
+        run_schema: RUN_SCHEMA.to_string(),
+        wirings: targets().into_iter().collect(),
+        attachments: write_document(documents, "attachments.json", &attachments()),
+        registrations: write_document(documents, "registrations.json", &registrations()),
+    })
+    .await
+}
+
+/// Seed the whole closure one CLI publish needs, short of its environment policy.
+async fn seed_publishable_release(admin: &Client, url: &str, documents: &Path) {
+    provision(admin).await;
+    provision_gate_reports(admin).await;
+    seed_release(admin, CATALOG_VERSION, "applied").await;
+    seed_component(admin, "http-request", COMPONENT_A).await;
+    seed_component(admin, "transform", COMPONENT_B).await;
+    let orders = wiring("orders", 1, "http-request", WiringTerminal::Respond);
+    let shipping = wiring(
+        "shipping",
+        2,
+        "transform",
+        WiringTerminal::emit("orders", WiringEventOperation::Insert),
+    );
+    for document in [&orders, &shipping] {
+        record_green_report(admin, document).await;
+        wamn_ctl::author_wiring::run(AuthorWiringArgs {
+            database_url: url.to_owned(),
+            control_database_url: url.to_owned(),
+            tenant: TENANT.to_string(),
+            catalog_id: CATALOG.to_string(),
+            gated_catalog_version: CATALOG_VERSION as u32,
+            wiring_document: write_document(
+                documents,
+                &format!("{}.json", document.wiring_id),
+                document,
+            ),
+        })
+        .await
+        .expect("the authorship verb gates and stores one wiring document");
+    }
 }
 
 async fn seed_release(admin: &Client, catalog_version: i32, state: &str) {
@@ -860,62 +992,22 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
         .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
 
     let (admin, task) = connect(&url).await;
-    provision(&admin).await;
-    provision_gate_reports(&admin).await;
-    seed_release(&admin, CATALOG_VERSION, "applied").await;
-    seed_component(&admin, "http-request", COMPONENT_A).await;
-    seed_component(&admin, "transform", COMPONENT_B).await;
-    let orders = wiring("orders", 1, "http-request", WiringTerminal::Respond);
-    let shipping = wiring(
-        "shipping",
-        2,
-        "transform",
-        WiringTerminal::emit("orders", WiringEventOperation::Insert),
-    );
-
     let documents =
         std::env::temp_dir().join(format!("wamn-publish-release-{}", std::process::id()));
     std::fs::create_dir_all(&documents).expect("create the interim document directory");
-    let attachments_path = write_document(&documents, "attachments.json", &attachments());
-    let registrations_path = write_document(&documents, "registrations.json", &registrations());
-
     // The wirings this release closes over are authored by the CLI verb from
     // their documents. Nothing between an empty environment and a first release
     // is hand SQL any more (wamn-1xb5).
-    for document in [&orders, &shipping] {
-        record_green_report(&admin, document).await;
-        wamn_ctl::author_wiring::run(AuthorWiringArgs {
-            database_url: url.clone(),
-            // Co-resident by fixture only; see `provision_gate_reports`.
-            control_database_url: url.clone(),
-            tenant: TENANT.to_string(),
-            catalog_id: CATALOG.to_string(),
-            gated_catalog_version: CATALOG_VERSION as u32,
-            wiring_document: write_document(
-                &documents,
-                &format!("{}.json", document.wiring_id),
-                document,
-            ),
-        })
-        .await
-        .expect("the authorship verb gates and stores one wiring document");
-    }
+    seed_publishable_release(&admin, &url, &documents).await;
+    // The verb's precondition, satisfied: this project database is provisioned
+    // for exactly the environment the catalog row labels the release with.
+    provision_environment_policy(&admin, Some(ENVIRONMENT)).await;
 
     // The first release in this environment is minted by the CLI verb alone:
     // no hand SQL, no Rust test calling the mint, no source release to promote.
-    wamn_ctl::publish_release::run(PublishReleaseArgs {
-        database_url: url.clone(),
-        org: ORG.to_string(),
-        project: PROJECT.to_string(),
-        tenant: TENANT.to_string(),
-        catalog_id: CATALOG.to_string(),
-        catalog_version: CATALOG_VERSION as u32,
-        wirings: targets().into_iter().collect(),
-        attachments: attachments_path,
-        registrations: registrations_path,
-    })
-    .await
-    .expect("the interim publish verb mints a first release");
+    publish_first_release(&url, &documents)
+        .await
+        .expect("the interim publish verb mints a first release");
 
     let frozen = admin
         .query_one(
@@ -983,6 +1075,188 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
     );
 
     std::fs::remove_dir_all(&documents).expect("remove the interim document directory");
+    drop(admin);
+    let _ = task.await;
+}
+
+/// The verify arm, live: the environment a release carries is checked against the
+/// environment the connected project database was PROVISIONED for, and a release
+/// that names another one refuses instead of keying an attestation to it.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 URL in WAMN_RELEASE_MANIFEST_MINT_PG_URL"]
+async fn a_release_labelled_for_another_environment_than_this_database_refuses() {
+    let _lock = support::lock();
+    let url = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL")
+        .expect("WAMN_RELEASE_MANIFEST_MINT_PG_URL names a disposable PostgreSQL 18 database");
+
+    let (admin, task) = connect(&url).await;
+    let documents = std::env::temp_dir().join(format!(
+        "wamn-publish-release-mismatch-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&documents).expect("create the interim document directory");
+    seed_publishable_release(&admin, &url, &documents).await;
+    // `catalog.catalogs.environment` labels this release `prod` (D18 puts no
+    // constraint on that column at all); `reconcile-run-plane` projected this
+    // database as `staging`. The label must lose.
+    provision_environment_policy(&admin, Some("staging")).await;
+
+    let refusal = publish_first_release(&url, &documents)
+        .await
+        .expect_err("a release keyed to an environment this database is not");
+    let typed = refusal
+        .downcast_ref::<MintManifestError>()
+        .unwrap_or_else(|| panic!("the publish verb refused untyped: {refusal:#}"));
+    assert_eq!(
+        typed.kind(),
+        MintManifestErrorKind::EnvironmentPolicyMismatch,
+        "refused as {refusal:#}"
+    );
+    let rendered = format!("{typed}");
+    assert!(
+        rendered.contains("environment-policy-environment-mismatch")
+            && rendered.contains("\"prod\"")
+            && rendered.contains("\"staging\""),
+        "the live refusal does not name the two environments: {rendered}"
+    );
+    // Fail-closed: the refusal runs inside the mint's own transaction, so the
+    // release it would have keyed is not frozen at all.
+    assert_no_release_was_frozen(&admin).await;
+
+    std::fs::remove_dir_all(&documents).expect("remove the interim document directory");
+    drop(admin);
+    let _ = task.await;
+}
+
+/// The absent arm, live (owner ruling 2026-08-26): a project database with no
+/// projected environment policy for this tenant refuses on its OWN literal, and
+/// the refusal names the verb that converges the policy.
+///
+/// This test also observes the grant and the row-security floor on a role that is
+/// NOT the superuser the rest of this fixture connects as, because a superuser
+/// fixture cannot prove either.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 URL in WAMN_RELEASE_MANIFEST_MINT_PG_URL"]
+async fn a_release_with_no_projected_environment_policy_refuses() {
+    let _lock = support::lock();
+    let url = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL")
+        .expect("WAMN_RELEASE_MANIFEST_MINT_PG_URL names a disposable PostgreSQL 18 database");
+
+    let (admin, task) = connect(&url).await;
+    let documents = std::env::temp_dir().join(format!(
+        "wamn-publish-release-absent-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&documents).expect("create the interim document directory");
+    seed_publishable_release(&admin, &url, &documents).await;
+    // The relation exists and is empty: nothing was ever projected for this
+    // tenant, which is exactly the state a never-reconciled project is in.
+    provision_environment_policy(&admin, None).await;
+
+    let refusal = publish_first_release(&url, &documents)
+        .await
+        .expect_err("a release published against an unprojected environment policy");
+    let typed = refusal
+        .downcast_ref::<MintManifestError>()
+        .unwrap_or_else(|| panic!("the publish verb refused untyped: {refusal:#}"));
+    assert_eq!(
+        typed.kind(),
+        MintManifestErrorKind::EnvironmentPolicyAbsent,
+        "refused as {refusal:#}"
+    );
+    let rendered = format!("{typed}");
+    assert!(
+        rendered.contains("environment-policy-not-converged"),
+        "the live absent refusal does not carry its own literal: {rendered}"
+    );
+    assert!(
+        rendered.contains("reconcile-run-plane"),
+        "the live absent refusal does not name its remedy verb: {rendered}"
+    );
+    assert_no_release_was_frozen(&admin).await;
+
+    // The privilege question this precondition rests on, answered on a role that
+    // does not bypass row security: `wamn_app` may SELECT the relation, and sees
+    // only the tenant its `app.tenant` claim names. The superuser the mint
+    // connects as in this fixture could not have shown either.
+    admin
+        .execute(
+            "INSERT INTO wamn_run.environment_policies \
+                   (tenant_id, expected_environment, durability_class) \
+             VALUES ($1, $2, 'standard'), ('other-tenant', 'prod', 'standard')",
+            &[&TENANT, &ENVIRONMENT],
+        )
+        .await
+        .expect("project two tenants' environment facts");
+    admin
+        .batch_execute("ALTER ROLE wamn_app LOGIN PASSWORD 'w71b-policy-reader'")
+        .await
+        .expect("give the app role a live-test password");
+    let mut reader_url = url::Url::parse(&url).expect("the live database URL parses");
+    reader_url
+        .set_username("wamn_app")
+        .expect("name the app role");
+    reader_url
+        .set_password(Some("w71b-policy-reader"))
+        .expect("carry the app role password");
+    let (reader, reader_task) = connect(reader_url.as_str()).await;
+    let bypasses: bool = reader
+        .query_one(
+            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user",
+            &[],
+        )
+        .await
+        .expect("observe the reading role")
+        .get(0);
+    assert!(!bypasses, "the reading role bypasses row security");
+    let granted: bool = reader
+        .query_one(
+            "SELECT pg_catalog.has_table_privilege( \
+                      current_user, 'wamn_run.environment_policies', 'SELECT')",
+            &[],
+        )
+        .await
+        .expect("observe the read grant")
+        .get(0);
+    assert!(
+        granted,
+        "the production app role cannot SELECT the provisioned environment fact"
+    );
+    for (claim, visible) in [(TENANT, 1_i64), ("other-tenant", 1), ("absent-tenant", 0)] {
+        reader
+            .execute("SELECT set_config('app.tenant', $1, false)", &[&claim])
+            .await
+            .expect("claim the reading tenant");
+        let rows: i64 = reader
+            .query_one(
+                "SELECT count(*) FROM wamn_run.environment_policies WHERE tenant_id = $1",
+                &[&claim],
+            )
+            .await
+            .expect("read the provisioned environment fact")
+            .get(0);
+        assert_eq!(rows, visible, "row security let {claim:?} see {rows} rows");
+    }
+    reader
+        .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
+        .await
+        .expect("claim the release tenant");
+    let crossed: i64 = reader
+        .query_one(
+            "SELECT count(*) FROM wamn_run.environment_policies WHERE tenant_id <> $1",
+            &[&TENANT],
+        )
+        .await
+        .expect("read across the tenant boundary")
+        .get(0);
+    assert_eq!(
+        crossed, 0,
+        "the claimed tenant read another tenant's policy"
+    );
+
+    std::fs::remove_dir_all(&documents).expect("remove the interim document directory");
+    drop(reader);
+    let _ = reader_task.await;
     drop(admin);
     let _ = task.await;
 }
