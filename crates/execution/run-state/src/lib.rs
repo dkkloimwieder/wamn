@@ -37,6 +37,8 @@ pub mod admission;
 /// so a live path referencing it fails to compile instead of being grepped for.
 #[cfg(feature = "durable-tier")]
 pub mod attempt;
+/// The closed authority a trusted caller selects its credential under.
+pub mod authority_class;
 /// The durability class a run was admitted under, and the crash-floor gate.
 pub mod durability;
 /// Shared strict credential document for the private native effect writer.
@@ -63,6 +65,7 @@ mod status;
 /// Typed, queue-joined executor transitions.
 pub mod transitions;
 
+pub use authority_class::AuthorityClass;
 pub use durability::{DURABLE_CLASS_SQL_PREDICATE, DurabilityClass};
 #[cfg(feature = "native")]
 pub use effect_writer::{

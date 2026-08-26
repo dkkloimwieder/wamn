@@ -4,7 +4,7 @@ use std::fmt;
 
 use sha2::{Digest as _, Sha256};
 use wamn_run_state::{
-    CredentialGeneration, EFFECT_WRITER_ROLE, effect_writer_generation_role,
+    AuthorityClass, CredentialGeneration, EFFECT_WRITER_ROLE, effect_writer_generation_role,
     effect_writer_scope_hash,
 };
 
@@ -136,6 +136,30 @@ impl WorkloadRoleFamily {
             Self::ExecutorPlatform => b"wamn.executor-platform.scope.v0.1",
             Self::HttpAdmitter => b"wamn.http-admitter.scope.v0.1",
             Self::EventMaterializer => b"wamn.event-materializer.scope.v0.1",
+        }
+    }
+}
+
+/// The ruled projection from authority class onto provisioning family.
+///
+/// `wamn-0h0g.22.14` fixed these four rows and the shape they must keep: ONE
+/// family per class, closed and total over the exact enum, every variant
+/// matched explicitly, and NO wildcard or default arm — so an added or unmapped
+/// class is a compile error here rather than a runtime fallback. If any row
+/// ever needs two families, that row returns as its own owner question rather
+/// than growing an arm.
+///
+/// The direction is deliberate and one-way. Several families (`EffectWriter`,
+/// `ControlAuthor`, `DispatchReader`, `ServiceReader`, `Retention`,
+/// `ManagementAdmitter`) carry no authority class at all, so the inverse is not
+/// a function and is not offered.
+impl From<AuthorityClass> for WorkloadRoleFamily {
+    fn from(class: AuthorityClass) -> Self {
+        match class {
+            AuthorityClass::GuestSql => Self::App,
+            AuthorityClass::ExecutorPlatform => Self::ExecutorPlatform,
+            AuthorityClass::CallableHttp => Self::HttpAdmitter,
+            AuthorityClass::EventMaterializer => Self::EventMaterializer,
         }
     }
 }
@@ -345,6 +369,64 @@ fn frame(preimage: &mut Vec<u8>, value: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The four rows `wamn-0h0g.22.14` ruled, pinned end to end: class ->
+    /// family -> the stable ACL role name the ruling actually named. Going all
+    /// the way to the role string is the point — asserting only the family
+    /// would pass even if a family were later repointed at another role.
+    #[test]
+    fn the_ruled_authority_class_rows_hold() {
+        let ruled = [
+            (AuthorityClass::GuestSql, "wamn_app"),
+            (AuthorityClass::ExecutorPlatform, "wamn_executor_platform"),
+            (AuthorityClass::CallableHttp, "wamn_http_admitter"),
+            (AuthorityClass::EventMaterializer, "wamn_event_materializer"),
+        ];
+        for (class, role) in ruled {
+            assert_eq!(
+                WorkloadRoleFamily::from(class).acl_role(),
+                role,
+                "wamn-0h0g.22.14 ruled {class} -> {role}"
+            );
+        }
+    }
+
+    /// One family per class. A collapse mapping two classes onto one family is
+    /// the mutant this kills; the ruling forbids it, and it would silently give
+    /// one class the other's authority.
+    #[test]
+    fn no_two_authority_classes_share_a_family() {
+        let mut seen: Vec<(AuthorityClass, WorkloadRoleFamily)> = Vec::new();
+        for class in AuthorityClass::ALL {
+            let family = WorkloadRoleFamily::from(class);
+            if let Some((other, _)) = seen.iter().find(|(_, f)| *f == family) {
+                panic!(
+                    "{class} and {other} both map to {family:?}; the ruling is one family per class"
+                );
+            }
+            seen.push((class, family));
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    /// Every class is covered. `ALL` plus the exhaustive match in `From` means a
+    /// new variant cannot reach production unmapped: the match is a compile
+    /// error first, and this catches an `ALL` that was not extended with it.
+    #[test]
+    fn every_authority_class_projects() {
+        assert_eq!(
+            AuthorityClass::ALL.len(),
+            4,
+            "a new authority class must be added to the ruled table above and to ALL"
+        );
+        for class in AuthorityClass::ALL {
+            let role = WorkloadRoleFamily::from(class).acl_role();
+            assert!(
+                role.starts_with("wamn_"),
+                "{class} projects onto {role}, which is not a wamn role"
+            );
+        }
+    }
 
     /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten).
     const FAMILIES: [WorkloadRoleFamily; 10] = [
