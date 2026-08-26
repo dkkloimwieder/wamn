@@ -12,7 +12,11 @@
 
 use std::process::Command;
 
-use wamn_control_provision::tenant_key::{tenant_key, tenant_key_function_sql};
+use wamn_control_provision::tenant_key::{authority_derivations_sql, tenant_key};
+use wamn_control_provision::workload_role::{
+    WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+};
+use wamn_run_state::CredentialGeneration;
 
 /// Every test gets its OWN database and its OWN roles.
 ///
@@ -115,7 +119,7 @@ fn reset(admin_url: &str, scope: &Scope) -> String {
 
 /// The DDL under test, rendered for one isolated scope.
 fn ddl(scope: &Scope) -> String {
-    tenant_key_function_sql(&scope.db)
+    authority_derivations_sql(&scope.db)
         .replace("\"wamn_db_owner\"", &format!("\"{}\"", scope.owner))
         .replace("\"wamn_app\"", &format!("\"{}\"", scope.app))
 }
@@ -171,18 +175,36 @@ fn the_function_carries_the_flags_the_expression_index_requires() {
     // Read from pg_proc, NOT from the DDL text. A function that silently lost
     // IMMUTABLE still creates fine and breaks every expression index built on
     // it, so the catalog is the only answer worth trusting.
-    let flags = psql(
-        &db_url,
-        None,
-        // Explicit casts: `\"char\" || \"char\"` is an ambiguous operator.
-        "SELECT p.provolatile::text || p.proparallel::text \
-           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
-          WHERE n.nspname = 'wamn_authority' AND p.proname = 'tenant_key'",
-    );
+    let flags = |name: &str| {
+        psql(
+            &db_url,
+            None,
+            // Explicit casts: `\"char\" || \"char\"` is an ambiguous operator.
+            &format!(
+                "SELECT p.provolatile::text || p.proparallel::text \
+                 || CASE WHEN p.prosecdef THEN 'd' ELSE 'i' END \
+                   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+                  WHERE n.nspname = 'wamn_authority' AND p.proname = '{name}'"
+            ),
+        )
+    };
     assert_eq!(
-        flags, "is",
-        "provolatile must be 'i' (IMMUTABLE) and proparallel 's' (SAFE); \
-         without IMMUTABLE the expression index is not even creatable"
+        flags("tenant_key"),
+        "isi",
+        "provolatile must be 'i' (IMMUTABLE), proparallel 's' (SAFE) and the \
+         function SECURITY INVOKER; without IMMUTABLE the expression index is \
+         not even creatable"
+    );
+    // The session side reads `current_user`, so STABLE is the strongest it can
+    // be — and is all an index scan needs on the comparison side. SECURITY
+    // INVOKER matters more here than anywhere: a DEFINER function reading
+    // `current_user` would report the DEFINER's identity, handing every session
+    // the owner's key.
+    assert_eq!(
+        flags("current_tenant_key"),
+        "ssi",
+        "provolatile must be 's' (STABLE), proparallel 's' (SAFE), and the \
+         function must be SECURITY INVOKER"
     );
 
     // The expression index the ruling requires must actually be creatable.
@@ -261,6 +283,38 @@ fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
         public_execute, "f",
         "PUBLIC must hold nothing on the derivation"
     );
+
+    // The session side carries the same posture. It is the half an attacker
+    // would rather own: redefining it to return a chosen key unlocks every
+    // tenant without touching a single policy.
+    let session_execute = psql(
+        &db_url,
+        None,
+        &format!(
+            // Both sides cast: `boolean || boolean` would render one as
+            // `true`/`false` and the other as `t`/`f`.
+            "SELECT has_function_privilege('{app}', \
+             'wamn_authority.current_tenant_key()', 'EXECUTE')::text \
+             || has_function_privilege('public', \
+             'wamn_authority.current_tenant_key()', 'EXECUTE')::text",
+            app = scope.app
+        ),
+    );
+    assert_eq!(
+        session_execute, "truefalse",
+        "the guest family may CALL the session derivation and PUBLIC may not"
+    );
+    let session_owner = psql(
+        &db_url,
+        None,
+        "SELECT pg_get_userbyid(p.proowner) \
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+          WHERE n.nspname = 'wamn_authority' AND p.proname = 'current_tenant_key'",
+    );
+    assert_eq!(
+        session_owner, scope.owner,
+        "the platform role owns the session derivation, not the guest"
+    );
 }
 
 /// R55: the bar is POST-STATE, not exit status. A second apply must leave the
@@ -277,13 +331,16 @@ fn a_second_apply_leaves_the_definition_identical() {
     };
     let scope = Scope::new("converge");
     let db_url = reset(&admin, &scope);
+    // BOTH derivations, ordered: a converge arm that watched only one would
+    // let the other drift silently between the two appliers.
     let definition = |url: &str| {
         psql(
             url,
             None,
-            "SELECT md5(pg_get_functiondef(p.oid)) \
+            "SELECT string_agg(md5(pg_get_functiondef(p.oid)), ' ' ORDER BY p.proname) \
                FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
-              WHERE n.nspname = 'wamn_authority' AND p.proname = 'tenant_key'",
+              WHERE n.nspname = 'wamn_authority' \
+                AND p.proname IN ('tenant_key', 'current_tenant_key')",
         )
     };
 
@@ -298,5 +355,143 @@ fn a_second_apply_leaves_the_definition_identical() {
          (catalog-schema.sql for fresh installs, wamn-0h0g.11.49's path for \
          existing databases) are not provably the same object"
     );
-    assert!(!first.is_empty(), "the function must exist after applying");
+    assert_eq!(
+        first.split(' ').count(),
+        2,
+        "both derivations must exist after applying, got {first:?}"
+    );
+}
+
+/// Throwaway password for the probe logins in this file. Not a credential of
+/// record: the gate builds and drops these roles inside a disposable container.
+const PROBE_PASSWORD: &str = "tenant-key-probe";
+
+/// Rewrite an admin URL onto another role and database.
+fn role_url(admin_url: &str, role: &str, database: &str) -> String {
+    let after_userinfo = admin_url
+        .rsplit_once('@')
+        .expect("the admin url carries userinfo")
+        .1;
+    let host = after_userinfo
+        .split('/')
+        .next()
+        .expect("the host precedes the database");
+    format!("postgres://{role}:{PROBE_PASSWORD}@{host}/{database}")
+}
+
+/// THE PREDICATE, END TO END, against a login the MINT actually produced.
+///
+/// `workload_generation_role` composes the name and `current_tenant_key`
+/// decomposes it, in two languages. The Rust unit tests can only prove the
+/// shape they share; whether PostgreSQL's regex agrees is a fact about
+/// PostgreSQL, and this is the only place it is established.
+#[test]
+fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_KEY_PG_URL") else {
+        eprintln!(
+            "skipping the_session_derivation_returns_the_key_of_the_connected_guest_login \
+             (set WAMN_TENANT_KEY_PG_URL to run)"
+        );
+        return;
+    };
+    let scope = Scope::new("session");
+    let db_url = reset(&admin, &scope);
+    psql_file(&db_url, &ddl(&scope));
+
+    let tenant = "acme";
+    let key = tenant_key(tenant, &scope.db);
+    let login = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant,
+            database: &scope.db,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("App takes a tenant scope");
+
+    // The near misses exist to prove the ANCHORS, which are the difference
+    // between a derivation and a cross-tenant read: without `^` a crafted role
+    // could carry a victim's key as a suffix, without `$` as a prefix. Both
+    // names are legal identifiers, so nothing but the anchors refuses them.
+    let head_attack = format!("x{login}");
+    let tail_attack = format!("{login}x");
+    for role in [&login, &head_attack, &tail_attack] {
+        psql_file(
+            &admin,
+            &format!(
+                "DO $$ BEGIN \
+                   IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
+                     DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\"; END IF; \
+                 END $$"
+            ),
+        );
+        psql_file(
+            &admin,
+            &format!("CREATE ROLE \"{role}\" LOGIN PASSWORD '{PROBE_PASSWORD}'"),
+        );
+        // Exactly the production shape: the generation holds no privilege of
+        // its own and inherits the stable NOLOGIN ACL role.
+        psql_file(&admin, &format!("GRANT {} TO \"{role}\"", scope.app));
+    }
+
+    let observed = psql(
+        &role_url(&admin, &login, &scope.db),
+        None,
+        "SELECT coalesce(wamn_authority.current_tenant_key(), '<null>')",
+    );
+    assert_eq!(
+        observed, key,
+        "the session derivation must return the connected login's tenant key; \
+         if it does not, every governed predicate refuses every row"
+    );
+
+    // The governed predicate itself, evaluated by the server as the guest.
+    let predicate = psql(
+        &role_url(&admin, &login, &scope.db),
+        None,
+        &format!(
+            "SELECT wamn_authority.tenant_key('{tenant}') \
+             = wamn_authority.current_tenant_key()"
+        ),
+    );
+    assert_eq!(
+        predicate, "t",
+        "the two halves of the governed predicate must agree for the tenant \
+         the connected login was minted for"
+    );
+
+    for (role, why) in [
+        (
+            &head_attack,
+            "a name merely ENDING in a guest login must not match",
+        ),
+        (
+            &tail_attack,
+            "a name merely STARTING with a guest login must not match",
+        ),
+    ] {
+        let attacked = psql(
+            &role_url(&admin, role, &scope.db),
+            None,
+            "SELECT coalesce(wamn_authority.current_tenant_key(), '<null>')",
+        );
+        assert_eq!(attacked, "<null>", "{why} (role {role})");
+    }
+
+    // FAIL CLOSED for anything that is not a guest generation at all — the
+    // posture `session_author_tenant()` takes for an unmapped login.
+    let non_guest = psql(
+        &db_url,
+        None,
+        "SELECT coalesce(wamn_authority.current_tenant_key(), '<null>')",
+    );
+    assert_eq!(
+        non_guest, "<null>",
+        "a role outside the guest generation convention holds no tenant key"
+    );
+
+    for role in [&login, &head_attack, &tail_attack] {
+        psql_file(&admin, &format!("DROP ROLE \"{role}\""));
+    }
 }

@@ -344,14 +344,21 @@ WAMN_TENANT_KEY_PG_URL=postgres://postgres:probe@localhost:5433/postgres \
 docker rm -f wamn-tenantkey-pg      # BY EXPLICIT NAME. Never prune.
 ```
 
-Each test builds **its own** database and **its own** roles, so the four are
+Each test builds **its own** database and **its own** roles, so the five are
 safe under the default parallel runner. They previously shared both and
 destroyed each other when the workspace sweep ran them concurrently; isolation
 by construction beats remembering `--test-threads=1`.
 
-The gate reads `provolatile`/`proparallel` from `pg_proc` rather than from the
-DDL text, because a function that silently lost `IMMUTABLE` still creates fine
-and breaks every expression index built on it.
+The gate reads `provolatile`/`proparallel`/`prosecdef` from `pg_proc` rather
+than from the DDL text, because a function that silently lost `IMMUTABLE` still
+creates fine and breaks every expression index built on it.
+
+`the_session_derivation_returns_the_key_of_the_connected_guest_login`
+(`wamn-0h0g.22.6.5`) is the end-to-end arm: it mints a login with
+`workload_generation_role`, connects **as that role**, and asserts
+`wamn_authority.current_tenant_key()` returns the tenant key — plus two
+near-miss role names (`x<login>`, `<login>x`) that prove the pattern's anchors.
+Unanchored, either one would read another tenant's rows.
 
 ### Other live gates that carry their command in-source
 
