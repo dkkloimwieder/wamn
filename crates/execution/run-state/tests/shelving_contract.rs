@@ -56,6 +56,147 @@ const CRASH_FLOOR_VOCABULARY: &[&str] = &[
     "lease_expires_at",
 ];
 
+/// `source` with every comment removed and every other byte preserved.
+///
+/// The needle narrowing of wamn-q3kq. Some guards below cannot follow the
+/// identifier-only rule above — the terminal scan reads for bare stems like
+/// `admit`, because an `admit` arriving as ANY shape is the leak — and a bare
+/// stem reads on prose: `terminal.rs` says three times that its selector
+/// arrives already ADMITTED from elsewhere, which a substring scan cannot tell
+/// apart from the router growing an admission of its own. Scanning executable
+/// positions only is the same narrowing wamn-0h0g.15.140 applied to the WIT
+/// guards and wamn-0h0g.15.149 to the SQL ones; both of those files have since
+/// been deleted, so this is that technique's surviving copy, not a third one.
+///
+/// A comment becomes whitespace rather than nothing: newlines are kept so
+/// line-shaped assertions still line up, and a block comment leaves one space
+/// behind so deleting it cannot fuse two otherwise distinct tokens.
+fn without_rust_comments(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut code = String::with_capacity(source.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let rest = &bytes[index..];
+        if rest.starts_with(b"//") {
+            index += rest
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .unwrap_or(rest.len());
+        } else if rest.starts_with(b"/*") {
+            code.push(' ');
+            index += 2;
+            let mut depth = 1_usize;
+            while depth > 0 && index < bytes.len() {
+                match (bytes[index], bytes.get(index + 1)) {
+                    (b'/', Some(b'*')) => {
+                        depth += 1;
+                        index += 2;
+                    }
+                    (b'*', Some(b'/')) => {
+                        depth -= 1;
+                        index += 2;
+                    }
+                    (byte, _) => {
+                        if byte == b'\n' {
+                            code.push('\n');
+                        }
+                        index += 1;
+                    }
+                }
+            }
+        } else {
+            let width = literal_width(rest).unwrap_or_else(|| {
+                source[index..]
+                    .chars()
+                    .next()
+                    .expect("index is on a UTF-8 boundary")
+                    .len_utf8()
+            });
+            code.push_str(&source[index..index + width]);
+            index += width;
+        }
+    }
+    code
+}
+
+/// Byte length of the string, raw-string, or character literal `rest` opens, or
+/// `None` if it opens none.
+///
+/// Literals are copied through whole, because `"// admit"` is a value the
+/// router carries, not a comment about one. The `'` arm must also decide
+/// LITERAL versus LIFETIME: reading `&'a str` as an open quote would swallow
+/// the rest of the file and leave the guard silently inert.
+fn literal_width(rest: &[u8]) -> Option<usize> {
+    match rest[0] {
+        b'r' => {
+            let hashes = rest[1..].iter().take_while(|byte| **byte == b'#').count();
+            if rest.get(1 + hashes) != Some(&b'"') {
+                return None;
+            }
+            let opened = 1 + hashes + 1;
+            let mut terminator = vec![b'"'];
+            terminator.resize(1 + hashes, b'#');
+            let end = rest[opened..]
+                .windows(terminator.len())
+                .position(|window| window == terminator)?;
+            Some(opened + end + terminator.len())
+        }
+        b'"' => {
+            let mut cursor = 1;
+            while cursor < rest.len() {
+                match rest[cursor] {
+                    b'\\' => cursor += 2,
+                    b'"' => return Some(cursor + 1),
+                    _ => cursor += 1,
+                }
+            }
+            None
+        }
+        b'\'' if rest.get(1) == Some(&b'\\') => rest
+            .get(3..)?
+            .iter()
+            .position(|byte| *byte == b'\'')
+            .map(|end| 4 + end),
+        b'\'' => (rest.get(2) == Some(&b'\'')).then_some(3),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_forbidden_stem_in_a_comment_is_not_an_executable_position() {
+    for commented in [
+        "/// routed only by this admitted selector\npub enum Terminal {}",
+        "pub enum Terminal {} // admit\n",
+        "/* admit /* admission */ idempotency */\npub enum Terminal {}",
+    ] {
+        let code = without_rust_comments(commented);
+        assert!(
+            !code.contains("admit"),
+            "a comment survived stripping: {code}"
+        );
+        assert!(code.contains("pub enum Terminal {}"));
+    }
+}
+
+#[test]
+fn a_forbidden_stem_in_code_survives_stripping() {
+    // Both occurrences are executable — a string literal is a value the crate
+    // carries, not prose about one — and the commented one is not.
+    let code = without_rust_comments(
+        "/* fn admit() {} */\nfn admit(id: &str) -> bool { id.contains(\"// admit\") }\n",
+    );
+
+    assert_eq!(code.matches("admit").count(), 2, "stripped to: {code}");
+}
+
+#[test]
+fn a_lifetime_does_not_swallow_the_rest_of_the_source() {
+    let code = without_rust_comments("fn id<'a>(value: &'a str) -> &'a str { value } // admit\n");
+
+    assert!(code.contains("fn id<'a>(value: &'a str) -> &'a str { value }"));
+    assert!(!code.contains("admit"), "stripped to: {code}");
+}
+
 #[test]
 fn paths_one_and_two_carry_no_durability_dependency() {
     for (name, source) in ROUTER_SOURCES {
@@ -100,6 +241,11 @@ fn the_terminal_vocabulary_is_class_independent() {
         .find(|(name, _)| *name == "terminal.rs")
         .expect("the terminal module is covered")
         .1;
+    // Executable positions only, both ways: a verdict that survives solely in a
+    // doc comment is as much a lie as a forbidden stem that only appears in one
+    // (wamn-q3kq). Non-comment bytes are preserved exactly, so the multi-line
+    // shapes below still match.
+    let terminal = without_rust_comments(terminal);
     for required in [
         "pub const DEDUP_ID_FIELD: &str = \"dedup-id\";",
         "Respond { payload: Value, node_id: String },",
