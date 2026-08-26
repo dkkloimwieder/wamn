@@ -325,6 +325,34 @@ WAMN_SCS_OFF_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
 The test asserts the server genuinely reports `off` before proceeding, so a
 stock server makes it fail rather than pass vacuously.
 
+### `[TENANT-KEY]` — the Rust≡SQL tenant-key agreement gate
+
+`crates/control/provision/tests/tenant_key_live.rs` (`wamn-0h0g.22.6.1`). The
+sharpest failure mode in Phase B item 2: provisioning mints a guest login whose
+name carries the scope digest, and every governed RLS predicate recomputes that
+digest **in SQL** from `current_user`. One of those two implementations exists
+only inside PostgreSQL, so a disagreement is invisible to every pure test — and
+it would make every guest read refuse.
+
+```bash
+docker run -d --name wamn-tenantkey-pg -e POSTGRES_PASSWORD=probe \
+  -p 127.0.0.1:5433:5432 postgres:18
+# pg_isready LIES during postgres:18 init-then-restart; ground truth is a query.
+until docker exec wamn-tenantkey-pg psql -U postgres -tAc 'select 1' >/dev/null 2>&1; do :; done
+WAMN_TENANT_KEY_PG_URL=postgres://postgres:probe@localhost:5433/postgres \
+  cargo test -p wamn-control-provision --test tenant_key_live
+docker rm -f wamn-tenantkey-pg      # BY EXPLICIT NAME. Never prune.
+```
+
+Each test builds **its own** database and **its own** roles, so the four are
+safe under the default parallel runner. They previously shared both and
+destroyed each other when the workspace sweep ran them concurrently; isolation
+by construction beats remembering `--test-threads=1`.
+
+The gate reads `provolatile`/`proparallel` from `pg_proc` rather than from the
+DDL text, because a function that silently lost `IMMUTABLE` still creates fine
+and breaks every expression index built on it.
+
 ### Other live gates that carry their command in-source
 
 These have no section tag; the file's own doc comment is the recipe of record.
