@@ -20,9 +20,20 @@
 //! therefore a `macro_rules!` taking `$name:literal`: one definition of the
 //! shared field block, a per-surface constant name at each call site. This is
 //! M-MACRO-LAST-RESORT's actual last resort — the limitation is the language's,
-//! not a preference — and it is what keeps `wamn-0h0g.24.12`'s wiring/node
-//! enrichment a ONE-line edit here rather than four edits that only a gate
-//! could notice going out of step.
+//! not a preference.
+//!
+//! What the shared block does NOT buy is enrichment for free. `wamn-0h0g.24.12`
+//! was filed on the premise that widening this block enriches all four surfaces
+//! at once, and an owner ruling refuted that for three of them on 2026-08-26:
+//! DECLARING a field here is one edit, but FILLING it is one per surface, and
+//! only a surface that can SOURCE the claim may fill it. So [`EffectWiring`] is
+//! declared here once and filled by `wamn.connection_http` alone
+//! (`wamn-0h0g.24.12`), the one surface holding a host-bound
+//! `ConnectionInvocation`. The rest are separate beads with separate owners:
+//! `wamn.jetstream` is `wamn-0h0g.24.15` (it holds a wiring id only as a
+//! router-tap subject, and no node id at all), and `wamn:postgres` is
+//! `wamn-0h0g.24.14`, blocked until `wamn-0h0g.7.9` builds the guest-to-host
+//! run-context contract those coordinates would reach it through.
 //!
 //! # The vocabulary
 //!
@@ -30,9 +41,15 @@
 //!   component's identity, resolved HOST-side from bind-time claim maps and
 //!   frozen plugin config. The guest supplies none of them and cannot spoof
 //!   them. An empty string means the surface holds no such claim.
-//! - `wamn.run_id` / `wamn.node_id` / `wamn.occurrence` / `wamn.requirement` —
-//!   declared `Empty`, filled by [`record_run`] on the surfaces whose contract
-//!   carries run coordinates. Today that is only the trusted HTTP effect.
+//! - `wamn.wiring_id` / `wamn.wiring_version` / `wamn.node_id` /
+//!   `wamn.component_digest` — the wiring position the effect was raised at,
+//!   declared `Empty` and filled by [`record_wiring`] on a surface holding a
+//!   host-bound invocation. Spelled exactly as the `wamn.component.invoke`
+//!   parent spells them, never a second vocabulary for the same coordinates.
+//! - `wamn.run_id` / `wamn.occurrence` / `wamn.requirement` — declared `Empty`,
+//!   filled by [`record_run`] on the surfaces whose contract carries run
+//!   coordinates. Nothing constructs an [`EffectRun`] on any surface today; the
+//!   contract that would is `wamn-0h0g.7.9`.
 //!
 //! Each surface adds its own leading fields — `db.system` / `db.operation` for
 //! `wamn:postgres` (OTel DB semantic conventions, frozen), `effect.operation`
@@ -48,13 +65,18 @@
 //!
 //! # What is deliberately absent
 //!
-//! These spans carry no wiring or node identity of their own. They are not
-//! orphaned: an effect raised inside a node runs under `wamn.component.invoke`,
-//! the span `crates/execution/host/src/router_driver.rs` instruments each
-//! `Step::Invoke` with, which already carries `wamn.wiring_id`,
-//! `wamn.wiring_version`, `wamn.node_id` and `wamn.component_digest`. Copying
-//! those down so one effect span is self-describing is `wamn-0h0g.24.12`;
-//! `wamn-0h0g.24.2` landed the invocation span itself and did not cover it.
+//! Three of the four surfaces still carry no wiring or node identity of their
+//! own. They are not orphaned: an effect raised inside a node runs under
+//! `wamn.component.invoke`, the span
+//! `crates/execution/host/src/router_driver.rs` instruments each `Step::Invoke`
+//! with, which already carries `wamn.wiring_id`, `wamn.wiring_version`,
+//! `wamn.node_id` and `wamn.component_digest` — the spelling [`EffectWiring`]
+//! reuses rather than forking. `wamn.connection_http` copies them down so that
+//! one effect span is self-describing without a parent walk
+//! (`wamn-0h0g.24.12`); `wamn.jetstream` (`wamn-0h0g.24.15`) and `wamn:postgres`
+//! (`wamn-0h0g.24.14`, itself blocked on `wamn-0h0g.7.9`) cannot source the
+//! coordinates yet and leave the block empty. `wamn-0h0g.24.2` landed the
+//! invocation span itself and covered none of them.
 //! (`wamn_router::NodeInvoker` has only test implementors because its `invoke`
 //! is synchronous; `RouterDriver` drives `wiring.next` / `Step::Invoke` directly
 //! and is the production driver.)
@@ -73,14 +95,31 @@ pub(crate) struct EffectIdentity<'a> {
     pub component: &'a str,
 }
 
+/// The wiring position one effect was raised at.
+///
+/// Host-attested: copied down from the invocation the router driver bound before
+/// entering the pooled component, never from anything the guest sent. An empty
+/// field means "this effect holds no such claim" — the same convention
+/// [`EffectIdentity`] follows.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EffectWiring<'a> {
+    pub wiring_id: &'a str,
+    pub wiring_version: u32,
+    pub node_id: &'a str,
+    pub component_digest: &'a str,
+}
+
 /// The run coordinates of one effect, for a surface whose contract carries them.
 ///
 /// Guest-supplied, and therefore only ever a trace label — the authority checks
 /// that make these coordinates load-bearing live in the plugin, not here.
+///
+/// `node_id` is NOT here: one coordinate has one owner, and the owner is
+/// [`EffectWiring`], which the host attests rather than the guest asserts
+/// (`wamn-0h0g.24.12`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EffectRun<'a> {
     pub run_id: &'a str,
-    pub node_id: &'a str,
     pub occurrence: u32,
     pub requirement: &'a str,
 }
@@ -154,10 +193,36 @@ pub(crate) const EFFECT_OPERATION: &str = "effect.operation";
 pub(crate) fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
     if let Some(run) = run {
         span.record("wamn.run_id", run.run_id);
-        span.record("wamn.node_id", run.node_id);
         span.record("wamn.occurrence", run.occurrence);
         span.record("wamn.requirement", run.requirement);
     }
+}
+
+/// Copy the wiring position of one invocation onto the fields [`effect_span`]
+/// declared `Empty`, so an effect span answers "which wiring, which node" on its
+/// own instead of only through its `wamn.component.invoke` parent.
+///
+/// Called by the surface AFTER the macro rather than from inside it. The macro
+/// takes no wiring argument on purpose: widening its arity would force the two
+/// surfaces that cannot source these coordinates to pass a placeholder they have
+/// no way to compute, which is exactly the premise `wamn-0h0g.24.12`'s owner
+/// ruling refuted.
+///
+/// `None` records the four keys EMPTY rather than leaving them unfilled,
+/// following [`EffectIdentity`]'s convention: one span shape per surface, where
+/// an empty value reads as "this effect holds no such claim" and never as "the
+/// enrichment was dropped".
+pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_>>) {
+    let wiring = wiring.unwrap_or(EffectWiring {
+        wiring_id: "",
+        wiring_version: 0,
+        node_id: "",
+        component_digest: "",
+    });
+    span.record("wamn.wiring_id", wiring.wiring_id);
+    span.record("wamn.wiring_version", wiring.wiring_version);
+    span.record("wamn.node_id", wiring.node_id);
+    span.record("wamn.component_digest", wiring.component_digest);
 }
 
 /// [9.1] Open one effect span: a per-surface constant name, that surface's own
@@ -176,6 +241,10 @@ pub(crate) fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
 /// The surface's own fields come FIRST in the emitted span, so `wamn:postgres`
 /// keeps the exact field order it published. They are spliced as raw tokens, so
 /// the last one must carry a trailing comma.
+///
+/// A surface that can source its wiring position calls [`record_wiring`] on the
+/// returned span; the macro declares those fields but never fills them, because
+/// only the call site knows whether it holds an invocation.
 ///
 /// The caller instruments the awaited effect with the returned span
 /// (`future.instrument(span).await`); entering it around a synchronous prelude
@@ -203,8 +272,11 @@ macro_rules! effect_span {
             wamn.tenant = %identity.tenant,
             wamn.project = %identity.project,
             wamn.component = %identity.component,
-            wamn.run_id = tracing::field::Empty,
+            wamn.wiring_id = tracing::field::Empty,
+            wamn.wiring_version = tracing::field::Empty,
             wamn.node_id = tracing::field::Empty,
+            wamn.component_digest = tracing::field::Empty,
+            wamn.run_id = tracing::field::Empty,
             wamn.occurrence = tracing::field::Empty,
             wamn.requirement = tracing::field::Empty,
         );

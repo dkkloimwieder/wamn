@@ -27,7 +27,8 @@ use crate::connection_authority::{
     parse_http_connection_authority, resolve_http_request,
 };
 use crate::plugins::effect_span::{
-    EFFECT_OPERATION, EffectIdentity, HTTP_EFFECT_DURATION_MS, effect_span, record_effect_ms,
+    EFFECT_OPERATION, EffectIdentity, EffectWiring, HTTP_EFFECT_DURATION_MS, effect_span,
+    record_effect_ms, record_wiring,
 };
 use crate::release_manifest::ReleaseManifestWeld;
 
@@ -692,22 +693,51 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<Connecti
     ctx.try_get_plugin::<ConnectionHttp>(CONNECTION_HTTP_ID)
 }
 
+/// [9.1] The `wamn.connection_http` span over one guest HTTP effect: the shared
+/// identity vocabulary, plus the wiring position this component was invoked at.
+///
+/// The wiring block is a COPY of what `wamn.component.invoke` already carries one
+/// level up, so a reader filtering effect spans directly can say which wiring and
+/// which node raised one without walking parents (`wamn-0h0g.24.12`). It is
+/// sourced from the [`ConnectionInvocation`] the router driver binds before the
+/// component runs — the same host-attested record [`ConnectionHttp::send`]
+/// authorizes against, never anything the guest sent.
+///
+/// A pooled instance with no invocation bound holds no such claim and records the
+/// wiring keys empty. That send is about to be refused as
+/// `ConnectionError::AttestationInvalid`, and an empty value says so where a
+/// missing field would look like lost instrumentation.
+fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
+    let span = effect_span!(
+        "wamn.connection_http",
+        EffectIdentity {
+            tenant: &plugin.tenant,
+            project: &plugin.project,
+            component: component_id,
+        },
+        None,
+        effect.operation = "send",
+    );
+    let invocation = plugin.invocation(component_id);
+    record_wiring(
+        &span,
+        invocation.as_ref().map(|invocation| EffectWiring {
+            wiring_id: &invocation.wiring_id,
+            wiring_version: invocation.wiring_version,
+            node_id: &invocation.node_id,
+            component_digest: &invocation.component_digest,
+        }),
+    );
+    span
+}
+
 impl http::Host for ActiveCtx<'_> {
     async fn send(
         &mut self,
         request: Request,
     ) -> wash_runtime::wasmtime::Result<Result<Response, ConnectionError>> {
         let plugin = plugin_of(self)?;
-        let span = effect_span!(
-            "wamn.connection_http",
-            EffectIdentity {
-                tenant: &plugin.tenant,
-                project: &plugin.project,
-                component: self.component_id.as_ref(),
-            },
-            None,
-            effect.operation = "send",
-        );
+        let span = http_span(&plugin, self.component_id.as_ref());
         let started = std::time::Instant::now();
         let result = plugin
             .send(self.component_id.as_ref(), &request)
@@ -740,6 +770,7 @@ impl http::Host for ActiveCtx<'_> {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+    use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
     use wamn_catalog::{SERVING_MANIFEST_FORMAT_VERSION, ServingRelease};
 
     use super::*;
@@ -1019,5 +1050,140 @@ mod tests {
         let (headers, _) = with_effect_span(|| outbound_headers(&request, HashMap::new()));
         let headers = headers.expect("valid headers");
         assert_eq!(headers["traceparent"], GUEST);
+    }
+
+    /// The spans one call exported, read back through an in-memory exporter, so
+    /// an assertion names what a trace reader RECEIVES rather than what the call
+    /// site wrote.
+    ///
+    /// The layer's own bookkeeping attributes — tracing target, source location,
+    /// thread, and busy/idle timings — are switched off, so the exported set is
+    /// exactly the span's declared fields and a field the enrichment should not
+    /// carry cannot hide among them.
+    struct SpanHarness {
+        exporter: InMemorySpanExporter,
+        provider: SdkTracerProvider,
+        _guard: tracing::subscriber::DefaultGuard,
+    }
+
+    impl SpanHarness {
+        fn install() -> Self {
+            use opentelemetry::trace::TracerProvider as _;
+            use tracing_subscriber::layer::SubscriberExt as _;
+
+            let exporter = InMemorySpanExporter::default();
+            let provider = SdkTracerProvider::builder()
+                .with_simple_exporter(exporter.clone())
+                .build();
+            let layer = tracing_opentelemetry::layer()
+                .with_tracer(provider.tracer("connection-http-span-test"))
+                .with_target(false)
+                .with_location(false)
+                .with_threads(false)
+                .with_tracked_inactivity(false);
+            let guard =
+                tracing::subscriber::set_default(tracing_subscriber::registry().with(layer));
+            Self {
+                exporter,
+                provider,
+                _guard: guard,
+            }
+        }
+
+        fn attributes(&self, name: &str) -> Vec<(String, String)> {
+            self.provider.force_flush().expect("test spans must flush");
+            let exported = self
+                .exporter
+                .get_finished_spans()
+                .expect("test span exporter must remain readable");
+            let span = exported
+                .iter()
+                .find(|span| span.name == name)
+                .unwrap_or_else(|| panic!("span {name:?} must be exported"));
+            let mut attributes: Vec<(String, String)> = span
+                .attributes
+                .iter()
+                .map(|attribute| (attribute.key.to_string(), attribute.value.to_string()))
+                .collect();
+            attributes.sort();
+            attributes
+        }
+    }
+
+    fn expected_attributes(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect();
+        pairs.sort();
+        pairs
+    }
+
+    fn offline_plugin() -> ConnectionHttp {
+        ConnectionHttp::new(
+            Arc::new(offline_postgres()),
+            Arc::new(WamnCredentials::empty()),
+            "tenant-a",
+            "project-a",
+            Vec::<AllowedHost>::new().into(),
+            None,
+        )
+    }
+
+    /// The wiring and node identity `wamn.component.invoke` carries one level up
+    /// is copied ONTO the effect span, so a reader filtering effect spans can name
+    /// the wiring and node that raised one without walking parents.
+    #[test]
+    fn the_effect_span_carries_the_bound_wiring_and_node_identity() {
+        let plugin = offline_plugin();
+        let component_id = "component-store-7";
+        plugin
+            .bind_invocation(component_id, invocation())
+            .expect("the fresh store accepts its invocation");
+        let component_digest = digest('a');
+
+        let harness = SpanHarness::install();
+        drop(http_span(&plugin, component_id));
+
+        assert_eq!(
+            harness.attributes("wamn.connection_http"),
+            expected_attributes(&[
+                ("effect.operation", "send"),
+                ("wamn.tenant", "tenant-a"),
+                ("wamn.project", "project-a"),
+                ("wamn.component", component_id),
+                ("wamn.wiring_id", "orders"),
+                ("wamn.wiring_version", "3"),
+                ("wamn.node_id", "notify"),
+                ("wamn.component_digest", component_digest.as_str()),
+            ]),
+        );
+    }
+
+    /// A pooled instance with no invocation bound holds no wiring claim — the
+    /// send it is about to serve is refused as `AttestationInvalid`. The four keys
+    /// are still emitted, empty, so "this effect was raised outside a node walk"
+    /// never reads as "the enrichment was dropped".
+    #[test]
+    fn an_unbound_component_records_the_wiring_keys_empty() {
+        let plugin = offline_plugin();
+        let component_id = "component-store-7";
+
+        let harness = SpanHarness::install();
+        drop(http_span(&plugin, component_id));
+
+        assert_eq!(
+            harness.attributes("wamn.connection_http"),
+            expected_attributes(&[
+                ("effect.operation", "send"),
+                ("wamn.tenant", "tenant-a"),
+                ("wamn.project", "project-a"),
+                ("wamn.component", component_id),
+                ("wamn.wiring_id", ""),
+                ("wamn.wiring_version", "0"),
+                ("wamn.node_id", ""),
+                ("wamn.component_digest", ""),
+            ]),
+        );
     }
 }
