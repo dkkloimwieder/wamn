@@ -9,3 +9,6 @@ license.workspace = true
 serde_json = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-schema-model = { workspace = true }
+
+[lints]
+workspace = true

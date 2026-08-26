@@ -78,3 +78,6 @@ wamn-run-state = { workspace = true }
 # 11.8 ops-only impact-report: the PURE schema-change impact analysis
 # (entities → flows via registration + node config → generated API).
 # This shell reads the dependency rows and calls wamn_schema_control::impact::analyze.
+
+[lints]
+workspace = true

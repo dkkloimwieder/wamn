@@ -25,3 +25,6 @@ wasmtime-wasi-http = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 tracing-subscriber = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

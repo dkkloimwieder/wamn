@@ -28,6 +28,64 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 
+# M-STATIC-VERIFICATION: the compiler and clippy sets the guidelines name, held
+# in ONE place per M-CARGO-WORKSPACE. Members inherit with `[lints] workspace = true`.
+#
+# Levels are deliberate, not aspirational: everything here is `warn` because
+# `tools/repo-lint` already runs clippy with `-D warnings`, so that gate is what
+# promotes these to errors. Setting `deny` here as well would only duplicate it
+# and break plain `cargo build` for a developer mid-edit.
+#
+# M-LINT-OVERRIDE-EXPECT: override with `#[expect(..., reason = "...")]`, never
+# `#[allow]` -- an `expect` that stops firing reports itself, so exemptions
+# cannot silently go stale.
+[workspace.lints.rust]
+# DENY WHAT IS ALREADY CLEAN, warn what is not. A clean lint held at `warn` only
+# asks to be re-read; held at `deny` it cannot regress. Measured clean at
+# ffe54cae -- if one of these ever fires, that is new code, not old debt.
+ambiguous_negative_literals = "deny"
+redundant_lifetimes = "deny"
+trivial_numeric_casts = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "deny"
+# Dirty today, so `warn` states the intent without breaking the build.
+missing_debug_implementations = "warn"
+redundant_imports = "warn"
+
+[workspace.lints.clippy]
+# `correctness` and `suspicious` are the two categories that find BUGS, and both
+# measured ZERO occurrences at ffe54cae -- so they are denied rather than warned.
+# This costs nothing today and is the whole point: a correctness regression stops
+# the run instead of scrolling past inside a large warning set. Clippy tool lints
+# are inert under plain `cargo build`, so denying them does not break an edit loop.
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+# Dirty today; `tools/repo-lint` promotes these to errors via `-D warnings`.
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+
+# Opted back out, case-by-case, as M-STATIC-VERIFICATION allows. Counts are from
+# the adoption measurement at ffe54cae (2316 warnings, 64 lints) and are recorded
+# so the exemptions stay arguable instead of becoming folklore. These crates are
+# an APPLICATION workspace -- services plus internal libraries with no external
+# consumers and nothing published -- and the guidelines scope libs-ux rules to
+# crates with a public API.
+must_use_candidate = "allow"      # 697. #[must_use] on internal APIs nobody else calls.
+missing_errors_doc = "allow"      # 254. Library-API doc contract; no external consumer.
+doc_markdown = "allow"            # 237. Formats rendered rustdoc; we publish no docs.
+cargo_common_metadata = "allow"   # 140. Wants description/license/repository on crates
+                                  #      that are never published.
+too_many_lines = "allow"          # 112. A line-count threshold would drive mechanical
+                                  #      splits, not better boundaries (M-BALANCED-MODULES
+                                  #      is the rule that actually governs this).
+missing_panics_doc = "allow"      #  72. Library-API doc contract, as above.
+multiple_crate_versions = "allow" #  46. Duplicate transitive versions we do not control;
+                                  #      the wasmtime/async-nats pins are upstream-governed.
+return_self_not_must_use = "allow"#   8. Library-API concern, as above.
+
 [workspace.dependencies]
 # Upstream v2.7.0 plus the policies recorded in
 # docs/archive/platform/wash-runtime-fork.md. The ledger is authoritative.

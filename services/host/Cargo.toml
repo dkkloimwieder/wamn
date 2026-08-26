@@ -21,3 +21,6 @@ clap = { workspace = true, features = ["derive", "env"] }
 opentelemetry = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tracing = { workspace = true }
+
+[lints]
+workspace = true

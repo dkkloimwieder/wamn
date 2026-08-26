@@ -56,3 +56,6 @@ url = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

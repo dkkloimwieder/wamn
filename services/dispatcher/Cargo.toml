@@ -39,3 +39,6 @@ wamn-control-registry = { workspace = true }
 # dispatcher's scoped reader role, so the live gate cannot drift from the SQL
 # production actually applies. Dev-only: the shipped binary links no provisioner.
 wamn-control-provision = { workspace = true }
+
+[lints]
+workspace = true

@@ -33,3 +33,6 @@ wasm-encoder = { workspace = true }
 wamn-execution-host = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wat = "=1.252.0"
+
+[lints]
+workspace = true

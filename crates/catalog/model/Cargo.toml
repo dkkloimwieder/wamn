@@ -36,3 +36,6 @@ wamn-event-wire = { workspace = true }
 # production configuration.
 [dev-dependencies]
 wamn-catalog = { path = ".", features = ["test-util"] }
+
+[lints]
+workspace = true

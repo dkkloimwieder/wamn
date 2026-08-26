@@ -80,3 +80,6 @@ wat = "=1.252.0"
 # only a `tracing-opentelemetry` layer over an SDK tracer provider produces.
 opentelemetry_sdk = { workspace = true, features = ["logs", "testing"] }
 tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

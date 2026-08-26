@@ -19,3 +19,6 @@ serde_json = { workspace = true }
 # Conditions use JMESPath (the codebase's one expression language) and compile
 # at write time to reject bad syntax; the materializer owns evaluation.
 jmespath = { workspace = true }
+
+[lints]
+workspace = true

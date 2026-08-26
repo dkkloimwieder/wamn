@@ -45,3 +45,6 @@ wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
 wamn-run-state = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

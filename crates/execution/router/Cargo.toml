@@ -22,3 +22,6 @@ opentelemetry = { workspace = true, features = ["metrics"] }
 # No pooling, no runtime, no clock, no DB: siblings own those. The wiring cache
 # IS here (wamn-0h0g.16.5) — the compiled graph it holds is this crate's type —
 # but it never reads the store itself.
+
+[lints]
+workspace = true

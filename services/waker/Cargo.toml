@@ -26,3 +26,6 @@ rustls = { workspace = true, features = ["std", "tls12", "aws-lc-rs"] }
 # (oci-client via wash-runtime) built on the rustls stack, so a direct dep with
 # the `rustls` feature (aws-lc-rs provider) adds no new lock entries.
 reqwest = { workspace = true, features = ["rustls"] }
+
+[lints]
+workspace = true

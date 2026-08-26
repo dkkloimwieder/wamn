@@ -31,3 +31,6 @@ wamn-control-registry = { workspace = true }
 # The event_reader_live gate provisions its fixture env (publication and slot)
 # through the pure provisioning builders.
 wamn-control-provision = { workspace = true }
+
+[lints]
+workspace = true

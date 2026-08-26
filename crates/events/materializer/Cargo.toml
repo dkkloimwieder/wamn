@@ -24,3 +24,6 @@ chrono = { workspace = true, features = ["std"] }
 # No DB / wasm / clock dependency: every decision is a pure function of the
 # delivered event + the declarations. The guest (components/execution/materializer) owns
 # every effect; the matbench gate drives the same decisions live.
+
+[lints]
+workspace = true

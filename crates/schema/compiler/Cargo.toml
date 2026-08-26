@@ -27,3 +27,6 @@ wamn-pg-core = { workspace = true }
 # No DB dependency: this crate EMITS SQL, it does not execute it (the live apply
 # path is the migration engine 2.5 / hosting). The apply-verification test shells
 # out to `psql` against a throwaway Postgres, gated on WAMN_DDL_PG_URL.
+
+[lints]
+workspace = true

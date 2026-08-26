@@ -13,3 +13,6 @@ license.workspace = true
 # its inputs (dev-only; the crate itself stays dependency-free).
 wamn-schema-model = { workspace = true }
 wamn-schema-compiler = { workspace = true }
+
+[lints]
+workspace = true
