@@ -701,39 +701,127 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
 }
 
 /// The manual-store deadline conversion mirrors a wash-runtime constant, and
-/// the two must move together (`wamn-k9ea`).
+/// the two must move together (`wamn-k9ea`, narrowed by `wamn-6evd`).
 ///
 /// wash-runtime owns the epoch ticker and keeps its cadence `pub(crate)`, so
 /// WAMN cannot import it and compare. `router_driver.rs` therefore restates the
 /// value to turn a millisecond deadline into ticks. If upstream retunes its
-/// ticker and this restatement stays at 10 ms, **every node deadline silently
+/// ticker and this restatement stays behind, **every node deadline silently
 /// rescales** — a 30 ms budget becomes 30 ticks of whatever the new cadence is —
 /// and nothing else in the tree notices, because both halves still compile and
 /// every deadline still fires eventually.
 ///
-/// Pinning both literals is the only mechanical check available. The upstream
-/// half is the load-bearing one; the WAMN half is here so the guard cannot pass
-/// on upstream alone after someone edits ours.
+/// # Why this one reads source text (`wamn-hopk` R5)
+///
+/// R5 forbids tests that read source files as text, with ONE exemption: an
+/// identity pin on a named artifact. This is that exemption, and it is narrowed
+/// to earn it — it compares the two cadences' VALUES, not their spellings, so
+/// upstream reformatting, a visibility change or a renamed type cannot break it,
+/// while an actual retune still fails it.
+///
+/// It qualifies because neither of R5's alternatives exists. The compiler cannot
+/// carry the rule: `EPOCH_TICK` is `pub(crate)` upstream, so there is no linkable
+/// surface. A behavioural test cannot either: this is a constant-equality
+/// question, and timing a ticker to infer its period measures the scheduler.
+///
+/// **Re-converge trigger:** when upstream exposes the constant publicly, import
+/// it, compare it directly, and DELETE this scan. Checked at every tagged-release
+/// fork sync — see `docs/architecture/native-alignment-ledger.md`.
 #[test]
 fn the_manual_store_epoch_tick_still_mirrors_the_runtime_ticker() {
-    const RUNTIME_EPOCH_TICK: &str =
-        "pub(crate) const EPOCH_TICK: Duration = Duration::from_millis(10);";
-    const MANUAL_STORE_EPOCH_TICK: &str =
-        "const MANUAL_STORE_EPOCH_TICK: Duration = Duration::from_millis(10);";
+    /// The upstream declaration, spelled without its visibility so a
+    /// `pub(crate)` to `pub` change does not read as a missing constant — that
+    /// change is the re-converge trigger, not a failure.
+    const RUNTIME_DECL: &str = "const EPOCH_TICK: Duration";
+    const MANUAL_STORE_DECL: &str = "const MANUAL_STORE_EPOCH_TICK: Duration";
 
     let root = repository_root();
     let engine_path = wash_runtime_source(&root).join("src/engine/mod.rs");
     let engine = fs::read_to_string(&engine_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", engine_path.display()));
-    assert_one(&engine, RUNTIME_EPOCH_TICK, "runtime epoch ticker cadence");
 
     let driver_path = root.join(EXECUTION_HOST_STORE_FILE);
     let driver = fs::read_to_string(&driver_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", driver_path.display()));
-    assert_one(
-        &driver,
-        MANUAL_STORE_EPOCH_TICK,
-        "manual store deadline cadence",
+
+    let upstream = epoch_millis(&engine, RUNTIME_DECL, "wash-runtime src/engine/mod.rs");
+    let ours = epoch_millis(&driver, MANUAL_STORE_DECL, EXECUTION_HOST_STORE_FILE);
+
+    assert_eq!(
+        upstream, ours,
+        "the epoch cadence drifted: wash-runtime ticks every {upstream} ms and \
+         router_driver.rs still converts deadlines at {ours} ms, so EVERY node \
+         deadline is rescaled by {upstream}/{ours}"
+    );
+}
+
+/// The millisecond value of the one `Duration::from_millis(..)` constant `decl`
+/// declares in `source`.
+///
+/// Reads the VALUE, never the line: this is what keeps the epoch pin an identity
+/// pin rather than a spelling assertion (`wamn-hopk` R5). Exactly one
+/// declaration must match, so a second one cannot shadow a drifted first.
+fn epoch_millis(source: &str, decl: &str, origin: &str) -> u64 {
+    let declarations = source.matches(decl).count();
+    assert_eq!(
+        declarations, 1,
+        "{origin} must declare `{decl}` exactly once; found {declarations}"
+    );
+    let tail = &source[source.find(decl).expect("the counted declaration is present")..];
+    let open = tail
+        .find("from_millis(")
+        .unwrap_or_else(|| panic!("{origin}: `{decl}` is no longer a from_millis constant"))
+        + "from_millis(".len();
+    let rest = &tail[open..];
+    let close = rest
+        .find(')')
+        .unwrap_or_else(|| panic!("{origin}: `{decl}` has no closing paren"));
+    rest[..close]
+        .trim()
+        .replace('_', "")
+        .parse::<u64>()
+        .unwrap_or_else(|error| panic!("{origin}: `{decl}` millis do not parse: {error}"))
+}
+
+/// `epoch_millis` reads the VALUE, so the spellings upstream is free to change
+/// cannot break the pin — which is the whole difference between an identity pin
+/// and the whole-line text match this replaced (`wamn-6evd`).
+#[test]
+fn the_epoch_pin_survives_upstream_reformatting_but_not_a_retune() {
+    const DECL: &str = "const EPOCH_TICK: Duration";
+    for (label, source) in [
+        (
+            "pub(crate), as upstream spells it today",
+            "pub(crate) const EPOCH_TICK: Duration = Duration::from_millis(10);",
+        ),
+        (
+            "made public — the re-converge trigger, not a failure",
+            "pub const EPOCH_TICK: Duration = Duration::from_millis(10);",
+        ),
+        (
+            "rustfmt split across lines",
+            "const EPOCH_TICK: Duration =\n    Duration::from_millis(10);",
+        ),
+        (
+            "underscore-separated literal",
+            "const EPOCH_TICK: Duration = Duration::from_millis(1_0);",
+        ),
+    ] {
+        assert_eq!(
+            epoch_millis(source, DECL, "fixture"),
+            10,
+            "reformatting changed the read value: {label}"
+        );
+    }
+
+    assert_eq!(
+        epoch_millis(
+            "const EPOCH_TICK: Duration = Duration::from_millis(25);",
+            DECL,
+            "fixture"
+        ),
+        25,
+        "a real retune must still be read, and read exactly"
     );
 }
 
