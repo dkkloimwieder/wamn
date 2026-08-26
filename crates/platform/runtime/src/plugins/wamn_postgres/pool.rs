@@ -14,6 +14,9 @@ use deadpool_postgres::{Hook, HookError, Object, Pool};
 use tokio::sync::mpsc;
 use tokio_postgres::{AsyncMessage, Client, Config, Error, NoTls};
 
+use wamn_run_state::AuthorityClass;
+
+use super::DEFAULT_PROJECT;
 use crate::engine::MAX_HOST_CALL_DURATION;
 
 /// Async traffic surfaced by connections created inside the existing platform
@@ -141,7 +144,13 @@ impl WamnPostgresConfig {
                 .unwrap_or(default)
         }
         Self {
-            database_url: std::env::var("WAMN_PG_URL").ok(),
+            // wamn-0h0g.22.8.2: the ambient WAMN_PG_URL read is GONE. A
+            // credential must arrive through an explicit source, because
+            // `credential_exactness::AmbientCredentialState` already states the
+            // contract that an explicit source plus ANY ambient source is a
+            // CONFLICT. Reading the environment here made the runtime its own
+            // second source, which is the acceptance-forbidden behaviour.
+            database_url: None,
             // Preserve the former total of 16 while reserving one measured
             // platform operation plus one headroom slot against guest starvation.
             guest_pool_max_size: num("WAMN_PG_GUEST_POOL_MAX", DEFAULT_GUEST_POOL_MAX_SIZE),
@@ -201,29 +210,46 @@ pub trait CredentialProvider: Send + Sync {
     /// `Ok(Some)` = resolved; `Ok(None)` = unknown project (the caller returns
     /// `connection-unavailable`); `Err` = provider failure (also surfaced as
     /// `connection-unavailable`, logged).
-    fn resolve(&self, project: &str) -> anyhow::Result<Option<ProjectConfig>>;
+    ///
+    /// `class` is the trusted caller's [`AuthorityClass`]. It never originates
+    /// from a guest (`wamn-0h0g.22.8`), and it is part of the resolution rather
+    /// than a post-hoc filter so a provider can hand different authorities
+    /// different credentials for the same project.
+    fn resolve(
+        &self,
+        project: &str,
+        class: AuthorityClass,
+    ) -> anyhow::Result<Option<ProjectConfig>>;
 }
 
-/// v0 provider: an in-memory project→config map plus an optional default used
-/// for any unlisted project (so a single-DB deployment and the S2 bench work
-/// with no map at all). The map is populated from `WAMN_PG_PROJECTS_FILE` (a
-/// JSON object mounted like a Secret/ConfigMap) or constructed directly.
+/// v0 provider: an in-memory project→config map populated from
+/// `WAMN_PG_PROJECTS_FILE` (a JSON object mounted like a Secret/ConfigMap) or
+/// constructed directly.
+///
+/// `wamn-0h0g.22.8.2`: THERE IS NO CATCH-ALL DEFAULT. A config supplied as the
+/// "default" is registered under [`DEFAULT_PROJECT`] like any other project, so
+/// a single-DB deployment and the S2 bench still resolve, while an UNLISTED
+/// project now FAILS instead of silently borrowing another project's
+/// credential. Silent fallback is the behaviour the parent acceptance forbids:
+/// it made an unprovisioned project indistinguishable from a provisioned one.
 pub struct StaticCredentialProvider {
     projects: HashMap<String, ProjectConfig>,
-    default: Option<ProjectConfig>,
 }
 
 impl StaticCredentialProvider {
+    /// `default`, when present, is registered under [`DEFAULT_PROJECT`] rather
+    /// than acting as a fallback for every unlisted project.
     pub fn new(projects: HashMap<String, ProjectConfig>, default: Option<ProjectConfig>) -> Self {
-        Self { projects, default }
+        let mut projects = projects;
+        if let Some(cfg) = default {
+            projects.entry(DEFAULT_PROJECT.to_string()).or_insert(cfg);
+        }
+        Self { projects }
     }
 
     /// Default-only provider (single database = the default project).
     pub(super) fn default_only(default: Option<ProjectConfig>) -> Self {
-        Self {
-            projects: HashMap::new(),
-            default,
-        }
+        Self::new(HashMap::new(), default)
     }
 
     /// Parse `{ "<project>": { "url": .., "row_limit"?: .., .. }, .. }`; unset
@@ -282,12 +308,16 @@ impl StaticCredentialProvider {
 }
 
 impl CredentialProvider for StaticCredentialProvider {
-    fn resolve(&self, project: &str) -> anyhow::Result<Option<ProjectConfig>> {
-        Ok(self
-            .projects
-            .get(project)
-            .cloned()
-            .or_else(|| self.default.clone()))
+    fn resolve(
+        &self,
+        project: &str,
+        _class: AuthorityClass,
+    ) -> anyhow::Result<Option<ProjectConfig>> {
+        // One credential per project in v0, so the class does not select here.
+        // It still travels through the seam because it is part of the POOL KEY:
+        // two authorities must never share a pooled session even when they
+        // resolve to the same URL.
+        Ok(self.projects.get(project).cloned())
     }
 }
 
@@ -301,7 +331,11 @@ pub struct K8sSecretProvider {
 }
 
 impl CredentialProvider for K8sSecretProvider {
-    fn resolve(&self, _project: &str) -> anyhow::Result<Option<ProjectConfig>> {
+    fn resolve(
+        &self,
+        _project: &str,
+        _class: AuthorityClass,
+    ) -> anyhow::Result<Option<ProjectConfig>> {
         anyhow::bail!(
             "K8sSecretProvider (namespace {:?}) is not implemented yet — see wamn-5x0.1 [2.2b]; use StaticCredentialProvider",
             self.namespace
@@ -312,6 +346,61 @@ impl CredentialProvider for K8sSecretProvider {
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
+
+/// The identity a pooled session is cached under (`wamn-0h0g.22.8.2`).
+///
+/// Three components, all load-bearing:
+///
+/// * `project` — which database.
+/// * `class` — which authority. Two authorities must never share a pooled
+///   session even when they resolve to the same URL, because the session
+///   carries the connected role.
+/// * `generation_role` — WHICH CREDENTIAL GENERATION. See
+///   [`credential_generation_role`]; a rotation produces a different role and
+///   therefore a different key, so a stale principal is unreachable rather
+///   than merely unlikely.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct PoolKey {
+    project: Box<str>,
+    class: AuthorityClass,
+    generation_role: Box<str>,
+}
+
+impl PoolKey {
+    pub(super) fn new(project: &str, class: AuthorityClass, generation_role: &str) -> Self {
+        Self {
+            project: project.into(),
+            class,
+            generation_role: generation_role.into(),
+        }
+    }
+
+    pub(super) fn project(&self) -> &str {
+        &self.project
+    }
+}
+
+/// The credential generation identity a resolved URL carries.
+///
+/// The provisioner mints an A/B credential generation AS THE LOGIN ROLE
+/// (`wamn_app_<scope-hash>_a` / `_b`, `wamn-0h0g.13.59`), so the generation
+/// already travels inside the URL's user component. Deriving it here rather
+/// than declaring a second field is deliberate: a declared generation could
+/// disagree with the URL that actually authenticates, and then the key would
+/// certify an identity the session does not have.
+///
+/// Note this is NOT `lease_generation`. That is the run-queue lease fence and
+/// has nothing to do with credential rotation; conflating them in a pool key
+/// would tie session reuse to queue state.
+pub(super) fn credential_generation_role(database_url: &str) -> anyhow::Result<String> {
+    let config: Config = database_url
+        .parse()
+        .context("parse the project database url")?;
+    let user = config
+        .get_user()
+        .context("the project database url names no user, so it carries no credential identity")?;
+    Ok(user.to_string())
+}
 
 /// A project's live connection pool plus its host-enforced policy (statement
 /// timeout + row limit travel with every call made against it).
@@ -329,6 +418,21 @@ pub(super) enum PoolLifecycle {
 }
 
 impl PoolLifecycle {
+    /// Which pool cache an authority class draws from.
+    ///
+    /// The class SUBSUMES the lifecycle, so a caller never pairs the two by
+    /// hand and a guest-sql checkout against the platform cache is
+    /// unrepresentable rather than merely unreviewed. Exhaustive on purpose: a
+    /// new class is a compile error here, not a silent Platform default.
+    pub(super) const fn for_class(class: AuthorityClass) -> Self {
+        match class {
+            AuthorityClass::GuestSql => Self::Guest,
+            AuthorityClass::ExecutorPlatform
+            | AuthorityClass::CallableHttp
+            | AuthorityClass::EventMaterializer => Self::Platform,
+        }
+    }
+
     pub(super) const fn label(self) -> &'static str {
         match self {
             Self::Guest => "guest",
@@ -408,6 +512,178 @@ pub(super) fn destroy_connection(obj: Object, counter: &AtomicU64) {
 mod tests {
     use super::*;
 
+    /// Marks the re-exec'd child of the ambient-credential test below.
+    const AMBIENT_PROBE_VAR: &str = "WAMN_POOL_AMBIENT_PROBE";
+
+    fn config(url: &str) -> ProjectConfig {
+        ProjectConfig {
+            database_url: url.to_string(),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 1,
+            statement_timeout_ms: 1,
+            row_limit: 1,
+        }
+    }
+
+    /// The acceptance-forbidden silent fallback. An unprovisioned project used
+    /// to be indistinguishable from a provisioned one, because it quietly
+    /// borrowed whichever config was configured as the default.
+    #[test]
+    fn an_unlisted_project_does_not_borrow_another_projects_credential() {
+        let mut projects = HashMap::new();
+        projects.insert(
+            "billing".to_string(),
+            config("postgres://wamn_app_billing_a:pw@db/billing"),
+        );
+        let provider =
+            StaticCredentialProvider::new(projects, Some(config("postgres://d_a:pw@db/d")));
+
+        assert!(
+            provider
+                .resolve("billing", AuthorityClass::GuestSql)
+                .expect("resolve billing")
+                .is_some(),
+            "a listed project must still resolve"
+        );
+        assert!(
+            provider
+                .resolve("not-provisioned", AuthorityClass::GuestSql)
+                .expect("resolve unlisted")
+                .is_none(),
+            "an unlisted project must FAIL, not fall back onto the default              project's credential"
+        );
+    }
+
+    /// The single-DB deployment and the S2 bench must keep working: the default
+    /// config is registered UNDER the default project rather than deleted.
+    #[test]
+    fn the_default_config_is_registered_under_the_default_project() {
+        let provider =
+            StaticCredentialProvider::default_only(Some(config("postgres://wamn_app_d_a:pw@db/d")));
+        assert!(
+            provider
+                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql)
+                .expect("resolve default")
+                .is_some(),
+            "the default project must resolve, or single-DB deployments break"
+        );
+        assert!(
+            provider
+                .resolve("somethingelse", AuthorityClass::GuestSql)
+                .expect("resolve other")
+                .is_none(),
+            "registering the default must not resurrect the catch-all"
+        );
+    }
+
+    /// The generation is the LOGIN ROLE, carried in the url's user component.
+    #[test]
+    fn the_credential_generation_is_the_login_role_the_url_carries() {
+        assert_eq!(
+            credential_generation_role("postgres://wamn_app_9f3c_a:pw@host:5432/db")
+                .expect("parse generation role"),
+            "wamn_app_9f3c_a"
+        );
+        assert_eq!(
+            credential_generation_role("postgres://wamn_app_9f3c_b:pw@host:5432/db")
+                .expect("parse generation role"),
+            "wamn_app_9f3c_b",
+            "the A and B generations are different roles, so they are different keys"
+        );
+        assert!(
+            credential_generation_role("postgres://host:5432/db").is_err(),
+            "a url naming no user carries no credential identity and must be refused              rather than pooled under an empty generation"
+        );
+    }
+
+    /// Rotation must be unreachable, not merely unlikely.
+    #[test]
+    fn a_rotated_credential_is_a_different_pool_key() {
+        let a = PoolKey::new("billing", AuthorityClass::GuestSql, "wamn_app_9f3c_a");
+        let b = PoolKey::new("billing", AuthorityClass::GuestSql, "wamn_app_9f3c_b");
+        assert_ne!(a, b, "an A->B rotation must not reuse the stale pool");
+    }
+
+    /// Two authorities must never share a pooled session even when they resolve
+    /// to the same url, because the session carries the connected role.
+    #[test]
+    fn two_authorities_never_share_a_pool_key() {
+        let mut seen = Vec::new();
+        for class in AuthorityClass::ALL {
+            let key = PoolKey::new("billing", class, "wamn_shared_9f3c_a");
+            assert!(
+                !seen.contains(&key),
+                "{class} collided with an earlier authority on one pool key"
+            );
+            seen.push(key);
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    /// The class subsumes the lifecycle, so a guest-sql checkout against the
+    /// platform cache is unrepresentable rather than merely unreviewed.
+    #[test]
+    fn the_authority_class_selects_the_cache() {
+        assert_eq!(
+            PoolLifecycle::for_class(AuthorityClass::GuestSql).label(),
+            "guest"
+        );
+        for class in [
+            AuthorityClass::ExecutorPlatform,
+            AuthorityClass::CallableHttp,
+            AuthorityClass::EventMaterializer,
+        ] {
+            assert_eq!(
+                PoolLifecycle::for_class(class).label(),
+                "platform",
+                "{class} is host-owned platform work"
+            );
+        }
+    }
+
+    /// The ambient credential source is gone.
+    ///
+    /// Proven in a CHILD PROCESS that actually has `WAMN_PG_URL` set, because
+    /// asserting `is_none()` in a parent where the variable happens to be unset
+    /// proves nothing, and `std::env::set_var` is `unsafe` in Rust 2024
+    /// precisely because it races every concurrent reader. A re-exec gives a
+    /// real positive condition with no data race.
+    #[test]
+    fn from_env_ignores_an_ambient_database_url() {
+        if std::env::var(AMBIENT_PROBE_VAR).is_ok() {
+            assert!(
+                std::env::var("WAMN_PG_URL").is_ok(),
+                "the child must run WITH the ambient url set, or it proves nothing"
+            );
+            assert!(
+                WamnPostgresConfig::from_env().database_url.is_none(),
+                "from_env read an ambient WAMN_PG_URL; the runtime must not be its                  own second credential source"
+            );
+            return;
+        }
+
+        let path = module_path!();
+        let filter = path.split_once("::").map_or(path, |(_, rest)| rest);
+        let exe = std::env::current_exe().expect("test binary path");
+        let status = std::process::Command::new(exe)
+            .args([
+                "--exact",
+                &format!("{filter}::from_env_ignores_an_ambient_database_url"),
+            ])
+            .env(AMBIENT_PROBE_VAR, "1")
+            .env(
+                "WAMN_PG_URL",
+                "postgres://ambient_a:pw@ambient-host/ambient",
+            )
+            .status()
+            .expect("re-exec this test binary with an ambient url");
+        assert!(
+            status.success(),
+            "the child, running with WAMN_PG_URL set, saw from_env pick it up"
+        );
+    }
+
     // R18 — the connect-time check logic. A negative is hard to produce on stock
     // PG18 (the setting defaults on), so the fail-closed branch is asserted here.
     #[test]
@@ -453,5 +729,4 @@ mod tests {
         .expect_err("the ambiguous pre-split key must refuse");
         assert!(retired.to_string().contains("retired \"pool_max_size\""));
     }
-
 }

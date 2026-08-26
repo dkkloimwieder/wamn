@@ -42,6 +42,7 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::sql as reg_sql;
 use wamn_control_registry::{Org, OrgEnvPolicy, Template, Triple};
+use wamn_run_state::AuthorityClass;
 use wamn_runtime::plugins::wamn_postgres::{
     CredentialProvider, StaticCredentialProvider, WamnPostgresConfig,
 };
@@ -182,10 +183,10 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
     let provider = StaticCredentialProvider::new(projects, None);
 
     let cfg_a = provider
-        .resolve(PROJECT_A)?
+        .resolve(PROJECT_A, AuthorityClass::GuestSql)?
         .with_context(|| format!("resolve {PROJECT_A}"))?;
     let cfg_b = provider
-        .resolve(PROJECT_B)?
+        .resolve(PROJECT_B, AuthorityClass::GuestSql)?
         .with_context(|| format!("resolve {PROJECT_B}"))?;
 
     // 5a. Routing witness: each resolved URL reaches its own project's database.
@@ -503,7 +504,7 @@ async fn tier_scenario(
     for spec in envs {
         let db = project_env_database_name(&org.id, project, spec.env, spec.instance);
         let cfg = provider
-            .resolve(&db)?
+            .resolve(&db, AuthorityClass::GuestSql)?
             .with_context(|| format!("resolve {db}"))?;
         let (client, task) = connect(&cfg.database_url)
             .await

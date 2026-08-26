@@ -6,6 +6,7 @@ use anyhow::Context as _;
 use tokio_postgres::types::ToSql;
 use wamn_catalog::{AdmittedComponent, WiringDocument};
 use wamn_router::Wiring;
+use wamn_run_state::AuthorityClass;
 
 use crate::wiring_lowering::{
     GatedActiveWiring, ScopedWiringOperationFacts, WiringScope, lower_active_wiring,
@@ -395,7 +396,7 @@ impl WamnPostgres {
         let wiring_version = i32::try_from(wiring_version)
             .context("active wiring version exceeds PostgreSQL int")?;
         let (connection, policy) = self
-            .checkout_platform(project)
+            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
@@ -479,7 +480,7 @@ impl WamnPostgres {
         let wiring_version = i32::try_from(wiring_version)
             .context("release wiring version exceeds PostgreSQL int")?;
         let (connection, policy) = self
-            .checkout_platform(project)
+            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
@@ -563,7 +564,7 @@ impl WamnPostgres {
         let wiring_version = i32::try_from(wiring_version)
             .context("candidate wiring version exceeds PostgreSQL int")?;
         let (connection, policy) = self
-            .checkout_platform(project)
+            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
@@ -684,7 +685,7 @@ impl WamnPostgres {
             .context("release catalog version exceeds PostgreSQL int")?;
         let component_digests = component_digests.to_vec();
         let (connection, policy) = self
-            .checkout_platform(project)
+            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self

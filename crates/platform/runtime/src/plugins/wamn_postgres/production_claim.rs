@@ -16,7 +16,9 @@ use wamn_run_state::queue::{
 use wamn_run_state::transitions::{
     CallerReleaseResult, TerminalizeResult, release_caller_sql, terminalize_sql,
 };
-use wamn_run_state::{DurabilityClass, EffectUncertainFailure, FailKind, RunStatus};
+use wamn_run_state::{
+    AuthorityClass, DurabilityClass, EffectUncertainFailure, FailKind, RunStatus,
+};
 
 use super::{CandidateBindingWorld, ReleaseIdentity, WamnPostgres};
 
@@ -520,7 +522,7 @@ impl WamnPostgres {
         let release = self.release_identity_for(component_id);
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout_platform(&project).await.map_err(|error| {
+        let (connection, policy) = self.checkout_platform(&project, AuthorityClass::ExecutorPlatform).await.map_err(|error| {
             ProductionClaimError::new(
                 ProductionClaimErrorKind::Storage,
                 "checkout project connection",
@@ -621,7 +623,7 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout_platform(&project).await.map_err(|error| {
+        let (connection, policy) = self.checkout_platform(&project, AuthorityClass::ExecutorPlatform).await.map_err(|error| {
             ProductionClaimError::new(
                 ProductionClaimErrorKind::Storage,
                 "checkout janitor connection",
@@ -707,7 +709,7 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout_platform(&project).await.map_err(|error| {
+        let (connection, policy) = self.checkout_platform(&project, AuthorityClass::ExecutorPlatform).await.map_err(|error| {
             ProductionClaimError::new(
                 ProductionClaimErrorKind::Storage,
                 "checkout renewal connection",
@@ -775,7 +777,7 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout_platform(&project).await.map_err(|error| {
+        let (connection, policy) = self.checkout_platform(&project, AuthorityClass::ExecutorPlatform).await.map_err(|error| {
             ProductionClaimError::new(
                 ProductionClaimErrorKind::Storage,
                 "checkout completion connection",
