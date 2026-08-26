@@ -575,6 +575,32 @@ fn psql_ok(url: &str, stage: &str, script: &str) {
     );
 }
 
+/// Substitute a bound statement's positional params in as literals, so a builder
+/// the driver would run with `$n` binds runs under `psql` (the shape is the same
+/// one; only the transport differs). Highest-to-lowest so `$1` never matches
+/// inside `$10`+.
+fn render(statement: &wamn_schema_control::SqlStatement) -> String {
+    let mut sql = statement.sql.clone();
+    for (index, value) in statement.params.iter().enumerate().rev() {
+        sql = sql.replace(&format!("${}", index + 1), &lit(value));
+    }
+    sql
+}
+
+fn lit(value: &wamn_schema_control::Value) -> String {
+    match value {
+        wamn_schema_control::Value::Text(text)
+        | wamn_schema_control::Value::NullableText(Some(text)) => {
+            format!("'{}'", text.replace('\'', "''"))
+        }
+        wamn_schema_control::Value::NullableText(None)
+        | wamn_schema_control::Value::NullableInt(None) => "NULL".to_owned(),
+        wamn_schema_control::Value::Int(int)
+        | wamn_schema_control::Value::NullableInt(Some(int)) => int.to_string(),
+        wamn_schema_control::Value::Bool(flag) => flag.to_string(),
+    }
+}
+
 #[test]
 #[ignore = "requires disposable PostgreSQL 18 URL in WAMN_CONTROL_PORTABLE_PG_URL"]
 fn current_database_connect_posture_kills_remove_and_sibling_scope_mutants_on_postgres() {
@@ -1156,4 +1182,176 @@ END $second$;
         wamn_control_provision::sql::retire_control_author_generation_sql(&database, &author_a),
     );
     psql_ok(&url, "control-author retirement", &retire);
+}
+
+/// wamn-0h0g.8.21 live PostgreSQL 18 proof for the RUST binding of
+/// `catalog.register_deployment_attestation`.
+///
+/// The plpgsql leg inside
+/// `control_portable_store_applies_twice_and_enforces_contract_on_postgres`
+/// already proves the ROUTINE — the idempotent exact retry, the content-conflict
+/// raise, the zero probe grants — and none of that is repeated here. What is
+/// unproven without this is the STATEMENT `wamn_schema_control::attestation`
+/// builds: that PostgreSQL accepts it against the installed signature at all, at
+/// the arity and per-position types the binding assumes; that each named field
+/// lands in its own column; and that the refusal the Rust boundary keys on is
+/// the one the server actually returns.
+///
+/// The relation is CONTROL-plane only, so the store this applies is
+/// `deploy/sql/control-portable-store.sql` — the `catalog.releases` the
+/// attestation's foreign key targets is the control copy, not the project one.
+#[test]
+fn deployment_attestation_rust_binding_holds_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
+        eprintln!(
+            "skipping deployment_attestation_rust_binding_holds_on_postgres \
+             (set WAMN_CONTROL_PORTABLE_PG_URL)"
+        );
+        return;
+    };
+
+    let hash = format!("sha256:{}", "a".repeat(64));
+    let other_hash = format!("sha256:{}", "b".repeat(64));
+    let attestation = wamn_schema_control::attestation::Attestation {
+        tenant_id: "tenant-a",
+        catalog_id: "orders",
+        catalog_version: 7,
+        org_id: "acme",
+        project_id: "billing",
+        environment: "prod",
+        deployed_manifest_hash: &hash,
+        attested_at: "2026-08-15T12:00:00Z",
+    };
+    let conflicting = wamn_schema_control::attestation::Attestation {
+        deployed_manifest_hash: &other_hash,
+        ..attestation
+    };
+    let write = wamn_schema_control::attestation::register_attestation(&attestation);
+    let conflicting_write =
+        wamn_schema_control::attestation::register_attestation(&conflicting);
+
+    let mut script = String::from(
+        "CREATE EXTENSION IF NOT EXISTS pgcrypto;\n\
+         DROP SCHEMA IF EXISTS catalog CASCADE;\n\
+         DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
+         DROP SCHEMA IF EXISTS wamn_authority CASCADE;\n\
+         DO $$ BEGIN\n\
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN\n\
+             CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
+           END IF;\n\
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_portable_probe') THEN\n\
+             CREATE ROLE wamn_portable_probe NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
+           END IF;\n\
+         END $$;\n\
+         DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
+           current_database()); END $$;\n\
+         SET ROLE wamn_system;\n",
+    );
+    script.push_str(&ddl());
+    script.push_str(&format!(
+        r"
+SET app.tenant = '{tenant}';
+INSERT INTO catalog.catalogs
+  (tenant_id,catalog_id,version,environment,schema_version,state)
+VALUES ('{tenant}','{catalog}',{version},'{environment}','0.1','applied');
+INSERT INTO catalog.releases
+  (tenant_id,catalog_id,catalog_version)
+VALUES ('{tenant}','{catalog}',{version});
+
+-- The server's own answer about the Rust statement. It must PREPARE against the
+-- installed routine at all, and it must type every position the way the binding
+-- assumes: a dropped argument, a moved `$n` across the one non-text position, or
+-- a lost `::text` on the instant each change this array.
+PREPARE wamn_rust_attestation AS {prepared};
+DO $types$ DECLARE found text[]; BEGIN
+  SELECT parameter_types::text[] INTO found
+    FROM pg_prepared_statements WHERE name = 'wamn_rust_attestation';
+  ASSERT found = ARRAY['text','text','integer','text','text','text','text','text']::text[],
+    format('PostgreSQL types the Rust binding as %s', found);
+END $types$;
+DEALLOCATE wamn_rust_attestation;
+
+DO $bind$ DECLARE first_at timestamptz; BEGIN
+  first_at := ({write});
+  ASSERT first_at = ({write}),
+    'the Rust-bound write is not idempotent on an exact retry';
+  ASSERT (SELECT count(*) FROM catalog.deployment_attestations) = 1,
+    'the exact retry of the Rust-bound write inserted a second row';
+  -- Named field to named column. Two same-typed parts swapped in the binder or
+  -- in the wrapper string would key the attestation under a placement nothing
+  -- deployed to, and only the server can say which column each part landed in.
+  ASSERT EXISTS (
+    SELECT 1 FROM catalog.deployment_attestations
+     WHERE tenant_id = '{tenant}'
+       AND catalog_id = '{catalog}'
+       AND catalog_version = {version}
+       AND org_id = '{org}'
+       AND project_id = '{project}'
+       AND environment = '{environment}'
+       AND deployed_manifest_hash = '{hash}'
+       AND attested_at = first_at),
+    'the Rust-bound write placed a part in the wrong column';
+END $bind$;
+
+-- The refusal is reported back rather than merely asserted here, so the Rust
+-- boundary is translating the server's own SQLSTATE and message, not a copy.
+DO $refusal$ DECLARE refused timestamptz; BEGIN
+  BEGIN
+    refused := ({conflicting});
+    RAISE EXCEPTION 'a differing attestation at the same Rust-bound coordinate was accepted';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'WAMN-RUST-ATTESTATION-REFUSAL % %', SQLSTATE, SQLERRM;
+  END;
+END $refusal$;
+RESET ROLE;
+",
+        tenant = attestation.tenant_id,
+        catalog = attestation.catalog_id,
+        version = attestation.catalog_version,
+        org = attestation.org_id,
+        project = attestation.project_id,
+        environment = attestation.environment,
+        hash = attestation.deployed_manifest_hash,
+        prepared = write.sql,
+        write = render(&write),
+        conflicting = render(&conflicting_write),
+    ));
+
+    let output = psql(&url, &script);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "deployment-attestation Rust binding proof failed:\n{stderr}"
+    );
+
+    let reported = stderr
+        .lines()
+        .find_map(|line| line.split_once("WAMN-RUST-ATTESTATION-REFUSAL "))
+        .map(|(_, refusal)| refusal.trim().to_owned())
+        .expect("the server reported its refusal of the conflicting Rust-bound write");
+    let (sqlstate, message) = reported
+        .split_once(' ')
+        .expect("the reported refusal carries a SQLSTATE and a message");
+
+    // One condition, one literal: the boundary keys on what the DDL raises.
+    assert_eq!(message, wamn_schema_control::attestation::CONTENT_CONFLICT);
+    let error = wamn_schema_control::attestation::translate_failure(
+        &conflicting,
+        Some(sqlstate),
+        message,
+    );
+    assert_eq!(
+        error.kind(),
+        wamn_schema_control::attestation::AttestationErrorKind::ContentConflict,
+        "the server refused with {sqlstate}/{message:?} and the write's owning \
+         boundary did not recognize it"
+    );
+    assert_eq!(error.coordinate(), "tenant-a/orders@7 -> acme/billing/prod");
+    assert!(
+        error
+            .to_string()
+            .starts_with(wamn_schema_control::attestation::CONTENT_CONFLICT)
+    );
 }

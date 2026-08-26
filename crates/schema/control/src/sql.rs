@@ -178,6 +178,23 @@ pub fn release_manifest_exists_sql() -> &'static str {
      WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3)"
 }
 
+/// Record the deployment attestation for one six-part coordinate. Insert-or-verify:
+/// an identical retry returns the original `attested_at`, and a differing
+/// `deployed_manifest_hash` at the same coordinate raises
+/// `deployment-attestation-content-conflict`.
+///
+/// CONTROL-plane only (`deploy/sql/control-portable-store.sql`), unlike the
+/// release identity above, which is a separate relation in each plane. `$8` is
+/// bound as text and cast because [`crate::Value`] carries no timestamp
+/// variant — the same double cast as `$8::text::jsonb` in
+/// [`upsert_applied_version_sql`], which also holds the parameter's own inferred
+/// type at `text` instead of the cast target. [`crate::attestation`] owns the
+/// typed binding and the single translation of this write's failure.
+pub fn register_deployment_attestation_sql() -> &'static str {
+    "SELECT catalog.register_deployment_attestation(\
+     $1, $2, $3, $4, $5, $6, $7, $8::text::timestamptz)"
+}
+
 // ---------------------------------------------------------------------------
 // Schema-impact analysis (11.8, wamn-wvb): the dependency-edge reads the ops
 // `impact-report` shell (`services/ctl/src/impact_report.rs`, the only one)
@@ -274,5 +291,22 @@ mod tests {
                 .contains("catalog_version = $3::integer")
         );
         assert!(super::advance_catalog_head_sql().contains("DO UPDATE"));
+    }
+
+    /// The deployment-attestation write is CONTROL-plane, so `CATALOG_SCHEMA`
+    /// above cannot answer for it, and a text scan over the control DDL could
+    /// not tell a declaration from a comment anyway. The drift guard that IS
+    /// load-bearing for Rust-built SQL is the generated string itself: pinned
+    /// exactly, so a moved `$n` or a dropped cast fails here rather than only
+    /// against a live server. `deployment_attestation_rust_binding_holds_on_postgres`
+    /// (`crates/control/provision/tests/control_portable_store.rs`) asks
+    /// PostgreSQL 18 itself whether this string matches the installed routine.
+    #[test]
+    fn deployment_attestation_write_pins_its_eight_argument_binding() {
+        assert_eq!(
+            super::register_deployment_attestation_sql(),
+            "SELECT catalog.register_deployment_attestation(\
+             $1, $2, $3, $4, $5, $6, $7, $8::text::timestamptz)"
+        );
     }
 }
