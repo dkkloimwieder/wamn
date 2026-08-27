@@ -692,6 +692,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `services/ctl/tests/release_manifest_mint_live.rs` | `WAMN_RELEASE_MANIFEST_MINT_PG_URL` | `cargo test -p wamn-ctl --test release_manifest_mint_live -- --ignored` |
 | `services/ctl/tests/protected_relations_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --features ops --test protected_relations_live -- --ignored` |
 | `services/ctl/tests/catalog_confinement_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test catalog_confinement_live` |
+| `services/ctl/tests/author_wiring_gate_report_live.rs` | `WAMN_AUTHOR_WIRING_PROJECT_PG_URL` **and** `WAMN_AUTHOR_WIRING_CONTROL_PG_URL` | `cargo test -p wamn-ctl --test author_wiring_gate_report_live -- --ignored` |
 | `services/scenario-worker/tests/management_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-scenario-worker --test management_live` |
 | `crates/execution/run-state/tests/effect_writer_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --features native --test effect_writer_live -- --ignored` |
 | `services/dispatcher/tests/read_authority.rs` | `WAMN_PROVISION_PG_URL` | `cargo test -p wamn-dispatcher --test read_authority` |
@@ -724,6 +725,13 @@ WAMN_CONTROL_PORTABLE_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
   cargo test -p wamn-control-provision --test control_portable_store -- \
   --include-ignored control_portable_store_renames_the_gate_ledger_literal
 ```
+
+`author_wiring_gate_report_live` needs **two distinct databases** on a
+disposable server — the wiring row is project-plane and the gate report is
+control-plane — and its control preamble REVOKEs `CONNECT ... FROM PUBLIC` on
+the database it is pointed at, so never share that one with another suite. It
+had no row here until `wamn-0h0g.8.29`, which means it had never entered an
+arming set.
 
 The two `generation_live` tests revoke `PUBLIC CONNECT` on **every** non-template
 database in the cluster. Run them only against a disposable server.

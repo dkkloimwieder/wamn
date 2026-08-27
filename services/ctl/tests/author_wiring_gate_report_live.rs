@@ -10,6 +10,60 @@
 //! Both stores are provisioned from the production SQL artifacts —
 //! `ensure_catalog_storage` and `CONTROL_BOOTSTRAP_SQL` — so the report row the
 //! verb reads is the deployed relation, not a fixture shaped like it.
+//!
+//! # This file SEEDS the gate verdict by admin SQL, and here is what that costs
+//!
+//! `wamn-0h0g.8.28`'s rider said the live tests stop seeding
+//! `wamn_run.gate_reports` directly, because a seeded report is a false green
+//! that proves the STEADY STATE and never the FIRST TRANSITION. `record_report`
+//! below still seeds. `wamn-0h0g.8.29` measured the alternative and ruled this
+//! the honest disposition rather than neglect; the measurement is recorded here
+//! so it is not re-derived and the rider is not re-raised as an unfixed defect.
+//!
+//! **What is NOT wrong with it.** The dangerous half of the pattern — a
+//! FABRICATED hash standing in for a derived one — is not present here. Every
+//! report is keyed on `document.wiring_hash()`, derived by the same reader the
+//! server uses from the same bytes the document carries. The sibling that DID
+//! invent its candidate hash (`sha256:1c1c1c…`) was `management_live.rs`, and
+//! that is where the false green actually lived; it is gone. This file seeds the
+//! VERDICT, not the IDENTITY.
+//!
+//! **What this file therefore does NOT prove.** That the gate verb itself ever
+//! writes a report — the ordering in which a judgment produces the row this test
+//! then reads. Every arm below starts from a report row that exists because this
+//! file inserted it.
+//!
+//! **The test that DOES prove it** is
+//! `management_surface_authenticates_and_attributes_authoring_commands` in
+//! `services/scenario-worker/tests/management_live.rs`. It drives the real gate
+//! command over the management surface and asserts, at the moment a document
+//! reaches an accepted judgment, that `catalog.wirings` holds ZERO rows — the
+//! first transition, which no seeded fixture can reach — then reads the report
+//! the gate wrote back out of `wamn_run.gate_reports` at the hash DERIVED from
+//! the submitted bytes.
+//!
+//! **The measured cost of building it here instead.** The gate verb lives in
+//! `wamn-scenario-worker`, and its writer `management::insert_gate_report` is
+//! `pub(crate)`; the only public entry is `management::serve`, an HTTP server.
+//! Taking the crate as a dev-dependency is the cheap part — measured with
+//! `cargo tree -e normal`, it adds exactly two crates to `wamn-ctl`'s graph
+//! (`wamn-scenario-worker` and `wamn-authoring-model`). The fixture is not. This
+//! test would have to stand up `ManagementServeArgs`' four connection inputs,
+//! THREE of them scoped A/B generation LOGINs whose digest-derived names are
+//! validated before any I/O — a `wamn_identity_reader` generation, a
+//! `wamn_control_author` generation and a `wamn_management_admitter` generation
+//! — then provision the `identity` schema, admit a principal, mint it a project
+//! role and a PAT, bind a listener, and POST the command with that bearer token,
+//! across THREE databases rather than two. `management_live.rs` carries exactly
+//! that: 812 lines of fixture ahead of its single `#[tokio::test]`, where this
+//! whole file — fixture and all four arms — was 292 lines before this comment.
+//! The one cheap route, making `insert_gate_report` reachable in-process, is an
+//! edit to `services/scenario-worker/src/management.rs`.
+//!
+//! So the proof of the first transition stays where the gate verb lives, and
+//! this file proves the other half: that AUTHORSHIP admits a document only under
+//! a green report keyed to that document's own hash. Those are different claims,
+//! and this one needs no gate run to make.
 
 use std::collections::BTreeMap;
 
@@ -154,6 +208,13 @@ async fn provision_control(control: &Client) {
 }
 
 /// Record one gate verdict at exactly the hash the gate judged.
+///
+/// **THIS IS THE ADMIN-SQL SEEDING `wamn-0h0g.8.28`'s rider named, kept
+/// deliberately (`wamn-0h0g.8.29`).** `wiring_hash` is always
+/// `document.wiring_hash()` — derived from the bytes, never a literal — so what
+/// is seeded is the VERDICT, not the IDENTITY. The consequence is that no arm
+/// below proves the gate verb ever WRITES a report; the module header names the
+/// test that does and the measured cost of moving that proof here.
 async fn record_report(control: &Client, wiring_hash: &DefinitionHash, passed: bool) {
     control
         .execute(
