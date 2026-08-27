@@ -39,7 +39,10 @@
 //!   database without project schemas while the cluster-scoped runtime roles
 //!   remain shared. `--dry-run` first, proven STRICTLY read-only; then the apply
 //!   provisions everything — run plane + `catalog` schema — and a functional
-//!   smoke as `wamn_app` proves the sections' grants + RLS isolation end-to-end.
+//!   smoke as a MINTED GUEST GENERATION LOGIN (not the bare `wamn_app` ACL
+//!   role, under which `current_tenant_key` derives NULL and every read
+//!   matches nothing in silence) proves the sections' grants + RLS isolation
+//!   end-to-end.
 //! - **invocation retention cutover**: the legacy admission expiry column/index
 //!   are removed and the client-key carrier becomes optional; a second pass is
 //!   a no-op.
@@ -97,6 +100,7 @@ const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
 
 const SCHEMA: &str = "rp_live";
 const DISPATCH_READER_PASSWORD: &str = "dispatch-reader-run-plane-probe";
+const GUEST_GENERATION_PASSWORD: &str = "guest-generation-run-plane-probe";
 const EMPTY_EXECUTION_BUNDLE_HASH: &str =
     "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const CLI_ORG: &str = "acme";
@@ -2430,6 +2434,73 @@ async fn drop_generation_role(su: &Client, role: &str) {
     .expect("drop the disposable generation role");
 }
 
+/// Mint one guest-SQL generation LOGIN for `tenant` and dial it
+/// (`wamn-0h0g.22.36`).
+///
+/// # THE BARE `wamn_app` ACL ROLE CANNOT STAND IN FOR THIS
+///
+/// After `wamn-0h0g.22.6` the tenant floor is
+/// `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
+/// and `current_tenant_key` recovers a key ONLY from the guest generation
+/// pattern. Under the ACL role it derives NULL, a NULL-compared predicate
+/// matches nothing, and the read returns ZERO ROWS WITH NO ERROR — an assertion
+/// dialing `wamn_app` cannot tell REFUSED from MATCHED-NOTHING, which is the
+/// whole point of a FORCE-RLS probe.
+///
+/// The login name is DERIVED by the production builder, never spelled, so the
+/// digest under test is the digest `provision-project-env` would mint. The
+/// membership edge is written here rather than taken from
+/// `normalize_workload_generation_membership_sql`: that builder composes
+/// `ensure_workload_acl_role_sql`, which would harden this fixture's `wamn_app`
+/// to `NOLOGIN PASSWORD NULL` and strand the legs that dial it directly.
+/// `INHERIT TRUE` is spelled because PostgreSQL 16+ matches a policy's `TO`
+/// clause on the PER-EDGE inherit option.
+async fn mint_guest_generation(su: &Client, url: &str, tenant: &str) -> (String, Client) {
+    let database: String = su
+        .query_one("SELECT current_database()", &[])
+        .await
+        .expect("read the reconciled database")
+        .get(0);
+    let generation = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("the guest family takes a tenant scope");
+    drop_generation_role(su, &generation).await;
+    su.batch_execute(&format!(
+        "CREATE ROLE \"{generation}\" LOGIN PASSWORD '{GUEST_GENERATION_PASSWORD}' \
+           NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
+         GRANT wamn_app TO \"{generation}\" WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; \
+         GRANT CONNECT ON DATABASE \"{database}\" TO \"{generation}\";"
+    ))
+    .await
+    .expect("mint the guest generation login");
+    // A SUPERUSER (or BYPASSRLS) FIXTURE MASKS RLS ENTIRELY, so the probe role
+    // is asserted unprivileged from `pg_roles` — across everything it inherits,
+    // because the attribute is recovered through the whole membership chain.
+    let masking: Vec<String> = su
+        .query(
+            "SELECT rolname FROM pg_catalog.pg_roles \
+              WHERE (rolsuper OR rolbypassrls) AND pg_has_role($1, oid, 'USAGE')",
+            &[&generation],
+        )
+        .await
+        .expect("probe the generation's superuser/bypassrls reach")
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert!(
+        masking.is_empty(),
+        "the guest generation reaches an RLS-masking role: {masking:?}"
+    );
+    let client = connect_as(url, &generation, GUEST_GENERATION_PASSWORD).await;
+    (generation, client)
+}
+
 /// wamn-0h0g.12.178: the reconciler must ACCEPT the generation shape its OWN
 /// provisioner mints.
 ///
@@ -4093,63 +4164,85 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         );
     }
 
-    // Functional smoke as the runtime role: the sections' grants + RLS hold.
-    // wamn-0h0g.22.7 (b1d42599) took every run-plane WRITE away from
+    // Functional smoke as the runtime principal: the sections' grants + RLS
+    // hold. wamn-0h0g.22.7 (b1d42599) took every run-plane WRITE away from
     // `wamn_app` — table SELECT and DELETE on `runs`, nothing at all on
-    // `run_queue` — so the row is seeded as superuser and the guest role is
-    // proven to READ under RLS and to be REFUSED on write.
+    // `run_queue` — so both tenants' rows are seeded as superuser and the guest
+    // is proven to READ its own under RLS and to be REFUSED on write.
+    //
+    // *** THE PRINCIPAL IS A MINTED GENERATION LOGIN, NOT `SET ROLE wamn_app`
+    // (wamn-0h0g.22.36). *** After wamn-0h0g.22.6 the floor is
+    // `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`
+    // and `current_tenant_key` recovers a key ONLY from the guest generation
+    // pattern. Under the BARE ACL role it derives NULL, a NULL-compared
+    // predicate matches nothing, and PostgreSQL returns ZERO ROWS WITH NO
+    // ERROR — so the retired probe could not tell REFUSED from MATCHED-NOTHING
+    // and read 0 where it demanded 1. The login name is DERIVED by the
+    // production builder, never spelled, so the digest under test is the digest
+    // `provision-project-env` would mint.
     seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "t2", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
               environment) \
-             VALUES ('t1','r1','f',1,'cat',1,'dev'); \
+             VALUES ('t1','r1','f',1,'cat',1,'dev'), \
+                    ('t2','r2','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
     ))
     .await
-    .expect("seed a tenant run-plane row");
-    su.batch_execute("SET ROLE wamn_app; SELECT set_config('app.tenant', 't1', false);")
+    .expect("seed both tenants' run-plane rows");
+    let seeded: i64 = su
+        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
         .await
-        .expect("assume the runtime role");
+        .expect("superuser sees the whole table")
+        .get(0);
+    assert_eq!(seeded, 2, "both tenants' rows exist before the guest reads");
+
+    let (guest_generation, guest) = mint_guest_generation(su, base_url, "t1").await;
     for refused in [
         format!(
             "INSERT INTO {SCHEMA}.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment) \
-             VALUES ('t1','r2','f',1,'cat',1,'dev')"
+             VALUES ('t1','r3','f',1,'cat',1,'dev')"
         ),
-        format!("INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1','r2')"),
+        format!("INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1','r3')"),
     ] {
-        let denied = su
+        let denied = guest
             .batch_execute(&refused)
             .await
             .expect_err("the runtime role writes no run-plane row");
         assert_db_code(denied, "42501", "runtime-role write refusal");
     }
+    // THE POST-STATE, not merely a count: the row the guest reads is ITS OWN,
+    // and the foreign tenant's row — proven present above — is absent from the
+    // result. One query settles admission and isolation together, so a
+    // regression to matched-nothing fails on the left half and a regression to
+    // a `USING (true)` floor fails on the right.
+    let visible = guest
+        .query(
+            &format!("SELECT tenant_id, run_id FROM {SCHEMA}.runs ORDER BY run_id"),
+            &[],
+        )
+        .await
+        .expect("tenant read");
+    let visible: Vec<(String, String)> =
+        visible.iter().map(|row| (row.get(0), row.get(1))).collect();
+    assert_eq!(
+        visible,
+        vec![("t1".to_string(), "r1".to_string())],
+        "the guest generation sees exactly its own tenant's row"
+    );
     // `runs` is the only run-plane relation the guest role can still read;
     // wamn-0h0g.22.7 (b1d42599) left it nothing at all on `run_queue`.
-    let visible: i64 = su
-        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
-        .await
-        .expect("tenant read")
-        .get(0);
-    assert_eq!(visible, 1, "own tenant sees its row");
-    let queue_denied = su
+    let queue_denied = guest
         .query_one(&format!("SELECT count(*) FROM {SCHEMA}.run_queue"), &[])
         .await
         .expect_err("the runtime role cannot read the queue at all");
     assert_db_code(queue_denied, "42501", "runtime-role queue read refusal");
-    su.batch_execute("SELECT set_config('app.tenant', 't2', false)")
-        .await
-        .expect("switch tenant");
-    let foreign: i64 = su
-        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
-        .await
-        .expect("foreign read")
-        .get(0);
-    assert_eq!(foreign, 0, "RLS isolates the foreign tenant");
-    su.batch_execute("RESET ROLE; SELECT set_config('app.tenant', '', false)")
-        .await
-        .expect("drop back to superuser");
+    drop(guest);
+    // Roles are CLUSTER-wide: leave none behind for the legs that follow.
+    drop_generation_role(su, &guest_generation).await;
 
     let sentinel = connect(&sentinel_url).await;
     let sentinel_owners = sentinel
@@ -4721,10 +4814,12 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     // `runs` and no write of any shape. The admission that used to prove the
     // `off` default moved to the private management path, so what this leg
     // still proves live is the confinement the reconciler restores.
-    let app = connect_as(url, "wamn_app", "wamn_app").await;
-    app.batch_execute("SELECT set_config('app.tenant','t1',false)")
-        .await
-        .expect("enter application tenant for capture authority probes");
+    // A MINTED GENERATION LOGIN, not the bare `wamn_app` ACL role: the read
+    // below is governed by the tenant floor, under which the ACL role derives a
+    // NULL key and matches nothing in silence (`wamn-0h0g.22.36`). The three
+    // refusals are grant-level and hold either way; the generation inherits
+    // exactly the ACL role's grants, so it is the same authority under test.
+    let (app_generation, app) = mint_guest_generation(su, url, "t1").await;
     for (label, refused) in [
         (
             "admission",
@@ -4759,6 +4854,8 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
         .expect("the application role retains its tenant read")
         .get(0);
     assert_eq!(readable, 1);
+    drop(app);
+    drop_generation_role(su, &app_generation).await;
 
     let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
