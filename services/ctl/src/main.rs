@@ -37,6 +37,8 @@ enum Command {
     /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
     AuthorWiring(author_wiring::AuthorWiringArgs),
     /// INTERIM: mint one format-2 release from named wirings plus hand-authored attachment and registration documents (wamn-0h0g.15.164 replaces the documents with a projection)
+    ///
+    /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(publish_release::PublishReleaseArgs),
     /// Publish canonical format-2 serving-manifest bytes as an immutable OCI artifact
     PushReleaseManifest(push_release_manifest::PushReleaseManifestArgs),

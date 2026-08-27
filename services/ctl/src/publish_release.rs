@@ -26,6 +26,26 @@
 //! registrations into that store; the projection replaces these two arguments
 //! then. Both stay REQUIRED until it does, because an empty registration set is
 //! a valid manifest with a real digest and must be chosen, never defaulted.
+//!
+//! # Stated precondition: reconcile the run plane BEFORE publishing
+//!
+//! `publish-release` requires that `reconcile-run-plane` has already converged
+//! this tenant's row in `<--run-schema>.environment_policies` in the project
+//! database being published into. That row is the provisioned environment fact
+//! `verify_provisioned_environment` checks the release's carried environment
+//! against, and the check refuses when the row is ABSENT
+//! (`environment-policy-not-converged`) exactly as it refuses when the row
+//! DISAGREES (`environment-policy-environment-mismatch`). Publishing into a
+//! project database whose run plane was never reconciled therefore fails, where
+//! before the check existed it succeeded unchecked.
+//!
+//! The ordering is stated here rather than enforced: nothing in the schema
+//! sequences the two verbs, and this module does not run the reconcile itself.
+//! What makes the failure diagnosable rather than surprising is that the absent
+//! refusal names `reconcile-run-plane` in its own message text — recorded as the
+//! publish surface's precondition by wamn-0h0g.8.26, after wamn-xkgp mounted the
+//! check. `push-release-manifest` carries no such check and no such precondition:
+//! it publishes bytes a mint already verified.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -340,6 +360,12 @@ pub struct PublishReleaseArgs {
     /// default would let an invocation that omits the flag check the release
     /// against a relation the operator never named, which is the trusted-carry
     /// this verb exists to stop.
+    ///
+    /// PRECONDITION: run `reconcile-run-plane` for this tenant and this schema
+    /// FIRST. Publishing before it has converged the tenant's
+    /// `environment_policies` row refuses on `environment-policy-not-converged`;
+    /// a row naming another environment refuses on
+    /// `environment-policy-environment-mismatch`.
     #[arg(long)]
     pub run_schema: String,
 

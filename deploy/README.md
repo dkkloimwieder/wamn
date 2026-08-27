@@ -29,6 +29,21 @@ Placement judgment calls, recorded: `postgres.yaml` is platform (the shared
 long-lived fixture ~8 gates and the dispatcher point at, despite its bench
 header); `serve-echo` is gates (gate support, not product).
 
+Ordering recorded, **reconcile the run plane before publishing a release into
+it** (wamn-0h0g.8.26). `wamn-ctl reconcile-run-plane` — the per-project-env Job
+in `platform/run-plane-reconcile.example.yaml` — converges one tenant's row in
+`<--schema>.environment_policies` out of the control registry. `wamn-ctl
+publish-release --run-schema <schema>` reads `expected_environment` from that
+same row before it commits, and refuses when the row is ABSENT
+(`environment-policy-not-converged`) as well as when it names another
+environment than the release carries
+(`environment-policy-environment-mismatch`). Publishing into a project database
+whose run plane was never reconciled therefore fails; the absent refusal names
+`reconcile-run-plane` so the remedy is in the error text. Nothing sequences the
+two verbs, which is why the ordering is written down here.
+`push-release-manifest` has no such precondition — it publishes bytes a mint
+already verified.
+
 cert-manager is base infrastructure, not a gate prerequisite (wamn-ergz).
 `infra/cert-manager.yaml` is the upstream static install **pinned at v1.21.0**
 — all three `quay.io/jetstack` images (controller, webhook, cainjector) and
