@@ -39,6 +39,10 @@ wamn-control-registry = { workspace = true }
 # dispatcher's scoped reader role, so the live gate cannot drift from the SQL
 # production actually applies. Dev-only: the shipped binary links no provisioner.
 wamn-control-provision = { workspace = true }
+# wamn-0h0g.24.10: the depth-liveness test reads its own series back off a
+# TEST-OWNED meter provider (`InMemoryMetricExporter`), never the global one, so
+# two tests cannot see each other's instruments.
+opentelemetry_sdk = { workspace = true, features = ["metrics", "testing"] }
 
 [lints]
 workspace = true

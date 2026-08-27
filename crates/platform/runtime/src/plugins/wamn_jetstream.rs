@@ -53,6 +53,7 @@ use async_nats::jetstream::message::AckKind;
 use async_nats::jetstream::publish::PublishAck as NatsPublishAck;
 use futures_util::{StreamExt as _, TryStreamExt as _};
 use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Meter};
 use tokio::sync::Mutex;
 use tracing::Instrument as _;
 use wamn_catalog::ServingManifest;
@@ -496,15 +497,59 @@ struct DeadLetterDepthSample {
     depth: u64,
 }
 
-#[derive(Debug, Default)]
+/// The series labels for one dead-letter registration, minted ONCE and shared
+/// by the depth gauge and its samples counter, so the two always land on the
+/// same series and a dashboard can read them together.
+fn dead_letter_attributes(identity: &DeadLetterIdentity) -> [KeyValue; 4] {
+    [
+        KeyValue::new("wamn.tenant", identity.tenant.to_string()),
+        KeyValue::new("wamn.environment", identity.environment.to_string()),
+        KeyValue::new("wamn.catalog", identity.catalog_id.to_string()),
+        KeyValue::new("wamn.registration", identity.registration_id.to_string()),
+    ]
+}
+
+#[derive(Debug)]
 struct DeadLetterDepth {
     by_subject: std::sync::Mutex<HashMap<Box<str>, DeadLetterDepthSample>>,
+    /// `wamn.jetstream.dlq.depth.samples` (wamn-0h0g.24.10): one increment per
+    /// depth reading this process actually TOOK, under the same attributes as
+    /// the gauge it certifies.
+    ///
+    /// LIVENESS IS PROVEN BY A SIGNAL THE SUSPECT CANNOT FAKE. The gauge alone
+    /// proves nothing: it is an OBSERVABLE instrument over a last-write-wins
+    /// map, and the exporter invokes its callback on ITS OWN clock whether or
+    /// not anything refreshed the map — so a registration whose dead-letter
+    /// subject is genuinely empty and one whose observer died an hour ago emit
+    /// BYTE-IDENTICAL series. Read with this counter they differ: the depth is
+    /// trustworthy only while the counter is still advancing.
+    ///
+    /// THE LIMIT, STATED SO THE CRITERION IS NOT READ AS FULLY MET: this is a
+    /// SELF-REPORT, so it distinguishes an observer that STOPPED and nothing
+    /// more. An observer that LIES or WEDGES while still ticking keeps
+    /// incrementing it. A signal the subject does not produce — an external
+    /// reader of stream state — is `wamn-2jkm.104`; this counter is a floor
+    /// under that bead, not a substitute for it, and retires nothing.
+    samples: Counter<u64>,
 }
 
 impl DeadLetterDepth {
-    fn register(depth: &Arc<Self>) {
+    fn new(meter: &Meter) -> Self {
+        Self {
+            by_subject: std::sync::Mutex::new(HashMap::new()),
+            samples: meter
+                .u64_counter("wamn.jetstream.dlq.depth.samples")
+                .with_description(
+                    "dead-letter depth readings taken for one release registration; \
+                     a flat count means the observer stopped, not that the subject is empty",
+                )
+                .build(),
+        }
+    }
+
+    fn register(meter: &Meter, depth: &Arc<Self>) {
         let weak = Arc::downgrade(depth);
-        let _ = opentelemetry::global::meter("wamn-jetstream")
+        let _ = meter
             .u64_observable_gauge("wamn.jetstream.dlq.depth")
             .with_description("retained dead-letter messages for one release registration")
             .with_callback(move |observer| {
@@ -513,24 +558,7 @@ impl DeadLetterDepth {
                 };
                 if let Ok(samples) = depth.by_subject.lock() {
                     for sample in samples.values() {
-                        observer.observe(
-                            sample.depth,
-                            &[
-                                KeyValue::new("wamn.tenant", sample.identity.tenant.to_string()),
-                                KeyValue::new(
-                                    "wamn.environment",
-                                    sample.identity.environment.to_string(),
-                                ),
-                                KeyValue::new(
-                                    "wamn.catalog",
-                                    sample.identity.catalog_id.to_string(),
-                                ),
-                                KeyValue::new(
-                                    "wamn.registration",
-                                    sample.identity.registration_id.to_string(),
-                                ),
-                            ],
-                        );
+                        observer.observe(sample.depth, &dead_letter_attributes(&sample.identity));
                     }
                 }
             })
@@ -538,6 +566,12 @@ impl DeadLetterDepth {
     }
 
     fn update(&self, identity: DeadLetterIdentity, depth: u64) {
+        // ON THE OBSERVATION PATH, not the publish path: both refresh sites —
+        // after every consumer fetch and after a dead-letter publish — land
+        // here, and a counter incremented where dead letters are PUBLISHED
+        // would sit flat on a healthy registration that never dead-letters,
+        // which is exactly the reading it exists to rule out.
+        self.samples.add(1, &dead_letter_attributes(&identity));
         if let Ok(mut samples) = self.by_subject.lock() {
             samples.insert(
                 identity.subject.clone(),
@@ -567,8 +601,9 @@ fn js_span(claim: &JetstreamClaim, component_id: &str, operation: &'static str) 
 
 impl WamnJetstream {
     pub fn new(cfg: WamnJetstreamConfig) -> Self {
-        let dlq_depth = Arc::new(DeadLetterDepth::default());
-        DeadLetterDepth::register(&dlq_depth);
+        let meter = opentelemetry::global::meter("wamn-jetstream");
+        let dlq_depth = Arc::new(DeadLetterDepth::new(&meter));
+        DeadLetterDepth::register(&meter, &dlq_depth);
         Self {
             nats_url: cfg.nats_url,
             ctx: Mutex::new(None),
@@ -1825,6 +1860,9 @@ impl producer::Host for ActiveCtx<'_> {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
+    use opentelemetry::metrics::MeterProvider as _;
+    use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
     use wamn_catalog::{
         DefinitionHash, ServingRegistration, ServingRegistrationInput, ServingRelease,
         ServingWiring,
@@ -2698,5 +2736,148 @@ mod tests {
         assert_eq!(stored[0].causation.depth, 3);
 
         ctx.delete_stream(stream).await.expect("cleanup");
+    }
+
+    // ---- depth-gauge liveness (wamn-0h0g.24.10) ----------------------------
+
+    /// One meter over an in-memory exporter, owned by the test rather than by
+    /// `opentelemetry::global`, so each [`MetricHarness::export`] call reads back
+    /// exactly one exporter tick. Same shape as the harness in
+    /// `crates/execution/host/src/router_delivery.rs`, which lives in that
+    /// crate's `#[cfg(test)]` module and cannot be imported.
+    struct MetricHarness {
+        exporter: InMemoryMetricExporter,
+        provider: SdkMeterProvider,
+    }
+
+    impl MetricHarness {
+        fn install() -> Self {
+            let exporter = InMemoryMetricExporter::default();
+            let provider = SdkMeterProvider::builder()
+                .with_reader(PeriodicReader::builder(exporter.clone()).build())
+                .build();
+            Self { exporter, provider }
+        }
+
+        fn meter(&self) -> Meter {
+            self.provider.meter("dead-letter-depth-test")
+        }
+
+        /// One exporter tick: flush, then read back only the NEWEST batch, so
+        /// two calls model two ticks of the exporter's own clock.
+        fn export(&self) -> Vec<(String, Vec<(String, String)>, u64)> {
+            self.provider
+                .force_flush()
+                .expect("test metrics must flush");
+            let batches = self
+                .exporter
+                .get_finished_metrics()
+                .expect("test metric exporter must remain readable");
+            let mut series = Vec::new();
+            let Some(resource) = batches.last() else {
+                return series;
+            };
+            for scope in resource.scope_metrics() {
+                for metric in scope.metrics() {
+                    let points: Vec<(Vec<(String, String)>, u64)> = match metric.data() {
+                        AggregatedMetrics::U64(MetricData::Sum(sum)) => sum
+                            .data_points()
+                            .map(|point| (sorted_attributes(point.attributes()), point.value()))
+                            .collect(),
+                        AggregatedMetrics::U64(MetricData::Gauge(gauge)) => gauge
+                            .data_points()
+                            .map(|point| (sorted_attributes(point.attributes()), point.value()))
+                            .collect(),
+                        _ => panic!("{} must stay a u64 gauge or sum", metric.name()),
+                    };
+                    for (attributes, value) in points {
+                        series.push((metric.name().to_owned(), attributes, value));
+                    }
+                }
+            }
+            series.sort();
+            series
+        }
+    }
+
+    fn sorted_attributes<'a>(
+        attributes: impl Iterator<Item = &'a KeyValue>,
+    ) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = attributes
+            .map(|kv| (kv.key.to_string(), kv.value.to_string()))
+            .collect();
+        pairs.sort();
+        pairs
+    }
+
+    /// A DEPTH GAUGE ALONE CANNOT PROVE ITS OWN OBSERVER IS ALIVE.
+    ///
+    /// Three exporter ticks over one registration whose dead-letter subject is
+    /// genuinely EMPTY. The gauge reads 0 on all three, because the exporter
+    /// re-observes the last written sample on ITS OWN clock: tick 2, where
+    /// nothing refreshed the cache, is byte-identical to tick 1. The samples
+    /// counter is what separates them — flat across tick 2 (the observer
+    /// stopped), advanced on tick 3 (the observer is alive and the subject is
+    /// genuinely empty).
+    ///
+    /// THE LIMIT, so this is not read as proving more than it does: the counter
+    /// is a SELF-REPORT, so it catches an observer that STOPPED and nothing
+    /// else. One that LIES or WEDGES while still ticking keeps incrementing it
+    /// and no assertion below would fail. The signal the subject cannot fake is
+    /// `wamn-2jkm.104`'s.
+    #[test]
+    fn the_dlq_depth_samples_counter_tells_an_empty_subject_from_a_stopped_observer() {
+        let harness = MetricHarness::install();
+        let meter = harness.meter();
+        let depth = Arc::new(DeadLetterDepth::new(&meter));
+        DeadLetterDepth::register(&meter, &depth);
+
+        let identity = DeadLetterIdentity {
+            tenant: "tenant-a".into(),
+            environment: "prod".into(),
+            catalog_id: "orders".into(),
+            registration_id: "orders-changed".into(),
+            subject: "dlq.tenant-a.prod.orders.orders-changed".into(),
+        };
+        let labels = vec![
+            ("wamn.catalog".to_owned(), "orders".to_owned()),
+            ("wamn.environment".to_owned(), "prod".to_owned()),
+            ("wamn.registration".to_owned(), "orders-changed".to_owned()),
+            ("wamn.tenant".to_owned(), "tenant-a".to_owned()),
+        ];
+
+        depth.update(identity.clone(), 0);
+        let observed = harness.export();
+        assert_eq!(
+            observed,
+            vec![
+                ("wamn.jetstream.dlq.depth".to_owned(), labels.clone(), 0),
+                (
+                    "wamn.jetstream.dlq.depth.samples".to_owned(),
+                    labels.clone(),
+                    1,
+                ),
+            ]
+        );
+
+        let stopped = harness.export();
+        assert_eq!(
+            stopped[0], observed[0],
+            "the gauge cannot tell a stopped observer from an empty subject: \
+             it re-observes the last written sample forever"
+        );
+
+        depth.update(identity, 0);
+        let alive = harness.export();
+        assert_eq!(
+            alive[0], observed[0],
+            "the subject stayed empty, so the gauge must not have moved"
+        );
+        assert_eq!(
+            (stopped[1].2, alive[1].2),
+            (1, 2),
+            "the samples counter is the whole difference: flat while the \
+             observer is stopped, advancing while it is taking readings"
+        );
     }
 }

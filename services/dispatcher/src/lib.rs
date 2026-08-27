@@ -17,6 +17,8 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Meter};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio_postgres::{Client, NoTls};
 use wamn_run_state::queue::parked_due_sql;
@@ -52,11 +54,77 @@ pub struct DepthSample {
     pub depth: i64,
 }
 
+/// [9.8] The series labels for one project, minted ONCE and shared by the depth
+/// gauge and its samples counter, so the two always land on the same series and
+/// a dashboard can read them together.
+fn queue_depth_attributes(tenant: &str, project: &str) -> [KeyValue; 2] {
+    [
+        KeyValue::new("wamn.tenant", tenant.to_owned()),
+        KeyValue::new("wamn.project", project.to_owned()),
+    ]
+}
+
 /// [9.8] Shared per-project depth samples (keyed by project name) the
-/// `wamn.run_queue.depth` observable gauge folds at export time. [`Dispatcher::tick_project`]
-/// republishes its project's sample each sweep — no new loop, the sweep IS the
-/// interval.
-pub type DepthRegistry = Arc<Mutex<HashMap<String, DepthSample>>>;
+/// `wamn.run_queue.depth` observable gauge folds at export time.
+/// [`Dispatcher::tick_project`] republishes its project's sample each sweep — no
+/// new loop, the sweep IS the interval.
+#[derive(Debug)]
+pub struct QueueDepth {
+    by_project: Mutex<HashMap<String, DepthSample>>,
+    /// `wamn.run_queue.depth.samples` (wamn-0h0g.24.10): one increment per depth
+    /// reading this dispatcher actually TOOK, under the same attributes as the
+    /// gauge it certifies.
+    ///
+    /// LIVENESS IS PROVEN BY A SIGNAL THE SUSPECT CANNOT FAKE. The gauge alone
+    /// proves nothing: it is an OBSERVABLE instrument over a last-write-wins
+    /// map, and the exporter invokes its callback on ITS OWN clock whether or
+    /// not a sweep refreshed the map — so a project whose queue is genuinely
+    /// empty and one whose dispatcher died an hour ago emit BYTE-IDENTICAL
+    /// series. Read with this counter they differ: the depth is trustworthy
+    /// only while the counter is still advancing.
+    ///
+    /// THE LIMIT, STATED SO THE CRITERION IS NOT READ AS FULLY MET: this is a
+    /// SELF-REPORT, so it distinguishes a dispatcher that STOPPED and nothing
+    /// more. One that LIES or WEDGES while still sweeping keeps incrementing
+    /// it. A signal the subject does not produce — a queue-side reading taken
+    /// by something that is not the dispatcher — is `wamn-2jkm.104`; this
+    /// counter is a floor under that bead, not a substitute for it, and retires
+    /// nothing.
+    samples: Counter<u64>,
+}
+
+impl QueueDepth {
+    pub fn new(meter: &Meter) -> Self {
+        Self {
+            by_project: Mutex::new(HashMap::new()),
+            samples: meter
+                .u64_counter("wamn.run_queue.depth.samples")
+                .with_description(
+                    "claimable-depth readings taken for one project; a flat count means \
+                     the dispatcher stopped, not that the queue is empty",
+                )
+                .build(),
+        }
+    }
+
+    /// Record one reading. ON THE OBSERVATION PATH: the increment belongs where
+    /// the depth is READ, so a project that is quiet — no doorbells published,
+    /// nothing woken — still reports that its dispatcher is sweeping.
+    pub fn observe(&self, project: &str, tenant: &str, depth: i64) {
+        self.samples.add(1, &queue_depth_attributes(tenant, project));
+        if let Ok(mut by_project) = self.by_project.lock() {
+            by_project.insert(
+                project.to_owned(),
+                DepthSample {
+                    tenant: tenant.to_owned(),
+                    depth,
+                },
+            );
+        }
+    }
+}
+
+pub type DepthRegistry = Arc<QueueDepth>;
 
 #[derive(Debug, Args)]
 pub struct DispatchArgs {
@@ -320,7 +388,9 @@ impl Dispatcher {
             projects,
             nats,
             cfg,
-            depth: Arc::new(Mutex::new(HashMap::new())),
+            depth: Arc::new(QueueDepth::new(&opentelemetry::global::meter(
+                "wamn-dispatcher",
+            ))),
         })
     }
 
@@ -367,15 +437,7 @@ impl Dispatcher {
         // predicate a runner claims by) for the wamn.run_queue.depth gauge —
         // piggybacked on the existing sweep, no new loop.
         let queue_depth: i64 = p.client.query_one(RUN_QUEUE_DEPTH_SQL, &[]).await?.get(0);
-        if let Ok(mut d) = depth.lock() {
-            d.insert(
-                p.spec.name.clone(),
-                DepthSample {
-                    tenant: p.spec.tenant.clone(),
-                    depth: queue_depth,
-                },
-            );
-        }
+        depth.observe(&p.spec.name, &p.spec.tenant, queue_depth);
 
         // Doorbells follow the durable queue SELECT. They are only hints; the
         // executor's direct claim remains the state-transition boundary.
@@ -458,24 +520,19 @@ impl Dispatcher {
 
 /// [9.8] Register the `wamn.run_queue.depth` observable gauge over the
 /// dispatcher's shared depth registry, keyed by `wamn.tenant` / `wamn.project`.
-/// Uses the global meter (the provider `main` installs when `OTEL_*` is set) — a
-/// no-op otherwise. Call ONCE (observable instruments warn on duplicate
+/// Takes the meter rather than reaching for the global one, so the gauge and
+/// the [`QueueDepth`] samples counter that certifies it can be read back off one
+/// test-owned provider. Call ONCE (observable instruments warn on duplicate
 /// registration); the callback folds every project's last-sampled depth.
-pub fn register_queue_depth_gauge(depth: &DepthRegistry) {
+pub fn register_queue_depth_gauge(meter: &Meter, depth: &DepthRegistry) {
     let depth = depth.clone();
-    let _ = opentelemetry::global::meter("wamn-dispatcher")
+    let _ = meter
         .i64_observable_gauge("wamn.run_queue.depth")
         .with_description("claimable runs waiting in a project's run_queue")
         .with_callback(move |o| {
-            if let Ok(d) = depth.lock() {
+            if let Ok(d) = depth.by_project.lock() {
                 for (project, sample) in d.iter() {
-                    o.observe(
-                        sample.depth,
-                        &[
-                            opentelemetry::KeyValue::new("wamn.tenant", sample.tenant.clone()),
-                            opentelemetry::KeyValue::new("wamn.project", project.clone()),
-                        ],
-                    );
+                    o.observe(sample.depth, &queue_depth_attributes(&sample.tenant, project));
                 }
             }
         })
@@ -562,7 +619,10 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
     let mut dispatcher = Dispatcher::connect(&specs, nats, cfg).await?;
     // [9.8] the run-queue-depth gauge reads the dispatcher's shared registry each
     // sweep refreshes; a no-op until main installs a meter provider (OTEL_*).
-    register_queue_depth_gauge(&dispatcher.depth_registry());
+    register_queue_depth_gauge(
+        &opentelemetry::global::meter("wamn-dispatcher"),
+        &dispatcher.depth_registry(),
+    );
     tracing::info!(
         projects = dispatcher.projects.len(),
         min_interval_ms = args.min_interval_ms,
@@ -734,10 +794,16 @@ fn init_crypto() {
 mod tests {
     use clap::CommandFactory as _;
 
+    use std::sync::Arc;
+
+    use opentelemetry::metrics::MeterProvider as _;
+    use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
+
     use super::{
-        DispatchArgs, DispatcherConfig, MISSING_PROJECTS_CONTEXT, ProjectSpecInput,
-        RUN_QUEUE_DEPTH_SQL, doorbell_subject, next_reconcile, project_spec, reconcile_due,
-        valid_tenant,
+        DepthRegistry, DispatchArgs, DispatcherConfig, KeyValue, MISSING_PROJECTS_CONTEXT, Meter,
+        ProjectSpecInput, QueueDepth, RUN_QUEUE_DEPTH_SQL, doorbell_subject, next_reconcile,
+        project_spec, reconcile_due, register_queue_depth_gauge, valid_tenant,
     };
 
     /// THE CREDENTIAL HAS EXACTLY ONE SOURCE (`wamn-0h0g.22.30`).
@@ -864,5 +930,139 @@ mod tests {
         let cadence = wamn_scheduler::Cadence::new(250, 30_000).expect("valid band");
         let cfg = DispatcherConfig { cadence, batch: 64 };
         assert_eq!((cfg.cadence.min(), cfg.cadence.max()), (250, 30_000));
+    }
+
+    // ---- depth-gauge liveness (wamn-0h0g.24.10) ----------------------------
+
+    /// One meter over an in-memory exporter, owned by the test rather than by
+    /// `opentelemetry::global`, so each [`MetricHarness::export`] call reads back
+    /// exactly one exporter tick. Same shape as the harness in
+    /// `crates/execution/host/src/router_delivery.rs`, which lives in that
+    /// crate's `#[cfg(test)]` module and cannot be imported.
+    struct MetricHarness {
+        exporter: InMemoryMetricExporter,
+        provider: SdkMeterProvider,
+    }
+
+    impl MetricHarness {
+        fn install() -> Self {
+            let exporter = InMemoryMetricExporter::default();
+            let provider = SdkMeterProvider::builder()
+                .with_reader(PeriodicReader::builder(exporter.clone()).build())
+                .build();
+            Self { exporter, provider }
+        }
+
+        fn meter(&self) -> Meter {
+            self.provider.meter("run-queue-depth-test")
+        }
+
+        /// One exporter tick: flush, then read back only the NEWEST batch, so
+        /// two calls model two ticks of the exporter's own clock.
+        fn export(&self) -> Vec<(String, Vec<(String, String)>, i64)> {
+            self.provider
+                .force_flush()
+                .expect("test metrics must flush");
+            let batches = self
+                .exporter
+                .get_finished_metrics()
+                .expect("test metric exporter must remain readable");
+            let mut series = Vec::new();
+            let Some(resource) = batches.last() else {
+                return series;
+            };
+            for scope in resource.scope_metrics() {
+                for metric in scope.metrics() {
+                    let points: Vec<(Vec<(String, String)>, i64)> = match metric.data() {
+                        AggregatedMetrics::U64(MetricData::Sum(sum)) => sum
+                            .data_points()
+                            .map(|point| {
+                                (
+                                    sorted_attributes(point.attributes()),
+                                    i64::try_from(point.value()).expect("test counts stay small"),
+                                )
+                            })
+                            .collect(),
+                        AggregatedMetrics::I64(MetricData::Gauge(gauge)) => gauge
+                            .data_points()
+                            .map(|point| (sorted_attributes(point.attributes()), point.value()))
+                            .collect(),
+                        _ => panic!("{} must stay an i64 gauge or a u64 sum", metric.name()),
+                    };
+                    for (attributes, value) in points {
+                        series.push((metric.name().to_owned(), attributes, value));
+                    }
+                }
+            }
+            series.sort();
+            series
+        }
+    }
+
+    fn sorted_attributes<'a>(
+        attributes: impl Iterator<Item = &'a KeyValue>,
+    ) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = attributes
+            .map(|kv| (kv.key.to_string(), kv.value.to_string()))
+            .collect();
+        pairs.sort();
+        pairs
+    }
+
+    /// A DEPTH GAUGE ALONE CANNOT PROVE ITS OWN OBSERVER IS ALIVE.
+    ///
+    /// Three exporter ticks over one project whose run queue is genuinely EMPTY.
+    /// The gauge reads 0 on all three, because the exporter re-observes the last
+    /// written sample on ITS OWN clock: tick 2, where no sweep refreshed the
+    /// cache, is byte-identical to tick 1. The samples counter is what separates
+    /// them — flat across tick 2 (the dispatcher stopped), advanced on tick 3
+    /// (the dispatcher is sweeping and the queue is genuinely empty).
+    ///
+    /// THE LIMIT, so this is not read as proving more than it does: the counter
+    /// is a SELF-REPORT, so it catches a dispatcher that STOPPED and nothing
+    /// else. One that LIES or WEDGES while still sweeping keeps incrementing it
+    /// and no assertion below would fail. The signal the subject cannot fake is
+    /// `wamn-2jkm.104`'s.
+    #[test]
+    fn the_run_queue_depth_samples_counter_tells_an_empty_queue_from_a_stopped_dispatcher() {
+        let harness = MetricHarness::install();
+        let meter = harness.meter();
+        let depth: DepthRegistry = Arc::new(QueueDepth::new(&meter));
+        register_queue_depth_gauge(&meter, &depth);
+
+        let labels = vec![
+            ("wamn.project".to_owned(), "orders".to_owned()),
+            ("wamn.tenant".to_owned(), "tenant-a".to_owned()),
+        ];
+
+        depth.observe("orders", "tenant-a", 0);
+        let observed = harness.export();
+        assert_eq!(
+            observed,
+            vec![
+                ("wamn.run_queue.depth".to_owned(), labels.clone(), 0),
+                ("wamn.run_queue.depth.samples".to_owned(), labels, 1),
+            ]
+        );
+
+        let stopped = harness.export();
+        assert_eq!(
+            stopped[0], observed[0],
+            "the gauge cannot tell a stopped dispatcher from an empty queue: \
+             it re-observes the last written sample forever"
+        );
+
+        depth.observe("orders", "tenant-a", 0);
+        let alive = harness.export();
+        assert_eq!(
+            alive[0], observed[0],
+            "the queue stayed empty, so the gauge must not have moved"
+        );
+        assert_eq!(
+            (stopped[1].2, alive[1].2),
+            (1, 2),
+            "the samples counter is the whole difference: flat while the \
+             dispatcher is stopped, advancing while it is taking readings"
+        );
     }
 }
