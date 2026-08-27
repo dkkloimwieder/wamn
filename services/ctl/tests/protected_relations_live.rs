@@ -305,6 +305,37 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
     reconcile_run_plane::reconcile(client, &schema, true)
         .await
         .expect("install canonical project schemas through reconciler");
+    // R55 (wamn-0h0g.12.177). The install above is the FRESH path — the control
+    // schemas were dropped a few lines up, so every convergence arm sits behind a
+    // presence probe that is false. The rows this file generates are read off the
+    // reconciled database, so the reconciler must be proven CONVERGED and not
+    // merely exited-zero: a second pass over the same database plans nothing.
+    let converged = reconcile_run_plane::reconcile(client, &schema, true)
+        .await
+        .expect("second reconcile over the installed project schemas");
+    assert!(
+        converged.is_noop(),
+        "the project install did not converge; the generated rows would describe \
+         a database the reconciler still means to change: {:#?}",
+        converged.actions
+    );
+    // …and the post-check named the PROJECT record, on a database that carried
+    // the CONTROL plane's same-qualified schemas moments ago.
+    let mut at_target = converged.at_target.clone();
+    at_target.sort();
+    assert_eq!(
+        at_target,
+        [
+            "effect_attempt_dispatches",
+            "effect_attempt_outcomes",
+            "effect_attempts",
+            "environment_policies",
+            "operator_run_actions",
+            "run_queue",
+            "runs",
+        ],
+        "the converged post-check did not name exactly the project run-plane record"
+    );
 
     let catalog_path = std::env::temp_dir().join(format!(
         "wamn-protected-relations-{}.catalog.json",

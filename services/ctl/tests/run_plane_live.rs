@@ -86,6 +86,10 @@ use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+/// The CONTROL plane's canonical record. Read here only to lift the co-resident
+/// relation's declaration text, never installed as a whole.
+const CONTROL_PORTABLE_STORE_SQL: &str =
+    include_str!("../../../deploy/sql/control-portable-store.sql");
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
 
@@ -747,6 +751,7 @@ async fn run_plane_reconcile_live() {
     stored_suite_cutover_leg(&su).await;
     environment_policy_row_security_leg(&su, &url).await;
     current_noop_leg(&su).await;
+    two_plane_residency_leg(&su).await;
     retired_effect_disposition_cutover_leg(&su).await;
     persisted_literal_check_drift_leg(&su).await;
     dispatch_reader_read_surface_leg(&su, &url).await;
@@ -768,6 +773,16 @@ async fn effect_writer_cutover_live() {
         support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let su = connect(&url).await;
     effect_writer_cutover_leg(&su).await;
+}
+
+/// Own entry so the two-plane post-check can be run — and mutated — alone.
+#[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
+async fn two_plane_residency_live() {
+    let url =
+        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let su = connect(&url).await;
+    two_plane_residency_leg(&su).await;
 }
 
 #[tokio::test]
@@ -4206,6 +4221,170 @@ async fn current_noop_leg(su: &Client) {
         "current schema apply is a no-op: {:#?}",
         apply.actions
     );
+}
+
+/// The CONTROL plane's `wamn_run` residency, created from the deployed control
+/// store's OWN declaration text rather than a hand copy that could drift from it.
+///
+/// `wamn_run.gate_reports` is the relation `protected_relations_live.rs` names
+/// CONTROL-ONLY: the control portable store installs it and no project installer
+/// recreates it. Both planes spell the schema `wamn_run`, so a project-plane
+/// reconciler pointed at a control database sees this relation sitting in the
+/// schema it is about to converge.
+async fn install_control_plane_residency(su: &Client) {
+    let declaration = CONTROL_PORTABLE_STORE_SQL
+        .split_once("CREATE TABLE IF NOT EXISTS wamn_run.gate_reports (")
+        .expect("the control portable store declares the gate-report relation")
+        .1
+        .split_once("\n);")
+        .expect("the gate-report declaration is terminated")
+        .0;
+    su.batch_execute(&format!(
+        "CREATE TABLE {SCHEMA}.gate_reports ({declaration});"
+    ))
+    .await
+    .expect("install the control plane's same-schema residency");
+}
+
+/// TWO-PLANE RESIDENCY (wamn-0h0g.12.177). The reconciler's post-check must call
+/// the PROJECT record — `run-state.sql` plus `run-queue.sql` — and nothing else,
+/// on a database that also carries the CONTROL plane's `wamn_run` residency.
+///
+/// **Why the drift is installed first.** `current_noop_leg` proves the FRESH
+/// path: a schema already at record plans nothing. That is the R55 shape
+/// wamn-0h0g.12.1 measured on the control store's own gate — a virgin install
+/// whose every convergence arm sits behind a presence probe that is false both
+/// times. This leg therefore starts from a DRIFTED (already-provisioned)
+/// schema, so the post-check is read off a CONVERGED database, and the second
+/// run's no-op is read from `pg_class` and `pg_attribute` rather than from an
+/// exit status.
+///
+/// **Why the residency is the discriminator.** A post-check that reached the
+/// other plane's record could pass while the plane it guards has drifted. So
+/// this asserts both directions: the seven PROJECT record tables are at target,
+/// and the control-plane relation is neither counted as a record table, nor
+/// named by any action, nor amputated — the project reconciler must leave the
+/// other plane's record exactly as it found it.
+async fn two_plane_residency_leg(su: &Client) {
+    reset(su).await;
+    let schema = schema();
+    install_current_run_plane(su).await;
+    install_control_plane_residency(su).await;
+
+    // Real drift, so this is an UPGRADE and not a fresh install: a record column
+    // the reconciler must restore, plus schema-level ACL drift it must narrow.
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner; \
+         GRANT CREATE ON SCHEMA {SCHEMA} TO wamn_effect_writer;"
+    ))
+    .await
+    .expect("install converge-path drift");
+
+    let converge = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("converge the drifted project plane");
+    assert!(
+        !converge.is_noop(),
+        "the drift did not take — this leg would prove the fresh path only"
+    );
+    assert!(
+        converge.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::AddColumn
+                && action.target == "run_queue.lease_owner"
+        }),
+        "the converge pass did not restore the record column: {:#?}",
+        converge.actions
+    );
+    // THE PLANE LINE. No action may name the other plane's relation.
+    for plan in [&converge] {
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|action| action.target.contains("gate_reports")),
+            "the project reconciler planned against the CONTROL plane's record: {:#?}",
+            plan.actions
+        );
+        assert!(
+            !plan.at_target.iter().any(|table| table == "gate_reports"),
+            "the control-plane relation was counted as a project record table: {:?}",
+            plan.at_target
+        );
+    }
+
+    // R55: the SECOND run is a no-op, in apply mode and in dry-run mode.
+    let again = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("second reconcile on the converged database");
+    assert!(
+        again.is_noop(),
+        "the converged database still plans work: {:#?}",
+        again.actions
+    );
+    let dry = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("read-only third reconcile");
+    assert!(dry.is_noop(), "dry-run drift: {:#?}", dry.actions);
+    // …and the post-check names the PROJECT record exactly: the six run-state
+    // tables plus run_queue, with the co-resident control relation excluded.
+    let mut at_target = dry.at_target.clone();
+    at_target.sort();
+    assert_eq!(
+        at_target,
+        [
+            "effect_attempt_dispatches",
+            "effect_attempt_outcomes",
+            "effect_attempts",
+            "environment_policies",
+            "operator_run_actions",
+            "run_queue",
+            "runs",
+        ],
+        "the converged post-check did not name exactly the project record"
+    );
+
+    // POST-STATE FROM THE CATALOG, not from an exit status. Every project record
+    // table is present…
+    for table in [
+        "environment_policies",
+        "runs",
+        "effect_attempts",
+        "effect_attempt_dispatches",
+        "effect_attempt_outcomes",
+        "operator_run_actions",
+        "run_queue",
+    ] {
+        assert!(
+            table_exists(su, SCHEMA, table).await,
+            "project record table {table} is absent after convergence"
+        );
+    }
+    assert!(
+        column_exists(su, "run_queue", "lease_owner").await,
+        "the restored record column is absent from the catalog"
+    );
+    // …and the other plane's relation survives, with its own columns, untouched.
+    assert!(
+        table_exists(su, SCHEMA, "gate_reports").await,
+        "the project reconciler amputated the CONTROL plane's relation"
+    );
+    let residency_columns: String = su
+        .query_one(
+            "SELECT string_agg(attribute.attname, ',' ORDER BY attribute.attnum) \
+               FROM pg_catalog.pg_attribute AS attribute \
+              WHERE attribute.attrelid = pg_catalog.to_regclass($1::text) \
+                AND attribute.attnum > 0 AND NOT attribute.attisdropped",
+            &[&format!("{SCHEMA}.gate_reports")],
+        )
+        .await
+        .expect("read the co-resident control relation from the catalog")
+        .get(0);
+    assert_eq!(
+        residency_columns, "tenant_id,wiring_hash,passed,summary,gated_at",
+        "the project reconciler rewrote the CONTROL plane's record"
+    );
+
+    reset(su).await;
 }
 
 async fn capture_mode_additive_leg(su: &Client, url: &str) {
