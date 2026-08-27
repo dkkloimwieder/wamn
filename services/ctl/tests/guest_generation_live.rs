@@ -24,7 +24,10 @@ use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope,
     project_env_database_name, project_env_guest_secret_name, sql, workload_generation_role,
 };
-use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs};
+use wamn_ctl::provision_project_env::{
+    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
+    WorkloadGenerationArgs,
+};
 
 const ORG: &str = "pg18guest";
 const PROJECT: &str = "receiving";
@@ -89,22 +92,6 @@ fn action_args(
         namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
         secret_namespace: None,
         target_admin_database_url: Some(target_admin_url.to_string()),
-        prepare_effect_writer_generation: None,
-        retire_effect_writer_generation: None,
-        abort_effect_writer_generation: None,
-        emit_effect_writer_secret: None,
-        prepare_guest_generation: prepare.map(|(generation, _)| generation),
-        retire_guest_generation: retire,
-        abort_guest_generation: abort,
-        emit_guest_secret: prepare.map(|(_, path)| path.to_path_buf()),
-        prepare_control_author_generation: None,
-        retire_control_author_generation: None,
-        abort_control_author_generation: None,
-        emit_control_author_secret: None,
-        prepare_management_admitter_generation: None,
-        retire_management_admitter_generation: None,
-        abort_management_admitter_generation: None,
-        emit_management_admitter_secret: None,
         emit_database: None,
         emit_role_sql: None,
         emit_privilege_sql: None,
@@ -112,6 +99,20 @@ fn action_args(
         emit_management_author_pat_secret: None,
         emit_route_caller_pat_secret: None,
         revoke_pat_prefix: None,
+        // wamn-0h0g.22.16: one derived action, not four families of fields.
+        workload: WorkloadGenerationArgs {
+            action: prepare
+                .map(|(generation, _)| (WorkloadActionVerb::Prepare, generation))
+                .or_else(|| retire.map(|generation| (WorkloadActionVerb::Retire, generation)))
+                .or_else(|| abort.map(|generation| (WorkloadActionVerb::Abort, generation)))
+                .map(|(verb, generation)| WorkloadGenerationAction {
+                    family: WorkloadRoleFamily::App,
+                    verb,
+                    generation,
+                }),
+            secret: prepare
+                .map(|(_, path)| (WorkloadRoleFamily::App, path.to_path_buf())),
+        },
     }
 }
 

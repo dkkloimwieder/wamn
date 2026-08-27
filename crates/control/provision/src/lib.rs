@@ -109,14 +109,16 @@ pub use name::{
     project_env_cdc_secret_name, project_env_database_name, project_env_effect_writer_secret_name,
     project_env_guest_secret_name, project_env_namespace, project_env_secret_name, secret_name,
     validate_instance_suffix, validate_project_env, validate_project_env_cdc, validate_project_id,
+    workload_secret_name,
 };
 pub use org::{OrgClusters, render_org_cluster_set};
 #[cfg(feature = "ops")]
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use secret::{
-    render_control_author_secret_manifest, render_effect_writer_secret_manifest,
-    render_guest_secret_manifest, render_management_admitter_secret_manifest,
-    render_project_env_cdc_secret_manifest, render_project_env_secret_manifest,
+    WorkloadSecretBody, render_control_author_secret_manifest,
+    render_effect_writer_secret_manifest, render_guest_secret_manifest,
+    render_management_admitter_secret_manifest, render_project_env_cdc_secret_manifest,
+    render_project_env_secret_manifest, render_workload_secret_manifest,
 };
 pub use wamn_run_state::{
     CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_CREDENTIAL_PATH,
@@ -128,7 +130,8 @@ pub use wamn_run_state::{
 pub use workload_role::{
     CONTROL_AUTHOR_ROLE, MANAGEMENT_ADMITTER_ROLE, RETENTION_ROLE, SERVICE_READER_ROLE,
     WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeError, WorkloadRoleScopeKind,
-    legacy_effect_writer_generation_role, workload_generation_role, workload_role_scope_hash,
+    WorkloadSecretBodyKind, legacy_effect_writer_generation_role, workload_generation_role,
+    workload_role_scope_hash,
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.

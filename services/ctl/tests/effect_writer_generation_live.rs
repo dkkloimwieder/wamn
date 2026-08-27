@@ -15,9 +15,13 @@ use url::Url;
 
 use wamn_control_provision::{
     CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_ROLE,
-    EffectWriterCredentialScope, effect_writer_generation_role, project_env_database_name, sql,
+    EffectWriterCredentialScope, WorkloadRoleFamily, effect_writer_generation_role,
+    project_env_database_name, sql,
 };
-use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs};
+use wamn_ctl::provision_project_env::{
+    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
+    WorkloadGenerationArgs,
+};
 use wamn_run_state::RUN_PROJECTION_WRITER_ROLE;
 
 const ORG: &str = "pg18proof";
@@ -81,22 +85,6 @@ fn action_args(
         namespace: "wamn-system".to_string(),
         secret_namespace: None,
         target_admin_database_url: Some(target_admin_url.to_string()),
-        prepare_effect_writer_generation: prepare.map(|(generation, _)| generation),
-        retire_effect_writer_generation: retire,
-        abort_effect_writer_generation: abort,
-        emit_effect_writer_secret: prepare.map(|(_, path)| path.to_path_buf()),
-        prepare_control_author_generation: None,
-        retire_control_author_generation: None,
-        abort_control_author_generation: None,
-        emit_control_author_secret: None,
-        prepare_management_admitter_generation: None,
-        retire_management_admitter_generation: None,
-        abort_management_admitter_generation: None,
-        prepare_guest_generation: None,
-        retire_guest_generation: None,
-        abort_guest_generation: None,
-        emit_guest_secret: None,
-        emit_management_admitter_secret: None,
         emit_database: None,
         emit_role_sql: None,
         emit_privilege_sql: None,
@@ -104,6 +92,20 @@ fn action_args(
         emit_management_author_pat_secret: None,
         emit_route_caller_pat_secret: None,
         revoke_pat_prefix: None,
+        // wamn-0h0g.22.16: one derived action, not four families of fields.
+        workload: WorkloadGenerationArgs {
+            action: prepare
+                .map(|(generation, _)| (WorkloadActionVerb::Prepare, generation))
+                .or_else(|| retire.map(|generation| (WorkloadActionVerb::Retire, generation)))
+                .or_else(|| abort.map(|generation| (WorkloadActionVerb::Abort, generation)))
+                .map(|(verb, generation)| WorkloadGenerationAction {
+                    family: WorkloadRoleFamily::EffectWriter,
+                    verb,
+                    generation,
+                }),
+            secret: prepare
+                .map(|(_, path)| (WorkloadRoleFamily::EffectWriter, path.to_path_buf())),
+        },
     }
 }
 

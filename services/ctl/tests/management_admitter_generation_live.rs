@@ -20,12 +20,16 @@ use tokio_postgres::{Client, NoTls};
 use url::Url;
 
 use wamn_control_provision::{
-    CredentialGeneration, MANAGEMENT_ADMITTER_ROLE, management_admitter_generation_role,
-    management_admitter_secret_name, parse_management_admission_url, project_env_database_name,
+    CredentialGeneration, MANAGEMENT_ADMITTER_ROLE, WorkloadRoleFamily,
+    management_admitter_generation_role, management_admitter_secret_name,
+    parse_management_admission_url, project_env_database_name,
     render_management_admitter_secret_manifest, sql,
 };
 use wamn_control_registry::Triple;
-use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs};
+use wamn_ctl::provision_project_env::{
+    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
+    WorkloadGenerationArgs,
+};
 
 const ORG: &str = "pg18admit";
 const PROJECT: &str = "receiving";
@@ -89,22 +93,6 @@ fn action_args(
         namespace: "wamn-system".to_string(),
         secret_namespace: None,
         target_admin_database_url: Some(target_admin_url.to_string()),
-        prepare_effect_writer_generation: None,
-        retire_effect_writer_generation: None,
-        abort_effect_writer_generation: None,
-        emit_effect_writer_secret: None,
-        prepare_guest_generation: None,
-        retire_guest_generation: None,
-        abort_guest_generation: None,
-        emit_guest_secret: None,
-        prepare_control_author_generation: None,
-        retire_control_author_generation: None,
-        abort_control_author_generation: None,
-        emit_control_author_secret: None,
-        prepare_management_admitter_generation: prepare.map(|(generation, _)| generation),
-        retire_management_admitter_generation: retire,
-        abort_management_admitter_generation: abort,
-        emit_management_admitter_secret: prepare.map(|(_, path)| path.to_path_buf()),
         emit_database: None,
         emit_role_sql: None,
         emit_privilege_sql: None,
@@ -112,6 +100,20 @@ fn action_args(
         emit_management_author_pat_secret: None,
         emit_route_caller_pat_secret: None,
         revoke_pat_prefix: None,
+        // wamn-0h0g.22.16: one derived action, not four families of fields.
+        workload: WorkloadGenerationArgs {
+            action: prepare
+                .map(|(generation, _)| (WorkloadActionVerb::Prepare, generation))
+                .or_else(|| retire.map(|generation| (WorkloadActionVerb::Retire, generation)))
+                .or_else(|| abort.map(|generation| (WorkloadActionVerb::Abort, generation)))
+                .map(|(verb, generation)| WorkloadGenerationAction {
+                    family: WorkloadRoleFamily::ManagementAdmitter,
+                    verb,
+                    generation,
+                }),
+            secret: prepare
+                .map(|(_, path)| (WorkloadRoleFamily::ManagementAdmitter, path.to_path_buf())),
+        },
     }
 }
 

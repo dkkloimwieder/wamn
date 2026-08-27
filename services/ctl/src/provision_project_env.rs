@@ -72,12 +72,11 @@ use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EffectWriterCredentialScope,
     EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, WorkloadRoleFamily, WorkloadRoleScope,
-    compose_url, effect_writer_credential, legacy_effect_writer_generation_role,
-    project_env_database_name, project_env_namespace, project_env_secret_name,
-    render_control_author_secret_manifest, render_effect_writer_secret_manifest,
-    render_guest_secret_manifest, render_management_admitter_secret_manifest,
-    render_project_env_database, render_project_env_secret_manifest, sql, validate_instance_suffix,
-    validate_project_env, workload_generation_role,
+    WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind, compose_url,
+    effect_writer_credential, legacy_effect_writer_generation_role, project_env_database_name,
+    project_env_namespace, project_env_secret_name, render_project_env_database,
+    render_project_env_secret_manifest, render_workload_secret_manifest, sql,
+    validate_instance_suffix, validate_project_env, workload_generation_role,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_platform_identity::{
@@ -143,22 +142,17 @@ pub struct ProvisionProjectEnvArgs {
     /// the Secret are wanted by exactly the same invocations. The refusal stays
     /// a parse error — mode-scoping narrows *when* the guard fires, never
     /// weakens it into a runtime check.
+    ///
+    /// `wamn-0h0g.22.16` names the exemption ONCE, as the derived
+    /// [`WORKLOAD_ACTION_GROUP`], instead of listing each family's three flags.
+    /// Listing them by hand is what left the guest family out of all three
+    /// exempt lists: preparing a guest generation demanded an `--emit-secret`
+    /// that its own action then refused, so the mode was unrunnable.
     #[arg(
         long,
         env = "WAMN_APP_PASSWORD",
         value_name = "PASSWORD ($WAMN_APP_PASSWORD)",
-        required_unless_present_any = [
-            "revoke_pat_prefix",
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
-        ]
+        required_unless_present_any = ["revoke_pat_prefix", WORKLOAD_ACTION_GROUP]
     )]
     pub app_password: Option<String>,
 
@@ -178,18 +172,7 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(
         long,
         env = "WAMN_DISPATCH_READER_PASSWORD",
-        required_unless_present_any = [
-            "revoke_pat_prefix",
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
-        ]
+        required_unless_present_any = ["revoke_pat_prefix", WORKLOAD_ACTION_GROUP]
     )]
     pub dispatch_reader_password: Option<String>,
 
@@ -217,297 +200,11 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long, value_name = "URL")]
     pub target_admin_database_url: Option<String>,
 
-    /// Prepare and authenticate the inactive effect-writer credential generation.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub prepare_effect_writer_generation: Option<CredentialGeneration>,
-
-    /// Retire the old effect-writer credential generation after replacement use.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub retire_effect_writer_generation: Option<CredentialGeneration>,
-
-    /// Abort a prepared generation that was definitively not published.
-    ///
-    /// This action requires the exact active ACL and zero sessions. It does not
-    /// accept retirement's replacement-active/use-proven contract.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub abort_effect_writer_generation: Option<CredentialGeneration>,
-
-    /// Write the fixed-mount effect-writer Secret. Required with prepare and
-    /// forbidden otherwise; credentials are never written to stdout.
-    #[arg(
-        long,
-        value_name = "PATH",
-        value_parser = parse_secret_path,
-        requires = "prepare_effect_writer_generation"
-    )]
-    pub emit_effect_writer_secret: Option<PathBuf>,
-
-    /// Prepare and authenticate the inactive per-tenant guest-SQL generation.
-    ///
-    /// After `wamn-0h0g.22.6` the guest's tenant comes from `current_user`, so
-    /// this credential IS the tenant authority: no claim accompanies it, and a
-    /// generation minted for one tenant can read no other.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub prepare_guest_generation: Option<CredentialGeneration>,
-
-    /// Retire the old guest-SQL generation after replacement use.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub retire_guest_generation: Option<CredentialGeneration>,
-
-    /// Abort a prepared guest generation that was definitively not published.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation"
-        ]
-    )]
-    pub abort_guest_generation: Option<CredentialGeneration>,
-
-    /// Write the scoped guest-SQL Secret. Required with prepare and forbidden
-    /// otherwise; credentials are never written to stdout.
-    #[arg(
-        long,
-        value_name = "PATH",
-        value_parser = parse_secret_path,
-        requires = "prepare_guest_generation"
-    )]
-    pub emit_guest_secret: Option<PathBuf>,
-
-    /// Prepare and authenticate the inactive control-author credential generation.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub prepare_control_author_generation: Option<CredentialGeneration>,
-
-    /// Retire the old control-author generation after replacement use.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub retire_control_author_generation: Option<CredentialGeneration>,
-
-    /// Abort a prepared control-author generation that was not published.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub abort_control_author_generation: Option<CredentialGeneration>,
-
-    /// Write the control-author URL Secret consumed by scenario-worker.
-    #[arg(
-        long,
-        value_name = "PATH",
-        value_parser = parse_secret_path,
-        requires = "prepare_control_author_generation"
-    )]
-    pub emit_control_author_secret: Option<PathBuf>,
-
-    /// Prepare and authenticate the inactive management-admitter generation.
-    ///
-    /// The seventh frozen family (`wamn-0h0g.13.61`) reaches ctl here.
-    /// `wamn-0h0g.12.118` deferred this lifecycle while nothing consumed the
-    /// role; `wamn-0h0g.8.5.3` is the first consumer, so `wamn-0h0g.12.176`
-    /// **completes** that deferral instead of reversing it — there is still no
-    /// bespoke prepare, retire, Secret or A/B implementation, only this stamp
-    /// onto the `wamn-0h0g.13.59` unified lifecycle.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub prepare_management_admitter_generation: Option<CredentialGeneration>,
-
-    /// Retire the old management-admitter generation after replacement use.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "abort_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub retire_management_admitter_generation: Option<CredentialGeneration>,
-
-    /// Abort a prepared management-admitter generation that was not published.
-    #[arg(
-        long,
-        value_name = "a|b",
-        conflicts_with_all = [
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "prepare_guest_generation",
-            "retire_guest_generation",
-            "abort_guest_generation"
-        ]
-    )]
-    pub abort_management_admitter_generation: Option<CredentialGeneration>,
-
-    /// Write the management-admitter URL Secret consumed by scenario-worker.
-    #[arg(
-        long,
-        value_name = "PATH",
-        value_parser = parse_secret_path,
-        requires = "prepare_management_admitter_generation"
-    )]
-    pub emit_management_admitter_secret: Option<PathBuf>,
+    /// The workload-generation actions and their credential Secrets, DERIVED
+    /// from the closed [`WorkloadRoleFamily`] set rather than written out per
+    /// family (`wamn-0h0g.22.16`). See [`WorkloadGenerationArgs`].
+    #[command(flatten)]
+    pub workload: WorkloadGenerationArgs,
 
     /// Write the CNPG `Database` CR (JSON) here; `-` = stdout. Absent ⇒ printed
     /// with a labeled header.
@@ -531,18 +228,7 @@ pub struct ProvisionProjectEnvArgs {
         long,
         value_name = "PATH",
         value_parser = parse_secret_path,
-        required_unless_present_any = [
-            "revoke_pat_prefix",
-            "prepare_effect_writer_generation",
-            "retire_effect_writer_generation",
-            "abort_effect_writer_generation",
-            "prepare_control_author_generation",
-            "retire_control_author_generation",
-            "abort_control_author_generation",
-            "prepare_management_admitter_generation",
-            "retire_management_admitter_generation",
-            "abort_management_admitter_generation"
-        ]
+        required_unless_present_any = ["revoke_pat_prefix", WORKLOAD_ACTION_GROUP]
     )]
     pub emit_secret: Option<PathBuf>,
 
@@ -569,13 +255,196 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(
         long,
         value_name = "16-LOWERCASE-HEX",
-        value_parser = parse_pat_prefix,
-        conflicts_with_all = [
-            "emit_management_author_pat_secret",
-            "emit_route_caller_pat_secret"
-        ]
+        value_parser = parse_pat_prefix
     )]
     pub revoke_pat_prefix: Option<String>,
+}
+
+
+/// The id of the ONE group every derived workload action flag belongs to.
+///
+/// This constant is the whole exclusion rule. Before `wamn-0h0g.22.16` the same
+/// rule was spelled out as SIXTEEN hand-written `conflicts_with_all` /
+/// `required_unless_present_any` arrays, and admitting a family meant
+/// remembering to append its three flag names to every one of them. A closed
+/// enum that must be appended to by hand in sixteen places is not closed; it is
+/// a checklist.
+pub const WORKLOAD_ACTION_GROUP: &str = "workload_generation_action";
+
+/// The id of the one group every derived credential-Secret flag belongs to.
+const WORKLOAD_SECRET_GROUP: &str = "workload_generation_secret";
+
+/// The three verbs of the `wamn-0h0g.13.59` unified generation lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkloadActionVerb {
+    Prepare,
+    Retire,
+    Abort,
+}
+
+impl WorkloadActionVerb {
+    const ALL: [Self; 3] = [Self::Prepare, Self::Retire, Self::Abort];
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prepare => "prepare",
+            Self::Retire => "retire",
+            Self::Abort => "abort",
+        }
+    }
+}
+
+/// One selected workload-generation action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkloadGenerationAction {
+    pub family: WorkloadRoleFamily,
+    pub verb: WorkloadActionVerb,
+    pub generation: CredentialGeneration,
+}
+
+/// The workload-generation half of the parser, DERIVED from the closed
+/// [`WorkloadRoleFamily`] set (`wamn-0h0g.22.16`).
+///
+/// [`clap::Args`] is implemented by hand rather than derived because the flag
+/// SET is a function of the family set: `#[derive(Args)]` can only name fields
+/// that were typed out, which is exactly the hand-maintained inventory this
+/// replaces. Mutual exclusion is one [`clap::ArgGroup`] per concern, so
+/// admitting a family joins its flags to those groups by construction.
+#[derive(Debug, Default, Clone)]
+pub struct WorkloadGenerationArgs {
+    /// The single selected action. `multiple(false)` on the action group makes
+    /// "single" a parse-time guarantee rather than a convention.
+    pub action: Option<WorkloadGenerationAction>,
+    /// The credential Secret to write, bound by `requires` to its OWN family's
+    /// prepare — so a Secret can accompany neither another family's action nor
+    /// a retire or abort.
+    pub secret: Option<(WorkloadRoleFamily, PathBuf)>,
+}
+
+/// `--<verb>-<family>-generation`, the flag one family's one verb answers to.
+fn workload_action_flag(family: WorkloadRoleFamily, verb: WorkloadActionVerb) -> String {
+    format!("{}-{}-generation", verb.as_str(), family.cli_stem())
+}
+
+fn workload_action_id(family: WorkloadRoleFamily, verb: WorkloadActionVerb) -> String {
+    workload_action_flag(family, verb).replace('-', "_")
+}
+
+/// `--emit-<family>-secret`, the path one family's prepared credential is
+/// written to.
+fn workload_secret_flag(family: WorkloadRoleFamily) -> String {
+    format!("emit-{}-secret", family.cli_stem())
+}
+
+fn workload_secret_id(family: WorkloadRoleFamily) -> String {
+    workload_secret_flag(family).replace('-', "_")
+}
+
+impl clap::Args for WorkloadGenerationArgs {
+    fn augment_args(command: clap::Command) -> clap::Command {
+        let mut command = command;
+        let mut action_ids: Vec<clap::Id> = Vec::new();
+        let mut secret_ids: Vec<clap::Id> = Vec::new();
+        for family in WorkloadRoleFamily::ALL {
+            let stem = family.cli_stem();
+            for verb in WorkloadActionVerb::ALL {
+                let id = workload_action_id(family, verb);
+                command = command.arg(
+                    clap::Arg::new(id.clone())
+                        .long(workload_action_flag(family, verb))
+                        .value_name("a|b")
+                        .value_parser(clap::value_parser!(CredentialGeneration))
+                        .help(format!(
+                            "{} the {stem} credential generation",
+                            verb.as_str()
+                        )),
+                );
+                action_ids.push(clap::Id::from(id));
+            }
+            let secret = workload_secret_id(family);
+            let own_prepare = workload_action_id(family, WorkloadActionVerb::Prepare);
+            let mut argument = clap::Arg::new(secret.clone())
+                .long(workload_secret_flag(family))
+                .value_name("PATH")
+                .value_parser(parse_secret_path)
+                // Bound to its OWN family's prepare: credentials are never
+                // written to stdout and never without a mint.
+                .requires(own_prepare.clone())
+                .help(format!("write the prepared {stem} credential Secret here"));
+            // `requires` alone is not enough. Clap does not report a required
+            // argument missing when it CONFLICTS with one that is present, and
+            // every action shares the exclusive group above — so a retire, an
+            // abort, or another family's prepare would silently satisfy the
+            // requirement. Naming the conflict outright is what refuses them,
+            // and it is derived here rather than written out per family.
+            for other in WorkloadRoleFamily::ALL {
+                for verb in WorkloadActionVerb::ALL {
+                    let id = workload_action_id(other, verb);
+                    if id != own_prepare {
+                        argument = argument.conflicts_with(id);
+                    }
+                }
+            }
+            command = command.arg(argument);
+            secret_ids.push(clap::Id::from(secret));
+        }
+        command
+            .group(
+                clap::ArgGroup::new(WORKLOAD_ACTION_GROUP)
+                    .args(action_ids)
+                    .multiple(false),
+            )
+            .group(
+                clap::ArgGroup::new(WORKLOAD_SECRET_GROUP)
+                    .args(secret_ids)
+                    .multiple(false),
+            )
+    }
+
+    fn augment_args_for_update(command: clap::Command) -> clap::Command {
+        Self::augment_args(command)
+    }
+}
+
+impl clap::FromArgMatches for WorkloadGenerationArgs {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        let mut parsed = Self::default();
+        parsed.update_from_arg_matches(matches)?;
+        Ok(parsed)
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        self.action = None;
+        self.secret = None;
+        for family in WorkloadRoleFamily::ALL {
+            for verb in WorkloadActionVerb::ALL {
+                if let Some(generation) =
+                    matches.get_one::<CredentialGeneration>(&workload_action_id(family, verb))
+                {
+                    self.action = Some(WorkloadGenerationAction {
+                        family,
+                        verb,
+                        generation: *generation,
+                    });
+                }
+            }
+            if let Some(path) = matches.get_one::<PathBuf>(&workload_secret_id(family)) {
+                self.secret = Some((family, path.clone()));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ProvisionProjectEnvArgs {
+    /// The credential Secret path this family's prepare named, if any.
+    fn workload_secret_path(&self, family: WorkloadRoleFamily) -> Option<&Path> {
+        self.workload
+            .secret
+            .as_ref()
+            .filter(|(named, _)| *named == family)
+            .map(|(_, path)| path.as_path())
+    }
 }
 
 /// The role batch the runbook applies to the TARGET cluster's superuser before
@@ -627,33 +496,14 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if args.prepare_effect_writer_generation.is_some()
-        || args.retire_effect_writer_generation.is_some()
-        || args.abort_effect_writer_generation.is_some()
-    {
-        return run_effect_writer_action(&args).await;
-    }
-    if args.prepare_guest_generation.is_some()
-        || args.retire_guest_generation.is_some()
-        || args.abort_guest_generation.is_some()
-    {
-        return run_guest_action(&args).await;
-    }
-    if args.prepare_control_author_generation.is_some()
-        || args.retire_control_author_generation.is_some()
-        || args.abort_control_author_generation.is_some()
-    {
-        return run_control_author_action(&args).await;
-    }
-    if args.prepare_management_admitter_generation.is_some()
-        || args.retire_management_admitter_generation.is_some()
-        || args.abort_management_admitter_generation.is_some()
-    {
-        return run_management_admitter_action(&args).await;
+    // ONE dispatch over the closed family set, replacing four hand-written
+    // branches that each had to be added beside a new `run_*_action`.
+    if let Some(action) = args.workload.action {
+        return run_workload_action(&args, action).await;
     }
     anyhow::ensure!(
         args.target_admin_database_url.is_none(),
-        "--target-admin-database-url is valid only for an effect-writer or management-admitter generation action"
+        "--target-admin-database-url is valid only for a workload generation action"
     );
 
     let db_secret_path = args
@@ -950,86 +800,94 @@ impl<'a> WorkloadLifecycle<'a> {
         format!("wamn.workload-family.v1:{}", self.family.acl_role())
     }
 
-    fn label(self) -> &'static str {
-        match self.family {
-            WorkloadRoleFamily::EffectWriter => "effect-writer",
-            WorkloadRoleFamily::ControlAuthor => "control-author",
-            WorkloadRoleFamily::ManagementAdmitter => "management-admitter",
-            WorkloadRoleFamily::DispatchReader => "dispatch-reader",
-            WorkloadRoleFamily::ServiceReader => "service-reader",
-            WorkloadRoleFamily::App => "app",
-            WorkloadRoleFamily::Retention => "retention",
-            WorkloadRoleFamily::ExecutorPlatform => "executor-platform",
-            WorkloadRoleFamily::HttpAdmitter => "http-admitter",
-            WorkloadRoleFamily::EventMaterializer => "event-materializer",
-        }
+    fn label(self) -> String {
+        self.family.label()
     }
 }
 
-fn effect_writer_lifecycle<'a>(tenant: &'a str, database: &'a str) -> WorkloadLifecycle<'a> {
-    WorkloadLifecycle {
-        family: WorkloadRoleFamily::EffectWriter,
-        scope: WorkloadRoleScope::Tenant { tenant, database },
-        control_tenant: None,
-    }
-}
-
-/// The guest-SQL family's pairing with its exact scope grain
-/// (`wamn-0h0g.22.6.4`).
+/// ONE lifecycle constructor, for any family (`wamn-0h0g.22.16`).
 ///
-/// Tenant scope, exactly as the effect writer's is, and for the same reason:
-/// the digest in the role name IS the tenant key, so the login the mint issues
-/// and the key `wamn_authority.tenant_key` computes are the same string. If
-/// they ever differ, every guest read refuses.
-fn app_guest_lifecycle<'a>(tenant: &'a str, database: &'a str) -> WorkloadLifecycle<'a> {
-    WorkloadLifecycle {
-        family: WorkloadRoleFamily::App,
-        scope: WorkloadRoleScope::Tenant { tenant, database },
-        control_tenant: None,
-    }
-}
-
-fn control_author_lifecycle<'a>(
-    tenant: &'a str,
-    org: &'a str,
-    project: &'a str,
-    environment: &'a str,
+/// Replaces four copy-pasted constructors that differed only in the scope arm
+/// they filled in. The scope GRAIN is the family's own declaration, so pairing a
+/// family with the wrong grain is not something a caller can get wrong here.
+///
+/// The control tenant follows the same derivation: only a control-scoped family
+/// records a login-to-tenant mapping row, because that row is the control
+/// plane's and a project-environment credential never reaches the control
+/// database.
+fn workload_lifecycle<'a>(
+    family: WorkloadRoleFamily,
+    identity: WorkloadActionIdentity<'a>,
     database: &'a str,
 ) -> WorkloadLifecycle<'a> {
-    WorkloadLifecycle {
-        family: WorkloadRoleFamily::ControlAuthor,
-        scope: WorkloadRoleScope::Control {
+    let WorkloadActionIdentity {
+        org,
+        project,
+        environment,
+        tenant,
+    } = identity;
+    let scope = match family.scope_kind() {
+        // Tenant scope for the effect writer and the guest credential alike:
+        // the digest in the role name IS the tenant key, so the login the mint
+        // issues and the key `wamn_authority.tenant_key` computes are the same
+        // string (`wamn-0h0g.22.6.4`).
+        WorkloadRoleScopeKind::Tenant => WorkloadRoleScope::Tenant { tenant, database },
+        WorkloadRoleScopeKind::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
             org,
             project,
             environment,
             database,
         },
-        control_tenant: Some(tenant),
-    }
-}
-
-/// The management-admitter family's pairing with its exact scope grain.
-///
-/// The third stamp of the same shape, not a fourth mechanism: project-environment
-/// scope (`org`, `project`, `environment`, and the project-env **database** the
-/// URL names), and no control tenant, because the tenant mapping row is the
-/// control plane's and this credential never touches the control database.
-fn management_admitter_lifecycle<'a>(
-    org: &'a str,
-    project: &'a str,
-    environment: &'a str,
-    database: &'a str,
-) -> WorkloadLifecycle<'a> {
-    WorkloadLifecycle {
-        family: WorkloadRoleFamily::ManagementAdmitter,
-        scope: WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleScopeKind::Control => WorkloadRoleScope::Control {
             org,
             project,
             environment,
             database,
         },
-        control_tenant: None,
+    };
+    WorkloadLifecycle {
+        family,
+        scope,
+        control_tenant: (family.scope_kind() == WorkloadRoleScopeKind::Control).then_some(tenant),
     }
+}
+
+/// The retired project-environment effect-writer identities, migration input
+/// only.
+///
+/// `None` for every other family, including any admitted later: a legacy
+/// identity is a fact about one family's history, not a generic property.
+fn legacy_generation_roles(
+    family: WorkloadRoleFamily,
+    identity: WorkloadActionIdentity<'_>,
+    database: &str,
+    generation: CredentialGeneration,
+) -> (Option<String>, Option<String>) {
+    if family != WorkloadRoleFamily::EffectWriter {
+        return (None, None);
+    }
+    let WorkloadActionIdentity {
+        org,
+        project,
+        environment,
+        ..
+    } = identity;
+    (
+        Some(legacy_effect_writer_generation_role(
+            org,
+            project,
+            environment,
+            database,
+            generation,
+        )),
+        Some(legacy_effect_writer_generation_role(
+            org,
+            project,
+            environment,
+            database,
+            generation.other(),
+        )),
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1075,7 +933,7 @@ async fn converge_workload_generation_state(
     lifecycle: WorkloadLifecycle<'_>,
     role: &str,
 ) -> anyhow::Result<Option<WorkloadRoleState>> {
-    let state = read_workload_role_state(client, role, lifecycle.label()).await?;
+    let state = read_workload_role_state(client, role, &lifecycle.label()).await?;
     let Some(found) = state.as_ref() else {
         return Ok(None);
     };
@@ -1102,7 +960,7 @@ async fn converge_workload_generation_state(
                 lifecycle.label()
             )
         })?;
-    read_workload_role_state(client, role, lifecycle.label()).await
+    read_workload_role_state(client, role, &lifecycle.label()).await
 }
 
 async fn converge_stable_workload_memberships(
@@ -1111,7 +969,7 @@ async fn converge_stable_workload_memberships(
     lifecycle: WorkloadLifecycle<'_>,
 ) -> anyhow::Result<()> {
     let Some(stable) =
-        read_workload_role_state(client, lifecycle.family.acl_role(), lifecycle.label()).await?
+        read_workload_role_state(client, lifecycle.family.acl_role(), &lifecycle.label()).await?
     else {
         return Ok(());
     };
@@ -1134,7 +992,7 @@ async fn converge_stable_workload_memberships(
                     lifecycle.label()
                 )
             })?;
-        let child = read_workload_role_state(client, &role, lifecycle.label())
+        let child = read_workload_role_state(client, &role, &lifecycle.label())
             .await?
             .with_context(|| {
                 format!(
@@ -1163,7 +1021,25 @@ async fn converge_stable_workload_memberships(
     Ok(())
 }
 
-async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
+/// ONE workload generation action, for any family (`wamn-0h0g.22.16`).
+///
+/// Replaces four copy-pasted `run_*_action` functions and the dispatch chain
+/// that chose between them. Everything this needs is DERIVED from the family:
+/// its scope grain picks the identity inputs, the admin database and the
+/// lifecycle scope; its label names the action in every message; its declared
+/// Secret body shape picks what the published Secret carries. What is
+/// deliberately NOT derived is the GRANT SET, which is where a family's
+/// authority actually lives.
+async fn run_workload_action(
+    args: &ProvisionProjectEnvArgs,
+    action: WorkloadGenerationAction,
+) -> anyhow::Result<()> {
+    let WorkloadGenerationAction {
+        family,
+        verb,
+        generation,
+    } = action;
+    let label = family.label();
     anyhow::ensure!(
         args.cluster.is_none()
             && args.connection_limit.is_none()
@@ -1172,457 +1048,165 @@ async fn run_effect_writer_action(args: &ProvisionProjectEnvArgs) -> anyhow::Res
             && args.emit_role_sql.is_none()
             && args.emit_privilege_sql.is_none()
             && args.emit_secret.is_none()
-            && args.emit_control_author_secret.is_none()
-            && args.emit_management_admitter_secret.is_none()
             && args.emit_management_author_pat_secret.is_none()
             && args.emit_route_caller_pat_secret.is_none(),
-        "effect-writer generation actions cannot render ordinary provisioning or PAT artifacts"
+        "{label} generation actions cannot render ordinary provisioning or PAT artifacts"
     );
-    let identity = workload_action_identity(args, "effect-writer")?;
+    let identity = workload_action_identity(args, &label)?;
     let WorkloadActionIdentity {
         org,
         project,
         environment,
         tenant,
     } = identity;
-    let system_url = args.system_database_url.as_deref().context(
-        "effect-writer generation actions require --system-database-url to resolve the stored instance suffix",
-    )?;
     let triple = Triple::new(org, project, environment);
-    let instance = read_project_env_instance(system_url, &triple).await?;
-    let database = project_env_database_name(org, project, environment, &instance);
-    let admin_url = args
-        .target_admin_database_url
-        .as_deref()
-        .context("effect-writer generation actions require --target-admin-database-url")?;
-    let admin_config = exact_project_database_config(admin_url, &database)?;
-    let lifecycle = effect_writer_lifecycle(tenant, &database);
-
-    if let Some(generation) = args.prepare_effect_writer_generation {
-        let secret_path = args.emit_effect_writer_secret.as_deref().context(
-            "--prepare-effect-writer-generation requires --emit-effect-writer-secret PATH",
-        )?;
-        ensure_secret_path(secret_path, "--emit-effect-writer-secret")?;
-        let validity = workload_validity(Utc::now());
-        let scope = EffectWriterCredentialScope {
-            tenant: tenant.to_string(),
-            org: org.to_string(),
-            project: project.to_string(),
-            environment: environment.to_string(),
-            database: database.clone(),
-        };
-        let legacy_desired =
-            legacy_effect_writer_generation_role(org, project, environment, &database, generation);
-        let legacy_other = legacy_effect_writer_generation_role(
-            org,
-            project,
-            environment,
-            &database,
-            generation.other(),
-        );
-        prepare_workload_generation(
-            &admin_config,
-            lifecycle,
-            Some(&legacy_desired),
-            Some(&legacy_other),
-            generation,
-            &validity.expires_at,
-            |role, password, predecessor_role| {
-                let credential_id = random_lower_hex(16)?;
-                let credential_url = workload_url(admin_url, role, password, &database)?;
-                let credential = effect_writer_credential(
-                    &scope,
-                    &credential_id,
-                    generation,
-                    &validity,
-                    &credential_url,
-                );
-                let mut secret =
-                    render_effect_writer_secret_manifest(&triple, &args.namespace, &credential);
-                if let Some(predecessor_role) = predecessor_role {
-                    secret["metadata"]["annotations"]["wamn.io/predecessor-database-role"] =
-                        json!(predecessor_role);
-                }
-                write_secret_json(secret_path, &secret)
-                    .context("write authenticated effect-writer Secret")
-            },
-        )
-        .await?;
-        println!(
-            "prepared and authenticated effect-writer credential generation {} for {}/{}/{}; wrote {}",
-            generation.as_str(),
-            org,
-            project,
-            environment,
-            secret_path.display()
-        );
-        Ok(())
-    } else if let Some(generation) = args.retire_effect_writer_generation {
-        anyhow::ensure!(
-            args.emit_effect_writer_secret.is_none(),
-            "--emit-effect-writer-secret is valid only when preparing a generation"
-        );
-        let legacy_role =
-            legacy_effect_writer_generation_role(org, project, environment, &database, generation);
-        retire_workload_generation(&admin_config, lifecycle, Some(&legacy_role), generation)
-            .await?;
-        println!(
-            "retired effect-writer credential generation {} for {}/{}/{}",
-            generation.as_str(),
-            org,
-            project,
-            environment
-        );
-        Ok(())
-    } else if let Some(generation) = args.abort_effect_writer_generation {
-        anyhow::ensure!(
-            args.emit_effect_writer_secret.is_none(),
-            "--emit-effect-writer-secret is valid only when preparing a generation"
-        );
-        abort_workload_generation(&admin_config, lifecycle, generation).await?;
-        println!(
-            "aborted unpublished effect-writer credential generation {} for {}/{}/{}",
-            generation.as_str(),
-            org,
-            project,
-            environment
-        );
-        Ok(())
-    } else {
-        anyhow::bail!("no effect-writer generation action selected")
-    }
-}
-
-async fn run_control_author_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        args.cluster.is_none()
-            && args.connection_limit.is_none()
-            && args.app_host.is_none()
-            && args.target_admin_database_url.is_none()
-            && args.emit_database.is_none()
-            && args.emit_role_sql.is_none()
-            && args.emit_privilege_sql.is_none()
-            && args.emit_secret.is_none()
-            && args.emit_effect_writer_secret.is_none()
-            && args.emit_management_admitter_secret.is_none()
-            && args.emit_management_author_pat_secret.is_none()
-            && args.emit_route_caller_pat_secret.is_none(),
-        "control-author generation actions cannot render ordinary provisioning, effect-writer, management-admitter, or PAT artifacts"
-    );
-    let identity = workload_action_identity(args, "control-author")?;
-    let WorkloadActionIdentity {
-        org,
-        project,
-        environment,
-        tenant,
-    } = identity;
-    let admin_url = args
+    let system_url = args
         .system_database_url
         .as_deref()
-        .context("control-author generation actions require --system-database-url")?;
-    let admin_config = named_database_config(admin_url, "control-author admin")?;
-    let database = admin_config
-        .get_dbname()
-        .expect("named_database_config requires a database name");
-    let lifecycle = control_author_lifecycle(tenant, org, project, environment, database);
+        .with_context(|| format!("{label} generation actions require --system-database-url"))?;
 
-    if let Some(generation) = args.prepare_control_author_generation {
-        let secret_path = args.emit_control_author_secret.as_deref().context(
-            "--prepare-control-author-generation requires --emit-control-author-secret PATH",
-        )?;
-        ensure_secret_path(secret_path, "--emit-control-author-secret")?;
-        let validity = workload_validity(Utc::now());
-        let triple = Triple::new(org, project, environment);
-        prepare_workload_generation(
-            &admin_config,
-            lifecycle,
-            None,
-            None,
-            generation,
-            &validity.expires_at,
-            |role, password, _predecessor_role| {
-                let credential_url = workload_url(admin_url, role, password, database)?;
-                let secret = render_control_author_secret_manifest(
-                    &triple,
-                    &args.namespace,
-                    &credential_url,
-                );
-                write_secret_json(secret_path, &secret)
-                    .context("write authenticated control-author Secret")
-            },
-        )
-        .await?;
-        println!(
-            "prepared and authenticated control-author credential generation {} for {}/{}/{}; wrote {}",
-            generation.as_str(),
-            org,
-            project,
-            environment,
-            secret_path.display()
-        );
-        Ok(())
-    } else if let Some(generation) = args.retire_control_author_generation {
+    // A CONTROL-scoped family addresses the control database the system URL
+    // already names; every other family addresses the project environment's own
+    // database, whose instance suffix is READ from the registry rather than
+    // typed. One derivation over the scope grain, not a branch per family.
+    let (admin_url, database, admin_config) = if family.scope_kind()
+        == WorkloadRoleScopeKind::Control
+    {
         anyhow::ensure!(
-            args.emit_control_author_secret.is_none(),
-            "--emit-control-author-secret is valid only when preparing a generation"
+            args.target_admin_database_url.is_none(),
+            "--target-admin-database-url is not a {label} input: this family addresses the control database"
         );
-        retire_workload_generation(&admin_config, lifecycle, None, generation).await?;
-        println!(
-            "retired control-author credential generation {} for {}/{}/{}",
-            generation.as_str(),
-            org,
-            project,
-            environment
-        );
-        Ok(())
-    } else if let Some(generation) = args.abort_control_author_generation {
-        anyhow::ensure!(
-            args.emit_control_author_secret.is_none(),
-            "--emit-control-author-secret is valid only when preparing a generation"
-        );
-        abort_workload_generation(&admin_config, lifecycle, generation).await?;
-        println!(
-            "aborted unpublished control-author credential generation {} for {}/{}/{}",
-            generation.as_str(),
-            org,
-            project,
-            environment
-        );
-        Ok(())
+        let config = named_database_config(system_url, &format!("{label} admin"))?;
+        let database = config
+            .get_dbname()
+            .expect("named_database_config requires a database name")
+            .to_string();
+        (system_url, database, config)
     } else {
-        anyhow::bail!("no control-author generation action selected")
+        let instance = read_project_env_instance(system_url, &triple).await?;
+        let database = project_env_database_name(org, project, environment, &instance);
+        let admin_url = args.target_admin_database_url.as_deref().with_context(|| {
+            format!("{label} generation actions require --target-admin-database-url")
+        })?;
+        let config = exact_project_database_config(admin_url, &database)?;
+        (admin_url, database, config)
+    };
+    let lifecycle = workload_lifecycle(family, identity, &database);
+
+    match verb {
+        WorkloadActionVerb::Prepare => {
+            let secret_path = args.workload_secret_path(family).with_context(|| {
+                format!(
+                    "--{} requires --{} PATH",
+                    workload_action_flag(family, verb),
+                    workload_secret_flag(family)
+                )
+            })?;
+            ensure_secret_path(secret_path, &format!("--{}", workload_secret_flag(family)))?;
+            let validity = workload_validity(Utc::now());
+            // The key the RLS predicate computes, taken from the ONE Rust
+            // definition rather than re-derived here — the Secret's label must
+            // name the same tenant the role name's digest does.
+            let key = tenant_key(tenant, &database);
+            let scope = EffectWriterCredentialScope {
+                tenant: tenant.to_string(),
+                org: org.to_string(),
+                project: project.to_string(),
+                environment: environment.to_string(),
+                database: database.clone(),
+            };
+            let (legacy_desired, legacy_other) =
+                legacy_generation_roles(family, identity, &database, generation);
+            prepare_workload_generation(
+                &admin_config,
+                lifecycle,
+                legacy_desired.as_deref(),
+                legacy_other.as_deref(),
+                generation,
+                &validity.expires_at,
+                |role, password, predecessor_role| {
+                    let credential_url = workload_url(admin_url, role, password, &database)?;
+                    let secret = match family.secret_body_kind() {
+                        WorkloadSecretBodyKind::Url => render_workload_secret_manifest(
+                            family,
+                            &triple,
+                            &args.namespace,
+                            WorkloadSecretBody::Url(&credential_url),
+                        ),
+                        WorkloadSecretBodyKind::TenantUrl => {
+                            anyhow::ensure!(
+                                role.contains(&key),
+                                "the minted {label} login does not carry the tenant key the RLS \
+                                 predicate computes, so every guest read would refuse"
+                            );
+                            render_workload_secret_manifest(
+                                family,
+                                &triple,
+                                &args.namespace,
+                                WorkloadSecretBody::TenantUrl {
+                                    tenant,
+                                    tenant_key: &key,
+                                    url: &credential_url,
+                                },
+                            )
+                        }
+                        WorkloadSecretBodyKind::EffectWriterCredential => {
+                            let credential_id = random_lower_hex(16)?;
+                            let credential = effect_writer_credential(
+                                &scope,
+                                &credential_id,
+                                generation,
+                                &validity,
+                                &credential_url,
+                            );
+                            let mut secret = render_workload_secret_manifest(
+                                family,
+                                &triple,
+                                &args.namespace,
+                                WorkloadSecretBody::EffectWriterCredential(&credential),
+                            );
+                            if let Some(predecessor_role) = predecessor_role {
+                                secret["metadata"]["annotations"]
+                                    ["wamn.io/predecessor-database-role"] = json!(predecessor_role);
+                            }
+                            secret
+                        }
+                    };
+                    write_secret_json(secret_path, &secret)
+                        .with_context(|| format!("write authenticated {label} Secret"))
+                },
+            )
+            .await?;
+            println!(
+                "prepared and authenticated {label} credential generation {} for {org}/{project}/{environment}; wrote {}",
+                generation.as_str(),
+                secret_path.display()
+            );
+        }
+        WorkloadActionVerb::Retire => {
+            let (legacy_old_role, _) =
+                legacy_generation_roles(family, identity, &database, generation);
+            retire_workload_generation(
+                &admin_config,
+                lifecycle,
+                legacy_old_role.as_deref(),
+                generation,
+            )
+            .await?;
+            println!(
+                "retired {label} credential generation {} for {org}/{project}/{environment}",
+                generation.as_str()
+            );
+        }
+        WorkloadActionVerb::Abort => {
+            abort_workload_generation(&admin_config, lifecycle, generation).await?;
+            println!(
+                "aborted unpublished {label} credential generation {} for {org}/{project}/{environment}",
+                generation.as_str()
+            );
+        }
     }
-}
-
-/// The management-admitter A/B lifecycle (`wamn-0h0g.12.176`).
-///
-/// The third instance of one shape. It addresses the **project-environment**
-/// database like the effect-writer action — the instance suffix is read from the
-/// registry so the database name is derived, never typed — and it publishes a
-/// single-`url` Secret like the control-author action, because scenario-worker
-/// mounts both through the same `secretKeyRef … key: url`.
-///
-/// `--tenant` is the shared workload-action identity contract, not an input to
-/// this family's derivation: management-admission scopes on `(org, project,
-/// environment, database)` alone.
-/// The per-tenant guest-SQL generation actions (`wamn-0h0g.22.6.4`).
-///
-/// The fourth stamp of one shape, not a fourth mechanism: tenant scope like the
-/// effect writer's, a plain URL Secret like the management admitter's.
-async fn run_guest_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        args.cluster.is_none()
-            && args.connection_limit.is_none()
-            && args.app_host.is_none()
-            && args.emit_database.is_none()
-            && args.emit_role_sql.is_none()
-            && args.emit_privilege_sql.is_none()
-            && args.emit_secret.is_none()
-            && args.emit_effect_writer_secret.is_none()
-            && args.emit_control_author_secret.is_none()
-            && args.emit_management_admitter_secret.is_none()
-            && args.emit_management_author_pat_secret.is_none()
-            && args.emit_route_caller_pat_secret.is_none(),
-        "guest generation actions cannot render ordinary provisioning, effect-writer, control-author, management-admitter, or PAT artifacts"
-    );
-    let identity = workload_action_identity(args, "guest")?;
-    let WorkloadActionIdentity {
-        org,
-        project,
-        environment,
-        tenant,
-    } = identity;
-    let system_url = args.system_database_url.as_deref().context(
-        "guest generation actions require --system-database-url to resolve the stored instance suffix",
-    )?;
-    let triple = Triple::new(org, project, environment);
-    let instance = read_project_env_instance(system_url, &triple).await?;
-    let database = project_env_database_name(org, project, environment, &instance);
-    let admin_url = args
-        .target_admin_database_url
-        .as_deref()
-        .context("guest generation actions require --target-admin-database-url")?;
-    let admin_config = exact_project_database_config(admin_url, &database)?;
-    let lifecycle = app_guest_lifecycle(tenant, &database);
-
-    if let Some(generation) = args.prepare_guest_generation {
-        let secret_path = args
-            .emit_guest_secret
-            .as_deref()
-            .context("--prepare-guest-generation requires --emit-guest-secret PATH")?;
-        ensure_secret_path(secret_path, "--emit-guest-secret")?;
-        let validity = workload_validity(Utc::now());
-        // The key the predicate computes, taken from the ONE Rust definition
-        // rather than re-derived here — the label must name the same tenant the
-        // role name's digest does.
-        let key = tenant_key(tenant, &database);
-        prepare_workload_generation(
-            &admin_config,
-            lifecycle,
-            None,
-            None,
-            generation,
-            &validity.expires_at,
-            |role, password, _predecessor_role| {
-                anyhow::ensure!(
-                    role.contains(&key),
-                    "the minted guest login does not carry the tenant key the RLS \
-                     predicate computes, so every guest read would refuse"
-                );
-                let credential_url = workload_url(admin_url, role, password, &database)?;
-                let secret = render_guest_secret_manifest(
-                    &triple,
-                    &args.namespace,
-                    tenant,
-                    &key,
-                    &credential_url,
-                );
-                write_secret_json(secret_path, &secret).context("write authenticated guest Secret")
-            },
-        )
-        .await?;
-        println!(
-            "prepared and authenticated guest credential generation {} for {}/{}/{}; wrote {}",
-            generation.as_str(),
-            org,
-            project,
-            environment,
-            secret_path.display()
-        );
-        Ok(())
-    } else if let Some(generation) = args.retire_guest_generation {
-        anyhow::ensure!(
-            args.emit_guest_secret.is_none(),
-            "--emit-guest-secret is valid only when preparing a generation"
-        );
-        retire_workload_generation(&admin_config, lifecycle, None, generation).await?;
-        println!(
-            "retired guest credential generation {} for {}/{}/{}",
-            generation.as_str(),
-            org,
-            project,
-            environment
-        );
-        Ok(())
-    } else if let Some(generation) = args.abort_guest_generation {
-        anyhow::ensure!(
-            args.emit_guest_secret.is_none(),
-            "--emit-guest-secret is valid only when preparing a generation"
-        );
-        abort_workload_generation(&admin_config, lifecycle, generation).await?;
-        println!(
-            "aborted unpublished guest credential generation {} for {}/{}/{}",
-            generation.as_str(),
-            org,
-            project,
-            environment
-        );
-        Ok(())
-    } else {
-        anyhow::bail!("no guest generation action selected")
-    }
-}
-
-async fn run_management_admitter_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        args.cluster.is_none()
-            && args.connection_limit.is_none()
-            && args.app_host.is_none()
-            && args.emit_database.is_none()
-            && args.emit_role_sql.is_none()
-            && args.emit_privilege_sql.is_none()
-            && args.emit_secret.is_none()
-            && args.emit_effect_writer_secret.is_none()
-            && args.emit_control_author_secret.is_none()
-            && args.emit_management_author_pat_secret.is_none()
-            && args.emit_route_caller_pat_secret.is_none(),
-        "management-admitter generation actions cannot render ordinary provisioning, effect-writer, control-author, or PAT artifacts"
-    );
-    let identity = workload_action_identity(args, "management-admitter")?;
-    let WorkloadActionIdentity {
-        org,
-        project,
-        environment,
-        ..
-    } = identity;
-    let system_url = args.system_database_url.as_deref().context(
-        "management-admitter generation actions require --system-database-url to resolve the stored instance suffix",
-    )?;
-    let triple = Triple::new(org, project, environment);
-    let instance = read_project_env_instance(system_url, &triple).await?;
-    let database = project_env_database_name(org, project, environment, &instance);
-    let admin_url = args
-        .target_admin_database_url
-        .as_deref()
-        .context("management-admitter generation actions require --target-admin-database-url")?;
-    let admin_config = exact_project_database_config(admin_url, &database)?;
-    let lifecycle = management_admitter_lifecycle(org, project, environment, &database);
-
-    if let Some(generation) = args.prepare_management_admitter_generation {
-        let secret_path = args.emit_management_admitter_secret.as_deref().context(
-            "--prepare-management-admitter-generation requires --emit-management-admitter-secret PATH",
-        )?;
-        ensure_secret_path(secret_path, "--emit-management-admitter-secret")?;
-        let validity = workload_validity(Utc::now());
-        prepare_workload_generation(
-            &admin_config,
-            lifecycle,
-            None,
-            None,
-            generation,
-            &validity.expires_at,
-            |role, password, _predecessor_role| {
-                let credential_url = workload_url(admin_url, role, password, &database)?;
-                let secret = render_management_admitter_secret_manifest(
-                    &triple,
-                    &args.namespace,
-                    &credential_url,
-                );
-                write_secret_json(secret_path, &secret)
-                    .context("write authenticated management-admitter Secret")
-            },
-        )
-        .await?;
-        println!(
-            "prepared and authenticated management-admitter credential generation {} for {}/{}/{}; wrote {}",
-            generation.as_str(),
-            org,
-            project,
-            environment,
-            secret_path.display()
-        );
-        Ok(())
-    } else if let Some(generation) = args.retire_management_admitter_generation {
-        anyhow::ensure!(
-            args.emit_management_admitter_secret.is_none(),
-            "--emit-management-admitter-secret is valid only when preparing a generation"
-        );
-        retire_workload_generation(&admin_config, lifecycle, None, generation).await?;
-        println!(
-            "retired management-admitter credential generation {} for {}/{}/{}",
-            generation.as_str(),
-            org,
-            project,
-            environment
-        );
-        Ok(())
-    } else if let Some(generation) = args.abort_management_admitter_generation {
-        anyhow::ensure!(
-            args.emit_management_admitter_secret.is_none(),
-            "--emit-management-admitter-secret is valid only when preparing a generation"
-        );
-        abort_workload_generation(&admin_config, lifecycle, generation).await?;
-        println!(
-            "aborted unpublished management-admitter credential generation {} for {}/{}/{}",
-            generation.as_str(),
-            org,
-            project,
-            environment
-        );
-        Ok(())
-    } else {
-        anyhow::bail!("no management-admitter generation action selected")
-    }
+    Ok(())
 }
 
 async fn prepare_workload_generation<F>(
@@ -1640,7 +1224,7 @@ where
     let database = lifecycle.database();
     let role = lifecycle.role(generation);
     let mut other_role = lifecycle.role(generation.other());
-    let (mut admin, admin_task) = connect_config(admin_config, lifecycle.label()).await?;
+    let (mut admin, admin_task) = connect_config(admin_config, &lifecycle.label()).await?;
     lock_workload_family(&admin, lifecycle).await?;
     let transaction = admin
         .transaction()
@@ -1650,7 +1234,7 @@ where
         .batch_execute(sql::revoke_public_connect_floor_sql())
         .await
         .context("converge cluster PUBLIC CONNECT floor")?;
-    verify_public_access_floor(&transaction, lifecycle.label()).await?;
+    verify_public_access_floor(&transaction, &lifecycle.label()).await?;
     converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
     let desired = converge_workload_generation_state(&transaction, lifecycle, &role).await?;
     if let Some(legacy_role) = legacy_desired_role {
@@ -1725,15 +1309,24 @@ where
         .await?;
     }
     let predecessor_role = other.as_ref().map(|_| other_role.as_str());
-    if read_workload_role_state(&transaction, lifecycle.family.acl_role(), lifecycle.label())
-        .await?
-        .is_some()
-        && lifecycle.family == WorkloadRoleFamily::EffectWriter
+    // Pre-checked ONLY for a family whose stable grant set is converged
+    // elsewhere (schema control owns the effect writer's, because its grants
+    // exist only once the effect-ledger tables do). A family whose grant set
+    // THIS batch applies has nothing to assert yet on a first prepare, so the
+    // condition is the absence of a stable surface, not a family name.
+    if sql::stable_surface_sql(lifecycle.family).is_none()
+        && let Some(grant_set) = stable_grant_set(lifecycle.family)
+        && read_workload_role_state(&transaction, lifecycle.family.acl_role(), &lifecycle.label())
+            .await?
+            .is_some()
     {
         verify_role_acl_inventory(
             admin_config,
             lifecycle.family.acl_role(),
-            RoleAclExpectation::EffectAclRole,
+            RoleAclExpectation::StableGrantSet {
+                grant_set,
+                required_database: database,
+            },
         )
         .await?;
     }
@@ -1782,7 +1375,7 @@ where
             .await
             .with_context(|| format!("authenticate prepared {} generation", lifecycle.label()))?;
 
-        let prepared = read_workload_role_state(&admin, &role, lifecycle.label())
+        let prepared = read_workload_role_state(&admin, &role, &lifecycle.label())
             .await?
             .with_context(|| format!("prepared {} generation disappeared", lifecycle.label()))?;
         anyhow::ensure!(
@@ -1847,7 +1440,7 @@ async fn rollback_prepared_workload_generation(
                 lifecycle.label()
             )
         })?;
-    let state = read_workload_role_state(admin, role, lifecycle.label())
+    let state = read_workload_role_state(admin, role, &lifecycle.label())
         .await?
         .with_context(|| format!("rolled-back {} generation disappeared", lifecycle.label()))?;
     anyhow::ensure!(
@@ -1867,13 +1460,13 @@ async fn retire_workload_generation(
     let database = lifecycle.database();
     let mut old_role = lifecycle.role(generation);
     let replacement_role = lifecycle.role(generation.other());
-    let (mut admin, admin_task) = connect_config(admin_config, lifecycle.label()).await?;
+    let (mut admin, admin_task) = connect_config(admin_config, &lifecycle.label()).await?;
     lock_workload_family(&admin, lifecycle).await?;
     let transaction = admin
         .transaction()
         .await
         .with_context(|| format!("begin {} generation retirement", lifecycle.label()))?;
-    verify_public_access_floor(&transaction, lifecycle.label()).await?;
+    verify_public_access_floor(&transaction, &lifecycle.label()).await?;
     converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
     let mut old = converge_workload_generation_state(&transaction, lifecycle, &old_role).await?;
     if old.as_ref().is_none_or(WorkloadRoleState::is_inactive)
@@ -1945,7 +1538,7 @@ async fn retire_workload_generation(
                 lifecycle.label()
             )
         })?;
-    let retired = read_workload_role_state(&admin, &old_role, lifecycle.label())
+    let retired = read_workload_role_state(&admin, &old_role, &lifecycle.label())
         .await?
         .with_context(|| format!("retired {} generation disappeared", lifecycle.label()))?;
     anyhow::ensure!(
@@ -1965,13 +1558,13 @@ async fn abort_workload_generation(
 ) -> anyhow::Result<()> {
     let database = lifecycle.database();
     let role = lifecycle.role(generation);
-    let (mut admin, admin_task) = connect_config(admin_config, lifecycle.label()).await?;
+    let (mut admin, admin_task) = connect_config(admin_config, &lifecycle.label()).await?;
     lock_workload_family(&admin, lifecycle).await?;
     let transaction = admin
         .transaction()
         .await
         .with_context(|| format!("begin {} generation abort", lifecycle.label()))?;
-    verify_public_access_floor(&transaction, lifecycle.label()).await?;
+    verify_public_access_floor(&transaction, &lifecycle.label()).await?;
     converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
     let prepared = converge_workload_generation_state(&transaction, lifecycle, &role)
         .await?
@@ -2021,7 +1614,7 @@ async fn abort_workload_generation(
                 lifecycle.label()
             )
         })?;
-    let aborted = read_workload_role_state(&admin, &role, lifecycle.label())
+    let aborted = read_workload_role_state(&admin, &role, &lifecycle.label())
         .await?
         .with_context(|| format!("aborted {} generation disappeared", lifecycle.label()))?;
     anyhow::ensure!(
@@ -2145,7 +1738,7 @@ fn workload_url(
 
 async fn connect_config(
     config: &PgConfig,
-    purpose: &'static str,
+    purpose: &str,
 ) -> anyhow::Result<(
     tokio_postgres::Client,
     tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,
@@ -2162,7 +1755,7 @@ async fn authenticate_workload_generation(
     lifecycle: WorkloadLifecycle<'_>,
     role: &str,
 ) -> anyhow::Result<()> {
-    let (client, task) = connect_config(config, lifecycle.label()).await?;
+    let (client, task) = connect_config(config, &lifecycle.label()).await?;
     let row = client
         .query_one(
             "SELECT current_user::text, current_database()::text, \
@@ -2237,7 +1830,7 @@ async fn verify_stable_workload_role(
     lifecycle: WorkloadLifecycle<'_>,
 ) -> anyhow::Result<()> {
     let role = lifecycle.family.acl_role();
-    let state = read_workload_role_state(client, role, lifecycle.label())
+    let state = read_workload_role_state(client, role, &lifecycle.label())
         .await?
         .with_context(|| format!("stable {} ACL role does not exist", lifecycle.label()))?;
     anyhow::ensure!(
@@ -2245,32 +1838,74 @@ async fn verify_stable_workload_role(
         "stable {} ACL role is not a connection-free NOLOGIN role with exact generation members",
         lifecycle.label()
     );
-    match lifecycle.family {
-        WorkloadRoleFamily::EffectWriter => {
-            verify_role_acl_inventory(admin_config, role, RoleAclExpectation::EffectAclRole)
-                .await?;
-        }
-        WorkloadRoleFamily::ManagementAdmitter => {
-            verify_role_acl_inventory(
-                admin_config,
-                role,
-                RoleAclExpectation::ManagementAclRole {
-                    required_database: lifecycle.database(),
-                },
-            )
-            .await?;
-        }
-        _ => {}
+    if let Some(grant_set) = stable_grant_set(lifecycle.family) {
+        verify_role_acl_inventory(
+            admin_config,
+            role,
+            RoleAclExpectation::StableGrantSet {
+                grant_set,
+                required_database: lifecycle.database(),
+            },
+        )
+        .await?;
     }
     Ok(())
+}
+
+/// THE GRANT SET, and the one thing that stays per family
+/// (`wamn-0h0g.22.16`).
+///
+/// `None` = this family's stable ACL role holds no direct grants of its own, so
+/// there is no denial matrix to assert. The wildcard arm is deliberate: an
+/// admitted family reaches every derived flag, action and Secret without an
+/// edit anywhere, and acquires an entry HERE only when it acquires authority.
+fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
+    match family {
+        WorkloadRoleFamily::EffectWriter => Some(StableGrantSet::EffectWriter),
+        WorkloadRoleFamily::ManagementAdmitter => Some(StableGrantSet::ManagementAdmitter),
+        _ => None,
+    }
+}
+
+/// The per-family denial matrices a stable ACL role is measured against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StableGrantSet {
+    EffectWriter,
+    ManagementAdmitter,
+}
+
+impl StableGrantSet {
+    fn verify(
+        self,
+        role: &str,
+        database: &str,
+        required_database: &str,
+        inventory: &[RoleAcl],
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::EffectWriter => {
+                verify_effect_writer_acl_role_inventory(role, database, inventory)
+            }
+            Self::ManagementAdmitter => verify_management_admitter_acl_role_inventory(
+                role,
+                database,
+                required_database,
+                inventory,
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RoleAclExpectation<'a> {
     None,
-    Generation { database: &'a str },
-    EffectAclRole,
-    ManagementAclRole { required_database: &'a str },
+    Generation {
+        database: &'a str,
+    },
+    StableGrantSet {
+        grant_set: StableGrantSet,
+        required_database: &'a str,
+    },
 }
 
 async fn verify_role_acl_inventory(
@@ -2320,16 +1955,11 @@ async fn verify_role_acl_inventory(
             );
         }
         match expectation {
-            RoleAclExpectation::EffectAclRole => {
-                verify_effect_writer_acl_role_inventory(role, &database, &inventory)?;
-            }
-            RoleAclExpectation::ManagementAclRole { required_database } => {
-                verify_management_admitter_acl_role_inventory(
-                    role,
-                    &database,
-                    required_database,
-                    &inventory,
-                )?;
+            RoleAclExpectation::StableGrantSet {
+                grant_set,
+                required_database,
+            } => {
+                grant_set.verify(role, &database, required_database, &inventory)?;
             }
             expectation => {
                 for acl in &inventory {
@@ -2341,8 +1971,7 @@ async fn verify_role_acl_inventory(
                                 && acl.object_name == expected
                                 && acl.privilege == "CONNECT"
                         }
-                        RoleAclExpectation::EffectAclRole
-                        | RoleAclExpectation::ManagementAclRole { .. } => {
+                        RoleAclExpectation::StableGrantSet { .. } => {
                             unreachable!("handled above")
                         }
                     };
@@ -3122,6 +2751,16 @@ mod tests {
     /// `\n`, so it cannot match its own spelling — only the real module header.
     /// Locating it with `find` also makes the boundary's absence LOUD, where
     /// `split(..).next()` is infallible and can never report it.
+    const TEST_MODULE_BOUNDARY: &str = "\n#[cfg(test)]\nmod tests {";
+
+    /// This file's IMPLEMENTATION half — everything before the test module.
+    fn implementation_source() -> &'static str {
+        const SOURCE: &str = include_str!("provision_project_env.rs");
+        let boundary = SOURCE
+            .find(TEST_MODULE_BOUNDARY)
+            .expect("the test module header is where a source scan must stop");
+        &SOURCE[..boundary]
+    }
 
     #[derive(Debug, Parser)]
     struct TestCli {
@@ -3132,11 +2771,27 @@ mod tests {
     fn parse_without_password_envs<const N: usize>(
         argv: [&str; N],
     ) -> Result<ProvisionProjectEnvArgs, clap::Error> {
+        parse_argv(argv.iter().map(|arg| (*arg).to_string()).collect())
+    }
+
+    /// The same parser over a DERIVED command line, which a fixed-size array
+    /// cannot express.
+    fn parse_argv(argv: Vec<String>) -> Result<ProvisionProjectEnvArgs, clap::Error> {
         let matches = TestCli::command()
             .mut_arg("app_password", |arg| arg.env(None::<&str>))
             .mut_arg("dispatch_reader_password", |arg| arg.env(None::<&str>))
             .try_get_matches_from(argv)?;
         TestCli::from_arg_matches(&matches).map(|cli| cli.args)
+    }
+
+    /// `["test", "--org", .., "--env", "dev"]` plus whatever the caller adds.
+    fn action_argv(extra: &[&str]) -> Vec<String> {
+        let mut argv: Vec<String> = ["test", "--org", "acme", "--project", "billing", "--env", "dev"]
+            .iter()
+            .map(|arg| (*arg).to_string())
+            .collect();
+        argv.extend(extra.iter().map(|arg| (*arg).to_string()));
+        argv
     }
 
     fn parse_args(extra: &[&str]) -> Result<ProvisionProjectEnvArgs, clap::Error> {
@@ -3210,36 +2865,16 @@ mod tests {
     /// contract makes its identity accesses infallible in every action mode.
     #[test]
     fn clap_guards_the_workload_identity_accesses_in_every_action_mode() {
-        for action in [
-            "--prepare-effect-writer-generation",
-            "--retire-effect-writer-generation",
-            "--abort-effect-writer-generation",
-            "--prepare-control-author-generation",
-            "--retire-control-author-generation",
-            "--abort-control-author-generation",
-            "--prepare-management-admitter-generation",
-            "--retire-management-admitter-generation",
-            "--abort-management-admitter-generation",
-        ] {
+        for action in every_action_flag() {
             for omitted in ["--org", "--project", "--env"] {
-                let mut argv = vec![
-                    "test",
-                    "--org",
-                    "acme",
-                    "--project",
-                    "billing",
-                    "--env",
-                    "dev",
-                    action,
-                    "a",
-                ];
+                let mut argv = action_argv(&[&action, "a"]);
                 let at = argv
                     .iter()
-                    .position(|arg| *arg == omitted)
+                    .position(|arg| arg == omitted)
                     .expect("the omitted flag is in the complete action invocation");
                 argv.drain(at..=at + 1);
 
-                let error = TestCli::try_parse_from(argv)
+                let error = parse_argv(argv)
                     .expect_err("a workload action accepted a missing identity member");
                 assert_eq!(
                     error.kind(),
@@ -3467,11 +3102,15 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            abort.abort_effect_writer_generation,
-            Some(CredentialGeneration::A)
+            abort.workload.action,
+            Some(WorkloadGenerationAction {
+                family: WorkloadRoleFamily::EffectWriter,
+                verb: WorkloadActionVerb::Abort,
+                generation: CredentialGeneration::A,
+            })
         );
         assert!(abort.emit_secret.is_none());
-        assert!(abort.emit_effect_writer_secret.is_none());
+        assert!(abort.workload.secret.is_none());
 
         for issue_flag in [
             "--emit-management-author-pat-secret",
@@ -3815,27 +3454,19 @@ mod tests {
         assert!(revoke.app_password.is_none());
         assert!(revoke.dispatch_reader_password.is_none());
 
-        for action in [
-            "--prepare-effect-writer-generation",
-            "--retire-effect-writer-generation",
-            "--abort-effect-writer-generation",
-            "--prepare-management-admitter-generation",
-            "--retire-management-admitter-generation",
-            "--abort-management-admitter-generation",
-        ] {
-            let parsed = parse_without_password_envs([
-                "test",
-                "--org",
-                "acme",
-                "--project",
-                "billing",
-                "--env",
-                "dev",
+        // EVERY family's action, derived — not the six that were remembered.
+        // `wamn-0h0g.22.16` measured that the guest family's three flags were
+        // MISSING from all three exempt lists, so `--prepare-guest-generation`
+        // demanded `--emit-secret` while `run_guest_action` refused it: an
+        // unrunnable mode. Deriving the exemption from the family set closes
+        // that by construction rather than by remembering.
+        for action in every_action_flag() {
+            let parsed = parse_argv(action_argv(&[
                 "--target-admin-database-url",
                 "postgresql://postgres@localhost/wamn-db-acme--billing--dev",
-                action,
+                &action,
                 "a",
-            ])
+            ]))
             .unwrap_or_else(|e| panic!("{action} demanded a database credential: {e}"));
             assert!(
                 parsed.app_password.is_none(),
@@ -3845,7 +3476,300 @@ mod tests {
                 parsed.dispatch_reader_password.is_none(),
                 "{action} acquired a --dispatch-reader-password"
             );
+            assert!(
+                parsed.emit_secret.is_none(),
+                "{action} was made to name a database Secret it would discard"
+            );
         }
+    }
+
+
+    /// Every derived action flag, in family order.
+    fn every_action_flag() -> Vec<String> {
+        WorkloadRoleFamily::ALL
+            .into_iter()
+            .flat_map(|family| {
+                WorkloadActionVerb::ALL
+                    .into_iter()
+                    .map(move |verb| format!("--{}", workload_action_flag(family, verb)))
+            })
+            .collect()
+    }
+
+    /// *** THE DELETION — `wamn-0h0g.22.16`'s load-bearing half. ***
+    ///
+    /// SIXTEEN hand-written clap exclusion arrays named every family's three
+    /// flag ids, so admitting a family meant remembering to append to all
+    /// sixteen. A closed enum that must be appended to by hand in sixteen
+    /// places is not closed; it is a checklist.
+    ///
+    /// The count is now ZERO, and this proves the stronger property the
+    /// acceptance actually asks for: NO family's flag or id is SPELLED anywhere
+    /// in the implementation. A list cannot name a family it never mentions, so
+    /// admitting a family cannot require an edit to any list.
+    #[test]
+    fn no_flag_exclusion_list_names_a_family_and_none_can() {
+        let implementation = implementation_source();
+        assert_eq!(
+            implementation.matches("conflicts_with_all = [").count(),
+            0,
+            "a hand-written clap exclusion array is back"
+        );
+        // The only surviving requirement list names the single derived GROUP.
+        // Sixteen arrays collapse to this one two-element expression, repeated
+        // once per argument that owes it — never per family.
+        let survivors: Vec<&str> = implementation
+            .match_indices("required_unless_present_any = ")
+            .map(|(at, _)| {
+                implementation[at..]
+                    .lines()
+                    .next()
+                    .expect("the attribute occupies one line")
+            })
+            .collect();
+        for line in &survivors {
+            assert_eq!(
+                *line,
+                "required_unless_present_any = [\"revoke_pat_prefix\", WORKLOAD_ACTION_GROUP]",
+                "an exclusion list grew members again"
+            );
+        }
+        assert_eq!(
+            survivors.len(),
+            3,
+            "the two passwords and the database Secret are the arguments a \
+             provisioning-only invocation owes"
+        );
+
+        for family in WorkloadRoleFamily::ALL {
+            let mut spellings = vec![
+                workload_secret_flag(family),
+                workload_secret_id(family),
+            ];
+            for verb in WorkloadActionVerb::ALL {
+                spellings.push(workload_action_flag(family, verb));
+                spellings.push(workload_action_id(family, verb));
+            }
+            for spelling in spellings {
+                assert!(
+                    !implementation.contains(&spelling),
+                    "{spelling:?} is spelled in the implementation; whatever names it \
+                     would have to be edited to admit a family"
+                );
+            }
+        }
+    }
+
+    /// The flag SET is a function of the family set, measured on the built
+    /// parser rather than asserted about the source.
+    ///
+    /// An eleventh family reaches all four of its flags, both groups and every
+    /// exemption through this derivation, with no edit outside its own
+    /// declaration and its grant set.
+    #[test]
+    fn every_family_gets_its_flags_from_the_one_derivation() {
+        let command = TestCli::command();
+        let group = |id: &str| {
+            command
+                .get_groups()
+                .find(|group| group.get_id().as_str() == id)
+                .unwrap_or_else(|| panic!("the derived group {id} exists"))
+        };
+        let actions = group(WORKLOAD_ACTION_GROUP);
+        assert_eq!(
+            actions.get_args().count(),
+            3 * WorkloadRoleFamily::ALL.len(),
+            "the action group is three verbs per family and nothing else"
+        );
+        // `multiple(false)` is not readable off a `&ArgGroup`, so the
+        // one-action rule is proven where it bites, by parsing: see
+        // `one_action_group_excludes_every_pair_across_every_family`.
+        let secrets = group(WORKLOAD_SECRET_GROUP);
+        assert_eq!(secrets.get_args().count(), WorkloadRoleFamily::ALL.len());
+
+        for family in WorkloadRoleFamily::ALL {
+            for verb in WorkloadActionVerb::ALL {
+                let id = workload_action_id(family, verb);
+                assert!(
+                    command
+                        .get_arguments()
+                        .any(|arg| arg.get_id().as_str() == id),
+                    "{id} was not derived into the parser"
+                );
+                assert!(
+                    actions.get_args().any(|arg| arg.as_str() == id),
+                    "{id} is outside the one exclusion group"
+                );
+            }
+            let secret = workload_secret_id(family);
+            assert!(
+                secrets.get_args().any(|arg| arg.as_str() == secret),
+                "{secret} is outside the one Secret group"
+            );
+        }
+    }
+
+    /// One action per invocation, for EVERY pair across EVERY family — the
+    /// generalization of a nine-flag hand-written check that could only ever
+    /// cover the families someone remembered to list.
+    #[test]
+    fn one_action_group_excludes_every_pair_across_every_family() {
+        let flags = every_action_flag();
+        assert_eq!(flags.len(), 3 * WorkloadRoleFamily::ALL.len());
+        for (index, first) in flags.iter().enumerate() {
+            for second in &flags[index + 1..] {
+                assert!(
+                    parse_argv(action_argv(&[first, "a", second, "b"])).is_err(),
+                    "{first} and {second} were accepted together"
+                );
+            }
+        }
+    }
+
+    /// A credential Secret is bound to its OWN family's prepare, never to
+    /// another family's action, never to a retire or abort, and never to stdout.
+    #[test]
+    fn every_family_secret_is_bound_to_its_own_prepare() {
+        for family in WorkloadRoleFamily::ALL {
+            let secret = format!("--{}", workload_secret_flag(family));
+            let prepare = format!(
+                "--{}",
+                workload_action_flag(family, WorkloadActionVerb::Prepare)
+            );
+            assert!(
+                parse_argv(action_argv(&[&secret, "/tmp/workload.json"])).is_err(),
+                "{secret} escaped its prepare requirement"
+            );
+            assert!(
+                parse_argv(action_argv(&[&prepare, "a", &secret, "-"])).is_err(),
+                "{secret} accepted stdout"
+            );
+            let parsed = parse_argv(action_argv(&[&prepare, "a", &secret, "/tmp/workload.json"]))
+                .unwrap_or_else(|e| panic!("{prepare} with {secret} must parse: {e}"));
+            assert_eq!(
+                parsed.workload_secret_path(family),
+                Some(Path::new("/tmp/workload.json"))
+            );
+            for verb in [WorkloadActionVerb::Retire, WorkloadActionVerb::Abort] {
+                let other_verb = format!("--{}", workload_action_flag(family, verb));
+                assert!(
+                    parse_argv(action_argv(&[&other_verb, "a", &secret, "/tmp/workload.json"]))
+                        .is_err(),
+                    "{secret} accompanied {other_verb}"
+                );
+            }
+            for other in WorkloadRoleFamily::ALL {
+                if other == family {
+                    continue;
+                }
+                let foreign = format!("--{}", workload_secret_flag(other));
+                assert!(
+                    parse_argv(action_argv(&[&prepare, "a", &foreign, "/tmp/workload.json"]))
+                        .is_err(),
+                    "{prepare} accepted {foreign}, another family's Secret"
+                );
+            }
+        }
+    }
+
+    /// The dispatch, the lifecycle and the ACL expectation are one derivation
+    /// each, total over the family set.
+    ///
+    /// Four copy-pasted `run_*_action` functions, four lifecycle constructors
+    /// and a two-arm `RoleAclExpectation` are gone. What stays per family is the
+    /// GRANT SET, and the wildcard arm of [`stable_grant_set`] means a family
+    /// admitted without authority needs no entry there either.
+    #[test]
+    fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
+        let identity = WorkloadActionIdentity {
+            org: "acme",
+            project: "billing",
+            environment: "dev",
+            tenant: "tenant",
+        };
+        for family in WorkloadRoleFamily::ALL {
+            let lifecycle = workload_lifecycle(family, identity, "wamn-db-acme--billing--dev");
+            assert_eq!(lifecycle.family, family);
+            assert_eq!(lifecycle.database(), "wamn-db-acme--billing--dev");
+            // The scope grain is the family's own declaration, so a family can
+            // never be paired with the wrong one here.
+            assert_eq!(lifecycle.scope, {
+                let probe = workload_lifecycle(family, identity, "wamn-db-acme--billing--dev");
+                probe.scope
+            });
+            let a = lifecycle.role(CredentialGeneration::A);
+            let b = lifecycle.role(CredentialGeneration::B);
+            assert_ne!(a, b, "{family:?}");
+            assert!(is_workload_generation_role(family, &a), "{family:?}: {a}");
+            assert!(a.len() <= 63, "{family:?}: {a}");
+            // Only a CONTROL-scoped family records a login-to-tenant mapping.
+            assert_eq!(
+                lifecycle.control_tenant.is_some(),
+                family.scope_kind() == WorkloadRoleScopeKind::Control,
+                "{family:?}"
+            );
+        }
+
+        let with_grant_sets: Vec<WorkloadRoleFamily> = WorkloadRoleFamily::ALL
+            .into_iter()
+            .filter(|family| stable_grant_set(*family).is_some())
+            .collect();
+        assert_eq!(
+            with_grant_sets,
+            [
+                WorkloadRoleFamily::EffectWriter,
+                WorkloadRoleFamily::ManagementAdmitter
+            ],
+            "a family acquired a grant set without acquiring authority"
+        );
+        // The pre-prepare grant-set assertion fires for the family whose grant
+        // set is converged ELSEWHERE, and not for the one this batch applies.
+        assert!(sql::stable_surface_sql(WorkloadRoleFamily::EffectWriter).is_none());
+        assert!(sql::stable_surface_sql(WorkloadRoleFamily::ManagementAdmitter).is_some());
+        for family in WorkloadRoleFamily::ALL {
+            if !matches!(
+                family,
+                WorkloadRoleFamily::EffectWriter | WorkloadRoleFamily::ManagementAdmitter
+            ) {
+                assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
+            }
+        }
+    }
+
+    /// Every family publishes a Secret whose name, component label and body are
+    /// DERIVED, and the four frozen names are unchanged.
+    #[test]
+    fn every_family_derives_its_credential_secret_name() {
+        let frozen = [
+            (
+                WorkloadRoleFamily::EffectWriter,
+                "wamn-effect-writer-acme--billing--dev",
+            ),
+            (
+                WorkloadRoleFamily::ControlAuthor,
+                "wamn-authoring-acme--billing--dev",
+            ),
+            (
+                WorkloadRoleFamily::ManagementAdmitter,
+                "wamn-mgmt-admitter-acme--billing--dev",
+            ),
+            (WorkloadRoleFamily::App, "wamn-guest-acme--billing--dev"),
+        ];
+        for (family, name) in frozen {
+            assert_eq!(
+                wamn_control_provision::workload_secret_name(family, "acme", "billing", "dev"),
+                name,
+                "{family:?}"
+            );
+        }
+        let mut names = BTreeSet::new();
+        for family in WorkloadRoleFamily::ALL {
+            let name =
+                wamn_control_provision::workload_secret_name(family, "acme", "billing", "dev");
+            assert!(name.starts_with("wamn-"), "{family:?}: {name}");
+            assert!(names.insert(name), "{family:?} shares a Secret name");
+        }
+        assert_eq!(names.len(), WorkloadRoleFamily::ALL.len());
     }
 
     fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl {
@@ -4042,10 +3966,17 @@ mod tests {
     fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() {
         const DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
 
-        // The lifecycle constructor pairs the seventh family with its exact scope
-        // grain, and carries no control tenant: the tenant mapping row belongs to
-        // the control plane, which this credential never reaches.
-        let lifecycle = management_admitter_lifecycle("acme", "receiving", "dev", DATABASE);
+        // The ONE lifecycle derivation pairs the seventh family with its exact
+        // scope grain, and carries no control tenant: the tenant mapping row
+        // belongs to the control plane, which this credential never reaches.
+        let identity = WorkloadActionIdentity {
+            org: "acme",
+            project: "receiving",
+            environment: "dev",
+            tenant: "tenant",
+        };
+        let lifecycle =
+            workload_lifecycle(WorkloadRoleFamily::ManagementAdmitter, identity, DATABASE);
         assert_eq!(lifecycle.family, WorkloadRoleFamily::ManagementAdmitter);
         assert_eq!(lifecycle.database(), DATABASE);
         assert_eq!(lifecycle.label(), "management-admitter");
@@ -4086,110 +4017,58 @@ mod tests {
 
         // Each family locks on its own key, so three lifecycles never serialize
         // against one another.
-        let keys = [
-            lifecycle.family_lock_key(),
-            effect_writer_lifecycle("tenant", DATABASE).family_lock_key(),
-            control_author_lifecycle("tenant", "acme", "receiving", "dev", "wamn-system")
-                .family_lock_key(),
-        ];
-        assert_eq!(BTreeSet::from(keys.clone()).len(), keys.len());
+        let keys: BTreeSet<String> = WorkloadRoleFamily::ALL
+            .into_iter()
+            .map(|family| workload_lifecycle(family, identity, DATABASE).family_lock_key())
+            .collect();
+        assert_eq!(keys.len(), WorkloadRoleFamily::ALL.len());
 
         // The published Secret is the crate renderer's, named by the crate helper
         // the wamn-0h0g.8.5.3 Deployment reference derives from. One derivation,
         // so the mint and the reference cannot drift apart.
-        let secret = render_management_admitter_secret_manifest(
+        let secret = render_workload_secret_manifest(
+            WorkloadRoleFamily::ManagementAdmitter,
             &Triple::new("acme", "receiving", "dev"),
             "wamn-system",
-            "postgres://role:pw@acme-dev-rw:5432/wamn-db-acme--receiving--dev--k3m9x2p7",
+            WorkloadSecretBody::Url(
+                "postgres://role:pw@acme-dev-rw:5432/wamn-db-acme--receiving--dev--k3m9x2p7",
+            ),
         );
         assert_eq!(
             secret["metadata"]["name"].as_str().expect("Secret name"),
             wamn_control_provision::management_admitter_secret_name("acme", "receiving", "dev")
         );
 
-        // Every pair of the nine action flags is mutually exclusive: one action
-        // per invocation, across all three families.
-        const ACTIONS: [&str; 9] = [
-            "--prepare-effect-writer-generation",
-            "--retire-effect-writer-generation",
-            "--abort-effect-writer-generation",
-            "--prepare-control-author-generation",
-            "--retire-control-author-generation",
-            "--abort-control-author-generation",
-            "--prepare-management-admitter-generation",
-            "--retire-management-admitter-generation",
-            "--abort-management-admitter-generation",
-        ];
-        for (index, first) in ACTIONS.iter().enumerate() {
-            for second in &ACTIONS[index + 1..] {
-                assert!(
-                    parse_without_password_envs([
-                        "test",
-                        "--org",
-                        "acme",
-                        "--project",
-                        "receiving",
-                        "--env",
-                        "dev",
-                        first,
-                        "a",
-                        second,
-                        "b",
-                    ])
-                    .is_err(),
-                    "{first} and {second} were accepted together"
-                );
-            }
-        }
-
-        // The Secret output is bound to prepare and never to stdout, exactly like
-        // its two siblings.
-        assert!(
-            parse_args(&[
-                "--emit-management-admitter-secret",
-                "/tmp/management-admitter.json",
-            ])
-            .is_err(),
-            "--emit-management-admitter-secret escaped its prepare requirement"
-        );
-        assert!(
-            parse_without_password_envs([
-                "test",
-                "--org",
-                "acme",
-                "--project",
-                "receiving",
-                "--env",
-                "dev",
-                "--prepare-management-admitter-generation",
-                "a",
-                "--emit-management-admitter-secret",
-                "-",
-            ])
-            .is_err(),
-            "--emit-management-admitter-secret accepted stdout"
-        );
-        let prepared = parse_without_password_envs([
-            "test",
-            "--org",
-            "acme",
-            "--project",
-            "receiving",
-            "--env",
-            "dev",
+        // One action per invocation and one Secret bound to its own prepare are
+        // now group-derived properties, proven for EVERY pair and EVERY family
+        // by `one_action_group_excludes_every_pair_across_every_family` and
+        // `every_family_secret_is_bound_to_its_own_prepare` below. What stays
+        // here is this family's own parse.
+        let prepared = parse_argv(action_argv(&[
             "--prepare-management-admitter-generation",
             "a",
             "--emit-management-admitter-secret",
             "/tmp/management-admitter.json",
-        ])
+        ]))
         .expect("prepare with its Secret path parses");
         assert_eq!(
-            prepared.prepare_management_admitter_generation,
-            Some(CredentialGeneration::A)
+            prepared.workload.action,
+            Some(WorkloadGenerationAction {
+                family: WorkloadRoleFamily::ManagementAdmitter,
+                verb: WorkloadActionVerb::Prepare,
+                generation: CredentialGeneration::A,
+            })
         );
         assert!(prepared.emit_secret.is_none());
-        assert!(prepared.emit_control_author_secret.is_none());
-        assert!(prepared.emit_effect_writer_secret.is_none());
+        assert_eq!(
+            prepared.workload_secret_path(WorkloadRoleFamily::ManagementAdmitter),
+            Some(Path::new("/tmp/management-admitter.json"))
+        );
+        assert!(
+            prepared
+                .workload_secret_path(WorkloadRoleFamily::ControlAuthor)
+                .is_none()
+        );
     }
 
     #[test]
@@ -4211,6 +4090,7 @@ mod tests {
             (WorkloadRoleFamily::HttpAdmitter, "http-admitter"),
             (WorkloadRoleFamily::EventMaterializer, "event-materializer"),
         ];
+        assert_eq!(expected.len(), WorkloadRoleFamily::ALL.len());
         let mut seen = Vec::new();
         for (family, label) in expected {
             let lifecycle = WorkloadLifecycle {
@@ -4222,6 +4102,7 @@ mod tests {
                 control_tenant: None,
             };
             assert_eq!(lifecycle.label(), label, "{family:?}");
+            assert_eq!(family.label(), label, "{family:?}");
             seen.push(label);
         }
         seen.sort_unstable();

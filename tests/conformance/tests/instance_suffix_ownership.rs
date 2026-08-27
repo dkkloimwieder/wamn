@@ -57,11 +57,14 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
         "the effect-writer credential scope must carry the stored-suffix-derived \
          `database` binding"
     );
-    assert!(
-        provision.contains(
-            "render_effect_writer_secret_manifest(&triple, &args.namespace, &credential)"
-        )
-    );
+    // `wamn-0h0g.22.16` replaced four per-family renderers with one derivation,
+    // so the pin moved to the derived call. What is load-bearing is unchanged:
+    // the published Secret is rendered from `&credential`, which carries the
+    // stored-suffix-derived database, never a freshly recomputed name.
+    assert!(provision.contains(
+        "render_workload_secret_manifest( family, &triple, &args.namespace, \
+         WorkloadSecretBody::EffectWriterCredential(&credential), )"
+    ));
     let stored = provision
         .rfind("let stored: String = row.get(0);")
         .expect("recording consumes the returned stored suffix");

@@ -8,6 +8,7 @@
 //! without translation.
 
 use crate::error::ProvisionError;
+use crate::workload_role::WorkloadRoleFamily;
 
 /// The single shared, cluster-global application role. Every generated tenant
 /// floor and hand-written schema grants to it; provisioning grants it `CONNECT`
@@ -253,9 +254,25 @@ pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
     project_env_database_stem(org, project, env)
 }
 
+/// ONE workload credential Secret name, for any family (`wamn-0h0g.22.16`).
+///
+/// Replaces the four copy-pasted per-family helpers. The name is
+/// `<family secret prefix><org>--<project>--<env>`: triple-only for the same
+/// reason [`project_env_secret_name`] is — the URL inside names the suffixed
+/// Postgres database, so the Secret name does not have to. An admitted family
+/// gets its Secret name from this derivation with no edit here.
+pub fn workload_secret_name(
+    family: WorkloadRoleFamily,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> String {
+    format!("{}{org}--{project}--{env}", family.secret_prefix())
+}
+
 /// Scoped control-author Secret name consumed by scenario-worker.
 pub fn control_author_secret_name(org: &str, project: &str, env: &str) -> String {
-    format!("{CONTROL_AUTHOR_SECRET_PREFIX}{org}--{project}--{env}")
+    workload_secret_name(WorkloadRoleFamily::ControlAuthor, org, project, env)
 }
 
 /// Scoped management-admitter Secret name consumed by scenario-worker
@@ -271,7 +288,7 @@ pub fn control_author_secret_name(org: &str, project: &str, env: &str) -> String
 /// (`wamn-0h0g.12.176`) derive the same string instead of each carrying a copied
 /// literal that can drift apart silently.
 pub fn management_admitter_secret_name(org: &str, project: &str, env: &str) -> String {
-    format!("{MANAGEMENT_ADMITTER_SECRET_PREFIX}{org}--{project}--{env}")
+    workload_secret_name(WorkloadRoleFamily::ManagementAdmitter, org, project, env)
 }
 
 /// The per-project-env Kubernetes namespace:
@@ -330,12 +347,12 @@ pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
 
 /// The fixed-mount effect-writer credential Secret name.
 pub fn project_env_effect_writer_secret_name(org: &str, project: &str, env: &str) -> String {
-    format!("{EFFECT_WRITER_SECRET_PREFIX}{org}--{project}--{env}")
+    workload_secret_name(WorkloadRoleFamily::EffectWriter, org, project, env)
 }
 
 /// The scoped per-tenant guest-SQL credential Secret name.
 pub fn project_env_guest_secret_name(org: &str, project: &str, env: &str) -> String {
-    format!("{GUEST_SECRET_PREFIX}{org}--{project}--{env}")
+    workload_secret_name(WorkloadRoleFamily::App, org, project, env)
 }
 
 /// Validate that a `(org, project, env)` yields safe provisioned names: **all

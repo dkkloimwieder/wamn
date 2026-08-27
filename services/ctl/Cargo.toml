@@ -32,7 +32,10 @@ required-features = ["ops"]
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive", "env"] }
+# `string`: `wamn-0h0g.22.16` derives the workload-generation flag set from the
+# closed WorkloadRoleFamily vocabulary, so arg ids and long names are computed
+# `String`s rather than typed-out literals.
+clap = { workspace = true, features = ["derive", "env", "string"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 serde_json = { workspace = true }

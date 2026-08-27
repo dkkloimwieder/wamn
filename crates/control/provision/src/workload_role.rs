@@ -8,6 +8,9 @@ use wamn_run_state::{
     effect_writer_generation_role, effect_writer_scope_hash,
 };
 
+use crate::name::{
+    CONTROL_AUTHOR_SECRET_PREFIX, GUEST_SECRET_PREFIX, MANAGEMENT_ADMITTER_SECRET_PREFIX,
+};
 use crate::{APP_ROLE, DISPATCH_READER_ROLE};
 
 /// Stable NOLOGIN role used by control-author generations.
@@ -78,6 +81,25 @@ pub enum WorkloadRoleFamily {
 }
 
 impl WorkloadRoleFamily {
+    /// Every family, in declaration order.
+    ///
+    /// `wamn-0h0g.22.16` makes this THE DRIVER rather than a convenience:
+    /// provisioning's flag set, action dispatch and Secret naming are all
+    /// derived by walking it, so an admitted family reaches every one of them
+    /// without a list anywhere being appended to by hand.
+    pub const ALL: [Self; 10] = [
+        Self::EffectWriter,
+        Self::ControlAuthor,
+        Self::ManagementAdmitter,
+        Self::DispatchReader,
+        Self::ServiceReader,
+        Self::App,
+        Self::Retention,
+        Self::ExecutorPlatform,
+        Self::HttpAdmitter,
+        Self::EventMaterializer,
+    ];
+
     /// Stable NOLOGIN ACL role inherited by this family's generations.
     pub const fn acl_role(self) -> &'static str {
         match self {
@@ -124,6 +146,77 @@ impl WorkloadRoleFamily {
         }
     }
 
+    /// The family's operator-facing name, in the hyphenated convention.
+    ///
+    /// DERIVED from the stable ACL role, not tabulated beside it: the two are
+    /// one vocabulary, and a table would be a second place to append a family
+    /// to. The wildcard arm is what makes an admitted family reach every
+    /// derived flag, Secret prefix and message without an edit here.
+    pub fn label(self) -> String {
+        match self {
+            // `wamn-0h0g.13.59` froze this label before the role name carried
+            // its `run_` qualifier; deriving it would rename the family in
+            // operator-facing text for no gain.
+            Self::Retention => "retention".to_string(),
+            _ => self
+                .acl_role()
+                .trim_start_matches("wamn_")
+                .replace('_', "-"),
+        }
+    }
+
+    /// The stem this family's provisioning flags and Secret name are built from.
+    ///
+    /// Equal to [`Self::label`] except where an operator-facing name was frozen
+    /// before the role vocabulary settled. `App` is the guest-SQL family, and
+    /// its flags and Secret have always said `guest`.
+    pub fn cli_stem(self) -> String {
+        match self {
+            Self::App => "guest".to_string(),
+            _ => self.label(),
+        }
+    }
+
+    /// This family's `app.kubernetes.io/component` label value, less the
+    /// `-credentials` suffix every workload Secret shares.
+    pub fn component_stem(self) -> String {
+        match self {
+            // Frozen before the family vocabulary settled on `app`.
+            Self::App => "guest-sql".to_string(),
+            _ => self.cli_stem(),
+        }
+    }
+
+    /// Which body this family's credential Secret carries.
+    ///
+    /// A closed three-value vocabulary of SHAPES, not a per-family list: an
+    /// admitted family lands on the plain single-`url` Secret every consumer
+    /// already mounts through `secretKeyRef … key: url`, with no edit here.
+    pub fn secret_body_kind(self) -> WorkloadSecretBodyKind {
+        match self {
+            // The frozen `credential.json` document the runtime parses.
+            Self::EffectWriter => WorkloadSecretBodyKind::EffectWriterCredential,
+            // The guest credential IS the tenant authority, so its Secret
+            // carries the tenant key that keys every governed predicate.
+            Self::App => WorkloadSecretBodyKind::TenantUrl,
+            _ => WorkloadSecretBodyKind::Url,
+        }
+    }
+
+    /// Prefix of this family's credential Secret name.
+    ///
+    /// `wamn-<cli-stem>-` for every family whose Secret name was not frozen
+    /// first. The three overrides are the frozen ones and carry their reasons
+    /// on the constants themselves.
+    pub fn secret_prefix(self) -> String {
+        match self {
+            Self::ControlAuthor => CONTROL_AUTHOR_SECRET_PREFIX.to_string(),
+            Self::ManagementAdmitter => MANAGEMENT_ADMITTER_SECRET_PREFIX.to_string(),
+            Self::App => GUEST_SECRET_PREFIX.to_string(),
+            _ => format!("wamn-{}-", self.cli_stem()),
+        }
+    }
+
     pub(crate) const fn scope_domain(self) -> &'static [u8] {
         match self {
             Self::EffectWriter => b"wamn.effect-writer.scope.v0.1",
@@ -162,6 +255,17 @@ impl From<AuthorityClass> for WorkloadRoleFamily {
             AuthorityClass::EventMaterializer => Self::EventMaterializer,
         }
     }
+}
+
+/// The closed set of credential-Secret body shapes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkloadSecretBodyKind {
+    /// One `url` key.
+    Url,
+    /// One `url` key, plus the tenant key label and tenant annotation.
+    TenantUrl,
+    /// The frozen effect-writer `credential.json` document.
+    EffectWriterCredential,
 }
 
 /// The three admitted provisioning scope shapes.

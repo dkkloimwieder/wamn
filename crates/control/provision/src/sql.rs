@@ -488,6 +488,25 @@ pub fn prepare_effect_writer_generation_sql(
     )
 }
 
+/// The family-specific privilege batch that converges one family's STABLE ACL
+/// role to its exact grant set, when this crate owns that convergence.
+///
+/// `None` = the family's stable role carries no grant set this batch applies.
+/// The effect writer is the standing example: schema-control owns its grants
+/// because they only exist once the effect-ledger tables do, so this batch has
+/// nothing to converge and a caller must not assert the grant set before
+/// preparing. An admitted family lands on `None` with no edit here; a family
+/// that acquires a grant set adds it beside its builder, which is the one place
+/// a family stays per-family (`wamn-0h0g.22.16`).
+pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
+    match family {
+        WorkloadRoleFamily::ManagementAdmitter => {
+            Some(grant_management_admitter_surface_sql("wamn_run"))
+        }
+        _ => None,
+    }
+}
+
 /// Prepare one inactive generation for a closed workload family.
 pub fn prepare_workload_generation_sql(
     family: WorkloadRoleFamily,
@@ -499,10 +518,8 @@ pub fn prepare_workload_generation_sql(
     let role_ident = quote_ident(role);
     let role_lit = quote_literal(role);
     let membership = normalize_workload_generation_membership_sql(family, role, true);
-    let stable_surface = match family {
-        WorkloadRoleFamily::ManagementAdmitter => grant_management_admitter_surface_sql("wamn_run"),
-        _ => ensure_workload_acl_role_sql(family),
-    };
+    let stable_surface =
+        stable_surface_sql(family).unwrap_or_else(|| ensure_workload_acl_role_sql(family));
     format!(
         "{stable_surface} \
          DO $$ BEGIN \

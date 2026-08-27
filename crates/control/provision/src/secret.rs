@@ -17,10 +17,10 @@ use wamn_control_registry::Triple;
 use wamn_run_state::{EFFECT_WRITER_CREDENTIAL_KEY, EffectWriterCredential};
 
 use crate::name::{
-    APP_ROLE, cdc_object_name, control_author_secret_name, management_admitter_secret_name,
-    project_env_cdc_secret_name, project_env_effect_writer_secret_name,
-    project_env_guest_secret_name, project_env_secret_name, secret_name,
+    APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_secret_name, secret_name,
+    workload_secret_name,
 };
+use crate::workload_role::{WorkloadRoleFamily, WorkloadSecretBodyKind};
 
 /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
 /// Policy knobs (`row_limit`, timeouts) are optional and default from the
@@ -93,16 +93,110 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url:
     })
 }
 
-/// Render the fixed-mount effect-writer Secret for one credential generation.
+/// The body one workload credential `Secret` carries.
 ///
-/// The Secret carries exactly one key, `credential.json`. Kubernetes mounts the
-/// whole Secret directory read-only, without `subPath`, so an atomic Secret
-/// projection update can be observed after the wrapper drains/reloads pools.
-pub fn render_effect_writer_secret_manifest(
+/// Three SHAPES, closed — not one variant per family. Which shape a family
+/// takes is [`WorkloadRoleFamily::secret_body_kind`], so an admitted family
+/// gets the plain single-`url` Secret with no edit here.
+#[derive(Debug, Clone, Copy)]
+pub enum WorkloadSecretBody<'a> {
+    /// The single `url` key every consumer mounts through
+    /// `secretKeyRef … key: url`.
+    Url(&'a str),
+    /// The same single `url`, plus the tenant key as a label and the tenant id
+    /// as an annotation (`wamn-0h0g.22.6.4`).
+    ///
+    /// The TENANT KEY is a label and the tenant id an ANNOTATION deliberately:
+    /// a label value is capped at 63 characters and restricted to alphanumerics
+    /// plus `-_.`, while `valid_tenant` admits 64 bytes — so a label carrying
+    /// the tenant verbatim would be rejected by the API server for exactly the
+    /// tenants the digest exists to handle.
+    TenantUrl {
+        tenant: &'a str,
+        tenant_key: &'a str,
+        url: &'a str,
+    },
+    /// The frozen effect-writer `credential.json` document.
+    ///
+    /// Kubernetes mounts the whole Secret directory read-only, without
+    /// `subPath`, so an atomic Secret projection update can be observed after
+    /// the wrapper drains/reloads pools.
+    EffectWriterCredential(&'a EffectWriterCredential),
+}
+
+impl WorkloadSecretBody<'_> {
+    fn kind(self) -> WorkloadSecretBodyKind {
+        match self {
+            Self::Url(_) => WorkloadSecretBodyKind::Url,
+            Self::TenantUrl { .. } => WorkloadSecretBodyKind::TenantUrl,
+            Self::EffectWriterCredential(_) => WorkloadSecretBodyKind::EffectWriterCredential,
+        }
+    }
+}
+
+/// ONE workload credential `Secret` renderer, for any family
+/// (`wamn-0h0g.22.16`).
+///
+/// Replaces the four copy-pasted per-family renderers. Name, component label
+/// and body shape are all DERIVED from the family, so admitting a family
+/// publishes its Secret without a renderer being written for it. The body is
+/// checked against the family's declared shape rather than trusted, so a caller
+/// cannot hand the guest family a plain url and lose the tenant key.
+pub fn render_workload_secret_manifest(
+    family: WorkloadRoleFamily,
     triple: &Triple,
     namespace: &str,
-    credential: &EffectWriterCredential,
+    body: WorkloadSecretBody<'_>,
 ) -> Value {
+    assert_eq!(
+        body.kind(),
+        family.secret_body_kind(),
+        "{family:?} publishes a {:?} Secret body, not a {:?} one",
+        family.secret_body_kind(),
+        body.kind(),
+    );
+    let mut metadata = json!({
+        "name": workload_secret_name(family, &triple.org, &triple.project, triple.env.as_str()),
+        "namespace": namespace,
+        "labels": {
+            "app.kubernetes.io/managed-by": "wamn",
+            "app.kubernetes.io/component": format!("{}-credentials", family.component_stem()),
+            "wamn.org": triple.org,
+            "wamn.project": triple.project,
+            "wamn.env": triple.env.as_str(),
+        },
+    });
+    let string_data = match body {
+        WorkloadSecretBody::Url(url) => json!({ "url": url }),
+        WorkloadSecretBody::TenantUrl {
+            tenant,
+            tenant_key,
+            url,
+        } => {
+            metadata["labels"]["wamn.tenant-key"] = json!(tenant_key);
+            metadata["annotations"] = json!({ "wamn.io/tenant": tenant });
+            json!({ "url": url })
+        }
+        WorkloadSecretBody::EffectWriterCredential(credential) => {
+            metadata["annotations"] = Value::Object(effect_writer_annotations(credential));
+            json!({
+                (EFFECT_WRITER_CREDENTIAL_KEY): serde_json::to_string(credential)
+                    .expect("effect-writer credential serializes"),
+            })
+        }
+    };
+    json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": metadata,
+        "type": "Opaque",
+        "stringData": string_data,
+    })
+}
+
+/// The effect-writer credential's own annotation block — the one family whose
+/// Secret carries a frozen document rather than a url.
+fn effect_writer_annotations(credential: &EffectWriterCredential) -> serde_json::Map<String, Value> {
     let document = serde_json::to_value(credential).expect("effect-writer credential serializes");
     let field = |name: &str| {
         document[name]
@@ -145,58 +239,31 @@ pub fn render_effect_writer_secret_manifest(
             Value::String(revoked_at.to_string()),
         );
     }
-    json!({
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": project_env_effect_writer_secret_name(
-                &triple.org,
-                &triple.project,
-                triple.env.as_str(),
-            ),
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/managed-by": "wamn",
-                "app.kubernetes.io/component": "effect-writer-credentials",
-                "wamn.org": triple.org,
-                "wamn.project": triple.project,
-                "wamn.env": triple.env.as_str(),
-            },
-            "annotations": annotations,
-        },
-        "type": "Opaque",
-        "stringData": {
-            (EFFECT_WRITER_CREDENTIAL_KEY): serde_json::to_string(credential)
-                .expect("effect-writer credential serializes"),
-        },
-    })
+    annotations
+}
+
+/// Render the fixed-mount effect-writer Secret for one credential generation.
+pub fn render_effect_writer_secret_manifest(
+    triple: &Triple,
+    namespace: &str,
+    credential: &EffectWriterCredential,
+) -> Value {
+    render_workload_secret_manifest(
+        WorkloadRoleFamily::EffectWriter,
+        triple,
+        namespace,
+        WorkloadSecretBody::EffectWriterCredential(credential),
+    )
 }
 
 /// Render the scoped control-author URL Secret consumed by scenario-worker.
 pub fn render_control_author_secret_manifest(triple: &Triple, namespace: &str, url: &str) -> Value {
-    json!({
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": control_author_secret_name(
-                &triple.org,
-                &triple.project,
-                triple.env.as_str(),
-            ),
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/managed-by": "wamn",
-                "app.kubernetes.io/component": "control-author-credentials",
-                "wamn.org": triple.org,
-                "wamn.project": triple.project,
-                "wamn.env": triple.env.as_str(),
-            },
-        },
-        "type": "Opaque",
-        "stringData": {
-            "url": url,
-        },
-    })
+    render_workload_secret_manifest(
+        WorkloadRoleFamily::ControlAuthor,
+        triple,
+        namespace,
+        WorkloadSecretBody::Url(url),
+    )
 }
 
 /// Render the scoped management-admitter URL Secret consumed by scenario-worker.
@@ -206,41 +273,17 @@ pub fn render_control_author_secret_manifest(triple: &Triple, namespace: &str, u
 /// **project environment's own** database. Both carry the single `url` key
 /// because scenario-worker reads both through the same `secretKeyRef … key: url`
 /// shape (`wamn-0h0g.8.5.3`).
-///
-/// `wamn-0h0g.12.118` deliberately deferred this renderer — "no bespoke prepare,
-/// retire, Secret, or A/B implementation" — while nothing consumed the
-/// management-admitter family. `wamn-0h0g.8.5.3` is the first consumer, so
-/// `wamn-0h0g.12.176` **completes** that deferral at its trigger rather than
-/// reversing it: the A/B lifecycle behind this Secret is still the generic
-/// workload machinery, and this function only renders.
 pub fn render_management_admitter_secret_manifest(
     triple: &Triple,
     namespace: &str,
     url: &str,
 ) -> Value {
-    json!({
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": management_admitter_secret_name(
-                &triple.org,
-                &triple.project,
-                triple.env.as_str(),
-            ),
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/managed-by": "wamn",
-                "app.kubernetes.io/component": "management-admitter-credentials",
-                "wamn.org": triple.org,
-                "wamn.project": triple.project,
-                "wamn.env": triple.env.as_str(),
-            },
-        },
-        "type": "Opaque",
-        "stringData": {
-            "url": url,
-        },
-    })
+    render_workload_secret_manifest(
+        WorkloadRoleFamily::ManagementAdmitter,
+        triple,
+        namespace,
+        WorkloadSecretBody::Url(url),
+    )
 }
 
 /// Render the scoped per-tenant guest-SQL credential `Secret`
@@ -250,12 +293,6 @@ pub fn render_management_admitter_secret_manifest(
 /// point: after the `wamn-0h0g.22.6` sweep the guest's tenant comes from
 /// `current_user`, so the credential IS the tenant authority and no claim
 /// accompanies it.
-///
-/// The TENANT KEY is a label and the tenant id an ANNOTATION, deliberately: a
-/// label value is capped at 63 characters and restricted to alphanumerics plus
-/// `-_.`, while `valid_tenant` admits 64 bytes — so a label carrying the tenant
-/// verbatim would be rejected by the API server for exactly the tenants the
-/// digest exists to handle.
 pub fn render_guest_secret_manifest(
     triple: &Triple,
     namespace: &str,
@@ -263,33 +300,16 @@ pub fn render_guest_secret_manifest(
     tenant_key: &str,
     url: &str,
 ) -> Value {
-    json!({
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": project_env_guest_secret_name(
-                &triple.org,
-                &triple.project,
-                triple.env.as_str(),
-            ),
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/managed-by": "wamn",
-                "app.kubernetes.io/component": "guest-sql-credentials",
-                "wamn.org": triple.org,
-                "wamn.project": triple.project,
-                "wamn.env": triple.env.as_str(),
-                "wamn.tenant-key": tenant_key,
-            },
-            "annotations": {
-                "wamn.io/tenant": tenant,
-            },
+    render_workload_secret_manifest(
+        WorkloadRoleFamily::App,
+        triple,
+        namespace,
+        WorkloadSecretBody::TenantUrl {
+            tenant,
+            tenant_key,
+            url,
         },
-        "type": "Opaque",
-        "stringData": {
-            "url": url,
-        },
-    })
+    )
 }
 
 /// Render the per-project-env **CDC** credential `Secret` (wamn-l5i9.9). Name
