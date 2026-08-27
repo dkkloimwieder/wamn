@@ -16,6 +16,11 @@ resolver = "2"
 # adds ten wasi:cli imports that TENANT_WASI_PACKAGES denies, making both
 # guests unpublishable, and declaring `serde_json` with default-features = false
 # does not help because the std request is not local.
+#
+# These two are not every `no_std` guest in the tree. The fixture
+# `../fixtures/connection-http-standard` is a third and stays in `../Cargo.toml`:
+# it has no `serde_json` dependency, so it has no unification to escape (owner
+# ruling, wamn-6i30).
 members = ["http-request", "transform"]
 
 # Lint policy. IDENTICAL to the root workspace's by intent -- see the root

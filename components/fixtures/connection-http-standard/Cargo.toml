@@ -11,6 +11,13 @@ std = []
 
 [lib]
 crate-type = ["cdylib"]
+# No testable surface. A `no_std` cdylib guest's lib-test AND lib-bench units
+# both link `test`, which pulls `std` and collides with the guest-supplied
+# `#[panic_handler]` (E0152, duplicate lang item `panic_impl`). `--all-targets`
+# builds both, so both have to be off: `test = false` alone leaves the bench
+# unit, which cargo still reports as "(lib test)" (wamn-6i30).
+test = false
+bench = false
 
 [lints]
 workspace = true
