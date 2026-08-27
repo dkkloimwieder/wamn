@@ -13,8 +13,8 @@
 //!
 //! Set `WAMN_RESTORE_PG_URL` to a **superuser** URL (it CREATEs/DROPs throwaway
 //! databases); skipped cleanly when unset or when the client tools are absent
-//! (the wamn-schema-compiler / dump-gate pattern). The object-store transport is deferred
-//! (wamn-e1g); this validates the restore of the artifact, substrate-independent.
+//! (the wamn-schema-compiler / dump-gate pattern). The object-store transport is out
+//! of scope here; this validates the restore of the artifact, substrate-independent.
 
 use std::process::Command as Proc;
 

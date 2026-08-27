@@ -60,7 +60,8 @@ fn schema_discriminators<'a>(schema: &'a Value, definition: &str, field: &str) -
 fn exact_two_commands_and_one_query_round_trip() {
     let validated = json!({"validated-draft-id": "validated-1"});
     let commands = [
-        // `gate` is spelled `test-set-run` on the wire until wamn-0h0g.26.18.
+        // `gate` is spelled `test-set-run` on the wire; changing the literal is a
+        // breaking wire rename, owed by whoever sweeps the wire vocabulary.
         command(
             "test-set-run",
             json!({"scope": scope(), "validated-draft": validated}),

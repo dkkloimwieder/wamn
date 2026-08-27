@@ -22,10 +22,11 @@
 //! registration facts arrive as hand-authored JSON documents because no table
 //! projects them: the flow-era attachment records were retired whole by
 //! wamn-0h0g.26.21, and `catalog.event_registrations`
-//! is absent from the control portable store. Ruling `wamn-0h0g.15.164` moves
-//! registrations into that store; the projection replaces these two arguments
-//! then. Both stay REQUIRED until it does, because an empty registration set is
-//! a valid manifest with a real digest and must be chosen, never defaulted.
+//! is absent from the control portable store. A ratified ruling moves
+//! registrations into that store — owed by whoever lands that move — and the
+//! projection replaces these two arguments then. Both stay REQUIRED until it
+//! does, because an empty registration set is a valid manifest with a real
+//! digest and must be chosen, never defaulted.
 //!
 //! # Stated precondition: reconcile the run plane BEFORE publishing
 //!

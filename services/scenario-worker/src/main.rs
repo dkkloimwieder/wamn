@@ -123,8 +123,8 @@ mod tests {
     /// wamn-0h0g.8.5.3: the admission input refuses at PARSE time, and the
     /// refusal NAMES the environment variable.
     ///
-    /// The Secret this variable is fed from is minted by wamn-0h0g.12.176. Until
-    /// that lands, an environment brought up without it crash-loops here, and
+    /// The Secret this variable is fed from is minted by wamn-0h0g.12.176's
+    /// renderer. An environment brought up without it crash-loops here, and
     /// the only thing an operator has to go on is this message — clap's default
     /// value name is the uppercased argument, which names no variable at all, so
     /// the explicit `value_name` is what makes the log actionable.

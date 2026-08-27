@@ -20,9 +20,9 @@ audit each sync.
 
 ## Part 2 — Fork ledger (`wamn/2.8.0` @ `5c4ec4a3`)
 
-**Process law:** every fork patch carries a `wamn-g2br.N` id, a row here, and
-an exit condition. No un-ledgered patches. The current branch has **zero**
-patches: its tip is the peeled upstream `v2.8.0` tag.
+**Process law:** every fork patch carries a bead id under the fork's current
+retarget epic, a row here, and an exit condition. No un-ledgered patches. The
+current branch has **zero** patches: its tip is the peeled upstream `v2.8.0` tag.
 
 | Former patch | v2.8 disposition | Native or WAMN-owned replacement |
 |---|---|---|

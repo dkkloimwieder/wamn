@@ -155,8 +155,7 @@ pub fn pg_dump_argv(conninfo: &str, out_dir: &str) -> Vec<String> {
     ]
 }
 
-/// The object-store upload argv (**rendered** into the CronJob/Job; the live
-/// upload is deferred to when the shared store lands — wamn-e1g, Q2). A `-Fd` dump
+/// The object-store upload argv (**rendered** into the CronJob/Job). A `-Fd` dump
 /// is a directory → a recursive copy under the dump's object key.
 pub fn upload_argv(local_dir: &str, bucket: &str, object_key: &str) -> Vec<String> {
     vec![

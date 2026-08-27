@@ -17,8 +17,9 @@
 //! effects (running the restore, creating the scratch DB, reading the dump catalog)
 //! live in the `restore-project-env` subcommand (`wamn-ctl`).
 //!
-//! **Object store (Q2, the .10 stance):** the dump bytes live in object storage
-//! once the shared store lands (wamn-e1g); until then a dump is staged locally (the
+//! **Object store (Q2, the .10 stance):** the dump path uploads the bytes to the
+//! shared object store, but pulling them back down is unbuilt — owed by whoever
+//! wires the restore-side fetch — so a dump is staged locally (the
 //! `dump-project-env --run-now --out-dir` output). The dump **catalog**
 //! (`provisioning.dumps`, [`crate::state`] via `wamn_control_registry`) records *which* dump
 //! is latest so restore-to-last-dump needs no manual key; the physical bytes come

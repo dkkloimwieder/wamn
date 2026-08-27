@@ -187,7 +187,7 @@ impl ReleaseManifestWeld {
 
         // The one narrowing on this path: the manifest carries the release version
         // as `u32`, the run plane records it as `int`. Refuse rather than wrap —
-        // `wamn-0h0g.15.65` owns reconciling the four widths this value has.
+        // reconciling them is owed by whoever gives the catalog version one type.
         let release_version = i32::try_from(manifest.release.catalog_version).map_err(|error| {
             WeldError::new(
                 WeldErrorKind::ManifestRejected,

@@ -1016,8 +1016,8 @@ impl WamnPostgres {
     /// claim recording nothing.
     ///
     /// The digest arrives as [`ManifestDigest`], so its shape is already proven;
-    /// only the version still needs a check, and `wamn-0h0g.15.65` owns giving
-    /// that value a type too.
+    /// only the version still needs a check, and typing that value is owed by
+    /// whoever gives the catalog version one type.
     ///
     /// # Why effect authority needs no equality check against this record
     ///

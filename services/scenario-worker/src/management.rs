@@ -140,8 +140,9 @@ impl AuditedCommand {
     /// spelling the wire contract uses; a unit test pins them to `serde`.
     pub const fn as_str(self) -> &'static str {
         match self {
-            // `gate` is spelled `test-set-run` on the wire and in the ledger
-            // until the wiring vocabulary sweep (wamn-0h0g.26.18).
+            // `gate` is spelled `test-set-run` on the wire and in the ledger;
+            // changing the literal is a breaking wire rename, owed by whoever
+            // sweeps the wire vocabulary.
             Self::Gate => "test-set-run",
             Self::Publish => "publish",
         }

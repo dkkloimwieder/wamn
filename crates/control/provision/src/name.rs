@@ -1047,7 +1047,7 @@ mod tests {
 
     /// wamn-0h0g.8.5.3: `deploy/platform/scenario-worker.yaml` references the
     /// management-admitter Secret by this exact rendered name, and
-    /// wamn-0h0g.12.176's renderer will mint it from this same helper. Pinning
+    /// wamn-0h0g.12.176's renderer mints it from this same helper. Pinning
     /// the string here is what makes those two agree by derivation rather than
     /// by two hand-copied literals.
     #[test]

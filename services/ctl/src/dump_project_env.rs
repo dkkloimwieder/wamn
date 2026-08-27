@@ -17,8 +17,8 @@
 //!
 //! The dump connects via the project-env credential Secret (its `url`), so the
 //! target cluster is not named here. The **object-store upload** is rendered into
-//! the CronJob/Job but its live execution is deferred to when the shared store
-//! lands (wamn-e1g) — the `pg_dump -Fd` artifact is complete regardless (Q2).
+//! the CronJob/Job and runs live against the shared store, guarded on the S3
+//! endpoint env — the `pg_dump -Fd` artifact is complete regardless (Q2).
 //!
 //! **Scope (wamn-q3n.10):** producing the dump + its schedule + the metadata
 //! record. The operator-facing RESTORE runbook + the audit-rewind caveat +

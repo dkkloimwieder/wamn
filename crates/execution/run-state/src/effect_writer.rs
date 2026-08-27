@@ -42,8 +42,8 @@ pub struct EffectWriterScope<'a> {
 ///
 /// The trusted HTTP effect already does this (`authorize_plan_closure` in
 /// `crates/platform/runtime/src/plugins/connection_http.rs`). Whoever activates a
-/// production caller for this writer (`wamn-0h0g.5.4`) inherits the same
-/// obligation; there is no caller today.
+/// production caller for this writer inherits the same obligation; there is no
+/// caller today.
 #[derive(Debug, Clone, Copy)]
 pub struct BeginEffectAttempt<'a> {
     pub run_id: &'a str,

@@ -180,8 +180,8 @@ pub struct AuthoringQueryResponse {
 ///
 /// `gate` is spelled `test-set-run` ON THE WIRE. The Rust name is the honest one
 /// the owner ratified — one verb produces reports, and that judgment is gating —
-/// while the wire literal waits for the wiring vocabulary sweep
-/// (`wamn-0h0g.26.18`) so this collapse is not also a breaking rename.
+/// while the wire literal stands: changing it is a breaking wire rename, owed by
+/// whoever sweeps the wire vocabulary, so this collapse is not also one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",

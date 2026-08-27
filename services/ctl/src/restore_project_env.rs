@@ -18,8 +18,9 @@
 //! for the latest recorded dump (or `--object-key`), and the dump directory is
 //! `--dump-root/<timestamp>` (the timestamp is the object key's last segment — the
 //! `dump-project-env --run-now --out-dir` layout). So restore-to-last-dump needs no
-//! manual key. The dump **bytes** are local until the shared object store lands
-//! (wamn-e1g); the catalog says *which* dump, staged under `--dump-root`.
+//! manual key. The dump **bytes** are local: pulling them back down from the
+//! shared object store is unbuilt, owed by whoever wires the restore-side fetch.
+//! The catalog says *which* dump, staged under `--dump-root`.
 //!
 //! **Scope (wamn-q3n.11):** logical-dump restore (this) + the operator restore
 //! runbook + the audit-rewind caveat (docs). Whole-cluster **PITR** (restore an org
@@ -70,8 +71,8 @@ pub struct RestoreProjectEnvArgs {
     #[arg(long)]
     pub dump_dir: Option<PathBuf>,
 
-    /// Local root the dumps are staged under (the object-store mirror until
-    /// wamn-e1g). When `--dump-dir` is absent, the dump directory is
+    /// Local root the dumps are staged under (the object-store mirror until the
+    /// restore-side fetch is wired). When `--dump-dir` is absent, the dump directory is
     /// `<dump-root>/<timestamp>` for the catalog-selected dump.
     #[arg(long, default_value = "/tmp/wamn-dump")]
     pub dump_root: PathBuf,
@@ -242,7 +243,7 @@ async fn do_recorded_latest_dump_key(
 
 /// The dump keys currently STAGED under `--dump-root` for a project-env, in the
 /// object-key form [`select_latest_dump_key`](wamn_control_provision::dump::select_latest_dump_key)
-/// ranks over. Until the shared object store lands (wamn-e1g), `--dump-root` is the local
+/// ranks over. Until the restore-side fetch is wired, `--dump-root` is the local
 /// mirror restore reads dump bytes from, so each timestamp subdirectory holding a
 /// complete `-Fd` dump (a `toc.dat`) IS a listed dump. The `toc.dat` gate is the local
 /// mirror's completeness signal (a torn/partial directory is skipped). A missing or
