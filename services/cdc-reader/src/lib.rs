@@ -82,6 +82,7 @@ use pg_walstream::{
 };
 use tokio_postgres::NoTls;
 
+use wamn_control_provision::{SystemReader, parse_system_reader_url};
 use wamn_control_registry::sql::select_event_reader_sql;
 use wamn_event_wire::{
     Causation, DEAD_LETTER_MAX_AGE_SECONDS, DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION,
@@ -106,6 +107,12 @@ pub struct EventReaderArgs {
 
     /// Postgres URL to the T1 system DB (`wamn_system`) — reads this
     /// project-env's `registry.event_readers` registration (SELECT only).
+    ///
+    /// A scoped A/B LOGIN generation of `wamn_registry_reader`, whose whole
+    /// authority is that one `SELECT` (`wamn-0h0g.12.116`). It is settled purely
+    /// before any I/O by [`parse_system_reader_url`], so a URL carrying the
+    /// unconfined `wamn_system` owner — which can write `identity.pats` under no
+    /// row-level security — crash-loops the reader instead of serving it.
     #[arg(long, env = "WAMN_SYSTEM_URL")]
     pub system_database_url: String,
 
@@ -426,6 +433,17 @@ struct Registration {
 }
 
 async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registration> {
+    // Settled PURELY and FIRST: the credential is proven to be this project-env's
+    // own registry-reader generation before a socket is opened. The accepted
+    // value is deliberately discarded — this call exists to fix the ORDER, so a
+    // mis-scoped or over-wide Secret refuses here instead of connecting with it.
+    parse_system_reader_url(
+        SystemReader::Registry,
+        &args.system_database_url,
+        &args.org,
+        &args.project,
+        &args.env,
+    )?;
     let (client, conn) = tokio_postgres::connect(&args.system_database_url, NoTls)
         .await
         .context("connect to the system DB (--system-database-url)")?;
@@ -1571,6 +1589,77 @@ mod tests {
             preflight_url("postgres://u:p@h:5432/db", "require").unwrap(),
             "postgres://u:p@h:5432/db?sslmode=require"
         );
+    }
+
+    /// THE CONSUMER-WIRING GUARD (`wamn-0h0g.12.116`).
+    ///
+    /// `wamn-system-db` authenticates as `wamn_system`, which owns
+    /// `registry`, `provisioning` and `identity` under no row-level security.
+    /// Re-pointing this reader at it — the wide credential it used to carry —
+    /// is refused on the ROLE predicate, and refused BEFORE any I/O: the host
+    /// below does not resolve, so a connect-first implementation would fail
+    /// with a connection error instead of this one.
+    #[tokio::test]
+    async fn the_registration_read_refuses_the_wide_system_owner_before_connecting() {
+        let mut args = reader_args_fixture();
+        args.system_database_url = "postgres://wamn_system:pw@sysdb.invalid:5432/wamn_system".into();
+        let Err(error) = read_registration(&args).await else {
+            panic!("the wide system-owner credential was accepted");
+        };
+        let refusal = error
+            .downcast_ref::<wamn_control_provision::SystemReaderUrlError>()
+            .expect("the refusal is the pure scope check, not a connection failure");
+        assert_eq!(
+            refusal.kind(),
+            wamn_control_provision::SystemReaderUrlErrorKind::Role
+        );
+        assert_eq!(refusal.reader(), SystemReader::Registry);
+        // The refusal must not echo the input: it carries a password.
+        assert!(!format!("{error}").contains("pw@"));
+    }
+
+    /// Its own scoped generation, conversely, passes the pure gate and only
+    /// then fails on the connection — which is what proves the gate is a
+    /// PREDICATE on the credential and not a blanket refusal.
+    #[tokio::test]
+    async fn the_registration_read_accepts_its_own_generation_and_then_connects() {
+        let mut args = reader_args_fixture();
+        let role = wamn_control_provision::system_reader_generation_role(
+            SystemReader::Registry,
+            &args.org,
+            &args.project,
+            &args.env,
+            "wamn_system",
+            wamn_control_provision::CredentialGeneration::A,
+        );
+        args.system_database_url = format!("postgres://{role}:pw@sysdb.invalid:5432/wamn_system");
+        let Err(error) = read_registration(&args).await else {
+            panic!("sysdb.invalid must not resolve");
+        };
+        assert!(
+            error
+                .downcast_ref::<wamn_control_provision::SystemReaderUrlError>()
+                .is_none(),
+            "the reader's own generation was refused by the scope gate: {error}"
+        );
+    }
+
+    fn reader_args_fixture() -> EventReaderArgs {
+        EventReaderArgs {
+            org: "acme".into(),
+            project: "receiving".into(),
+            env: "dev".into(),
+            system_database_url: String::new(),
+            cdc_url: "postgres://cdc:pw@db.invalid:5432/project".into(),
+            nats_url: "nats://nats.invalid:4222".into(),
+            sslmode: "disable".into(),
+            stream_replicas: 1,
+            dup_window_secs: 120,
+            feedback_secs: 1,
+            stall_threshold_secs: 30,
+            slot_poll_secs: 0,
+            slot_safe_wal_warn_bytes: 268_435_456,
+        }
     }
 
     #[test]

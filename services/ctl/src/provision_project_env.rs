@@ -78,6 +78,7 @@ use wamn_control_provision::{
     render_project_env_secret_manifest, render_workload_secret_manifest, sql,
     validate_instance_suffix, validate_project_env, workload_generation_role,
 };
+use wamn_control_provision::SystemReader;
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_platform_identity::{
     IdentityErrorKind, Principal, PrincipalKind, PrincipalStatus, assign_project_role,
@@ -1863,6 +1864,7 @@ fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
     match family {
         WorkloadRoleFamily::EffectWriter => Some(StableGrantSet::EffectWriter),
         WorkloadRoleFamily::ManagementAdmitter => Some(StableGrantSet::ManagementAdmitter),
+        WorkloadRoleFamily::RegistryReader => Some(StableGrantSet::RegistryReader),
         _ => None,
     }
 }
@@ -1872,6 +1874,7 @@ fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
 enum StableGrantSet {
     EffectWriter,
     ManagementAdmitter,
+    RegistryReader,
 }
 
 impl StableGrantSet {
@@ -1887,6 +1890,15 @@ impl StableGrantSet {
                 verify_effect_writer_acl_role_inventory(role, database, inventory)
             }
             Self::ManagementAdmitter => verify_management_admitter_acl_role_inventory(
+                role,
+                database,
+                required_database,
+                inventory,
+            ),
+            Self::RegistryReader => verify_system_reader_acl_role_inventory(
+                SystemReader::Registry,
+                "registry",
+                &sql::REGISTRY_READER_RELATIONS,
                 role,
                 database,
                 required_database,
@@ -2165,6 +2177,72 @@ fn verify_management_admitter_acl_role_inventory(
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact management-admission grant set"
+    );
+    Ok(())
+}
+
+/// THE DISJOINTNESS MATRIX for one T1 control-database reader
+/// (`wamn-0h0g.12.116`, `wamn-0h0g.12.67`).
+///
+/// The server's own `aclexplode` answer, compared for EQUALITY against the
+/// derived set — never containment. Containment would pass a role that had
+/// acquired the OTHER reader's schema, and that union is the exact failure the
+/// two families exist to prevent; an added `INSERT` or `UPDATE` fails here for
+/// the same reason.
+///
+/// An empty inventory is only acceptable in a database that is not the target:
+/// the control database MUST carry the grant set, and every other database in
+/// the cluster must carry nothing at all.
+fn verify_system_reader_acl_role_inventory(
+    reader: SystemReader,
+    schema: &str,
+    relations: &[&str],
+    role: &str,
+    database: &str,
+    required_database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    if database != required_database {
+        anyhow::ensure!(
+            inventory.is_empty(),
+            "stable role {role:?} carries a {reader} ACL in database {database:?}, \
+             which is not the control database"
+        );
+        return Ok(());
+    }
+    anyhow::ensure!(
+        !inventory.is_empty(),
+        "stable role {role:?} has no {reader} ACL in required database {database:?}"
+    );
+
+    let actual = inventory
+        .iter()
+        .map(|acl| {
+            (
+                acl.object_kind.clone(),
+                acl.schema_name.clone(),
+                acl.object_name.clone(),
+                acl.privilege.clone(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let mut expected = BTreeSet::from([(
+        "schema".to_string(),
+        schema.to_string(),
+        schema.to_string(),
+        "USAGE".to_string(),
+    )]);
+    for relation in relations {
+        expected.insert((
+            "relation".to_string(),
+            schema.to_string(),
+            (*relation).to_string(),
+            "SELECT".to_string(),
+        ));
+    }
+    anyhow::ensure!(
+        actual == expected,
+        "stable role {role:?} ACLs in database {database:?} are not the exact {reader} grant set"
     );
     Ok(())
 }
@@ -3718,22 +3796,89 @@ mod tests {
             with_grant_sets,
             [
                 WorkloadRoleFamily::EffectWriter,
-                WorkloadRoleFamily::ManagementAdmitter
+                WorkloadRoleFamily::ManagementAdmitter,
+                WorkloadRoleFamily::RegistryReader
             ],
             "a family acquired a grant set without acquiring authority"
         );
         // The pre-prepare grant-set assertion fires for the family whose grant
-        // set is converged ELSEWHERE, and not for the one this batch applies.
+        // set is converged ELSEWHERE, and not for the ones this batch applies.
         assert!(sql::stable_surface_sql(WorkloadRoleFamily::EffectWriter).is_none());
-        assert!(sql::stable_surface_sql(WorkloadRoleFamily::ManagementAdmitter).is_some());
+        for family in [
+            WorkloadRoleFamily::ManagementAdmitter,
+            WorkloadRoleFamily::RegistryReader,
+        ] {
+            assert!(sql::stable_surface_sql(family).is_some(), "{family:?}");
+        }
         for family in WorkloadRoleFamily::ALL {
             if !matches!(
                 family,
-                WorkloadRoleFamily::EffectWriter | WorkloadRoleFamily::ManagementAdmitter
+                WorkloadRoleFamily::EffectWriter
+                    | WorkloadRoleFamily::ManagementAdmitter
+                    | WorkloadRoleFamily::RegistryReader
             ) {
                 assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
             }
         }
+    }
+
+    /// THE DISJOINTNESS MATRIX, exercised from both sides
+    /// (`wamn-0h0g.12.116`).
+    ///
+    /// The exact set passes; the same set widened onto the identity plane, or
+    /// widened with a write privilege, does not. The empty inventory is required
+    /// in the control database and required to be empty everywhere else.
+    #[test]
+    fn the_registry_reader_acl_inventory_is_exact_and_never_reaches_identity() {
+        let exact = vec![
+            role_acl("schema", "registry", "registry", "USAGE"),
+            role_acl("relation", "registry", "event_readers", "SELECT"),
+        ];
+        let verify = |inventory: &[RoleAcl], database: &str| {
+            verify_system_reader_acl_role_inventory(
+                SystemReader::Registry,
+                "registry",
+                &sql::REGISTRY_READER_RELATIONS,
+                WorkloadRoleFamily::RegistryReader.acl_role(),
+                database,
+                "wamn_system",
+                inventory,
+            )
+        };
+        verify(&exact, "wamn_system").unwrap();
+
+        for widening in [
+            role_acl("schema", "identity", "identity", "USAGE"),
+            role_acl("relation", "identity", "pats", "SELECT"),
+            role_acl("relation", "identity", "project_roles", "SELECT"),
+            role_acl("relation", "registry", "event_readers", "INSERT"),
+            role_acl("relation", "registry", "event_readers", "UPDATE"),
+            role_acl("relation", "registry", "orgs", "SELECT"),
+        ] {
+            let mut widened = exact.clone();
+            widened.push(widening.clone());
+            let error = verify(&widened, "wamn_system")
+                .expect_err("a widened registry reader passed its own matrix");
+            assert!(
+                error
+                    .to_string()
+                    .contains("are not the exact registry-reader grant set"),
+                "refused for the wrong reason: {error}"
+            );
+        }
+
+        // A missing grant set in the control database is a failure; nothing at
+        // all in any OTHER database is the required state.
+        verify(&[], "wamn_system").expect_err("an empty control-database inventory passed");
+        verify(&[], "some_project_db").unwrap();
+        let error = verify(&exact, "some_project_db")
+            .expect_err("the reader holds its grant set in a database that is not the control one");
+        assert!(
+            error
+                .to_string()
+                .contains("which is not the control database"),
+            "refused for the wrong reason: {error}"
+        );
     }
 
     /// Every family publishes a Secret whose name, component label and body are

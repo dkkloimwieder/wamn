@@ -67,6 +67,8 @@ pub mod restore;
 pub mod saga;
 pub mod secret;
 pub mod sql;
+/// The two T1 control-database read consumers' scoped credential contract.
+pub mod system_reader;
 #[cfg(feature = "ops")]
 pub mod state;
 /// The pure derivation guest RLS uses to reach a tenant from `current_user`.
@@ -114,6 +116,11 @@ pub use name::{
 pub use org::{OrgClusters, render_org_cluster_set};
 #[cfg(feature = "ops")]
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
+pub use system_reader::{
+    SystemReader, SystemReaderConnection, SystemReaderUrlError, SystemReaderUrlErrorKind,
+    parse_system_reader_url, system_reader_generation_role, system_reader_scope_hash,
+};
+
 pub use secret::{
     WorkloadSecretBody, render_control_author_secret_manifest,
     render_effect_writer_secret_manifest, render_guest_secret_manifest,

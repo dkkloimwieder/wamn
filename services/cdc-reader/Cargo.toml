@@ -26,10 +26,11 @@ wamn-event-wire = { workspace = true }
 wamn-pg-core = { workspace = true }
 # registry.event_readers registration lookup.
 wamn-control-registry = { workspace = true }
-
-[dev-dependencies]
-# The event_reader_live gate provisions its fixture env (publication and slot)
-# through the pure provisioning builders.
+# The scoped registry-reader credential contract (wamn-0h0g.12.116): the pure,
+# pre-I/O refusal of a WAMN_SYSTEM_URL that is not this project-env's own
+# read-only generation. A pure text/hashing edge — no DB, K8s, clock or tokio.
+# The `event_reader_live` gate also provisions its fixture env (publication and
+# slot) through the same crate's builders.
 wamn-control-provision = { workspace = true }
 
 [lints]

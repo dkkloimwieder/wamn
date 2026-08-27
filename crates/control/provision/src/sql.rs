@@ -467,6 +467,97 @@ fn quoted_column_list(columns: &[&str]) -> String {
         .join(", ")
 }
 
+// --- T1 control-database read surfaces (wamn-0h0g.12.116, wamn-0h0g.12.67) ---
+//
+// The T1 system database's two read-only consumers both authenticated as
+// `wamn_system`, the AUTHORIZATION owner of all three schemas below.
+// `deploy/sql/system-schema.sql` declares no policy and forces no row-level
+// security, so confinement in this database is PURELY GRANT-SHAPED: there is no
+// tenant predicate to satisfy and none is invented here. The owner credential is
+// therefore not merely wide, it is unconfined — it can INSERT an `identity.pats`
+// row binding any token digest to any principal, or an `identity.project_roles`
+// row self-granting a project role anywhere.
+//
+// TWO families and TWO builders, never one. The grant sets are disjoint and the
+// disjointness IS the security property: one role serving both is how a
+// credential gets widened to the union. Each builder revokes across ALL of
+// [`SYSTEM_PLANE_SCHEMAS`] before granting inside its own, so a role widened out
+// of band converges back to its own schema on the next apply rather than merely
+// gaining whatever surface it was missing. A table-level `REVOKE` also clears
+// that table's column-level ACL entries, so no per-column revocation loop is
+// needed to make the narrowing total.
+
+/// Every schema `deploy/sql/system-schema.sql` creates under `wamn_system`.
+///
+/// The REVOKE scope, not the grant scope: a system-plane reader is revoked
+/// across all three and granted inside exactly one.
+pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];
+
+/// The one relation the CDC reader's registration `SELECT` touches.
+///
+/// `services/cdc-reader` runs `wamn_control_registry::sql::select_event_reader_sql`
+/// over `WAMN_SYSTEM_URL` and nothing else, so this is its whole authority.
+pub const REGISTRY_READER_RELATIONS: [&str; 1] = ["event_readers"];
+
+/// Converge one system-plane reader's stable ACL role to exactly `SELECT` on
+/// `relations` inside `schema`, and nothing anywhere else in the control plane.
+///
+/// Table-level rather than column-exact — the
+/// [`grant_dispatch_reader_read_surface_sql`] shape rather than the
+/// management-admitter one: these roles hold no write privilege at all, so a
+/// column list would withhold only timestamps and labels while making a query
+/// that reads one more column fail in production instead of at review.
+///
+/// Run connected to the control database as a principal that owns the system
+/// schemas or the cluster superuser, AFTER `deploy/sql/system-schema.sql` has
+/// been applied — the `REVOKE`/`GRANT` name relations that must already exist.
+/// `CREATE ROLE` needs an admin principal, so the whole batch is an admin batch
+/// exactly as the other families' are.
+fn grant_system_reader_surface_sql(
+    family: WorkloadRoleFamily,
+    schema: &str,
+    relations: &[&str],
+) -> String {
+    debug_assert!(
+        SYSTEM_PLANE_SCHEMAS.contains(&schema),
+        "a system-plane reader grants inside a system-plane schema"
+    );
+    let role = quote_ident(family.acl_role());
+    let plane = SYSTEM_PLANE_SCHEMAS
+        .iter()
+        .map(|name| quote_ident(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let schema = quote_ident(schema);
+    let mut sql = format!(
+        "{ensure} \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {plane} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA {plane} FROM {role}; \
+         GRANT USAGE ON SCHEMA {schema} TO {role};",
+        ensure = ensure_workload_acl_role_sql(family),
+    );
+    for relation in relations {
+        sql.push_str(&format!(
+            " GRANT SELECT ON TABLE {schema}.{relation} TO {role};",
+            relation = quote_ident(relation),
+        ));
+    }
+    sql
+}
+
+/// Converge `wamn_registry_reader` to its exact CDC-registration read surface.
+///
+/// One `SELECT`, on `registry.event_readers`. The role is refused on `identity.*`
+/// by the same batch that grants it here, which is why the CDC reader's
+/// credential cannot be reused to read or forge identity.
+pub fn grant_registry_reader_surface_sql() -> String {
+    grant_system_reader_surface_sql(
+        WorkloadRoleFamily::RegistryReader,
+        "registry",
+        &REGISTRY_READER_RELATIONS,
+    )
+}
+
 /// Prepare one inactive scoped credential generation for authenticated use.
 ///
 /// `role` is the validated deterministic generation name. The caller verifies
@@ -503,6 +594,7 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
         WorkloadRoleFamily::ManagementAdmitter => {
             Some(grant_management_admitter_surface_sql("wamn_run"))
         }
+        WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
         _ => None,
     }
 }
@@ -1373,6 +1465,93 @@ mod tests {
         )));
         assert_eq!(sql.matches("LOGIN PASSWORD 'secret'").count(), 1);
         assert!(!sql.contains("CREATE SECRET"));
+    }
+
+    /// The registry reader's WHOLE batch, pinned as the string the builder
+    /// emits (`wamn-0h0g.12.116`).
+    ///
+    /// Generated text, not declared DDL: the assertion is over what this
+    /// function produces, so a comment mentioning a GRANT cannot satisfy it and
+    /// an added grant cannot hide inside it.
+    #[test]
+    fn the_registry_reader_grants_exactly_one_select_and_revokes_the_whole_plane() {
+        let sql = grant_registry_reader_surface_sql();
+        assert!(sql.starts_with(&ensure_workload_acl_role_sql(
+            WorkloadRoleFamily::RegistryReader
+        )));
+        let granted = sql
+            .split_once("END $workload_acl$;")
+            .expect("the batch opens with the ACL-role guard")
+            .1;
+        assert_eq!(
+            granted,
+            " REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"identity\", \"provisioning\", \
+             \"registry\" FROM \"wamn_registry_reader\"; \
+             REVOKE ALL PRIVILEGES ON SCHEMA \"identity\", \"provisioning\", \"registry\" \
+             FROM \"wamn_registry_reader\"; \
+             GRANT USAGE ON SCHEMA \"registry\" TO \"wamn_registry_reader\"; \
+             GRANT SELECT ON TABLE \"registry\".\"event_readers\" TO \"wamn_registry_reader\";"
+        );
+    }
+
+    /// THE DISJOINTNESS GUARD, from the registry side (`wamn-0h0g.12.116`).
+    ///
+    /// One SELECT and one relation, and not one syllable of `identity`
+    /// downstream of the revocation. Widening this role onto the identity plane
+    /// — the one edit that would collapse the two disjoint grant sets into a
+    /// union — fails here.
+    #[test]
+    fn the_registry_reader_is_never_granted_anything_on_the_identity_plane() {
+        let sql = grant_registry_reader_surface_sql();
+        assert_eq!(sql.matches("GRANT SELECT").count(), 1);
+        assert_eq!(sql.matches("GRANT USAGE ON SCHEMA").count(), 1);
+        assert_eq!(REGISTRY_READER_RELATIONS.len(), 1);
+        for forbidden in ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES"] {
+            assert!(
+                !sql.contains(&format!("GRANT {forbidden}")),
+                "the registry reader must hold no {forbidden}"
+            );
+        }
+        let granted = sql
+            .rsplit_once("FROM \"wamn_registry_reader\";")
+            .expect("the batch revokes before it grants")
+            .1;
+        for plane in ["identity", "provisioning"] {
+            assert!(
+                !granted.contains(plane),
+                "the registry reader is granted something on the {plane} plane"
+            );
+        }
+        // The revocation half, conversely, MUST name every system-plane schema:
+        // that is what makes a role widened out of band converge back.
+        for plane in SYSTEM_PLANE_SCHEMAS {
+            assert!(
+                sql.contains(&format!("\"{plane}\"")),
+                "the batch does not revoke across the {plane} plane"
+            );
+        }
+    }
+
+    /// The registry reader's grant set reaches the generic lifecycle, so a
+    /// prepared generation inherits exactly it and nothing wider.
+    #[test]
+    fn the_registry_reader_prepare_carries_its_grant_set_and_only_control_connect() {
+        let role = "wamn_registry_reader_c8216ab3ed30b424606deacec7d0d7cb7e65649b_a";
+        let sql = prepare_workload_generation_sql(
+            WorkloadRoleFamily::RegistryReader,
+            "wamn_system",
+            role,
+            "secret",
+            "2026-09-15T12:00:00Z",
+        );
+        assert!(sql.contains(&grant_registry_reader_surface_sql()));
+        assert!(sql.contains(&format!(
+            "GRANT \"wamn_registry_reader\" TO \"{role}\" \
+             WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+        )));
+        assert_eq!(sql.matches("GRANT CONNECT ON DATABASE").count(), 1);
+        assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn_system\""));
+        assert!(stable_surface_sql(WorkloadRoleFamily::RegistryReader).is_some());
     }
 
     #[test]

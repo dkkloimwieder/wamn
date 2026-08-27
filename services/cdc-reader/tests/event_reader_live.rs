@@ -33,7 +33,10 @@ use pg_walstream::CancellationToken;
 use tokio_postgres::NoTls;
 
 use wamn_cdc_reader::{EventReaderArgs, run_with_token};
-use wamn_control_provision::{cdc_object_name, event_stream_name, sql};
+use wamn_control_provision::{
+    CredentialGeneration, SystemReader, WorkloadRoleFamily, cdc_object_name,
+    event_stream_name, sql, system_reader_generation_role,
+};
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
@@ -47,6 +50,8 @@ const PROJECT: &str = "app";
 const ENV: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const CDC_PW: &str = "wamn_cdc_pw";
+/// Password for the gate's minted registry-reader generation.
+const READER_PW: &str = "wamn_registry_reader_pw";
 
 /// Swap the database path segment of a libpq URL (the test controls the URL —
 /// no query string).
@@ -57,10 +62,27 @@ fn swap_db(url: &str, db: &str) -> String {
 
 /// `host:port` (with credentials swapped out) → the CDC role's plain URL.
 fn cdc_plain_url(super_url: &str, role: &str) -> String {
+    role_url(super_url, role, CDC_PW)
+}
+
+/// `host:port` (with credentials swapped out) → one role's plain URL on [`DB`].
+fn role_url(super_url: &str, role: &str, password: &str) -> String {
     let after_scheme = super_url.strip_prefix("postgres://").expect("postgres://");
     let (_, host_and_path) = after_scheme.rsplit_once('@').expect("url has userinfo");
     let (host_port, _) = host_and_path.split_once('/').expect("url has a path");
-    format!("postgres://{role}:{CDC_PW}@{host_port}/{DB}")
+    format!("postgres://{role}:{password}@{host_port}/{DB}")
+}
+
+/// This gate's registry-reader generation-A login (`wamn-0h0g.12.116`).
+fn registry_reader_role() -> String {
+    system_reader_generation_role(
+        SystemReader::Registry,
+        ORG,
+        PROJECT,
+        ENV,
+        DB,
+        CredentialGeneration::A,
+    )
 }
 
 async fn connect(url: &str) -> tokio_postgres::Client {
@@ -130,7 +152,12 @@ fn reader_args(super_url: &str, cdc_name: &str, nats_url: String) -> EventReader
         org: ORG.into(),
         project: PROJECT.into(),
         env: ENV.into(),
-        system_database_url: swap_db(super_url, DB),
+        // The NARROW credential, not the superuser one: `wamn-0h0g.12.116` gave
+        // the registration read its own `wamn_registry_reader` generation, whose
+        // whole authority is `SELECT` on `registry.event_readers`. The reader
+        // refuses any other principal before it opens a socket, so passing the
+        // gate's admin URL here would fail closed rather than pass.
+        system_database_url: role_url(super_url, &registry_reader_role(), READER_PW),
         cdc_url: cdc_plain_url(super_url, cdc_name),
         nats_url,
         sslmode: "disable".into(),
@@ -298,6 +325,32 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .batch_execute(&format!("DROP ROLE IF EXISTS {cdc_name}"))
         .await
         .expect("drop leftover role");
+    // Roles are CLUSTER-wide, so `DROP DATABASE` does not reach them and a
+    // leftover HEALTHY reader would satisfy the builder's `IF NOT EXISTS` and
+    // mask a mutated one. `DROP OWNED BY` precedes `DROP ROLE` so a dependency
+    // left in another database cannot refuse the drop.
+    for role in [
+        registry_reader_role(),
+        system_reader_generation_role(
+            SystemReader::Registry,
+            ORG,
+            PROJECT,
+            ENV,
+            DB,
+            CredentialGeneration::B,
+        ),
+        WorkloadRoleFamily::RegistryReader.acl_role().to_owned(),
+    ] {
+        admin
+            .batch_execute(&format!(
+                "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
+                   EXECUTE 'DROP OWNED BY \"{role}\"'; \
+                   EXECUTE 'DROP ROLE \"{role}\"'; \
+                 END IF; END $$"
+            ))
+            .await
+            .expect("drop leftover registry-reader role");
+    }
     admin
         .batch_execute(&format!("CREATE DATABASE {DB}"))
         .await
@@ -324,6 +377,23 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute(CATALOG_SCHEMA)
         .await
         .expect("apply deploy/sql/catalog-schema.sql (the migrate-catalog metadata store)");
+    // The registration read's own credential, minted through the REAL builders
+    // now that `registry.event_readers` exists (`wamn-0h0g.12.116`). The grant
+    // batch also runs inside `prepare_workload_generation_sql`; applying it
+    // first proves the convergent step is a no-op on replay rather than a
+    // one-shot.
+    sys.batch_execute(&sql::grant_registry_reader_surface_sql())
+        .await
+        .expect("converge the registry reader's grant set");
+    sys.batch_execute(&sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::RegistryReader,
+        DB,
+        &registry_reader_role(),
+        READER_PW,
+        "2099-01-01T00:00:00Z",
+    ))
+    .await
+    .expect("prepare the registry-reader generation");
     sys.execute(upsert_org_sql(), &[&ORG, &"pooled", &"wamn-pg"])
         .await
         .expect("org row");
