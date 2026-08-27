@@ -405,15 +405,38 @@ async fn ensure_connection_component_grain(client: &tokio_postgres::Client) -> a
         .context("migrate connection storage to the component grain")
 }
 
-/// The six catalog relations `wamn-0h0g.22.20` revoked `wamn_scenario_author`
-/// SELECT on, in `deploy/sql/catalog-schema.sql` order.
+/// The catalog relations no emitter grants `wamn_scenario_author` SELECT on.
 ///
-/// The authority was DORMANT, measured from the server on a fully provisioned
-/// environment: `pg_auth_members` carries no edge for the role in either
-/// direction, it is NOLOGIN NOINHERIT, and it holds no CONNECT on the project
-/// database. Nothing could reach these reads, and no bead describes a reader
-/// that would — writing a justification into the DDL comment instead would
-/// reproduce the `wamn-p3ze` defect exactly.
+/// The first six are `wamn-0h0g.22.20`'s, in `deploy/sql/catalog-schema.sql`
+/// order. The last three are `wamn-0h0g.22.33`'s, and they were a DIFFERENT
+/// defect: this converge was their ONLY emitter. Neither
+/// `deploy/sql/catalog-schema.sql` nor `AUTHORING_PRIVILEGE_SPECS` ever named
+/// them, so a fresh install and a converge produced different author surfaces on
+/// the same three relations — the two-appliers drift class, which the
+/// `.22.20` cross-check could not see because it proves agreement only on the
+/// relations an emitter NAMES.
+///
+/// The authority was DORMANT for all nine, re-measured from the server for the
+/// three rather than inherited from the six (they were measured together but
+/// ruled separately): `wamn_scenario_author` is NOLOGIN NOINHERIT, nothing mints
+/// a login into it — `crates/control/provision` has a generation-role minter for
+/// every principal that connects and none for this one, and it REFUSES a
+/// connection URL naming it (`control_author.rs`, `management_admitter.rs`) —
+/// and the control plane's own authoring probe asserts `NOT pg_has_role(
+/// session_user, 'wamn_scenario_author', 'USAGE')`
+/// (`services/scenario-worker/src/authoring.rs`). Every `GRANT
+/// wamn_scenario_author TO ...` in the tree is a test fixture staging drift for
+/// the reconciler to revoke. The three relations DO have production readers —
+/// `promote.rs`, `push_component.rs`, `wiring_resolution.rs` — but every one of
+/// them reads as a superuser/owner connection or as `wamn_app`, which keeps its
+/// SELECT here. No reader connects as the author, and none can.
+///
+/// One correction to the `.22.20` census, recorded rather than left to be
+/// re-derived: `pg_auth_members` is no longer empty in both directions.
+/// `deploy/sql/postgres-init.sql` grants `wamn_platform` TO this role
+/// (`wamn-0h0g.22.17`). That is an OUTBOUND edge to another NOLOGIN group and
+/// carries RLS policy membership only; it is not a path a session can arrive on,
+/// so the dormancy conclusion is unchanged.
 ///
 /// The list is `pub(crate)` because the revoke has THREE emitters and landing a
 /// subset is strictly worse than landing nothing: this converge, the fresh
@@ -421,13 +444,16 @@ async fn ensure_connection_component_grain(client: &tokio_postgres::Client) -> a
 /// `wamn_schema_control::run_plane`'s `AUTHORING_PRIVILEGE_SPECS`, whose
 /// `RepairAuthoringPrivilege` would otherwise re-grant on every reconcile and
 /// report the revoked state as drift.
-pub(crate) const AUTHOR_DORMANT_CATALOG_RELATIONS: [&str; 6] = [
+pub(crate) const AUTHOR_DORMANT_CATALOG_RELATIONS: [&str; 9] = [
     "releases",
     "catalog_heads",
     "connection_requirements",
     "connection_instances",
     "connection_generations",
     "connection_bindings",
+    "component_library",
+    "release_components",
+    "release_manifest_v2_snapshots",
 ];
 
 /// Converge the catalog schema's role grants on an ALREADY-PROVISIONED database.
@@ -450,11 +476,11 @@ const CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL: &str = "REVOKE wamn_scenario_au
              REVOKE ALL PRIVILEGES ON catalog.catalog_heads FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.catalog_heads TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.component_library FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.component_library TO wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.component_library TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.release_components FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.release_components TO wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.release_components TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.release_manifest_v2_snapshots FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.release_manifest_v2_snapshots TO wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.release_manifest_v2_snapshots TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.connection_requirements FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.connection_requirements TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.connection_instances FROM PUBLIC, wamn_app, wamn_scenario_author; \
@@ -481,7 +507,10 @@ const CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL: &str = "REVOKE wamn_scenario_au
                  'catalog.connection_requirements', \
                  'catalog.connection_instances', \
                  'catalog.connection_generations', \
-                 'catalog.connection_bindings'] LOOP \
+                 'catalog.connection_bindings', \
+                 'catalog.component_library', \
+                 'catalog.release_components', \
+                 'catalog.release_manifest_v2_snapshots'] LOOP \
                  IF to_regclass(rel) IS NULL THEN CONTINUE; END IF; \
                  IF has_any_column_privilege( \
                       'wamn_scenario_author', rel, 'SELECT,INSERT,UPDATE,REFERENCES') \
@@ -770,7 +799,168 @@ pub fn seed_dataset_sql(
 
 #[cfg(test)]
 mod tests {
-    use super::{AUTHOR_DORMANT_CATALOG_RELATIONS, CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL};
+    use std::collections::BTreeSet;
+
+    use super::{
+        AUTHOR_DORMANT_CATALOG_RELATIONS, CATALOG_SCHEMA_SQL,
+        CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL,
+    };
+
+    const SCENARIO_AUTHOR: &str = "wamn_scenario_author";
+
+    /// Every `catalog` relation `sql` GRANTs `grantee` a SELECT on, whatever else
+    /// the statement grants and whoever else it grants to.
+    ///
+    /// SHAPE-AGNOSTIC ON PURPOSE. The `.22.20` cross-check matched only the
+    /// single-grantee line `GRANT SELECT ON catalog.x TO wamn_scenario_author;`,
+    /// and the three relations `wamn-0h0g.22.33` found were granted as `TO
+    /// wamn_app, wamn_scenario_author` — the one shape that scan could not see.
+    /// A scanner that recognises one spelling of a grant reports the other
+    /// spellings as agreement.
+    ///
+    /// `grantee` is a parameter so the positive control below can run the SAME
+    /// scan for `wamn_app`. A control that used a different reader would prove
+    /// the file has grants in it, not that THIS scan can find one.
+    ///
+    /// Comment lines are dropped before the scan, as the sibling in
+    /// `run_plane.rs` does: static DDL cannot otherwise tell a declaration from a
+    /// COMMENT quoting one.
+    fn catalog_selects_for(sql: &str, grantee: &str) -> BTreeSet<String> {
+        let body = sql
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with("--"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut granted = BTreeSet::new();
+        for statement in body.split(';') {
+            let statement = statement.split_whitespace().collect::<Vec<_>>().join(" ");
+            let Some(rest) = statement.strip_prefix("GRANT ") else {
+                continue;
+            };
+            let Some((privileges, rest)) = rest.split_once(" ON catalog.") else {
+                continue;
+            };
+            let grants_select = privileges
+                .split(',')
+                .map(str::trim)
+                .any(|privilege| matches!(privilege, "SELECT" | "ALL" | "ALL PRIVILEGES"));
+            if !grants_select {
+                continue;
+            }
+            let Some((relations, grantees)) = rest.split_once(" TO ") else {
+                continue;
+            };
+            if !grantees
+                .split(',')
+                .map(str::trim)
+                .any(|name| name == grantee)
+            {
+                continue;
+            }
+            for relation in relations.split(',').map(str::trim) {
+                granted.insert(
+                    relation
+                        .strip_prefix("catalog.")
+                        .unwrap_or(relation)
+                        .to_string(),
+                );
+            }
+        }
+        granted
+    }
+
+    /// The scanner's answer on a LITERAL fixture, so the closed-inventory proof
+    /// below cannot be two empty sets agreeing because the scan matches nothing.
+    ///
+    /// Deriving the expectation from the emitters the scan reads would make it a
+    /// tautology, so the value is pinned here instead. Every shape that has ever
+    /// carried the author's SELECT is present: sole grantee, trailing grantee in
+    /// a list, a multi-privilege grant, and a multi-relation grant.
+    #[test]
+    fn the_author_grant_scan_sees_every_shape_a_grant_can_take() {
+        let fixture = "\
+GRANT SELECT ON catalog.sole TO wamn_scenario_author;
+GRANT SELECT ON catalog.trailing TO wamn_app, wamn_scenario_author;
+GRANT SELECT, INSERT ON catalog.multi_privilege TO wamn_scenario_author;
+GRANT SELECT ON catalog.listed_a, catalog.listed_b TO wamn_scenario_author;
+GRANT SELECT ON catalog.app_only TO wamn_app;
+GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author;
+GRANT wamn_scenario_author TO wamn_app;
+GRANT INSERT ON catalog.write_only TO wamn_scenario_author;
+-- GRANT SELECT ON catalog.commented TO wamn_scenario_author;
+";
+        assert_eq!(
+            catalog_selects_for(fixture, "wamn_scenario_author"),
+            [
+                "listed_a",
+                "listed_b",
+                "multi_privilege",
+                "sole",
+                "trailing"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<String>>()
+        );
+        // The grantee really is the discriminator, not decoration: the same
+        // fixture read for `wamn_app` answers with the one relation it names.
+        assert_eq!(
+            catalog_selects_for(fixture, "wamn_app"),
+            ["app_only", "trailing"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<BTreeSet<String>>()
+        );
+    }
+
+    /// THE INVENTORY IS CLOSED (wamn-0h0g.22.33): no emitter may grant
+    /// `wamn_scenario_author` a catalog SELECT the other two do not name.
+    ///
+    /// This half pins the CONVERGE emitter against the FRESH-INSTALL emitter.
+    /// `run_plane.rs`'s `the_catalog_ddl_and_the_authoring_specs_agree_on_the_author`
+    /// pins that same fresh install against `AUTHORING_PRIVILEGE_SPECS`, and both
+    /// are SET EQUALITIES, so the two together close the triangle: a relation
+    /// present in exactly one emitter fails one of them. The chain is what makes
+    /// this provable at all — the converge lives in `services/ctl` and the specs
+    /// in `wamn-schema-control`, which does not and must not depend on it, so no
+    /// single test can see all three emitters directly.
+    ///
+    /// `.22.20`'s cross-check proved only that the emitters AGREE on the
+    /// relations they all name. These three were granted here and nowhere else,
+    /// so a fresh install and a converge left the same database with different
+    /// author surfaces and every existing test called that agreement.
+    #[test]
+    fn the_converge_and_the_fresh_install_name_one_author_catalog_surface() {
+        let converge =
+            catalog_selects_for(CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL, SCENARIO_AUTHOR);
+        let fresh_install = catalog_selects_for(CATALOG_SCHEMA_SQL, SCENARIO_AUTHOR);
+        assert_eq!(
+            converge, fresh_install,
+            "an emitter grants wamn_scenario_author a catalog SELECT the other \
+             does not name; a fresh install and a converge would leave the same \
+             database with different author surfaces"
+        );
+
+        // The scan has to be able to see THESE TWO TEXTS, not just the literal
+        // fixture above: a batch that stopped carrying grants in a shape the scan
+        // recognises would make the equality two empty sets agreeing. `wamn_app`
+        // is the positive control because it holds, in both emitters, exactly the
+        // reads the author does not — including the three `.22.33` revoked.
+        for (emitter, sql) in [
+            ("the converge", CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL),
+            ("the fresh install", CATALOG_SCHEMA_SQL),
+        ] {
+            let app = catalog_selects_for(sql, "wamn_app");
+            for relation in AUTHOR_DORMANT_CATALOG_RELATIONS {
+                assert!(
+                    app.contains(relation),
+                    "{emitter} no longer grants catalog.{relation} to wamn_app, \
+                     so this scan is reading a shape it does not carry"
+                );
+            }
+        }
+    }
 
     /// The CONVERGE emitter's own text, pinned (wamn-0h0g.22.20).
     ///

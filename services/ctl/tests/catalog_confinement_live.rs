@@ -67,24 +67,34 @@ const CONFINED: [&str; 10] = [
     "catalog.event_registrations",
 ];
 
-/// The six relations wamn-0h0g.22.20 revoked `wamn_scenario_author` SELECT on.
+/// The relations no emitter may grant `wamn_scenario_author` SELECT on: the six
+/// wamn-0h0g.22.20 revoked, then the three wamn-0h0g.22.33 did.
 ///
 /// These are NOT the confined ten: the author never held anything there. These
-/// six are the ones it held a DORMANT read on — no membership edge in either
-/// direction, NOLOGIN NOINHERIT, no CONNECT — and the revoke has three emitters.
+/// nine are the ones it held a DORMANT read on — NOLOGIN NOINHERIT, no CONNECT,
+/// no minted login in it and none admissible — and the revoke has three emitters.
 /// Two of them are separately observable here, because `ensure_catalog_storage`
 /// RETURNS after applying the file on a fresh database and only reaches
 /// `ensure_authoring_catalog_privileges` on the converge: ARM 1 therefore reads
 /// what `deploy/sql/catalog-schema.sql` alone produced, and ARM 6 what the
 /// converge alone produced. The third, `AUTHORING_PRIVILEGE_SPECS`, is pinned
 /// against the file by `the_catalog_ddl_and_the_authoring_specs_agree_on_the_author`.
-const AUTHOR_DORMANT: [&str; 6] = [
+///
+/// THE LAST THREE ARE WHY READING BOTH STAGES MATTERS. Until `.22.33` the
+/// converge was their ONLY emitter — the file never named them for the author —
+/// so ARM 1 and ARM 6 left the SAME database in different states and no
+/// assertion asked them the same question. They are listed in converge order,
+/// after the six, because that is where the drift was.
+const AUTHOR_DORMANT: [&str; 9] = [
     "catalog.releases",
     "catalog.catalog_heads",
     "catalog.connection_requirements",
     "catalog.connection_instances",
     "catalog.connection_generations",
     "catalog.connection_bindings",
+    "catalog.component_library",
+    "catalog.release_components",
+    "catalog.release_manifest_v2_snapshots",
 ];
 
 /// The blanket grants an already-provisioned database still carries — the exact

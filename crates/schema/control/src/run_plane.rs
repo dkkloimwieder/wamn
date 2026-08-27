@@ -7687,21 +7687,17 @@ COMMIT;
     /// otherwise tell a real declaration from a COMMENT mentioning one, and this
     /// direction of the check would false-RED on a comment that merely quotes a
     /// grant.
+    ///
+    /// THE SCAN IS SHAPE-AGNOSTIC (wamn-0h0g.22.33). It formerly matched only
+    /// `GRANT SELECT ON catalog.x TO wamn_scenario_author;` — the author as SOLE
+    /// grantee — which made the equality closed over the relations an emitter
+    /// spells that way and blind to every other spelling. The three relations
+    /// `.22.33` found were granted `TO wamn_app, wamn_scenario_author`, exactly
+    /// the shape the old scan skipped, so a grant landing in `catalog-schema.sql`
+    /// in that form would have been reported here as agreement.
     #[test]
     fn the_catalog_ddl_and_the_authoring_specs_agree_on_the_author() {
-        let statements: Vec<&str> = CATALOG_SCHEMA_SQL
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.starts_with("--"))
-            .collect();
-        let granted_to_author: BTreeSet<String> = statements
-            .iter()
-            .filter_map(|line| {
-                let rest = line.strip_prefix("GRANT SELECT ON catalog.")?;
-                let relation = rest.strip_suffix(" TO wamn_scenario_author;")?;
-                Some(relation.to_string())
-            })
-            .collect();
+        let granted_to_author = catalog_selects_for(CATALOG_SCHEMA_SQL, "wamn_scenario_author");
         let specified_for_author: BTreeSet<String> = AUTHORING_PRIVILEGE_SPECS
             .iter()
             .filter(|spec| matches!(spec.schema, AuthoringTableSchema::Catalog))
@@ -7717,22 +7713,114 @@ COMMIT;
 
         // The scan has to be able to SEE a grant, or the equality above is two
         // empty sets agreeing with each other. The relations the confinement
-        // narrowed to `wamn_app` are the positive control: the same line shape,
-        // present in the file, differing only in the grantee.
-        let granted_to_app = statements
-            .iter()
-            .filter(|line| {
-                line.starts_with("GRANT SELECT ON catalog.") && line.ends_with(" TO wamn_app;")
-            })
-            .count();
+        // narrowed to `wamn_app` are the positive control: read out of the same
+        // file by the same function, differing only in the grantee.
+        let granted_to_app = catalog_selects_for(CATALOG_SCHEMA_SQL, "wamn_app");
         assert!(
-            granted_to_app
+            granted_to_app.len()
                 >= AUTHORING_PRIVILEGE_SPECS
                     .iter()
                     .filter(|spec| matches!(spec.schema, AuthoringTableSchema::Catalog))
                     .count(),
-            "the grant scan matched {granted_to_app} app grants, so its line \
-             shape no longer matches the file and the author scan proves nothing"
+            "the grant scan matched {} app grants, so its statement shape no \
+             longer matches the file and the author scan proves nothing",
+            granted_to_app.len()
+        );
+    }
+
+    /// Every `catalog` relation `sql` GRANTs `grantee` a SELECT on, whatever else
+    /// the statement grants and whoever else it grants to.
+    ///
+    /// Kept byte-for-byte in step with `wamn_ctl::publish_catalog`'s scanner of
+    /// the same name: that one reads the CONVERGE emitter against this same file,
+    /// and the two set equalities are what close the three-emitter inventory
+    /// (`wamn-0h0g.22.33`). They cannot share one copy — the converge lives in
+    /// `services/ctl`, which depends on this crate and not the reverse — so each
+    /// side carries the scan and pins it against a literal fixture.
+    fn catalog_selects_for(sql: &str, grantee: &str) -> BTreeSet<String> {
+        let body = sql
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with("--"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut granted = BTreeSet::new();
+        for statement in body.split(';') {
+            let statement = statement.split_whitespace().collect::<Vec<_>>().join(" ");
+            let Some(rest) = statement.strip_prefix("GRANT ") else {
+                continue;
+            };
+            let Some((privileges, rest)) = rest.split_once(" ON catalog.") else {
+                continue;
+            };
+            let grants_select = privileges
+                .split(',')
+                .map(str::trim)
+                .any(|privilege| matches!(privilege, "SELECT" | "ALL" | "ALL PRIVILEGES"));
+            if !grants_select {
+                continue;
+            }
+            let Some((relations, grantees)) = rest.split_once(" TO ") else {
+                continue;
+            };
+            if !grantees
+                .split(',')
+                .map(str::trim)
+                .any(|name| name == grantee)
+            {
+                continue;
+            }
+            for relation in relations.split(',').map(str::trim) {
+                granted.insert(
+                    relation
+                        .strip_prefix("catalog.")
+                        .unwrap_or(relation)
+                        .to_string(),
+                );
+            }
+        }
+        granted
+    }
+
+    /// The scanner's answer on a LITERAL fixture (wamn-0h0g.22.33).
+    ///
+    /// The cross-check above compares two sets the scan itself produces, so a
+    /// scan that silently stopped matching would report agreement. Deriving the
+    /// expectation from `CATALOG_SCHEMA_SQL` would be a tautology over the very
+    /// text under test, so the value is pinned here as a literal instead — one
+    /// case per shape a grant has ever taken in the tree.
+    #[test]
+    fn the_author_grant_scan_sees_every_shape_a_grant_can_take() {
+        let fixture = "\
+GRANT SELECT ON catalog.sole TO wamn_scenario_author;
+GRANT SELECT ON catalog.trailing TO wamn_app, wamn_scenario_author;
+GRANT SELECT, INSERT ON catalog.multi_privilege TO wamn_scenario_author;
+GRANT SELECT ON catalog.listed_a, catalog.listed_b TO wamn_scenario_author;
+GRANT SELECT ON catalog.app_only TO wamn_app;
+GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author;
+GRANT wamn_scenario_author TO wamn_app;
+GRANT INSERT ON catalog.write_only TO wamn_scenario_author;
+-- GRANT SELECT ON catalog.commented TO wamn_scenario_author;
+";
+        assert_eq!(
+            catalog_selects_for(fixture, "wamn_scenario_author"),
+            [
+                "listed_a",
+                "listed_b",
+                "multi_privilege",
+                "sole",
+                "trailing"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<String>>()
+        );
+        assert_eq!(
+            catalog_selects_for(fixture, "wamn_app"),
+            ["app_only", "trailing"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<BTreeSet<String>>()
         );
     }
 
