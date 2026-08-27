@@ -42,7 +42,10 @@ use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalKind, ProjectRole, authenticate_pat, project_roles,
 };
 
-use wamn_control_provision::{parse_control_authoring_url, parse_management_admission_url};
+use wamn_control_provision::{
+    SystemReader, parse_control_authoring_url, parse_management_admission_url,
+    parse_system_reader_url,
+};
 
 use crate::authoring::{ControlAuthoringScope, GetReportResult, InternalAuthoringBackend};
 
@@ -431,6 +434,15 @@ pub struct ManagementServeArgs {
     /// A SEPARATE identity-read connection (wamn-0h0g.8.18): it is never the
     /// authoring or report store, and the authoring credential is never used to
     /// read identity.
+    ///
+    /// A scoped A/B LOGIN generation of `wamn_identity_reader`, whose whole
+    /// authority is SELECT on `identity.pats`, `identity.principals` and
+    /// `identity.project_roles` (wamn-0h0g.12.67). It used to authenticate as
+    /// `wamn_system`, which OWNS those relations under no row-level security —
+    /// so whoever read that Secret could INSERT a token_hash/token_prefix pair
+    /// bound to any principal and present the matching PAT here, or INSERT a
+    /// project_roles row and self-grant in any project. It is settled purely
+    /// before any I/O, so such a credential crash-loops instead of serving.
     #[arg(long = "system-url", env = "WAMN_SYSTEM_URL")]
     pub system_url: String,
 
@@ -570,12 +582,13 @@ fn reconcile_command_scope(
 
 /// Serve the authenticated management authoring surface until the process ends.
 ///
-/// BOTH connection inputs are settled FIRST and PURELY: an absent or
-/// out-of-scope `WAMN_CONTROL_AUTHORING_PG_URL` or
-/// `WAMN_MANAGEMENT_ADMISSION_PG_URL` refuses before this function opens a file
-/// or a socket (wamn-0h0g.8.18, wamn-0h0g.8.5.3). Neither is the other's
+/// ALL THREE connection inputs are settled FIRST and PURELY: an absent or
+/// out-of-scope `WAMN_CONTROL_AUTHORING_PG_URL`, `WAMN_MANAGEMENT_ADMISSION_PG_URL`
+/// or `WAMN_SYSTEM_URL` refuses before this function opens a file or a socket
+/// (wamn-0h0g.8.18, wamn-0h0g.8.5.3, wamn-0h0g.12.67). None is another's
 /// fallback: the first names the control database, the second names this
-/// environment's project database.
+/// environment's project database, and the third reads identity out of the T1
+/// system database.
 pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
     let scope = args.control_authoring_scope();
     // The accepted value is deliberately discarded: this call exists to establish
@@ -595,6 +608,19 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
     // settled purely — the order, not the connection, is what this call fixes.
     parse_management_admission_url(
         &args.management_admission_database_url,
+        &scope.org,
+        &scope.project,
+        &scope.environment,
+    )?;
+    // The identity READ credential is settled on the same terms, at the same
+    // point, for the same reason (wamn-0h0g.12.67). It is the narrowest of the
+    // three and the most dangerous to get wrong: this surface's whole
+    // authorization model is rows in `identity.*`, which carries no row-level
+    // security, so a connection input that authenticates as the schema owner
+    // would let its own reader forge the answers it then trusts.
+    parse_system_reader_url(
+        SystemReader::Identity,
+        &args.system_url,
         &scope.org,
         &scope.project,
         &scope.environment,
@@ -1165,14 +1191,33 @@ mod tests {
     const SCOPE_PROJECT: &str = "receiving";
     const SCOPE_ENVIRONMENT: &str = "dev";
     const CONTROL_DATABASE: &str = "wamn-system";
+    /// The T1 system database this fixture's identity read names.
+    const SYSTEM_DATABASE: &str = "wamn-system";
     const PROJECT_DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+
+    /// The scoped identity-reader login for this fixture's scope
+    /// (`wamn-0h0g.12.67`). `SYSTEM_DATABASE` is the database the fixture's
+    /// `WAMN_SYSTEM_URL` names, and it is inside the scope digest, so this is
+    /// the ONLY user string that URL can carry and still be accepted.
+    fn identity_reader_login(generation: wamn_control_provision::CredentialGeneration) -> String {
+        wamn_control_provision::system_reader_generation_role(
+            wamn_control_provision::SystemReader::Identity,
+            SCOPE_ORG,
+            SCOPE_PROJECT,
+            SCOPE_ENVIRONMENT,
+            SYSTEM_DATABASE,
+            generation,
+        )
+    }
 
     /// `serve` arguments whose every input but the admission URL is in scope, so
     /// what the admission gate does is the only thing under test.
     ///
     /// The system URL names a reserved-TLD host that cannot resolve: whatever
     /// error escapes `serve` after the pure gates therefore identifies itself,
-    /// and cannot be mistaken for one of them.
+    /// and cannot be mistaken for one of them. Its USER, however, must be the
+    /// scoped identity-reader generation, because that input is settled purely
+    /// too.
     fn admission_probe_args(admission_url: &str) -> ManagementServeArgs {
         let authoring = wamn_control_provision::control_author_generation_role(
             SCOPE_ORG,
@@ -1183,7 +1228,10 @@ mod tests {
         );
         ManagementServeArgs {
             bind: "127.0.0.1:0".to_owned(),
-            system_url: "postgres://system.invalid:5432/system".to_owned(),
+            system_url: format!(
+                "postgres://{}:secret@system.invalid:5432/{SYSTEM_DATABASE}",
+                identity_reader_login(wamn_control_provision::CredentialGeneration::A)
+            ),
             control_authoring_database_url: format!(
                 "postgres://{authoring}:secret@control.invalid:5432/{CONTROL_DATABASE}"
             ),
@@ -1265,6 +1313,107 @@ mod tests {
         );
     }
 
+
+    /// THE FORGERY PRIMITIVE, CLOSED AT THE CALL SITE (`wamn-0h0g.12.67`).
+    ///
+    /// `wamn-system-db` authenticates as `wamn_system`, the AUTHORIZATION owner
+    /// of the `identity` schema, and `identity.*` has NO row-level security. Any
+    /// holder of that Secret could INSERT a token_hash/token_prefix pair bound to
+    /// any principal and present the matching PAT to THIS surface, or INSERT an
+    /// identity.project_roles row and self-grant in any org or project — this
+    /// surface's whole authorization model is rows in a table that credential
+    /// owns. The exposure was live the moment the manifest was applied.
+    ///
+    /// This is the CALL-SITE proof, the sibling of
+    /// `the_admission_connection_input_is_settled_before_any_io`.
+    /// `wamn-control-provision` proves the parser; nothing there proves the
+    /// production entry point runs it. The accepting half then fails on the
+    /// identity CONNECT — the error this test would see instead if the call were
+    /// removed, which is what makes the refusals below the predicate working
+    /// rather than the gate refusing everything.
+    #[tokio::test]
+    async fn the_identity_read_credential_is_settled_before_any_io() {
+        for out_of_scope in [
+            // Absent: no fallback exists to pick up the slack.
+            String::new(),
+            // THE WIDE OWNER. This is the credential the manifest carried.
+            format!("postgres://wamn_system:secret@system.invalid:5432/{SYSTEM_DATABASE}"),
+            // The control-author generation this same pod already mounts: a
+            // separate plane, never this one's fallback.
+            format!(
+                "postgres://{}:secret@system.invalid:5432/{SYSTEM_DATABASE}",
+                wamn_control_provision::control_author_generation_role(
+                    SCOPE_ORG,
+                    SCOPE_PROJECT,
+                    SCOPE_ENVIRONMENT,
+                    CONTROL_DATABASE,
+                    wamn_control_provision::CredentialGeneration::A,
+                )
+            ),
+            // The OTHER control reader's credential: the two grant sets are
+            // disjoint, so its login must not satisfy this predicate either.
+            format!(
+                "postgres://{}:secret@system.invalid:5432/{SYSTEM_DATABASE}",
+                wamn_control_provision::system_reader_generation_role(
+                    wamn_control_provision::SystemReader::Registry,
+                    SCOPE_ORG,
+                    SCOPE_PROJECT,
+                    SCOPE_ENVIRONMENT,
+                    SYSTEM_DATABASE,
+                    wamn_control_provision::CredentialGeneration::A,
+                )
+            ),
+        ] {
+            let mut args = admission_probe_args(&in_scope_admission_url());
+            args.system_url = out_of_scope;
+            let error = serve(args)
+                .await
+                .expect_err("an out-of-scope identity read input must refuse");
+            let rendered = format!("{error}");
+            assert!(rendered.contains("WAMN_SYSTEM_URL"), "{rendered}");
+            // A refusal names the variable, never the credential in it.
+            assert!(!rendered.contains("secret"), "{rendered}");
+        }
+
+        // Both of its OWN generations are accepted, so rotation is not a
+        // refusal; `serve` then fails on the connect it was always going to
+        // reach.
+        for generation in [
+            wamn_control_provision::CredentialGeneration::A,
+            wamn_control_provision::CredentialGeneration::B,
+        ] {
+            let mut args = admission_probe_args(&in_scope_admission_url());
+            args.system_url = format!(
+                "postgres://{}:secret@system.invalid:5432/{SYSTEM_DATABASE}",
+                identity_reader_login(generation)
+            );
+            let error = serve(args)
+                .await
+                .expect_err("the unresolvable identity host still fails the startup");
+            let rendered = format!("{error}");
+            assert!(
+                !rendered.contains("WAMN_SYSTEM_URL"),
+                "an in-scope identity read input was refused: {rendered}"
+            );
+            assert!(
+                rendered.contains("connect the T1 system database for identity"),
+                "{rendered}"
+            );
+        }
+    }
+
+    fn in_scope_admission_url() -> String {
+        format!(
+            "postgres://{}:secret@project.invalid:5432/{PROJECT_DATABASE}",
+            wamn_control_provision::management_admitter_generation_role(
+                SCOPE_ORG,
+                SCOPE_PROJECT,
+                SCOPE_ENVIRONMENT,
+                PROJECT_DATABASE,
+                wamn_control_provision::CredentialGeneration::A,
+            )
+        )
+    }
 
     /// One management instance serves exactly one `(org, project, environment)`,
     /// so a client-selected environment is reconciled, never accepted.

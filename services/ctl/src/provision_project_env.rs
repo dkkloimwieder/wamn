@@ -1865,6 +1865,7 @@ fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
         WorkloadRoleFamily::EffectWriter => Some(StableGrantSet::EffectWriter),
         WorkloadRoleFamily::ManagementAdmitter => Some(StableGrantSet::ManagementAdmitter),
         WorkloadRoleFamily::RegistryReader => Some(StableGrantSet::RegistryReader),
+        WorkloadRoleFamily::IdentityReader => Some(StableGrantSet::IdentityReader),
         _ => None,
     }
 }
@@ -1875,6 +1876,7 @@ enum StableGrantSet {
     EffectWriter,
     ManagementAdmitter,
     RegistryReader,
+    IdentityReader,
 }
 
 impl StableGrantSet {
@@ -1899,6 +1901,15 @@ impl StableGrantSet {
                 SystemReader::Registry,
                 "registry",
                 &sql::REGISTRY_READER_RELATIONS,
+                role,
+                database,
+                required_database,
+                inventory,
+            ),
+            Self::IdentityReader => verify_system_reader_acl_role_inventory(
+                SystemReader::Identity,
+                "identity",
+                &sql::IDENTITY_READER_RELATIONS,
                 role,
                 database,
                 required_database,
@@ -3797,7 +3808,8 @@ mod tests {
             [
                 WorkloadRoleFamily::EffectWriter,
                 WorkloadRoleFamily::ManagementAdmitter,
-                WorkloadRoleFamily::RegistryReader
+                WorkloadRoleFamily::RegistryReader,
+                WorkloadRoleFamily::IdentityReader
             ],
             "a family acquired a grant set without acquiring authority"
         );
@@ -3807,6 +3819,7 @@ mod tests {
         for family in [
             WorkloadRoleFamily::ManagementAdmitter,
             WorkloadRoleFamily::RegistryReader,
+            WorkloadRoleFamily::IdentityReader,
         ] {
             assert!(sql::stable_surface_sql(family).is_some(), "{family:?}");
         }
@@ -3816,6 +3829,7 @@ mod tests {
                 WorkloadRoleFamily::EffectWriter
                     | WorkloadRoleFamily::ManagementAdmitter
                     | WorkloadRoleFamily::RegistryReader
+                    | WorkloadRoleFamily::IdentityReader
             ) {
                 assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
             }
@@ -3879,6 +3893,60 @@ mod tests {
                 .contains("which is not the control database"),
             "refused for the wrong reason: {error}"
         );
+    }
+
+    /// THE DISJOINTNESS MATRIX from the identity side, and THE THREE-TIMES-DRIFT
+    /// GUARD at the verification boundary (`wamn-0h0g.12.67`).
+    ///
+    /// The live cluster role carries `SELECT, INSERT, UPDATE`. Every one of the
+    /// widenings below — the registry plane, `INSERT`, `UPDATE` — is measured
+    /// against the server's own `aclexplode` answer for EQUALITY, so a role that
+    /// drifts a fourth time fails provisioning instead of being converged around.
+    #[test]
+    fn the_identity_reader_acl_inventory_is_exact_and_never_grants_a_write() {
+        let exact = vec![
+            role_acl("schema", "identity", "identity", "USAGE"),
+            role_acl("relation", "identity", "pats", "SELECT"),
+            role_acl("relation", "identity", "principals", "SELECT"),
+            role_acl("relation", "identity", "project_roles", "SELECT"),
+        ];
+        let verify = |inventory: &[RoleAcl], database: &str| {
+            verify_system_reader_acl_role_inventory(
+                SystemReader::Identity,
+                "identity",
+                &sql::IDENTITY_READER_RELATIONS,
+                WorkloadRoleFamily::IdentityReader.acl_role(),
+                database,
+                "wamn_system",
+                inventory,
+            )
+        };
+        verify(&exact, "wamn_system").unwrap();
+
+        for widening in [
+            // The forgery primitives themselves.
+            role_acl("relation", "identity", "pats", "INSERT"),
+            role_acl("relation", "identity", "pats", "UPDATE"),
+            role_acl("relation", "identity", "project_roles", "INSERT"),
+            role_acl("relation", "identity", "project_roles", "UPDATE"),
+            role_acl("column", "identity", "pats.token_hash", "UPDATE"),
+            // …and the other reader's plane.
+            role_acl("schema", "registry", "registry", "USAGE"),
+            role_acl("relation", "registry", "event_readers", "SELECT"),
+        ] {
+            let mut widened = exact.clone();
+            widened.push(widening.clone());
+            let error = verify(&widened, "wamn_system")
+                .expect_err("a widened identity reader passed its own matrix");
+            assert!(
+                error
+                    .to_string()
+                    .contains("are not the exact identity-reader grant set"),
+                "refused for the wrong reason: {error}"
+            );
+        }
+        verify(&[], "wamn_system").expect_err("an empty control-database inventory passed");
+        verify(&[], "some_project_db").unwrap();
     }
 
     /// Every family publishes a Secret whose name, component label and body are

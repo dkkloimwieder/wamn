@@ -829,6 +829,41 @@ fn database_error(error: tokio_postgres::Error) -> IdentityError {
 mod tests {
     use super::*;
 
+    /// THE PREMISE `wamn-0h0g.12.67`'s GRANT SET RESTS ON.
+    ///
+    /// `wamn_identity_reader` is provisioned SELECT-only, and that is correct
+    /// only while the two statements the management surface makes are plain
+    /// reads. A row lock — `FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE` —
+    /// requires `UPDATE` on the locked relation, which a SELECT-only role
+    /// cannot serve, so adding one here silently breaks the credential rather
+    /// than the query. The grant is pinned separately by
+    /// `wamn_control_provision::sql`'s `the_identity_reader_grants_no_insert_and_no_update`;
+    /// this is the half that lives with the statements.
+    #[test]
+    fn the_two_reads_the_management_surface_makes_take_no_row_lock() {
+        for statement in [SELECT_PAT_BY_PREFIX_SQL, SELECT_PROJECT_ROLES_SQL] {
+            for locking in ["FOR UPDATE", "FOR NO KEY UPDATE", "FOR SHARE", "FOR KEY SHARE"] {
+                assert!(
+                    !statement.contains(locking),
+                    "an identity read takes a {locking} row lock, \
+                     which the SELECT-only reader role cannot serve"
+                );
+            }
+        }
+        // …and they reach exactly the three relations that role is granted.
+        for (statement, relations) in [
+            (
+                SELECT_PAT_BY_PREFIX_SQL,
+                &["identity.pats", "identity.principals"][..],
+            ),
+            (SELECT_PROJECT_ROLES_SQL, &["identity.project_roles"][..]),
+        ] {
+            for relation in relations {
+                assert!(statement.contains(relation), "{relation} is not read here");
+            }
+        }
+    }
+
     #[test]
     fn subjects_and_roles_are_canonical_fail_closed_tokens() {
         assert_eq!(

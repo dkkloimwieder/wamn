@@ -524,6 +524,78 @@ mod tests {
         );
     }
 
+    /// THE CONSUMER-WIRING GUARD for the identity read (`wamn-0h0g.12.67`).
+    ///
+    /// The mount-exact shape above, applied to the credential that mattered
+    /// most: `WAMN_SYSTEM_URL` named `wamn-system-db`, which authenticates as
+    /// `wamn_system` — the owner of `identity.pats` and `identity.project_roles`
+    /// under no row-level security. Re-pointing the reference back at that
+    /// Secret, or at either of the other two this pod already mounts, fails
+    /// here, because the name is compared against the RENDERER'S OWN output for
+    /// this scope rather than restated.
+    #[test]
+    fn identity_reader_secret_is_mount_exact_with_the_scenario_worker_deployment() {
+        const SCENARIO_WORKER: &str =
+            include_str!("../../../../deploy/platform/scenario-worker.yaml");
+
+        let triple = Triple::new("acme", "receiving", "dev");
+        let url = "postgres://wamn_identity_reader_scope_a:pw@wamn-sysdb-rw:5432/wamn_system";
+        let secret = render_workload_secret_manifest(
+            WorkloadRoleFamily::IdentityReader,
+            &triple,
+            "wamn-system",
+            WorkloadSecretBody::Url(url),
+        );
+        assert_eq!(secret["kind"], "Secret");
+        assert_eq!(
+            secret["metadata"]["labels"]["app.kubernetes.io/component"],
+            "identity-reader-credentials"
+        );
+        let data = secret["stringData"].as_object().unwrap();
+        assert_eq!(data.len(), 1);
+        let key = data.keys().next().expect("the Secret carries one key");
+        assert_eq!(data[key], url);
+        let name = secret["metadata"]["name"]
+            .as_str()
+            .expect("the Secret is named");
+
+        // R8b: three credential tiers, three Secrets. This one is never either
+        // of the two the same pod already mounts.
+        for other in [
+            render_control_author_secret_manifest(&triple, "wamn-system", url),
+            render_management_admitter_secret_manifest(&triple, "wamn-system", url),
+        ] {
+            assert_ne!(secret["metadata"]["name"], other["metadata"]["name"]);
+        }
+        // …and it is never the wide owner credential it replaced.
+        assert_ne!(name, "wamn-system-db");
+
+        let reference: Vec<String> = SCENARIO_WORKER
+            .split("- name: WAMN_SYSTEM_URL")
+            .nth(1)
+            .expect("scenario-worker consumes WAMN_SYSTEM_URL")
+            .lines()
+            .skip(1)
+            .take(4)
+            .map(|line| line.trim().to_string())
+            .collect();
+        assert_eq!(
+            reference,
+            [
+                "valueFrom:".to_string(),
+                "secretKeyRef:".to_string(),
+                format!("name: {name}"),
+                format!("key: {key}"),
+            ]
+        );
+        // The wide owner credential must be gone from the MOUNTS, not merely
+        // unmentioned: the header still names it to say what was replaced.
+        assert!(
+            !SCENARIO_WORKER.contains("name: wamn-system-db"),
+            "the deployment still mounts the unconfined wamn_system owner credential"
+        );
+    }
+
     #[test]
     fn cdc_secret_is_a_distinct_replication_tier_reference() {
         let t = Triple::new("acme", "billing", "dev");

@@ -499,6 +499,14 @@ pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "regist
 /// over `WAMN_SYSTEM_URL` and nothing else, so this is its whole authority.
 pub const REGISTRY_READER_RELATIONS: [&str; 1] = ["event_readers"];
 
+/// The relations the management surface's two identity `SELECT`s touch.
+///
+/// `SELECT_PAT_BY_PREFIX_SQL` joins `pats` to `principals`; `SELECT_PROJECT_ROLES_SQL`
+/// reads `project_roles` (both in `crates/identity/platform/src/lib.rs`).
+/// PostgreSQL checks privileges on every relation a statement references, so all
+/// three are load bearing.
+pub const IDENTITY_READER_RELATIONS: [&str; 3] = ["pats", "principals", "project_roles"];
+
 /// Converge one system-plane reader's stable ACL role to exactly `SELECT` on
 /// `relations` inside `schema`, and nothing anywhere else in the control plane.
 ///
@@ -558,6 +566,31 @@ pub fn grant_registry_reader_surface_sql() -> String {
     )
 }
 
+/// Converge `wamn_identity_reader` to its exact identity read surface.
+///
+/// `SELECT` on three `identity` relations, and NO `INSERT` and NO `UPDATE`
+/// anywhere. Both consuming statements are plain reads that take no row lock, so
+/// a genuinely SELECT-only role serves the surface as it stands.
+///
+/// **SELECT-only is correct only because `POST /login` no longer exists.** The
+/// live cluster role carries `SELECT, INSERT, UPDATE`; its `INSERT` was added
+/// deliberately when that route did exist, and the grant then drifted
+/// SELECT-only -> +INSERT -> +INSERT,UPDATE out of band THREE times.
+/// `services/scenario-worker`'s
+/// `only_the_mounted_kinds_have_a_route_and_the_rest_answer_a_bare_501` decides
+/// the mounted inventory by CALLING route selection, so a re-mounted session
+/// route changes an answer that test reads. The write privilege such a route
+/// would need is pinned separately by
+/// `the_identity_reader_grants_no_insert_and_no_update`, so the fourth drift
+/// fails a test instead of landing.
+pub fn grant_identity_reader_surface_sql() -> String {
+    grant_system_reader_surface_sql(
+        WorkloadRoleFamily::IdentityReader,
+        "identity",
+        &IDENTITY_READER_RELATIONS,
+    )
+}
+
 /// Prepare one inactive scoped credential generation for authenticated use.
 ///
 /// `role` is the validated deterministic generation name. The caller verifies
@@ -595,6 +628,7 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
             Some(grant_management_admitter_surface_sql("wamn_run"))
         }
         WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
+        WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
         _ => None,
     }
 }
@@ -1552,6 +1586,119 @@ mod tests {
         assert_eq!(sql.matches("GRANT CONNECT ON DATABASE").count(), 1);
         assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn_system\""));
         assert!(stable_surface_sql(WorkloadRoleFamily::RegistryReader).is_some());
+    }
+
+    /// The identity reader's WHOLE batch, pinned as the string the builder
+    /// emits (`wamn-0h0g.12.67`).
+    #[test]
+    fn the_identity_reader_grants_exactly_three_selects_and_revokes_the_whole_plane() {
+        let sql = grant_identity_reader_surface_sql();
+        assert!(sql.starts_with(&ensure_workload_acl_role_sql(
+            WorkloadRoleFamily::IdentityReader
+        )));
+        let granted = sql
+            .split_once("END $workload_acl$;")
+            .expect("the batch opens with the ACL-role guard")
+            .1;
+        assert_eq!(
+            granted,
+            " REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"identity\", \"provisioning\", \
+             \"registry\" FROM \"wamn_identity_reader\"; \
+             REVOKE ALL PRIVILEGES ON SCHEMA \"identity\", \"provisioning\", \"registry\" \
+             FROM \"wamn_identity_reader\"; \
+             GRANT USAGE ON SCHEMA \"identity\" TO \"wamn_identity_reader\"; \
+             GRANT SELECT ON TABLE \"identity\".\"pats\" TO \"wamn_identity_reader\"; \
+             GRANT SELECT ON TABLE \"identity\".\"principals\" TO \"wamn_identity_reader\"; \
+             GRANT SELECT ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_reader\";"
+        );
+    }
+
+    /// THE THREE-TIMES-DRIFT GUARD (`wamn-0h0g.12.67`).
+    ///
+    /// The live cluster role carries `SELECT, INSERT, UPDATE`. That `INSERT` was
+    /// added deliberately when `POST /login` existed, and the grant drifted
+    /// SELECT-only -> +INSERT -> +INSERT,UPDATE out of band three separate
+    /// times. Whoever holds `INSERT` on `identity.pats` can bind a token digest
+    /// to any principal and present the matching PAT; whoever holds it on
+    /// `identity.project_roles` can self-grant a role in any project — and
+    /// `identity.*` has no row-level security to confine either. This is the
+    /// assertion that fails on the fourth drift instead of after it.
+    #[test]
+    fn the_identity_reader_grants_no_insert_and_no_update() {
+        let sql = grant_identity_reader_surface_sql();
+        for forbidden in ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES"] {
+            assert!(
+                !sql.contains(&format!("GRANT {forbidden}")),
+                "the identity reader must hold no {forbidden} — see this test's doc comment"
+            );
+        }
+        assert_eq!(
+            sql.matches("GRANT SELECT").count(),
+            IDENTITY_READER_RELATIONS.len(),
+        );
+        // The other half of the premise — that neither consuming statement takes
+        // a row lock, which would need UPDATE that SELECT alone cannot serve —
+        // is pinned where those statements live, by
+        // `wamn_platform_identity`'s `the_two_reads_the_management_surface_makes_take_no_row_lock`.
+    }
+
+    /// THE DISJOINTNESS GUARD, from both sides (`wamn-0h0g.12.116`,
+    /// `wamn-0h0g.12.67`).
+    ///
+    /// One role serving both grant sets is how a credential gets widened to the
+    /// union, so the two batches must name two roles and neither may grant
+    /// anything inside the other's schema.
+    #[test]
+    fn the_two_control_reader_grant_sets_are_disjoint() {
+        let registry = grant_registry_reader_surface_sql();
+        let identity = grant_identity_reader_surface_sql();
+        assert!(!registry.contains("wamn_identity_reader"));
+        assert!(!identity.contains("wamn_registry_reader"));
+        for (batch, own, foreign) in [
+            (&registry, "registry", "identity"),
+            (&identity, "identity", "registry"),
+        ] {
+            let granted = batch
+                .split_once(&format!("GRANT USAGE ON SCHEMA \"{own}\""))
+                .expect("the batch revokes before it grants")
+                .1;
+            assert!(
+                !granted.contains(foreign),
+                "a control reader is granted something on the {foreign} plane"
+            );
+            // The revocation half, conversely, MUST span the whole plane: that
+            // is what converges a role widened out of band back to its own.
+            for plane in SYSTEM_PLANE_SCHEMAS {
+                assert!(batch.contains(&format!("\"{plane}\"")));
+            }
+        }
+        assert!(
+            IDENTITY_READER_RELATIONS
+                .iter()
+                .all(|relation| !REGISTRY_READER_RELATIONS.contains(relation))
+        );
+    }
+
+    /// The identity reader's grant set reaches the generic lifecycle, so a
+    /// prepared generation inherits exactly it and nothing wider.
+    #[test]
+    fn the_identity_reader_prepare_carries_its_grant_set_and_only_control_connect() {
+        let role = "wamn_identity_reader_4ea81a9f35b250844e8e95f9985cf1e4f7c16dba_a";
+        let sql = prepare_workload_generation_sql(
+            WorkloadRoleFamily::IdentityReader,
+            "wamn_system",
+            role,
+            "secret",
+            "2026-09-15T12:00:00Z",
+        );
+        assert!(sql.contains(&grant_identity_reader_surface_sql()));
+        assert!(sql.contains(&format!(
+            "GRANT \"wamn_identity_reader\" TO \"{role}\" \
+             WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+        )));
+        assert_eq!(sql.matches("GRANT CONNECT ON DATABASE").count(), 1);
+        assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn_system\""));
+        assert!(stable_surface_sql(WorkloadRoleFamily::IdentityReader).is_some());
     }
 
     #[test]

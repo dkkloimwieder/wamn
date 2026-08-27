@@ -19,8 +19,34 @@
 #                        verifies personal access tokens and reads
 #                        identity.project_roles. This is control-plane tooling
 #                        reading first-party identity by ctc8.6 design, not a
-#                        data-plane request path. `wamn-system-db` is the same
-#                        operator-provided control-database Secret.
+#                        data-plane request path.
+#
+#                        A scoped A/B LOGIN generation of `wamn_identity_reader`
+#                        (wamn-0h0g.12.67), granted SELECT on exactly
+#                        identity.pats, identity.principals and
+#                        identity.project_roles. It was `wamn-system-db`, which
+#                        authenticates as `wamn_system` — the AUTHORIZATION owner
+#                        of the registry, provisioning and identity schemas. That
+#                        credential is not merely wide: identity.* carries NO row
+#                        level security, so anyone who could read that Secret
+#                        could INSERT a token_hash/token_prefix pair bound to any
+#                        principal and present the matching PAT to this surface,
+#                        or INSERT an identity.project_roles row and self-grant a
+#                        role in any org or project. This surface's whole
+#                        authorization model is rows in a table that credential
+#                        owned. It is refused before any I/O on the same
+#                        predicates as the two below
+#                        (crates/control/provision parse_system_reader_url), so a
+#                        Secret carrying the owner crash-loops instead of serving.
+#
+#   THE IDENTITY-READER SECRET IS NOT MINTED YET, exactly as the admission
+#   Secret below is not: `wamn-identity-reader-<org>--<project>--<env>` is the
+#   rendering of `workload_secret_name(WorkloadRoleFamily::IdentityReader, …)`
+#   and nothing in ctl emits it for this environment today, so a fresh
+#   environment's pod pends with CreateContainerConfigError until it does. That
+#   fail-closed window is deliberate and is strictly narrower than the exposure
+#   it replaces — do NOT hand-create the Secret to get past it, and do NOT point
+#   this reference back at `wamn-system-db`.
 #   WAMN_CONTROL_AUTHORING_PG_URL
 #                        the SOLE authoring and report connection
 #                        (wamn-0h0g.8.18): a scoped A/B LOGIN generation of
@@ -110,7 +136,7 @@ spec:
             - name: WAMN_SYSTEM_URL
               valueFrom:
                 secretKeyRef:
-                  name: wamn-system-db
+                  name: wamn-identity-reader-acme--receiving--dev
                   key: url
             - name: WAMN_CONTROL_AUTHORING_PG_URL
               valueFrom:
