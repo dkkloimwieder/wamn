@@ -981,6 +981,23 @@ impl HostPlugin for WamnJetstream {
             environment.as_deref(),
         );
         if let Some(tenant) = tenant {
+            // THE MVP TENANT-TO-TARGET ADAPTER, DELIBERATE AND RECORDED HERE
+            // (wamn-0h0g.10.11). The other two doorbell configs take the
+            // execution target as a STATED field — the waker requires its
+            // `<execution-target-id>=<Deployment>` mapping, and the
+            // dispatcher's `project_spec` falls back to this adapter only when
+            // the field is absent. This bind DERIVES it instead, because the
+            // workload config it reads names a tenant, a project and an
+            // environment and NO target; that absence is why
+            // `deploy/platform/materializer.example.yaml` is the one manifest
+            // wamn-0h0g.10.5 could not rewrite to an explicit target.
+            //
+            // RETIREMENT TRIGGER: the first component that must ring a target
+            // which is not its own tenant. Placement is wamn-0h0g.5's. Until it
+            // yields a second target, a config key here would state nothing
+            // this line does not already state, and it would give the doorbell
+            // subject two sources where the comment above depends on it having
+            // one.
             let execution_target_id = mvp_execution_target_id(&tenant)?;
             self.set_execution_target(item.id(), execution_target_id.clone());
             tracing::debug!(
