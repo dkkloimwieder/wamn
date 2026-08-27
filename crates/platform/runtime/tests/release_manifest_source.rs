@@ -1,8 +1,14 @@
-//! Every refusal the release-manifest OCI source makes before it touches a registry.
+//! Every refusal the release-manifest OCI source makes, from configuration to wire.
 //!
-//! The one leg that needs a real registry — a published artifact pulling back
-//! byte-exact and welding the release it names — is the ignored leg at the
-//! bottom.
+//! Most of them land before any transport. The ones that need a registry to
+//! answer are driven by the in-process stub at the bottom, which serves a
+//! manifest whose descriptor disagrees with the body it returns — the lie a
+//! conforming registry structurally cannot tell, and the only thing that reaches
+//! those arms.
+//!
+//! The one leg that needs a *real* registry — a published artifact pulling back
+//! byte-exact and welding the release it names — is the ignored leg in the
+//! middle.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,7 +25,7 @@ const REGISTRY: &str = "registry.example:5000";
 const ARTIFACT_BASE: &str = "registry.example:5000/wamn/releases";
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
-/// A private pull credential for exactly [`REGISTRY`], removed on drop.
+/// A private pull credential for exactly one registry authority, removed on drop.
 struct ScratchCredential {
     root: PathBuf,
     path: PathBuf,
@@ -27,6 +33,12 @@ struct ScratchCredential {
 
 impl ScratchCredential {
     fn write() -> Self {
+        Self::write_for(REGISTRY)
+    }
+
+    /// The loader keys on the bare authority, so a stub on an ephemeral port
+    /// needs its own entry rather than [`REGISTRY`]'s.
+    fn write_for(registry: &str) -> Self {
         let sequence = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
             "wamn-release-manifest-source-{}-{sequence}",
@@ -36,7 +48,7 @@ impl ScratchCredential {
         let path = root.join("config.json");
         std::fs::write(
             &path,
-            format!(r#"{{"auths":{{"{REGISTRY}":{{"username":"puller","password":"secret"}}}}}}"#),
+            format!(r#"{{"auths":{{"{registry}":{{"username":"puller","password":"secret"}}}}}}"#),
         )
         .expect("write scratch credential");
         Self { root, path }
@@ -252,5 +264,198 @@ async fn a_published_release_pulls_back_byte_exact_and_welds_the_release_it_name
             .expect_err("a digest the repository does not hold refuses")
             .kind(),
         ReleaseManifestFetchErrorKind::Unavailable
+    );
+}
+
+/// An in-process HTTP responder that serves exactly the bytes a test hands it.
+///
+/// This is deliberately not a registry. It exists to answer a manifest whose
+/// layer descriptor disagrees with the body it then returns — the one lie a
+/// conforming registry structurally cannot tell, because `registry:2` validates
+/// blob digests on upload and refuses a manifest naming an absent blob. The
+/// refusals below exist for an untrusted transport, so nothing but an untrusted
+/// transport can provoke them.
+struct LyingRegistry {
+    authority: String,
+    listening: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for LyingRegistry {
+    fn drop(&mut self) {
+        self.listening.abort();
+    }
+}
+
+/// Bind an ephemeral port and answer every pull phase from these fixed bytes.
+async fn lying_registry(manifest_json: Vec<u8>, body: Vec<u8>) -> LyingRegistry {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("an ephemeral loopback port binds");
+    let authority = listener
+        .local_addr()
+        .expect("the listener reports its assigned port")
+        .to_string();
+    let listening = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let manifest_json = manifest_json.clone();
+            let body = body.clone();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+                let mut head = Vec::new();
+                let mut chunk = [0_u8; 1024];
+                while !head.ends_with(b"\r\n\r\n") {
+                    match stream.read(&mut chunk).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(read) => head.extend_from_slice(&chunk[..read]),
+                    }
+                }
+                let target = String::from_utf8_lossy(&head)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .split(' ')
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_owned();
+                // The `/v2/` probe answers without a `WWW-Authenticate`
+                // challenge, which is how `oci-client` decides no token is
+                // needed; the credential is still read, so the production
+                // configuration path is the one under test.
+                let (content_type, payload) = if target.contains("/manifests/") {
+                    ("application/vnd.oci.image.manifest.v1+json", manifest_json)
+                } else if target.contains("/blobs/") {
+                    ("application/octet-stream", body)
+                } else {
+                    ("application/json", b"{}".to_vec())
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.write_all(&payload).await;
+                let _ = stream.shutdown().await;
+            });
+        }
+    });
+    LyingRegistry {
+        authority,
+        listening,
+    }
+}
+
+/// The exact artifact the publisher would write for these canonical bytes.
+///
+/// Built by the production layout function, so a test's lie is one edited field
+/// on a real envelope rather than a hand-copied wire format that could drift.
+fn published_artifact(canonical: &[u8]) -> (String, serde_json::Value) {
+    let (layer, _, manifest) = release_manifest_artifact_layout(canonical);
+    let wire = serde_json::to_value(&manifest).expect("the published layout serializes");
+    (layer.sha256_digest(), wire)
+}
+
+/// Configure the production source against a stub bound to an ephemeral port.
+fn source_for(registry: &LyingRegistry, credential: &ScratchCredential) -> ReleaseManifestSource {
+    ReleaseManifestSource::new(
+        &format!("{}/wamn/releases", registry.authority),
+        true,
+        credential.path(),
+    )
+    .expect("an explicit base and a complete credential configure")
+}
+
+#[tokio::test]
+async fn a_conforming_stub_returns_the_exact_published_bytes() {
+    let canonical = br#"{"format-version":2}"#;
+    let (digest, wire) = published_artifact(canonical);
+
+    let registry = lying_registry(
+        serde_json::to_vec(&wire).expect("the published envelope serializes"),
+        canonical.to_vec(),
+    )
+    .await;
+    let credential = ScratchCredential::write_for(&registry.authority);
+    let pulled = source_for(&registry, &credential)
+        .pull_verified(&digest)
+        .await
+        .expect("an artifact served exactly as published pulls");
+
+    // Without this leg the two refusals below could pass for the wrong reason:
+    // a stub that answered nothing usable would refuse every pull.
+    assert_eq!(pulled, canonical);
+}
+
+#[tokio::test]
+async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
+    let canonical = br#"{"format-version":2}"#;
+    let (digest, mut wire) = published_artifact(canonical);
+    // The layer digest still names the exact bytes served, so the layout check
+    // and `oci-client`'s own digest verification both pass. Only the declared
+    // length is a lie — and nothing upstream of this module checks it.
+    wire["layers"][0]["size"] = serde_json::json!(canonical.len() + 1);
+
+    let registry = lying_registry(
+        serde_json::to_vec(&wire).expect("the edited envelope serializes"),
+        canonical.to_vec(),
+    )
+    .await;
+    let credential = ScratchCredential::write_for(&registry.authority);
+    let error = source_for(&registry, &credential)
+        .pull_verified(&digest)
+        .await
+        .expect_err("a body the descriptor undercounts refuses");
+
+    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
+    assert_eq!(
+        error.refusal(),
+        "release-manifest-artifact-body-size-mismatch"
+    );
+}
+
+/// A body the named digest does not address never reaches the weld.
+///
+/// MEASURED, not assumed: this refusal arrives as
+/// `release-manifest-artifact-body-unavailable`, NOT as
+/// `release-manifest-artifact-body-digest-mismatch`. `oci-client` 0.17's own
+/// `pull_blob` digests the streamed body against the layer descriptor it was
+/// handed and returns `DigestError::VerificationError`, and
+/// `verify_release_manifest_artifact_layout` has already pinned that descriptor
+/// to the digest the pod template named — so by the time control returns, the
+/// two are equal by construction and the source's own digest arm is
+/// unreachable. That arm is defense in depth against the transport dropping its
+/// check; it is not what refuses today.
+///
+/// Pinning the literal here is what makes that fact load-bearing: if a future
+/// `oci-client` stops verifying, this assertion fails, and the digest arm in
+/// `pull_verified` becomes the one that has to hold.
+#[tokio::test]
+async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
+    let canonical = br#"{"format-version":2}"#;
+    let (digest, wire) = published_artifact(canonical);
+    // Same length, different content, so the size check cannot be what fires.
+    let mut lied = canonical.to_vec();
+    lied[1] = b'F';
+    assert_eq!(lied.len(), canonical.len());
+    assert_ne!(component_digest(&lied), digest);
+
+    let registry = lying_registry(
+        serde_json::to_vec(&wire).expect("the published envelope serializes"),
+        lied,
+    )
+    .await;
+    let credential = ScratchCredential::write_for(&registry.authority);
+    let error = source_for(&registry, &credential)
+        .pull_verified(&digest)
+        .await
+        .expect_err("a body the named digest does not address refuses");
+
+    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Unavailable);
+    assert_eq!(
+        error.refusal(),
+        "release-manifest-artifact-body-unavailable"
     );
 }
