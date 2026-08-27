@@ -25,6 +25,7 @@ use crate::component_artifact::{
 use crate::registry_credentials::{
     RegistryCredentials, RegistryCredentialsError, read_registry_credentials,
 };
+use crate::registry_transport::transport_is_mismatched;
 
 /// Explicit, validated configuration for one component artifact repository.
 #[derive(Clone, PartialEq, Eq)]
@@ -470,25 +471,6 @@ fn verify_config_body(
         ));
     }
     Ok(())
-}
-
-fn transport_is_mismatched(error: &OciDistributionError) -> bool {
-    matches!(
-        error,
-        OciDistributionError::ConfigConversionError(_)
-            | OciDistributionError::DigestError(_)
-            | OciDistributionError::ImageIndexParsingNoPlatformResolverError
-            | OciDistributionError::IncompatibleLayerMediaTypeError(_)
-            | OciDistributionError::JsonError(_)
-            | OciDistributionError::ManifestEncodingError(_)
-            | OciDistributionError::ManifestParsingError(_)
-            | OciDistributionError::PullNoLayersError
-            | OciDistributionError::RegistryNoDigestError
-            | OciDistributionError::SpecViolationError(_)
-            | OciDistributionError::UnsupportedMediaTypeError(_)
-            | OciDistributionError::UnsupportedSchemaVersionError(_)
-            | OciDistributionError::VersionedParsingError(_)
-    )
 }
 
 #[cfg(test)]

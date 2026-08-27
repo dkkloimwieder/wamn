@@ -33,6 +33,7 @@ use wamn_catalog::MAX_SERVING_MANIFEST_BYTES;
 use crate::component_admission::component_digest;
 use crate::component_artifact::{ComponentArtifactBase, parse_component_artifact_base};
 use crate::registry_credentials::read_registry_credentials;
+use crate::registry_transport::transport_is_mismatched;
 use crate::release_manifest_artifact::verify_release_manifest_artifact_layout;
 
 /// Bound each registry connect/read phase without adding a deployment knob.
@@ -103,11 +104,22 @@ impl ReleaseManifestFetchError {
         }
     }
 
-    /// Every registry failure is one refusal: this pod does not have its release.
+    /// A registry that could not answer: this pod does not have its release.
     ///
-    /// The transferred content is classified by the explicit layout, size and
-    /// digest checks below, never by an upstream transport variant — matching
-    /// on that list would bind this refusal taxonomy to an `oci-client` version.
+    /// This constructor used to take *every* registry failure, on the position
+    /// that classifying by an upstream transport variant would bind this refusal
+    /// taxonomy to an `oci-client` version. `wamn-0h0g.19.17` reversed that: the
+    /// body pull now asks [`transport_is_mismatched`] first, and a registry that
+    /// served bytes the named digest does not address is refused as
+    /// [`ReleaseManifestFetchErrorKind::Mismatched`], not as absence.
+    ///
+    /// The version coupling is real and is accepted, because it was already
+    /// being paid next door — the component source has classified this way since
+    /// it was written, so the choice was never whether to depend on that list,
+    /// only whether the two pulls would answer the same question differently.
+    /// What the split buys is the operator's page: unreachable is retried,
+    /// contradicted is investigated, and collapsing them deletes the only signal
+    /// that makes pulling by digest mean anything.
     fn unavailable(reference: &str, refusal: &'static str) -> Self {
         Self {
             kind: ReleaseManifestFetchErrorKind::Unavailable,
@@ -262,11 +274,18 @@ impl ReleaseManifestSource {
         self.client
             .pull_blob(&reference, blobs.layer, &mut canonical_bytes)
             .await
-            .map_err(|_| {
-                ReleaseManifestFetchError::unavailable(
-                    &named,
-                    "release-manifest-artifact-body-unavailable",
-                )
+            .map_err(|source| {
+                if transport_is_mismatched(&source) {
+                    ReleaseManifestFetchError::mismatched(
+                        &named,
+                        "release-manifest-artifact-body-digest-mismatch",
+                    )
+                } else {
+                    ReleaseManifestFetchError::unavailable(
+                        &named,
+                        "release-manifest-artifact-body-unavailable",
+                    )
+                }
             })?;
         verify_transferred_body(&canonical_bytes, blobs.layer.size, manifest_digest, &named)?;
         Ok(canonical_bytes)

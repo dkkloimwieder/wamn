@@ -418,23 +418,22 @@ async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
 
 /// A body the named digest does not address never reaches the weld.
 ///
-/// MEASURED, not assumed: this refusal arrives as
-/// `release-manifest-artifact-body-unavailable`, NOT as
-/// `release-manifest-artifact-body-digest-mismatch`. `oci-client` 0.17's own
-/// `pull_blob` digests the streamed body against the layer descriptor it was
-/// handed and returns `DigestError::VerificationError`, and
+/// MEASURED, not assumed, and the measurement is what the refusal is built on:
+/// `oci-client` 0.17's `pull_blob` builds its digester from the layer descriptor
+/// it was handed and refuses a body that does not finalize to it, and
 /// `verify_release_manifest_artifact_layout` has already pinned that descriptor
-/// to the digest the pod template named — so by the time control returns, the
-/// two are equal by construction and the source's own digest arm is
-/// unreachable. That arm is defense in depth against the transport dropping its
-/// check; it is not what refuses today.
+/// to the digest the pod template named. So a lying registry never reaches the
+/// source's own comparison — it comes back as `DigestError::VerificationError`,
+/// which `pull_verified` classifies as `Mismatched` rather than as absence
+/// (`wamn-0h0g.19.17`).
 ///
-/// Pinning the literal here is what makes that fact load-bearing: if a future
-/// `oci-client` stops verifying, this assertion fails, and the digest arm in
-/// `pull_verified` becomes the one that has to hold.
-///
-/// That arm is not left unwatched in the meantime: no wire fixture can reach
-/// it, so it is held by a direct call in
+/// This is therefore the wire proof of the digest-mismatch refusal: a served
+/// body the name does not address is refused as a contradiction, not as an
+/// unreachable registry, and an operator is paged accordingly. What is *not*
+/// proven here is the source's own digest comparison in
+/// `verify_transferred_body`: it stays unreachable by construction, defense in
+/// depth against the transport dropping its check, and it is held by a direct
+/// call in
 /// `release_manifest_source::tests::a_body_the_named_digest_does_not_address_refuses_as_a_digest_mismatch`.
 #[tokio::test]
 async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
@@ -457,9 +456,9 @@ async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
         .await
         .expect_err("a body the named digest does not address refuses");
 
-    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Unavailable);
+    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
     assert_eq!(
         error.refusal(),
-        "release-manifest-artifact-body-unavailable"
+        "release-manifest-artifact-body-digest-mismatch"
     );
 }

@@ -10,6 +10,7 @@ pub mod connection_generation;
 pub mod engine;
 pub mod plugins;
 pub mod registry_credentials;
+mod registry_transport;
 pub mod release_manifest;
 pub mod release_manifest_artifact;
 pub mod release_manifest_source;
