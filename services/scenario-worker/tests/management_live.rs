@@ -51,8 +51,9 @@ use tokio::net::TcpStream;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
-    CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
-    control_author_generation_role, management_admitter_generation_role, sql,
+    CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, SystemReader,
+    WorkloadRoleFamily, control_author_generation_role, management_admitter_generation_role, sql,
+    system_reader_generation_role,
 };
 use wamn_platform_identity::{
     IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
@@ -72,6 +73,8 @@ const PROJECT: &str = "receiving";
 const OTHER_PROJECT: &str = "shipping";
 const ENVIRONMENT: &str = "dev";
 const AUTHOR_PASSWORD: &str = "wamn-management-live";
+/// Password for the identity-reader generation this gate mints (`wamn-0h0g.12.67`).
+const IDENTITY_READER_PASSWORD: &str = "wamn-management-identity-read-live";
 /// The project-environment database the admission credential is scoped to. The
 /// generation role name binds it, so the gate cannot rename one without the
 /// other.
@@ -295,6 +298,43 @@ fn author_url(admin_url: &str) -> String {
         .expect("a postgres URL carries a username");
     parsed
         .set_password(Some(AUTHOR_PASSWORD))
+        .expect("a postgres URL carries a password");
+    parsed.to_string()
+}
+
+/// The exact scoped identity-READ generation `serve` will accept
+/// (`wamn-0h0g.12.67`).
+///
+/// Derived for the same reason `author_role` is, and from the same database:
+/// the identity registry lives in the one control database this gate's admin URL
+/// names, so that name is inside the scope digest and no other login satisfies
+/// the pre-I/O gate.
+fn identity_reader_role(admin_url: &str) -> String {
+    system_reader_generation_role(
+        SystemReader::Identity,
+        ORG,
+        PROJECT,
+        ENVIRONMENT,
+        &database_of(admin_url),
+        CredentialGeneration::A,
+    )
+}
+
+/// The T1 identity read input `serve` refuses to start without.
+///
+/// NOT the admin URL. `serve` settles this input purely before any I/O and
+/// refuses anything that is not this scope's identity-reader generation — the
+/// schema owner and the superuser included — because this surface's whole
+/// authorization model is rows in `identity.*` under no row-level security, so a
+/// connection that could write them would let its own reader forge the answers
+/// it then trusts.
+fn identity_reader_url(admin_url: &str) -> String {
+    let mut parsed = url::Url::parse(admin_url).expect("the admin PG URL parses");
+    parsed
+        .set_username(&identity_reader_role(admin_url))
+        .expect("a postgres URL carries a username");
+    parsed
+        .set_password(Some(IDENTITY_READER_PASSWORD))
         .expect("a postgres URL carries a password");
     parsed.to_string()
 }
@@ -605,6 +645,32 @@ async fn project_queue_count(project: &Client) -> i64 {
 async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
     let database = database_of(admin_url);
     let role = author_role(admin_url);
+    // Roles are CLUSTER-wide, so dropping this database's schemas does not reach
+    // them, and a leftover HEALTHY reader would satisfy the builder's
+    // `IF NOT EXISTS` and mask a mutated one. `DROP OWNED BY` precedes
+    // `DROP ROLE` so a privilege left behind cannot refuse the drop.
+    let drop_identity_reader_roles: String = [
+        identity_reader_role(admin_url),
+        system_reader_generation_role(
+            SystemReader::Identity,
+            ORG,
+            PROJECT,
+            ENVIRONMENT,
+            &database,
+            CredentialGeneration::B,
+        ),
+        WorkloadRoleFamily::IdentityReader.acl_role().to_owned(),
+    ]
+    .iter()
+    .map(|role| {
+        format!(
+            "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
+               EXECUTE 'DROP OWNED BY \"{role}\"'; \
+               EXECUTE 'DROP ROLE \"{role}\"'; \
+             END IF; END $$; "
+        )
+    })
+    .collect();
     admin
         .batch_execute(&format!(
             "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
@@ -614,6 +680,7 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
              DROP SCHEMA IF EXISTS identity CASCADE; \
              DROP SCHEMA IF EXISTS provisioning CASCADE; \
              DROP SCHEMA IF EXISTS registry CASCADE; \
+             {drop_identity_reader_roles} \
              DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
              THEN CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; END $$; \
@@ -639,6 +706,30 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
         ))
         .await
         .context("apply the control system schema and portable store")?;
+    // The identity read's OWN credential, minted through the real builders now
+    // that `identity.*` exists (`wamn-0h0g.12.67`). The surface authenticates as
+    // this generation, never as the superuser this gate provisions with: `serve`
+    // settles that input purely and refuses the wide credential before it opens
+    // a socket. Applying the stable surface on its own first proves the
+    // convergent step is a no-op on replay rather than a one-shot —
+    // `prepare_workload_generation_sql` runs the very same text again.
+    admin
+        .batch_execute(
+            &sql::stable_surface_sql(WorkloadRoleFamily::IdentityReader)
+                .context("the identity reader family carries a stable grant set")?,
+        )
+        .await
+        .context("converge the identity reader's grant set")?;
+    admin
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::IdentityReader,
+            &database,
+            &identity_reader_role(admin_url),
+            IDENTITY_READER_PASSWORD,
+            "2099-01-01T00:00:00Z",
+        ))
+        .await
+        .context("mint the identity-reader generation the surface authenticates as")?;
     admin
         .execute(
             "INSERT INTO wamn_authority.author_login_tenants \
@@ -802,10 +893,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("age one token past its expiry");
 
-    let surface = tokio::spawn(wamn_scenario_worker::management::serve(
+    let mut surface = tokio::spawn(wamn_scenario_worker::management::serve(
         wamn_scenario_worker::management::ManagementServeArgs {
             bind: BIND.to_owned(),
-            system_url: url.clone(),
+            system_url: identity_reader_url(&url),
             control_authoring_database_url: author_url(&url),
             management_admission_database_url: admission_url(&url),
             org: ORG.to_owned(),
@@ -816,7 +907,17 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         },
     ));
     // The listener binds inside the spawned task; give it the connection.
+    //
+    // A `serve` that REFUSED one of its three connection inputs FINISHES instead
+    // of listening, and every later assertion then fails as a connection refusal
+    // a long way from its cause — which is exactly how the superuser this gate
+    // used to hand `serve` as its identity read stayed hidden (wamn-0h0g.22.19).
+    // Reading the finished task's error names the refusal where it happened.
     for _ in 0..50 {
+        if surface.is_finished() {
+            let refused = (&mut surface).await.expect("the surface task did not panic");
+            panic!("the management surface never listened: {refused:?}");
+        }
         if TcpStream::connect(BIND).await.is_ok() {
             break;
         }
