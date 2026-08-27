@@ -360,6 +360,32 @@ creates fine and breaks every expression index built on it.
 near-miss role names (`x<login>`, `<login>x`) that prove the pattern's anchors.
 Unanchored, either one would read another tenant's rows.
 
+### `[GUEST-RUNTIME]` — the guest SQL path on per-tenant connections
+
+`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs` (`WAMN_PG_TEST_URL`,
+`wamn-0h0g.22.6.7`). Ordinary `--lib` tests, so a throwaway server is all it takes.
+
+```bash
+docker run -d --name wamn-guestrt-pg -e POSTGRES_PASSWORD=probe \
+  -p 127.0.0.1:5436:5432 postgres:18
+until psql postgres://postgres:probe@localhost:5436/postgres -Atqc 'select 1'; do :; done
+WAMN_PG_TEST_URL=postgres://postgres:probe@localhost:5436/postgres \
+  cargo test -p wamn-runtime --all-features --lib wamn_postgres
+docker rm -f wamn-guestrt-pg      # BY EXPLICIT NAME. Never prune.
+```
+
+**A guest live test can no longer point at any URL.** Guest credential
+resolution verifies that the login carries `app_scope_hash(tenant, database)`,
+so the fixtures compose a properly named generation (`live_guest_url`) and
+create the stable `wamn_app` ACL role — the credential-exactness hook requires
+membership in it, and a fresh cluster has neither.
+
+`live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim` asserts
+`current_setting('app.tenant', true)` is **NULL**, not `''`: a custom GUC reads
+back as the empty string once it has been set and the `SET LOCAL` scope ended,
+and NULL only if it was never set in the session at all. NULL is therefore the
+sharper claim — the guest transaction never touched it.
+
 ### `[TENANT-FLOOR]` — the swept hand-written tenant floor
 
 `crates/control/provision/tests/deploy_sql_authority.rs` (`wamn-0h0g.22.6.3`).

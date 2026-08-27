@@ -428,7 +428,6 @@ mod tests {
         assert!(queue.contains("lease_generation bigint NOT NULL DEFAULT 0"));
     }
 
-
     #[test]
     fn effect_attempt_schema_has_one_identity_and_no_successor_shape() {
         let ddl = include_str!("../../../../deploy/sql/run-state.sql");

@@ -256,6 +256,31 @@ mod tests {
         assert_eq!(tenant_key("acme", DATABASE), expected);
     }
 
+    /// THE RUNTIME COMPUTES THIS DIGEST TOO, from `wamn-run-state`, because it
+    /// must check that a resolved guest credential belongs to the tenant it is
+    /// about to serve and the shipped runtime links no provisioner
+    /// (`wamn-0h0g.22.6.7`).
+    ///
+    /// This asserts DELEGATION, not the value: both sides are the same function
+    /// now, so a domain or framing drift moves both and passes here. The value
+    /// is pinned in `wamn_run_state::tenant_scope`, and the live SQL agreement
+    /// gate recomputes it inside PostgreSQL from a builder that does not
+    /// delegate — measured: a domain drift survives this test and dies there.
+    #[test]
+    fn the_runtime_reachable_digest_is_the_same_one() {
+        for (tenant, database) in [
+            ("acme", DATABASE),
+            ("t", "wamn-db-acme--billing--prod"),
+            (&"t".repeat(64), DATABASE),
+        ] {
+            assert_eq!(
+                tenant_key(tenant, database),
+                wamn_run_state::app_scope_hash(tenant, database),
+                "tenant {tenant:?}: the provisioner and the runtime must agree"
+            );
+        }
+    }
+
     /// Two project-environment databases must not derive one key for one
     /// tenant, or their guest logins collide on a single role name.
     #[test]

@@ -182,11 +182,15 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
         .context("parse emitted projects-file json")?;
     let provider = StaticCredentialProvider::new(projects, None);
 
+    // Resolved as a PLATFORM class: the witness below is about which PROJECT a
+    // credential routes to. Guest resolution additionally verifies the
+    // credential's tenant binding (wamn-0h0g.22.6.7), and mixing the two would
+    // make a routing failure and a tenant-binding failure indistinguishable.
     let cfg_a = provider
-        .resolve(PROJECT_A, AuthorityClass::GuestSql)?
+        .resolve(PROJECT_A, AuthorityClass::ExecutorPlatform, None)?
         .with_context(|| format!("resolve {PROJECT_A}"))?;
     let cfg_b = provider
-        .resolve(PROJECT_B, AuthorityClass::GuestSql)?
+        .resolve(PROJECT_B, AuthorityClass::ExecutorPlatform, None)?
         .with_context(|| format!("resolve {PROJECT_B}"))?;
 
     // 5a. Routing witness: each resolved URL reaches its own project's database.
@@ -503,8 +507,10 @@ async fn tier_scenario(
     let mut conns: Vec<(&'static str, Client, Conn)> = Vec::new();
     for spec in envs {
         let db = project_env_database_name(&org.id, project, spec.env, spec.instance);
+        // Routing witness again: a PLATFORM class, so a project-env routing
+        // failure cannot be confused with a tenant-binding refusal.
         let cfg = provider
-            .resolve(&db, AuthorityClass::GuestSql)?
+            .resolve(&db, AuthorityClass::ExecutorPlatform, None)?
             .with_context(|| format!("resolve {db}"))?;
         let (client, task) = connect(&cfg.database_url)
             .await

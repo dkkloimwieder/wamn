@@ -522,16 +522,20 @@ impl WamnPostgres {
         let release = self.release_identity_for(component_id);
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout_platform(&project, AuthorityClass::ExecutorPlatform).await.map_err(|error| {
-            ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
-                "checkout project connection",
-                format!("{error:?}"),
-            )
-        })?;
+        let (connection, policy) = self
+            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| {
+                ProductionClaimError::new(
+                    ProductionClaimErrorKind::Storage,
+                    "checkout project connection",
+                    format!("{error:?}"),
+                )
+            })?;
         if let Err(error) = self
             .begin_with_claims(
                 &connection,
+                AuthorityClass::ExecutorPlatform,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
@@ -623,16 +627,20 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout_platform(&project, AuthorityClass::ExecutorPlatform).await.map_err(|error| {
-            ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
-                "checkout janitor connection",
-                format!("{error:?}"),
-            )
-        })?;
+        let (connection, policy) = self
+            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| {
+                ProductionClaimError::new(
+                    ProductionClaimErrorKind::Storage,
+                    "checkout janitor connection",
+                    format!("{error:?}"),
+                )
+            })?;
         if let Err(error) = self
             .begin_with_claims(
                 &connection,
+                AuthorityClass::ExecutorPlatform,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
@@ -709,16 +717,20 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout_platform(&project, AuthorityClass::ExecutorPlatform).await.map_err(|error| {
-            ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
-                "checkout renewal connection",
-                format!("{error:?}"),
-            )
-        })?;
+        let (connection, policy) = self
+            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| {
+                ProductionClaimError::new(
+                    ProductionClaimErrorKind::Storage,
+                    "checkout renewal connection",
+                    format!("{error:?}"),
+                )
+            })?;
         if let Err(error) = self
             .begin_with_claims(
                 &connection,
+                AuthorityClass::ExecutorPlatform,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
@@ -777,16 +789,20 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
-        let (connection, policy) = self.checkout_platform(&project, AuthorityClass::ExecutorPlatform).await.map_err(|error| {
-            ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
-                "checkout completion connection",
-                format!("{error:?}"),
-            )
-        })?;
+        let (connection, policy) = self
+            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| {
+                ProductionClaimError::new(
+                    ProductionClaimErrorKind::Storage,
+                    "checkout completion connection",
+                    format!("{error:?}"),
+                )
+            })?;
         if let Err(error) = self
             .begin_with_claims(
                 &connection,
+                AuthorityClass::ExecutorPlatform,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
@@ -1616,7 +1632,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn generic_refusal_body_is_exact_and_message_free() {
         let identity = ExhaustedExecutionIdentity::Flow {
@@ -1760,9 +1775,6 @@ mod tests {
                 .contains("router-response-without-result-owner")
         );
     }
-
-
-
 
     #[test]
     fn lease_grant_uses_a_fresh_post_fence_clock() {
@@ -1994,5 +2006,4 @@ mod tests {
             "the premium class no longer reaches the floor it pays for"
         );
     }
-
 }

@@ -402,6 +402,7 @@ impl WamnPostgres {
         if let Err(error) = self
             .begin_with_claims(
                 &connection,
+                AuthorityClass::ExecutorPlatform,
                 tenant_id,
                 None,
                 None,
@@ -486,6 +487,7 @@ impl WamnPostgres {
         if let Err(error) = self
             .begin_with_claims(
                 &connection,
+                AuthorityClass::ExecutorPlatform,
                 tenant_id,
                 None,
                 None,
@@ -570,6 +572,7 @@ impl WamnPostgres {
         if let Err(error) = self
             .begin_with_claims(
                 &connection,
+                AuthorityClass::ExecutorPlatform,
                 tenant_id,
                 None,
                 None,
@@ -691,6 +694,7 @@ impl WamnPostgres {
         if let Err(error) = self
             .begin_with_claims(
                 &connection,
+                AuthorityClass::ExecutorPlatform,
                 tenant_id,
                 None,
                 None,
@@ -1002,7 +1006,9 @@ mod tests {
             .expect_err("an underived purity claim is refused before it is served");
 
         assert!(
-            error.to_string().contains("re-admit it through the validator"),
+            error
+                .to_string()
+                .contains("re-admit it through the validator"),
             "unexpected refusal: {error}"
         );
     }

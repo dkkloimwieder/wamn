@@ -21,7 +21,10 @@ wamn-pg-core = { workspace = true }
 # that rings its WiringCache cannot live there; it lives here beside the
 # process-owned platform pool.
 wamn-router = { workspace = true }
-wamn-run-state = { workspace = true }
+# `tenant-key` and NOT `effect-writer-credential`: the shipped runtime needs the
+# framed scope digest to check a guest credential against the tenant it will
+# serve (wamn-0h0g.22.6.7), and nothing of the effect-writer credential document.
+wamn-run-state = { workspace = true, features = ["tenant-key"] }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
 tracing = { workspace = true }

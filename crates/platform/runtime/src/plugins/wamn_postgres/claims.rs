@@ -435,6 +435,28 @@ const CLAIM_SQL: &str = "SELECT \
      set_config('app.role', $5, true), \
      set_config('app.user_id', $6, true)";
 
+/// The GUEST claim statement: [`CLAIM_SQL`] WITHOUT `app.tenant`
+/// (`wamn-0h0g.22.6.7`).
+///
+/// *** THE GUEST'S TENANT IS ITS LOGIN, NOT A CLAIM. *** Every relation the
+/// guest can reach now keys on
+/// `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
+/// which reads `current_user` — so injecting `app.tenant` here would set a GUC
+/// that nothing the guest can read consults. Leaving it would not be belt and
+/// braces; it would be a second, SETTABLE statement about an authority the
+/// session no longer derives that way, and the next person to add a policy
+/// would have two boundaries to choose between.
+///
+/// `app.role` and `app.user_id` STAY. They key the RESTRICTIVE per-role and
+/// per-user policies, a different claim class layered INSIDE the tenant floor
+/// and explicitly outside `wamn-0h0g.22.6`'s scope.
+const GUEST_CLAIM_SQL: &str = "SELECT \
+     set_config('statement_timeout', $1, true), \
+     set_config('search_path', COALESCE($2, current_setting('search_path')), true), \
+     set_config('app.runner', COALESCE($3, current_setting('app.runner', true)), true), \
+     set_config('app.role', $4, true), \
+     set_config('app.user_id', $5, true)";
+
 /// Reject a malformed claim identity before it is bound (R16). Since R2 these
 /// validators are NO LONGER the injection boundary — every claim value binds as a
 /// parameter into [`CLAIM_SQL`], so a `'`/`;`/`--` value is inert data — but a
@@ -703,10 +725,11 @@ impl WamnPostgres {
         &self,
         class: AuthorityClass,
         project: &str,
+        tenant: Option<&str>,
     ) -> Result<Arc<ProjectPool>, PgError> {
         let lifecycle = PoolLifecycle::for_class(class);
         let pools = self.pools(lifecycle);
-        let cfg = match self.provider.resolve(project, class) {
+        let cfg = match self.provider.resolve(project, class, tenant) {
             Ok(Some(c)) => c,
             Ok(None) => {
                 tracing::warn!(
@@ -1384,17 +1407,21 @@ impl WamnPostgres {
 
     /// Check out a raw connection from the default project and report its state
     /// *before* any claim injection. Gate verification only.
-    pub async fn probe_checkout(&self) -> anyhow::Result<CheckoutProbe> {
-        self.probe_checkout_of(DEFAULT_PROJECT).await
+    pub async fn probe_checkout(&self, tenant: &str) -> anyhow::Result<CheckoutProbe> {
+        self.probe_checkout_of(DEFAULT_PROJECT, tenant).await
     }
 
     /// Check out a raw connection from a project's (lazily built) pool and
     /// report its state *before* any claim injection. Gate verification only —
     /// not reachable from guests and not a platform work path. It deliberately
     /// observes the guest lifecycle that the conformance gate is proving.
-    pub async fn probe_checkout_of(&self, project: &str) -> anyhow::Result<CheckoutProbe> {
+    pub async fn probe_checkout_of(
+        &self,
+        project: &str,
+        tenant: &str,
+    ) -> anyhow::Result<CheckoutProbe> {
         let pp = self
-            .ensure_pool(AuthorityClass::GuestSql, project)
+            .ensure_pool(AuthorityClass::GuestSql, project, Some(tenant))
             .map_err(|_| anyhow::anyhow!("no pool for project {project:?}"))?;
         let conn = pp.pool.get().await?;
         let row = conn
@@ -1464,6 +1491,7 @@ impl WamnPostgres {
         if let Err(error) = self
             .begin_with_claims(
                 &conn,
+                AuthorityClass::CallableHttp,
                 tenant,
                 schema.as_deref(),
                 None,
@@ -1560,8 +1588,9 @@ impl WamnPostgres {
         &self,
         class: AuthorityClass,
         project: &str,
+        tenant: Option<&str>,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
-        let pp = self.ensure_pool(class, project)?;
+        let pp = self.ensure_pool(class, project, tenant)?;
         let obj = pp.pool.get().await.map_err(|e| {
             tracing::warn!(
                 project,
@@ -1580,11 +1609,18 @@ impl WamnPostgres {
     /// Takes no class parameter BY DESIGN: guest-visible work is
     /// [`AuthorityClass::GuestSql`] and nothing else, so there is no call site
     /// at which a guest checkout could name a platform authority.
+    ///
+    /// It DOES take the tenant, and that is the whole of `wamn-0h0g.22.6.7`:
+    /// after the `wamn-0h0g.22.6` sweep the guest's tenant comes from
+    /// `current_user`, so the credential IS the tenant authority and the
+    /// connection cannot be selected without knowing which tenant it is for.
     pub(super) async fn checkout_guest(
         &self,
         project: &str,
+        tenant: &str,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
-        self.checkout_class(AuthorityClass::GuestSql, project).await
+        self.checkout_class(AuthorityClass::GuestSql, project, Some(tenant))
+            .await
     }
 
     /// Check out a connection reserved for host-owned platform work.
@@ -1593,6 +1629,11 @@ impl WamnPostgres {
     /// distinct authorities (`wamn-0h0g.22.14`). Making the caller name which
     /// one is what stops executor-platform work and callable-HTTP admission
     /// sharing a pooled session.
+    /// `tenant` is deliberately absent: platform credentials are scoped to the
+    /// project-environment, not to a tenant, and the two relations that still
+    /// carry a settable claim (`wamn_run.run_queue`,
+    /// `wamn_run.operator_run_actions`) are exactly the ones the guest cannot
+    /// reach — their claim is host-injected.
     pub(super) async fn checkout_platform(
         &self,
         project: &str,
@@ -1610,7 +1651,7 @@ impl WamnPostgres {
             );
             return Err(PgError::ConnectionUnavailable);
         }
-        self.checkout_class(class, project).await
+        self.checkout_class(class, project, None).await
     }
 
     /// `BEGIN` + claim/limit injection. The claims are injected by ONE fully
@@ -1634,6 +1675,7 @@ impl WamnPostgres {
     pub(super) async fn begin_with_claims(
         &self,
         conn: &Object,
+        class: AuthorityClass,
         tenant: &str,
         schema: Option<&str>,
         runner: Option<&str>,
@@ -1642,9 +1684,13 @@ impl WamnPostgres {
         run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<(), PgError> {
+        // The tenant is still VALIDATED on the guest path even though it is no
+        // longer bound: it selected the credential this connection was checked
+        // out with, so a malformed one is a bug worth failing on.
         validate_claims(tenant, schema, runner, role, user_id)?;
+        let guest = class == AuthorityClass::GuestSql;
         let stmt = conn
-            .prepare_cached(CLAIM_SQL)
+            .prepare_cached(if guest { GUEST_CLAIM_SQL } else { CLAIM_SQL })
             .await
             .map_err(|e| map_pg_error(&e))?;
         // statement_timeout binds as TEXT (a bare-integer string = ms).
@@ -1653,14 +1699,20 @@ impl WamnPostgres {
         // value the compiled policies' COALESCE / NULLIF floors deny on.
         let role = role.unwrap_or_default();
         let user_id = user_id.unwrap_or_default();
-        let params: [&(dyn ToSql + Sync); 6] =
+        let platform_params: [&(dyn ToSql + Sync); 6] =
             [&tenant, &timeout, &schema, &runner, &role, &user_id];
+        let guest_params: [&(dyn ToSql + Sync); 5] = [&timeout, &schema, &runner, &role, &user_id];
+        let params: &[&(dyn ToSql + Sync)] = if guest {
+            &guest_params
+        } else {
+            &platform_params
+        };
         // Pipeline BEGIN ahead of the bound claim statement: both requests are
         // enqueued in `join!` poll order (BEGIN first) and travel in one flight;
         // tokio-postgres processes them FIFO, so the txn is open before the
         // transaction-LOCAL `set_config`s run.
         let (begin, claims) =
-            tokio::join!(conn.batch_execute("BEGIN"), conn.execute(&stmt, &params));
+            tokio::join!(conn.batch_execute("BEGIN"), conn.execute(&stmt, params));
         begin.map_err(|e| map_pg_error(&e))?;
         claims.map_err(|e| map_pg_error(&e))?;
         if let Some(run) = run {
@@ -1720,10 +1772,11 @@ impl WamnPostgres {
         let role = self.role_for(component_id);
         let user_id = self.user_id_for(component_id);
         let run = self.current_run_for(component_id);
-        let (conn, pp) = self.checkout_guest(project).await?;
+        let (conn, pp) = self.checkout_guest(project, &tenant).await?;
         if let Err(e) = self
             .begin_with_claims(
                 &conn,
+                AuthorityClass::GuestSql,
                 &tenant,
                 schema.as_deref(),
                 runner.as_deref(),
@@ -1878,16 +1931,62 @@ mod tests {
     /// database is this test. It asserts the composed credential actually
     /// reaches resolution, and that composing without one resolves NOTHING
     /// rather than falling back.
+    /// A guest credential url for `tenant` in `database`, named the way
+    /// provisioning names one: the login carries the tenant key as its scope
+    /// digest (`wamn-0h0g.22.6.4`).
+    fn guest_url(tenant: &str, database: &str) -> String {
+        format!(
+            "postgres://wamn_app_{}_a:pw@db/{database}",
+            wamn_run_state::app_scope_hash(tenant, database)
+        )
+    }
+
+    /// *** THE REFUSAL THAT MAKES THE CREDENTIAL THE AUTHORITY. ***
+    ///
+    /// After `wamn-0h0g.22.6` a guest's tenant is its LOGIN, so handing back a
+    /// credential minted for another tenant is not a mis-selection, it is a
+    /// cross-tenant read. Resolution refuses instead, and refuses again when the
+    /// caller names no tenant at all.
+    #[test]
+    fn a_guest_credential_resolves_for_its_own_tenant_and_no_other() {
+        let host = WamnPostgres::from_env(Some(guest_url("acme", "host-default")))
+            .expect("compose with a credential");
+        assert!(
+            host.provider
+                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("acme"))
+                .expect("the credential's own tenant resolves")
+                .is_some()
+        );
+        assert!(
+            host.provider
+                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("evil"))
+                .is_err(),
+            "a credential minted for another tenant must be REFUSED, not borrowed"
+        );
+        assert!(
+            host.provider
+                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, None)
+                .is_err(),
+            "guest resolution without a tenant has no authority to check"
+        );
+        // Platform classes are project-environment scoped, so the tenant is not
+        // part of their binding and its absence is not an error.
+        assert!(
+            host.provider
+                .resolve(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
+                .expect("platform resolution needs no tenant")
+                .is_some()
+        );
+    }
+
     #[test]
     fn the_composed_credential_becomes_the_default_project() {
-        let composed = WamnPostgres::from_env(Some(
-            "postgres://wamn_app_host_a:pw@db/host-default".to_string(),
-        ))
-        .expect("compose with a credential");
+        let composed = WamnPostgres::from_env(Some(guest_url("acme", "host-default")))
+            .expect("compose with a credential");
         assert!(
             composed
                 .provider
-                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql)
+                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("acme"))
                 .expect("resolve default")
                 .is_some(),
             "a host composed WITH a credential must resolve the default project; \
@@ -1898,7 +1997,7 @@ mod tests {
         let bare = WamnPostgres::from_env(None).expect("compose without a credential");
         assert!(
             bare.provider
-                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql)
+                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("acme"))
                 .expect("resolve default")
                 .is_none(),
             "composing without a credential must resolve nothing, not reach for \
@@ -1913,9 +2012,10 @@ mod tests {
             // and the pool key is derived from it. A url with no user carries no
             // credential identity and is now refused, so this fixture names one
             // rather than relying on a libpq-style implicit OS user.
-            database_url: Some(
-                "postgres://wamn_app_proof_a@localhost/pool-lifecycle-proof".to_string(),
-            ),
+            database_url: Some(format!(
+                "postgres://wamn_app_{}_a@localhost/pool-lifecycle-proof",
+                wamn_run_state::app_scope_hash("acme", "pool-lifecycle-proof")
+            )),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 100,
@@ -1925,16 +2025,16 @@ mod tests {
         .expect("construct lazy lifecycle pools");
 
         let guest_first = postgres
-            .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT)
+            .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT, Some("acme"))
             .expect("first guest pool");
         let platform_first = postgres
-            .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT)
+            .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT, None)
             .expect("first platform pool");
         let platform_second = postgres
-            .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT)
+            .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT, None)
             .expect("memoized platform pool");
         let guest_second = postgres
-            .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT)
+            .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT, Some("acme"))
             .expect("memoized guest pool");
 
         assert!(Arc::ptr_eq(&guest_first, &guest_second));
@@ -2297,6 +2397,71 @@ mod tests {
             .ok()
     }
 
+    /// The tenant every live guest checkout in this module authenticates for.
+    const LIVE_TENANT: &str = "acme";
+
+    /// Ensure the stable guest ACL role exists, race-tolerantly.
+    ///
+    /// EVERY guest connection is checked by the credential-exactness hook
+    /// (`wamn-0h0g.22.8.4`), which requires the session to be a MEMBER of
+    /// `wamn_app` — so on a fresh cluster, where no cluster-wide role exists
+    /// yet, a guest checkout fails before it reaches anything under test. That
+    /// is the production shape (a generation inherits the stable ACL role), so
+    /// the fixtures reproduce it rather than weaken the hook.
+    const ENSURE_GUEST_ACL_ROLE_SQL: &str = "DO $acl$ BEGIN \
+           BEGIN CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             NOREPLICATION NOBYPASSRLS; \
+           EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; \
+         END $acl$;";
+
+    fn live_database(admin_url: &str) -> String {
+        url::Url::parse(admin_url)
+            .expect("parse the live test url")
+            .path()
+            .trim_start_matches('/')
+            .to_string()
+    }
+
+    /// Rewrite a disposable-database URL onto a PROPERLY NAMED guest generation,
+    /// creating the login if it is missing.
+    ///
+    /// `wamn-0h0g.22.6.7` binds a guest credential to its tenant: resolution
+    /// verifies that the login carries `app_scope_hash(tenant, database)`, so a
+    /// URL naming an arbitrary user no longer resolves for the guest class.
+    /// That is the point — a shared login is exactly what item 2 retires — and
+    /// it means a live guest test has to authenticate as a real generation.
+    async fn live_guest_url(admin_url: &str, tenant: &str) -> String {
+        let mut url = url::Url::parse(admin_url).expect("parse the live test url");
+        let database = live_database(admin_url);
+        let role = format!(
+            "wamn_app_{}_a",
+            wamn_run_state::app_scope_hash(tenant, &database)
+        );
+        let admin = connect_raw(admin_url).await;
+        admin
+            .batch_execute(&format!(
+                // The tests in this module run in PARALLEL against one cluster
+                // and roles are cluster-wide, so IF NOT EXISTS races: two
+                // sessions both see the role absent and both create it. The
+                // exception guard is what makes the create idempotent under
+                // concurrency, not the existence check.
+                "{ENSURE_GUEST_ACL_ROLE_SQL} \
+                 DO $$ BEGIN \
+                   BEGIN \
+                     CREATE ROLE \"{role}\" LOGIN PASSWORD 'live-guest'; \
+                   EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; \
+                   END; \
+                 END $$; \
+                 GRANT wamn_app TO \"{role}\";"
+            ))
+            .await
+            .expect("ensure the live guest generation");
+        url.set_username(&role).expect("set the guest login");
+        url.set_password(Some("live-guest"))
+            .expect("set the password");
+        url.to_string()
+    }
+
     async fn connect_raw(url: &str) -> tokio_postgres::Client {
         let (client, conn) = tokio_postgres::connect(url, NoTls).await.unwrap();
         tokio::spawn(async move {
@@ -2448,15 +2613,18 @@ mod tests {
             .unwrap();
     }
 
-    // R2/R16 — the REAL plugin path: begin_with_claims injects all six claims via
-    // the bound statement, they are visible in-txn, and revert after the txn.
+    // R2/R16 — the REAL plugin path: begin_with_claims injects the guest claim
+    // set via the bound statement, they are visible in-txn, and revert after the
+    // txn. `app.tenant` is NOT among them (`wamn-0h0g.22.6.7`): a guest's tenant
+    // is its LOGIN, and injecting a GUC nothing it can read consults would be a
+    // second, settable statement about an authority derived elsewhere.
     #[tokio::test]
-    async fn live_begin_with_claims_sets_all_six_and_reverts() {
-        let Some(url) = test_pg_url() else {
+    async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
+        let Some(admin_url) = test_pg_url() else {
             return;
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(url),
+            database_url: Some(live_guest_url(&admin_url, LIVE_TENANT).await),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -2465,9 +2633,13 @@ mod tests {
         })
         .unwrap();
         let user_id = "11111111-1111-4111-8111-111111111111";
-        let (conn, _pp) = pg.checkout_guest(DEFAULT_PROJECT).await.unwrap();
+        let (conn, _pp) = pg
+            .checkout_guest(DEFAULT_PROJECT, LIVE_TENANT)
+            .await
+            .unwrap();
         pg.begin_with_claims(
             &conn,
+            AuthorityClass::GuestSql,
             "acme",
             Some("public"),
             Some("owner-1"),
@@ -2496,7 +2668,29 @@ mod tests {
         let runner: Option<String> = row.get(3);
         let role: Option<String> = row.get(4);
         let user: Option<String> = row.get(5);
-        assert_eq!(tenant.as_deref(), Some("acme"));
+        // THE DELETION, ASSERTED — and NULL is the sharper result. A custom GUC
+        // reads back as the EMPTY STRING once it has been set and the SET LOCAL
+        // scope ended; it reads NULL only if it was never set in this session at
+        // all. So `None` here says more than "the claim was cleared": it says
+        // the guest transaction never touched `app.tenant`.
+        assert_eq!(
+            tenant, None,
+            "the guest claim set must NOT inject app.tenant"
+        );
+        // …and the session it runs on authenticates as the tenant's own
+        // generation, which is where its tenant actually comes from.
+        let who: String = conn
+            .query_one("SELECT current_user::text", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert!(
+            who.contains(&wamn_run_state::app_scope_hash(
+                LIVE_TENANT,
+                &live_database(&admin_url)
+            )),
+            "the guest session must authenticate as {LIVE_TENANT}'s generation, got {who:?}"
+        );
         assert_eq!(timeout.as_deref(), Some("4321ms"));
         assert_eq!(sp.as_deref(), Some("public"));
         assert_eq!(runner.as_deref(), Some("owner-1"));
@@ -2508,10 +2702,13 @@ mod tests {
         // session-level leak.
         conn.batch_execute("COMMIT").await.unwrap();
         let after: Option<String> = conn
-            .query_one("SELECT current_setting('app.tenant', true)", &[])
+            .query_one("SELECT current_setting('app.role', true)", &[])
             .await
             .unwrap()
             .get(0);
+        // `app.role` IS injected by the guest set, so after the commit it reads
+        // back as the empty string — the reset value, which is what proves the
+        // claim was transaction-LOCAL rather than a session-level leak.
         assert_eq!(after.as_deref(), Some(""));
     }
 
@@ -2524,6 +2721,16 @@ mod tests {
         }
     }
 
+    /// SCAFFOLDING FLOOR, NOT THE PRODUCTION ONE. Production keys the permissive
+    /// floor on `current_user` through `wamn_authority.tenant_key`
+    /// (`wamn-0h0g.22.6`), which needs the authority derivations installed — and
+    /// those are built by the provisioner, which the shipped runtime
+    /// deliberately does not link. The floor is not this fixture's subject: the
+    /// RESTRICTIVE per-role and per-user layer is, and that is a different claim
+    /// class item 2 leaves alone. The production floor is proven live by
+    /// `crates/control/provision/tests/deploy_sql_authority.rs` and
+    /// `crates/schema/compiler/tests/ddl.rs`.
+    ///
     /// The 3.2 tenant floor plus the 3.5 row-ownership rule in the shape
     /// `crates/schema/compiler/src/rls/compile.rs` emits (pinned by
     /// `crates/schema/compiler/tests/rls.rs`), over a table the probe role does
@@ -2532,13 +2739,15 @@ mod tests {
         format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
              DROP ROLE IF EXISTS {probe}; \
+             {ENSURE_GUEST_ACL_ROLE_SQL} \
              CREATE ROLE {probe} LOGIN PASSWORD '{probe}' NOSUPERUSER NOBYPASSRLS; \
+             GRANT wamn_app TO {probe}; \
              CREATE SCHEMA {schema}; \
              CREATE TABLE {schema}.dispositions ( \
                  tenant_id text NOT NULL, id int NOT NULL, inspector_id uuid NOT NULL); \
              ALTER TABLE {schema}.dispositions ENABLE ROW LEVEL SECURITY; \
              CREATE POLICY dispositions_tenant ON {schema}.dispositions \
-                 USING (tenant_id = NULLIF(current_setting('app.tenant', true), '')); \
+                 USING (tenant_id = '{tenant}'); \
              CREATE POLICY \"dispositions_owner_0\" ON {schema}.dispositions AS RESTRICTIVE \
                  FOR ALL \
                  USING (COALESCE(current_setting('app.role', true), '') IN ('supervisor', 'admin') \
@@ -2570,7 +2779,17 @@ mod tests {
         };
         let suffix = std::process::id();
         let schema = format!("wamn_rls_claim_{suffix}");
-        let probe = format!("wamn_rls_probe_{suffix}");
+        // The probe login is NAMED AS A GUEST GENERATION for this test's tenant:
+        // guest credential resolution verifies that the login carries
+        // `app_scope_hash(tenant, database)` (`wamn-0h0g.22.6.7`), so a probe
+        // with an arbitrary name would be refused before the policy under test
+        // ever ran. The two tenants differ per test, so the derived logins do
+        // too and the tests stay parallel-safe.
+        let probe = format!(
+            "wamn_app_{}_a",
+            wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        );
+        let _ = suffix;
         let admin = connect_raw(&admin_url).await;
         admin
             .batch_execute(&rls_fixture_sql(&schema, &probe, TENANT, U1, U2))
@@ -2652,7 +2871,17 @@ mod tests {
         };
         let suffix = std::process::id();
         let schema = format!("wamn_rls_override_{suffix}");
-        let probe = format!("wamn_rls_overrider_{suffix}");
+        // The probe login is NAMED AS A GUEST GENERATION for this test's tenant:
+        // guest credential resolution verifies that the login carries
+        // `app_scope_hash(tenant, database)` (`wamn-0h0g.22.6.7`), so a probe
+        // with an arbitrary name would be refused before the policy under test
+        // ever ran. The two tenants differ per test, so the derived logins do
+        // too and the tests stay parallel-safe.
+        let probe = format!(
+            "wamn_app_{}_a",
+            wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        );
+        let _ = suffix;
         let admin = connect_raw(&admin_url).await;
         admin
             .batch_execute(&rls_fixture_sql(&schema, &probe, TENANT, U1, U2))
@@ -2677,9 +2906,10 @@ mod tests {
         // the caller's own row — and a bare `SET LOCAL` on that same transaction
         // clears the exempt-role gate and reveals BOTH. So the escalation the
         // guard refuses below is real, not hypothetical.
-        let (conn, _pp) = pg.checkout_guest(DEFAULT_PROJECT).await.unwrap();
+        let (conn, _pp) = pg.checkout_guest(DEFAULT_PROJECT, TENANT).await.unwrap();
         pg.begin_with_claims(
             &conn,
+            AuthorityClass::GuestSql,
             TENANT,
             Some(&schema),
             None,
@@ -2866,40 +3096,60 @@ mod tests {
         );
     }
 
-    /// The 3.2 tenant floor over rows belonging to TWO tenants, so a claim that
-    /// resolved to the wrong tenant returns the wrong rows instead of none.
-    fn two_tenant_rls_fixture_sql(schema: &str, probe: &str, a: &str, b: &str) -> String {
+    /// The tenant floor over rows belonging to TWO tenants, keyed on
+    /// `current_user` — the shape `wamn-0h0g.22.6` put in production.
+    ///
+    /// The literal role names stand in for `wamn_authority.tenant_key`, which
+    /// this crate cannot install (the derivations are built by the provisioner,
+    /// which the shipped runtime deliberately does not link). What the fixture
+    /// reproduces faithfully is the thing under test: the row filter reads the
+    /// CONNECTED ROLE, so a session cannot talk its way into another tenant's
+    /// rows — there is no claim to rewrite.
+    fn two_tenant_rls_fixture_sql(
+        schema: &str,
+        role_a: &str,
+        role_b: &str,
+        a: &str,
+        b: &str,
+    ) -> String {
         format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
-             DROP ROLE IF EXISTS {probe}; \
-             CREATE ROLE {probe} LOGIN PASSWORD '{probe}' NOSUPERUSER NOBYPASSRLS; \
+             DO $reset$ BEGIN \
+               IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role_a}') THEN \
+                 DROP OWNED BY {role_a}; DROP ROLE {role_a}; END IF; \
+               IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role_b}') THEN \
+                 DROP OWNED BY {role_b}; DROP ROLE {role_b}; END IF; \
+             END $reset$; \
+             {ENSURE_GUEST_ACL_ROLE_SQL} \
+             CREATE ROLE {role_a} LOGIN PASSWORD 'live-guest' NOSUPERUSER NOBYPASSRLS; \
+             CREATE ROLE {role_b} LOGIN PASSWORD 'live-guest' NOSUPERUSER NOBYPASSRLS; \
+             GRANT wamn_app TO {role_a}, {role_b}; \
              CREATE SCHEMA {schema}; \
              CREATE TABLE {schema}.dispositions (tenant_id text NOT NULL, id int NOT NULL); \
              ALTER TABLE {schema}.dispositions ENABLE ROW LEVEL SECURITY; \
              CREATE POLICY dispositions_tenant ON {schema}.dispositions \
-                 USING (tenant_id = NULLIF(current_setting('app.tenant', true), '')); \
+                 USING ((tenant_id = '{a}' AND current_user = '{role_a}') \
+                     OR (tenant_id = '{b}' AND current_user = '{role_b}')); \
              INSERT INTO {schema}.dispositions \
                  VALUES ('{a}', 1), ('{a}', 2), ('{b}', 3); \
-             GRANT USAGE ON SCHEMA {schema} TO {probe}; \
-             GRANT SELECT ON {schema}.dispositions TO {probe};"
+             GRANT USAGE ON SCHEMA {schema} TO {role_a}, {role_b}; \
+             GRANT SELECT ON {schema}.dispositions TO {role_a}, {role_b};"
         )
     }
 
-    /// wamn-0h0g.17.7 — two tenants bound through the acquisition seam,
-    /// INTERLEAVED, each seeing only its own rows under real RLS.
+    /// *** THE ADVERSARIAL ARM, RE-EXPRESSED ON THE NEW MECHANISM. ***
     ///
-    /// [`WamnPostgres::bind_session_claims`] is exactly what the router driver
-    /// calls on the instance serving one invocation, and `app.tenant` is exactly
-    /// what the tenant policy gates on, so this is the row-level half of the
-    /// seam's acceptance: two such claim sets admit two disjoint row sets on a
-    /// server that cannot be talked out of it — the probe role is NOSUPERUSER
-    /// NOBYPASSRLS.
+    /// This test used to prove that two interleaved CLAIM sets each saw only
+    /// their own rows. That subject is retired: after `wamn-0h0g.22.6` a guest's
+    /// tenant is its LOGIN, and under the owner ruling on `wamn-0h0g.22.6.7` a
+    /// host holds ONE guest credential per project-environment. So the property
+    /// worth proving is stronger and simpler — a second tenant is REFUSED rather
+    /// than quietly served the credential the host does hold.
     ///
-    /// The interleaving is what makes it adversarial: A reads, B reads, A reads
-    /// again. An implementation holding one claim per component rather than one
-    /// per acquisition passes the first two reads and fails the third.
+    /// The logins are NOSUPERUSER NOBYPASSRLS, so the server cannot be talked
+    /// out of the floor either.
     #[tokio::test]
-    async fn live_interleaved_bound_scopes_each_see_only_their_own_rows() {
+    async fn live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_rows() {
         const TENANT_A: &str = "seam-live-a";
         const TENANT_B: &str = "seam-live-b";
 
@@ -2908,17 +3158,31 @@ mod tests {
         };
         let suffix = std::process::id();
         let schema = format!("wamn_seam_{suffix}");
-        let probe = format!("wamn_seam_probe_{suffix}");
+        let database = live_database(&admin_url);
+        // Named exactly as provisioning names a guest generation, so the
+        // credential the host resolves is bound to TENANT_A by its own digest.
+        let role_a = format!(
+            "wamn_app_{}_a",
+            wamn_run_state::app_scope_hash(TENANT_A, &database)
+        );
+        let role_b = format!(
+            "wamn_app_{}_a",
+            wamn_run_state::app_scope_hash(TENANT_B, &database)
+        );
         let admin = connect_raw(&admin_url).await;
         admin
             .batch_execute(&two_tenant_rls_fixture_sql(
-                &schema, &probe, TENANT_A, TENANT_B,
+                &schema, &role_a, &role_b, TENANT_A, TENANT_B,
             ))
             .await
             .expect("seed the two-tenant RLS fixture as the superuser owner");
 
+        let mut url = url::Url::parse(&admin_url).expect("parse the live test url");
+        url.set_username(&role_a).expect("set A's login");
+        url.set_password(Some("live-guest"))
+            .expect("set A's password");
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(database_url_for_role(&admin_url, &probe, &probe)),
+            database_url: Some(url.to_string()),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -2927,8 +3191,6 @@ mod tests {
         })
         .unwrap();
 
-        // Two warm instances of ONE component digest, acquired by two tenants.
-        // The scopes name the INSTANCES; the tenants arrive with the acquisition.
         let scope_a = "warm-instance-0";
         let scope_b = "warm-instance-1";
         let claims = |tenant: &str| SessionClaims {
@@ -2941,69 +3203,70 @@ mod tests {
         pg.bind_session_claims(scope_b, &claims(TENANT_B))
             .expect("tenant B's acquisition binds");
 
-        // CONTROL: the table is reachable on this path at all, so a zero below is
-        // a policy denying rather than a broken fixture or search_path.
+        // CONTROL: the table is reachable on this path at all, so the refusal
+        // below is a refusal and not a broken fixture or search_path.
         assert_eq!(
-            visible_rows(&pg, scope_a, "SELECT count(*) FROM dispositions").await,
-            1,
-            "control: the probe role must reach the fixture table"
+            visible_rows(&pg, scope_a, "SELECT id FROM dispositions ORDER BY id").await,
+            2,
+            "A sees exactly its own two rows through its own login"
+        );
+
+        // B's acquisition is legitimate; the HOST simply holds no credential for
+        // it. That must refuse. Serving A's credential would hand B two rows
+        // belonging to another tenant, which is the failure this design exists
+        // to make impossible.
+        let refused = pg
+            .one_shot(scope_b, "SELECT id FROM dispositions", &[], true)
+            .await
+            .err()
+            .expect("a tenant this host holds no credential for cannot query");
+        assert!(
+            matches!(&refused, PgError::ConnectionUnavailable),
+            "a second tenant must be REFUSED at credential resolution, not served \
+             the first tenant's connection: {refused:?}"
         );
 
         assert_eq!(
             visible_rows(&pg, scope_a, "SELECT id FROM dispositions ORDER BY id").await,
             2,
-            "A sees exactly its own two rows"
-        );
-        assert_eq!(
-            visible_rows(&pg, scope_b, "SELECT id FROM dispositions ORDER BY id").await,
-            1,
-            "B sees exactly its own one row, never A's"
-        );
-        assert_eq!(
-            visible_rows(&pg, scope_a, "SELECT id FROM dispositions ORDER BY id").await,
-            2,
-            "A's rows are unchanged by B's acquisition of the same digest's pool"
+            "A's rows are unchanged by B's refused acquisition"
         );
 
-        // Ending A's checkout revokes A's identity and nothing else. The refusal
-        // is matched on the NO-TENANT code specifically: a revoke that cleared
-        // only the search_path would also make this query fail, for a reason that
-        // has nothing to do with isolation.
+        // Ending A's checkout revokes A's identity and nothing else. Matched on
+        // the NO-TENANT code specifically: a revoke that cleared only the
+        // search_path would also fail this query, for an unrelated reason.
         pg.revoke_session_claims(scope_a);
         assert_eq!(pg.session_claims(scope_a), None);
-        let refused = pg
+        let unbound = pg
             .one_shot(scope_a, "SELECT id FROM dispositions", &[], true)
             .await
             .err()
             .expect("an unbound claim scope cannot query at all");
         assert!(
-            matches!(&refused, PgError::QueryError((code, _)) if code == "WAMN0"),
+            matches!(&unbound, PgError::QueryError((code, _)) if code == "WAMN0"),
             "an instance whose checkout ended must resolve NO tenant, not merely \
-             fail for some other reason: {refused:?}"
-        );
-        assert_eq!(
-            visible_rows(&pg, scope_b, "SELECT id FROM dispositions ORDER BY id").await,
-            1,
-            "revoking A must not disturb B's live identity"
+             fail for some other reason: {unbound:?}"
         );
 
         admin
             .batch_execute(&format!(
-                "DROP SCHEMA {schema} CASCADE; DROP OWNED BY {probe}; DROP ROLE {probe};"
+                "DROP SCHEMA {schema} CASCADE; \
+                 DROP OWNED BY {role_a}; DROP ROLE {role_a}; \
+                 DROP OWNED BY {role_b}; DROP ROLE {role_b};"
             ))
             .await
-            .expect("drop the two-tenant RLS fixture");
+            .expect("drop the fixture");
     }
 
     // R18 — the post_create hook runs on connect; a successful checkout from the
     // pool proves the assertion passed on this server (stock PG18 = on).
     #[tokio::test]
     async fn live_connect_asserts_standard_conforming_strings() {
-        let Some(url) = test_pg_url() else {
+        let Some(admin_url) = test_pg_url() else {
             return;
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(url),
+            database_url: Some(live_guest_url(&admin_url, LIVE_TENANT).await),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,
@@ -3014,7 +3277,7 @@ mod tests {
         // The checkout builds the pool (with the R18 hook) and creates a physical
         // connection; the hook must pass for this to be Ok.
         let (conn, _pp) = pg
-            .checkout_guest(DEFAULT_PROJECT)
+            .checkout_guest(DEFAULT_PROJECT, LIVE_TENANT)
             .await
             .expect("checkout ok (scs=on)");
         let scs: String = conn
@@ -3028,8 +3291,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires WAMN_POOL_LIFECYCLE_PG_URL for a disposable PostgreSQL database"]
     async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving() {
-        let url = std::env::var("WAMN_POOL_LIFECYCLE_PG_URL")
+        let admin_url = std::env::var("WAMN_POOL_LIFECYCLE_PG_URL")
             .expect("set WAMN_POOL_LIFECYCLE_PG_URL to a disposable PostgreSQL database");
+        let url = live_guest_url(&admin_url, LIVE_TENANT).await;
         let postgres = WamnPostgres::new(WamnPostgresConfig {
             database_url: Some(url),
             guest_pool_max_size: 1,
@@ -3041,7 +3305,7 @@ mod tests {
         .expect("construct size-one lifecycle pools");
 
         let (guest, _) = postgres
-            .checkout_guest(DEFAULT_PROJECT)
+            .checkout_guest(DEFAULT_PROJECT, LIVE_TENANT)
             .await
             .expect("hold the only guest connection");
         let guest_row = guest
@@ -3083,7 +3347,7 @@ mod tests {
         drop(guest);
 
         let (guest_again, _) = postgres
-            .checkout_guest(DEFAULT_PROJECT)
+            .checkout_guest(DEFAULT_PROJECT, LIVE_TENANT)
             .await
             .expect("reacquire guest lifecycle");
         let guest_again_row = guest_again
@@ -3158,8 +3422,14 @@ mod tests {
         // `SHOW standard_conforming_strings` on the new physical connection and
         // fails the create; checkout maps that pool error to the WIT
         // `connection-unavailable` variant the guest sees.
+        // The url names a REAL guest generation, so resolution succeeds and the
+        // refusal below can only come from the hook. A url with an arbitrary
+        // user would now be refused at RESOLUTION (`wamn-0h0g.22.6.7`) — the same
+        // `connection-unavailable` variant for a different reason, which is
+        // exactly the false positive this test's second half exists to rule out.
+        let guest_url = live_guest_url(&url, LIVE_TENANT).await;
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(url.clone()),
+            database_url: Some(guest_url),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,
@@ -3168,7 +3438,7 @@ mod tests {
         })
         .unwrap();
         // (`matches!`, not `expect_err`, so the Ok type need not be `Debug`.)
-        let result = pg.checkout_guest(DEFAULT_PROJECT).await;
+        let result = pg.checkout_guest(DEFAULT_PROJECT, LIVE_TENANT).await;
         assert!(
             matches!(result, Err(PgError::ConnectionUnavailable)),
             "scs=off must fail CLOSED as the guest-visible connection-unavailable \

@@ -1365,7 +1365,9 @@ async fn build_materializer(
     let pg = Arc::new(WamnPostgres::new(pg_config)?);
     pg.set_tenant(&resources.gate_id, &resources.tenant)?;
     pg.set_schema(&resources.gate_id, "wamn_run")?;
-    pg.probe_checkout().await?;
+    // The guest lifecycle now selects the credential BY TENANT
+    // (wamn-0h0g.22.6.7), so the probe names the same tenant the gate binds.
+    pg.probe_checkout(&resources.tenant).await?;
     // The production guest's durable-consumer bind is release-gated
     // (wamn-0h0g.15.95): a release-less host refuses the run-owned durable, so
     // no CDC event would ever be decided.
@@ -2797,7 +2799,6 @@ mod tests {
     /// Spelled with an escaped newline, so the literal cannot match the
     /// two-line attribute it names and the split can never find itself. Same
     /// marker `tests/conformance/src/runtime_inventory.rs` slices files at.
-
 
     fn args() -> CausationE2eArgs {
         CausationE2eArgs {

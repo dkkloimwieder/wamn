@@ -44,6 +44,9 @@ pub mod durability;
 /// Shared strict credential document for the private native effect writer.
 #[cfg(feature = "effect-writer-credential")]
 pub mod effect_writer_credential;
+/// The framed scope digest and the guest-SQL tenant key.
+#[cfg(feature = "tenant-key")]
+pub mod tenant_scope;
 // Host-only effect-ledger statements stay out of the default guest-safe graph.
 // The attempt-ledger adapter remains unmounted in production. See the module doc.
 #[cfg(feature = "native")]
@@ -89,3 +92,5 @@ pub use status::{
     EffectUncertainFailure, FailKind, InvalidEffectUncertainRunId, NodeErrorKind, NodeRunStatus,
     RunStatus,
 };
+#[cfg(feature = "tenant-key")]
+pub use tenant_scope::app_scope_hash;

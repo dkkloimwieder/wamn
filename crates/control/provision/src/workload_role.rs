@@ -4,8 +4,8 @@ use std::fmt;
 
 use sha2::{Digest as _, Sha256};
 use wamn_run_state::{
-    AuthorityClass, CredentialGeneration, EFFECT_WRITER_ROLE, effect_writer_generation_role,
-    effect_writer_scope_hash,
+    AuthorityClass, CredentialGeneration, EFFECT_WRITER_ROLE, app_scope_hash,
+    effect_writer_generation_role, effect_writer_scope_hash,
 };
 
 use crate::{APP_ROLE, DISPATCH_READER_ROLE};
@@ -258,11 +258,22 @@ pub fn workload_role_scope_hash(
             actual,
         });
     }
+    // Two families delegate to `wamn-run-state`, which is the leaf the RUNTIME
+    // can reach: the effect writer because its credential lives there, and the
+    // App family because `wamn-0h0g.22.6.7` makes the runtime check that a
+    // resolved guest credential belongs to the tenant it is about to serve.
+    // Delegation, not duplication — there is still ONE definition of each.
     if family == WorkloadRoleFamily::EffectWriter {
         let WorkloadRoleScope::Tenant { tenant, database } = scope else {
             unreachable!("scope kind was checked above")
         };
         return Ok(effect_writer_scope_hash(tenant, database));
+    }
+    if family == WorkloadRoleFamily::App {
+        let WorkloadRoleScope::Tenant { tenant, database } = scope else {
+            unreachable!("scope kind was checked above")
+        };
+        return Ok(app_scope_hash(tenant, database));
     }
 
     let mut preimage = Vec::new();

@@ -14,7 +14,7 @@ use deadpool_postgres::{Hook, HookError, Object, Pool};
 use tokio::sync::mpsc;
 use tokio_postgres::{AsyncMessage, Client, Config, Error, NoTls};
 
-use wamn_run_state::AuthorityClass;
+use wamn_run_state::{AuthorityClass, app_scope_hash};
 
 use super::DEFAULT_PROJECT;
 use super::credential_exactness::{
@@ -219,10 +219,17 @@ pub trait CredentialProvider: Send + Sync {
     /// from a guest (`wamn-0h0g.22.8`), and it is part of the resolution rather
     /// than a post-hoc filter so a provider can hand different authorities
     /// different credentials for the same project.
+    ///
+    /// `tenant` is `Some` for guest-SQL and `None` for host-owned platform
+    /// work. After `wamn-0h0g.22.6` the guest's tenant comes from
+    /// `current_user`, so for that class THE CREDENTIAL IS THE TENANT
+    /// AUTHORITY: resolution must refuse rather than hand back a credential
+    /// minted for someone else.
     fn resolve(
         &self,
         project: &str,
         class: AuthorityClass,
+        tenant: Option<&str>,
     ) -> anyhow::Result<Option<ProjectConfig>>;
 }
 
@@ -312,16 +319,42 @@ impl StaticCredentialProvider {
 }
 
 impl CredentialProvider for StaticCredentialProvider {
+    /// One credential per project-environment (`wamn-0h0g.22.6.7`, owner
+    /// ruling (a)), so the class does not select here — it travels through the
+    /// seam because it is part of the POOL KEY: two authorities must never
+    /// share a pooled session even when they resolve to the same URL.
+    ///
+    /// FOR GUEST SQL THE TENANT BINDING IS VERIFIED, NOT CONFIGURED. The
+    /// credential's login role carries the tenant key as its scope digest, and
+    /// the same key is what every governed predicate computes — so the binding
+    /// is proven from the credential itself rather than declared beside it,
+    /// and a credential minted for another tenant is REFUSED instead of
+    /// silently borrowed.
     fn resolve(
         &self,
         project: &str,
-        _class: AuthorityClass,
+        class: AuthorityClass,
+        tenant: Option<&str>,
     ) -> anyhow::Result<Option<ProjectConfig>> {
-        // One credential per project in v0, so the class does not select here.
-        // It still travels through the seam because it is part of the POOL KEY:
-        // two authorities must never share a pooled session even when they
-        // resolve to the same URL.
-        Ok(self.projects.get(project).cloned())
+        let Some(cfg) = self.projects.get(project).cloned() else {
+            return Ok(None);
+        };
+        if class == AuthorityClass::GuestSql {
+            let tenant = tenant.context(
+                "guest-SQL resolution requires the tenant: after wamn-0h0g.22.6 the \
+                 credential IS the tenant authority",
+            )?;
+            let database = credential_database(&cfg.database_url)?;
+            let role = credential_generation_role(&cfg.database_url)?;
+            let key = app_scope_hash(tenant, &database);
+            anyhow::ensure!(
+                role.contains(&key),
+                "the credential for project {project:?} authenticates as {role:?}, which \
+                 does not carry the tenant key for the requested tenant; refusing rather \
+                 than reading another tenant's rows"
+            );
+        }
+        Ok(Some(cfg))
     }
 }
 
@@ -339,6 +372,7 @@ impl CredentialProvider for K8sSecretProvider {
         &self,
         _project: &str,
         _class: AuthorityClass,
+        _tenant: Option<&str>,
     ) -> anyhow::Result<Option<ProjectConfig>> {
         anyhow::bail!(
             "K8sSecretProvider (namespace {:?}) is not implemented yet — see wamn-5x0.1 [2.2b]; use StaticCredentialProvider",
@@ -404,6 +438,23 @@ pub(super) fn credential_generation_role(database_url: &str) -> anyhow::Result<S
         .get_user()
         .context("the project database url names no user, so it carries no credential identity")?;
     Ok(user.to_string())
+}
+
+/// The database a resolved URL names.
+///
+/// Read from the URL rather than configured beside it for the same reason the
+/// generation role is: a declared database could disagree with the one that
+/// actually connects, and the tenant key is computed over BOTH the tenant and
+/// the database — so a disagreement would compute a key for a database the
+/// session is not in.
+pub(super) fn credential_database(database_url: &str) -> anyhow::Result<String> {
+    let config: Config = database_url
+        .parse()
+        .context("parse the project database url")?;
+    let database = config
+        .get_dbname()
+        .context("the project database url names no database")?;
+    Ok(database.to_string())
 }
 
 /// A project's live connection pool plus its host-enforced policy (statement
@@ -607,6 +658,12 @@ mod tests {
     /// The acceptance-forbidden silent fallback. An unprovisioned project used
     /// to be indistinguishable from a provisioned one, because it quietly
     /// borrowed whichever config was configured as the default.
+    ///
+    /// Resolved as a PLATFORM class deliberately: the subject here is the
+    /// project MAP, and guest resolution additionally verifies the credential's
+    /// tenant binding (`wamn-0h0g.22.6.7`), which has its own test. Mixing the
+    /// two would make a project-selection failure and a tenant-binding failure
+    /// indistinguishable.
     #[test]
     fn an_unlisted_project_does_not_borrow_another_projects_credential() {
         let mut projects = HashMap::new();
@@ -619,14 +676,14 @@ mod tests {
 
         assert!(
             provider
-                .resolve("billing", AuthorityClass::GuestSql)
+                .resolve("billing", AuthorityClass::ExecutorPlatform, None)
                 .expect("resolve billing")
                 .is_some(),
             "a listed project must still resolve"
         );
         assert!(
             provider
-                .resolve("not-provisioned", AuthorityClass::GuestSql)
+                .resolve("not-provisioned", AuthorityClass::ExecutorPlatform, None)
                 .expect("resolve unlisted")
                 .is_none(),
             "an unlisted project must FAIL, not fall back onto the default              project's credential"
@@ -641,14 +698,14 @@ mod tests {
             StaticCredentialProvider::default_only(Some(config("postgres://wamn_app_d_a:pw@db/d")));
         assert!(
             provider
-                .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql)
+                .resolve(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
                 .expect("resolve default")
                 .is_some(),
             "the default project must resolve, or single-DB deployments break"
         );
         assert!(
             provider
-                .resolve("somethingelse", AuthorityClass::GuestSql)
+                .resolve("somethingelse", AuthorityClass::ExecutorPlatform, None)
                 .expect("resolve other")
                 .is_none(),
             "registering the default must not resurrect the catch-all"

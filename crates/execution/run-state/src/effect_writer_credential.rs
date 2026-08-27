@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use url::Url;
 
+use crate::tenant_scope::frame;
+
 /// Frozen document identity for the private effect-writer credential.
 pub const EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION: &str = "0.2";
 /// Only key carried by the fixed-mount effect-writer Secret.
@@ -357,12 +359,6 @@ fn is_lower_hex(value: &str) -> bool {
     value
         .bytes()
         .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-}
-
-fn frame(output: &mut Vec<u8>, value: &[u8]) {
-    let length = u64::try_from(value.len()).expect("identity field length fits u64");
-    output.extend_from_slice(&length.to_be_bytes());
-    output.extend_from_slice(value);
 }
 
 #[cfg(test)]
