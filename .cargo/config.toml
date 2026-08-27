@@ -4,3 +4,20 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [build]
 jobs = 4
+# sccache caches DEPENDENCY compilations across target dirs. That is the win
+# here: every lane worktree keeps its own `target/` (sharing one is forbidden --
+# CARGO_MANIFEST_DIR validation and fingerprint thrash), so without this each
+# lane rebuilds the whole dependency graph from scratch.
+#
+# Incremental compilation is deliberately LEFT ON. Cargo only passes
+# `-C incremental` for workspace members, and sccache treats those as
+# non-cacheable -- so workspace crates keep incremental rebuilds while
+# dependencies still come from the cache. Disabling it would trade the local
+# edit-compile loop for nothing.
+rustc-wrapper = "sccache"
+
+[env]
+# 10 GiB (the sccache default) is too small for this tree: native + wasm32-wasip2
+# targets across three workspaces and several feature sets. Takes effect only
+# after `sccache --stop-server`, because the running server caches its config.
+SCCACHE_CACHE_SIZE = "50G"
