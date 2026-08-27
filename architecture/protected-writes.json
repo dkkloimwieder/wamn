@@ -490,7 +490,7 @@
       "guards": [
         "constraint:authoring_command_audit_audit_id_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, audit_id)",
         "constraint:authoring_command_audit_command_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_id <> ''::text)",
-        "constraint:authoring_command_audit_command_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_kind = ANY (ARRAY['test-set-run'::text, 'publish'::text]))",
+        "constraint:authoring_command_audit_command_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_kind = ANY (ARRAY['gate'::text, 'publish'::text]))",
         "constraint:authoring_command_audit_effective_role_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (effective_role = ANY (ARRAY['project-author'::text, 'project-admin'::text]))",
         "constraint:authoring_command_audit_environment_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (environment <> ''::text)",
         "constraint:authoring_command_audit_org_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (org <> ''::text)",
