@@ -689,7 +689,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `services/ctl/tests/guest_generation_live.rs` | `WAMN_GUEST_GENERATION_PG18_URL` | `cargo test -p wamn-ctl --features ops --test guest_generation_live -- --ignored --nocapture` |
 | `services/ctl/tests/management_admitter_generation_live.rs` | `WAMN_MANAGEMENT_ADMITTER_PG18_URL` | `cargo test -p wamn-ctl --test management_admitter_generation_live -- --ignored --nocapture` |
 | `services/ctl/tests/terminalize_effect_uncertain_live.rs` | `WAMN_OPERATOR_TERMINALIZE_PG18_URL` | `cargo test -p wamn-ctl --test terminalize_effect_uncertain_live` |
-| `services/ctl/tests/release_manifest_mint_live.rs` | `WAMN_RELEASE_MANIFEST_MINT_PG_URL` | `cargo test -p wamn-ctl --test release_manifest_mint_live -- --ignored` |
+| `services/ctl/tests/release_manifest_mint_live.rs` | `WAMN_RELEASE_MANIFEST_MINT_PG_URL` | `cargo test -p wamn-ctl --test release_manifest_mint_live -- --include-ignored` |
 | `services/ctl/tests/protected_relations_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --features ops --test protected_relations_live -- --ignored` |
 | `services/ctl/tests/catalog_confinement_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test catalog_confinement_live` |
 | `services/ctl/tests/author_wiring_gate_report_live.rs` | `WAMN_AUTHOR_WIRING_PROJECT_PG_URL` **and** `WAMN_AUTHOR_WIRING_CONTROL_PG_URL` | `cargo test -p wamn-ctl --test author_wiring_gate_report_live -- --ignored` |
@@ -698,7 +698,76 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `crates/execution/run-state/tests/run_state_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --test run_state_live -- --include-ignored` |
 | `services/dispatcher/tests/read_authority.rs` | `WAMN_PROVISION_PG_URL` | `cargo test -p wamn-dispatcher --test read_authority` |
 | `crates/control/provision/tests/control_portable_store.rs` | `WAMN_CONTROL_PORTABLE_PG_URL` | `cargo test -p wamn-control-provision --test control_portable_store -- --include-ignored --test-threads=1` |
+| `crates/control/provision/tests/cdc.rs` | `WAMN_CDC_PG_URL` | `cargo test -p wamn-control-provision --test cdc` |
+| `crates/control/provision/tests/control_storage.rs` | `WAMN_REGISTRY_PG_URL` | `cargo test -p wamn-control-provision --test control_storage` |
+| `crates/control/provision/tests/ops_storage.rs` | `WAMN_REGISTRY_PG_URL` | `cargo test -p wamn-control-provision --features ops --test ops_storage` |
+| `crates/control/provision/tests/system_reader_grants.rs` | `WAMN_REGISTRY_PG_URL` | `cargo test -p wamn-control-provision --test system_reader_grants` |
+| `crates/control/provision/tests/provision.rs` | `WAMN_PROVISION_PG_URL` | `cargo test -p wamn-control-provision --test provision` |
+| `crates/control/provision/tests/database_owner.rs` | `WAMN_PROVISION_PG_URL` | `cargo test -p wamn-control-provision --test database_owner` |
+| `crates/control/provision/tests/dump.rs` | `WAMN_DUMP_PG_URL` | `cargo test -p wamn-control-provision --features ops --test dump` |
+| `crates/control/provision/tests/restore.rs` | `WAMN_RESTORE_PG_URL` | `cargo test -p wamn-control-provision --features ops --test restore` |
 | `crates/control/provision/tests/family_surface_grants.rs` | `WAMN_FAMILY_SURFACE_PG_URL` | `cargo test -p wamn-control-provision --test family_surface_grants` |
+| `crates/execution/run-state/tests/store.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --test store` |
+| `crates/identity/platform/tests/identity_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-platform-identity --test identity_live` |
+| `crates/identity/platform/tests/pat_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-platform-identity --test pat_live` |
+| `crates/identity/project-state/tests/authority.rs` | `WAMN_SYSSCHEMA_PG_URL` | `cargo test -p wamn-project-state --test authority` |
+| `crates/identity/project-state/tests/schema.rs` | `WAMN_SYSSCHEMA_PG_URL` | `cargo test -p wamn-project-state --test schema` |
+| `crates/platform/runtime/tests/production_claim_live.rs` | `WAMN_PRODUCTION_CLAIM_PG_URL` | `cargo test -p wamn-runtime --test production_claim_live -- --include-ignored` |
+| `crates/platform/runtime/tests/production_claim_durable_live.rs` | `WAMN_DURABLE_TIER_PG_URL` | `cargo test -p wamn-runtime --test production_claim_durable_live -- --include-ignored` |
+| `crates/platform/runtime/tests/release_manifest_source.rs` | `WAMN_RELEASE_MANIFEST_ARTIFACT_BASE` **and** `WAMN_REGISTRY_AUTH_FILE` | `cargo test -p wamn-runtime --test release_manifest_source -- --include-ignored` |
+| `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs` | `WAMN_POOL_LIFECYCLE_PG_URL` | `cargo test -p wamn-runtime --all-features --lib live_size_one_guest_and_platform_pools -- --include-ignored` |
+| `crates/schema/compiler/tests/rls.rs` | `WAMN_RLS_PG_URL` | `cargo test -p wamn-schema-compiler --test rls` |
+| `crates/schema/compiler/tests/seed.rs` | `WAMN_SEED_PG_URL` | `cargo test -p wamn-schema-compiler --test seed` |
+| `crates/schema/control/tests/migrate.rs` | `WAMN_MIGRATE_PG_URL` | `cargo test -p wamn-schema-control --test migrate` |
+| `services/ctl/tests/connection_storage_live.rs` | `WAMN_CONNECTION_STORAGE_PG_URL` | `cargo test -p wamn-ctl --test connection_storage_live` |
+| `services/ctl/tests/dispatch_reader_provisioning_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test dispatch_reader_provisioning_live` |
+| `services/ctl/tests/replica_identity_unreadable_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test replica_identity_unreadable_live` |
+| `services/ctl/tests/ri_orch_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test ri_orch_live -- --include-ignored --test-threads=1` |
+
+**The twenty-four rows from `cdc.rs` down were added by `wamn-0h0g.15.137.2`,
+which means every one of those gates had never entered an arming set.** Each was
+armed once, alone, on its own fresh `postgres:18` container. Nine are red.
+`authority.rs` and `migrate.rs` were re-measured with `--test-threads=1` and
+died identically, so neither red is a parallelism artifact:
+
+| gate | measured | first failing test and reason |
+| --- | --- | --- |
+| `run-state/tests/store.rs` | 7 passed / 1 failed | `run_state_schema_applies_and_isolates_on_postgres` — `ERROR: role "wamn_effect_writer" does not exist`; the bootstrap mints only `wamn_app`, and `run-state.sql` GRANTs to three roles |
+| `project-state/tests/authority.rs` | 0 passed / 3 failed | all three, e.g. `a_project_still_owns_its_own_configuration` — `ERROR: new row violates row-level security policy for table "configurations"` |
+| `project-state/tests/schema.rs` | 4 passed / 1 failed | `app_schema_applies_and_enforces_isolation_and_claims_on_postgres` — `ERROR: t1 sees its 2 users, not t2's` |
+| `schema-compiler/tests/rls.rs` | 12 passed / 1 failed | `compiled_policy_filters_rows_on_postgres` — `ERROR: schema "wamn_authority" does not exist` |
+| `schema-compiler/tests/seed.rs` | 10 passed / 1 failed | `seed_applies_and_reapply_is_idempotent` — `ERROR: schema "wamn_authority" does not exist` |
+| `schema-control/tests/migrate.rs` | 9 passed / 2 failed | `catalog_schema_from_zero_is_complete_and_transactional_on_postgres` — `ERROR: role "wamn_scenario_author" does not exist`; the second failure only cascades on the poisoned live-database lock |
+| `runtime/tests/production_claim_live.rs` | 1 passed / 1 failed | `production_claim_live` — `effect-writer credential role does not match its scoped generation` |
+| `runtime/tests/production_claim_durable_live.rs` | 0 passed / 1 failed | `production_claim_durable_live` — same credential refusal |
+| `runtime .../wamn_postgres/claims.rs` | 0 passed / 1 failed | `live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving` — `platform headroom remains available while guest is saturated: PgError::ConnectionUnavailable` |
+
+`crates/schema/control/tests/migrate.rs` **hides its own failure**: its `psql`
+helper `unwrap()`s the `write_all` into the child's stdin, so when `psql` exits
+early under `ON_ERROR_STOP` the test panics with
+`Err(BrokenPipe)` at `migrate.rs:549` and `wait_with_output` never runs. The
+SQL error above was recovered by dropping that one `unwrap`. Read a BrokenPipe
+panic from this file as "the reason is being swallowed", never as the reason.
+
+The fourteen green ones, armed and measured: `cdc` 2 passed 0.78s (**start the
+container with `-c wal_level=logical`** or it false-reds), `control_storage` 11
+passed, `system_reader_grants` 2 passed, `provision` 1 passed, `database_owner`
+1 passed, `dump` 1 passed, `restore` 1 passed, `ops_storage` 6 passed,
+`identity_live` 1 passed, `pat_live` 1 passed, `connection_storage_live` 1
+passed, `dispatch_reader_provisioning_live` 1 passed,
+`replica_identity_unreadable_live` 2 passed, `ri_orch_live` 2 passed. Unarmed,
+every one of them printed a `skipping …` line and still reported `ok` in
+`0.00s`; the duration is the only honest signal.
+
+`crates/platform/runtime/tests/release_manifest_source.rs` could not be armed:
+its one ignored leg needs a live authenticated OCI registry holding a published
+release, and the in-tree push path went with `builder` and `node-host` at
+`f6bc01eb`. Its row records the variables so the gate is at least addressable.
+
+`crates/control/provision/tests/provision.rs` and
+`crates/control/provision/tests/database_owner.rs` are the only pair here whose
+source states they may share one container; everything else in this table needs
+its own.
 
 Rows carrying `-- --ignored` have **every** test in that binary marked
 `#[ignore]`; without the flag the binary runs zero tests and reports ok.
@@ -718,8 +787,13 @@ then dies with `ERROR: permission denied to create temporary tables in database
 "postgres"`. Give each of the two its **own** container. Measured together on
 one: `admission_live` ok in 3.52s, `run_state_live` FAILED in 1.03s.
 
-`services/ctl/tests/release_manifest_mint_live.rs` is mixed: three plain
-`#[test]` and three `#[ignore]`. Run it both ways.
+`services/ctl/tests/release_manifest_mint_live.rs` is mixed, and the counts here
+were wrong until `wamn-0h0g.15.137.2` measured them: it is **seven `#[ignore]`
+and two plain `#[test]`**, nine in all. Its row carried `-- --ignored`, which
+runs the seven and reports the other two as `2 filtered out` — measured
+`0 passed; 7 failed; 2 filtered out` against `2 passed; 7 failed; 0 filtered
+out` under `--include-ignored`. The row now carries `--include-ignored`; a
+mixed binary must never be armed with `-- --ignored`.
 
 `crates/control/provision/tests/control_portable_store.rs` is mixed the same way:
 one `#[ignore]` gate and the rest self-skipping, which is why its row carries
