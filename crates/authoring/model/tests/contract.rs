@@ -81,16 +81,16 @@ fn schema_discriminators<'a>(schema: &'a Value, definition: &str, field: &str) -
 #[test]
 fn exact_two_commands_and_one_query_round_trip() {
     // Both commands carry the DOCUMENT and its catalog placement: `publish` since
-    // wamn-0h0g.7.10, `test-set-run` since wamn-0h0g.8.28 re-pointed the gate off
-    // the stored row it could not have read on a first transition.
+    // wamn-0h0g.7.10, `gate` since wamn-0h0g.8.28 re-pointed the gate off the
+    // stored row it could not have read on a first transition.
     let input = json!({
         "scope": scope(), "catalog-id": "orders",
         "gated-catalog-version": 3, "document": wiring_document()
     });
     let commands = [
-        // `gate` is spelled `test-set-run` on the wire; changing the literal is a
-        // breaking wire rename, owed by whoever sweeps the wire vocabulary.
-        command("test-set-run", input.clone()),
+        // wamn-0h0g.7.11 moved this pin deliberately: the wire literal is now
+        // `gate`, the same name the Rust variant carries.
+        command("gate", input.clone()),
         command("publish", input),
     ];
     let queries = [query(
@@ -156,13 +156,13 @@ fn command_inventory_and_operation_pairing_are_exact() {
     ] {
         assert_eq!(
             schema_discriminators(&schema, definition, field),
-            ["test-set-run", "publish"],
+            ["gate", "publish"],
             "{definition} inventory drifted"
         );
     }
     let kind_schema = serde_json::to_value(schemars::schema_for!(AuthoringCommandKind))
         .expect("command-kind schema serializes");
-    assert_eq!(kind_schema["enum"], json!(["test-set-run", "publish"]));
+    assert_eq!(kind_schema["enum"], json!(["gate", "publish"]));
 }
 
 #[test]
@@ -284,7 +284,7 @@ fn the_effect_free_clause_has_a_typed_refusal_on_the_wire() {
             "outcome": {
                 "status": "refused",
                 "value": {
-                    "command": "test-set-run",
+                    "command": "gate",
                     "reason": {
                         "kind": "effectful-component-reached",
                         "components": ["acme:ledger", "acme:mailer"]
@@ -326,7 +326,7 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
             "outcome": {
                 "status": "refused",
                 "value": {
-                    "command": "test-set-run",
+                    "command": "gate",
                     "reason": {"kind": "report-not-successful"}
                 }
             }
@@ -415,6 +415,9 @@ fn retired_and_forbidden_vocabulary_is_absent() {
         // the identity the server derived — so only the refusals are retired.
         "validated-draft-not-found",
         "validated-draft-drift",
+        // wamn-0h0g.7.11 renamed the gate's wire literal. The superseded
+        // spelling is retired vocabulary, not merely unused.
+        "test-set-run",
     ] {
         assert!(
             !schema.contains(retired),
@@ -422,7 +425,10 @@ fn retired_and_forbidden_vocabulary_is_absent() {
         );
     }
     for required in [
-        "test-set-run",
+        // Quoted: bare `gate` is a substring of `gated-catalog-version` and of
+        // every `Gate*` definition name, so an unquoted probe would pass on a
+        // schema that had lost the literal entirely.
+        "\"gate\"",
         "get-report",
         "publish",
         // The constitutional clause's refusal is part of the public contract.

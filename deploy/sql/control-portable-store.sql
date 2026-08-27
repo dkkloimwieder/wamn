@@ -206,7 +206,7 @@ CREATE TABLE IF NOT EXISTS catalog.authoring_command_audit (
     CONSTRAINT authoring_command_audit_outcome_present
         CHECK (octet_length(outcome_bytes) > 0),
     CONSTRAINT authoring_command_audit_command_kind_check
-        CHECK (command_kind IN ('test-set-run', 'publish')),
+        CHECK (command_kind IN ('gate', 'publish')),
     CONSTRAINT authoring_command_audit_principal_kind_check
         CHECK (principal_kind IN ('human', 'service')),
     CONSTRAINT authoring_command_audit_effective_role_check
@@ -230,13 +230,76 @@ CREATE INDEX IF NOT EXISTS authoring_command_audit_recorded
 -- `save-draft`, `validate` or `draft-run` audit row refuses here by name rather
 -- than carrying a vocabulary no command can produce.
 --
--- `gate` is spelled `test-set-run` here for the same reason it is on the wire:
--- the literal follows the wiring vocabulary sweep (wamn-0h0g.26.18), not this
--- collapse.
-ALTER TABLE catalog.authoring_command_audit
-    DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check,
-    ADD CONSTRAINT authoring_command_audit_command_kind_check
-        CHECK (command_kind IN ('test-set-run', 'publish'));
+-- wamn-0h0g.7.11 renamed the gate's ledger literal from `test-set-run` to
+-- `gate`, matching the wire and the Rust variant. That narrows the vocabulary
+-- an ALREADY-POPULATED store violates, so the converging arm is no longer a
+-- bare `ALTER`: existing rows carry the superseded spelling and `ADD
+-- CONSTRAINT` validates the whole heap, so they migrate FIRST or the artifact
+-- refuses on its own history. Greenfield, so there is no transition state
+-- admitting both spellings -- the rows move once and the vocabulary is exactly
+-- two names at every instant a statement can observe it.
+--
+-- Two of this artifact's OWN defences hide the heap from the applying owner and
+-- must be stood down for exactly that one statement, then restored:
+--
+--   * FORCE ROW LEVEL SECURITY with no `app.tenant` shows the owner zero rows
+--     (wamn-0h0g.15.91), so an unguarded UPDATE would report success having
+--     touched nothing and the ADD CONSTRAINT below would then fail on the rows
+--     it did not reach;
+--   * `authoring_command_audit_immutable` rejects every UPDATE on the relation,
+--     including the owner's.
+--
+-- Both are read from `pg_catalog` rather than assumed, because on a VIRGIN
+-- database this block runs before either exists. The whole thing is one DO, so
+-- one transaction: a failure anywhere rolls the stood-down defences back up.
+DO $rename_gate_command_kind$
+DECLARE
+    forced boolean;
+    guarded boolean;
+BEGIN
+    SELECT c.relforcerowsecurity INTO forced
+    FROM pg_class c WHERE c.oid = 'catalog.authoring_command_audit'::regclass;
+    SELECT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'catalog.authoring_command_audit'::regclass
+          AND tgname = 'authoring_command_audit_immutable'
+          AND NOT tgisinternal
+    ) INTO guarded;
+
+    ALTER TABLE catalog.authoring_command_audit
+        DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check;
+
+    IF forced THEN
+        ALTER TABLE catalog.authoring_command_audit NO FORCE ROW LEVEL SECURITY;
+    END IF;
+    IF guarded THEN
+        ALTER TABLE catalog.authoring_command_audit
+            DISABLE TRIGGER authoring_command_audit_immutable;
+    END IF;
+
+    UPDATE catalog.authoring_command_audit
+       SET command_kind = 'gate'
+     WHERE command_kind = 'test-set-run';
+
+    -- Restored HERE rather than left to the reconcile blocks further down: they
+    -- run in later statements, so later transactions, and a store must not sit
+    -- un-forced across the rest of an apply. The re-FORCE is consequently
+    -- redundant with the `$policies$` block and no mutant can kill it on its
+    -- own; the re-ENABLE is not -- `$triggers$` only creates a MISSING trigger
+    -- and would leave a disabled one disabled.
+    IF guarded THEN
+        ALTER TABLE catalog.authoring_command_audit
+            ENABLE TRIGGER authoring_command_audit_immutable;
+    END IF;
+    IF forced THEN
+        ALTER TABLE catalog.authoring_command_audit FORCE ROW LEVEL SECURITY;
+    END IF;
+
+    ALTER TABLE catalog.authoring_command_audit
+        ADD CONSTRAINT authoring_command_audit_command_kind_check
+            CHECK (command_kind IN ('gate', 'publish'));
+END
+$rename_gate_command_kind$;
 
 -- The ONE durable fact an accepted gate produces (wamn-0h0g.8.5.6).
 --
@@ -774,7 +837,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '2bbd219e98ae3fb68b6bb647607968cf6b033c89ad9c6f5edece975cb356ec61'
+       'a7cf017a79e092bd75c262afa50263f08c5ae5a475ce4702976a17994af4adbc'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';

@@ -178,10 +178,10 @@ pub struct AuthoringQueryResponse {
 
 /// Complete two-command authoring inventory.
 ///
-/// `gate` is spelled `test-set-run` ON THE WIRE. The Rust name is the honest one
-/// the owner ratified — one verb produces reports, and that judgment is gating —
-/// while the wire literal stands: changing it is a breaking wire rename, owed by
-/// whoever sweeps the wire vocabulary, so this collapse is not also one.
+/// `gate` is spelled `gate` on the wire (wamn-0h0g.7.11). The variant name and
+/// the wire literal are the one honest name the owner ratified — one verb
+/// produces reports, and that judgment is gating — so the kebab-case rule alone
+/// renders it and no `rename` apologises for a second spelling.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -190,7 +190,6 @@ pub struct AuthoringQueryResponse {
     deny_unknown_fields
 )]
 pub enum AuthoringCommand {
-    #[serde(rename = "test-set-run")]
     Gate(Gate),
     Publish(PublishValidatedDraft),
 }
@@ -199,7 +198,6 @@ pub enum AuthoringCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthoringCommandKind {
-    #[serde(rename = "test-set-run")]
     Gate,
     Publish,
 }
@@ -245,7 +243,6 @@ pub enum AuthoringOutcome {
     deny_unknown_fields
 )]
 pub enum AuthoringSuccess {
-    #[serde(rename = "test-set-run")]
     Gate(GateReceipt),
     Publish(PublishedWiringIdentity),
 }
@@ -259,7 +256,6 @@ pub enum AuthoringSuccess {
     deny_unknown_fields
 )]
 pub enum CommandRefusal {
-    #[serde(rename = "test-set-run")]
     Gate(GateRefusal),
     Publish(PublishRefusal),
 }

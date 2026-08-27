@@ -11,7 +11,7 @@
 //! does not mount: an untrusted presenter naming one gets the same refusal
 //! document as any other, so the surface is no route-existence oracle, and an
 //! admitted author gets a bare `501` that audits nothing and mutates nothing.
-//! `test-set-run` LEFT that set in wamn-0h0g.8.5.4 — it is mounted, so this gate
+//! `gate` LEFT that set in wamn-0h0g.8.5.4 — it is mounted, so this gate
 //! now proves the judgment it reaches instead of the 501 it used to answer.
 //! wamn-0h0g.8.5.5 then collapsed `save-draft`, `validate`, `draft-run` and
 //! `read-draft` OUT OF THE CONTRACT, so `publish` is the whole unmounted
@@ -130,7 +130,7 @@ fn derived_hash(document: &serde_json::Value) -> String {
         .to_owned()
 }
 
-/// The one candidate wiring `test-set-run` is exercised against.
+/// The one candidate wiring `gate` is exercised against.
 ///
 /// The wiring hash is the WHOLE identity (wamn-0h0g.8.5.6): it is the key the
 /// accepted gate's report is stored under, the report id the receipt hands back,
@@ -213,7 +213,7 @@ async fn send(
     }
 }
 
-/// `test-set-run` was here until wamn-0h0g.8.5.4 mounted it. Its assertions moved
+/// `gate` was here until wamn-0h0g.8.5.4 mounted it. Its assertions moved
 /// to the composition block; what stays here is the property that outlives it —
 /// a kind with no route answers a bare `501`, and the answer carries no
 /// document.
@@ -563,7 +563,7 @@ async fn stored_wiring_count(project: &Client) -> i64 {
         .get(0)
 }
 
-/// One `test-set-run` request carrying one document, in one project.
+/// One `gate` request carrying one document, in one project.
 ///
 /// The command carries the DOCUMENT and its catalog placement (wamn-0h0g.8.28).
 /// Nothing here names a stored row, which is why an empty `catalog.wirings` is
@@ -575,7 +575,7 @@ fn gate_document_in(command_id: &str, project: &str, document: &serde_json::Valu
             "schema-version": "0.1",
             "command-id": command_id,
             "command": {
-                "kind": "test-set-run",
+                "kind": "gate",
                 "input": {
                     "scope": {"project-id": project, "environment": ENVIRONMENT},
                     "catalog-id": CANDIDATE_CATALOG,
@@ -588,7 +588,7 @@ fn gate_document_in(command_id: &str, project: &str, document: &serde_json::Valu
     .to_string()
 }
 
-/// One `test-set-run` request document for one project, gating the pure candidate.
+/// One `gate` request document for one project, gating the pure candidate.
 fn gate_document_for(command_id: &str, project: &str) -> String {
     gate_document_in(
         command_id,
@@ -597,8 +597,8 @@ fn gate_document_for(command_id: &str, project: &str) -> String {
     )
 }
 
-/// One `test-set-run` request document gating the pure candidate.
-fn test_set_run_document(command_id: &str) -> String {
+/// One `gate` request document gating the pure candidate.
+fn gate_document(command_id: &str) -> String {
     gate_document_for(command_id, PROJECT)
 }
 
@@ -1036,7 +1036,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "an unmounted command or query wrote durable authoring state"
     );
 
-    // Nothing above reached a command: no ledger row. `test-set-run` is no
+    // Nothing above reached a command: no ledger row. `gate` is no
     // longer among the kinds above — wamn-0h0g.8.5.4 mounted it, and the
     // assertions that replaced its bare 501 run at the end of this gate, where
     // they cannot disturb the "nothing has reached a command yet" invariants
@@ -1227,7 +1227,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a pre-dispatch refusal was audited"
     );
 
-    // ---- test-set-run IS mounted, and judges a real candidate --------------
+    // ---- gate IS mounted, and judges a real candidate ----------------------
     // wamn-0h0g.8.5.4. This is the assertion that replaced the bare 501: the
     // very document that used to be in `unmounted` above now reaches the
     // composition. `validate`, `draft-run`, `publish`, and `read-draft` kept
@@ -1243,22 +1243,22 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             "/authoring",
             token.as_deref(),
             &[],
-            &test_set_run_document("probe-test-set-run"),
+            &gate_document("probe-gate"),
         )
         .await;
         assert_eq!(
             response.status, 403,
-            "{name} probed test-set-run for a route"
+            "{name} probed gate for a route"
         );
         assert_eq!(
             response.body, AUTHORIZATION_DENIED,
-            "{name} learned that test-set-run is mounted"
+            "{name} learned that gate is mounted"
         );
     }
     assert_eq!(
         ledger_rows(&admin).await.len(),
         ledger_before_composition,
-        "an untrusted test-set-run probe was attributed"
+        "an untrusted gate probe was attributed"
     );
 
     // The headers assert another principal and a wider role. Neither is read:
@@ -1270,12 +1270,12 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             ("X-Wamn-Principal", "bob@example.com"),
             ("X-Wamn-Role", "project-admin"),
         ],
-        &test_set_run_document("test-set-1"),
+        &gate_document("test-set-1"),
     )
     .await;
     assert_eq!(
         accepted.status, 200,
-        "test-set-run did not reach its handler: {}",
+        "gate did not reach its handler: {}",
         accepted.body
     );
     // ---- THE FIRST TRANSITION (wamn-0h0g.8.28) -----------------------------
@@ -1301,7 +1301,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         serde_json::json!({
             "status": "completed",
             "value": {
-                "command": "test-set-run",
+                "command": "gate",
                 "result": {
                     "report-id": candidate_hash,
                     "validated-draft": {"validated-draft-id": candidate_hash},
@@ -1326,7 +1326,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .find(|row| row.0 == "alice@example.com")
         .expect("the gate is attributed to the token principal");
     assert_eq!(alice_row.1, alice_principal.id().as_str());
-    assert_eq!(alice_row.2, "test-set-run");
+    assert_eq!(alice_row.2, "gate");
     assert_eq!(alice_row.3, "project-author", "a header widened a role");
     assert!(
         !attributed
@@ -1409,7 +1409,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             .iter()
             .map(|(_, _, kind, _)| kind.clone())
             .collect::<Vec<_>>(),
-        ["test-set-run".to_owned()],
+        ["gate".to_owned()],
         "the judged command was not attributed exactly once"
     );
 
@@ -1419,7 +1419,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "/authoring",
         Some(alice.token()),
         &[],
-        &test_set_run_document("test-set-1"),
+        &gate_document("test-set-1"),
     )
     .await;
     assert_eq!(replay.status, 200, "{}", replay.body);
@@ -1433,7 +1433,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "/authoring",
         Some(bob.token()),
         &[],
-        &test_set_run_document("test-set-2"),
+        &gate_document("test-set-2"),
     )
     .await;
     assert_eq!(rerun.status, 200, "{}", rerun.body);
@@ -1462,7 +1462,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "two principals ran the same command and are not distinguishable"
     );
     assert_eq!(bob_row.1, bob_principal.id().as_str());
-    assert_eq!(bob_row.2, "test-set-run");
+    assert_eq!(bob_row.2, "gate");
     assert_eq!(bob_row.3, "project-admin");
 
     // A SERVICE token reaches the same command on the same terms as a human
@@ -1471,7 +1471,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "/authoring",
         Some(service_token.token()),
         &[],
-        &test_set_run_document("test-set-3"),
+        &gate_document("test-set-3"),
     )
     .await;
     assert_eq!(by_service.status, 200, "{}", by_service.body);
@@ -1520,7 +1520,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(
         outcome(&effectful.body)["value"],
         serde_json::json!({
-            "command": "test-set-run",
+            "command": "gate",
             "reason": {
                 "kind": "effectful-component-reached",
                 "components": [EFFECTFUL_COMPONENT],
@@ -1589,7 +1589,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     .await;
     assert_eq!(unknown.status, 200, "{}", unknown.body);
     let refusal = outcome(&unknown.body)["value"].clone();
-    assert_eq!(refusal["command"], serde_json::json!("test-set-run"));
+    assert_eq!(refusal["command"], serde_json::json!("gate"));
     assert_eq!(
         refusal["reason"]["kind"],
         serde_json::json!("invalid-document"),

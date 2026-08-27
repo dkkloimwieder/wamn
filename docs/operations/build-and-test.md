@@ -626,6 +626,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `services/scenario-worker/tests/management_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-scenario-worker --test management_live` |
 | `crates/execution/run-state/tests/effect_writer_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --features native --test effect_writer_live -- --ignored` |
 | `services/dispatcher/tests/read_authority.rs` | `WAMN_PROVISION_PG_URL` | `cargo test -p wamn-dispatcher --test read_authority` |
+| `crates/control/provision/tests/control_portable_store.rs` | `WAMN_CONTROL_PORTABLE_PG_URL` | `cargo test -p wamn-control-provision --test control_portable_store -- --include-ignored --test-threads=1` |
 
 Rows carrying `-- --ignored` have **every** test in that binary marked
 `#[ignore]`; without the flag the binary runs zero tests and reports ok.
@@ -636,6 +637,24 @@ instead.
 
 `services/ctl/tests/release_manifest_mint_live.rs` is mixed: three plain
 `#[test]` and three `#[ignore]`. Run it both ways.
+
+`crates/control/provision/tests/control_portable_store.rs` is mixed the same way:
+one `#[ignore]` gate and the rest self-skipping, which is why its row carries
+`--include-ignored` rather than `--ignored`. Every gate in it applies the
+artifact to the SAME database and resets the control schemas first, so
+`--test-threads=1` is not optional: measured in parallel they collide on
+`ERROR: tuple concurrently updated`. Its wamn-0h0g.7.11 arm,
+`control_portable_store_renames_the_gate_ledger_literal_as_an_upgrade_on_postgres`,
+is an R55 UPGRADE proof: it seeds pre-rename `authoring_command_audit` rows in
+two tenants, applies `deploy/sql/control-portable-store.sql`, and asserts the
+migrated rows and the installed CHECK from `pg_catalog` — then applies a second
+time and asserts the post-state is unmoved. Run it alone with
+
+```bash
+WAMN_CONTROL_PORTABLE_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
+  cargo test -p wamn-control-provision --test control_portable_store -- \
+  --include-ignored control_portable_store_renames_the_gate_ledger_literal
+```
 
 The two `generation_live` tests revoke `PUBLIC CONNECT` on **every** non-template
 database in the cluster. Run them only against a disposable server.

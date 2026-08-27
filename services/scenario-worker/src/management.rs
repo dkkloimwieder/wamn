@@ -140,10 +140,7 @@ impl AuditedCommand {
     /// spelling the wire contract uses; a unit test pins them to `serde`.
     pub const fn as_str(self) -> &'static str {
         match self {
-            // `gate` is spelled `test-set-run` on the wire and in the ledger;
-            // changing the literal is a breaking wire rename, owed by whoever
-            // sweeps the wire vocabulary.
-            Self::Gate => "test-set-run",
+            Self::Gate => "gate",
             Self::Publish => "publish",
         }
     }
@@ -1577,7 +1574,7 @@ mod tests {
                 "schema-version": "0.1",
                 "command-id": "retry-1",
                 "command": {
-                    "kind": "test-set-run",
+                    "kind": "gate",
                     "input": {
                         "scope": input,
                         "catalog-id": "orders",

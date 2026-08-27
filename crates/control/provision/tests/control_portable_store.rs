@@ -115,7 +115,12 @@ fn portable_store_record_is_exact_and_storage_only() {
     assert!(!sql.contains("CREATE TRIGGER flow_drafts_controlled_update"));
     assert!(!sql.contains("CREATE TRIGGER flow_drafts_delete_immutable"));
     // The ledger vocabulary follows the contract's two surviving commands.
-    assert!(sql.contains("CHECK (command_kind IN ('test-set-run', 'publish'))"));
+    assert!(sql.contains("CHECK (command_kind IN ('gate', 'publish'))"));
+    // wamn-0h0g.7.11 renamed the gate's ledger literal. The superseded spelling
+    // survives in exactly one place -- the converging UPDATE's own `WHERE` --
+    // and nowhere else may still declare it.
+    assert!(!sql.contains("CHECK (command_kind IN ('test-set-run'"));
+    assert_eq!(sql.matches("'test-set-run'").count(), 1);
     assert!(!sql.contains("CREATE TABLE IF NOT EXISTS catalog.execution_bundles"));
     assert!(sql.contains("DROP TABLE catalog.execution_bundles RESTRICT"));
     assert!(!sql.contains("REFERENCES registry."));
@@ -702,7 +707,7 @@ END $positive$;
 INSERT INTO catalog.authoring_command_audit
   (tenant_id,command_id,command_kind,principal_id,principal_kind,principal_subject,
    effective_role,org,project,environment,target_ref,request_hash,outcome_bytes)
-VALUES ('tenant-a','command-1','test-set-run','principal-1','human','someone',
+VALUES ('tenant-a','command-1','gate','principal-1','human','someone',
         'project-author','acme','receiving','dev','validated-tenant-a',
         'sha256:'||repeat('2',64),'\x7b7d'::bytea);
 
@@ -718,7 +723,7 @@ DO $no_widening$ BEGIN
       (tenant_id,command_id,command_kind,principal_id,principal_kind,
        principal_subject,effective_role,org,project,environment,target_ref,
        request_hash,outcome_bytes)
-    VALUES ('tenant-b','forged','test-set-run','principal-1','human','someone',
+    VALUES ('tenant-b','forged','gate','principal-1','human','someone',
             'project-author','acme','shipping','dev','forged',
             'sha256:'||repeat('3',64),'\x7b7d'::bytea);
     ASSERT false, 'app.tenant widened a write to another tenant';
@@ -1758,6 +1763,167 @@ fn control_portable_store_converges_a_legacy_store_to_the_fresh_record_on_postgr
         &url,
         "the control record inventory",
         CONTROL_RECORD_INVENTORY_SQL,
+    );
+}
+
+/// The store as an already-provisioned deployment holds it the instant BEFORE
+/// wamn-0h0g.7.11: the superseded command vocabulary, and audit rows spelling
+/// it, in two tenants.
+///
+/// The second tenant is the point. Under the artifact's own FORCE ROW LEVEL
+/// SECURITY the applying owner sees rows for at most one `app.tenant` claim at a
+/// time and none at all with no claim (wamn-0h0g.15.91), so a converging UPDATE
+/// that does not stand that defence down reaches neither row and reports
+/// success. A single-tenant seed could be migrated by accident; this one cannot.
+const PRE_RENAME_AUDIT_LEDGER_SQL: &str = "
+SET ROLE wamn_system;
+ALTER TABLE catalog.authoring_command_audit
+    DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check;
+ALTER TABLE catalog.authoring_command_audit
+    ADD CONSTRAINT authoring_command_audit_command_kind_check
+        CHECK (command_kind IN ('test-set-run', 'publish'));
+SET app.tenant = 'tenant-a';
+INSERT INTO catalog.authoring_command_audit
+  (tenant_id,command_id,command_kind,principal_id,principal_kind,principal_subject,
+   effective_role,org,project,environment,target_ref,request_hash,outcome_bytes)
+VALUES ('tenant-a','pre-rename-1','test-set-run','principal-1','human','someone',
+        'project-author','acme','receiving','dev','candidate-a',
+        'sha256:'||repeat('a',64),'\\x7b7d'::bytea),
+       ('tenant-a','pre-rename-3','publish','principal-1','human','someone',
+        'project-author','acme','receiving','dev','candidate-a',
+        'sha256:'||repeat('c',64),'\\x7b7d'::bytea);
+SET app.tenant = 'tenant-b';
+INSERT INTO catalog.authoring_command_audit
+  (tenant_id,command_id,command_kind,principal_id,principal_kind,principal_subject,
+   effective_role,org,project,environment,target_ref,request_hash,outcome_bytes)
+VALUES ('tenant-b','pre-rename-2','test-set-run','principal-2','service','other',
+        'project-admin','acme','shipping','dev','candidate-b',
+        'sha256:'||repeat('b',64),'\\x7b7d'::bytea);
+RESET app.tenant;
+RESET ROLE;
+";
+
+/// The ledger's command vocabulary as the SERVER reports it: every row's kind,
+/// the INSTALLED constraint definition, the relation's row-security posture, and
+/// whether the immutable-row guard is enabled.
+///
+/// Read from `pg_catalog` and from the heap, never from the statement that wrote
+/// either. The last two fields exist because the migration stands both defences
+/// down to reach the rows, so "the rows moved" is only half the property -- the
+/// other half is that the store is not left open afterwards.
+const AUDIT_COMMAND_VOCABULARY_SQL: &str = "
+SELECT coalesce(
+         (SELECT string_agg(tenant_id || '/' || command_id || '=' || command_kind,
+                            ',' ORDER BY command_id COLLATE \"C\")
+            FROM catalog.authoring_command_audit),
+         '(no rows)')
+    || ' | ' || (SELECT pg_catalog.pg_get_constraintdef(con.oid, true)
+                   FROM pg_catalog.pg_constraint AS con
+                  WHERE con.conrelid = 'catalog.authoring_command_audit'::regclass
+                    AND con.conname = 'authoring_command_audit_command_kind_check')
+    || ' | rls=' || (SELECT rel.relrowsecurity::text || ':' || rel.relforcerowsecurity::text
+                       FROM pg_catalog.pg_class AS rel
+                      WHERE rel.oid = 'catalog.authoring_command_audit'::regclass)
+    || ' | immutable=' || (SELECT trg.tgenabled::text
+                             FROM pg_catalog.pg_trigger AS trg
+                            WHERE trg.tgrelid = 'catalog.authoring_command_audit'::regclass
+                              AND trg.tgname = 'authoring_command_audit_immutable'
+                              AND NOT trg.tgisinternal);
+";
+
+/// wamn-0h0g.7.11: the gate's ledger literal renamed, proved as an UPGRADE.
+///
+/// R55. A virgin install executes NO migration arm here: `CREATE TABLE IF NOT
+/// EXISTS` already declares the narrowed vocabulary, the converging block finds
+/// zero rows to move, and a gate that only applies the artifact twice to a fresh
+/// database would pass with the whole rename deleted. So this seeds the store an
+/// already-provisioned deployment actually holds -- the superseded CHECK plus
+/// audit rows spelling `test-set-run` in TWO tenants -- and then applies.
+///
+/// Three properties, in order:
+///
+/// 1. the pre-rename state is really installed, asserted before the apply so a
+///    seed that silently did nothing cannot be mistaken for a migration;
+/// 2. one apply migrates every row across every tenant, installs the narrowed
+///    constraint, and leaves both stood-down defences back up;
+/// 3. a SECOND apply moves nothing -- neither the vocabulary nor the record --
+///    with both post-states read from `pg_catalog` and the heap.
+#[test]
+fn control_portable_store_renames_the_gate_ledger_literal_as_an_upgrade_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
+        eprintln!(
+            "skipping control_portable_store_renames_the_gate_ledger_literal_as_an_upgrade_on_postgres \
+             (set WAMN_CONTROL_PORTABLE_PG_URL)"
+        );
+        return;
+    };
+
+    let apply = control_store_apply_sql();
+    psql_ok(
+        &url,
+        "reset the control schemas",
+        &control_store_reset_sql(),
+    );
+    psql_ok(&url, "the fresh apply", &apply);
+    psql_ok(
+        &url,
+        "seed the pre-rename ledger",
+        PRE_RENAME_AUDIT_LEDGER_SQL,
+    );
+
+    let before = psql_scalar(
+        &url,
+        "the pre-rename ledger vocabulary",
+        AUDIT_COMMAND_VOCABULARY_SQL,
+    );
+    assert_eq!(
+        before,
+        "tenant-a/pre-rename-1=test-set-run,tenant-b/pre-rename-2=test-set-run,\
+         tenant-a/pre-rename-3=publish \
+         | CHECK (command_kind = ANY (ARRAY['test-set-run'::text, 'publish'::text])) \
+         | rls=true:true | immutable=O",
+        "the seed did not install the pre-rename store, so the apply below has \
+         no migration arm to exercise"
+    );
+
+    psql_ok(&url, "the upgrade apply", &apply);
+    let upgraded = psql_scalar(
+        &url,
+        "the upgraded ledger vocabulary",
+        AUDIT_COMMAND_VOCABULARY_SQL,
+    );
+    assert_eq!(
+        upgraded,
+        "tenant-a/pre-rename-1=gate,tenant-b/pre-rename-2=gate,\
+         tenant-a/pre-rename-3=publish \
+         | CHECK (command_kind = ANY (ARRAY['gate'::text, 'publish'::text])) \
+         | rls=true:true | immutable=O",
+        "the ledger literal did not migrate, or a defence was left down"
+    );
+    let record = psql_scalar(
+        &url,
+        "the upgraded record fingerprint",
+        CONTROL_RECORD_FINGERPRINT_SQL,
+    );
+
+    psql_ok(&url, "the replay apply", &apply);
+    assert_eq!(
+        psql_scalar(
+            &url,
+            "the replayed ledger vocabulary",
+            AUDIT_COMMAND_VOCABULARY_SQL,
+        ),
+        upgraded,
+        "replaying the rename over a migrated store was not a no-op"
+    );
+    assert_eq!(
+        psql_scalar(
+            &url,
+            "the replayed record fingerprint",
+            CONTROL_RECORD_FINGERPRINT_SQL,
+        ),
+        record,
+        "replaying the rename moved the installed record"
     );
 }
 

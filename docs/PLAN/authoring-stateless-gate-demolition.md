@@ -98,7 +98,7 @@ Both are strictly weaker than "execute the document's cases and report."
 One verb produces reports. The rename lands **with the collapse**, and the wire literal
 follows the wiring vocabulary sweep (`wamn-0h0g.26.18`).
 
-[landed: wamn-0h0g.26.18, closed 2026-08-25 - that sweep did NOT carry the wire literal; it is still test-set-run, owner wamn-0h0g.7.11]
+[landed: wamn-0h0g.7.11, 2026-08-27 - the wire literal IS `gate`. The sentence above is now true rather than annotated-false: wamn-0h0g.26.18 closed without carrying it, and the owner ruled the rename rather than the frozen spelling. It moved as a control-plane DDL migration, not only as source text - `deploy/sql/control-portable-store.sql` narrows `authoring_command_audit_command_kind_check` and migrates existing rows in the same statement set.]
 
 ---
 
@@ -363,6 +363,9 @@ All four carried. This section is the record, not an open list.
 1. **§5.1 — gate cases are EFFECT-FREE BY CONTRACT.** Constitutional clause, enforced
    through the `.21.9` effect-posture fact at admission. `authoring_test_case_runs` deletes.
 2. **§2.2 — `gate` IS `test-set-run` renamed.** Rename lands with the collapse.
+   [owned and landed: wamn-0h0g.7.11, 2026-08-27 - this item was future tense and cited
+   no bead, so it fell outside the wamn-0h0g.12.187 stale-citation criterion. The Rust
+   name landed with the collapse; the WIRE and LEDGER literal landed here.]
 3. **§2.1 — `gate_report_id` COLLAPSES into `wiring_hash`.** The column dies.
    *Landed as `wamn-0h0g.8.5.6`, together with the constructed successor in §3.3.2.*
 4. **§3.5 — `draft_safe_connection_grants` DELETES in this wave**, probe arm same-commit.
