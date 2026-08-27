@@ -330,19 +330,33 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
 /// A guest on the transaction / one-shot / cursor API must not be able to
-/// rewrite its host-injected `app.tenant` claim (or switch roles) and defeat
-/// RLS tenant isolation (wamn-cjv.2 / review C4-1). RLS keys on the settable
-/// GUC `current_setting('app.tenant', …)`, and the `wamn_app` login role
-/// (`NOSUPERUSER NOBYPASSRLS`) may freely `SET` it; a later
-/// `SET app.tenant = 'victim'` overrides the BEGIN-time `SET LOCAL`.
+/// rewrite a host-injected claim (or switch roles) and defeat RLS isolation
+/// (wamn-cjv.2 / review C4-1). The extended-query protocol forbids statement
+/// chaining, so a claim override can only arrive as a *standalone* `SET` /
+/// `RESET` / `set_config(…)` statement — which this catches.
 ///
-/// The extended-query protocol forbids statement chaining, so a claim override
-/// can only arrive as a *standalone* `SET` / `RESET` / `set_config(…)`
-/// statement — which this catches. It is a defense-in-depth **blocklist**, not
-/// a structural close: raw dynamic SQL (`DO` / `EXECUTE`) can still build a
-/// claim mutation at runtime. The structural close re-keys RLS onto a
-/// non-settable identity (per-tenant role + `current_user`) and is a
-/// prerequisite for enabling the raw-SQL node (wamn-1nd).
+/// # The TENANT axis is structurally closed, and this is no longer what holds it
+///
+/// The `wamn-0h0g.22.6` lineage re-keyed guest tenant authority onto a
+/// NON-SETTABLE identity: `.22.6.2` re-keyed the generated tenant floor onto
+/// `current_user`, `.22.6.4` minted per-tenant guest LOGIN generations, and
+/// `.22.6.7` cut the guest SQL path onto per-tenant connections.
+/// `wamn_authority.current_tenant_key()` reads the CONNECTED ROLE, which no
+/// session can rewrite, so a guest that succeeds in setting `app.tenant`
+/// changes nothing. Measured on PostgreSQL 18 as a guest generation login
+/// asserted NOT (`rolsuper` OR `rolbypassrls`): plain `SET`, `set_config`, `SET
+/// LOCAL` and `DO` + `EXECUTE` all SUCCEEDED and all left the visible row set
+/// unchanged.
+///
+/// # What remains is a live MECHANISM, not a stale citation
+///
+/// This is still a defense-in-depth **blocklist**:
+/// [`statement_mutates_session`] matches only a leading `set`/`reset` keyword
+/// or the literal `set_config`, so a `DO` block whose `EXECUTE` string carries
+/// `SET app.role` passes it untouched. That escape is dormant only because no
+/// PRODUCTION policy reads `app.role` or `app.user_id` today; it arms the day
+/// an applier for compiled RLS ships. `wamn-0h0g.22.23` (OPEN) owns the matcher
+/// defect and carries that trigger — do not close this comment against it.
 pub(super) fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
     if statement_mutates_session(sql) {
         tracing::warn!(

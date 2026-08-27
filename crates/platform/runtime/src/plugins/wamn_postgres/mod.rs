@@ -17,12 +17,19 @@
 //!   `SET app.tenant = 'other'` that would override the BEGIN-time claim) is
 //!   rejected on the query/execute/cursor surface (see
 //!   `reject_claim_mutation`, wamn-cjv.2), closing the reachable
-//!   transaction-API override. This is a defense-in-depth blocklist, **not** a
-//!   structural close: raw dynamic SQL (`DO` / `EXECUTE`) can still construct a
-//!   claim mutation, so re-keying RLS onto a non-settable identity (a per-tenant
-//!   DB role + `current_user`) is a prerequisite for enabling the raw-SQL node
-//!   (wamn-1nd) — until then the claim is trusted only on the parameterized
-//!   standard-node path.
+//!   transaction-API override. The TENANT axis no longer rests on that
+//!   blocklist: the `wamn-0h0g.22.6` lineage re-keyed guest tenant authority
+//!   onto `current_user` plus per-tenant guest LOGIN generations — a
+//!   non-settable identity — so a session that rewrites `app.tenant` no longer
+//!   rewrites its tenant. The matcher is still only a blocklist: a `DO` block
+//!   whose `EXECUTE` string carries `SET app.role` walks past it, and that
+//!   escape is dormant purely because no production policy reads `app.role` or
+//!   `app.user_id` yet (`wamn-0h0g.22.23`, OPEN, owns it).
+//! - The AR1 raw-SQL / custom-node trust assumptions are MOOT, not pending:
+//!   their preconditions closed by SUBJECT-DELETION — the node-kind registry
+//!   retired and no raw-SQL node surface exists to enable — so no live security
+//!   transition occurred. They re-enter only with a future raw-SQL or
+//!   custom-node surface, which would arrive through publish-time admission.
 //! - `statement_timeout` and a row limit are applied host-side per call.
 //! - Abnormal instance death (store dropped mid-transaction, e.g. an epoch
 //!   kill) destroys the underlying connection via [`Drop`] on

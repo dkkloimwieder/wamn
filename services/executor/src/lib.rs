@@ -78,8 +78,16 @@ fn queue_delivery_span(
 
 #[derive(Debug, Args)]
 pub struct ExecutorArgs {
-    /// App database URL. Overrides WAMN_PG_URL and DATABASE_URL.
-    #[arg(long)]
+    /// The one database URL this executor authenticates with.
+    ///
+    /// `WAMN_PG_URL` is the DECLARED TRANSPORT, not a fallback: `deploy/platform`
+    /// injects it via `secretKeyRef`, and naming it on the argument makes clap
+    /// the single place the credential is read. `wamn-0h0g.22.9` removed the
+    /// second ambient source (`DATABASE_URL`) that sat behind it — an explicit
+    /// source plus any ambient source is the conflict
+    /// `credential_exactness::AmbientCredentialState` already declares, and the
+    /// executor was its own second source.
+    #[arg(long, env = "WAMN_PG_URL")]
     pub database_url: Option<String>,
 
     /// Stable, replica-unique owner prefix for node acquisition claims.
@@ -256,12 +264,14 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             .context("trust the configured OCI CA bundles")?;
     }
 
+    // ONE source, read once, at trusted composition (`wamn-0h0g.22.9`). The
+    // `or_else` chain this replaces made the process its own second and third
+    // credential source; clap now resolves `--database-url` or its declared
+    // `WAMN_PG_URL` env, and nothing else is consulted.
     let database_url = args
         .database_url
         .clone()
-        .or_else(|| std::env::var("WAMN_PG_URL").ok())
-        .or_else(|| std::env::var("DATABASE_URL").ok())
-        .context("no database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")?;
+        .context("no database url: pass --database-url or set WAMN_PG_URL")?;
     let owner = resolve_owner(args.runner.clone());
     let release = load_release(
         &args.release_artifact_base,
@@ -721,6 +731,49 @@ mod tests {
         let help = TestCli::command().render_long_help().to_string();
         assert!(help.contains("wiring-cache-capacity"));
         assert!(help.contains("readiness-bind"));
+    }
+
+    /// THE CREDENTIAL HAS EXACTLY ONE SOURCE (`wamn-0h0g.22.9`).
+    ///
+    /// Asserted on the clap DECLARATION rather than by mutating the process
+    /// environment, which is global and racy across a test binary's threads.
+    /// `run` no longer consults the environment at all for the credential, so
+    /// what clap declares here IS the whole source set: one argument, one env
+    /// var. A reintroduced `DATABASE_URL` fallback would either appear as a
+    /// second declared env (caught by the equality below) or as an `or_else`
+    /// chain in `run` — which this pins by leaving `WAMN_PG_URL` the only
+    /// database env any executor argument names.
+    #[test]
+    fn the_database_credential_names_one_env_and_no_second_source() {
+        #[derive(clap::Parser)]
+        struct TestCli {
+            #[command(flatten)]
+            args: ExecutorArgs,
+        }
+
+        let command = TestCli::command();
+        let database_envs: Vec<String> = command
+            .get_arguments()
+            .filter_map(|arg| arg.get_env())
+            .map(|env| env.to_string_lossy().into_owned())
+            .filter(|env| env.ends_with("PG_URL") || env.ends_with("DATABASE_URL"))
+            .collect();
+        assert_eq!(
+            database_envs,
+            ["WAMN_PG_URL"],
+            "the executor credential must have exactly one declared source"
+        );
+
+        let database_url = command
+            .get_arguments()
+            .find(|arg| arg.get_id() == "database_url")
+            .expect("the executor declares a database-url argument");
+        assert_eq!(
+            database_url.get_env().map(|env| env.to_string_lossy()),
+            Some("WAMN_PG_URL".into()),
+            "WAMN_PG_URL is the argument's declared transport, not a fallback \
+             read behind it"
+        );
     }
 
     #[test]

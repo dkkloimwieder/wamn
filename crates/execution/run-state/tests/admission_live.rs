@@ -129,6 +129,22 @@ fn surviving_authority_matrix_live() {
         .trim()
         .to_string();
     let access_floor = sql::grant_connect_on_database_sql(&database);
+    // BOTH authorities are minted by the PRODUCTION builder, not by hand
+    // (`wamn-0h0g.22.9`). A hand-rolled `CREATE ROLE` + bare `GRANT` reaches the
+    // `require_executor_platform_authority()` check but NOT the tenant floor:
+    // `wamn-0h0g.22.17` narrowed `runs_tenant` `TO wamn_app` and admits every
+    // other family through one permissive arm `TO wamn_platform`, so a principal
+    // outside that group is DEFAULT-DENIED with no error and the claim reads
+    // zero rows. Measured on PostgreSQL 18.6 against the real files, connected
+    // as this login asserted NOT (rolsuper OR rolbypassrls): hand-rolled shape
+    // 0 rows, `prepare_workload_generation_sql` shape 1 row.
+    let executor_provision = sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::ExecutorPlatform,
+        &database,
+        EXECUTOR_LOGIN,
+        "executor-proof-password",
+        "2099-01-01T00:00:00Z",
+    );
     let management_provision = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::ManagementAdmitter,
         &database,
@@ -162,13 +178,9 @@ fn surviving_authority_matrix_live() {
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE wamn_executor_platform NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE {EXECUTOR_LOGIN} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOREPLICATION NOBYPASSRLS; \
-             GRANT wamn_executor_platform TO {EXECUTOR_LOGIN} WITH SET FALSE, ADMIN FALSE; \
              BEGIN; {catalog} {run_state} {run_queue} COMMIT; \
              {access_floor} \
+             {executor_provision} \
              {management_provision}"
         ),
     );
@@ -208,6 +220,43 @@ fn surviving_authority_matrix_live() {
                  '{MANAGEMENT_LOGIN}', current_database(), 'CONNECT'); \
                ASSERT NOT pg_catalog.has_database_privilege( \
                  '{MANAGEMENT_LOGIN}', current_database(), 'TEMPORARY'); \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_authid \
+                  WHERE rolname = 'wamn_executor_platform' \
+                    AND NOT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
+                    AND NOT rolcreaterole AND NOT rolinherit AND NOT rolreplication \
+                    AND NOT rolbypassrls AND rolpassword IS NULL); \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_authid \
+                  WHERE rolname = '{EXECUTOR_LOGIN}' \
+                    AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
+                    AND NOT rolcreaterole AND rolinherit AND NOT rolreplication \
+                    AND NOT rolbypassrls AND rolpassword IS NOT NULL \
+                    AND rolvaliduntil IS NOT NULL); \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_auth_members AS membership \
+                 JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
+                 JOIN pg_catalog.pg_roles AS child ON child.oid = membership.member \
+                  WHERE parent.rolname = 'wamn_executor_platform' \
+                    AND child.rolname = '{EXECUTOR_LOGIN}' \
+                    AND NOT membership.admin_option \
+                    AND membership.inherit_option \
+                    AND NOT membership.set_option); \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_auth_members AS membership \
+                 JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
+                 JOIN pg_catalog.pg_roles AS child ON child.oid = membership.member \
+                  WHERE parent.rolname = 'wamn_platform' \
+                    AND child.rolname = 'wamn_executor_platform' \
+                    AND NOT membership.admin_option \
+                    AND membership.inherit_option \
+                    AND NOT membership.set_option); \
+               ASSERT pg_catalog.pg_has_role( \
+                 '{EXECUTOR_LOGIN}', 'wamn_platform', 'USAGE'); \
+               ASSERT NOT pg_catalog.pg_has_role( \
+                 '{EXECUTOR_LOGIN}', 'wamn_app', 'USAGE'); \
+               ASSERT NOT pg_catalog.pg_has_role( \
+                 '{MANAGEMENT_LOGIN}', 'wamn_app', 'USAGE'); \
              END $$;"
         ),
     );
