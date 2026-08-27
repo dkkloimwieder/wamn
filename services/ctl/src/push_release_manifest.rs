@@ -192,6 +192,16 @@ pub struct PushReleaseManifestArgs {
     /// Use plain HTTP for exactly the registry in `--artifact-base`.
     #[arg(long, default_value_t = false)]
     pub insecure_registry: bool,
+
+    /// Owner URL to the CONTROL database this deployment is attested in
+    /// (wamn-0h0g.8.27).
+    ///
+    /// REQUIRED in both byte sources. The attestation is what makes a digest
+    /// RELEASED rather than a candidate (`wamn-0h0g.13.54`), so a push that
+    /// could not reach the control plane must refuse rather than leave bytes in
+    /// a registry that no fact says were deployed.
+    #[arg(long)]
+    pub control_database_url: String,
 }
 
 impl PushReleaseManifestArgs {
@@ -211,10 +221,19 @@ pub async fn run(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
         &args.registry_auth_file,
     )
     .await?;
-    report_deployment_coordinate(
-        &args.deployment_coordinate(&published.release),
+    let coordinate = args.deployment_coordinate(&published.release);
+    report_deployment_coordinate(&coordinate, &published.digest);
+    // wamn-0h0g.8.27: the OCI push IS the deployment event this attestation
+    // records (wamn-0h0g.8.21's own stated trigger), so the write lands here and
+    // on no other verb. Its foreign key refuses a release whose identity the mint
+    // never projected — bytes that reached a registry without ever being minted
+    // cannot be attested into existence.
+    crate::publish_release::attest_deployment(
+        &args.control_database_url,
+        &coordinate,
         &published.digest,
-    );
+    )
+    .await?;
     println!("{}", published.digest);
     Ok(())
 }
@@ -527,11 +546,15 @@ mod tests {
         args: PushReleaseManifestArgs,
     }
 
-    const DESTINATION: [&str; 4] = [
+    const DESTINATION: [&str; 6] = [
         "--artifact-base",
         "registry.example/wamn/releases",
         "--registry-auth-file",
         "auth.json",
+        // wamn-0h0g.8.27: the control database the push attests into. A
+        // separate URL on purpose — the two planes are two databases.
+        "--control-database-url",
+        "postgres://control.invalid/store",
     ];
 
     const PLACEMENT: [&str; 4] = ["--org", "acme", "--project", "billing"];
@@ -600,9 +623,45 @@ mod tests {
             }
         }
 
+        // The control database is required in BOTH byte sources for the same
+        // reason (wamn-0h0g.8.27): a push that cannot reach the control plane
+        // cannot record the fact that makes the pushed digest a release rather
+        // than a candidate.
+        for source in [
+            vec!["--manifest", "manifest.json"],
+            vec![
+                "--database-url",
+                "postgres://release.invalid/env",
+                "--tenant",
+                "tenant-a",
+                "--catalog-id",
+                "orders",
+                "--catalog-version",
+                "3",
+            ],
+        ] {
+            let mut argv = vec!["push-release-manifest"];
+            argv.extend_from_slice(&source);
+            argv.extend_from_slice(&[
+                "--artifact-base",
+                "registry.example/wamn/releases",
+                "--registry-auth-file",
+                "auth.json",
+            ]);
+            argv.extend_from_slice(&PLACEMENT);
+            assert!(
+                PushProbe::try_parse_from(argv).is_err(),
+                "published {source:?} with no control database to attest into"
+            );
+        }
+
         let placed = parse(&["--manifest", "manifest.json"]).expect("a placed file source parses");
         assert_eq!(placed.org, "acme");
         assert_eq!(placed.project, "billing");
+        assert_eq!(
+            placed.control_database_url,
+            "postgres://control.invalid/store"
+        );
     }
 
     #[test]

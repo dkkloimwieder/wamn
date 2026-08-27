@@ -67,7 +67,7 @@ use wamn_schema_control::BareSchemaName;
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
 const LOCK_RELEASE_SQL: &str = "\
-SELECT catalog.environment \
+SELECT catalog.environment, catalog.schema_version \
   FROM catalog.releases AS release \
   JOIN catalog.catalogs AS catalog \
     ON catalog.tenant_id = release.tenant_id \
@@ -214,6 +214,11 @@ pub struct MintedReleaseManifest {
     pub manifest: ServingManifest,
     pub digest: ManifestDigest,
     pub canonical_bytes: Vec<u8>,
+    /// `catalog.catalogs.schema_version` of the row this release was frozen from
+    /// — the catalog-MODEL format version, not the catalog version. Read under
+    /// the same `FOR UPDATE` lock as the environment so the identity projected
+    /// onto the control plane cannot be assembled from two different reads.
+    pub catalog_schema_version: String,
 }
 
 /// Stable prefix every release-manifest mint refusal renders with.
@@ -381,6 +386,16 @@ pub struct PublishReleaseArgs {
     /// INTERIM: JSON object of registration id to serving registration; `{}` for none.
     #[arg(long)]
     pub registrations: PathBuf,
+
+    /// Owner URL to the CONTROL database this release's identity is projected
+    /// into (wamn-0h0g.8.27).
+    ///
+    /// REQUIRED, and never defaulted to `--database-url`: the two are separate
+    /// databases, and a mint whose identity never reaches the control plane
+    /// leaves `catalog.deployment_attestations` unable to reference the release
+    /// it froze, so nothing could ever mark that digest deployed.
+    #[arg(long)]
+    pub control_database_url: String,
 }
 
 impl PublishReleaseArgs {
@@ -427,10 +442,19 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
                 .await
                 .context("join the release mint connection")?
                 .context("drive the release mint connection")?;
-            report_deployment_coordinate(
-                &args.deployment_coordinate(&minted.manifest.release),
-                &minted.digest,
-            );
+            let coordinate = args.deployment_coordinate(&minted.manifest.release);
+            report_deployment_coordinate(&coordinate, &minted.digest);
+            // The mint's own cross-plane write: identity, NOT attestation. A
+            // digest is RELEASED iff an attestation references it
+            // (wamn-0h0g.13.54), so a minted-and-unpushed release must be
+            // reachable by that foreign key while still carrying no attestation
+            // — which is exactly what makes it a candidate.
+            project_release_identity(
+                &args.control_database_url,
+                &coordinate,
+                &minted.catalog_schema_version,
+            )
+            .await?;
             println!("{}", minted.digest);
             Ok(())
         }
@@ -475,7 +499,7 @@ async fn mint_in_transaction(
 }
 
 /// Read the one provisioned environment fact this project database holds for a tenant.
-async fn read_expected_environment(
+pub(crate) async fn read_expected_environment(
     transaction: &Transaction<'_>,
     run_schema: &BareSchemaName,
     tenant_id: &str,
@@ -501,7 +525,7 @@ async fn read_expected_environment(
 /// The two refusals are deliberately distinct literals: an absent policy and a
 /// disagreeing one are different operator situations with different remedies, so
 /// the absent refusal names `reconcile-run-plane` — the verb that converges it.
-fn verify_provisioned_environment(
+pub(crate) fn verify_provisioned_environment(
     expected_environment: Option<&str>,
     release: &ServingRelease,
     run_schema: &BareSchemaName,
@@ -555,6 +579,187 @@ pub(crate) fn report_deployment_coordinate(
         manifest_hash = %manifest_hash,
         "release carries a complete deployment attestation coordinate"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The cross-plane writes (wamn-0h0g.8.27, owner ruling 2026-08-27).
+//
+// `catalog.deployment_attestations` and the `catalog.releases` its foreign key
+// resolves against are CONTROL-plane relations; both publish verbs mint into,
+// and read from, a PROJECT environment database. `catalog.releases` exists as a
+// SEPARATE relation in each plane, so the key resolves only once release
+// identity has been PROJECTED across — which is what the two functions below do,
+// in that order and from two different verbs.
+//
+// No statement spans the two databases. Each write is its own transaction on its
+// own connection, opened for the write and closed after it.
+// ---------------------------------------------------------------------------
+
+/// Open the control-plane connection, run one write on it, and close it.
+///
+/// Neither publish verb held a control connection before this bead: both connect
+/// to the project environment database alone.
+async fn on_control_plane<F, T>(control_database_url: &str, write: F) -> anyhow::Result<T>
+where
+    F: AsyncFnOnce(&mut Client) -> anyhow::Result<T>,
+{
+    let (mut control, connection) = tokio_postgres::connect(control_database_url, NoTls)
+        .await
+        .context("connect to the control database")?;
+    let connection_task = tokio::spawn(connection);
+    let outcome = write(&mut control).await;
+    drop(control);
+    match outcome {
+        Ok(outcome) => {
+            connection_task
+                .await
+                .context("join the control-plane connection")?
+                .context("drive the control-plane connection")?;
+            Ok(outcome)
+        }
+        Err(error) => {
+            connection_task.abort();
+            Err(error)
+        }
+    }
+}
+
+/// Render a driver failure so the server's own message survives into the translation.
+///
+/// `tokio_postgres::Error` DISPLAYS as the bare string `db error`: the `DbError`
+/// carrying a routine's `RAISE` message is its SOURCE, not part of its own
+/// rendering. Both translations in `wamn_schema_control::attestation` classify on
+/// the SQLSTATE *and* that message, so a caller handing them `error.to_string()`
+/// alone would report every routine refusal as `storage`.
+fn render_driver_failure(error: &tokio_postgres::Error) -> String {
+    match error.as_db_error() {
+        Some(db_error) => format!("{error}: {db_error}"),
+        None => error.to_string(),
+    }
+}
+
+/// Run one bound control-plane statement under the coordinate's own tenant claim.
+///
+/// The claim is not decoration: every relation this touches is under FORCE ROW
+/// LEVEL SECURITY with an `app.tenant` policy, so an unclaimed session writing as
+/// the store's owner would be filtered to nothing rather than refused.
+async fn execute_claimed(
+    control: &mut Client,
+    tenant_id: &str,
+    statement: &wamn_schema_control::SqlStatement,
+) -> Result<(), tokio_postgres::Error> {
+    let transaction = control.transaction().await?;
+    transaction
+        .query_one(CLAIM_TENANT_SQL, &[&tenant_id])
+        .await?;
+    let params = crate::migrate_catalog::to_sql_params(&statement.params);
+    transaction.execute(statement.sql.as_str(), &params).await?;
+    transaction.commit().await
+}
+
+/// Project one release's identity onto the control plane, as a provenance fact.
+///
+/// This is what makes the attestation's foreign key resolvable at all. It records
+/// nothing about deployment: an identity with no attestation beside it is exactly
+/// a CANDIDATE (`wamn-0h0g.13.54`).
+pub async fn project_release_identity(
+    control_database_url: &str,
+    coordinate: &DeploymentCoordinate,
+    catalog_schema_version: &str,
+) -> anyhow::Result<()> {
+    let catalog_version = i32::try_from(coordinate.catalog_version)
+        .context("catalog-version exceeds the PostgreSQL integer carrier")?;
+    let identity = wamn_schema_control::attestation::ReleaseIdentity {
+        tenant_id: &coordinate.tenant_id,
+        catalog_id: &coordinate.catalog_id,
+        catalog_version,
+        environment: coordinate.triple.env.as_str(),
+        schema_version: catalog_schema_version,
+    };
+    let statement = wamn_schema_control::attestation::project_release_identity(&identity);
+    on_control_plane(control_database_url, async |control| {
+        execute_claimed(control, identity.tenant_id, &statement)
+            .await
+            .map_err(|error| {
+                anyhow::Error::new(
+                    wamn_schema_control::attestation::translate_projection_failure(
+                        &identity,
+                        error.code().map(tokio_postgres::error::SqlState::code),
+                        &render_driver_failure(&error),
+                    ),
+                )
+            })
+    })
+    .await
+}
+
+/// Record that one release really reached its control-plane placement.
+///
+/// The attestation is what MAKES a manifest a release (`wamn-0h0g.13.54`), so it
+/// is written where the deployment happens — after the OCI push — and nowhere
+/// else. Its foreign key refuses a coordinate whose identity was never projected,
+/// which is the referential guarantee that definition rests on.
+pub async fn attest_deployment(
+    control_database_url: &str,
+    coordinate: &DeploymentCoordinate,
+    manifest_hash: &ManifestDigest,
+) -> anyhow::Result<()> {
+    let catalog_version = i32::try_from(coordinate.catalog_version)
+        .context("catalog-version exceeds the PostgreSQL integer carrier")?;
+    on_control_plane(control_database_url, async |control| {
+        // The instant is the CONTROL database's own clock, read on the connection
+        // that records it. `register_deployment_attestation` treats `attested_at`
+        // as attested content, so a retry must present the value already
+        // recorded rather than a second reading of some other clock; the write
+        // below reuses the stored instant when the coordinate is already
+        // attested, and lets the routine refuse when the content differs.
+        let recorded: Option<String> = control
+            .query_opt(
+                "SELECT attested_at::text FROM catalog.deployment_attestations \
+                  WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+                    AND org_id = $4 AND project_id = $5 AND environment = $6",
+                &[
+                    &coordinate.tenant_id,
+                    &coordinate.catalog_id,
+                    &catalog_version,
+                    &coordinate.triple.org,
+                    &coordinate.triple.project,
+                    &coordinate.triple.env.as_str(),
+                ],
+            )
+            .await
+            .context("read the recorded attestation instant")?
+            .map(|row| row.get(0));
+        let attested_at = match recorded {
+            Some(recorded) => recorded,
+            None => control
+                .query_one("SELECT now()::text", &[])
+                .await
+                .context("read the control database's attestation instant")?
+                .get(0),
+        };
+        let attestation = wamn_schema_control::attestation::Attestation {
+            tenant_id: &coordinate.tenant_id,
+            catalog_id: &coordinate.catalog_id,
+            catalog_version,
+            org_id: &coordinate.triple.org,
+            project_id: &coordinate.triple.project,
+            environment: coordinate.triple.env.as_str(),
+            deployed_manifest_hash: manifest_hash.as_str(),
+            attested_at: &attested_at,
+        };
+        let statement = wamn_schema_control::attestation::register_attestation(&attestation);
+        execute_claimed(control, attestation.tenant_id, &statement)
+            .await
+            .map_err(|error| {
+                anyhow::Error::new(wamn_schema_control::attestation::translate_failure(
+                    &attestation,
+                    error.code().map(tokio_postgres::error::SqlState::code),
+                    &render_driver_failure(&error),
+                ))
+            })
+    })
+    .await
 }
 
 fn read_document<T: DeserializeOwned>(path: &Path, field: &'static str) -> anyhow::Result<T> {
@@ -648,6 +853,7 @@ pub async fn mint_release_manifest(
         manifest,
         digest,
         canonical_bytes,
+        catalog_schema_version: release.get(1),
     })
 }
 
@@ -1052,9 +1258,15 @@ mod tests {
     /// The schema of record declaring the fact this verb's precondition reads.
     const RUN_STATE_SCHEMA: &str = include_str!("../../../deploy/sql/run-state.sql");
 
-    const COORDINATE: [&str; 14] = [
+    /// The control database the mint projects release identity into. A separate
+    /// URL on purpose: the two planes are two databases (wamn-0h0g.8.27).
+    const CONTROL_PLANE: [&str; 2] = ["--control-database-url", "postgres://control.invalid/store"];
+
+    const COORDINATE: [&str; 16] = [
         "--database-url",
         "postgres://release.invalid/env",
+        "--control-database-url",
+        "postgres://control.invalid/store",
         "--org",
         "acme",
         "--project",
@@ -1158,6 +1370,7 @@ mod tests {
                 "3",
             ];
             argv.extend_from_slice(&["--run-schema", "wamn_run"]);
+            argv.extend_from_slice(&CONTROL_PLANE);
             argv.extend_from_slice(&placement);
             argv.extend_from_slice(&closure);
             assert!(
@@ -1166,9 +1379,40 @@ mod tests {
             );
         }
 
+        // The control database is required for the same reason and separately
+        // (wamn-0h0g.8.27): a placement that names an org and a project but no
+        // control plane could never project the release identity the deployment
+        // attestation's foreign key resolves against.
+        let mut unprojected = vec![
+            "publish-release",
+            "--database-url",
+            "postgres://release.invalid/env",
+            "--tenant",
+            "tenant-a",
+            "--catalog-id",
+            "orders",
+            "--catalog-version",
+            "3",
+            "--run-schema",
+            "wamn_run",
+            "--org",
+            "acme",
+            "--project",
+            "billing",
+        ];
+        unprojected.extend_from_slice(&closure);
+        assert!(
+            PublishProbe::try_parse_from(unprojected).is_err(),
+            "minted a release with no control database to project its identity into"
+        );
+
         let placed = parse(&closure).expect("the complete placement parses");
         assert_eq!(placed.org, "acme");
         assert_eq!(placed.project, "billing");
+        assert_eq!(
+            placed.control_database_url,
+            "postgres://control.invalid/store"
+        );
     }
 
     #[test]

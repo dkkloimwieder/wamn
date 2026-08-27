@@ -59,10 +59,10 @@ pub const CATALOG_PLANE_RESIDENCY_REFUSAL: &str = "catalog-plane-residency-contr
 /// side effect of the wrong-plane path and it mutates CLUSTER-GLOBAL role state
 /// (it may `CREATE ROLE wamn_app` with a known password and always issues
 /// `REVOKE wamn_scenario_author FROM wamn_app`), which a refusal raised after it
-/// could not take back. Note that `promote` and `migrate-catalog` each call
-/// `ensure_wamn_app_role` themselves one line ahead of this verb, so on those two
-/// paths the role bootstrap still precedes the refusal; only the storage is
-/// guarded there.
+/// could not take back. `wamn-0h0g.12.183` deleted the `ensure_wamn_app_role`
+/// calls `promote` and `migrate-catalog` each made one line ahead of this verb,
+/// so every path now reaches the refusal before any role is minted. Removal was
+/// the fix rather than reordering, because this verb bootstraps the role itself.
 async fn refuse_control_plane_residency(client: &tokio_postgres::Client) -> anyhow::Result<()> {
     let control_store: bool = client
         .query_one(

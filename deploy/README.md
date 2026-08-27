@@ -41,8 +41,12 @@ environment than the release carries
 whose run plane was never reconciled therefore fails; the absent refusal names
 `reconcile-run-plane` so the remedy is in the error text. Nothing sequences the
 two verbs, which is why the ordering is written down here.
-`push-release-manifest` has no such precondition — it publishes bytes a mint
-already verified.
+`push-release-manifest` has no such ENVIRONMENT precondition — it publishes
+bytes a mint already verified. Both verbs do require `--control-database-url`:
+`wamn-0h0g.8.27` made the mint PROJECT release identity into the control plane
+and the push ATTEST against it, so a digest is RELEASED iff a deployment
+attestation references it (`wamn-0h0g.13.54`). `$CONTROL_URL` is the control
+database; `print-release-env` reads the project snapshot and takes neither.
 
 Release rollout, and rollback by revert: **the controller question re-opens on a
 named trigger, and on nothing else.** Two fire it, and only two — a SECOND
@@ -104,7 +108,8 @@ value; the executor's Deployment is hand-written.
 #    STDOUT. The deployment-attestation coordinate is a tracing record and goes
 #    to stderr, so `$(...)` around this captures the digest and nothing else.
 wamn-ctl publish-release \
-  --database-url "$OWNER_URL" --org "$ORG" --project "$PROJECT" \
+  --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
+  --org "$ORG" --project "$PROJECT" \
   --tenant "$TENANT" --catalog-id "$CATALOG_ID" --catalog-version "$CATALOG_VERSION" \
   --run-schema "$RUN_SCHEMA" \
   --wiring "$WIRING_ID=$WIRING_VERSION" \
@@ -113,7 +118,8 @@ wamn-ctl publish-release \
 # 2. PUSH the frozen bytes as an OCI artifact, read back from the snapshot the
 #    mint wrote rather than from a file, and re-print the same digest.
 wamn-ctl push-release-manifest \
-  --database-url "$OWNER_URL" --tenant "$TENANT" \
+  --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
+  --tenant "$TENANT" \
   --catalog-id "$CATALOG_ID" --catalog-version "$CATALOG_VERSION" \
   --org "$ORG" --project "$PROJECT" \
   --artifact-base "$PUSH_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"

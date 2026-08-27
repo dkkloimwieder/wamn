@@ -13,23 +13,25 @@ use serde_json::json;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
-    AttachmentKind, CatalogIdentityError, DefinitionHash, SERVING_MANIFEST_FORMAT_VERSION,
-    ServingAttachment, ServingManifest, ServingRegistration, ServingRegistrationInput,
-    ServingRelease, ServingWiring, WiringDocument, WiringEventOperation, WiringNode,
-    WiringTerminal,
+    AttachmentKind, CatalogIdentityError, DefinitionHash, ManifestDigest,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingManifest, ServingRegistration,
+    ServingRegistrationInput, ServingRelease, ServingWiring, WiringDocument, WiringEventOperation,
+    WiringNode, WiringTerminal,
 };
 use wamn_ctl::author_wiring::{
     AuthorWiringArgs, AuthorWiringErrorKind, AuthorWiringRequest, author_wiring,
 };
-use wamn_ctl::publish_catalog::ensure_catalog_storage;
+use wamn_ctl::publish_catalog::{CATALOG_PLANE_RESIDENCY_REFUSAL, ensure_catalog_storage};
 use wamn_ctl::publish_release::{
-    MintManifestError, MintManifestErrorKind, MintReleaseManifest, PublishReleaseArgs,
-    RELEASE_MANIFEST_MINT_REFUSAL, ReleaseWiringTarget, mint_release_manifest,
+    DeploymentCoordinate, MintManifestError, MintManifestErrorKind, MintReleaseManifest,
+    PublishReleaseArgs, RELEASE_MANIFEST_MINT_REFUSAL, ReleaseWiringTarget, attest_deployment,
+    mint_release_manifest, project_release_identity,
 };
 use wamn_ctl::push_release_manifest::{
     PushReleaseManifestArgs, ReleaseManifestPublishDisposition, publish_release_manifest,
 };
 use wamn_execution_contract::EntryKind;
+use wamn_schema_control::attestation::{AttestationError, AttestationErrorKind};
 use wamn_schema_control::{
     Attachment as ExposureAttachment, AttachmentKind as ExposureAttachmentKind, ExposureRelease,
     FlowExposure, HttpRoute, Source, SourceKind, resolve_exposure,
@@ -287,7 +289,11 @@ async fn assert_no_release_was_frozen(admin: &Client) {
 }
 
 /// Mint one first release through the CLI verb against a seeded environment.
-async fn publish_first_release(url: &str, documents: &Path) -> anyhow::Result<()> {
+async fn publish_first_release(
+    url: &str,
+    control_url: &str,
+    documents: &Path,
+) -> anyhow::Result<()> {
     wamn_ctl::publish_release::run(PublishReleaseArgs {
         database_url: url.to_owned(),
         org: ORG.to_string(),
@@ -299,8 +305,151 @@ async fn publish_first_release(url: &str, documents: &Path) -> anyhow::Result<()
         wirings: targets().into_iter().collect(),
         attachments: write_document(documents, "attachments.json", &attachments()),
         registrations: write_document(documents, "registrations.json", &registrations()),
+        control_database_url: control_url.to_owned(),
     })
     .await
+}
+
+/// The CONTROL database this fixture creates beside the project one.
+///
+/// The two planes are two DATABASES that share relation names on purpose
+/// (`deploy/sql/control-portable-store.sql`: "database residency, not a renamed
+/// schema, distinguishes them"), so a fixture that installed the control store
+/// into the project database would prove nothing about the crossing.
+const CONTROL_DATABASE: &str = "wamn_release_attestation_control";
+
+/// Point a live-test URL at another database on the SAME cluster.
+fn sibling_url(url: &str, database: &str) -> String {
+    let mut sibling = url::Url::parse(url).expect("the live database URL parses");
+    sibling.set_path(database);
+    sibling.to_string()
+}
+
+/// Create the control database beside the project one and install the PRODUCTION
+/// control portable store into it.
+///
+/// `CREATE DATABASE` and `DROP DATABASE` each go over the simple protocol as the
+/// only statement of their request, because neither may run inside a transaction
+/// block.
+async fn provision_control_plane(url: &str) -> String {
+    let (maintenance, maintenance_task) = connect(&sibling_url(url, "postgres")).await;
+    maintenance
+        .batch_execute(
+            "DO $$ DECLARE role_name text; BEGIN \
+               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
+               FOREACH role_name IN ARRAY \
+                 ARRAY['wamn_system', 'wamn_control_author', 'wamn_app', 'wamn_scenario_author'] \
+               LOOP \
+                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
+                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+                 END IF; \
+               END LOOP; \
+             END $$;",
+        )
+        .await
+        .expect("bootstrap the cluster-global roles the control store grants to");
+    maintenance
+        .simple_query(&format!(
+            "DROP DATABASE IF EXISTS {CONTROL_DATABASE} WITH (FORCE)"
+        ))
+        .await
+        .expect("retire any control database a previous run left behind");
+    maintenance
+        .simple_query(&format!("CREATE DATABASE {CONTROL_DATABASE}"))
+        .await
+        .expect("create the control database beside the project one");
+    drop(maintenance);
+    let _ = maintenance_task.await;
+
+    let control_url = sibling_url(url, CONTROL_DATABASE);
+    let (control, control_task) = connect(&control_url).await;
+    // The store's own authority self-check refuses to apply while the project
+    // plane's author role can reach this database at all.
+    control
+        .batch_execute(&format!(
+            "DO $$ BEGIN \
+               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', \
+                              pg_catalog.current_database()); \
+             END $$; \
+             {CONTROL_PORTABLE_STORE}"
+        ))
+        .await
+        .expect("install the production control portable store");
+    drop(control);
+    let _ = control_task.await;
+    control_url
+}
+
+/// The tables a schema actually holds, read off the server.
+async fn tables(client: &Client, schema: &str) -> Vec<String> {
+    client
+        .query(
+            "SELECT tablename::text FROM pg_catalog.pg_tables \
+             WHERE schemaname = $1 ORDER BY tablename",
+            &[&schema],
+        )
+        .await
+        .expect("read the schema inventory")
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect()
+}
+
+/// A registry nothing can be listening on, and the credential a verb must load
+/// before it can even try to reach one.
+///
+/// Port 1 is privileged and unbound: a connection to it is refused rather than
+/// answered, so a verb pointed here gets no further than the transport.
+const UNREACHABLE_REGISTRY: &str = "127.0.0.1:1";
+
+fn unreachable_registry_credential(documents: &Path) -> PathBuf {
+    let path = documents.join("registry-auth.json");
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"auths":{{"{UNREACHABLE_REGISTRY}":{{"username":"live","password":"live"}}}}}}"#
+        ),
+    )
+    .expect("write the registry credential");
+    path
+}
+
+/// What the control plane holds for this release: catalog header, release
+/// identity, and attestation counts, read off the server.
+async fn control_state(control: &Client) -> (i64, i64, i64) {
+    let row = control
+        .query_one(
+            "SELECT (SELECT count(*) FROM catalog.catalogs \
+                      WHERE tenant_id = $1 AND catalog_id = $2 AND version = $3), \
+                    (SELECT count(*) FROM catalog.releases \
+                      WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3), \
+                    (SELECT count(*) FROM catalog.deployment_attestations \
+                      WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3)",
+            &[&TENANT, &CATALOG, &CATALOG_VERSION],
+        )
+        .await
+        .expect("read the control plane's release state");
+    (row.get(0), row.get(1), row.get(2))
+}
+
+/// The one attestation row's content, if there is exactly one.
+async fn attested_content(control: &Client) -> Option<(String, String)> {
+    let rows = control
+        .query(
+            "SELECT deployed_manifest_hash, attested_at::text \
+               FROM catalog.deployment_attestations \
+              WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+            &[&TENANT, &CATALOG, &CATALOG_VERSION],
+        )
+        .await
+        .expect("read the attested content");
+    assert!(
+        rows.len() <= 1,
+        "the coordinate is attested {} times",
+        rows.len()
+    );
+    rows.first().map(|row| (row.get(0), row.get(1)))
 }
 
 /// Seed the whole closure one CLI publish needs, short of its environment policy.
@@ -973,7 +1122,8 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
 
     // The first release in this environment is minted by the CLI verb alone:
     // no hand SQL, no Rust test calling the mint, no source release to promote.
-    publish_first_release(&url, &documents)
+    let control_url = provision_control_plane(&url).await;
+    publish_first_release(&url, &control_url, &documents)
         .await
         .expect("the interim publish verb mints a first release");
 
@@ -1022,6 +1172,7 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
         artifact_base: artifact_base.clone(),
         registry_auth_file: PathBuf::from(&registry_auth_file),
         insecure_registry: true,
+        control_database_url: control_url.clone(),
     })
     .await
     .expect("the snapshot bridge publishes the minted release");
@@ -1069,7 +1220,8 @@ async fn a_release_labelled_for_another_environment_than_this_database_refuses()
     // database as `staging`. The label must lose.
     provision_environment_policy(&admin, Some("staging")).await;
 
-    let refusal = publish_first_release(&url, &documents)
+    let control_url = provision_control_plane(&url).await;
+    let refusal = publish_first_release(&url, &control_url, &documents)
         .await
         .expect_err("a release keyed to an environment this database is not");
     let typed = refusal
@@ -1121,7 +1273,8 @@ async fn a_release_with_no_projected_environment_policy_refuses() {
     // tenant, which is exactly the state a never-reconciled project is in.
     provision_environment_policy(&admin, None).await;
 
-    let refusal = publish_first_release(&url, &documents)
+    let control_url = provision_control_plane(&url).await;
+    let refusal = publish_first_release(&url, &control_url, &documents)
         .await
         .expect_err("a release published against an unprojected environment policy");
     let typed = refusal
@@ -1225,6 +1378,461 @@ async fn a_release_with_no_projected_environment_policy_refuses() {
     std::fs::remove_dir_all(&documents).expect("remove the interim document directory");
     drop(reader);
     let _ = reader_task.await;
+    drop(admin);
+    let _ = task.await;
+}
+
+/// The cross-plane proof (wamn-0h0g.8.27, owner ruling 2026-08-27).
+///
+/// `catalog.deployment_attestations` lives ONLY on the control plane and its
+/// foreign key targets the CONTROL copy of `catalog.releases`, while the publish
+/// pipeline mints into the PROJECT copy — two separate relations that share a
+/// name because database residency distinguishes the planes. This gate runs a
+/// real project database and a real control database, both installed from the
+/// production artifacts, and asserts the POST-STATE on the control server after
+/// each step rather than the absence of an error.
+///
+/// The division of labour it pins is the ruling's: the MINT projects identity and
+/// attests NOTHING, so a minted-but-unpushed release is reachable by the key and
+/// still carries no attestation — which is exactly what `wamn-0h0g.13.54` means
+/// by a candidate. Only the deployment writes the attestation.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 URL in WAMN_RELEASE_MANIFEST_MINT_PG_URL"]
+async fn the_mint_projects_release_identity_and_leaves_it_unattested() {
+    let _lock = support::lock();
+    let url = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL")
+        .expect("WAMN_RELEASE_MANIFEST_MINT_PG_URL names a disposable PostgreSQL 18 database");
+
+    let (admin, task) = connect(&url).await;
+    let documents = std::env::temp_dir().join(format!(
+        "wamn-publish-release-attestation-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&documents).expect("create the interim document directory");
+    seed_publishable_release(&admin, &url, &documents).await;
+    provision_environment_policy(&admin, Some(ENVIRONMENT)).await;
+    let control_url = provision_control_plane(&url).await;
+    let (control, control_task) = connect(&control_url).await;
+
+    assert_eq!(
+        control_state(&control).await,
+        (0, 0, 0),
+        "the fresh control store already holds this release"
+    );
+
+    publish_first_release(&url, &control_url, &documents)
+        .await
+        .expect("the interim publish verb mints a first release");
+
+    // THE CANDIDATE POST-STATE. Identity arrived; nothing attested it.
+    assert_eq!(
+        control_state(&control).await,
+        (1, 1, 0),
+        "the mint did not project exactly one release identity and no attestation"
+    );
+    let projected = control
+        .query_one(
+            "SELECT environment, schema_version FROM catalog.catalogs \
+              WHERE tenant_id = $1 AND catalog_id = $2 AND version = $3",
+            &[&TENANT, &CATALOG, &CATALOG_VERSION],
+        )
+        .await
+        .expect("read the projected catalog header");
+    assert_eq!(projected.get::<_, String>(0), ENVIRONMENT);
+    let projected_schema_version: String = projected.get(1);
+    let minted_schema_version: String = admin
+        .query_one(
+            "SELECT schema_version FROM catalog.catalogs \
+              WHERE tenant_id = $1 AND catalog_id = $2 AND version = $3",
+            &[&TENANT, &CATALOG, &CATALOG_VERSION],
+        )
+        .await
+        .expect("read the project catalog header")
+        .get(0);
+    assert_eq!(
+        projected_schema_version, minted_schema_version,
+        "the projection invented a catalog-model version the project plane never held"
+    );
+
+    let frozen_bytes: Vec<u8> = admin
+        .query_one(
+            "SELECT canonical_bytes FROM catalog.release_manifest_v2_snapshots \
+              WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+            &[&TENANT, &CATALOG, &CATALOG_VERSION],
+        )
+        .await
+        .expect("the CLI mint froze one v2 snapshot")
+        .get(0);
+    let (manifest, digest) = ServingManifest::from_canonical_bytes(&frozen_bytes)
+        .expect("the frozen snapshot is a canonical v2 manifest");
+    let coordinate = DeploymentCoordinate::new(ORG, PROJECT, &manifest.release);
+
+    // A PUSH THAT NEVER REACHED A REGISTRY ATTESTS NOTHING. The attestation is
+    // written strictly after the OCI push succeeds, so an unreachable registry
+    // must leave the control plane exactly as the mint left it. `127.0.0.1:1` is
+    // a port nothing can be listening on.
+    let auth_file = unreachable_registry_credential(&documents);
+    let unpublished = wamn_ctl::push_release_manifest::run(PushReleaseManifestArgs {
+        manifest: None,
+        database_url: Some(url.clone()),
+        org: ORG.to_string(),
+        project: PROJECT.to_string(),
+        tenant: Some(TENANT.to_string()),
+        catalog_id: Some(CATALOG.to_string()),
+        catalog_version: Some(CATALOG_VERSION as u32),
+        artifact_base: format!("{UNREACHABLE_REGISTRY}/wamn-live/release-manifest"),
+        registry_auth_file: auth_file.clone(),
+        insecure_registry: true,
+        control_database_url: control_url.clone(),
+    })
+    .await
+    .expect_err("a push that cannot reach its registry");
+    assert!(
+        unpublished.downcast_ref::<AttestationError>().is_none(),
+        "the push reached the attestation write before publishing any bytes: {unpublished:#}"
+    );
+    assert_eq!(
+        control_state(&control).await,
+        (1, 1, 0),
+        "a push that published nothing still attested a deployment"
+    );
+
+    // THE DEPLOYMENT EVENT. One attestation, and the foreign key resolves it
+    // against the identity the mint projected.
+    attest_deployment(&control_url, &coordinate, &digest)
+        .await
+        .expect("the deployed release is attested on the control plane");
+    assert_eq!(
+        control_state(&control).await,
+        (1, 1, 1),
+        "the deployment did not record exactly one attestation"
+    );
+    let (attested_hash, attested_at) = attested_content(&control)
+        .await
+        .expect("the attestation is recorded");
+    assert_eq!(attested_hash, digest.as_str());
+
+    // AN EXACT RETRY CONVERGES rather than raising the routine's content
+    // conflict on a second reading of the clock: `attested_at` is attested
+    // CONTENT, so the retry must present the instant already recorded.
+    attest_deployment(&control_url, &coordinate, &digest)
+        .await
+        .expect("an exact re-attestation converges");
+    assert_eq!(
+        attested_content(&control).await,
+        Some((attested_hash.clone(), attested_at.clone())),
+        "the retry rewrote or duplicated the attested fact"
+    );
+
+    // DIFFERENT BYTES AT THE SAME COORDINATE REFUSE, and the recorded fact stands.
+    let other_digest = ManifestDigest::parse(
+        "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    )
+    .expect("fixture digest is canonical");
+    let conflict = attest_deployment(&control_url, &coordinate, &other_digest)
+        .await
+        .expect_err("re-attesting a coordinate with other bytes");
+    let typed_conflict = conflict
+        .downcast_ref::<AttestationError>()
+        .unwrap_or_else(|| panic!("the conflict was untyped: {conflict:#}"));
+    assert_eq!(
+        typed_conflict.kind(),
+        AttestationErrorKind::ContentConflict,
+        "the routine's own refusal was classified as {:?}: {typed_conflict}",
+        typed_conflict.kind()
+    );
+    assert_eq!(
+        attested_content(&control).await,
+        Some((attested_hash, attested_at)),
+        "the refused re-attestation still moved the recorded fact"
+    );
+
+    // A COORDINATE THE MINT NEVER PROJECTED CANNOT BE ATTESTED INTO EXISTENCE.
+    // This is the referential guarantee `wamn-0h0g.13.54` rests on, observed as
+    // the server's own foreign-key refusal.
+    let unminted = DeploymentCoordinate {
+        catalog_version: coordinate.catalog_version + 1,
+        ..coordinate.clone()
+    };
+    let refusal = attest_deployment(&control_url, &unminted, &digest)
+        .await
+        .expect_err("attesting a release identity that was never projected");
+    let typed = refusal
+        .downcast_ref::<AttestationError>()
+        .unwrap_or_else(|| panic!("the foreign-key refusal was untyped: {refusal:#}"));
+    assert_eq!(typed.kind(), AttestationErrorKind::Storage);
+    assert!(
+        typed.driver().contains("foreign key"),
+        "the refusal did not come from the cross-plane key: {typed}"
+    );
+    let unminted_rows: i64 = control
+        .query_one(
+            "SELECT count(*) FROM catalog.deployment_attestations \
+              WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+            &[&TENANT, &CATALOG, &(CATALOG_VERSION + 1)],
+        )
+        .await
+        .expect("count the unminted coordinate's attestations")
+        .get(0);
+    assert_eq!(unminted_rows, 0);
+
+    // THE PROJECTION IS INSERT-OR-VERIFY-IDENTICAL, not a silent no-op: an exact
+    // re-projection converges, and one carrying other catalog facts refuses.
+    project_release_identity(&control_url, &coordinate, &minted_schema_version)
+        .await
+        .expect("an exact re-projection converges");
+    assert_eq!(control_state(&control).await, (1, 1, 1));
+    let drifted = project_release_identity(&control_url, &coordinate, "9999.0.0")
+        .await
+        .expect_err("re-projecting the coordinate under another catalog-model version");
+    assert_eq!(
+        drifted
+            .downcast_ref::<AttestationError>()
+            .unwrap_or_else(|| panic!("the projection conflict was untyped: {drifted:#}"))
+            .kind(),
+        AttestationErrorKind::IdentityProjectionConflict
+    );
+    let still: String = control
+        .query_one(
+            "SELECT schema_version FROM catalog.catalogs \
+              WHERE tenant_id = $1 AND catalog_id = $2 AND version = $3",
+            &[&TENANT, &CATALOG, &CATALOG_VERSION],
+        )
+        .await
+        .expect("read the projected catalog header back")
+        .get(0);
+    assert_eq!(
+        still, minted_schema_version,
+        "the refused re-projection still rewrote the projected fact"
+    );
+
+    // THE AUTHORITY FLOOR, asked of the server about a role that is neither a
+    // superuser nor a row-security bypasser — the only kind of role this
+    // question means anything for. The control author is the one non-owner
+    // principal this store grants anything to, and it reaches none of the
+    // cross-plane write path.
+    let bypasses: bool = control
+        .query_one(
+            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = 'wamn_control_author'",
+            &[],
+        )
+        .await
+        .expect("observe the control author role")
+        .get(0);
+    assert!(!bypasses, "the control author bypasses row security");
+    for (relation, privilege) in [
+        ("catalog.deployment_attestations", "SELECT"),
+        ("catalog.deployment_attestations", "INSERT"),
+        ("catalog.releases", "INSERT"),
+        ("catalog.catalogs", "SELECT"),
+        ("catalog.catalogs", "INSERT"),
+    ] {
+        let held: bool = control
+            .query_one(
+                "SELECT pg_catalog.has_table_privilege('wamn_control_author', $1, $2)",
+                &[&relation, &privilege],
+            )
+            .await
+            .expect("observe the control author's table privilege")
+            .get(0);
+        assert!(!held, "the control author holds {privilege} on {relation}");
+    }
+    for routine in [
+        "catalog.register_deployment_attestation(text,text,int,text,text,text,text,timestamptz)",
+        "catalog.project_release_identity(text,text,int,text,text)",
+    ] {
+        let held: bool = control
+            .query_one(
+                "SELECT pg_catalog.has_function_privilege('wamn_control_author', $1, 'EXECUTE')",
+                &[&routine],
+            )
+            .await
+            .expect("observe the control author's routine privilege")
+            .get(0);
+        assert!(!held, "the control author may execute {routine}");
+    }
+
+    std::fs::remove_dir_all(&documents).expect("remove the interim document directory");
+    drop(control);
+    let _ = control_task.await;
+    drop(admin);
+    let _ = task.await;
+}
+
+/// A minimal catalog document, so `promote` can read the source release's stored
+/// model and `migrate-catalog` has a target to apply.
+fn seed_catalog_document() -> serde_json::Value {
+    json!({
+        "schema-version": "0.1",
+        "catalog-id": CATALOG,
+        "version": CATALOG_VERSION,
+        "entities": [{
+            "id": "orders",
+            "name": "orders",
+            "fields": [{"id": "code", "name": "code", "type": {"kind": "text"}}],
+        }],
+    })
+}
+
+/// Whether `wamn_app` still holds the membership `ensure_wamn_app_role` revokes.
+///
+/// Role state is CLUSTER-global, so a refusal raised after that revoke could not
+/// take it back. This is the one witness a later failure cannot fake.
+async fn scenario_author_membership(client: &Client) -> bool {
+    client
+        .query_one(
+            "SELECT EXISTS ( \
+               SELECT FROM pg_catalog.pg_auth_members member \
+               JOIN pg_catalog.pg_roles granted ON granted.oid = member.roleid \
+               JOIN pg_catalog.pg_roles holder ON holder.oid = member.member \
+               WHERE granted.rolname = 'wamn_scenario_author' \
+                 AND holder.rolname = 'wamn_app')",
+            &[],
+        )
+        .await
+        .expect("read the scenario-author membership")
+        .get(0)
+}
+
+async fn plant_role_witness(client: &Client) {
+    client
+        .batch_execute(
+            "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
+             GRANT wamn_scenario_author TO wamn_app",
+        )
+        .await
+        .expect("plant the cluster-global witness the wrong-plane path would revoke");
+}
+
+/// Live proof for wamn-0h0g.12.183: the two verbs that bootstrapped the
+/// cluster-global role BEFORE the plane refusal no longer do.
+///
+/// `wamn-0h0g.12.180` put the control-plane refusal at the top of
+/// `ensure_catalog_storage`, ahead of `ensure_wamn_app_role`, precisely because
+/// role state is CLUSTER-wide and a refusal that fires after it has already
+/// mutated the cluster is not fail-closed. `promote` and `migrate-catalog` each
+/// called the role bootstrap themselves one line earlier and defeated it.
+///
+/// Both verbs run here as production runs them — `promote` against a real minted
+/// source release, `migrate-catalog` against a real catalog document — with a
+/// real control database as the target. The assertion is the POST-STATE of
+/// cluster-global role state, not an exit status: a planted membership must
+/// SURVIVE, because the pre-change verbs revoked it before refusing.
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18 URL in WAMN_RELEASE_MANIFEST_MINT_PG_URL"]
+async fn promote_and_migrate_catalog_refuse_a_control_database_before_minting_any_role() {
+    let _lock = support::lock();
+    let url = std::env::var("WAMN_RELEASE_MANIFEST_MINT_PG_URL")
+        .expect("WAMN_RELEASE_MANIFEST_MINT_PG_URL names a disposable PostgreSQL 18 database");
+
+    let (admin, task) = connect(&url).await;
+    let documents =
+        std::env::temp_dir().join(format!("wamn-control-plane-refusal-{}", std::process::id()));
+    std::fs::create_dir_all(&documents).expect("create the interim document directory");
+    seed_publishable_release(&admin, &url, &documents).await;
+    provision_environment_policy(&admin, Some(ENVIRONMENT)).await;
+    let document = seed_catalog_document();
+    admin
+        .execute(
+            "UPDATE catalog.catalogs SET document = $4::text::jsonb \
+              WHERE tenant_id = $1 AND catalog_id = $2 AND version = $3",
+            &[
+                &TENANT,
+                &CATALOG,
+                &CATALOG_VERSION,
+                &serde_json::to_string(&document).expect("the seed catalog serializes"),
+            ],
+        )
+        .await
+        .expect("store the source catalog document promote reads");
+    let control_url = provision_control_plane(&url).await;
+    publish_first_release(&url, &control_url, &documents)
+        .await
+        .expect("the source release promote reads is minted by the CLI verb");
+    let (control, control_task) = connect(&control_url).await;
+    let control_inventory = tables(&control, "catalog").await;
+    assert!(
+        control_inventory.contains(&"authoring_command_audit".to_string()),
+        "the control store does not carry the witness the refusal reads: {control_inventory:?}"
+    );
+
+    let credential = unreachable_registry_credential(&documents);
+    let target_document = documents.join("target.json");
+    std::fs::write(
+        &target_document,
+        serde_json::to_vec(&document).expect("the target catalog serializes"),
+    )
+    .expect("write the migrate-catalog target");
+
+    // ARM 1 — `promote`, driven from a real source release into a control
+    // database as its target.
+    plant_role_witness(&admin).await;
+    let refusal = wamn_ctl::promote::run(wamn_ctl::promote::PromoteArgs {
+        source_database_url: url.clone(),
+        target_database_url: control_url.clone(),
+        tenant: TENANT.to_string(),
+        catalog_id: CATALOG.to_string(),
+        catalog_version: CATALOG_VERSION as u32,
+        source_environment: ENVIRONMENT.to_string(),
+        target_environment: "canary".to_string(),
+        schema: "public".to_string(),
+        run_schema: RUN_SCHEMA.to_string(),
+        artifact_base: format!("{UNREACHABLE_REGISTRY}/wamn-live/components"),
+        registry_auth_file: credential.clone(),
+        insecure_registry: true,
+        principal: "live-gate".to_string(),
+        reason: "promote-release".to_string(),
+    })
+    .await
+    .expect_err("promote must refuse a control database as its target");
+    assert!(
+        format!("{refusal:#}").contains(CATALOG_PLANE_RESIDENCY_REFUSAL),
+        "promote rejected the control plane for the wrong reason: {refusal:#}"
+    );
+    assert!(
+        scenario_author_membership(&admin).await,
+        "promote's refusal ran AFTER ensure_wamn_app_role: cluster-global role \
+         state was already mutated on a database the verb then rejected"
+    );
+
+    // ARM 2 — `migrate-catalog`, same target, same witness.
+    plant_role_witness(&admin).await;
+    let refusal = wamn_ctl::migrate_catalog::run(wamn_ctl::migrate_catalog::MigrateCatalogArgs {
+        admin_database_url: control_url.clone(),
+        tenant: TENANT.to_string(),
+        environment: ENVIRONMENT.to_string(),
+        schema: "public".to_string(),
+        target: target_document.clone(),
+        base: None,
+        dry_run: false,
+        skip_reconcile_replica_identity: true,
+    })
+    .await
+    .expect_err("migrate-catalog must refuse a control database");
+    assert!(
+        format!("{refusal:#}").contains(CATALOG_PLANE_RESIDENCY_REFUSAL),
+        "migrate-catalog rejected the control plane for the wrong reason: {refusal:#}"
+    );
+    assert!(
+        scenario_author_membership(&admin).await,
+        "migrate-catalog's refusal ran AFTER ensure_wamn_app_role: cluster-global \
+         role state was already mutated on a database the verb then rejected"
+    );
+
+    // Neither verb may have installed project storage into the control plane.
+    assert_eq!(
+        tables(&control, "catalog").await,
+        control_inventory,
+        "project catalog storage reached the control plane"
+    );
+
+    admin
+        .batch_execute("REVOKE wamn_scenario_author FROM wamn_app")
+        .await
+        .expect("hand the cluster's role state back");
+    std::fs::remove_dir_all(&documents).expect("remove the interim document directory");
+    drop(control);
+    let _ = control_task.await;
     drop(admin);
     let _ = task.await;
 }

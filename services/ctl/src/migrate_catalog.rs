@@ -136,7 +136,10 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         print_dry_run(&plan);
         return Ok(());
     }
-    crate::publish_catalog::ensure_wamn_app_role(&client).await?;
+    // wamn-0h0g.12.183: `ensure_catalog_storage` refuses a control-plane target
+    // BEFORE bootstrapping the role, and calls `ensure_wamn_app_role` itself.
+    // A second call here only ran that CLUSTER-GLOBAL mutation ahead of the
+    // refusal, which no later error can take back.
     crate::publish_catalog::ensure_catalog_storage(&client).await?;
 
     // D24 (EVT-REG, wamn-rmxa): refuse a migration that would remove an entity
@@ -561,7 +564,7 @@ fn default_migration_error(error: anyhow::Error) -> anyhow::Error {
     )
 }
 
-fn to_sql_params(vals: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
+pub(crate) fn to_sql_params(vals: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
     vals.iter()
         .map(|v| -> &(dyn ToSql + Sync) {
             match v {
@@ -595,7 +598,6 @@ mod tests {
         assert!(default.contains("reprovision the environment"));
         assert!(default.contains("drop column orders.note"));
     }
-
 
     #[test]
     fn bare_ident_rules() {

@@ -28,8 +28,90 @@ use crate::sql;
 /// synonym for it.
 pub const CONTENT_CONFLICT: &str = "deployment-attestation-content-conflict";
 
+/// The refusal `catalog.project_release_identity` raises when a release
+/// coordinate is re-projected carrying different catalog facts.
+///
+/// One condition, one literal: this is that routine's own `MESSAGE`.
+pub const PROJECTION_CONTENT_CONFLICT: &str = "release-identity-projection-content-conflict";
+
 /// The `ERRCODE` the routine raises [`CONTENT_CONFLICT`] under (`unique_violation`).
 const UNIQUE_VIOLATION: &str = "23505";
+
+/// Project one release identity into the CONTROL plane, where the attestation's
+/// foreign key resolves it (wamn-0h0g.8.27).
+///
+/// Statement text and typed binding sit together here rather than with the
+/// builders in [`crate::sql`] because the projection exists only to make
+/// [`register_attestation`] below satisfiable: the two are one cross-plane write
+/// path, and the coordinate they must agree on is this module's subject.
+pub fn project_release_identity_sql() -> &'static str {
+    "SELECT catalog.project_release_identity($1, $2, $3, $4, $5)"
+}
+
+/// One release identity as the CONTROL plane records it.
+///
+/// The first three parts are the attestation's own foreign key. `environment` and
+/// `schema_version` are the catalog header facts the release was minted under:
+/// they are carried rather than defaulted, so a coordinate re-projected under a
+/// different environment or catalog-model version refuses instead of silently
+/// standing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReleaseIdentity<'a> {
+    pub tenant_id: &'a str,
+    pub catalog_id: &'a str,
+    pub catalog_version: i32,
+    pub environment: &'a str,
+    /// `catalog.catalogs.schema_version` — the catalog-MODEL format version,
+    /// distinct from the catalog version above.
+    pub schema_version: &'a str,
+}
+
+/// Bind one release-identity projection for the driver to execute.
+///
+/// The parameter order is the routine's argument order; a part bound at the wrong
+/// position would anchor the attestation's key to a coordinate nothing minted.
+pub fn project_release_identity(identity: &ReleaseIdentity<'_>) -> SqlStatement {
+    SqlStatement {
+        summary: format!(
+            "project release identity {}/{}@{}",
+            identity.tenant_id, identity.catalog_id, identity.catalog_version
+        ),
+        sql: project_release_identity_sql().to_owned(),
+        params: vec![
+            Value::Text(identity.tenant_id.to_owned()),
+            Value::Text(identity.catalog_id.to_owned()),
+            Value::Int(identity.catalog_version),
+            Value::Text(identity.environment.to_owned()),
+            Value::Text(identity.schema_version.to_owned()),
+        ],
+    }
+}
+
+/// Translate the driver's failure on a projection into [`AttestationError`],
+/// exactly once, here — the sibling of [`translate_failure`] below.
+pub fn translate_projection_failure(
+    identity: &ReleaseIdentity<'_>,
+    sqlstate: Option<&str>,
+    reported: &str,
+) -> AttestationError {
+    // Both halves are required, for the same reason the attestation classifier
+    // requires both: a bare `unique_violation` can come from anywhere else in the
+    // caller's transaction.
+    let kind =
+        if sqlstate == Some(UNIQUE_VIOLATION) && reported.contains(PROJECTION_CONTENT_CONFLICT) {
+            AttestationErrorKind::IdentityProjectionConflict
+        } else {
+            AttestationErrorKind::Storage
+        };
+    AttestationError {
+        kind,
+        coordinate: format!(
+            "{}/{}@{} in {:?}",
+            identity.tenant_id, identity.catalog_id, identity.catalog_version, identity.environment
+        ),
+        driver: reported.to_owned(),
+    }
+}
 
 /// One deployment attestation: the six-part coordinate it is keyed by, and the
 /// content it attests.
@@ -113,6 +195,10 @@ pub enum AttestationErrorKind {
     /// `deployed_manifest_hash`. Not a retry: the remedy is to find out which
     /// bytes actually deployed, never to re-publish over the recorded fact.
     ContentConflict,
+    /// The release coordinate is already projected onto the control plane with
+    /// DIFFERENT catalog facts. The remedy is to find out which environment or
+    /// catalog-model version actually minted it, never to overwrite the record.
+    IdentityProjectionConflict,
     /// Any other failure the driver reported.
     Storage,
 }
@@ -121,6 +207,7 @@ impl AttestationErrorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ContentConflict => CONTENT_CONFLICT,
+            Self::IdentityProjectionConflict => PROJECTION_CONTENT_CONFLICT,
             Self::Storage => "storage",
         }
     }
@@ -263,6 +350,77 @@ mod tests {
     #[test]
     fn a_failure_that_never_reached_the_server_is_storage() {
         let error = translate_failure(&attestation(), None, "connection closed");
+        assert_eq!(error.kind(), AttestationErrorKind::Storage);
+    }
+
+    /// Every part distinct, so a swapped pair cannot hide behind an equal value.
+    fn identity() -> ReleaseIdentity<'static> {
+        ReleaseIdentity {
+            tenant_id: "tenant-a",
+            catalog_id: "orders",
+            catalog_version: 7,
+            environment: "prod",
+            schema_version: "1.4.0",
+        }
+    }
+
+    /// A moved `$n` would anchor the attestation's foreign key to a coordinate
+    /// nothing minted, which no live gate keyed on the same wrong values could
+    /// see. Pinned here, where the string is built.
+    #[test]
+    fn the_projection_binding_places_every_part_at_its_own_position() {
+        let statement = project_release_identity(&identity());
+        assert_eq!(
+            statement.sql,
+            "SELECT catalog.project_release_identity($1, $2, $3, $4, $5)"
+        );
+        assert_eq!(
+            statement.params,
+            vec![
+                Value::Text("tenant-a".to_owned()),
+                Value::Text("orders".to_owned()),
+                Value::Int(7),
+                Value::Text("prod".to_owned()),
+                Value::Text("1.4.0".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_conflicting_re_projection_translates_to_the_routines_own_refusal() {
+        let error = translate_projection_failure(
+            &identity(),
+            Some("23505"),
+            "db error: ERROR: release-identity-projection-content-conflict",
+        );
+        assert_eq!(
+            error.kind(),
+            AttestationErrorKind::IdentityProjectionConflict
+        );
+        assert_eq!(error.coordinate(), "tenant-a/orders@7 in \"prod\"");
+        assert!(
+            error
+                .to_string()
+                .starts_with("release-identity-projection-content-conflict: ")
+        );
+    }
+
+    /// The two cross-plane writes raise the SAME sqlstate under DIFFERENT
+    /// messages, so a classifier that dropped the message half would report one
+    /// condition under the other's name.
+    #[test]
+    fn the_attestations_own_conflict_is_not_a_projection_conflict() {
+        let error = translate_projection_failure(
+            &identity(),
+            Some("23505"),
+            "db error: ERROR: deployment-attestation-content-conflict",
+        );
+        assert_eq!(error.kind(), AttestationErrorKind::Storage);
+    }
+
+    #[test]
+    fn a_projection_failure_that_never_reached_the_server_is_storage() {
+        let error = translate_projection_failure(&identity(), None, "connection closed");
         assert_eq!(error.kind(), AttestationErrorKind::Storage);
     }
 }

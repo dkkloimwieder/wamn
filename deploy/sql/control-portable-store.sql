@@ -341,6 +341,71 @@ REVOKE ALL ON FUNCTION catalog.register_deployment_attestation(
     text, text, int, text, text, text, text, timestamptz
 ) FROM PUBLIC;
 
+-- wamn-0h0g.8.27: release identity ARRIVES on the control plane.
+--
+-- The attestation's foreign key targets the CONTROL copy of catalog.releases,
+-- while the publish pipeline mints into the PROJECT copy: two separate relations
+-- that share a name because database residency, not a renamed schema,
+-- distinguishes the planes. Owner ruling 2026-08-27 projects the identity across
+-- rather than re-keying the attestation or moving the key -- a digest is RELEASED
+-- IFF an attestation references it (wamn-0h0g.13.54), so that definition survives
+-- as a REFERENTIAL guarantee only while its target actually arrives here.
+--
+-- Insert-or-verify-identical, exactly like register_deployment_attestation above:
+-- a bare ON CONFLICT DO NOTHING would silently accept a coordinate already
+-- projected under a DIFFERENT environment or catalog-model version, which is the
+-- one thing a provenance fact must not do. The transitive parent is written here
+-- too -- catalog.releases references catalog.catalogs, so a release projected
+-- without its catalog header could never satisfy the attestation's key.
+--
+-- The projected header carries only what the release itself fixes. `state` and
+-- `document` keep the declared defaults of the relation: the applied-version
+-- lifecycle and the catalog document are PROJECT-plane facts this projection does
+-- not carry, and choosing values for them here would state something no publisher
+-- said. Nothing on this plane reads them; the row exists so the key resolves.
+CREATE OR REPLACE FUNCTION catalog.project_release_identity(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_catalog_version int,
+    p_environment text,
+    p_schema_version text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO catalog.catalogs (
+        tenant_id, catalog_id, version, environment, schema_version
+    ) VALUES (
+        p_tenant_id, p_catalog_id, p_catalog_version, p_environment,
+        p_schema_version
+    )
+    ON CONFLICT (tenant_id, catalog_id, version) DO NOTHING;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM catalog.catalogs
+         WHERE tenant_id = p_tenant_id
+           AND catalog_id = p_catalog_id
+           AND version = p_catalog_version
+           AND environment = p_environment
+           AND schema_version = p_schema_version
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23505',
+            MESSAGE = 'release-identity-projection-content-conflict';
+    END IF;
+
+    INSERT INTO catalog.releases (
+        tenant_id, catalog_id, catalog_version
+    ) VALUES (
+        p_tenant_id, p_catalog_id, p_catalog_version
+    )
+    ON CONFLICT (tenant_id, catalog_id, catalog_version) DO NOTHING;
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.project_release_identity(
+    text, text, int, text, text
+) FROM PUBLIC;
+
 -- wamn-0h0g.26.16: flow-shaped release TEST EVIDENCE is retired. The row named
 -- a release member by `flow_id` under an identity that no longer exists, and no
 -- caller in the workspace ever executed its registrar. The rows are deliberately
@@ -733,7 +798,9 @@ $drift$;
 -- Author, publisher/deployer, artifact reader, and effect writer stay four
 -- separate principals. Nothing here grants deployment-attestation publication
 -- (`catalog.deployment_attestations` and its register_* routine stay
--- owner-only), project run or binding authority, artifact-reader authority,
+-- owner-only), the release-identity projection its foreign key rests on
+-- (`catalog.project_release_identity`), project run or binding authority,
+-- artifact-reader authority,
 -- effect-writer authority, or UPDATE/DELETE over any immutable fact.
 -- `wamn_scenario_author` is never granted anything here and is never granted
 -- CONNECT on this database: it is the project plane's author role.
@@ -922,6 +989,10 @@ BEGIN
        OR pg_catalog.has_function_privilege(
             'wamn_control_author',
             'catalog.register_deployment_attestation(text,text,int,text,text,text,text,timestamptz)',
+            'EXECUTE')
+       OR pg_catalog.has_function_privilege(
+            'wamn_control_author',
+            'catalog.project_release_identity(text,text,int,text,text)',
             'EXECUTE')
        OR pg_catalog.pg_has_role('wamn_control_author', 'wamn_system', 'USAGE')
        OR EXISTS (SELECT FROM pg_catalog.pg_roles

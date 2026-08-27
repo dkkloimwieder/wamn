@@ -177,6 +177,23 @@ pub struct PromoteArgs {
     #[arg(long, default_value = "public")]
     pub schema: String,
 
+    /// The run-plane schema in the TARGET project database holding the
+    /// provisioned environment fact — the same `--schema` `reconcile-run-plane`
+    /// converged there (`wamn_run` in the schema of record).
+    ///
+    /// Bare identifier, and REQUIRED, exactly as on `publish-release`: a default
+    /// would let an invocation that omits the flag check the promoted release
+    /// against a relation the operator never named. Distinct from `--schema`
+    /// above, which is the target DATA schema.
+    ///
+    /// PRECONDITION: run `reconcile-run-plane` for this tenant and this schema in
+    /// the target database FIRST. Promoting before it has converged the tenant's
+    /// `environment_policies` row refuses on `environment-policy-not-converged`;
+    /// a row naming another environment refuses on
+    /// `environment-policy-environment-mismatch`.
+    #[arg(long)]
+    pub run_schema: String,
+
     /// Explicit registry/repository base used by component publication.
     #[arg(long)]
     pub artifact_base: String,
@@ -235,6 +252,8 @@ pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
     validate_args(&args)?;
     let schema = BareSchemaName::new(args.schema.clone())
         .with_context(|| format!("invalid target schema {:?}", args.schema))?;
+    let run_schema = BareSchemaName::new(args.run_schema.clone())
+        .with_context(|| format!("invalid --run-schema {:?}", args.run_schema))?;
     let artifact_config = ComponentArtifactSourceConfig::new(
         &args.artifact_base,
         args.insecure_registry,
@@ -295,6 +314,7 @@ pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
         &source,
         &args,
         &schema,
+        &run_schema,
     )
     .await;
     let summary = match promoted {
@@ -674,8 +694,12 @@ async fn promote_target(
     source: &SourceRelease,
     args: &PromoteArgs,
     schema: &BareSchemaName,
+    run_schema: &BareSchemaName,
 ) -> anyhow::Result<PromotionSummary> {
-    crate::publish_catalog::ensure_wamn_app_role(client).await?;
+    // wamn-0h0g.12.183: `ensure_catalog_storage` refuses a control-plane target
+    // BEFORE bootstrapping the role, and calls `ensure_wamn_app_role` itself.
+    // A second call here only ran that CLUSTER-GLOBAL mutation ahead of the
+    // refusal, which no later error can take back.
     crate::publish_catalog::ensure_catalog_storage(client).await?;
     client
         .query_one(CLAIM_TENANT_SESSION_SQL, &[&args.tenant])
@@ -806,6 +830,23 @@ async fn promote_target(
     )
     .await
     .context("mint target v2 release snapshot")?;
+
+    // wamn-0h0g.8.27, owner ruling 2026-08-27: COVER PROMOTE. `--target-environment`
+    // is an operator's word for where this release is going; the release the mint
+    // froze carries `catalog.catalogs.environment`, which no constraint ties to any
+    // provisioned identity. The same verify arm `publish-release` takes checks the
+    // carried label against the fact `reconcile-run-plane` projected into THIS
+    // target database, so a promotion into an environment nothing verified refuses
+    // instead of freezing a release there. Inside the promotion's own transaction:
+    // a refusal commits neither the snapshot nor the pointer flip below.
+    let expected_environment =
+        crate::publish_release::read_expected_environment(&transaction, run_schema, &args.tenant)
+            .await?;
+    crate::publish_release::verify_provisioned_environment(
+        expected_environment.as_deref(),
+        &minted.manifest.release,
+        run_schema,
+    )?;
 
     let mut activated_wirings = 0;
     for wiring in &source.wirings {
@@ -1145,6 +1186,66 @@ async fn activate_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// wamn-0h0g.8.27, owner ruling 2026-08-27: COVER PROMOTE. The run-plane
+    /// schema this verb verifies its target environment in is REQUIRED and is
+    /// NOT `--schema`.
+    ///
+    /// `--schema` is the target DATA schema and carries a default, so a surface
+    /// that reused it would silently check the promoted release against whatever
+    /// relation that default named — the trusted-carry the verify arm exists to
+    /// stop. The two must therefore be separate flags, and the run-plane one must
+    /// have no default at all.
+    #[test]
+    fn the_run_plane_schema_is_required_and_separate_from_the_data_schema() {
+        use clap::Parser as _;
+
+        #[derive(clap::Parser)]
+        struct PromoteProbe {
+            #[command(flatten)]
+            args: PromoteArgs,
+        }
+
+        const PLACEMENT: [&str; 18] = [
+            "promote",
+            "--source-database-url",
+            "postgres://source.invalid/env",
+            "--target-database-url",
+            "postgres://target.invalid/env",
+            "--tenant",
+            "tenant-a",
+            "--catalog-id",
+            "orders",
+            "--catalog-version",
+            "3",
+            "--source-environment",
+            "prod",
+            "--target-environment",
+            "canary",
+            "--artifact-base",
+            "registry.example/wamn/components",
+            "--principal",
+        ];
+
+        let mut without = PLACEMENT.to_vec();
+        without.extend_from_slice(&["operator", "--registry-auth-file", "auth.json"]);
+        assert!(
+            PromoteProbe::try_parse_from(without.clone()).is_err(),
+            "promoted a release with no run-plane schema to verify its environment in"
+        );
+
+        let mut with = without;
+        with.extend_from_slice(&["--run-schema", "wamn_run"]);
+        let parsed = PromoteProbe::try_parse_from(with)
+            .expect("the complete promotion surface parses")
+            .args;
+        assert_eq!(parsed.run_schema, "wamn_run");
+        assert_eq!(
+            parsed.schema, "public",
+            "the DATA schema default must not stand in for the run-plane schema"
+        );
+        assert_ne!(parsed.run_schema, parsed.schema);
+    }
 
     /// One target row per released wiring id, and no second identity supplied
     /// alongside the document (wamn-0h0g.8.5.6).
