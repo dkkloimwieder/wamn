@@ -33,8 +33,59 @@ use wamn_schema_control::{BareSchemaName, rewrite_schema};
 
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
+/// The one `catalog`-schema relation only the CONTROL plane carries.
+///
+/// `deploy/sql/control-portable-store.sql` installs it in the same schema, in
+/// the same apply, as the `catalog.catalogs` the baseline probe below reads, and
+/// no project installer ever creates it — a project install DROPs `catalog` and
+/// rebuilds it from `deploy/sql/catalog-schema.sql`, which has no such table.
+/// `protected_relations_live` already names it control-only for that reason.
+const CONTROL_STORE_WITNESS: &str = "catalog.authoring_command_audit";
+
+/// Stable marker for the two-plane residency refusal (wamn-0h0g.12.180).
+pub const CATALOG_PLANE_RESIDENCY_REFUSAL: &str = "catalog-plane-residency-control-store";
+
+/// Refuse a CONTROL-plane database before anything is created, granted or revoked.
+///
+/// The baseline probe in [`ensure_catalog_storage`] is keyed on the NAME
+/// `catalog.catalogs`, and that name lives in BOTH planes — it is one of the
+/// tree's own shared portable relations. Pointed at a control store the name-only
+/// probe therefore answers "baseline present" and the converge arm runs, so the
+/// project-only connection, wiring and release-component storage would be
+/// installed into the control plane. A probe keyed on a shared name cannot tell
+/// the planes apart; ask the SERVER for a fact only one plane carries instead.
+///
+/// This sits AHEAD of `ensure_wamn_app_role` on purpose: that call is the first
+/// side effect of the wrong-plane path and it mutates CLUSTER-GLOBAL role state
+/// (it may `CREATE ROLE wamn_app` with a known password and always issues
+/// `REVOKE wamn_scenario_author FROM wamn_app`), which a refusal raised after it
+/// could not take back. Note that `promote` and `migrate-catalog` each call
+/// `ensure_wamn_app_role` themselves one line ahead of this verb, so on those two
+/// paths the role bootstrap still precedes the refusal; only the storage is
+/// guarded there.
+async fn refuse_control_plane_residency(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    let control_store: bool = client
+        .query_one(
+            "SELECT to_regclass($1) IS NOT NULL",
+            &[&CONTROL_STORE_WITNESS],
+        )
+        .await
+        .context("probe the catalog schema's plane")?
+        .get(0);
+    anyhow::ensure!(
+        !control_store,
+        "{CATALOG_PLANE_RESIDENCY_REFUSAL}: {CONTROL_STORE_WITNESS} is present, so this \
+         `catalog` schema is the control portable store rather than a project catalog; \
+         project catalog storage must not be installed into the control plane"
+    );
+    Ok(())
+}
+
 /// Install or additively upgrade the catalog persistence schema.
+///
+/// Refuses a control-plane database first — see [`refuse_control_plane_residency`].
 pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    refuse_control_plane_residency(client).await?;
     ensure_wamn_app_role(client).await?;
     let baseline_present: bool = client
         .query_one("SELECT to_regclass('catalog.catalogs') IS NOT NULL", &[])
