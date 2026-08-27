@@ -3072,17 +3072,13 @@ $retire_run_projection_authority$;"#,
         if !obs.tables.contains_key(table) {
             continue;
         }
-        // BORN PARKED (owner ruling on wamn-0h0g.20.28). `effect_attempts` is the
-        // one ledger whose APPEND authority is not part of the record: the writer
-        // primitive is unwired, and every generation login inherits this role with
-        // INHERIT TRUE. So a live INSERT there is DRIFT, and this convergent step
-        // REMOVES it rather than re-granting it. The two sibling ledgers are out of
-        // this bead's scope and keep theirs.
-        let writer_privileges: &[&str] = if table == "effect_attempts" {
-            &["SELECT"]
-        } else {
-            &["SELECT", "INSERT"]
-        };
+        // BORN PARKED (owner ruling on wamn-0h0g.20.28, widened to the two sibling
+        // ledgers by wamn-0h0g.20.32). NO effect ledger's APPEND authority is part
+        // of the record: the writer primitive is unwired, and every generation
+        // login inherits this role with INHERIT TRUE. So a live INSERT on any of
+        // the three is DRIFT, and this convergent step REMOVES it rather than
+        // re-granting it. Whoever wires the writer grants those INSERTs here.
+        let writer_privileges: &[&str] = &["SELECT"];
         let expected = |grantee: &str| -> BTreeSet<String> {
             match grantee {
                 "wamn_app" => ["SELECT"].into_iter().map(str::to_string).collect(),
@@ -3166,16 +3162,8 @@ $retire_run_projection_authority$;"#,
         // this ledger does not carry becomes a privilege the block REFUSES to see
         // the server still report, so a parked table proves its own denial.
         let writer_grant = writer_privileges.join(", ");
-        let writer_forbidden_table = if table == "effect_attempts" {
-            "'INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'"
-        } else {
-            "'UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'"
-        };
-        let writer_forbidden_columns = if table == "effect_attempts" {
-            "INSERT,UPDATE,REFERENCES"
-        } else {
-            "UPDATE,REFERENCES"
-        };
+        let writer_forbidden_table = "'INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'";
+        let writer_forbidden_columns = "INSERT,UPDATE,REFERENCES";
         plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
                 target: format!("{}.{}", schema.as_str(), table),
@@ -5078,13 +5066,9 @@ COMMIT;
         ] {
             obs.effect_ledger_owners
                 .insert(table.to_string(), "platform_admin".to_string());
-            // `effect_attempts` is at record WITHOUT the writer's append
-            // authority — it is born parked, matching `deploy/sql/run-state.sql`.
-            let writer_at_record: &[&str] = if table == "effect_attempts" {
-                &["SELECT"]
-            } else {
-                &["SELECT", "INSERT"]
-            };
+            // All three ledgers are at record WITHOUT the writer's append
+            // authority — born parked, matching `deploy/sql/run-state.sql`.
+            let writer_at_record: &[&str] = &["SELECT"];
             for (grantee, privileges) in [
                 ("wamn_app", &["SELECT"][..]),
                 (EFFECT_WRITER_ROLE, writer_at_record),
@@ -7879,33 +7863,68 @@ COMMIT;
         ));
     }
 
-    /// The scope line. Both sibling ledgers still carry the writer's append
-    /// authority, and this bead did not touch them — a widening of the parking
-    /// to `effect_attempt_dispatches` or `effect_attempt_outcomes` is a separate
-    /// ruling and must red here first.
+    /// The convergent author, for one sibling ledger. `deploy/sql/run-state.sql`
+    /// is only the BIRTH author; this builder is what an already-provisioned
+    /// database converges onto, so restoring the append here would re-mint the
+    /// dormant authority on every reconcile even with the DDL parked.
     #[test]
-    fn sibling_effect_ledgers_keep_the_writer_append_authority() {
+    fn dispatch_ledger_reconciles_to_a_parked_writer() {
+        assert_sibling_ledger_reconciles_parked("effect_attempt_dispatches");
+    }
+
+    /// The same arm for the second sibling, named separately so a mutant that
+    /// re-arms exactly one relation cannot hide behind the other.
+    #[test]
+    fn outcome_ledger_reconciles_to_a_parked_writer() {
+        assert_sibling_ledger_reconciles_parked("effect_attempt_outcomes");
+    }
+
+    fn assert_sibling_ledger_reconciles_parked(table: &str) {
         let mut obs = observation_at_record();
-        for table in ["effect_attempt_dispatches", "effect_attempt_outcomes"] {
-            obs.effect_ledger_effective_column_privileges
-                .entry((table.to_string(), "wamn_app".to_string()))
-                .or_default()
-                .insert("UPDATE".to_string());
-        }
+        obs.effect_ledger_effective_column_privileges
+            .entry((table.to_string(), "wamn_app".to_string()))
+            .or_default()
+            .insert("UPDATE".to_string());
         let plan = plan_run_plane(&schema("demo"), &obs);
-        for table in ["effect_attempt_dispatches", "effect_attempt_outcomes"] {
-            let action = plan
-                .actions
-                .iter()
-                .find(|action| {
-                    action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
-                        && action.target == format!("demo.{table}")
-                })
-                .expect("sibling ledger ACL repair");
-            assert!(action.sql.contains(&format!(
-                "GRANT SELECT, INSERT ON TABLE \"demo\".\"{table}\" TO wamn_effect_writer"
-            )));
-        }
+        let action = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+                    && action.target == format!("demo.{table}")
+            })
+            .expect("sibling ledger ACL repair");
+        // The re-grant is READ ONLY…
+        assert!(
+            action.sql.contains(&format!(
+                "GRANT SELECT ON TABLE \"demo\".\"{table}\" TO wamn_effect_writer"
+            )),
+            "{table}: sibling ledger is not re-granted read-only: {}",
+            action.sql
+        );
+        assert!(
+            !action.sql.contains("GRANT SELECT, INSERT"),
+            "{table}: reconciler still re-mints a live append: {}",
+            action.sql
+        );
+        // …and the generated self-check moved with it, so the step REFUSES to see
+        // the server report an append the record does not carry.
+        assert!(
+            action.sql.contains(
+                "ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                 WHERE pg_catalog.has_table_privilege('wamn_effect_writer'"
+            ),
+            "{table}: table-level self-check does not forbid INSERT: {}",
+            action.sql
+        );
+        assert!(
+            action.sql.contains(&format!(
+                "has_any_column_privilege('wamn_effect_writer', \
+                 '\"demo\".\"{table}\"', 'INSERT,UPDATE,REFERENCES')"
+            )),
+            "{table}: column-level self-check does not forbid INSERT: {}",
+            action.sql
+        );
     }
 
     #[test]

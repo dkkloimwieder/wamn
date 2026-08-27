@@ -1994,6 +1994,8 @@ async fn effect_writer_cutover_leg(su: &Client) {
         "GRANT CREATE ON SCHEMA {SCHEMA} TO wamn_effect_writer; \
          GRANT SELECT ON {SCHEMA}.effect_attempts TO wamn_scenario_author; \
          GRANT UPDATE (attempt_input_ref) ON {SCHEMA}.effect_attempts TO wamn_app; \
+         GRANT INSERT ON {SCHEMA}.effect_attempt_dispatches TO wamn_effect_writer; \
+         GRANT INSERT ON {SCHEMA}.effect_attempt_outcomes TO wamn_effect_writer; \
          GRANT SELECT ON {SCHEMA}.runs TO wamn_effect_writer; \
          GRANT UPDATE (status) ON {SCHEMA}.runs TO wamn_effect_writer; \
          ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner; \
@@ -2013,6 +2015,19 @@ async fn effect_writer_cutover_leg(su: &Client) {
         action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
             && action.target == format!("{SCHEMA}.effect_attempts")
     }));
+    // THE CONVERGE PATH for the two sibling ledgers (wamn-0h0g.20.32): an append
+    // granted directly to the stable role on an ALREADY-PROVISIONED database is
+    // drift the reconciler must REMOVE. The DDL alone cannot prove this — it only
+    // proves birth — so the drift above is installed on purpose.
+    for table in ["effect_attempt_dispatches", "effect_attempt_outcomes"] {
+        assert!(
+            repair.actions.iter().any(|action| {
+                action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+                    && action.target == format!("{SCHEMA}.{table}")
+            }),
+            "the reconciler did not plan to remove the sibling ledger append on {table}"
+        );
+    }
     for table in ["runs", "run_queue"] {
         assert!(repair.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
@@ -2066,7 +2081,8 @@ async fn effect_writer_cutover_leg(su: &Client) {
     // once the reconciler converges, the stable writer role holds READ on the
     // attempt ledger and NO append — at table level or at any column. Every
     // provisioned generation login inherits this role with INHERIT TRUE, so this
-    // is exactly what a fresh project environment is born holding.
+    // is exactly what a fresh project environment is born holding, and — because
+    // the drift above was installed first — what an UPGRADED one converges to.
     assert!(
         !privileges.get::<_, bool>(4),
         "the reconciler re-minted a LIVE append authority on a parked ledger"
@@ -2076,10 +2092,17 @@ async fn effect_writer_cutover_leg(su: &Client) {
         !privileges.get::<_, bool>(6),
         "column-level append survived the table-level park"
     );
-    // THE SCOPE LINE. Both sibling ledgers are OUTSIDE this bead and stay armed;
-    // parking either of them is a separate ruling and must red here first.
-    assert!(privileges.get::<_, bool>(7));
-    assert!(privileges.get::<_, bool>(8));
+    // wamn-0h0g.20.32: both sibling ledgers are parked on the same footing, and
+    // the append DIRECTLY granted to the stable role above is gone — the
+    // reconciler removed it rather than re-granting it.
+    assert!(
+        !privileges.get::<_, bool>(7),
+        "the reconciler left a LIVE append on effect_attempt_dispatches"
+    );
+    assert!(
+        !privileges.get::<_, bool>(8),
+        "the reconciler left a LIVE append on effect_attempt_outcomes"
+    );
     // A superuser or RLS-bypassing role would mask every refusal asserted above.
     assert!(privileges.get::<_, bool>(9));
     let run_reads = su

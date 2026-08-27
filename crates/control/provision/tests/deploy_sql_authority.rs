@@ -280,13 +280,13 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         "the sweep must cover exactly the 43 guest-reachable relations"
     );
 
-    // 2b. BORN PARKED (wamn-0h0g.20.30, owner ruling on wamn-0h0g.20.28). THE
-    //     SERVER'S OWN ANSWER over the REAL DDL, with no reconciler in the loop:
+    // 2b. BORN PARKED (wamn-0h0g.20.30 for the attempt ledger, wamn-0h0g.20.32
+    //     for its two siblings; owner ruling on wamn-0h0g.20.28). THE SERVER'S OWN
+    //     ANSWER over the REAL DDL, with no reconciler in the loop:
     //     `wamn_effect_writer` — the stable ACL role every provisioned generation
-    //     LOGIN inherits with INHERIT TRUE — READS the attempt ledger and cannot
-    //     APPEND to it, at table level or at any column. Prose calling the writer
-    //     parked is not evidence; this is. Its two sibling ledgers are outside
-    //     that ruling and stay armed, which is the scope line.
+    //     LOGIN inherits with INHERIT TRUE — READS the effect ledgers and cannot
+    //     APPEND to any of the three, at table level or at any column. Prose
+    //     calling the writer parked is not evidence; this is.
     let writer_ledger_acl = psql(
         &db_url,
         None,
@@ -300,9 +300,9 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
              WHERE rolname='wamn_effect_writer'))",
     );
     assert_eq!(
-        writer_ledger_acl, "t f f t t t",
-        "the schema of record did not mint a READ-ONLY effect writer on \
-         wamn_run.effect_attempts (order: attempt SELECT, attempt INSERT, attempt \
+        writer_ledger_acl, "t f f f f t",
+        "the schema of record did not mint a READ-ONLY effect writer across the \
+         three effect ledgers (order: attempt SELECT, attempt INSERT, attempt \
          column INSERT, dispatches INSERT, outcomes INSERT, role is unprivileged)"
     );
 

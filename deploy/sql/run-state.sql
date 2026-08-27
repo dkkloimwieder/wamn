@@ -705,7 +705,13 @@ CREATE INDEX effect_attempt_dispatches_tkey
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_dispatches
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempt_dispatches TO wamn_app;
-GRANT SELECT, INSERT ON wamn_run.effect_attempt_dispatches TO wamn_effect_writer;
+-- BORN PARKED, for the reason the attempt ledger above is: the writer primitive
+-- is installed but unwired, and every provisioned generation login inherits
+-- `wamn_effect_writer` with INHERIT TRUE, so a live INSERT here would be dormant
+-- authority mass-produced by the provisioner. A fresh environment is refused by
+-- the SERVER (42501), not by prose. Whoever wires the writer grants this INSERT
+-- explicitly and re-proves the gate; the record deliberately does not arm it.
+GRANT SELECT ON wamn_run.effect_attempt_dispatches TO wamn_effect_writer;
 CREATE TRIGGER effect_attempt_dispatches_update_immutable
 BEFORE UPDATE ON wamn_run.effect_attempt_dispatches
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
@@ -740,7 +746,12 @@ CREATE INDEX effect_attempt_outcomes_tkey
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_outcomes
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempt_outcomes TO wamn_app;
-GRANT SELECT, INSERT ON wamn_run.effect_attempt_outcomes TO wamn_effect_writer;
+-- BORN PARKED, on the same footing as the two ledgers above: the primitive is
+-- installed but unwired, the stable role is inherited by every provisioned
+-- generation LOGIN, so append here would be dormant authority. The SERVER
+-- refuses a fresh environment (42501). Whoever wires the writer grants this
+-- INSERT explicitly and re-proves the gate; the record does not arm it.
+GRANT SELECT ON wamn_run.effect_attempt_outcomes TO wamn_effect_writer;
 CREATE TRIGGER effect_attempt_outcomes_update_immutable
 BEFORE UPDATE ON wamn_run.effect_attempt_outcomes
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
