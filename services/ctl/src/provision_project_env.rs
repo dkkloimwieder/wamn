@@ -22,20 +22,23 @@
 //!    CNPG operator declaratively creates the database owned by `wamn_db_owner`,
 //!    and re-owns an already-existing one to it;
 //! 3. apply the emitted **privilege SQL** (`ALTER DATABASE … OWNER TO
-//!    wamn_db_owner`, then `REVOKE CONNECT, TEMPORARY FROM PUBLIC` / `GRANT
-//!    CONNECT TO wamn_app` / `GRANT CONNECT TO wamn_dispatch_reader`) — the
+//!    wamn_db_owner`, then `REVOKE CONNECT, TEMPORARY FROM PUBLIC` / `REVOKE
+//!    CONNECT FROM wamn_app` / `GRANT CONNECT TO wamn_dispatch_reader`) — the
 //!    thin imperative step the `Database` CRD does
 //!    not cover (topology fact 3), run **after** the database exists. The owner
 //!    statement is first and must stay first: `ALTER DATABASE … OWNER TO`
-//!    rewrites the outgoing owner's ACL entry, which is where `wamn_app`'s
-//!    granted `CONNECT` merges while `wamn_app` still owns the database.
-//!    **On an EXISTING environment this step is mandatory, not optional**: the
-//!    owner change (whether issued here or by the CR reconciler in step 2)
-//!    takes `wamn_app`'s `CONNECT` with the old owner's ACL entry, and the
-//!    `GRANT` that follows is what puts it back. Stopping after step 2 leaves
-//!    the runtime unable to reach its own database;
+//!    rewrites the outgoing owner's ACL entry, which is where a `CONNECT`
+//!    granted to a role that still owns the database merges.
+//!    **On an EXISTING environment this step is mandatory, not optional**: it
+//!    is what converges a pre-`wamn-0h0g.22.6` environment's `CONNECT` off the
+//!    stable `wamn_app` ACL role, and step 4's generation actions refuse to run
+//!    until it has (`wamn-0h0g.12.179`);
 //! 4. `kubectl apply -f` the emitted **credential Secret** and any independently
-//!    requested management-author / route-caller PAT Secrets.
+//!    requested management-author / route-caller PAT Secrets, then run the
+//!    guest family's generation prepare — the per-tenant LOGIN it mints is what
+//!    actually reaches the database. `wamn_app` itself does not: it is the
+//!    stable NOLOGIN ACL role those generations inherit, and it must stay
+//!    connection-free (see [`privilege_sql`]).
 //!
 //! What this tool does directly (given `--system-database-url`): read the org's
 //! placement to pick the target cluster, and record `registry.projects` +
@@ -84,6 +87,7 @@ use wamn_platform_identity::{
     IdentityErrorKind, Principal, PrincipalKind, PrincipalStatus, assign_project_role,
     authenticate_pat, create_service, issue_pat, resolve_subject, revoke_pat,
 };
+use wamn_schema_compiler::sql::quote_ident;
 
 use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policy};
 
@@ -470,18 +474,39 @@ pub fn role_sql(app_password: &str, dispatch_reader_password: &str) -> String {
 ///
 /// **Ownership converges FIRST and must stay first.** `ALTER DATABASE … OWNER
 /// TO` rewrites the outgoing owner's ACL entry, and that entry is where a
-/// `CONNECT` granted to `wamn_app` while `wamn_app` still owned the database
-/// has merged (the hazard measured at `47b404cf`). Both `CONNECT` grants
-/// therefore follow it: `grant_dispatch_reader_connect_sql` is ADDITIVE and
-/// deliberately separate from `grant_connect_on_database_sql`, which confines
-/// `CONNECT` to `wamn_app` and revokes `PUBLIC`.
+/// `CONNECT` granted to a role that still owned the database has merged (the
+/// hazard measured at `47b404cf`). Everything else therefore follows it.
+///
+/// **`wamn_app` is REVOKED, not granted (`wamn-0h0g.12.179`).** Until the
+/// `wamn-0h0g.22.6` cutover `wamn_app` was the guest LOGIN role and this batch
+/// granted it `CONNECT`. Guest SQL now authenticates as a per-tenant generation
+/// login that `prepare_workload_generation_sql` grants `CONNECT` directly, and
+/// `wamn_app` became the stable NOLOGIN ACL role those generations INHERIT. A
+/// `CONNECT` left on it is therefore not a leftover that merely offends a
+/// checker: measured on PostgreSQL 18, a generation minted for one project-env
+/// database and holding zero direct `CONNECT` grants of its own authenticates
+/// into ANY OTHER project-env database this batch has run against, because
+/// `wamn_app` is cluster-global and the membership inherits. That is what the
+/// guest family's generation prepare guards when it refuses a stable ACL role
+/// that is not connection-free, and the `REVOKE` is what converges an
+/// environment provisioned before the cutover back under that refusal.
+///
+/// `wamn_dispatch_reader` keeps its `CONNECT`: that family is NOT cut over —
+/// the dispatcher still authenticates as the stable role itself
+/// (`deploy/platform/dispatcher-projects.example.yaml`), and
+/// `grant_dispatch_reader_connect_sql` is ADDITIVE to the `PUBLIC` confinement
+/// rather than a replacement for it.
 ///
 /// `pub` for the same reason as [`role_sql`].
 pub fn privilege_sql(database: &str) -> String {
+    let db = quote_ident(database);
     format!(
-        "{owner};\n{connect}\n{reader_connect}\n",
+        "{owner};\n\
+         REVOKE CONNECT, TEMPORARY ON DATABASE {db} FROM PUBLIC; \
+         REVOKE CONNECT ON DATABASE {db} FROM {app};\n\
+         {reader_connect}\n",
         owner = sql::set_database_owner_sql(database),
-        connect = sql::grant_connect_on_database_sql(database),
+        app = quote_ident(APP_ROLE),
         reader_connect = sql::grant_dispatch_reader_connect_sql(database),
     )
 }
@@ -1210,6 +1235,27 @@ async fn run_workload_action(
     Ok(())
 }
 
+/// Prepare one generation, then verify it and publish its Secret.
+///
+/// **A REFUSED PREPARE IS NOT ATOMIC, deliberately (`wamn-0h0g.12.179`).** The
+/// prepare transaction COMMITS before the post-commit checks run, because the
+/// generation must be authenticated over a real connection — which no
+/// uncommitted role can accept. A refusal after that point therefore leaves,
+/// and is contracted to leave, exactly two things behind:
+///
+/// * the stable ACL role converged to its NOLOGIN, password-free shape by
+///   `ensure_workload_acl_role_sql`, which is idempotent and is the shape every
+///   subsequent prepare wants anyway; and
+/// * the target generation role, rolled back by
+///   [`rollback_prepared_workload_generation`] to the INACTIVE shape — no
+///   `LOGIN`, no password, no membership, no `CONNECT`, `VALID UNTIL 'epoch'`.
+///
+/// Nothing else survives, and no Secret is published. A retry meets precisely
+/// the inactive target a prepare requires, so the partial state is recoverable
+/// rather than wedging; what it is NOT is a clean cluster, and a live arm that
+/// assumes a refusal left no role behind will find a healthy object sitting
+/// inside `prepare_workload_generation_sql`'s `IF NOT EXISTS` guard. Live arms
+/// must drop the roles themselves, not rely on a failed run to have done it.
 async fn prepare_workload_generation<F>(
     admin_config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
@@ -1418,6 +1464,11 @@ where
     Ok(())
 }
 
+/// Undo the authority a committed prepare granted, back to the INACTIVE shape.
+///
+/// It does NOT drop the role, and does not undo the stable ACL role's
+/// convergence — see [`prepare_workload_generation`] for the contract on what a
+/// refused prepare leaves behind.
 async fn rollback_prepared_workload_generation(
     admin: &(impl GenericClient + Sync),
     admin_config: &PgConfig,
@@ -3394,6 +3445,9 @@ mod tests {
     /// builder is swapped for a wider one, and stays green when the `CONNECT`
     /// grant drifts back above the owner statement on a database that happens
     /// to be owned by `wamn_db_owner` already. The frozen literal is the guard.
+    ///
+    /// wamn-0h0g.12.179 re-pins it: the batch REVOKES `CONNECT` from the stable
+    /// `wamn_app` ACL role instead of granting it.
     #[test]
     fn the_privilege_batch_grants_reader_connect_after_the_owner_statement() {
         let batch = privilege_sql("wamn-db-acme--billing--dev");
@@ -3401,7 +3455,7 @@ mod tests {
             batch,
             "ALTER DATABASE \"wamn-db-acme--billing--dev\" OWNER TO \"wamn_db_owner\";\n\
              REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-acme--billing--dev\" FROM PUBLIC; \
-             GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_app\";\n\
+             REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM \"wamn_app\";\n\
              GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_dispatch_reader\";\n"
         );
 
@@ -3418,9 +3472,34 @@ mod tests {
             "reader CONNECT must follow ALTER DATABASE … OWNER TO: {batch}"
         );
 
-        // The additive grant must not have displaced the app-role confinement.
+        // The additive grant must not have displaced the PUBLIC confinement.
         assert!(batch.contains("REVOKE CONNECT, TEMPORARY ON DATABASE"));
-        assert!(batch.contains("TO \"wamn_app\";"));
+    }
+
+    /// wamn-0h0g.12.179. The stable guest ACL role must never be handed
+    /// `CONNECT` by the batch an operator applies. It is cluster-global and
+    /// every per-tenant generation INHERITS it, so one grant here reaches every
+    /// project-env database on the cluster — and `--prepare-guest-generation`
+    /// refuses the result, which is how the defect surfaced.
+    #[test]
+    fn the_privilege_batch_never_grants_the_stable_guest_acl_role_connect() {
+        let batch = privilege_sql("wamn-db-acme--billing--dev");
+        assert!(
+            !batch.contains(&format!("TO \"{APP_ROLE}\"")),
+            "the batch must not grant the stable guest ACL role anything: {batch}"
+        );
+        assert!(
+            batch.contains(&format!(
+                "REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM \"{APP_ROLE}\""
+            )),
+            "the batch must CONVERGE a pre-cutover CONNECT away: {batch}"
+        );
+        // The revoke follows the owner statement for the same reason the grants
+        // did: ALTER DATABASE … OWNER TO rewrites the outgoing owner's entry.
+        assert!(
+            batch.find("ALTER DATABASE") < batch.find("REVOKE CONNECT ON DATABASE"),
+            "ownership converges first: {batch}"
+        );
     }
 
     /// The role batch must actually CREATE the principal the dispatcher's

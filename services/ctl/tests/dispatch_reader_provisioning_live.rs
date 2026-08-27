@@ -208,14 +208,23 @@ async fn provisioned_reader_is_idempotent_and_dialable_leg(su: &Client, url: &st
     // The exact converged ACL. Pinned whole, so a widened grant (`CTc`), a lost
     // `PUBLIC` revoke (an `=Tc/…` entry), or a reader that never arrives all
     // fail here rather than passing a "can it connect" smoke.
+    //
+    // `wamn_app` is ABSENT (wamn-0h0g.12.179): it is the stable NOLOGIN guest
+    // ACL role every per-tenant generation INHERITS, so a `CONNECT` entry here
+    // reaches every project-env database on the cluster, and
+    // `--prepare-guest-generation` refuses the result.
     assert_eq!(
         first,
         vec![
-            format!("{APP_ROLE}=c/{DB_OWNER_ROLE}"),
             format!("{DB_OWNER_ROLE}=CTc/{DB_OWNER_ROLE}"),
             format!("{DISPATCH_READER_ROLE}=c/{DB_OWNER_ROLE}"),
         ],
         "converged database ACL"
+    );
+    assert!(
+        !can_connect(su, APP_ROLE, DATABASE).await,
+        "the emitted privilege batch must leave the stable guest ACL role \
+         connection free: {first:?}"
     );
 
     // Proof 4: the dispatcher dials the freshly provisioned environment as the
@@ -235,7 +244,7 @@ async fn provisioned_reader_is_idempotent_and_dialable_leg(su: &Client, url: &st
 
 /// **A measured premise correction, kept as a test so it cannot rot.**
 ///
-/// `provision_project_env::privilege_sql` emits both `CONNECT` grants after
+/// `provision_project_env::privilege_sql` emits its statements after
 /// `ALTER DATABASE … OWNER TO`, and `grant_dispatch_reader_connect_sql`'s doc
 /// says the order is "load-bearing exactly as it is for
 /// `grant_connect_on_database_sql`". Measured on PostgreSQL, it is NOT
@@ -247,8 +256,12 @@ async fn provisioned_reader_is_idempotent_and_dialable_leg(su: &Client, url: &st
 /// * `wamn_dispatch_reader`, which never owns it, keeps `c` and only has its
 ///   GRANTOR rewritten (`reader=c/wamn_app` → `reader=c/wamn_db_owner`).
 ///
-/// A reordering regression therefore breaks the RUNTIME and leaves the
-/// dispatcher working — a one-sided break a reader-only probe would miss.
+/// A reordering regression therefore breaks one side and leaves the dispatcher
+/// working — a one-sided break a reader-only probe would miss. The asymmetry is
+/// still measured on `wamn_app` because it is the only role that can be the
+/// OUTGOING OWNER of a pre-`wamn-0h0g.12.108` environment; what changed at
+/// wamn-0h0g.12.179 is the closing assertion, since the shipped batch now
+/// REVOKES `wamn_app`'s `CONNECT` rather than putting it back.
 async fn owner_statement_asymmetry_leg(su: &Client) {
     run_alone(
         su,
@@ -290,9 +303,27 @@ async fn owner_statement_asymmetry_leg(su: &Client) {
         "a non-owner grantee lost CONNECT across re-ownership: {acl:?}"
     );
 
-    // And the shipped order restores exactly what the mis-order destroyed.
+    // And the shipped order restores the reader — and ONLY the reader. The
+    // stable guest ACL role stays connection free through a batch applied to a
+    // database it used to own, which is the pre-cutover environment
+    // wamn-0h0g.12.179 has to converge.
     run_alone(su, &privilege_sql(ORDERING_DATABASE)).await;
+    assert!(
+        !can_connect(su, APP_ROLE, ORDERING_DATABASE).await,
+        "the shipped batch re-granted the stable guest ACL role CONNECT"
+    );
+    assert!(can_connect(su, DISPATCH_READER_ROLE, ORDERING_DATABASE).await);
+
+    // The other direction of the same contract: a pre-cutover environment where
+    // the grant is ALREADY present must converge, not merely fail to re-add it.
+    run_alone(su, &sql::grant_connect_on_database_sql(ORDERING_DATABASE)).await;
     assert!(can_connect(su, APP_ROLE, ORDERING_DATABASE).await);
+    run_alone(su, &privilege_sql(ORDERING_DATABASE)).await;
+    assert!(
+        !can_connect(su, APP_ROLE, ORDERING_DATABASE).await,
+        "the shipped batch must REVOKE a pre-cutover stable-role CONNECT, not \
+         just stop granting one"
+    );
     assert!(can_connect(su, DISPATCH_READER_ROLE, ORDERING_DATABASE).await);
 
     run_alone(
