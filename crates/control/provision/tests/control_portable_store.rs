@@ -115,6 +115,26 @@ fn portable_store_record_is_exact_and_storage_only() {
     assert!(!sql.contains("CREATE TRIGGER flow_drafts_controlled_update"));
     assert!(!sql.contains("CREATE TRIGGER flow_drafts_delete_immutable"));
     // The ledger vocabulary follows the contract's two surviving commands.
+    //
+    // wamn-0h0g.15.137.3 measured this text pin against the catalog assertion
+    // that would replace it, and it KEEPS ITS PLACE ONLY BECAUSE THAT ONE IS
+    // LIVE. Widening both occurrences to `('gate', 'publish', 'deploy')` dies
+    // here unarmed, and armed it dies at the artifact's OWN
+    // `control-portable-retained-shape-drift` fingerprint, which hashes
+    // `pg_get_constraintdef` of this very constraint -- the apply itself
+    // refuses, so every live test below fails on it. But with no
+    // WAMN_CONTROL_PORTABLE_PG_URL those tests early-return and the harness
+    // still prints `ok`, so deleting this line ships that mutant green in the
+    // ordinary sweep.
+    //
+    // Its weakness is measured, not assumed: the needle occurs TWICE in the
+    // artifact, so widening only the converging `ADD CONSTRAINT` -- the
+    // occurrence that alone decides the INSTALLED definition, since the rename
+    // block drops and re-adds on every apply -- passes here and dies only in
+    // the catalog. Widening only the CREATE TABLE declaration is an EQUIVALENT
+    // mutant; nothing observes it. The catalog is therefore the record of this
+    // vocabulary and this line is a sweep-time echo of it. Do not extend the
+    // pattern -- a NEW vocabulary fact belongs in the fingerprint, not here.
     assert!(sql.contains("CHECK (command_kind IN ('gate', 'publish'))"));
     // wamn-0h0g.7.11 renamed the gate's ledger literal. The superseded spelling
     // survives in exactly one place -- the converging UPDATE's own `WHERE` --
