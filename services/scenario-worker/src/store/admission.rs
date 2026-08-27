@@ -26,8 +26,15 @@ use serde_json::Value;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_authoring_model::GateRefusal;
-use wamn_control_provision::parse_management_admission_url;
+use wamn_control_provision::{
+    MANAGEMENT_ADMITTER_ROLE, ManagementAdmissionConnection, parse_management_admission_url, sql,
+};
 use wamn_execution_contract::{TestSetCase, validate_cases};
+use wamn_runtime::plugins::wamn_postgres::{
+    AclExpectation, AclTarget, AmbientCredentialState, CredentialExactnessProbe,
+    CredentialProbeError, ExpectedCredentialIdentity, MembershipExpectation, MembershipMode,
+    credential_exactness_probe, explicit_credential_source,
+};
 
 /// Inject the tenant every project-plane row policy resolves against.
 ///
@@ -201,6 +208,12 @@ impl AdmissionSurface {
     /// runs first. `serve` already parsed the same value at startup; re-parsing
     /// here holds an in-process caller that never goes through `serve` to the
     /// identical gate.
+    ///
+    /// The parse is only half of it (wamn-0h0g.22.10). A URL is a CLAIM about who
+    /// will connect, and no pure function can check it against the session the
+    /// server actually opened, so this boundary then asks the server itself:
+    /// [`admission_credential_probe`] is applied to the new connection BEFORE the
+    /// tenant scope is injected or a single admission read runs.
     pub async fn connect(
         management_admission_database_url: &str,
         org: &str,
@@ -217,13 +230,20 @@ impl AdmissionSurface {
         if !wamn_control_registry::identifiers::valid_tenant(tenant_id) {
             bail!("invalid fixed admission tenant identity");
         }
+        let probe =
+            admission_credential_probe(management_admission_database_url, &connection, tenant_id)
+                .map_err(|error| {
+                anyhow::anyhow!("management admission credential source refused: {error}")
+            })?;
         tracing::info!(
             database = connection.database(),
             role = connection.role(),
             generation = connection.generation().as_str(),
             "management admission credential accepted"
         );
-        let (client, driver) = tokio_postgres::connect(management_admission_database_url, NoTls)
+        let (client, driver) = probe
+            .connection_config()
+            .connect(NoTls)
             .await
             .context("connect dedicated project admission database credential")?;
         let connection_task = tokio::spawn(async move {
@@ -236,6 +256,14 @@ impl AdmissionSurface {
             connection_task,
             tenant_id: tenant_id.into(),
         };
+        // Held BEFORE the scope injection and before any admission read: a
+        // session the server does not agree is this generation never reaches a
+        // statement of ours at all. `Drop` aborts the driver task on refusal.
+        probe.probe_pooled(&surface.client).await.map_err(|error| {
+            // The refusal carries a predicate and a kind, never credential
+            // material or server detail.
+            anyhow::anyhow!("management admission credential exactness refused: {error}")
+        })?;
         surface.scope().await?;
         Ok(surface)
     }
@@ -326,6 +354,80 @@ impl AdmissionSurface {
             .context("name the candidate's unresolvable store aliases")?;
         Ok(rows.iter().map(|row| row.get(0)).collect())
     }
+}
+
+/// Bind the parsed admission input to the exact facts the server must report.
+///
+/// [`parse_management_admission_url`] proves everything a PURE function can:
+/// the input exists, names one database, and authenticates as one of this
+/// `(org, project, environment)`'s two generation roles. What it cannot prove is
+/// that the SERVER agrees — that is a fact about the opened session, not about
+/// the input — so `current_user`, `current_database`, the tenant binding, the
+/// stable ACL membership and the granted surface are asserted here instead of
+/// assumed (wamn-0h0g.22.10).
+///
+/// The probe machinery is `wamn_runtime`'s and is consumed READ-ONLY: this is a
+/// second caller beside the pooled runtime credential, and it derives no
+/// predicate of its own.
+///
+/// `AmbientCredentialState::Absent` is asserted, not assumed:
+/// `ManagementServeArgs::management_admission_database_url` deliberately carries
+/// no `default_value` and no project-URL fallback, so the URL reaching here is
+/// the one named explicit source. If a second source is ever reintroduced, this
+/// refuses.
+fn admission_credential_probe(
+    management_admission_database_url: &str,
+    connection: &ManagementAdmissionConnection,
+    tenant_id: &str,
+) -> Result<CredentialExactnessProbe, CredentialProbeError> {
+    let source = explicit_credential_source(
+        management_admission_database_url,
+        tenant_id,
+        AmbientCredentialState::Absent,
+    )?;
+    let mut acl = vec![AclExpectation::new(
+        AclTarget::Schema("catalog".into()),
+        "USAGE",
+        true,
+    )];
+    // Driven from the provisioner's OWN list rather than a second copy of it, so
+    // the readable surface this boundary asserts cannot drift from the one
+    // `grant_management_admitter_surface_sql` grants.
+    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+        acl.push(AclExpectation::new(
+            AclTarget::Table(format!("catalog.{relation}").into()),
+            "SELECT",
+            true,
+        ));
+    }
+    // A gate JUDGES the document it reads and mutates nothing in the catalog
+    // (wamn-0h0g.8.5.5). The grant batch revokes every table privilege before
+    // granting, so these three are absent — asserted negatively here so a
+    // widened ACL fails the surface at startup instead of at the first write it
+    // makes possible.
+    for privilege in ["INSERT", "UPDATE", "DELETE"] {
+        acl.push(AclExpectation::new(
+            AclTarget::Table("catalog.wirings".into()),
+            privilege,
+            false,
+        ));
+    }
+    let expected = ExpectedCredentialIdentity::new(
+        // Both users are the generation role: nothing issues `SET ROLE` between
+        // connect and this probe, so a differing `current_user` means the session
+        // is not the principal the URL named.
+        connection.role(),
+        connection.role(),
+        connection.database(),
+        tenant_id,
+        vec![MembershipExpectation::new(
+            MANAGEMENT_ADMITTER_ROLE,
+            MembershipMode::Member,
+            true,
+        )],
+        acl,
+    );
+    credential_exactness_probe(source, expected)
 }
 
 /// One gate command's inputs, already reconciled with the fixed scope.
@@ -567,5 +669,33 @@ mod tests {
         assert_eq!(candidate(json!({"nodes": []})).nodes_object(), json!({}));
         let nodes = json!({"a": {"component": "c", "interface-version": "1", "operation": "op"}});
         assert_eq!(candidate(json!({"nodes": nodes})).nodes_object(), nodes);
+    }
+
+    /// The expected identity is DERIVED from the parsed connection, never
+    /// hand-copied beside it.
+    ///
+    /// `credential_exactness_probe` refuses a user, database or tenant that the
+    /// source and the expectation disagree on, before a socket is used. So this
+    /// building at all is the assertion: a role or database name restated by
+    /// hand would refuse here, without a server.
+    #[test]
+    fn the_credential_probe_binds_the_parsed_generation_identity() {
+        const ORG: &str = "acme";
+        const PROJECT: &str = "receiving";
+        const ENVIRONMENT: &str = "dev";
+        const DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
+
+        let role = wamn_control_provision::management_admitter_generation_role(
+            ORG,
+            PROJECT,
+            ENVIRONMENT,
+            DATABASE,
+            wamn_control_provision::CredentialGeneration::A,
+        );
+        let url = format!("postgres://{role}:secret@project.invalid:5432/{DATABASE}");
+        let connection = parse_management_admission_url(&url, ORG, PROJECT, ENVIRONMENT)
+            .expect("an in-scope admission URL");
+        admission_credential_probe(&url, &connection, "tenant-a")
+            .expect("the parsed identity is the expected identity");
     }
 }
