@@ -215,8 +215,15 @@ fn run_state_sql_matches_the_model() {
     // Re-keyed onto `current_user` with the rest of the guest-reachable floor
     // (`wamn-0h0g.22.6.3`), and carrying the expression index without which the
     // derivation sequential-scans.
+    // `wamn-0h0g.22.17` narrowed the floor to the guest and admitted the
+    // platform families through one permissive arm. Both halves are asserted:
+    // the floor alone would leave every platform principal reading ZERO ROWS
+    // SILENTLY, which is the failure that bead exists to prevent.
     assert!(sql.contains(
-        "FOR SELECT\nUSING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())"
+        "FOR SELECT\nTO wamn_app\nUSING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())"
+    ));
+    assert!(sql.contains(
+        "CREATE POLICY environment_policies_platform ON wamn_run.environment_policies\n    AS PERMISSIVE FOR SELECT TO wamn_platform\n    USING (true)"
     ));
     assert!(sql.contains(
         "CREATE INDEX environment_policies_tkey\n    ON wamn_run.environment_policies ((wamn_authority.tenant_key(tenant_id)))"
