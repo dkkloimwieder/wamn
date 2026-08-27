@@ -563,8 +563,9 @@ GRANT SELECT (tenant_id, run_id, status)
 -- ---------------------------------------------------------------------------
 -- Immutable effect-attempt ledger. Every effectful occurrence has one
 -- server-minted identity here.
--- wamn-0h0g.4.9 installs the inaccessible writer primitive. wamn-0h0g.5.4
--- first wires and activates it; until then execution remains hard-refused.
+-- wamn-0h0g.4.9 installs the inaccessible writer primitive. Whoever first
+-- wires and activates it lifts the refusal; until then execution remains
+-- hard-refused.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.effect_attempts (
     tenant_id       text NOT NULL,
