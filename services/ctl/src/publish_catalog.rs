@@ -832,7 +832,7 @@ mod tests {
             .filter(|line| !line.starts_with("--"))
             .collect::<Vec<_>>()
             .join(" ");
-        let mut granted = BTreeSet::new();
+        let mut relations_read = BTreeSet::new();
         for statement in body.split(';') {
             let statement = statement.split_whitespace().collect::<Vec<_>>().join(" ");
             let Some(rest) = statement.strip_prefix("GRANT ") else {
@@ -859,7 +859,7 @@ mod tests {
                 continue;
             }
             for relation in relations.split(',').map(str::trim) {
-                granted.insert(
+                relations_read.insert(
                     relation
                         .strip_prefix("catalog.")
                         .unwrap_or(relation)
@@ -867,7 +867,7 @@ mod tests {
                 );
             }
         }
-        granted
+        relations_read
     }
 
     /// The scanner's answer on a LITERAL fixture, so the closed-inventory proof
