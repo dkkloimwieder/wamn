@@ -75,7 +75,8 @@ mod support;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
-    DISPATCH_READER_ROLE, project_env_database_name, sql as provision_sql,
+    CredentialGeneration, DISPATCH_READER_ROLE, effect_writer_generation_role,
+    project_env_database_name, sql as provision_sql,
 };
 use wamn_ctl::reconcile_run_plane::{
     self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneArgs, ReconcileTargetError,
@@ -729,6 +730,7 @@ async fn run_plane_reconcile_live() {
     frame_identity_cutover_leg(&su).await;
     effect_writer_cutover_leg(&su).await;
     effect_writer_populated_refusal_leg(&su).await;
+    provisioner_minted_generation_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
     partition_plane_authored_ordering_refusal_leg(&su).await;
     partition_plane_cutover_leg(&su).await;
@@ -773,6 +775,17 @@ async fn effect_writer_cutover_live() {
         support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let su = connect(&url).await;
     effect_writer_cutover_leg(&su).await;
+}
+
+/// Own entry so the provisioner-minted generation contract can be run — and
+/// mutated — alone (wamn-0h0g.12.178).
+#[tokio::test]
+#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
+async fn provisioner_minted_generation_live() {
+    let url =
+        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let su = connect(&url).await;
+    provisioner_minted_generation_leg(&su).await;
 }
 
 /// Own entry so the two-plane post-check can be run — and mutated — alone.
@@ -2164,6 +2177,9 @@ async fn effect_writer_cutover_leg(su: &Client) {
     .await
     .expect("install the transitive-membership witness");
 
+    // wamn-0h0g.12.178: both hand-built generations below carry the option shape
+    // the prepare path emits, so each refusal stays attributable to the ONE
+    // cause its assertion names rather than also tripping the edge-option term.
     let generation = "wamn_effect_writer_0000000000000000000000000000000000000000_a";
     su.batch_execute(&format!(
         "DO $generation$ BEGIN \
@@ -2172,7 +2188,8 @@ async fn effect_writer_cutover_leg(su: &Client) {
                INHERIT NOREPLICATION NOBYPASSRLS; \
            END IF; \
          END $generation$; \
-         GRANT wamn_effect_writer TO {generation}; \
+         GRANT wamn_effect_writer TO {generation} \
+           WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; \
          GRANT {generation} TO wamn_projection_rogue_member;"
     ))
     .await
@@ -2211,7 +2228,8 @@ async fn effect_writer_cutover_leg(su: &Client) {
          END $impostor$; \
          ALTER ROLE {impostor} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
            INHERIT NOREPLICATION NOBYPASSRLS; \
-         GRANT wamn_run_projection_writer TO {impostor}; \
+         GRANT wamn_run_projection_writer TO {impostor} \
+           WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; \
          DO $connect$ BEGIN EXECUTE format( \
            'GRANT CONNECT ON DATABASE %I TO {impostor}', current_database()); \
          END $connect$;"
@@ -2254,6 +2272,103 @@ async fn effect_writer_cutover_leg(su: &Client) {
         action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
             && action.target == format!("{SCHEMA}.effect_attempts")
     }));
+}
+
+/// Remove one disposable generation role.
+///
+/// `DROP OWNED BY` reaches only the CURRENT database (plus the shared-object
+/// grants, which is where this leg's `CONNECT` lives), and it must run before
+/// `DROP ROLE` or the drop is refused. Guarded by an existence check so a leg
+/// can call it both before and after minting.
+async fn drop_generation_role(su: &Client, role: &str) {
+    su.batch_execute(&format!(
+        "DO $drop_generation$ BEGIN \
+           IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
+             EXECUTE 'DROP OWNED BY {role}'; \
+             EXECUTE 'DROP ROLE {role}'; \
+           END IF; \
+         END $drop_generation$;"
+    ))
+    .await
+    .expect("drop the disposable generation role");
+}
+
+/// wamn-0h0g.12.178: the reconciler must ACCEPT the generation shape its OWN
+/// provisioner mints.
+///
+/// Every other generation leg in this file builds its role by hand with a bare
+/// `GRANT wamn_effect_writer TO <generation>`, which PostgreSQL 16+ defaults to
+/// `SET TRUE`. The prepare path emits `SET FALSE` — the tighter posture
+/// `docs/exe-model.md` names "rotating login generations with no `SET ROLE`
+/// escape" — so the edge production actually carries never reached this check,
+/// and `generation_role_contract_violation_sql` was left demanding the opposite
+/// of what the provisioner writes (`358f6792` flipped the provisioner and its
+/// own check without flipping the reconciler). This leg mints the generation
+/// through the provisioner's OWN batch, so the shape under test is the shape
+/// `provision-project-env --prepare` installs, and then requires the real verb
+/// to converge.
+async fn provisioner_minted_generation_leg(su: &Client) {
+    reset(su).await;
+    let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply run-state");
+    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
+        .await
+        .expect("apply run-queue");
+
+    let database: String = su
+        .query_one("SELECT current_database()", &[])
+        .await
+        .expect("read the reconciled database")
+        .get(0);
+    let generation = effect_writer_generation_role("t1", &database, CredentialGeneration::A);
+    drop_generation_role(su, &generation).await;
+    su.batch_execute(&provision_sql::prepare_effect_writer_generation_sql(
+        &database,
+        &generation,
+        "run-plane-prepared-generation",
+        "2099-01-01T00:00:00Z",
+    ))
+    .await
+    .expect("mint the generation through the real prepare batch");
+
+    // The server's own answer for the edge the provisioner just wrote, pinned
+    // so a later provisioner change cannot silently re-open the disagreement.
+    let edge = su
+        .query_one(
+            "SELECT edge.admin_option, edge.inherit_option, edge.set_option \
+               FROM pg_catalog.pg_auth_members AS edge \
+               JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
+               JOIN pg_catalog.pg_roles AS member ON member.oid = edge.member \
+              WHERE member.rolname = $1 AND parent.rolname = 'wamn_effect_writer'",
+            &[&generation],
+        )
+        .await
+        .expect("read the minted stable-role membership edge");
+    assert_eq!(
+        (
+            edge.get::<_, bool>(0),
+            edge.get::<_, bool>(1),
+            edge.get::<_, bool>(2),
+        ),
+        (false, true, false),
+        "the prepare path grants ADMIN FALSE, INHERIT TRUE, SET FALSE"
+    );
+
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("the reconciler accepts a generation its own provisioner minted");
+    assert!(
+        plan.is_noop(),
+        "a prepared generation is not schema drift: {:#?}",
+        plan.actions
+    );
+
+    drop_generation_role(su, &generation).await;
 }
 
 async fn effect_writer_populated_refusal_leg(su: &Client) {

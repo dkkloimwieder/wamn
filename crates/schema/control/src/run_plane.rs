@@ -2639,6 +2639,19 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
         || !obs.app_run_capture_privileges.2
 }
 
+/// The generation-role floor the PROVISIONER mints, restated as a refusal.
+///
+/// The membership edge term is `SET FALSE`, not `SET TRUE`: `INHERIT TRUE, SET
+/// FALSE` gives the login generation the stable ACL role's privileges while
+/// denying it `SET ROLE` to BECOME that role — the "rotating login generations
+/// with no `SET ROLE` escape" of `docs/exe-model.md`, and the posture that keeps
+/// `current_user` an honest RLS input. `wamn-0h0g.12.178`: this predicate was
+/// authored against the `SET TRUE` grant of `f0d18024`; `358f6792` tightened the
+/// provisioner's grant, its state probe, and its own violation check to `SET
+/// FALSE` without reaching here, leaving the reconciler demanding the LOOSER
+/// shape and refusing every environment `provision-project-env --prepare`
+/// actually mints. `provisioner_minted_generation_leg` is the arm that meets
+/// the real prepared shape.
 fn generation_role_contract_violation_sql() -> &'static str {
     "EXISTS ( \
          SELECT 1 FROM pg_catalog.pg_roles AS generation \
@@ -2669,7 +2682,7 @@ fn generation_role_contract_violation_sql() -> &'static str {
                       SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
                        WHERE edge.member = generation.oid \
                          AND (edge.admin_option OR NOT edge.inherit_option \
-                              OR NOT edge.set_option)) \
+                              OR edge.set_option)) \
                  OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
                              WHERE edge.roleid = generation.oid) \
                  OR EXISTS (SELECT 1 FROM pg_catalog.pg_shdepend AS dependency \
