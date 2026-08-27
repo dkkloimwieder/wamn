@@ -16,7 +16,7 @@
 # here, the bytes come from there, and the pull refuses unless they agree.
 #
 # NOT APPLIABLE AS CHECKED IN: the 64-zero manifest digest is a placeholder for
-# the desired-state writer owned by wamn-0h0g.15.98. A digest that addresses no
+# the digest the release mint prints. A digest that addresses no
 # artifact fails process construction, so the Pod crashloops instead of going
 # ready. Readiness never re-verifies those bytes.
 #
@@ -126,9 +126,8 @@ spec:
             # by the runtime-operator chart, so nothing mounts /runtime-cert
             # here and the CA is mounted explicitly below.
             #
-            # *** NOT ROLLABLE UNTIL deploy/platform/registry.yaml SERVES TLS
-            # *** from this same CA (wamn-0h0g.15.155 leg B). It still serves
-            # plain HTTP, so pulls fail until that lands. Apply it first.
+            # deploy/platform/registry.yaml serves TLS from this same CA, so
+            # apply that file before this one or every pull fails verification.
             - --oci-ca-path=/etc/wamn/registry-ca/ca.crt
           ports:
             - name: readiness

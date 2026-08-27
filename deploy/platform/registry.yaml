@@ -78,7 +78,7 @@
 # STILL STALE, AND NOT THIS LEG'S TO FIX: the recipe at
 # deploy/platform/http-route-workload.example.yaml:6-7 still publishes
 # `wash push localhost:5000 ... --insecure`, which this file breaks. The ctl
-# publish path is wamn-0h0g.15.155 leg C.
+# publish path is `wamn-ctl push-component`.
 #
 # [15.45] Storage is a PersistentVolumeClaim: a pod restart no longer loses every
 # blob, so readiness prefetch does not fail cluster-wide until someone

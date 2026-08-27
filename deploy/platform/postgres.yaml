@@ -102,9 +102,10 @@ spec:
 # this standing credential mount still cost authority. Mirrors
 # POSTGRES_PASSWORD above; the key shape matches CNPG-generated
 # `<cluster>-superuser` Secrets so one-shot Job wiring stays portable. The
-# retained shared fixture Secret is an accepted interim; wamn-0h0g.12.170 owns
-# inventorying and narrowing its surviving consumers before any promotion or
-# fixture unfreeze.
+# retained shared fixture Secret is an accepted interim; narrowing its surviving
+# consumers is subsumed by the Phase B build that establishes role, grant and
+# credential authority at final shape, not by a separate narrowing pass ahead of
+# any promotion or fixture unfreeze.
 apiVersion: v1
 kind: Secret
 metadata:

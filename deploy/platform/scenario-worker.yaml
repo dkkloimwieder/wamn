@@ -74,21 +74,25 @@
 #                        so a URL naming the control database, or carrying the
 #                        shared `wamn_app` role, crash-loops instead of serving.
 #
-# THE ADMISSION SECRET IS NOT MINTED YET. `wamn-0h0g.12.176` owns creating
-# `wamn-mgmt-admitter-<org>--<project>--<env>`; nothing in ctl renders it today.
-# Until it lands, a fresh environment's pod pends with CreateContainerConfigError
+# THE ADMISSION SECRET IS NOT MINTED FOR THIS ENVIRONMENT YET, exactly as the
+# identity-reader Secret above is not. `wamn-ctl provision-project-env
+# --prepare-management-admitter-generation <a|b>
+# --emit-management-admitter-secret PATH` renders
+# `wamn-mgmt-admitter-<org>--<project>--<env>`; until it has been run here, a
+# fresh environment's pod pends with CreateContainerConfigError
 # on the absent Secret. That fail-closed window is deliberate: do NOT hand-create
 # the Secret to get past it — a hand-written credential is exactly the drift the
 # derived name exists to prevent. The name below is the rendering of
 # `management_admitter_secret_name(org, project, env)`
-# (crates/control/provision/src/name.rs), which .12.176's renderer consumes, so
+# (crates/control/provision/src/name.rs), which that renderer consumes, so
 # the two agree by derivation rather than by two copied literals.
 #
-# WHO USES IT: nobody yet, on purpose. `serve` proves the credential is in scope
-# at startup; the sequential admission that opens it is wamn-0h0g.8.5.4, and
-# moving the production management path off the shared `wamn_app` role onto this
-# family is wamn-0h0g.22.10. Landing the plumbing first makes that cutover a
-# traffic change rather than a plumbing change.
+# WHO USES IT: the `gate` authoring command, which reads the project database
+# through it (services/scenario-worker/src/management.rs `gate` ->
+# store::admission::run_gate); `serve` also proves the credential is in scope at
+# startup. Moving the production management path off the shared `wamn_app` role
+# onto this family is wamn-0h0g.22.10. Landing the plumbing first makes that
+# cutover a traffic change rather than a plumbing change.
 #
 # NETWORK POSTURE: wamn-system ships egress policies only (runner-netpol.yaml,
 # there is no ingress policy, so this listener adds no

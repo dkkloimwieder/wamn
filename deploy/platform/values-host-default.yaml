@@ -172,14 +172,14 @@ runtime:
       # to render one `--oci-ca-path=` per path
       # (templates/runtime/deployment.yaml:189-190).
       #
-      # *** NOT ROLLABLE ON ITS OWN. *** Two things must be true first, and only
-      # one of them is:
+      # *** NOT ROLLABLE ON ITS OWN. *** Two things must be true first, and both
+      # now are:
       #   * the host binary must accept `--oci-ca-path`, or every host Pod
       #     crashloops on an unknown argument. DONE — services/host/src/host.rs
       #     gained it in the commit immediately before this one;
       #   * deploy/platform/registry.yaml must serve TLS from the same
-      #     `wasmcloud-ca`. NOT DONE — it still serves plain HTTP, so every pull
-      #     fails until wamn-0h0g.15.155 leg B lands. Apply that first.
+      #     `wasmcloud-ca`. DONE — apply that file before this one, or every
+      #     pull fails verification.
       ociCaPaths:
         - "/runtime-cert/ca.crt"
       # [wamn-3ceu] THE HOST'S RELEASE, AND ITS FIRST ONE. Until now this file
@@ -194,8 +194,7 @@ runtime:
       # The two are mutually required by the binary, so one without the other
       # refuses at startup rather than serving a release-less host by accident.
       #
-      # *** NOT ROLLABLE AS CHECKED IN. *** The digest is a 64-zero placeholder:
-      # no release can be minted in any environment yet (wamn-cdky, wamn-04m1),
+      # *** NOT ROLLABLE AS CHECKED IN. *** The digest is a 64-zero placeholder,
       # and a digest that addresses no artifact fails the pull, so every host Pod
       # crashloops. Set both to the values the mint prints, or drop these two
       # entries to go back to a host that carries no release.
