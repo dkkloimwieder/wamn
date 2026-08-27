@@ -181,6 +181,14 @@ async fn publish_and_verify(
     } else {
         ClientProtocol::Https
     };
+    // Built here rather than borrowed from `wash_runtime::oci`, which exposes no
+    // client-construction seam. Its `push_component` mints the config blob
+    // itself from `WasmConfig` and tags the layer `WASM_LAYER_MEDIA_TYPE`; this
+    // artifact carries the platform's own `component_artifact_layout`, whose
+    // config blob is the admitted-component fact `pull_verified` re-proves
+    // below. Routing through that API would discard the proof. See standing
+    // trigger 5 in `docs/architecture/native-alignment-ledger.md`
+    // (`wamn-kdhw`).
     let client = OciClient::new(ClientConfig {
         protocol,
         read_timeout: Some(REGISTRY_IO_TIMEOUT),

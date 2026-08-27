@@ -63,6 +63,18 @@ impl ComponentArtifactSourceConfig {
     /// compiles in, and an in-cluster registry behind a private CA is
     /// unreachable short of dropping verification altogether.
     ///
+    /// This duplication is measured and ledgered, not an oversight: vanilla
+    /// wash-runtime keeps the matching reader `oci::extra_ca_certificates()`
+    /// private and re-exports no `oci_client` symbol, so installed trust cannot
+    /// be read back into a foreign `ClientConfig`. Its only public transfer
+    /// surface, `oci::{pull_component, push_component}`, is fixed to
+    /// `WASM_LAYER_MEDIA_TYPE` + `WasmConfig` and cannot carry this artifact's
+    /// platform-owned layer and config blob — the config blob being the very
+    /// admission fact [`ComponentArtifactSource::pull_verified`] re-proves. See
+    /// standing trigger 5 in `docs/architecture/native-alignment-ledger.md`
+    /// (`wamn-kdhw`) for the exit condition; do not "fix" this by routing the
+    /// pull through `pull_component`.
+    ///
     /// Pass the same paths the host passed to that call, and call it first:
     /// validation lives there, and it refuses a bundle that is unreadable or
     /// unusable as a trust root rather than starting a host that will reject

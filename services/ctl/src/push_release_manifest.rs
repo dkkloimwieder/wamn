@@ -377,6 +377,17 @@ pub async fn publish_release_manifest(
     })
 }
 
+/// One registry client for this publish, built here rather than borrowed from
+/// `wash_runtime::oci`.
+///
+/// That module exposes no client-construction seam: its transfer surface is
+/// `pull_component`/`push_component`, both fixed to `WASM_LAYER_MEDIA_TYPE` and
+/// a `WasmConfig` blob, and `push_component` refuses non-wasm bytes outright
+/// through `wit_component::decode_reader`. A release manifest is canonical
+/// JSON. This path also needs `HttpsExcept` for a single insecure registry and
+/// `OciErrorCode::ManifestUnknown` discrimination for the exact-retry probe,
+/// neither of which survives that API. See standing trigger 5 in
+/// `docs/architecture/native-alignment-ledger.md` (`wamn-kdhw`).
 fn registry_client(registry: &str, insecure_registry: bool) -> OciClient {
     let protocol = if insecure_registry {
         ClientProtocol::HttpsExcept(vec![registry.to_owned()])

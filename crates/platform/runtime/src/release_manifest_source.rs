@@ -199,6 +199,14 @@ impl ReleaseManifestSource {
     /// Pass the same paths the host passed to that call, and call it first:
     /// validation lives there, and it refuses an unusable bundle before the
     /// process starts. Empty `paths` leave this source on the compiled-in roots.
+    ///
+    /// The duplication is measured and ledgered, not an oversight: vanilla
+    /// wash-runtime keeps the matching reader `oci::extra_ca_certificates()`
+    /// private, and its only public transfer surface pushes and pulls wasm
+    /// components — not this artifact's
+    /// `application/vnd.wamn.release-manifest.v2+json` layer over an empty
+    /// config. See standing trigger 5 in
+    /// `docs/architecture/native-alignment-ledger.md` (`wamn-kdhw`).
     pub fn with_ca_paths(mut self, paths: &[PathBuf]) -> Result<Self, ReleaseManifestFetchError> {
         if paths.is_empty() {
             return Ok(self);
