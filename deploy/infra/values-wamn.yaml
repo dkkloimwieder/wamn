@@ -19,6 +19,93 @@
 #     -f deploy/infra/values-wamn.yaml
 #   # then this environment's host tier — deploy/platform/values-host-default.yaml
 #
+# ############################################################################
+# [wamn-ob2f] *** THIS RELEASE MINTS THE CLUSTER'S CA, AND IT EXPIRES AFTER
+# *** 365 DAYS. NOTHING RENEWS IT. READ THIS BEFORE THAT DATE, NOT AFTER.
+# ############################################################################
+#
+# MINT DATE: the first successful `helm install` of the command above into a
+# namespace with no `wasmcloud-ca` Secret. EXPIRY: mint + 365 days.
+#
+#   *** wasmcloud-ca EXPIRES ON: ____________  ***
+#   *** (unfilled: the kind cluster is frozen, so no cluster of record exists
+#   ***  to read it off. Fill it in from the command below the first time this
+#   ***  release is installed anywhere that has to stay up.)
+#
+# Read the real value, which is authoritative over the arithmetic:
+#   kubectl -n wamn-system get secret wasmcloud-ca \
+#     -o jsonpath='{.data.tls\.crt}' | base64 -d \
+#     | openssl x509 -noout -subject -dates
+#
+# WHERE THE 365 COMES FROM, measured not repeated: the chart hard-codes it,
+# `{{- $ca = genCA "wasmcloud CA" 365 }}` at
+# charts/runtime-operator/templates/certificates.yaml:31, pinned rev 5c4ec4a3
+# = chart 2.8.0. No value exposes it. The four leaves this release signs —
+# `wasmcloud-operator-tls`, `wasmcloud-nats-tls`, `wasmcloud-runtime-tls`,
+# `wasmcloud-data-tls` — are `genSignedCert … 365 $ca` at :44, :52, :60 and :81,
+# so THEY EXPIRE ON THE SAME DAY as the CA that signed them, not staggered.
+#
+# WHY NOTHING RENEWS. The same template does lookup-then-reuse: once a Secret
+# exists it re-emits the SAME cert and key bytes (`buildCustomCert` for the CA,
+# the four `if $…Sec` branches for the leaves), specifically so an upgrade does
+# not rotate under running pods. That is correct behaviour and it is also the
+# whole problem — `helm upgrade` is a no-op on expiry, not a renewal. There is no
+# other renewal path: cert-manager issues only the per-environment leaves
+# (`platform/host-environment-certs.example.yaml`) and the registry's serving
+# certificate (`platform/registry.yaml`), never this CA, and a cert-manager leaf
+# renewed off an expired CA is just as dead.
+#
+# RECREATE PROCEDURE — DESTRUCTIVE, AND IT INVALIDATES EVERY CERTIFICATE ISSUED
+# UNDER THE OLD CA. Deleting `wasmcloud-ca` ALONE IS WRONG: the four leaf
+# lookups would still find their Secrets and re-emit the OLD leaves against a
+# NEW CA, so every chain breaks and the failure looks like a config error rather
+# than an expiry. Delete all five together:
+#
+#   kubectl -n wamn-system delete secret \
+#     wasmcloud-ca wasmcloud-operator-tls wasmcloud-nats-tls \
+#     wasmcloud-runtime-tls wasmcloud-data-tls
+#   helm upgrade --install --create-namespace -n wamn-system wamn \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
+#     -f deploy/infra/values-wamn.yaml          # re-mints all five
+#   # every pod holding the old PEM in memory must be restarted. NATS first —
+#   # nothing can register against a server still presenting the old cert:
+#   kubectl -n wamn-system rollout restart deploy/nats
+#   kubectl -n wamn-system rollout restart deploy/runtime-operator
+#   kubectl -n wamn-system rollout restart deploy/hostgroup-default
+#   kubectl -n wamn-system rollout restart deploy/executor deploy/registry
+#   # redo the CA copy into `cert-manager` — the ClusterIssuer still holds a
+#   # SNAPSHOT of the old CA (deploy/infra/wasmcloud-ca-issuer.yaml):
+#   kubectl -n wamn-system get secret wasmcloud-ca -o json \
+#     | jq 'del(.metadata) | .metadata = {name: "wasmcloud-ca", namespace: "cert-manager"}' \
+#     | kubectl apply -f -
+#   # force cert-manager to re-issue every leaf it signed off the old CA:
+#   kubectl -n wamn-system delete secret wamn-registry-tls
+#   # …and, per environment namespace beyond this one, its
+#   #   wasmcloud-runtime-tls / wasmcloud-data-tls
+# `nats` and `runtime-operator` are the pinned chart's own Deployment names
+# (templates/nats/deployment.yaml, templates/operator/deployment.yaml); each
+# host group renders as `hostgroup-<name>`, so an install with more than the
+# `default` group has more to restart. The rule is "restart everything that
+# mounts one of those Secrets", not this exact list. Nothing here has been run:
+# the cluster is frozen.
+#
+# THE ALTERNATIVE, RECORDED AND REJECTED — DO NOT RE-PRESENT IT. cert-manager
+# owning the ENTIRE PKI, the NATS and operator certificates included, renews
+# automatically and is genuinely cleaner. It is rejected for now because it
+# rewires the one configuration that currently works, and the frozen cluster
+# means it could not be tested — it would land unproven until an RC on a fresh
+# cluster. The ruling (2026-08-24) is STAY ADDITIVE: cert-manager keeps issuing
+# only the per-environment leaves while the chart keeps its own CA, so nothing
+# that currently converges gets rewired.
+#
+# TWO TRIPWIRES REOPEN THAT CHOICE, and either one alone is enough:
+#   1. the CA approaching one year from its mint date — the date above;
+#   2. any unfreeze that makes a live test possible, which removes the only
+#      reason the cleaner option was rejected.
+# Whoever trips one files the bead then. No bead stands open on it deliberately:
+# an open item on a decision nobody can test is a reminder nobody can act on,
+# and this comment is the reminder that does work.
+#
 # [wamn-0h0g.15.15] CHART + OPERATOR VERSION PIN — PER CLUSTER (ruling
 # wamn-0h0g.13.49). The chart version in the install command above is the whole
 # pin, and the conformance guard parses it from there: the chart's

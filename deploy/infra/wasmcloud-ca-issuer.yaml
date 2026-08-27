@@ -51,6 +51,15 @@
 # the CA Secret to recover from its 365-day expiry, which is the chart's only
 # renewal path.
 #
+# [wamn-ob2f] THAT EXPIRY IS A DATE SOMEONE HAS TO KNOW BEFORE IT ARRIVES, and
+# it is recorded in the header of `deploy/infra/values-wamn.yaml` — the file
+# whose install command mints the CA — with the mint-date rule, the command that
+# reads the real `notAfter`, the delete-all-five recreate procedure, and the two
+# tripwires that reopen the cert-manager-owns-the-whole-PKI alternative. What is
+# specific to THIS file: after a recreate the ClusterIssuer still holds a
+# snapshot of the DEAD CA, so re-running the copy above is a required step of
+# that procedure, not an optional tidy-up.
+#
 # ORDER. cert-manager first (its CRDs and webhook must exist before this object
 # is admitted), then the operator Helm release (it mints the CA), then the copy
 # above, then this file.

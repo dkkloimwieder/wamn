@@ -218,6 +218,18 @@ cluster-resource namespace — `cert-manager`, from the vendored install's
 `--cluster-resource-namespace=$(POD_NAMESPACE)`. That one copy of the CA is the
 single manual step, documented in `infra/wasmcloud-ca-issuer.yaml`.
 
+**That borrowed CA expires 365 days after it is minted, and nothing renews it**
+(wamn-ob2f). The chart hard-codes `genCA "wasmcloud CA" 365` and then does
+lookup-then-reuse, so `helm upgrade` re-emits the same bytes rather than
+rotating; the four leaves it signs carry the same 365 days and expire on the
+same day. cert-manager renews only what cert-manager issues — the registry's
+serving certificate and the per-environment host leaves — and a leaf renewed off
+a dead CA is dead too. Recovery is delete-and-recreate, which invalidates every
+certificate issued under the old CA. The expiry date, the command that reads the
+real `notAfter`, the full recreate procedure, and the two tripwires that reopen
+the question are in the header of `infra/values-wamn.yaml`, the file whose
+install command mints it.
+
 One chart, two tiers (wamn-0h0g.15.15, rulings `.13.49` + `.13.50`): the
 runtime-operator chart is installed twice with different values, and the tier
 split *is* the ruling. `infra/values-wamn.yaml` is the cluster-singleton
