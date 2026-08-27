@@ -20,9 +20,11 @@ This document wins every design conflict.
 2. **Durability.** The default is at-least-once delivery, producer idempotency and
    OTel as the record. The classifier/effect-ledger crash floor remains shelved
    behind a future premium-durability class gate.
-3. **Deployment.** Platform artifacts use OCI, GitOps and operator-managed hosts.
-   Wirings are gated tenant rows activated by pointer flip, not CRDs or per-edit
-   artifacts.
+3. **Deployment.** Platform artifacts use OCI and operator-managed hosts,
+   converged by operator kubectl per deploy/README.md's runbook; a GitOps
+   controller is demand-gated on a second environment or the first non-human
+   convergence. Wirings are gated tenant rows activated by pointer flip, not
+   CRDs or per-edit artifacts.
 
 ## Runtime target
 
@@ -112,8 +114,10 @@ pooler trigger, not an alternative identity model.
 - OTel carries trace context, one span per component invocation/effect, and
   per-wiring/registration throughput, error, ack-lag and DLQ metrics. The studio
   live view is a bounded, redacted router-edge stream, not durable node history.
-- Platform artifacts retain the operator/OCI/GitOps path. Flow-language artifacts
-  and plan-shaped publication surfaces retire with their subjects.
+- Platform artifacts retain the operator/OCI path, converged by operator kubectl
+  per deploy/README.md's runbook with a GitOps controller demand-gated.
+  Flow-language artifacts and plan-shaped publication surfaces retire with their
+  subjects.
 
 ## Proof and delivery
 

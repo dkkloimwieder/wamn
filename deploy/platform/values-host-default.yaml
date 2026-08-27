@@ -198,6 +198,31 @@ runtime:
       # and a digest that addresses no artifact fails the pull, so every host Pod
       # crashloops. Set both to the values the mint prints, or drop these two
       # entries to go back to a host that carries no release.
+      #
+      # WHY FLAGS AND NOT `env:`, given every entry above takes that carrier.
+      # The pair is OPTIONAL in the host binary — both absent means "this host
+      # serves no release", which is a state someone may choose on purpose. So a
+      # typo that lost both env NAMES would deploy cleanly and serve nothing,
+      # indistinguishable from that deliberate state. clap exits nonzero on an
+      # unknown FLAG, so the same typo crashloops the Pod instead and stalls the
+      # rollout, which is the failure that gets noticed. The executor's pair is
+      # REQUIRED rather than optional, so a value that fails to arrive is refused
+      # there whichever carrier it rides, and it can afford the plainer one —
+      # deploy/platform/executor.yaml.
+      #
+      # HOW A RELEASE GETS IN HERE, AND HOW IT COMES BACK OUT — the full runbook
+      # is in deploy/README.md, "Release rollout, and rollback by revert". In
+      # short: mint with `wamn-ctl publish-release` (the digest is the whole of
+      # its stdout), push the frozen bytes with `push-release-manifest`, read the
+      # lines both carriers take with `print-release-env` — which prints this
+      # flag pair already labelled with this file's path — HAND-EDIT the two
+      # entries below in one commit, then `helm upgrade` with this file. ROLLBACK
+      # IS `git revert` ON THAT COMMIT PLUS A RE-UPGRADE: no image any manifest
+      # in deploy/ schedules is digest-pinned — every one is a mutable tag,
+      # `runtime.image` above included — so this digest is the only thing in the
+      # tree a revert genuinely rolls back to exact bytes. Reverting stops
+      # pointing at the newer release; it never un-publishes it, since the mint
+      # is append-only and the pushed artifact immutable.
       extraArgs:
         - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
         - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"

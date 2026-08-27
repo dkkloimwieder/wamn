@@ -20,6 +20,28 @@
 # artifact fails process construction, so the Pod crashloops instead of going
 # ready. Readiness never re-verifies those bytes.
 #
+# HOW A RELEASE GETS IN HERE, AND HOW IT COMES BACK OUT — the full runbook is in
+# deploy/README.md, "Release rollout, and rollback by revert". In short: mint
+# with `wamn-ctl publish-release` (the digest is the whole of its stdout), push
+# the frozen bytes with `push-release-manifest`, read the lines both carriers
+# take with `print-release-env`, HAND-EDIT the pair below in one commit, then
+# `kubectl apply` this file. ROLLBACK IS `git revert` ON THAT COMMIT PLUS A
+# RE-APPLY: no image any manifest in deploy/ schedules is digest-pinned — every
+# one is a mutable tag, this file's `wamn-executor:dev` included — so this digest
+# is the only thing in the tree a revert genuinely rolls back to exact bytes.
+# Reverting stops pointing at the newer release; it never un-publishes it, since
+# the mint is append-only and the pushed artifact immutable.
+#
+# THIS FILE'S CARRIER IS `env:`; THE HOST'S IS FLAGS, and the asymmetry is
+# deliberate — see deploy/platform/values-host-default.yaml. This executor's
+# pair is REQUIRED by its parser, so a value that fails to arrive is refused
+# whichever carrier it travels in, and the plainer carrier costs nothing here.
+# The host's pair is OPTIONAL, because a host serving no release is a legitimate
+# state, so a typo that loses both env names there would deploy cleanly and
+# serve nothing; a typo'd FLAG exits clap nonzero and crashloops instead. The
+# host is also rendered by a chart with no release model, which is why its pair
+# rides `extraArgs`, while this Deployment is hand-written.
+#
 # STARTUP + ROLLOUTS: the process binds `/readyz` immediately and reports 503.
 # The transport asks the one RouterReadinessProbe to prepare only the release
 # wirings reachable from HTTP, internal, or studio attachments. It reports 200

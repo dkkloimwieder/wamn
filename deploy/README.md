@@ -44,6 +44,131 @@ two verbs, which is why the ordering is written down here.
 `push-release-manifest` has no such precondition — it publishes bytes a mint
 already verified.
 
+Release rollout, and rollback by revert: **the controller question re-opens on a
+named trigger, and on nothing else.** Two fire it, and only two — a SECOND
+ENVIRONMENT, or the first convergence with no human present: the platform half
+of the two-speed model (packaged artifacts carried over OCI and Helm, as against
+wirings, which are gated tenant rows activated by pointer flip) arriving as a
+path something other than a person has to apply. Neither has happened yet, so no
+bead carries a GitOps controller and none should be filed speculatively; the two
+triggers are the thing to watch, and whoever trips one files it then. GitOps is
+a deferred decision here, not a dead one. Until a
+trigger fires there is no reconciler in this tree — no `Kustomization`,
+`HelmRelease`, `GitRepository`, `OCIRepository` or `ApplicationSet` in any
+manifest — and an operator with `kubectl` and `helm` is the shipped convergence
+mechanism for all four tiers, not an interim stand-in. wamn-0h0g.15.16 closed
+REFUTED-AND-SPLIT on exactly that measurement, and this section is the residual
+it split off.
+
+**What `git revert` actually rolls back, and why that is enough.** No image any
+manifest under `deploy/` schedules is digest-pinned — every one is a mutable tag
+(`wamn-executor:dev`, `wamn-host:dev`, `postgres:18`, `registry:2`,
+`quay.io/jetstack/cert-manager-*:v1.21.0`, and the rest), so reverting a commit
+that changed one moves a *name* and guarantees nothing about the bytes behind
+it. The single digest under `deploy/` is a Dockerfile `FROM` base image in
+`gates/m1-postgres.Dockerfile`, a build input no cluster object reads. **The
+release manifest digest in the two git-tracked pod templates is therefore the
+only thing a revert genuinely rolls back**, and it rolls back to exact bytes:
+each pod re-derives the digest of what it pulled and refuses to start unless it
+equals the digest its template carried, so a reverted digest cannot resolve to
+anything but the release it named before.
+
+**The two carriers, and why they are not the same shape.** Both hold a 64-zero
+placeholder as checked in, and a digest that addresses no artifact fails the
+pull, so both crashloop until a real release is written in.
+
+- `platform/executor.yaml` — an env PAIR, `WAMN_RELEASE_ARTIFACT_BASE` and
+  `WAMN_RELEASE_MANIFEST_DIGEST`, on the Deployment's container.
+- `platform/values-host-default.yaml` — an extraArgs FLAG pair,
+  `--release-artifact-base=` and `--release-manifest-digest=`, under
+  `runtime.hostGroups[].extraArgs`.
+
+The host takes flags DELIBERATELY, and the reason is in the two binaries' arg
+shapes rather than in taste. **The host's pair is OPTIONAL** — both absent is a
+legitimate state meaning "this host serves no release" — so a misspelt
+`WAMN_RELEASE_MANIFEST_DIGES` would leave the pair absent, deploy cleanly, and
+serve nothing, indistinguishable from the state someone chose on purpose. Carried
+as a flag instead, clap exits nonzero on an unknown argument and the Pod
+crashloops: loud, and it stalls the rollout. **The executor's pair is REQUIRED**,
+so a value that fails to arrive is refused by the parser whichever carrier it
+travels in, and the executor can afford the plainer one. (Half a pair is refused
+in both binaries; the flags-versus-env choice only decides what happens when a
+typo loses *both*.) The host tier is also rendered by a chart with no release
+model of its own, which is why its pair rides `extraArgs` rather than a chart
+value; the executor's Deployment is hand-written.
+
+**Rollout.** Reconcile the run plane first (above), then:
+
+```bash
+# 1. MINT — freezes release identity and prints THE DIGEST AS THE WHOLE OF
+#    STDOUT. The deployment-attestation coordinate is a tracing record and goes
+#    to stderr, so `$(...)` around this captures the digest and nothing else.
+wamn-ctl publish-release \
+  --database-url "$OWNER_URL" --org "$ORG" --project "$PROJECT" \
+  --tenant "$TENANT" --catalog-id "$CATALOG_ID" --catalog-version "$CATALOG_VERSION" \
+  --run-schema "$RUN_SCHEMA" \
+  --wiring "$WIRING_ID=$WIRING_VERSION" \
+  --attachments attachments.json --registrations registrations.json
+
+# 2. PUSH the frozen bytes as an OCI artifact, read back from the snapshot the
+#    mint wrote rather than from a file, and re-print the same digest.
+wamn-ctl push-release-manifest \
+  --database-url "$OWNER_URL" --tenant "$TENANT" \
+  --catalog-id "$CATALOG_ID" --catalog-version "$CATALOG_VERSION" \
+  --org "$ORG" --project "$PROJECT" \
+  --artifact-base "$PUSH_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
+
+# 3. READ the six lines the templates take — both carriers, each labelled with
+#    the file it belongs in (wamn-duyl). --artifact-base here is the base THE
+#    PODS read, which is not necessarily the one step 2 pushed to.
+wamn-ctl print-release-env \
+  --database-url "$OWNER_URL" --tenant "$TENANT" \
+  --catalog-id "$CATALOG_ID" --catalog-version "$CATALOG_VERSION" \
+  --artifact-base registry.wamn-system.svc.cluster.local:5000/wamn/releases
+
+# 4. HAND-EDIT both files with those lines, in one commit. There is no verb that
+#    writes them; see the ruling below.
+
+# 5. APPLY. No ordering between these two is recorded anywhere in deploy/, and
+#    each refuses to serve a release it cannot verify, so either order is fine.
+kubectl -n wamn-system apply -f deploy/platform/executor.yaml
+kubectl -n wamn-system rollout status deploy/executor --timeout=300s
+helm upgrade --install -n wamn-system wamn-host \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
+  -f deploy/platform/values-host-default.yaml
+kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
+```
+
+`$PUSH_BASE` and the base written into the templates name the same repository
+reached by two different authorities: a publisher outside the cluster pushes
+through a port-forward to `localhost:5000/wamn/releases`, while pods pull
+`registry.wamn-system.svc.cluster.local:5000/wamn/releases`. The registry
+addresses artifacts by repo path, hostname-independent, so the same path
+resolves to the same manifest and blobs from either side — `platform/registry.yaml`
+carries that fact and the port-forward push flow that depends on it. The repo
+path is what must match; the authority need not.
+
+`executor.yaml` runs `maxUnavailable: 0`, so a bad digest, a missing binding or
+an unreachable registry stalls the rollout at 503 instead of replacing a serving
+replica. That is the safety property the sequence leans on: step 5 is not a
+commit point, and an unhealthy release never displaces the one running.
+
+**Rollback is `git revert` plus re-apply.** Revert the commit from step 4 and run
+step 5 again. Nothing else in the release path is stateful in a way a revert
+misses: the mint is append-only and the pushed artifact is immutable, so the
+previous digest still addresses the previous bytes, and there is nothing to
+un-publish. Reverting does not delete the newer release; it stops pointing at it.
+
+**Who writes the digest into the templates — ruling of record.** A human reads
+the digest off `publish-release` stdout and hand-edits the template. A pod
+reading its own digest out of PostgreSQL is EXPLICITLY REJECTED: it reintroduces
+the second carrier of release identity that wamn-0h0g.15.102 and `.15.103`
+deleted, and it would roll a release without a rollout. `print-release-env`
+(wamn-duyl) is the ergonomic improvement on the manual path and has landed —
+it removes the transcription step and nothing else, which is why step 3 is a
+verb rather than a copy-paste off step 1. It still writes no file; step 4 is
+still a person editing two YAML files.
+
 cert-manager is base infrastructure, not a gate prerequisite (wamn-ergz).
 `infra/cert-manager.yaml` is the upstream static install **pinned at v1.21.0**
 — all three `quay.io/jetstack` images (controller, webhook, cainjector) and
