@@ -885,7 +885,7 @@ async fn gate_route(
     else {
         return Ok(authorization_denied());
     };
-    if input.validated_draft.validated_draft_id.is_empty() || command.command_id.is_empty() {
+    if input.catalog_id.is_empty() || command.command_id.is_empty() {
         return Ok(empty(StatusCode::BAD_REQUEST));
     }
     let mut backend = surface.backend.lock().await;
@@ -927,12 +927,28 @@ async fn gate(
     input: &wamn_authoring_model::Gate,
 ) -> anyhow::Result<Vec<u8>> {
     let request_hash = canonical_request_hash(command)?;
+    // Parsed ONCE, here, because two callers need what it yields: the ledger
+    // needs a target and the judgment needs the candidate. This is the one
+    // validating reader for wiring bytes (wamn-0h0g.8.28).
+    let parsed = wamn_catalog::WiringDocument::parse(&input.document);
     let audit = CommandAudit {
         scope: scope.clone(),
         command_id: command.command_id.clone().into(),
         command: AuditedCommand::Gate,
         author: author.clone(),
-        target_ref: input.validated_draft.validated_draft_id.clone().into(),
+        // The DERIVED wiring hash, never a caller-stated one. A document that
+        // does not parse names no wiring identity at all, so the ledger records
+        // the exact bytes that were judged instead — `target_ref` is NOT NULL
+        // and non-empty, and a refusal is attributed like any other outcome.
+        target_ref: match &parsed {
+            Ok(document) => document.wiring_hash().as_str().to_owned().into(),
+            Err(_) => crate::store::sha256(
+                serde_json::to_vec(&input.document)
+                    .context("serialize the submitted document for attribution")?
+                    .as_slice(),
+            )
+            .into(),
+        },
         // The gate command carries no source claim, and nothing on this path
         // reads one. The ledger's provenance columns stay writable for a command
         // that does; every surviving command writes them NULL.
@@ -942,14 +958,29 @@ async fn gate(
         return Ok(settled);
     }
 
-    let judgment = crate::store::admission::run_gate(
-        admission,
-        &crate::store::admission::GateRequest {
-            environment: &scope.environment,
-            validated_draft_id: &input.validated_draft.validated_draft_id,
-        },
-    )
-    .await?;
+    let catalog_version = i32::try_from(input.gated_catalog_version)
+        .context("gated-catalog-version exceeds the PostgreSQL integer carrier")?;
+    let judgment = match &parsed {
+        Ok(document) => {
+            crate::store::admission::run_gate(
+                admission,
+                &crate::store::admission::GateRequest {
+                    environment: &scope.environment,
+                    catalog_id: &input.catalog_id,
+                    catalog_version,
+                    document,
+                },
+            )
+            .await?
+        }
+        // A gate JUDGES documents, so bytes that are not one are a judgment this
+        // verb makes and attributes, not a transport error it hides.
+        Err(error) => crate::store::admission::GateJudgment::Refused(
+            wamn_authoring_model::GateRefusal::InvalidDocument {
+                detail: error.to_string(),
+            },
+        ),
+    };
     // An accepted judgment carries the report this command must persist; a
     // refusal carries none, which is what makes "no row" and "report-not-found"
     // the same fact rather than two.
@@ -957,9 +988,13 @@ async fn gate(
         crate::store::admission::GateJudgment::Accepted(report) => (
             AuthoringOutcome::Completed(Box::new(AuthoringSuccess::Gate(GateReceipt {
                 // The receipt hands back the key the report is stored under, so
-                // `get-report` resolves exactly what the gate wrote.
+                // `get-report` resolves exactly what the gate wrote. Both fields
+                // are now the SERVER'S derived identity for the submitted
+                // document (wamn-0h0g.8.28) — the client stated neither.
                 report_id: report.wiring_hash.clone(),
-                validated_draft: input.validated_draft.clone(),
+                validated_draft: ValidatedDraftRef {
+                    validated_draft_id: report.wiring_hash.clone(),
+                },
             }))),
             Some(report),
         ),
@@ -1126,7 +1161,6 @@ fn empty(status: StatusCode) -> Response<Full<Bytes>> {
 mod tests {
     use super::*;
     use wamn_authoring_model::{AuthoringCommandKind, QueryId};
-
 
     async fn body_of(response: Response<Full<Bytes>>) -> Bytes {
         response
@@ -1313,7 +1347,6 @@ mod tests {
             "{rendered}"
         );
     }
-
 
     /// THE FORGERY PRIMITIVE, CLOSED AT THE CALL SITE (`wamn-0h0g.12.67`).
     ///
@@ -1537,8 +1570,6 @@ mod tests {
         );
     }
 
-
-
     #[test]
     fn canonical_request_hash_ignores_object_order_and_detects_content_change() {
         let request = |input: serde_json::Value| {
@@ -1549,7 +1580,19 @@ mod tests {
                     "kind": "test-set-run",
                     "input": {
                         "scope": input,
-                        "validated-draft": {"validated-draft-id": "validated-1"}
+                        "catalog-id": "orders",
+                        "gated-catalog-version": 1,
+                        "document": {
+                            "format-version": "0.1",
+                            "wiring-id": "orders-create",
+                            "version": 1,
+                            "entry": "node",
+                            "nodes": {"node": {
+                                "component": "entity",
+                                "interface-version": "0.1",
+                                "operation": "create"
+                            }}
+                        }
                     }
                 }
             }))
@@ -1585,7 +1628,6 @@ mod tests {
         );
     }
 
-
     /// The mounted inventory, and the shape of the answer an unmounted kind
     /// gets, decided by CALLING route selection over every contract kind.
     ///
@@ -1606,31 +1648,42 @@ mod tests {
     /// document for a mounted and an unmounted kind alike.
     #[test]
     fn only_the_mounted_kinds_have_a_route_and_the_rest_answer_a_bare_501() {
-        use wamn_authoring_model::{
-            AuthoringScope, Gate, PublishValidatedDraft, ValidatedDraftRef,
-        };
+        use wamn_authoring_model::{AuthoringScope, Gate, PublishValidatedDraft};
 
         let scope = AuthoringScope {
             project_id: "receiving".to_owned(),
             environment: "dev".to_owned(),
         };
-        let validated = ValidatedDraftRef {
-            validated_draft_id: "sha256:".to_owned() + &"0".repeat(64),
-        };
+        // Both surviving commands carry the DOCUMENT and its catalog placement
+        // (wamn-0h0g.7.10, wamn-0h0g.8.28), so one fixture serves both.
+        let document = serde_json::json!({
+            "format-version": "0.1",
+            "wiring-id": "orders-create",
+            "version": 1,
+            "entry": "node",
+            "nodes": {"node": {
+                "component": "entity",
+                "interface-version": "0.1",
+                "operation": "create"
+            }}
+        });
         let inventory = [
             (
                 AuthoringCommandKind::Gate,
                 AuthoringCommand::Gate(Gate {
                     scope: scope.clone(),
-                    validated_draft: validated.clone(),
+                    catalog_id: "orders".to_owned(),
+                    gated_catalog_version: 3,
+                    document: document.clone(),
                 }),
             ),
             (
                 AuthoringCommandKind::Publish,
                 AuthoringCommand::Publish(PublishValidatedDraft {
                     scope,
-                    validated_draft: validated,
-                    successful_report_id: "report".to_owned(),
+                    catalog_id: "orders".to_owned(),
+                    gated_catalog_version: 3,
+                    document,
                 }),
             ),
         ];
@@ -1677,7 +1730,4 @@ mod tests {
         // something that is not `Unmounted`.
         assert!(mounted[0].1.starts_with("Gate("));
     }
-
-
-
 }

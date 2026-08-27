@@ -7,6 +7,10 @@ license.workspace = true
 
 [dependencies]
 wamn-authoring-model = { workspace = true }
+# wamn-0h0g.8.28: the gate judges the DOCUMENT, so it needs the one validating
+# reader for wiring bytes and the hash derived from them. Taking this dependency
+# is what keeps a second structural dialect out of the authoring contract.
+wamn-catalog = { workspace = true }
 # wamn-0h0g.8.18: the scoped control-author credential contract. Default features
 # only — the pure naming and connection-input validators, no `ops` surface, no DB
 # or K8s client. Both sides of the credential must derive the same generation
@@ -33,6 +37,10 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "time"] }
+# The gate judges the DOCUMENT (wamn-0h0g.8.28), so the live gate derives the
+# hash its assertions key on exactly as the server does, from the same reader.
+# A literal would be a second, drifting copy of a derived identity.
+wamn-catalog = { workspace = true }
 # The live gates authenticate AS the scoped control-author generation (the tenant
 # mapping resolves on `session_user`, which `SET ROLE` does not change), so they
 # rewrite the admin URL's identity rather than taking a second URL input.

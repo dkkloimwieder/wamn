@@ -80,17 +80,64 @@ const IDENTITY_READER_PASSWORD: &str = "wamn-management-identity-read-live";
 /// other.
 const PROJECT_DATABASE: &str = "wamn-db-acme--receiving--dev--k3m9x2p7";
 const ADMITTER_PASSWORD: &str = "wamn-management-admission-live";
+/// One wiring document, exactly as `catalog.wirings.graph_json` stores it.
+///
+/// Both seeded candidates and the `publish` input differ only in which component
+/// operation the single node reaches, so they share one builder — a document
+/// written twice is a document that can drift on one of them.
+fn candidate_graph(wiring_id: &str, component: &str, operation: &str) -> serde_json::Value {
+    serde_json::json!({
+        "format-version": "0.1",
+        "wiring-id": wiring_id,
+        "version": 1,
+        "entry": "node",
+        "nodes": {
+            "node": {
+                "component": component,
+                "interface-version": "0.1",
+                "operation": operation,
+            },
+        },
+        "cases": [
+            {
+                "case-id": "creates",
+                "input": {"name": "first"},
+                "expect": {"outcome": "responded", "status": 201},
+            },
+            {
+                "case-id": "rejects",
+                "input": {"name": "second"},
+                "expect": {"outcome": "responded", "status": 200},
+            },
+        ],
+    })
+}
+
+/// The applied catalog version every seeded candidate is gated against.
+const CANDIDATE_CATALOG_VERSION: i32 = 1;
+/// The identity the SERVER will derive for one submitted document.
+///
+/// It is derived here the same way and by the same reader (wamn-0h0g.8.28), not
+/// written down. A literal would be a second copy of a derived value, and the
+/// old one was a fiction: the gate resolved its candidate by a hash the fixture
+/// INVENTED and stored, so the identity the report was keyed under had never
+/// been computed from the bytes it named.
+fn derived_hash(document: &serde_json::Value) -> String {
+    wamn_catalog::WiringDocument::parse(document)
+        .expect("the fixture document is a valid wiring document")
+        .wiring_hash()
+        .as_str()
+        .to_owned()
+}
+
 /// The one candidate wiring `test-set-run` is exercised against.
 ///
-/// `CANDIDATE_WIRING_HASH` is the WHOLE identity (wamn-0h0g.8.5.6). It is what
-/// the command carries as its `validated-draft-id`, it is the key the accepted
-/// gate's report is stored under, and it is therefore the report id the receipt
-/// hands back and `get-report` resolves. There is no second identifier to
-/// derive, chose, or mismatch -- the column that used to carry one is gone.
+/// The wiring hash is the WHOLE identity (wamn-0h0g.8.5.6): it is the key the
+/// accepted gate's report is stored under, the report id the receipt hands back,
+/// and what `get-report` resolves. There is no second identifier to derive,
+/// choose, or mismatch -- the column that used to carry one is gone.
 const CANDIDATE_CATALOG: &str = "catalog-candidate";
 const CANDIDATE_WIRING: &str = "orders-create";
-const CANDIDATE_WIRING_HASH: &str =
-    "sha256:1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c";
 const CANDIDATE_COMPONENT_DIGEST: &str =
     "sha256:2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d";
 const CANDIDATE_IMPORTS_FINGERPRINT: &str =
@@ -101,8 +148,6 @@ const CANDIDATE_IMPORTS_FINGERPRINT: &str =
 /// FIRES rather than merely being written: gate cases are effect-free by
 /// contract, so this candidate must be refused, typed, with nothing admitted.
 const EFFECTFUL_WIRING: &str = "orders-charge";
-const EFFECTFUL_WIRING_HASH: &str =
-    "sha256:4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f";
 const EFFECTFUL_COMPONENT: &str = "ledger";
 const EFFECTFUL_COMPONENT_DIGEST: &str =
     "sha256:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
@@ -179,13 +224,13 @@ async fn send(
 /// the whole remaining inventory.
 fn unmounted_commands() -> Vec<(&'static str, String)> {
     let scope = serde_json::json!({"project-id": PROJECT, "environment": "dev"});
-    let validated = serde_json::json!({"validated-draft-id": "validated-draft-1"});
     [(
         "publish",
         serde_json::json!({
             "scope": scope,
-            "validated-draft": validated,
-            "successful-report-id": "report-1",
+            "catalog-id": CANDIDATE_CATALOG,
+            "gated-catalog-version": CANDIDATE_CATALOG_VERSION,
+            "document": candidate_graph(CANDIDATE_WIRING, "entity", "create"),
         }),
     )]
     .into_iter()
@@ -457,31 +502,6 @@ async fn provision_project(
 /// ordinal, without making the assertion depend on connection lifecycle the
 /// composition does not own.
 async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
-    let graph = serde_json::json!({
-        "format-version": "0.1",
-        "wiring-id": CANDIDATE_WIRING,
-        "version": 1,
-        "entry": "node",
-        "nodes": {
-            "node": {
-                "component": "entity",
-                "interface-version": "0.1",
-                "operation": "create",
-            },
-        },
-        "cases": [
-            {
-                "case-id": "creates",
-                "input": {"name": "first"},
-                "expect": {"outcome": "responded", "status": 201},
-            },
-            {
-                "case-id": "rejects",
-                "input": {"name": "second"},
-                "expect": {"outcome": "responded", "status": 200},
-            },
-        ],
-    });
     project
         .batch_execute(&format!(
             "INSERT INTO catalog.catalogs \
@@ -511,65 +531,44 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
         ))
         .await
         .context("seed the applied catalog and environment policy")?;
-    project
-        .execute(
-            "INSERT INTO catalog.wirings \
-               (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
-                graph_json, wiring_hash) \
-             VALUES ($1, $2, $3, 1, 1, $4::text::jsonb, $5)",
-            &[
-                &TENANT,
-                &CANDIDATE_CATALOG,
-                &CANDIDATE_WIRING,
-                &graph.to_string(),
-                &CANDIDATE_WIRING_HASH,
-            ],
-        )
-        .await
-        .context("seed the gated candidate wiring")?;
-    let effectful_graph = serde_json::json!({
-        "format-version": "0.1",
-        "wiring-id": EFFECTFUL_WIRING,
-        "version": 1,
-        "entry": "node",
-        "nodes": {
-            "node": {
-                "component": EFFECTFUL_COMPONENT,
-                "interface-version": "0.1",
-                "operation": "charge",
-            },
-        },
-        // A well-formed, otherwise gateable case set. The refusal must come from
-        // the effect posture alone, not from an invalid test set.
-        "cases": [
-            {
-                "case-id": "charges",
-                "input": {"amount": 1},
-                "expect": {"outcome": "responded", "status": 201},
-            },
-        ],
-    });
-    project
-        .execute(
-            "INSERT INTO catalog.wirings \
-               (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
-                graph_json, wiring_hash) \
-             VALUES ($1, $2, $3, 1, 1, $4::text::jsonb, $5)",
-            &[
-                &TENANT,
-                &CANDIDATE_CATALOG,
-                &EFFECTFUL_WIRING,
-                &effectful_graph.to_string(),
-                &EFFECTFUL_WIRING_HASH,
-            ],
-        )
-        .await
-        .context("seed the effectful candidate wiring")?;
+    // AND NOTHING INTO `catalog.wirings` (wamn-0h0g.8.28).
+    //
+    // Two rows used to be inserted here by direct admin SQL so the gate could
+    // resolve a candidate out of them. THAT WAS THE FALSE GREEN. Authorship
+    // refuses to write a wiring row without a green report for its own hash, and
+    // the gate was the only producer of that report -- so on the real ordering
+    // the row could never exist, and this fixture manufactured the steady state
+    // the gate never reaches on its own. The gate now judges the DOCUMENT the
+    // command carries, and this relation stays EMPTY for the whole run, which
+    // `stored_wiring_count` asserts.
+    //
+    // What IS seeded above stays seeded: applied catalogs, the component library
+    // and the environment policy are facts the catalog installer legitimately
+    // writes, and they are the postures the gate judges a document AGAINST.
     Ok(())
 }
 
-/// One `test-set-run` request document for the seeded candidate, in one project.
-fn gate_document_for(command_id: &str, project: &str) -> String {
+/// How many wiring rows the project plane holds.
+///
+/// The first-transition proof reads this: an EMPTY `catalog.wirings` must still
+/// reach a green report, which is precisely what the deadlock made impossible.
+async fn stored_wiring_count(project: &Client) -> i64 {
+    project
+        .query_one(
+            "SELECT count(*) FROM catalog.wirings WHERE tenant_id = $1",
+            &[&TENANT],
+        )
+        .await
+        .expect("count the stored wiring rows")
+        .get(0)
+}
+
+/// One `test-set-run` request carrying one document, in one project.
+///
+/// The command carries the DOCUMENT and its catalog placement (wamn-0h0g.8.28).
+/// Nothing here names a stored row, which is why an empty `catalog.wirings` is
+/// no longer an obstacle to being gated.
+fn gate_document_in(command_id: &str, project: &str, document: &serde_json::Value) -> String {
     serde_json::json!({
         "document": "request",
         "body": {
@@ -579,7 +578,9 @@ fn gate_document_for(command_id: &str, project: &str) -> String {
                 "kind": "test-set-run",
                 "input": {
                     "scope": {"project-id": project, "environment": ENVIRONMENT},
-                    "validated-draft": {"validated-draft-id": CANDIDATE_WIRING_HASH},
+                    "catalog-id": CANDIDATE_CATALOG,
+                    "gated-catalog-version": CANDIDATE_CATALOG_VERSION,
+                    "document": document,
                 },
             },
         },
@@ -587,27 +588,18 @@ fn gate_document_for(command_id: &str, project: &str) -> String {
     .to_string()
 }
 
-/// One `test-set-run` request document for the seeded candidate.
-///
-/// The `validated-draft-id` is the WIRING HASH. There is no draft to resolve it
-/// through: the wiring document is the validated artifact and its hash is the
-/// identity, so the command carries the whole coordinate.
+/// One `test-set-run` request document for one project, gating the pure candidate.
+fn gate_document_for(command_id: &str, project: &str) -> String {
+    gate_document_in(
+        command_id,
+        project,
+        &candidate_graph(CANDIDATE_WIRING, "entity", "create"),
+    )
+}
+
+/// One `test-set-run` request document gating the pure candidate.
 fn test_set_run_document(command_id: &str) -> String {
-    serde_json::json!({
-        "document": "request",
-        "body": {
-            "schema-version": "0.1",
-            "command-id": command_id,
-            "command": {
-                "kind": "test-set-run",
-                "input": {
-                    "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
-                    "validated-draft": {"validated-draft-id": CANDIDATE_WIRING_HASH},
-                },
-            },
-        },
-    })
-    .to_string()
+    gate_document_for(command_id, PROJECT)
 }
 
 /// Every test-case run present in the project plane.
@@ -915,7 +907,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // Reading the finished task's error names the refusal where it happened.
     for _ in 0..50 {
         if surface.is_finished() {
-            let refused = (&mut surface).await.expect("the surface task did not panic");
+            let refused = (&mut surface)
+                .await
+                .expect("the surface task did not panic");
             panic!("the management surface never listened: {refused:?}");
         }
         if TcpStream::connect(BIND).await.is_ok() {
@@ -1150,10 +1144,19 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "/authoring",
         Some(alice.token()),
         &[],
-        &gate_document_for("gate-injected-body", PROJECT).replace(
-            r#""validated-draft""#,
-            r#""principal":"bob@example.com","validated-draft""#,
-        ),
+        // Spliced onto a token the gate input still carries. wamn-0h0g.8.28
+        // retired `validated-draft` from this command, and a replace matching
+        // NOTHING smuggles nothing — the document would stay valid, answer 200,
+        // and this assertion would quietly stop testing anything.
+        &{
+            let document = gate_document_for("gate-injected-body", PROJECT);
+            let smuggled = document.replace(
+                r#""catalog-id""#,
+                r#""principal":"bob@example.com","catalog-id""#,
+            );
+            assert_ne!(smuggled, document, "the injection matched nothing");
+            smuggled
+        },
     )
     .await;
     assert_eq!(injected_body.status, 400, "{}", injected_body.body);
@@ -1275,10 +1278,24 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "test-set-run did not reach its handler: {}",
         accepted.body
     );
-    // The receipt names the report identity the judgment DERIVED — the
-    // candidate's own content hash — not one the caller chose. Report id and
-    // validated-draft id are now the SAME string, which is the whole of
-    // wamn-0h0g.8.5.6 visible on the wire.
+    // ---- THE FIRST TRANSITION (wamn-0h0g.8.28) -----------------------------
+    // This is the assertion the old fixture could not make. `catalog.wirings` is
+    // EMPTY and has been for the whole run -- nothing seeded a row, and the gate
+    // writes none -- yet a document just reached an accepted judgment. Under the
+    // stored-row resolution this command could only ever have been refused,
+    // because the row it would have resolved cannot be authored without the
+    // green report this command produces.
+    assert_eq!(
+        stored_wiring_count(&project).await,
+        0,
+        "a wiring row existed, so this proves the steady state and not the first transition"
+    );
+
+    // The receipt names the report identity the judgment DERIVED from the
+    // submitted bytes, not one the caller chose -- the command carries no hash
+    // at all now. Report id and validated-draft id are the SAME string, which is
+    // the whole of wamn-0h0g.8.5.6 visible on the wire.
+    let candidate_hash = derived_hash(&candidate_graph(CANDIDATE_WIRING, "entity", "create"));
     assert_eq!(
         outcome(&accepted.body),
         serde_json::json!({
@@ -1286,8 +1303,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             "value": {
                 "command": "test-set-run",
                 "result": {
-                    "report-id": CANDIDATE_WIRING_HASH,
-                    "validated-draft": {"validated-draft-id": CANDIDATE_WIRING_HASH},
+                    "report-id": candidate_hash,
+                    "validated-draft": {"validated-draft-id": candidate_hash},
                 },
             },
         }),
@@ -1340,7 +1357,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     //
     // Asserted at the STORE first, so a receipt that merely echoes a hash back
     // cannot pass for a persisted report.
-    let stored = stored_gate_report(&admin, CANDIDATE_WIRING_HASH)
+    let stored = stored_gate_report(&admin, &candidate_hash)
         .await
         .expect("the accepted gate wrote its report row");
     assert!(stored.0, "an accepted gate stored a failing report");
@@ -1365,7 +1382,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "/authoring",
         Some(alice.token()),
         &[],
-        &get_report_document("judged-report", PROJECT, CANDIDATE_WIRING_HASH),
+        &get_report_document("judged-report", PROJECT, &candidate_hash),
     )
     .await;
     assert_eq!(projected.status, 200, "{}", projected.body);
@@ -1377,8 +1394,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
                 "query": "get-report",
                 "result": {
                     "state": "finalized",
-                    "report-id": CANDIDATE_WIRING_HASH,
-                    "validated-draft": {"validated-draft-id": CANDIDATE_WIRING_HASH},
+                    "report-id": candidate_hash,
+                    "validated-draft": {"validated-draft-id": candidate_hash},
                     "passed": true,
                     "summary": {"cases": ["creates", "rejects"]},
                 },
@@ -1492,21 +1509,11 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "/authoring",
         Some(alice.token()),
         &[],
-        &serde_json::json!({
-            "document": "request",
-            "body": {
-                "schema-version": "0.1",
-                "command-id": "gate-effectful",
-                "command": {
-                    "kind": "test-set-run",
-                    "input": {
-                        "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
-                        "validated-draft": {"validated-draft-id": EFFECTFUL_WIRING_HASH},
-                    },
-                },
-            },
-        })
-        .to_string(),
+        &gate_document_in(
+            "gate-effectful",
+            PROJECT,
+            &candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, "charge"),
+        ),
     )
     .await;
     assert_eq!(effectful.status, 200, "{}", effectful.body);
@@ -1541,9 +1548,16 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // the judgment would leave a row under it -- and `get-report` would then
     // certify a document the gate refused.
     assert!(
-        stored_gate_report(&admin, EFFECTFUL_WIRING_HASH)
-            .await
-            .is_none(),
+        stored_gate_report(
+            &admin,
+            &derived_hash(&candidate_graph(
+                EFFECTFUL_WIRING,
+                EFFECTFUL_COMPONENT,
+                "charge"
+            )),
+        )
+        .await
+        .is_none(),
         "a refused candidate was given a gate report"
     );
 
@@ -1557,42 +1571,40 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "the effect-free predicate refused the pure candidate too"
     );
 
-    // A candidate this plane does not hold is a typed product refusal, not a
-    // 501 and not a fabricated report.
+    // Bytes that are not a wiring document are a typed product refusal, not a
+    // 501 and not a fabricated report. This REPLACES the unknown-candidate arm
+    // (wamn-0h0g.8.28): a document the command carries cannot be "not found", so
+    // what the gate can still refuse on identity is bytes it cannot read. The
+    // entry names no node, which `WiringDocument::parse` refuses -- a shape that
+    // is well-formed JSON and a well-formed command, so only the document
+    // validator can catch it.
+    let mut malformed = candidate_graph(CANDIDATE_WIRING, "entity", "create");
+    malformed["entry"] = serde_json::json!("no-such-node");
     let unknown = post(
         "/authoring",
         Some(alice.token()),
         &[],
-        &serde_json::json!({
-            "document": "request",
-            "body": {
-                "schema-version": "0.1",
-                "command-id": "test-set-unknown",
-                "command": {
-                    "kind": "test-set-run",
-                    "input": {
-                        "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
-                        "validated-draft": {
-                            "validated-draft-id": "sha256:".to_owned() + &"9".repeat(64),
-                        },
-                    },
-                },
-            },
-        })
-        .to_string(),
+        &gate_document_in("test-set-unknown", PROJECT, &malformed),
     )
     .await;
     assert_eq!(unknown.status, 200, "{}", unknown.body);
+    let refusal = outcome(&unknown.body)["value"].clone();
+    assert_eq!(refusal["command"], serde_json::json!("test-set-run"));
     assert_eq!(
-        outcome(&unknown.body)["value"],
-        serde_json::json!({
-            "command": "test-set-run",
-            "reason": {
-                "kind": "validated-draft-not-found",
-                "validated-draft-id": "sha256:".to_owned() + &"9".repeat(64),
-            },
-        }),
-        "an unknown candidate was not refused by identity"
+        refusal["reason"]["kind"],
+        serde_json::json!("invalid-document"),
+        "an unreadable document was not refused as one: {}",
+        unknown.body
+    );
+    // The refusal names WHY, and the detail is the validator's own, so a client
+    // can act on it rather than guessing.
+    assert!(
+        refusal["reason"]["detail"]
+            .as_str()
+            .expect("the refusal carries a detail")
+            .contains("no-such-node"),
+        "the document refusal did not name the offending entry: {}",
+        unknown.body
     );
     assert_eq!(
         project_case_runs(&project).await,

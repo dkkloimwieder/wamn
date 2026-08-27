@@ -325,25 +325,79 @@ pub struct ValidatedDraftRef {
     pub validated_draft_id: String,
 }
 
-/// Judge one candidate wiring against its own bounded `cases` array.
+/// Judge one wiring document against its own bounded `cases` array.
 ///
-/// The judgment is a total function of the document: the candidate is resolved
-/// by content hash and its cases ride the document itself, so nothing here names
-/// server-side draft state.
+/// # This carries the DOCUMENT, and that is the whole of wamn-0h0g.8.28
+///
+/// It used to carry a reference the server resolved out of `catalog.wirings`.
+/// That was leftover coupling from the retired reservation protocol, and
+/// EXECUTION refuted it: authorship refuses to insert a wiring without a green
+/// report for its own hash, and the only producer of that report resolved its
+/// candidate from the very row that could not exist yet. Nothing could ever be
+/// gated a first time. The deadlock is PER-DOCUMENT, not per-catalog, so no
+/// bootstrap step would have sufficed.
+///
+/// The ratified stateless-gate model already said the answer in its own
+/// sentence: the report is REPRODUCIBLE FROM THE DOCUMENT. So the document IS
+/// the input, the judgment is a total function of it, and the gate reads
+/// `catalog.wirings` not at all.
+///
+/// `catalog_id` and `gated_catalog_version` ride with it for the same reason
+/// `publish` carries them (wamn-0h0g.7.10): the postures that can refuse a
+/// candidate — the admitted effect projection and the resolvable binding world —
+/// are facts of one APPLIED CATALOG VERSION, and neither value rides the
+/// document. They came off the stored row before; now they are stated.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Gate {
     pub scope: AuthoringScope,
-    pub validated_draft: ValidatedDraftRef,
+    /// Catalog identity whose admitted component facts judge this document.
+    pub catalog_id: String,
+    /// Applied catalog version those facts are read at.
+    pub gated_catalog_version: u32,
+    /// The wiring document itself — the same bytes `publish` carries.
+    pub document: serde_json::Value,
 }
 
-/// Publish exactly the executable proven by a successful report.
+/// Publish one gated wiring document into a named catalog version.
+///
+/// # What this carries, and why each field is here (wamn-0h0g.7.10)
+///
+/// `catalog.wirings` needs seven values. `tenant_id` is the authenticated
+/// scope's, `wiring_id` and `version` ride the document, and `graph_json` IS the
+/// document — but `catalog_id` and `gated_catalog_version` ride NEITHER the
+/// document nor its hash, which is why `ctl author-wiring` takes both as
+/// separate argv. So the command carries them too, and the row is writable from
+/// this input alone.
+///
+/// `wiring_hash` is DERIVED SERVER-SIDE and is deliberately absent here. The
+/// wamn-0h0g.7.8 close ruling rejected a carried proof value as forgeable and
+/// replayable and made the verb compute the identity from the bytes; a literal
+/// wire hash field the server trusted would reopen it. A client that wants to
+/// state its expectation states it out of band, not as the value written.
+///
+/// `successful_report_id` is GONE. wamn-0h0g.8.5.6 collapsed the report id into
+/// `wiring_hash`, and the green-report guard reads the report BY that hash — so
+/// the field named an identity the document already determines and had no
+/// remaining reader.
+///
+/// The document rides as its own JSON rather than a typed carrier: these are the
+/// exact bytes `catalog.wirings.graph_json` stores, and
+/// [`wamn_catalog::WiringDocument::parse`] is the ONE validating reader for
+/// them. Typing the field here would put a second structural dialect in front of
+/// that one, and — measured — would need `schemars::JsonSchema` derives across
+/// `wamn-catalog` and the FROZEN `wamn-event-wire`, which `WiringEventOperation`
+/// aliases into. The server parses, validates and hashes; this is the carrier.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PublishValidatedDraft {
     pub scope: AuthoringScope,
-    pub validated_draft: ValidatedDraftRef,
-    pub successful_report_id: String,
+    /// Catalog identity the wiring is published into.
+    pub catalog_id: String,
+    /// Applied catalog version whose component facts gate this document.
+    pub gated_catalog_version: u32,
+    /// The wiring document itself — `catalog.wirings.graph_json`.
+    pub document: serde_json::Value,
 }
 
 /// Read one immutable report projection.
@@ -410,11 +464,21 @@ pub enum GateRefusal {
         requested: String,
         supported: String,
     },
+    /// The submitted bytes are not a wiring document.
+    ///
+    /// This REPLACES the two retired lookup refusals (wamn-0h0g.8.28). Both
+    /// described a search of `catalog.wirings` that the gate no longer performs:
+    /// a document cannot be missing when the command carries it, and it cannot
+    /// diverge from a stored row it is never compared to. What CAN go wrong is
+    /// that the bytes do not parse or do not validate, which is this.
+    ///
+    /// Their exact spellings are pinned as retired in this crate's contract test,
+    /// so they are named there and deliberately not repeated here — a doc comment
+    /// becomes a schema description, and would resurrect the literal it retires.
     #[schemars(rename_all = "kebab-case")]
-    ValidatedDraftNotFound {
-        validated_draft_id: String,
+    InvalidDocument {
+        detail: String,
     },
-    ValidatedDraftDrift,
     #[schemars(rename_all = "kebab-case")]
     InvalidTestSet {
         detail: String,
@@ -453,9 +517,13 @@ pub enum PublishRefusal {
         requested: String,
         supported: String,
     },
+    /// The submitted bytes are not a wiring document.
+    ///
+    /// Same replacement, same reason as [`GateRefusal::InvalidDocument`]:
+    /// `publish` carries the document (wamn-0h0g.7.10), so it cannot be missing.
     #[schemars(rename_all = "kebab-case")]
-    ValidatedDraftNotFound {
-        validated_draft_id: String,
+    InvalidDocument {
+        detail: String,
     },
     #[schemars(rename_all = "kebab-case")]
     ReportNotFound {

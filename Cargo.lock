@@ -4587,6 +4587,7 @@ dependencies = [
  "tracing",
  "url",
  "wamn-authoring-model",
+ "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-execution-contract",

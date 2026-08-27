@@ -76,19 +76,19 @@ use wamn_runtime::plugins::wamn_postgres::{
 const ADMISSION_SCOPE_SQL: &str =
     "SELECT pg_catalog.set_config('search_path', 'pg_catalog', false)";
 
-/// Resolve the candidate wiring a test-set command names.
-///
-/// Keyed on `wiring_hash` alone: the owner ruled that `validated_draft_id` IS
-/// the wiring hash, so the command carries the whole identity and no
-/// cross-database mapping exists or is needed. Every remaining admission
-/// parameter — `catalog_id`, `wiring_id`, `version`, `gated_catalog_version` —
-/// is a column of the row the hash selects, which is why the admitter needs no
-/// `catalog.catalog_heads` grant to find them.
-const SELECT_CANDIDATE_BY_HASH_SQL: &str = "SELECT catalog_id, wiring_id, version, \
-        gated_catalog_version, graph_json \
-    FROM catalog.wirings \
-    WHERE tenant_id = $1 AND wiring_hash = $2 \
-    ORDER BY catalog_id, wiring_id, version";
+// THE CANDIDATE LOOKUP IS DELETED (wamn-0h0g.8.28), not moved.
+//
+// `SELECT catalog_id, wiring_id, version, gated_catalog_version, graph_json FROM
+// catalog.wirings WHERE tenant_id = $1 AND wiring_hash = $2` stood here and
+// resolved the gate's candidate from the STORED ROW. It was leftover coupling
+// from the retired reservation protocol, and execution refuted it: authorship
+// refuses to write that row without a green report for its own hash, and this
+// was the only producer of the report. Nothing could be gated a first time, per
+// DOCUMENT — so no bootstrap step would have sufficed either.
+//
+// The gate now reads `catalog.wirings` NOT AT ALL. Its candidate is the document
+// the command carries, which is what the ratified stateless-gate model meant by
+// a report REPRODUCIBLE FROM THE DOCUMENT.
 
 /// Name the components a gate case would reach whose admitted effects
 /// projection is NOT empty.
@@ -305,37 +305,6 @@ impl AdmissionSurface {
         Ok(())
     }
 
-    /// Resolve the one candidate a wiring hash names, or `None`.
-    pub async fn candidate_by_hash(
-        &self,
-        wiring_hash: &str,
-    ) -> anyhow::Result<Option<CandidateWiring>> {
-        let rows = self
-            .client
-            .query(
-                SELECT_CANDIDATE_BY_HASH_SQL,
-                &[&self.tenant_id.as_ref(), &wiring_hash],
-            )
-            .await
-            .context("resolve the candidate wiring by hash")?;
-        let Some(row) = rows.first() else {
-            return Ok(None);
-        };
-        if rows.len() != 1 {
-            bail!("one wiring hash selected {} candidate rows", rows.len());
-        }
-        let graph: Value = row.get(4);
-        Ok(Some(CandidateWiring {
-            catalog_id: row.get(0),
-            catalog_version: row.get(3),
-            wiring_id: row.get(1),
-            wiring_version: row.get(2),
-            wiring_hash: wiring_hash.to_owned(),
-            cases: candidate_cases(&graph)?,
-            nodes: graph.get("nodes").cloned().unwrap_or(Value::Null),
-        }))
-    }
-
     /// Name the effectful components this candidate reaches, for one refusal.
     ///
     /// Empty means the candidate is gateable: every component it reaches carries
@@ -460,13 +429,20 @@ fn admission_credential_probe(
 }
 
 /// One gate command's inputs, already reconciled with the fixed scope.
+///
+/// The DOCUMENT is the candidate (wamn-0h0g.8.28). Nothing here names a stored
+/// row, and the identity the report is keyed by is derived from these bytes
+/// rather than accepted from the caller.
 #[derive(Clone, Copy, Debug)]
 pub struct GateRequest<'a> {
     pub environment: &'a str,
-    /// The wiring hash. The owner ruled `validated_draft_id` IS the wiring hash:
-    /// the draft concept died with the pivot, the wiring document is the
-    /// validated artifact, and its hash is the identity.
-    pub validated_draft_id: &'a str,
+    /// Catalog identity whose admitted component facts judge this document.
+    pub catalog_id: &'a str,
+    /// Applied catalog version those facts are read at.
+    pub catalog_version: i32,
+    /// The submitted wiring document, already validated by
+    /// [`wamn_catalog::WiringDocument::parse`].
+    pub document: &'a wamn_catalog::WiringDocument,
 }
 
 /// The one durable fact an ACCEPTED gate produces (wamn-0h0g.8.5.6).
@@ -512,13 +488,21 @@ pub async fn run_gate(
     admission: &AdmissionSurface,
     request: &GateRequest<'_>,
 ) -> anyhow::Result<GateJudgment> {
-    let Some(candidate) = admission
-        .candidate_by_hash(request.validated_draft_id)
-        .await?
-    else {
-        return Ok(GateJudgment::Refused(GateRefusal::ValidatedDraftNotFound {
-            validated_draft_id: request.validated_draft_id.to_owned(),
-        }));
+    // The candidate is the DOCUMENT (wamn-0h0g.8.28). It arrives already through
+    // `WiringDocument::parse` — the one validating reader for these bytes — and
+    // the identity the report is keyed by is DERIVED from what that accepted,
+    // never taken from the caller (wamn-0h0g.7.8).
+    let document = request.document;
+    let candidate = CandidateWiring {
+        catalog_id: request.catalog_id.to_owned(),
+        catalog_version: request.catalog_version,
+        wiring_id: document.wiring_id.clone(),
+        wiring_version: i32::try_from(document.version)
+            .context("wiring version exceeds the PostgreSQL integer carrier")?,
+        wiring_hash: document.wiring_hash().as_str().to_owned(),
+        cases: document.cases.clone(),
+        nodes: serde_json::to_value(&document.nodes)
+            .context("re-serialize the judged document's nodes")?,
     };
     if let Err(error) = validate_cases(&candidate.cases) {
         return Ok(GateJudgment::Refused(GateRefusal::InvalidTestSet {
@@ -574,50 +558,74 @@ pub async fn run_gate(
     }))
 }
 
-/// Read a candidate's `cases` array out of its stored graph.
-///
-/// The array is the flow document's own, so it is decoded with the contract type
-/// and held to the contract's bounds rather than to a second declaration of
-/// them.
-fn candidate_cases(graph: &Value) -> anyhow::Result<Vec<TestSetCase>> {
-    let Some(cases) = graph.get("cases") else {
-        return Ok(Vec::new());
-    };
-    serde_json::from_value(cases.clone()).context("decode the candidate's stored cases array")
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
 
+    /// The cases array is the DOCUMENT's own, decoded by the contract type.
+    ///
+    /// This replaces two tests of a `candidate_cases` helper that read the array
+    /// out of a stored `graph_json` blob. wamn-0h0g.8.28 deleted that helper with
+    /// the stored-row lookup it served: the gate now receives an already-parsed
+    /// `WiringDocument`, so the same bound is held by the same contract type one
+    /// layer earlier, and `deny_unknown_fields` refuses a foreign array there.
     #[test]
-    fn a_candidate_carrying_no_cases_reads_as_an_empty_selection() {
-        assert_eq!(candidate_cases(&json!({"nodes": {}})).unwrap(), Vec::new());
-        assert_eq!(candidate_cases(&json!({"cases": []})).unwrap(), Vec::new());
-    }
-
-    #[test]
-    fn the_stored_cases_array_decodes_as_the_contract_type() {
-        let cases = candidate_cases(&json!({
+    fn the_documents_cases_array_is_the_contract_type() {
+        let document = wamn_catalog::WiringDocument::parse(&json!({
+            "format-version": "0.1",
+            "wiring-id": "orders-create",
+            "version": 1,
+            "entry": "node",
+            "nodes": {"node": {
+                "component": "entity",
+                "interface-version": "0.1",
+                "operation": "create",
+            }},
             "cases": [{
                 "case-id": "roundtrip",
                 "input": {"a": 1},
                 "expect": {"outcome": "responded", "status": 201},
             }],
         }))
-        .expect("a well-formed cases array decodes");
-        assert_eq!(cases.len(), 1);
-        assert_eq!(cases[0].case_id, "roundtrip");
-        assert_eq!(cases[0].expect.status, Some(201));
-        // The contract type denies unknown fields, so a foreign array is refused
-        // here rather than silently narrowed.
+        .expect("a well-formed document parses");
+        assert_eq!(document.cases.len(), 1);
+        assert_eq!(document.cases[0].case_id, "roundtrip");
+        assert_eq!(document.cases[0].expect.status, Some(201));
+
+        // A document carrying no cases reaches an empty selection, not an error.
+        let bare = wamn_catalog::WiringDocument::parse(&json!({
+            "format-version": "0.1",
+            "wiring-id": "orders-create",
+            "version": 1,
+            "entry": "node",
+            "nodes": {"node": {
+                "component": "entity",
+                "interface-version": "0.1",
+                "operation": "create",
+            }},
+        }))
+        .expect("a document with no cases parses");
+        assert!(bare.cases.is_empty());
+
+        // A foreign field in a case is REFUSED, not silently narrowed.
         assert!(
-            candidate_cases(&json!({"cases": [{"case-id": "x", "input": {}, "why": 1}]})).is_err()
+            wamn_catalog::WiringDocument::parse(&json!({
+                "format-version": "0.1",
+                "wiring-id": "orders-create",
+                "version": 1,
+                "entry": "node",
+                "nodes": {"node": {
+                    "component": "entity",
+                    "interface-version": "0.1",
+                    "operation": "create",
+                }},
+                "cases": [{"case-id": "x", "input": {}, "why": 1}],
+            }))
+            .is_err()
         );
     }
-
 
     /// The effect-posture read is EXACTLY the `wamn-0h0g.21.9` fact, resolved
     /// over exactly the components a run would reach.

@@ -10,6 +10,28 @@ fn scope() -> Value {
     json!({"project-id": "receiving", "environment": "dev"})
 }
 
+/// One wiring document, exactly as `catalog.wirings.graph_json` stores it.
+///
+/// `publish` carries the document itself (wamn-0h0g.7.10), so the frozen
+/// literals below carry a real one. The contract does not parse it — that is
+/// `wamn_catalog::WiringDocument::parse`'s job on the server — so what this
+/// pins is that the field round-trips byte-identical.
+fn wiring_document() -> Value {
+    json!({
+        "format-version": "0.1",
+        "wiring-id": "orders-create",
+        "version": 1,
+        "entry": "node",
+        "nodes": {
+            "node": {
+                "component": "entity",
+                "interface-version": "0.1",
+                "operation": "create"
+            }
+        }
+    })
+}
+
 fn command(kind: &str, input: Value) -> Value {
     json!({
         "document": "request",
@@ -58,21 +80,18 @@ fn schema_discriminators<'a>(schema: &'a Value, definition: &str, field: &str) -
 /// renamed field on any of them fails here.
 #[test]
 fn exact_two_commands_and_one_query_round_trip() {
-    let validated = json!({"validated-draft-id": "validated-1"});
+    // Both commands carry the DOCUMENT and its catalog placement: `publish` since
+    // wamn-0h0g.7.10, `test-set-run` since wamn-0h0g.8.28 re-pointed the gate off
+    // the stored row it could not have read on a first transition.
+    let input = json!({
+        "scope": scope(), "catalog-id": "orders",
+        "gated-catalog-version": 3, "document": wiring_document()
+    });
     let commands = [
         // `gate` is spelled `test-set-run` on the wire; changing the literal is a
         // breaking wire rename, owed by whoever sweeps the wire vocabulary.
-        command(
-            "test-set-run",
-            json!({"scope": scope(), "validated-draft": validated}),
-        ),
-        command(
-            "publish",
-            json!({
-                "scope": scope(), "validated-draft": validated,
-                "successful-report-id": "report-1"
-            }),
-        ),
+        command("test-set-run", input.clone()),
+        command("publish", input),
     ];
     let queries = [query(
         "get-report",
@@ -390,6 +409,12 @@ fn retired_and_forbidden_vocabulary_is_absent() {
         "contract-incompatibility",
         "ValidationIssue",
         "SafeUint64",
+        // wamn-0h0g.8.28: both commands carry the document, so neither can look
+        // one up and neither can find it missing or drifted from a stored row.
+        // `ValidatedDraftRef` itself SURVIVES — `gate` answers with one, carrying
+        // the identity the server derived — so only the refusals are retired.
+        "validated-draft-not-found",
+        "validated-draft-drift",
     ] {
         assert!(
             !schema.contains(retired),
@@ -462,40 +487,75 @@ fn query_request_is_exactly_the_three_ratified_fields() {
     );
 }
 
+/// Publish carries the document and its catalog placement, and NOTHING that
+/// asserts an identity the server must derive (wamn-0h0g.7.10).
+///
+/// The removed halves are pinned as removed, not merely absent from the happy
+/// path: `successful-report-id` died with wamn-0h0g.8.5.6's collapse of report
+/// id into `wiring_hash`, `validated-draft` named the document this command now
+/// carries whole, and a literal `wiring-hash` would reopen the wamn-0h0g.7.8
+/// close ruling by handing the server a forgeable, replayable proof value.
+/// `deny_unknown_fields` is what refuses all three, so each is exercised.
 #[test]
-fn publish_requires_a_successful_report_unconditionally() {
+fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
     let complete = json!({
         "scope": scope(),
-        "validated-draft": {"validated-draft-id": "validated-1"},
-        "successful-report-id": "report-1"
+        "catalog-id": "orders",
+        "gated-catalog-version": 3,
+        "document": wiring_document()
     });
     decode(&command("publish", complete.clone()));
 
-    let mut omitted = complete.clone();
-    let removed = omitted
-        .as_object_mut()
-        .expect("publish input is an object")
-        .remove("successful-report-id");
-    assert_eq!(removed, Some(json!("report-1")));
-    let mut nulled = complete;
-    nulled["successful-report-id"] = Value::Null;
-
-    for refused in [omitted, nulled] {
+    // Every field is load-bearing: dropping any one leaves `catalog.wirings`
+    // unwritable, so none may carry a serde default.
+    for field in ["scope", "catalog-id", "gated-catalog-version", "document"] {
+        let mut omitted = complete.clone();
+        assert!(
+            omitted
+                .as_object_mut()
+                .expect("publish input is an object")
+                .remove(field)
+                .is_some(),
+            "{field} was not in the complete publish input"
+        );
         let encoded =
-            serde_json::to_string(&command("publish", refused)).expect("command serializes");
+            serde_json::to_string(&command("publish", omitted)).expect("command serializes");
         assert_eq!(
-            decode_document(&encoded)
-                .expect_err("publish without a stated successful report must be refused")
-                .kind(),
-            ContractDecodeErrorKind::Json
+            decode_document(&encoded).unwrap_err().kind(),
+            ContractDecodeErrorKind::Json,
+            "publish without {field} decoded"
         );
     }
 
-    // A serde default on the report identity would also drop it from the
-    // published required set, so pin the exact required triple (wamn-0h0g.15.121).
+    // The three retired carriers are REFUSED, not ignored.
+    for (field, value) in [
+        ("successful-report-id", json!("report-1")),
+        (
+            "validated-draft",
+            json!({"validated-draft-id": "validated-1"}),
+        ),
+        ("wiring-hash", json!("sha256:".to_owned() + &"0".repeat(64))),
+    ] {
+        let mut extra = complete.clone();
+        extra
+            .as_object_mut()
+            .expect("publish input is an object")
+            .insert(field.to_owned(), value);
+        let encoded =
+            serde_json::to_string(&command("publish", extra)).expect("command serializes");
+        assert_eq!(
+            decode_document(&encoded).unwrap_err().kind(),
+            ContractDecodeErrorKind::Json,
+            "publish admitted the retired {field} field"
+        );
+    }
+
+    // A serde default on any field would also drop it from the published
+    // required set, so pin the exact required set (wamn-0h0g.15.121). This is
+    // frozen as a WHOLE VALUE: an added, removed or renamed field fails here.
     let schema = wamn_authoring_model::json_schema();
     assert_eq!(
         schema["definitions"]["PublishValidatedDraft"]["required"],
-        json!(["scope", "successful-report-id", "validated-draft"])
+        json!(["catalog-id", "document", "gated-catalog-version", "scope"])
     );
 }
