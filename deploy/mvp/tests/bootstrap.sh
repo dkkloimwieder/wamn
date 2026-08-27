@@ -33,6 +33,16 @@ check_namespace() {
     }
 }
 
+# Does the platform tier DECLARE a Deployment by this name? `kind:` sits at
+# column 0 and `metadata.name` at indent 2 in every document in that directory.
+platform_declares_deployment() {
+    awk -v want="$1" '
+        /^kind: / { kind = $2; next }
+        kind == "Deployment" && /^  name: / { if ($2 == want) found = 1; kind = "" }
+        END { exit found ? 0 : 1 }
+    ' "$MOCK_PLATFORM_DIR"/*.yaml
+}
+
 load_record() {
     IFS='|' read -r name namespace managed component org project env_name purpose \
         principal_id kind subject role prefix expiry pending_issued pending_revoke \
@@ -183,6 +193,18 @@ case $1 in
         rm "$MOCK_STATE/$name"
         ;;
     rollout)
+        # THE LOG LINE ALONE IS A PLAN PROOF, NOT AN EXECUTION PROOF
+        # (wamn-0h0g.10.9). `deployment/runner` stayed green in every assertion
+        # below for as long as it named nothing at all: a frozen literal pinned
+        # against a stub proves the command was ISSUED, never that it addresses
+        # a live object. Refuse a rollout target the platform tier does not
+        # declare, so the next deletion breaks here instead of in the cluster.
+        if [[ $3 == deployment/* ]]; then
+            platform_declares_deployment "${3#deployment/}" || {
+                echo "no Deployment named ${3#deployment/} in $MOCK_PLATFORM_DIR" >&2
+                exit 1
+            }
+        fi
         echo "rollout:$2:$3" >>"$MOCK_LOG"
         if [[ $2 == status ]]; then
             if [[ ${MOCK_WRITER_ROLLOUT_FAIL:-0} == 1 ]]; then
@@ -398,6 +420,7 @@ run_writer_rotation() {
     : >"$test_dir/log"
     MOCK_STATE="$test_dir/state" MOCK_LOG="$test_dir/log" \
         MOCK_EXPECT_NAMESPACE=wamn-system \
+        MOCK_PLATFORM_DIR="$repo_root/deploy/platform" \
         MOCK_APPLY_FAIL="${MOCK_APPLY_FAIL:-}" \
         MOCK_APPLY_AMBIGUOUS="${MOCK_APPLY_AMBIGUOUS:-}" \
         MOCK_APPLY_THIRD="${MOCK_APPLY_THIRD:-}" \
@@ -640,7 +663,7 @@ fi
 assert_log ''
 
 # Writer generation rotation is wrapper-owned: ctl prepares/authenticates,
-# kubectl publishes and rolls the runner, read-only probes prove pool use, and
+# kubectl publishes and rolls the executor, read-only probes prove pool use, and
 # only then ctl retires the old generation.
 reset_writer_state
 if MOCK_APPLY_FAIL=effect-writer run_writer_rotation a >/dev/null 2>&1; then
@@ -650,7 +673,7 @@ fi
 assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nabort:a'
 [[ $(cat "$test_dir/state/.writer-a-login") == f ]]
 output=$(run_writer_rotation a 2>&1)
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:a\nprobe-login:a'
+assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:a\nprobe-login:a'
 assert_no_secret_output "$output"
 [[ -f "$test_dir/state/.last-applied-wamn-effect-writer-acme--billing--dev" ]]
 
@@ -684,7 +707,7 @@ assert_log ''
 # An expired but structurally exact old Secret may rotate to the opposite slot;
 # refusing that path would make ordinary expiry unrecoverable.
 output=$(run_writer_rotation b 2>&1)
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
+assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
 assert_no_secret_output "$output"
 
 # A pre-tenant Secret is migration input, not a scope-equivalent credential.
@@ -700,15 +723,15 @@ if run_writer_rotation a >/dev/null 2>&1; then
 fi
 assert_log ''
 output=$(MOCK_WRITER_PREDECESSOR_ROLE=$legacy_a run_writer_rotation b 2>&1)
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
+assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
 assert_no_secret_output "$output"
 
 reset_writer_state
 output=$(MOCK_APPLY_AMBIGUOUS=effect-writer run_writer_rotation a 2>&1)
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:a\nprobe-login:a'
+assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:a\nprobe-login:a'
 assert_no_secret_output "$output"
 output=$(run_writer_rotation a 2>&1)
-assert_log $'rollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:a\nprobe-login:b\nprobe-login:a\nprobe-login:b'
+assert_log $'rollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:a\nprobe-login:b\nprobe-login:a\nprobe-login:b'
 assert_no_secret_output "$output"
 if MOCK_APPLY_FAIL=effect-writer run_writer_rotation b >/dev/null 2>&1; then
     echo 'expected prior-preserving writer Secret apply failure' >&2
@@ -740,7 +763,7 @@ printf t >"$test_dir/state/.writer-b-login"
 legacy_b=wamn_effect_writer_3333333333333333333333333333333333333333_b
 output=$(MOCK_WRITER_PREDECESSOR_ROLE=$legacy_b MOCK_REQUIRED_LOGIN_ROLE=$legacy_b \
     run_writer_rotation a 2>&1)
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:a\nprobe-login:b\nretire:b\nprobe-login:a\nprobe-login:b'
+assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:a\nprobe-login:b\nretire:b\nprobe-login:a\nprobe-login:b'
 assert_no_secret_output "$output"
 
 # The mirror migration is admitted too: absent Secret metadata cannot tell a
@@ -750,7 +773,7 @@ printf t >"$test_dir/state/.writer-a-login"
 legacy_a=wamn_effect_writer_4444444444444444444444444444444444444444_a
 output=$(MOCK_WRITER_PREDECESSOR_ROLE=$legacy_a MOCK_REQUIRED_LOGIN_ROLE=$legacy_a \
     run_writer_rotation b 2>&1)
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
+assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
 assert_no_secret_output "$output"
 
 # With neither slot present, the same desired-B request reaches ctl and ctl's
@@ -770,27 +793,27 @@ if MOCK_WRITER_LOGIN_PROBE_FAIL_GENERATION=b run_writer_rotation a >/dev/null 2>
     echo 'expected old-generation LOGIN probe failure to abort rotation' >&2
     exit 1
 fi
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:a\nprobe-login:b'
+assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:a\nprobe-login:b'
 
 if MOCK_WRITER_ROLLOUT_FAIL=1 run_writer_rotation b >/dev/null 2>&1; then
     echo 'expected writer rollout failure after Secret publication' >&2
     exit 1
 fi
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner'
+assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor'
 output=$(run_writer_rotation b 2>&1)
-assert_log $'rollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
+assert_log $'rollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
 assert_no_secret_output "$output"
 
 if MOCK_WRITER_SESSION_ZERO=1 run_writer_rotation a >/dev/null 2>&1; then
     echo 'expected writer live-session proof failure after Secret publication' >&2
     exit 1
 fi
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:a'
+assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:a'
 output=$(run_writer_rotation a 2>&1)
-assert_log $'rollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:a\nprobe-login:b\nretire:b\nprobe-login:a\nprobe-login:b'
+assert_log $'rollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:a\nprobe-login:b\nretire:b\nprobe-login:a\nprobe-login:b'
 assert_no_secret_output "$output"
 output=$(run_writer_rotation b 2>&1)
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/runner\nrollout:status:deployment/runner\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
+assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nrollout:restart:deployment/executor\nrollout:status:deployment/executor\nprobe-sessions:b\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
 assert_no_secret_output "$output"
 
 # The wrapper owns every credential-bearing output flag, including role SQL.

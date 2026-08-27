@@ -330,8 +330,8 @@ rotate_effect_writer() {
         fi
     fi
 
-    "$kubectl_bin" rollout restart deployment/runner --namespace "$namespace"
-    "$kubectl_bin" rollout status deployment/runner --namespace "$namespace" --timeout=120s
+    "$kubectl_bin" rollout restart deployment/executor --namespace "$namespace"
+    "$kubectl_bin" rollout status deployment/executor --namespace "$namespace" --timeout=120s
     sessions=$(effect_writer_role_sessions "$new_role")
     [[ $sessions =~ ^[0-9]+$ && $sessions -gt 0 ]] || {
         echo "bootstrap: replacement effect-writer generation has no live private-pool session" >&2
