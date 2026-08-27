@@ -131,6 +131,46 @@ measurement at a named commit, not a standing promise.
 The 34 ignored is corroborated independently: `grep -rn '#\[ignore' --include=*.rs .`
 returns 34 at `1bffa614`. See "Live gates" below for why ignored is not skipped.
 
+## Conformance
+
+```bash
+cargo test -p wamn-proof-conformance --no-fail-fast
+```
+
+**Conformance runs at the wave-end integrator pass, not per lane.** A lane
+runs the targeted `-p` selection its own change touches. Running the whole
+conformance package inside every lane costs a full build per lane and
+re-measures artifacts other lanes are still moving.
+
+Verify the package name before trusting `-p`: it is **`wamn-proof-conformance`**.
+A nonexistent name *errors* and greps as zero failures.
+
+### Known red
+
+**Measured at `c72194c7`: the lib is 62 passed / 1 failed, and all twenty
+test binaries are green.** This is a measurement at a named commit, not a
+standing promise.
+
+| target | state |
+| --- | --- |
+| `version_identity::governed_wire_schema_and_artifact_versions_stay_at_mvp_identity` | **RED** — governed first-party occurrence-count drift in `crates/execution/run-state/src/admission.rs` and `crates/platform/runtime/src/plugins/connection_http.rs` |
+
+That is the **only** conformance red at this commit, and it is one of the two
+long-standing reds on this branch (the other, `connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap`, is a runtime plugin live test and not in this package).
+
+An earlier inventory recorded *seven* red conformance guards — `gate_registry`,
+`workspace_tiers`, `package_architecture`, `protected_relations`,
+`runtime_inventory`, `repo_lint` and `contract_diff`. **Re-measured at
+`c72194c7`, six of those seven are green** (`gate_registry` 12/0,
+`workspace_tiers` 9/0, `package_architecture` 9/0, `protected_relations` 2/0,
+`repo_lint` 5/0, `contract_diff` 3/0; `runtime_inventory` is a lib module, not
+a separate binary, and is inside the 62 that pass). The inventory was written
+on 2026-08-23 and the tree moved under it. **Re-measure before citing a red;
+a stale red list is the same false-evidence defect as a stale green one.**
+
+Note `contract_diff` proves the *argv* against a fake cargo, so a green
+`contract_diff` is never evidence that the contract legs themselves are green.
+
 ## Lint
 
 ```bash
