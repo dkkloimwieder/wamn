@@ -183,10 +183,13 @@ fn contract_diff_runs_the_exact_owner_proofs_from_any_directory() {
     let tool = root.join(TOOL);
     let metadata = fs::metadata(&tool).expect("read contract-diff metadata");
     assert_ne!(metadata.permissions().mode() & 0o111, 0);
+    // wamn-0h0g.15.139: `eval ` with the trailing space, not bare `eval`. See the
+    // same needle in `repo_lint.rs` for the reasoning — bare, it is a prefix of
+    // `evaluate`/`evaluation` and forbids the word rather than the bash builtin.
     assert!(
         !fs::read_to_string(&tool)
             .expect("read contract-diff source")
-            .contains("eval"),
+            .contains("eval "),
         "contract-diff must execute argv directly"
     );
 

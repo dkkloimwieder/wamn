@@ -94,6 +94,26 @@ fn frozen_http_surface_is_relative_typed_and_extension_free() {
             "missing frozen WIT line {required:?}"
         );
     }
+    // wamn-0h0g.15.139: the needles are unchanged; the HAYSTACK is narrowed to
+    // WIT code. Four of them — `proxy`, `socket`, `json`, `extensions` — are
+    // ordinary English, and over the raw file they forbade the WORD rather than
+    // the surface. This contract exists precisely to exclude raw sockets,
+    // proxies and open JSON bodies, so the most natural doc comment anyone would
+    // ever add here is the one naming what is excluded, and it would have fired
+    // the guard. That is the `flowrunner` failure of wamn-0h0g.15.131: a rule
+    // that forbids the word forbids documenting the ruling. Comment stripping is
+    // the repo convention for exactly this — see `code_lines` in
+    // `tests/conformance/src/invocation.rs`, which the node ABI guard already
+    // matches its own retired vocabulary against. A forbidden SURFACE is a
+    // declaration and survives the strip; prose does not. Do not re-point these
+    // needles at the raw text.
+    let code = authority
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase();
     for forbidden in [
         "absolute-uri",
         "authority:",
@@ -106,7 +126,7 @@ fn frozen_http_surface_is_relative_typed_and_extension_free() {
         "extensions",
     ] {
         assert!(
-            !authority.to_ascii_lowercase().contains(forbidden),
+            !code.contains(forbidden),
             "forbidden connection surface {forbidden:?} entered the frozen WIT"
         );
     }

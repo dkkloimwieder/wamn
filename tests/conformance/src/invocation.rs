@@ -182,6 +182,14 @@ mod tests {
 
         // Retired with the frames model and the payload store. Each of these
         // returning would re-import a subsystem this revision exists to shed.
+        //
+        // wamn-0h0g.15.139 audited these and left them bare, but the safety is
+        // load-bearing and not local: the haystack is `code`, already stripped by
+        // `code_lines` above. `framing` is an ordinary English word and over the
+        // raw file it would forbid a doc comment explaining that the ABI does no
+        // framing — the `flowrunner` failure of wamn-0h0g.15.131. Bare is correct
+        // here ONLY because comments are gone. Do not re-point this loop at
+        // `NODE_WIT` or any other unstripped text.
         for retired in [
             "payload-ref",
             "framing",

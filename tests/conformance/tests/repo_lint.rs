@@ -192,8 +192,15 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
     let metadata = fs::metadata(&tool).expect("read repo-lint metadata");
     assert_ne!(metadata.permissions().mode() & 0o111, 0);
     let source = fs::read_to_string(&tool).expect("read repo-lint source");
+    // wamn-0h0g.15.139: the needle is `eval ` with the trailing space, not bare
+    // `eval`. The target is the bash builtin, which always takes an argument and
+    // so is always followed by whitespace. Bare, the needle is a prefix of
+    // ordinary English — `evaluate`, `evaluation`, `re-evaluate` — so one comment
+    // in this shell tool saying it re-evaluates its leg list would have failed a
+    // guard about executing argv directly. That is the `flowrunner` shape of
+    // wamn-0h0g.15.131. Do not re-broaden this to the bare word.
     assert!(
-        !source.contains("eval"),
+        !source.contains("eval "),
         "repo-lint must execute argv directly"
     );
 

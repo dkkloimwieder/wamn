@@ -229,6 +229,15 @@ fn build_graph_has_no_shared_or_retired_cook_leg() {
     assert_eq!(selected_packages(gates), ["wamn-gates"]);
     assert_shared_locked_caches(gates, "build-gates");
 
+    // wamn-0h0g.15.139 audited these against the bare-ordinary-English rule and
+    // KEPT THEM BARE. `jco` and `wac` are three characters matched over the whole
+    // lowercased Dockerfile, which is the fragile shape on its face — but they are
+    // tool names, not words: neither is a substring of any English word, and a
+    // Dockerfile spells a tool at a command position, so the only way either
+    // appears is the retired leg returning. That is the `InlineExecutionDriver`
+    // side of the wamn-0h0g.15.131 split, not the `flowrunner` side. If one ever
+    // does collide, pin it to its command shape (`jco `, `wac `) rather than
+    // deleting the row.
     for retired in [
         "builder-svc",
         "jco",

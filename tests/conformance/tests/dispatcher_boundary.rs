@@ -207,8 +207,25 @@ fn dispatcher_reconciliation_is_tenant_scoped_and_read_only() {
     ]
     .join("\n")
     .to_ascii_lowercase();
+    // wamn-0h0g.15.139: two needle shapes, and the split is deliberate. An
+    // identifier unique to the deleted surface stays a bare substring — nothing
+    // else in a dispatcher spells `partition_owner` or `run_dead_letters`. A
+    // needle whose name is ordinary English is pinned to the code shape it
+    // actually had. Bare `cancel` forbade the word, not the surface: this
+    // haystack is lowercased and joins four files, so it fired on any doc
+    // comment saying the dispatcher no longer cancels, and — the reason it had
+    // to go — on `pg_walstream::CancellationToken`, a LIVE UPSTREAM API that
+    // the sibling service `services/cdc-reader/src/lib.rs` already uses in
+    // twenty places. The dispatcher adopting its sibling's graceful-shutdown
+    // token would have tripped a guard about retired RUN cancellation, an
+    // unrelated concept. The retired surface at `8639e904` was the sweep
+    // import, its function, the report field and the SQL column, so those four
+    // shapes are what is pinned. Do not re-broaden these to the bare word.
     for retired in [
-        "cancel",
+        "wamn_run_state::cancellation",
+        "cancellation_sweep_sql",
+        "pub cancelled:",
+        "cancel_kind",
         "partition_key",
         "partition_policy",
         "partition_owner",
