@@ -2042,7 +2042,17 @@ async fn effect_writer_cutover_leg(su: &Client) {
                         has_table_privilege('wamn_scenario_author', \
                                             '{SCHEMA}.effect_attempts','SELECT'), \
                         has_table_privilege('wamn_effect_writer', \
-                                            '{SCHEMA}.effect_attempts','INSERT')"
+                                            '{SCHEMA}.effect_attempts','INSERT'), \
+                        has_table_privilege('wamn_effect_writer', \
+                                            '{SCHEMA}.effect_attempts','SELECT'), \
+                        has_any_column_privilege('wamn_effect_writer', \
+                                                 '{SCHEMA}.effect_attempts','INSERT'), \
+                        has_table_privilege('wamn_effect_writer', \
+                                            '{SCHEMA}.effect_attempt_dispatches','INSERT'), \
+                        has_table_privilege('wamn_effect_writer', \
+                                            '{SCHEMA}.effect_attempt_outcomes','INSERT'), \
+                        EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_effect_writer' \
+                                 AND NOT (rolsuper OR rolbypassrls))"
             ),
             &[],
         )
@@ -2052,7 +2062,26 @@ async fn effect_writer_cutover_leg(su: &Client) {
     assert!(!privileges.get::<_, bool>(1));
     assert!(!privileges.get::<_, bool>(2));
     assert!(!privileges.get::<_, bool>(3));
-    assert!(privileges.get::<_, bool>(4));
+    // BORN PARKED (wamn-0h0g.20.30). THE SERVER'S OWN ANSWER, not the DDL text:
+    // once the reconciler converges, the stable writer role holds READ on the
+    // attempt ledger and NO append — at table level or at any column. Every
+    // provisioned generation login inherits this role with INHERIT TRUE, so this
+    // is exactly what a fresh project environment is born holding.
+    assert!(
+        !privileges.get::<_, bool>(4),
+        "the reconciler re-minted a LIVE append authority on a parked ledger"
+    );
+    assert!(privileges.get::<_, bool>(5), "the writer keeps its read");
+    assert!(
+        !privileges.get::<_, bool>(6),
+        "column-level append survived the table-level park"
+    );
+    // THE SCOPE LINE. Both sibling ledgers are OUTSIDE this bead and stay armed;
+    // parking either of them is a separate ruling and must red here first.
+    assert!(privileges.get::<_, bool>(7));
+    assert!(privileges.get::<_, bool>(8));
+    // A superuser or RLS-bypassing role would mask every refusal asserted above.
+    assert!(privileges.get::<_, bool>(9));
     let run_reads = su
         .query_one(
             &format!(

@@ -653,7 +653,14 @@ CREATE INDEX effect_attempts_tkey
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempts TO wamn_app;
-GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_effect_writer;
+-- BORN PARKED. The writer's APPEND authority is deliberately absent below: the
+-- primitive is installed but unwired (wamn-0h0g.4.9), and every provisioned
+-- generation login inherits `wamn_effect_writer` with INHERIT TRUE, so a live
+-- INSERT here would be dormant authority mass-produced by the provisioner. A
+-- fresh environment is therefore refused by the SERVER (42501), not by prose.
+-- Whoever wires the writer grants this INSERT explicitly and re-proves this
+-- gate; the record deliberately no longer arms it for them.
+GRANT SELECT ON wamn_run.effect_attempts TO wamn_effect_writer;
 CREATE TRIGGER effect_attempts_update_immutable
 BEFORE UPDATE ON wamn_run.effect_attempts
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();

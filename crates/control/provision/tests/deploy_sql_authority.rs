@@ -280,6 +280,32 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         "the sweep must cover exactly the 43 guest-reachable relations"
     );
 
+    // 2b. BORN PARKED (wamn-0h0g.20.30, owner ruling on wamn-0h0g.20.28). THE
+    //     SERVER'S OWN ANSWER over the REAL DDL, with no reconciler in the loop:
+    //     `wamn_effect_writer` — the stable ACL role every provisioned generation
+    //     LOGIN inherits with INHERIT TRUE — READS the attempt ledger and cannot
+    //     APPEND to it, at table level or at any column. Prose calling the writer
+    //     parked is not evidence; this is. Its two sibling ledgers are outside
+    //     that ruling and stay armed, which is the scope line.
+    let writer_ledger_acl = psql(
+        &db_url,
+        None,
+        "SELECT concat_ws(' ', \
+           has_table_privilege('wamn_effect_writer','wamn_run.effect_attempts','SELECT'), \
+           has_table_privilege('wamn_effect_writer','wamn_run.effect_attempts','INSERT'), \
+           has_any_column_privilege('wamn_effect_writer','wamn_run.effect_attempts','INSERT'), \
+           has_table_privilege('wamn_effect_writer','wamn_run.effect_attempt_dispatches','INSERT'), \
+           has_table_privilege('wamn_effect_writer','wamn_run.effect_attempt_outcomes','INSERT'), \
+           (SELECT NOT (rolsuper OR rolbypassrls) FROM pg_roles \
+             WHERE rolname='wamn_effect_writer'))",
+    );
+    assert_eq!(
+        writer_ledger_acl, "t f f t t t",
+        "the schema of record did not mint a READ-ONLY effect writer on \
+         wamn_run.effect_attempts (order: attempt SELECT, attempt INSERT, attempt \
+         column INSERT, dispatches INSERT, outcomes INSERT, role is unprivileged)"
+    );
+
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
     //    composed by the mint, not by hand, so this also proves the digest the
     //    provisioner would issue matches the key the predicate computes.

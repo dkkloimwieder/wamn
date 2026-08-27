@@ -3072,11 +3072,23 @@ $retire_run_projection_authority$;"#,
         if !obs.tables.contains_key(table) {
             continue;
         }
+        // BORN PARKED (owner ruling on wamn-0h0g.20.28). `effect_attempts` is the
+        // one ledger whose APPEND authority is not part of the record: the writer
+        // primitive is unwired, and every generation login inherits this role with
+        // INHERIT TRUE. So a live INSERT there is DRIFT, and this convergent step
+        // REMOVES it rather than re-granting it. The two sibling ledgers are out of
+        // this bead's scope and keep theirs.
+        let writer_privileges: &[&str] = if table == "effect_attempts" {
+            &["SELECT"]
+        } else {
+            &["SELECT", "INSERT"]
+        };
         let expected = |grantee: &str| -> BTreeSet<String> {
             match grantee {
                 "wamn_app" => ["SELECT"].into_iter().map(str::to_string).collect(),
-                EFFECT_WRITER_ROLE => ["SELECT", "INSERT"]
-                    .into_iter()
+                EFFECT_WRITER_ROLE => writer_privileges
+                    .iter()
+                    .copied()
                     .map(str::to_string)
                     .collect(),
                 "PUBLIC" | SCENARIO_AUTHOR_ROLE => BTreeSet::new(),
@@ -3150,6 +3162,20 @@ $retire_run_projection_authority$;"#,
             .map(|column| quote_ident(column))
             .collect::<Vec<_>>()
             .join(", ");
+        // The grant and the self-check move together: whatever APPEND authority
+        // this ledger does not carry becomes a privilege the block REFUSES to see
+        // the server still report, so a parked table proves its own denial.
+        let writer_grant = writer_privileges.join(", ");
+        let writer_forbidden_table = if table == "effect_attempts" {
+            "'INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'"
+        } else {
+            "'UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'"
+        };
+        let writer_forbidden_columns = if table == "effect_attempts" {
+            "INSERT,UPDATE,REFERENCES"
+        } else {
+            "UPDATE,REFERENCES"
+        };
         plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
                 target: format!("{}.{}", schema.as_str(), table),
@@ -3160,17 +3186,17 @@ $retire_run_projection_authority$;"#,
                      REVOKE ALL PRIVILEGES ON TABLE {qualified} \
                        FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}, {EFFECT_WRITER_ROLE}; \
                      GRANT SELECT ON TABLE {qualified} TO wamn_app; \
-                     GRANT SELECT, INSERT ON TABLE {qualified} TO {EFFECT_WRITER_ROLE}; \
+                     GRANT {writer_grant} ON TABLE {qualified} TO {EFFECT_WRITER_ROLE}; \
                      DO $effect_ledger_acl$ BEGIN \
                        IF EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
                                    WHERE pg_catalog.has_table_privilege('wamn_app', '{qualified}', privilege)) \
                           OR EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
                                    WHERE pg_catalog.has_table_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', privilege)) \
-                          OR EXISTS (SELECT 1 FROM unnest(ARRAY['UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                          OR EXISTS (SELECT 1 FROM unnest(ARRAY[{writer_forbidden_table}]) privilege \
                                    WHERE pg_catalog.has_table_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', privilege)) \
                           OR pg_catalog.has_any_column_privilege('wamn_app', '{qualified}', 'INSERT,UPDATE,REFERENCES') \
                           OR pg_catalog.has_any_column_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', 'SELECT,INSERT,UPDATE,REFERENCES') \
-                          OR pg_catalog.has_any_column_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', 'UPDATE,REFERENCES') \
+                          OR pg_catalog.has_any_column_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', '{writer_forbidden_columns}') \
                           OR (SELECT owner.rolname FROM pg_catalog.pg_class relation \
                               JOIN pg_catalog.pg_roles owner ON owner.oid = relation.relowner \
                              WHERE relation.oid = pg_catalog.to_regclass('{qualified}')) \
@@ -5052,9 +5078,16 @@ COMMIT;
         ] {
             obs.effect_ledger_owners
                 .insert(table.to_string(), "platform_admin".to_string());
+            // `effect_attempts` is at record WITHOUT the writer's append
+            // authority — it is born parked, matching `deploy/sql/run-state.sql`.
+            let writer_at_record: &[&str] = if table == "effect_attempts" {
+                &["SELECT"]
+            } else {
+                &["SELECT", "INSERT"]
+            };
             for (grantee, privileges) in [
                 ("wamn_app", &["SELECT"][..]),
-                (EFFECT_WRITER_ROLE, &["SELECT", "INSERT"][..]),
+                (EFFECT_WRITER_ROLE, writer_at_record),
             ] {
                 let key = (table.to_string(), grantee.to_string());
                 let privileges: BTreeSet<String> = privileges
@@ -7692,8 +7725,17 @@ COMMIT;
         assert!(RUN_STATE_SQL.contains(
             "REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts\n    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer"
         ));
+        // BORN PARKED: read-only at record. This is the DDL-TEXT half only, and it
+        // cannot tell a declaration from a comment mentioning one. The load-bearing
+        // arm is THE SERVER'S refusal, asserted live over the applied DDL in
+        // `crates/control/provision/tests/deploy_sql_authority.rs` and over the
+        // reconciled result in `services/ctl/tests/run_plane_live.rs`.
         assert!(
             RUN_STATE_SQL
+                .contains("GRANT SELECT ON wamn_run.effect_attempts TO wamn_effect_writer")
+        );
+        assert!(
+            !RUN_STATE_SQL
                 .contains("GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_effect_writer")
         );
         assert!(
@@ -7819,7 +7861,51 @@ COMMIT;
             .expect("writer table ACL repair");
         assert!(table_action.sql.contains("REVOKE SELECT ("));
         assert!(table_action.sql.contains("has_any_column_privilege"));
-        assert!(table_action.sql.contains("GRANT SELECT, INSERT"));
+        // BORN PARKED: the attempt ledger is re-granted READ ONLY, and the block
+        // refuses to see the server still report the writer holding INSERT.
+        assert!(
+            table_action.sql.contains(
+                "GRANT SELECT ON TABLE \"demo\".\"effect_attempts\" TO wamn_effect_writer"
+            )
+        );
+        assert!(!table_action.sql.contains("GRANT SELECT, INSERT"));
+        assert!(table_action.sql.contains(
+            "ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+             WHERE pg_catalog.has_table_privilege('wamn_effect_writer'"
+        ));
+        assert!(table_action.sql.contains(
+            "has_any_column_privilege('wamn_effect_writer', \
+             '\"demo\".\"effect_attempts\"', 'INSERT,UPDATE,REFERENCES')"
+        ));
+    }
+
+    /// The scope line. Both sibling ledgers still carry the writer's append
+    /// authority, and this bead did not touch them — a widening of the parking
+    /// to `effect_attempt_dispatches` or `effect_attempt_outcomes` is a separate
+    /// ruling and must red here first.
+    #[test]
+    fn sibling_effect_ledgers_keep_the_writer_append_authority() {
+        let mut obs = observation_at_record();
+        for table in ["effect_attempt_dispatches", "effect_attempt_outcomes"] {
+            obs.effect_ledger_effective_column_privileges
+                .entry((table.to_string(), "wamn_app".to_string()))
+                .or_default()
+                .insert("UPDATE".to_string());
+        }
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        for table in ["effect_attempt_dispatches", "effect_attempt_outcomes"] {
+            let action = plan
+                .actions
+                .iter()
+                .find(|action| {
+                    action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+                        && action.target == format!("demo.{table}")
+                })
+                .expect("sibling ledger ACL repair");
+            assert!(action.sql.contains(&format!(
+                "GRANT SELECT, INSERT ON TABLE \"demo\".\"{table}\" TO wamn_effect_writer"
+            )));
+        }
     }
 
     #[test]
