@@ -9,7 +9,7 @@
 //! disaster recovery) is the *other* mechanism — wamn-e1g's Barman Cloud — not this.
 //!
 //! This module is **pure** (SR3 / house rule 1): pure builders (the `pg_dump`
-//! argv, the object-store key naming, the default schedule, the upload argv) and
+//! argv, the object-store key naming, the default schedule) and
 //! K8s manifest renderers (`serde_json::Value` — `kubectl apply -f` accepts JSON,
 //! the [`crate::database`] / [`crate::org`] precedent). No DB, no clock, no K8s
 //! client, no `pg_dump` invocation — the effects (running the dump, recording the
@@ -152,19 +152,6 @@ pub fn pg_dump_argv(conninfo: &str, out_dir: &str) -> Vec<String> {
         out_dir.into(),
         "-d".into(),
         conninfo.into(),
-    ]
-}
-
-/// The object-store upload argv (**rendered** into the CronJob/Job). A `-Fd` dump
-/// is a directory → a recursive copy under the dump's object key.
-pub fn upload_argv(local_dir: &str, bucket: &str, object_key: &str) -> Vec<String> {
-    vec![
-        "aws".into(),
-        "s3".into(),
-        "cp".into(),
-        "--recursive".into(),
-        local_dir.into(),
-        format!("s3://{bucket}/{object_key}/"),
     ]
 }
 
@@ -428,15 +415,6 @@ mod tests {
             5,
             "a 5-field cron"
         );
-    }
-
-    #[test]
-    fn upload_argv_targets_the_object_key_recursively() {
-        let argv = upload_argv("/dump/out", "wamn-dumps", "dumps/acme/billing/dev/123");
-        assert_eq!(argv[..4], ["aws", "s3", "cp", "--recursive"]);
-        assert_eq!(argv[4], "/dump/out");
-        // A -Fd dump is a directory → uploaded under the object-key prefix.
-        assert_eq!(argv[5], "s3://wamn-dumps/dumps/acme/billing/dev/123/");
     }
 
     #[test]
