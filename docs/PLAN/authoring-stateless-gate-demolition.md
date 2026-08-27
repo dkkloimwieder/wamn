@@ -98,6 +98,8 @@ Both are strictly weaker than "execute the document's cases and report."
 One verb produces reports. The rename lands **with the collapse**, and the wire literal
 follows the wiring vocabulary sweep (`wamn-0h0g.26.18`).
 
+[landed: wamn-0h0g.26.18, closed 2026-08-25 - that sweep did NOT carry the wire literal; it is still test-set-run, owner wamn-0h0g.7.11]
+
 ---
 
 ## 3. What deletes
