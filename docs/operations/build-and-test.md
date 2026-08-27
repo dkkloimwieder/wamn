@@ -522,15 +522,30 @@ WAMN_TENANT_FLOOR_PG_URL=postgres://postgres:probe@localhost:5434/postgres \
 docker rm -f wamn-floor-pg      # BY EXPLICIT NAME. Never prune.
 ```
 
-**`--test-threads=1` IS REQUIRED, NOT OPTIONAL.** Measured 2026-08-27 on a
-certified-empty cluster: without it this binary reports `4 passed; 1 failed`
-with `duplicate key value violates unique constraint "pg_authid_rolname_index",
-Key (rolname)=(wamn_app) already exists`. More than one test applies
-`postgres-init.sql`, whose `CREATE ROLE wamn_app` is **bare and unguarded**, and
-roles are CLUSTER-wide — so the parallel runner races two applications of the
-same unguarded create. Single-threaded it is `5 passed; 0 failed` and passes
-TWICE IN A ROW on the SAME cluster, which is the bar for a gate applying an
-artifact that carries a bare `CREATE ROLE`.
+**`--test-threads=1` IS REQUIRED, NOT OPTIONAL, and the reason is now the
+DATABASE, not the role** (`wamn-0h0g.12.188`). Measured 2026-08-27 on a
+certified-empty cluster: without the flag this binary reports `6 passed;
+2 failed` with
+
+```
+ERROR:  duplicate key value violates unique constraint "pg_database_datname_index"
+DETAIL:  Key (datname)=(wamn) already exists.
+```
+
+More than one test applies `postgres-init.sql`, whose `CREATE DATABASE wamn` is
+bare, and **no `DO` block can guard it**: `CREATE DATABASE` must be its own
+autocommit statement and plpgsql cannot execute it inside a function body. The
+only alternatives are a client-side existence check — which moves logic out of
+the artifact and weakens it as a self-contained install — or accepting the
+serialization. **The serialization is accepted.** Single-threaded it is
+`8 passed; 0 failed` and passes TWICE IN A ROW on the SAME cluster, which is the
+bar for a gate applying an artifact that creates cluster-global objects.
+
+THE ROLE RACE THAT USED TO BE THE REASON IS CLOSED. `wamn-0h0g.12.186` guarded
+the bare `CREATE ROLE wamn_app`, so `duplicate key value violates unique
+constraint "pg_authid_rolname_index", Key (rolname)=(wamn_app) already exists`
+no longer occurs. Guarding the role MOVED the parallel failure rather than
+removing it; do not remove the flag on the strength of that fix.
 
 Three arms: no guest-reachable relation keys on a settable claim; all 43
 re-keyed relations carry their `<table>_tkey` expression index (from
