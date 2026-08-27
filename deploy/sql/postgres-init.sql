@@ -112,7 +112,21 @@ END $platform_group$;
 -- false`, the two-hop chain (generation login -> ACL role -> wamn_platform)
 -- dies, and the platform principal reads ZERO ROWS with no error at all.
 -- Measured on PostgreSQL 18.6: bare grant -> 0 rows, `INHERIT TRUE` -> all rows.
-GRANT wamn_platform TO wamn_scenario_author WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
+--
+-- `wamn_scenario_author` IS DELIBERATELY ABSENT FROM THIS LIST
+-- (`wamn-0h0g.22.27`). It was granted here and NOWHERE ELSE: the converge path
+-- that creates the role, `wamn_schema_control::ensure_scenario_author_role_sql`
+-- (crates/schema/control/src/run_plane.rs), grants no membership at all. A
+-- fresh install therefore granted what a converge did not, which is the
+-- two-appliers drift class, and the membership itself was never ratified.
+--
+-- THE EMITTERS AGREE AT ZERO GRANTS. Agreeing by GRANTING would have ratified
+-- through the side door a membership that was explicitly not pre-ratified;
+-- replicating it into the converge path is REJECTED and is not to be
+-- re-proposed. The six-SELECT revoke of `wamn-0h0g.22.20` has landed, so
+-- deleting it strands nothing — the silent-deny risk that made the timing hard
+-- is gone. Whether the author's two remaining catalog reads are load-bearing
+-- for authoring is `wamn-0h0g.22.25`'s question and is not decided here.
 GRANT wamn_platform TO wamn_effect_writer WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 GRANT wamn_platform TO wamn_run_retention WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 

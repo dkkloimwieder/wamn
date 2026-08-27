@@ -38,7 +38,7 @@ use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::sql;
 use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
 use wamn_control_provision::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+    PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
 
 const POSTGRES_INIT: &str = include_str!("../../../../deploy/sql/postgres-init.sql");
@@ -117,11 +117,15 @@ const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
     "wamn_service_reader",
 ];
 
-/// The one `wamn_platform` member that is NOT a [`WorkloadRoleFamily`].
+/// The host-only group that is NOT a [`WorkloadRoleFamily`] and, since
+/// `wamn-0h0g.22.27`, is NOT a `wamn_platform` member either.
 ///
-/// The host-only scenario-author group holds SELECT on governed relations of its
-/// own, so `deploy/sql/postgres-init.sql` members it in directly. It is named
-/// separately because no family derivation could ever yield it.
+/// `deploy/sql/postgres-init.sql` used to grant it the membership and NOTHING
+/// ELSE did: the converge path that creates the role,
+/// `wamn_schema_control::ensure_scenario_author_role_sql`, grants none. A fresh
+/// install therefore granted what a converge did not. THE EMITTERS NOW AGREE AT
+/// ZERO GRANTS, which is what the arm below reads back from `pg_auth_members`
+/// on both paths against the same server.
 const SCENARIO_AUTHOR_GROUP_MEMBER: &str = "wamn_scenario_author";
 
 /// THE PURE HALF OF THE PLATFORM-ARM GUARD, and the reason
@@ -141,8 +145,7 @@ fn the_platform_grain_family_set_is_pinned_and_not_derived() {
         .collect();
     derived.sort_unstable();
     assert_eq!(
-        derived,
-        PLATFORM_GRAIN_ACL_ROLES,
+        derived, PLATFORM_GRAIN_ACL_ROLES,
         "is_platform_grain moved. A family that gains the arm reads EVERY \
          tenant's rows on the relations it holds grants on; one that loses it \
          reads ZERO ROWS with no error and no failing live gate. Move the pin \
@@ -666,10 +669,9 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         apply(&db_url, &sql::platform_group_membership_sql(family));
     }
     // THE PINNED LITERAL, NOT A CALL TO `is_platform_grain`
-    // (`wamn-0h0g.15.137.1`). See [`PLATFORM_GRAIN_ACL_ROLES`].
-    let mut expected: Vec<&str> = PLATFORM_GRAIN_ACL_ROLES.to_vec();
-    expected.push(SCENARIO_AUTHOR_GROUP_MEMBER);
-    expected.sort_unstable();
+    // (`wamn-0h0g.15.137.1`). See [`PLATFORM_GRAIN_ACL_ROLES`]. The host-only
+    // scenario author is deliberately NOT in it (`wamn-0h0g.22.27`).
+    let expected: Vec<&str> = PLATFORM_GRAIN_ACL_ROLES.to_vec();
     let members = psql(
         &db_url,
         None,
@@ -793,4 +795,150 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         &admin,
         &format!("DROP ROLE \"{writer}\";\nDROP ROLE {PLATFORM_PROBE_OUTSIDER};\n"),
     );
+}
+
+/// THE TWO SCENARIO-AUTHOR EMITTERS, READ BACK FROM THE SAME SERVER
+/// (`wamn-0h0g.22.27`).
+///
+/// # The defect this closes is DRIFT, not the membership itself
+///
+/// `wamn_scenario_author` is CREATED by
+/// `wamn_schema_control::ensure_scenario_author_role_sql`, which grants no
+/// membership at all. `deploy/sql/postgres-init.sql` granted it `wamn_platform`
+/// and nothing else did. So a FRESH INSTALL granted what a CONVERGE did not,
+/// and the two appliers disagreed about the authority a role carries — the
+/// two-appliers drift class, independent of whether the membership was ever
+/// wanted. The owner ruled DELETE FROM THE INSTALL PATH: agreeing by GRANTING
+/// would ratify through the side door a membership that was explicitly not
+/// pre-ratified. THE EMITTERS AGREE AT ZERO GRANTS.
+///
+/// # Why this reads `pg_auth_members` and not an exit status
+///
+/// An emitter that raises nothing has proved nothing. Both appliers succeed
+/// today and always did — the disagreement was in the POST-STATE, which is the
+/// only thing asserted below. Every arm reads the member set out of the
+/// catalog, and the role's own existence is asserted first so an empty set
+/// cannot pass vacuously because the role was never created.
+///
+/// # A SECOND APPLY IS A NO-OP, and that is a post-state claim too
+///
+/// The converge emitter is applied TWICE and the member set is read after each,
+/// so a builder that grants on replay — or one whose `ELSIF` harden arm gains a
+/// membership — fails here rather than at the next reconcile. `postgres-init.sql`
+/// cannot be applied twice against a surviving cluster at all (its bare
+/// `CREATE DATABASE wamn` is `wamn-0h0g.12.188`), so its replay is the one
+/// following a `reset`, which is the second install arm below.
+#[test]
+fn the_two_scenario_author_emitters_agree_at_zero_memberships() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_two_scenario_author_emitters_agree_at_zero_memberships \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+
+    let memberships = |label: &str| -> String {
+        let existing = psql(
+            &admin,
+            None,
+            &format!(
+                "SELECT count(*) FROM pg_catalog.pg_roles \
+                  WHERE rolname = '{SCENARIO_AUTHOR_GROUP_MEMBER}'"
+            ),
+        );
+        assert_eq!(
+            existing, "1",
+            "{label}: the role is absent, so an empty membership set would pass \
+             vacuously"
+        );
+        psql(
+            &admin,
+            None,
+            &format!(
+                "SELECT coalesce(string_agg(parent.rolname, ' ' ORDER BY parent.rolname), \
+                        '<none>') \
+                   FROM pg_catalog.pg_auth_members AS membership \
+                   JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
+                   JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
+                  WHERE member.rolname = '{SCENARIO_AUTHOR_GROUP_MEMBER}'"
+            ),
+        )
+    };
+
+    // 1. THE FRESH-INSTALL PATH, from an empty cluster.
+    reset(&admin);
+    apply(&admin, POSTGRES_INIT);
+    let install = memberships("fresh install");
+    assert_eq!(
+        install, "<none>",
+        "deploy/sql/postgres-init.sql grants wamn_scenario_author a membership \
+         the converge path does not: a fresh install and a converge would ship \
+         different authority for the same role"
+    );
+
+    // 2. THE CONVERGE PATH, applied ON TOP of the install, then AGAIN.
+    let converge = wamn_schema_control::ensure_scenario_author_role_sql();
+    apply(&admin, converge);
+    let converged = memberships("converge over install");
+    apply(&admin, converge);
+    let converged_twice = memberships("second converge");
+    assert_eq!(
+        converged, install,
+        "the two emitters disagree about wamn_scenario_author's memberships"
+    );
+    assert_eq!(
+        converged_twice, converged,
+        "a second apply is not a no-op: the converge emitter moved the member set"
+    );
+
+    // 3. THE CONVERGE PATH FIRST, on a cluster the install has never touched,
+    //    then the install on top. Order must not decide the outcome, and this is
+    //    the arm that would catch an install-path grant that only lands when the
+    //    role already exists.
+    reset(&admin);
+    apply(&admin, converge);
+    let converge_only = memberships("converge on an empty cluster");
+    apply(&admin, POSTGRES_INIT);
+    let install_over_converge = memberships("install over converge");
+    assert_eq!(
+        [converge_only.as_str(), install_over_converge.as_str()],
+        ["<none>", "<none>"],
+        "the emitters must agree at ZERO GRANTS in either application order"
+    );
+}
+
+/// THE SWEEP-VISIBLE HALF of `wamn-0h0g.22.27`.
+///
+/// The claim that matters — the member set both appliers leave behind — is a
+/// POST-STATE read and lives in the live arm above. But a mutant that dies only
+/// in a live gate ships green in the ordinary sweep, and this branch has paid
+/// for that repeatedly. Emitter agreement is a property of the EMITTED TEXT, so
+/// it is assertable here with no server at all: neither artifact may name
+/// `wamn_platform` in a grant to the scenario author.
+///
+/// It is deliberately NOT a privilege claim. Whether that membership would
+/// actually confer anything is the server's answer and the live arm asks it.
+#[test]
+fn neither_scenario_author_emitter_grants_the_platform_group() {
+    let converge = wamn_schema_control::ensure_scenario_author_role_sql();
+    for (label, sql) in [
+        ("deploy/sql/postgres-init.sql", POSTGRES_INIT),
+        ("ensure_scenario_author_role_sql", converge),
+    ] {
+        for line in sql.lines() {
+            let statement = line.split("--").next().unwrap_or(line);
+            assert!(
+                !(statement.contains("GRANT")
+                    && statement.contains(PLATFORM_GROUP_ROLE)
+                    && statement.contains(SCENARIO_AUTHOR_GROUP_MEMBER)),
+                "{label} grants {} to {SCENARIO_AUTHOR_GROUP_MEMBER}: the two \
+                 emitters must agree, and they agree at ZERO GRANTS \
+                 (wamn-0h0g.22.27). Replicating it into the converge path is \
+                 REJECTED — it would ratify an unruled membership through the \
+                 side door",
+                PLATFORM_GROUP_ROLE,
+            );
+        }
+    }
 }
