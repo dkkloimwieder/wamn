@@ -354,12 +354,22 @@ and compares WAL before and after the flip.
 
 ```bash
 WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
-  cargo test -p wamn-ctl --test run_plane_live -- --ignored --test-threads=1
+  cargo test -p wamn-ctl --test run_plane_live -- --include-ignored --test-threads=1
 ```
 
 Superuser, path `/postgres`. The legs share the `catalog` schema and the
 `wamn_app` role, so they run sequentially under one entry; the execution-pin
 cutover has a second entry.
+
+**`--include-ignored`, NOT `--ignored`.** This binary is MIXED: 7 of its 17
+tests carry `#[ignore]` and `.expect()` the variable; the other 10 take
+`LockedUrl::optional()` and SELF-SKIP. `-- --ignored` runs *only* the ignored
+set, so it reports `10 filtered out` and every self-skipping test is invisible.
+Measured 2026-08-27 on one fresh `postgres:18` at `2179f9c7`: `-- --ignored`
+reported `5 passed; 2 failed; 10 filtered out`, while `-- --include-ignored` on
+an identical fresh server reported `9 passed; 8 failed; 0 filtered out` — the
+same run, with six more reds visible. The flag was hiding them, which is the
+false-green class this document exists to close.
 
 ### `[CATALOG-PLANE]` — the catalog plane-residency refusal
 
