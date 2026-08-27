@@ -26,7 +26,9 @@ use wamn_runtime::component_artifact_source::{
 };
 use wamn_runtime::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
-use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream, WamnLogging, WamnPostgres};
+use wamn_runtime::plugins::{
+    ClassCredentials, FlowHttpRouting, WamnJetstream, WamnLogging, WamnPostgres,
+};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
@@ -369,9 +371,17 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // injects WAMN_PG_URL via secretKeyRef (values-host-default.yaml ->
     // host-db.example.yaml), so the environment is the transport; reading it at
     // composition is what makes it the explicit source instead of a fallback.
+    // wamn-0h0g.22.16: the host also names WHICH AUTHORITY the credential
+    // belongs to. No family is cut over yet, so this one injected login is
+    // written down for every class rather than left to serve them all
+    // implicitly; a family cutover replaces exactly its own entry here.
     let postgres = Arc::new(
-        WamnPostgres::from_env(std::env::var("WAMN_PG_URL").ok())
-            .context("wamn:postgres plugin init")?,
+        WamnPostgres::from_env(
+            std::env::var("WAMN_PG_URL")
+                .ok()
+                .map(ClassCredentials::every_class),
+        )
+        .context("wamn:postgres plugin init")?,
     );
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let router_driver = match release.as_ref() {

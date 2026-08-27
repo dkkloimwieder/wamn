@@ -72,8 +72,8 @@ pub use credential_exactness::{
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
 pub use pool::{
-    CheckoutProbe, CredentialProvider, K8sSecretProvider, ProjectConfig, StaticCredentialProvider,
-    WamnPostgresConfig,
+    CheckoutProbe, ClassCredentials, CredentialProvider, K8sSecretProvider, ProjectConfig,
+    ResolvedCredential, StaticCredentialProvider, WamnPostgresConfig,
 };
 pub use production_claim::{
     ProductionCallerOutcome, ProductionCandidate, ProductionClaimError, ProductionClaimErrorKind,

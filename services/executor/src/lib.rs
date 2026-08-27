@@ -31,7 +31,7 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
-    ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
+    ClassCredentials, ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
     ProductionReapResult, ProductionRouterAction, ReleaseIdentity, SessionClaims, WamnPostgres,
     WamnPostgresConfig, production_router_action, production_router_result_action,
 };
@@ -282,7 +282,11 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         .filter(|ttl| *ttl > 0)
         .context("--lease-ttl-ms must be a positive signed 64-bit integer")?;
     let mut postgres_config = WamnPostgresConfig::from_env();
-    postgres_config.database_url = Some(database_url);
+    // wamn-0h0g.22.16: the executor names WHICH AUTHORITY the credential it
+    // sourced above belongs to. No family is cut over yet, so the one login is
+    // written down for every class rather than left to serve them all
+    // implicitly; a family cutover replaces exactly its own entry here.
+    postgres_config.credentials = Some(ClassCredentials::every_class(database_url));
     let postgres = Arc::new(WamnPostgres::new(postgres_config)?);
     postgres.register_pool_metrics();
     postgres.bind_session_claims(

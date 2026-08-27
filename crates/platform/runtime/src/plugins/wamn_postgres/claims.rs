@@ -20,10 +20,10 @@ use wamn_event_wire::Causation;
 use wamn_run_state::AuthorityClass;
 
 use super::pool::{
-    CheckoutProbe, CredentialProvider, PlatformAsyncMessage, PlatformConnect, PoolKey,
-    PoolLifecycle, ProjectConfig, ProjectPool, StaticCredentialProvider, WamnPostgresConfig,
-    credential_exactness_hook, credential_generation_role, destroy_connection,
-    standard_conforming_strings_hook,
+    CheckoutProbe, ClassCredentials, CredentialProvider, PlatformAsyncMessage, PlatformConnect,
+    PoolKey, PoolLifecycle, ProjectConfig, ProjectPool, ResolvedCredential,
+    StaticCredentialProvider, WamnPostgresConfig, credential_exactness_hook,
+    credential_generation_role, destroy_connection, standard_conforming_strings_hook,
 };
 use super::resources::{run_execute, run_query};
 use super::types::map_pg_error;
@@ -589,14 +589,14 @@ fn starts_with_keyword(head: &str, kw: &str) -> bool {
 }
 
 impl WamnPostgres {
-    /// Plugin over a single default database (the [`WamnPostgresConfig`] URL).
-    /// Pools are built lazily; `database_url: None` ⇒ every call returns
-    /// `connection-unavailable`.
+    /// Plugin over a single default database (the [`WamnPostgresConfig`]
+    /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
+    /// returns `connection-unavailable`.
     pub fn new(cfg: WamnPostgresConfig) -> anyhow::Result<Self> {
         let default = cfg
-            .database_url
+            .credentials
             .clone()
-            .map(|url| ProjectConfig::from_global(url, &cfg));
+            .map(|credentials| ProjectConfig::from_global(credentials, &cfg));
         Ok(Self::with_provider(Arc::new(
             StaticCredentialProvider::default_only(default),
         )))
@@ -642,9 +642,14 @@ impl WamnPostgres {
     /// the named explicit source rather than a silent fallback buried in the
     /// config layer. `services/executor` already composed this way; this is the
     /// host taking the same shape.
-    pub fn from_env(database_url: Option<String>) -> anyhow::Result<Self> {
+    ///
+    /// `wamn-0h0g.22.16`: the parameter is the caller's PER-CLASS credential
+    /// set, not one url, so the composition root states which authority each
+    /// login belongs to instead of leaving one login to serve every authority
+    /// implicitly.
+    pub fn from_env(credentials: Option<ClassCredentials>) -> anyhow::Result<Self> {
         let cfg = WamnPostgresConfig::from_env();
-        let default = database_url.map(|url| ProjectConfig::from_global(url, &cfg));
+        let default = credentials.map(|credentials| ProjectConfig::from_global(credentials, &cfg));
         let mut projects = HashMap::new();
         if let Ok(path) = std::env::var("WAMN_PG_PROJECTS_FILE") {
             let text = std::fs::read_to_string(&path)
@@ -656,9 +661,9 @@ impl WamnPostgres {
         )))
     }
 
-    /// Build a deadpool pool for one project's connection config.
+    /// Build a deadpool pool for one resolved credential.
     fn build_pool(
-        cfg: &ProjectConfig,
+        cfg: &ResolvedCredential,
         class: AuthorityClass,
         project: &str,
         platform_messages: &tokio::sync::mpsc::UnboundedSender<PlatformAsyncMessage>,
@@ -1883,7 +1888,7 @@ mod tests {
     #[test]
     fn building_a_pool_requires_a_probeable_credential() {
         let (messages, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let unprobeable = ProjectConfig {
+        let unprobeable = ResolvedCredential {
             // Parses as a manager config, but names no principal, so the
             // exactness hook cannot be built for it.
             database_url: "postgres://host:5432/db".to_string(),
@@ -1909,9 +1914,9 @@ mod tests {
     /// must survive `--release`, where a `debug_assert` would not exist.
     #[tokio::test]
     async fn a_platform_checkout_refuses_the_guest_authority() {
-        let postgres = WamnPostgres::from_env(Some(
-            "postgres://wamn_app_refusal_a@localhost/refusal-proof".to_string(),
-        ))
+        let postgres = WamnPostgres::from_env(Some(ClassCredentials::every_class(
+            "postgres://wamn_app_refusal_a@localhost/refusal-proof",
+        )))
         .expect("compose");
         let refused = postgres
             .checkout_platform(DEFAULT_PROJECT, AuthorityClass::GuestSql)
@@ -1949,7 +1954,7 @@ mod tests {
     /// caller names no tenant at all.
     #[test]
     fn a_guest_credential_resolves_for_its_own_tenant_and_no_other() {
-        let host = WamnPostgres::from_env(Some(guest_url("acme", "host-default")))
+        let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url("acme", "host-default"))))
             .expect("compose with a credential");
         assert!(
             host.provider
@@ -1981,7 +1986,7 @@ mod tests {
 
     #[test]
     fn the_composed_credential_becomes_the_default_project() {
-        let composed = WamnPostgres::from_env(Some(guest_url("acme", "host-default")))
+        let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url("acme", "host-default"))))
             .expect("compose with a credential");
         assert!(
             composed
@@ -2012,10 +2017,10 @@ mod tests {
             // and the pool key is derived from it. A url with no user carries no
             // credential identity and is now refused, so this fixture names one
             // rather than relying on a libpq-style implicit OS user.
-            database_url: Some(format!(
+            credentials: Some(ClassCredentials::every_class(format!(
                 "postgres://wamn_app_{}_a@localhost/pool-lifecycle-proof",
                 wamn_run_state::app_scope_hash("acme", "pool-lifecycle-proof")
-            )),
+            ))),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 100,
@@ -2624,7 +2629,7 @@ mod tests {
             return;
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(live_guest_url(&admin_url, LIVE_TENANT).await),
+            credentials: Some(ClassCredentials::every_class(live_guest_url(&admin_url, LIVE_TENANT).await)),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -2797,7 +2802,7 @@ mod tests {
             .expect("seed the per-user RLS fixture as the superuser owner");
 
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(database_url_for_role(&admin_url, &probe, &probe)),
+            credentials: Some(ClassCredentials::every_class(database_url_for_role(&admin_url, &probe, &probe))),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -2889,7 +2894,7 @@ mod tests {
             .expect("seed the per-user RLS fixture as the superuser owner");
 
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(database_url_for_role(&admin_url, &probe, &probe)),
+            credentials: Some(ClassCredentials::every_class(database_url_for_role(&admin_url, &probe, &probe))),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -2985,7 +2990,7 @@ mod tests {
     async fn effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim() {
         const COMPONENT: &str = "warm-instance-0";
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: None,
+            credentials: None,
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 100,
@@ -3057,7 +3062,7 @@ mod tests {
     async fn effect_snapshot_refuses_a_component_with_no_bound_tenant() {
         const COMPONENT: &str = "never-acquired-instance";
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: None,
+            credentials: None,
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 100,
@@ -3182,7 +3187,7 @@ mod tests {
         url.set_password(Some("live-guest"))
             .expect("set A's password");
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(url.to_string()),
+            credentials: Some(ClassCredentials::every_class(url.to_string())),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -3266,7 +3271,7 @@ mod tests {
             return;
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(live_guest_url(&admin_url, LIVE_TENANT).await),
+            credentials: Some(ClassCredentials::every_class(live_guest_url(&admin_url, LIVE_TENANT).await)),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,
@@ -3295,7 +3300,7 @@ mod tests {
             .expect("set WAMN_POOL_LIFECYCLE_PG_URL to a disposable PostgreSQL database");
         let url = live_guest_url(&admin_url, LIVE_TENANT).await;
         let postgres = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(url),
+            credentials: Some(ClassCredentials::every_class(url)),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 250,
@@ -3429,7 +3434,7 @@ mod tests {
         // exactly the false positive this test's second half exists to rule out.
         let guest_url = live_guest_url(&url, LIVE_TENANT).await;
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(guest_url),
+            credentials: Some(ClassCredentials::every_class(guest_url)),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,
@@ -3454,7 +3459,7 @@ mod tests {
         let (platform_messages, _platform_message_receiver) =
             tokio::sync::mpsc::unbounded_channel();
         let pool = WamnPostgres::build_pool(
-            &ProjectConfig {
+            &ResolvedCredential {
                 database_url: url,
                 guest_pool_max_size: 1,
                 platform_pool_max_size: 1,

@@ -47,7 +47,7 @@ use wamn_runtime::component_artifact_source::{
 use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
-use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 
 /// The one tenant every seeded row and every claim is scoped to.
@@ -152,7 +152,8 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
 
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(options.database_url.clone()),
+            // wamn-0h0g.22.16: one url, named for every class explicitly.
+            credentials: Some(ClassCredentials::every_class(options.database_url.clone())),
             guest_pool_max_size: 4,
             platform_pool_max_size: 4,
             wait_timeout_ms: 5_000,

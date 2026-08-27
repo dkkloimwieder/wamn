@@ -793,7 +793,7 @@ mod tests {
 
     fn offline_postgres() -> WamnPostgres {
         WamnPostgres::new(WamnPostgresConfig {
-            database_url: None,
+            credentials: None,
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 1,

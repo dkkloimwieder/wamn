@@ -11,4 +11,4 @@ pub use flow_http_routing::FlowHttpRouting;
 pub use wamn_credentials::WamnCredentials;
 pub use wamn_jetstream::WamnJetstream;
 pub use wamn_logging::WamnLogging;
-pub use wamn_postgres::WamnPostgres;
+pub use wamn_postgres::{ClassCredentials, WamnPostgres};

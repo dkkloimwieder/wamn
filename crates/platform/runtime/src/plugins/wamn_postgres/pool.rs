@@ -124,9 +124,9 @@ fn bounded_statement_timeout_ms(value: u64) -> u32 {
 
 #[derive(Clone, Debug)]
 pub struct WamnPostgresConfig {
-    /// `postgres://user:pass@host:port/db`. None = plugin registers but every
-    /// call returns `connection-unavailable`.
-    pub database_url: Option<String>,
+    /// The default project's per-class credentials. None = plugin registers but
+    /// every call returns `connection-unavailable`.
+    pub credentials: Option<ClassCredentials>,
     /// Connections reserved for guest-visible `wamn:postgres` calls.
     pub guest_pool_max_size: usize,
     /// Connections reserved for host-owned claim, authorization, and plan-supply work.
@@ -154,7 +154,7 @@ impl WamnPostgresConfig {
             // contract that an explicit source plus ANY ambient source is a
             // CONFLICT. Reading the environment here made the runtime its own
             // second source, which is the acceptance-forbidden behaviour.
-            database_url: None,
+            credentials: None,
             // Preserve the former total of 16 while reserving one measured
             // platform operation plus one headroom slot against guest starvation.
             guest_pool_max_size: num("WAMN_PG_GUEST_POOL_MAX", DEFAULT_GUEST_POOL_MAX_SIZE),
@@ -176,13 +176,66 @@ impl WamnPostgresConfig {
 // Credential resolution (per-project connection + policy)
 // ---------------------------------------------------------------------------
 
-/// Resolved connection + policy for one project's database. In production one
-/// project = one database (plan 2.3); the pool, statement timeout, and row
-/// limit are all per-project so one noisy project cannot starve or over-fetch
-/// on behalf of another.
+/// The credential each [`AuthorityClass`] authenticates with for one project
+/// (`wamn-0h0g.22.16`).
+///
+/// A class this map does not name has NO credential. That is the whole point:
+/// resolution REFUSES for such a class rather than handing back whatever login
+/// another class was configured with, so an un-provisioned authority is
+/// distinguishable from a provisioned one instead of quietly borrowing a shared
+/// principal.
+///
+/// There is deliberately no `From<&str>` for [`AuthorityClass`] here or
+/// anywhere: `wamn-0h0g.22.14` ruled the class one-way, so a class is named in
+/// code and matched against a configuration key, never parsed out of one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClassCredentials {
+    urls: HashMap<AuthorityClass, String>,
+}
+
+impl ClassCredentials {
+    /// Name ONE url as the credential of EVERY class, explicitly.
+    ///
+    /// This is the pre-cutover shape and it is not a fallback: the entries are
+    /// written down, so `resolve` still selects rather than defaulting. Every
+    /// family cutover REPLACES one entry with that family's own login
+    /// ([`Self::with_class`]) and leaves the others alone; none of them
+    /// reintroduces an implicit shared credential.
+    pub fn every_class(url: impl Into<String>) -> Self {
+        let url = url.into();
+        Self {
+            urls: AuthorityClass::ALL
+                .into_iter()
+                .map(|class| (class, url.clone()))
+                .collect(),
+        }
+    }
+
+    /// Name one class's own credential, replacing any previous entry.
+    #[must_use]
+    pub fn with_class(mut self, class: AuthorityClass, url: impl Into<String>) -> Self {
+        self.urls.insert(class, url.into());
+        self
+    }
+
+    /// The url this class authenticates with, or `None` when it has none.
+    pub fn url(&self, class: AuthorityClass) -> Option<&str> {
+        self.urls.get(&class).map(String::as_str)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.urls.is_empty()
+    }
+}
+
+/// Per-project credentials + policy. In production one project = one database
+/// (plan 2.3); the pool, statement timeout, and row limit are all per-project so
+/// one noisy project cannot starve or over-fetch on behalf of another. The
+/// CREDENTIAL is per authority class, because two authorities in one database
+/// are two different logins.
 #[derive(Clone, Debug)]
 pub struct ProjectConfig {
-    pub database_url: String,
+    pub credentials: ClassCredentials,
     pub guest_pool_max_size: usize,
     pub platform_pool_max_size: usize,
     pub wait_timeout_ms: u64,
@@ -192,9 +245,9 @@ pub struct ProjectConfig {
 
 impl ProjectConfig {
     /// The default project's config, from the single-DB [`WamnPostgresConfig`].
-    pub(super) fn from_global(url: String, cfg: &WamnPostgresConfig) -> Self {
+    pub(super) fn from_global(credentials: ClassCredentials, cfg: &WamnPostgresConfig) -> Self {
         Self {
-            database_url: url,
+            credentials,
             guest_pool_max_size: cfg.guest_pool_max_size,
             platform_pool_max_size: cfg.platform_pool_max_size,
             wait_timeout_ms: cfg.wait_timeout_ms,
@@ -202,6 +255,31 @@ impl ProjectConfig {
             row_limit: cfg.row_limit,
         }
     }
+
+    /// This class's credential, carrying the project's policy. `None` = the
+    /// class has no configured credential and the caller must refuse.
+    pub fn select(&self, class: AuthorityClass) -> Option<ResolvedCredential> {
+        Some(ResolvedCredential {
+            database_url: self.credentials.url(class)?.to_string(),
+            guest_pool_max_size: self.guest_pool_max_size,
+            platform_pool_max_size: self.platform_pool_max_size,
+            wait_timeout_ms: self.wait_timeout_ms,
+            statement_timeout_ms: self.statement_timeout_ms,
+            row_limit: self.row_limit,
+        })
+    }
+}
+
+/// One authority class's resolved connection + the project policy that travels
+/// with every call made against it.
+#[derive(Clone, Debug)]
+pub struct ResolvedCredential {
+    pub database_url: String,
+    pub guest_pool_max_size: usize,
+    pub platform_pool_max_size: usize,
+    pub wait_timeout_ms: u64,
+    pub statement_timeout_ms: u32,
+    pub row_limit: u64,
 }
 
 /// Resolves a project id to its database connection + policy. This is the seam
@@ -216,9 +294,9 @@ pub trait CredentialProvider: Send + Sync {
     /// `connection-unavailable`, logged).
     ///
     /// `class` is the trusted caller's [`AuthorityClass`]. It never originates
-    /// from a guest (`wamn-0h0g.22.8`), and it is part of the resolution rather
-    /// than a post-hoc filter so a provider can hand different authorities
-    /// different credentials for the same project.
+    /// from a guest (`wamn-0h0g.22.8`), and it SELECTS THE CREDENTIAL
+    /// (`wamn-0h0g.22.16`): a project names one login per class, and a class it
+    /// does not name resolves to an error rather than to another class's login.
     ///
     /// `tenant` is `Some` for guest-SQL and `None` for host-owned platform
     /// work. After `wamn-0h0g.22.6` the guest's tenant comes from
@@ -230,7 +308,7 @@ pub trait CredentialProvider: Send + Sync {
         project: &str,
         class: AuthorityClass,
         tenant: Option<&str>,
-    ) -> anyhow::Result<Option<ProjectConfig>>;
+    ) -> anyhow::Result<Option<ResolvedCredential>>;
 }
 
 /// v0 provider: an in-memory project→config map populated from
@@ -263,11 +341,19 @@ impl StaticCredentialProvider {
         Self::new(HashMap::new(), default)
     }
 
-    /// Parse `{ "<project>": { "url": .., "row_limit"?: .., .. }, .. }`; unset
-    /// per-project fields fall back to `base`. Mirrors a mounted projects
-    /// Secret/ConfigMap. Public so the 2.3 `provisionbench` gate can feed the
-    /// projects-file JSON that `provision-project` emits through the exact parse
-    /// path production uses (`from_env`), proving a provisioned project resolves.
+    /// Parse `{ "<project>": { "url"?: .., "credentials"?: { "<class>": .. },
+    /// "row_limit"?: .., .. }, .. }`; unset per-project fields fall back to
+    /// `base`. Mirrors a mounted projects Secret/ConfigMap. Public so the 2.3
+    /// `provisionbench` gate can feed the projects-file JSON that
+    /// `provision-project` emits through the exact parse path production uses
+    /// (`from_env`), proving a provisioned project resolves.
+    ///
+    /// `"url"` names one login for EVERY class — written out, not defaulted —
+    /// and `"credentials"` names one class's own login, overriding it. A class
+    /// neither of them names has no credential and is refused at resolution
+    /// (`wamn-0h0g.22.16`). An entry naming neither is refused here, because a
+    /// project with no credential at all is a configuration error, not a
+    /// project that resolves to nothing.
     pub fn projects_from_json(
         text: &str,
         base: &WamnPostgresConfig,
@@ -284,16 +370,12 @@ impl StaticCredentialProvider {
                 "project {name:?} uses retired \"pool_max_size\"; configure \
                  \"guest_pool_max_size\" and \"platform_pool_max_size\" separately"
             );
-            let url = entry
-                .get("url")
-                .and_then(|u| u.as_str())
-                .with_context(|| format!("project {name:?} missing string \"url\""))?
-                .to_string();
+            let credentials = class_credentials_from_json(name, entry)?;
             let u64_or = |k: &str, d: u64| entry.get(k).and_then(|n| n.as_u64()).unwrap_or(d);
             out.insert(
                 name.clone(),
                 ProjectConfig {
-                    database_url: url,
+                    credentials,
                     guest_pool_max_size: u64_or(
                         "guest_pool_max_size",
                         base.guest_pool_max_size as u64,
@@ -318,34 +400,85 @@ impl StaticCredentialProvider {
     }
 }
 
+/// Read one project entry's per-class credentials.
+///
+/// The class is MATCHED, never parsed: `wamn-0h0g.22.14` ruled `AuthorityClass`
+/// one-way and forbade a `FromStr`/`Deserialize` on it, so this walks the closed
+/// class set and compares each label against the configured keys. An
+/// unrecognised key is refused rather than ignored — silently dropping it would
+/// leave the operator believing a class was configured when it was not.
+fn class_credentials_from_json(
+    name: &str,
+    entry: &serde_json::Value,
+) -> anyhow::Result<ClassCredentials> {
+    let mut credentials = match entry.get("url") {
+        Some(url) => ClassCredentials::every_class(
+            url.as_str()
+                .with_context(|| format!("project {name:?} \"url\" must be a string"))?,
+        ),
+        None => ClassCredentials::default(),
+    };
+    if let Some(per_class) = entry.get("credentials") {
+        let per_class = per_class
+            .as_object()
+            .with_context(|| format!("project {name:?} \"credentials\" must be a JSON object"))?;
+        for (label, url) in per_class {
+            let class = AuthorityClass::ALL
+                .into_iter()
+                .find(|class| class.as_str() == label)
+                .with_context(|| {
+                    format!("project {name:?} names unknown authority class {label:?}")
+                })?;
+            let url = url.as_str().with_context(|| {
+                format!("project {name:?} credential for {label:?} must be a string")
+            })?;
+            credentials = credentials.with_class(class, url);
+        }
+    }
+    anyhow::ensure!(
+        !credentials.is_empty(),
+        "project {name:?} names no credential: give it \"url\" or a \"credentials\" entry"
+    );
+    Ok(credentials)
+}
+
 impl CredentialProvider for StaticCredentialProvider {
-    /// One credential per project-environment (`wamn-0h0g.22.6.7`, owner
-    /// ruling (a)), so the class does not select here — it travels through the
-    /// seam because it is part of the POOL KEY: two authorities must never
-    /// share a pooled session even when they resolve to the same URL.
+    /// THE CLASS SELECTS THE CREDENTIAL (`wamn-0h0g.22.16`). A project names one
+    /// login per authority class; a class it does not name is REFUSED here, so
+    /// an authority that was never provisioned cannot authenticate as one that
+    /// was. The class remains part of the POOL KEY as well: two authorities must
+    /// never share a pooled session even when they resolve to the same URL.
     ///
     /// FOR GUEST SQL THE TENANT BINDING IS VERIFIED, NOT CONFIGURED. The
     /// credential's login role carries the tenant key as its scope digest, and
     /// the same key is what every governed predicate computes — so the binding
     /// is proven from the credential itself rather than declared beside it,
     /// and a credential minted for another tenant is REFUSED instead of
-    /// silently borrowed.
+    /// silently borrowed. Selection happens FIRST and the check runs on the
+    /// selected credential, so it fires on exactly the credential that would be
+    /// handed back — never on a different class's login.
     fn resolve(
         &self,
         project: &str,
         class: AuthorityClass,
         tenant: Option<&str>,
-    ) -> anyhow::Result<Option<ProjectConfig>> {
-        let Some(cfg) = self.projects.get(project).cloned() else {
+    ) -> anyhow::Result<Option<ResolvedCredential>> {
+        let Some(cfg) = self.projects.get(project) else {
             return Ok(None);
         };
+        let resolved = cfg.select(class).with_context(|| {
+            format!(
+                "project {project:?} names no credential for authority class {class}; refusing \
+                 rather than authenticating as another authority's login"
+            )
+        })?;
         if class == AuthorityClass::GuestSql {
             let tenant = tenant.context(
                 "guest-SQL resolution requires the tenant: after wamn-0h0g.22.6 the \
                  credential IS the tenant authority",
             )?;
-            let database = credential_database(&cfg.database_url)?;
-            let role = credential_generation_role(&cfg.database_url)?;
+            let database = credential_database(&resolved.database_url)?;
+            let role = credential_generation_role(&resolved.database_url)?;
             let key = app_scope_hash(tenant, &database);
             anyhow::ensure!(
                 role.contains(&key),
@@ -354,7 +487,7 @@ impl CredentialProvider for StaticCredentialProvider {
                  than reading another tenant's rows"
             );
         }
-        Ok(Some(cfg))
+        Ok(Some(resolved))
     }
 }
 
@@ -373,7 +506,7 @@ impl CredentialProvider for K8sSecretProvider {
         _project: &str,
         _class: AuthorityClass,
         _tenant: Option<&str>,
-    ) -> anyhow::Result<Option<ProjectConfig>> {
+    ) -> anyhow::Result<Option<ResolvedCredential>> {
         anyhow::bail!(
             "K8sSecretProvider (namespace {:?}) is not implemented yet — see wamn-5x0.1 [2.2b]; use StaticCredentialProvider",
             self.namespace
@@ -495,7 +628,7 @@ impl PoolLifecycle {
         }
     }
 
-    pub(super) const fn max_size(self, config: &ProjectConfig) -> usize {
+    pub(super) const fn max_size(self, config: &ResolvedCredential) -> usize {
         match self {
             Self::Guest => config.guest_pool_max_size,
             Self::Platform => config.platform_pool_max_size,
@@ -645,14 +778,197 @@ mod tests {
     const AMBIENT_PROBE_VAR: &str = "WAMN_POOL_AMBIENT_PROBE";
 
     fn config(url: &str) -> ProjectConfig {
+        project_config(ClassCredentials::every_class(url))
+    }
+
+    fn project_config(credentials: ClassCredentials) -> ProjectConfig {
         ProjectConfig {
-            database_url: url.to_string(),
+            credentials,
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 1,
             statement_timeout_ms: 1,
             row_limit: 1,
         }
+    }
+
+    fn base() -> WamnPostgresConfig {
+        WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 14,
+            platform_pool_max_size: 2,
+            wait_timeout_ms: 100,
+            statement_timeout_ms: 100,
+            row_limit: 10,
+        }
+    }
+
+    /// *** THE CLASS SELECTS THE CREDENTIAL. ***
+    ///
+    /// Before `wamn-0h0g.22.16` `resolve` returned the same url whatever
+    /// authority asked, so every family authenticated as the shared `wamn_app`
+    /// login. Four classes, four configured logins, four different answers.
+    #[test]
+    fn each_authority_class_authenticates_with_its_own_configured_credential() {
+        let projects = StaticCredentialProvider::projects_from_json(
+            r#"{"billing":{"credentials":{
+                 "guest-sql":"postgres://wamn_app_g_a:pw@db/billing",
+                 "executor-platform":"postgres://wamn_exec_platform_x_a:pw@db/billing",
+                 "callable-http":"postgres://wamn_http_admitter_x_a:pw@db/billing",
+                 "event-materializer":"postgres://wamn_materializer_x_a:pw@db/billing"}}}"#,
+            &base(),
+        )
+        .expect("per-class credentials parse");
+        let cfg = projects.get("billing").expect("project billing");
+
+        let mut seen = Vec::new();
+        for class in AuthorityClass::ALL {
+            let url = cfg
+                .select(class)
+                .unwrap_or_else(|| panic!("{class} has a configured credential"))
+                .database_url;
+            assert!(
+                !seen.contains(&url),
+                "{class} was handed a credential another authority already holds"
+            );
+            seen.push(url);
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    /// A class with no configured credential REFUSES. The forbidden behaviour is
+    /// the quiet one: handing back whichever login happened to be configured for
+    /// some other authority, which is how an unprovisioned family becomes
+    /// indistinguishable from a provisioned one.
+    #[test]
+    fn a_class_with_no_configured_credential_is_refused_not_defaulted() {
+        let projects = StaticCredentialProvider::projects_from_json(
+            r#"{"billing":{"credentials":{"guest-sql":"postgres://wamn_app_g_a:pw@db/billing"}}}"#,
+            &base(),
+        )
+        .expect("a single-class project parses");
+        let provider = StaticCredentialProvider::new(projects, None);
+
+        for class in [
+            AuthorityClass::ExecutorPlatform,
+            AuthorityClass::CallableHttp,
+            AuthorityClass::EventMaterializer,
+        ] {
+            let error = provider
+                .resolve("billing", class, None)
+                .expect_err("an unconfigured class must refuse");
+            assert!(
+                format!("{error:#}").contains("names no credential for authority class"),
+                "{class} refused for the wrong reason: {error:#}"
+            );
+        }
+    }
+
+    /// The pre-cutover shape, stated rather than defaulted: one `"url"` names
+    /// every class EXPLICITLY, so nothing regresses while no family is cut over
+    /// and resolution still selects instead of falling back.
+    #[test]
+    fn one_configured_url_names_every_class_explicitly() {
+        let projects = StaticCredentialProvider::projects_from_json(
+            r#"{"billing":{"url":"postgres://wamn_app_g_a:pw@db/billing"}}"#,
+            &base(),
+        )
+        .expect("a single-url project parses");
+        let cfg = projects.get("billing").expect("project billing");
+        for class in AuthorityClass::ALL {
+            assert_eq!(
+                cfg.select(class).map(|c| c.database_url).as_deref(),
+                Some("postgres://wamn_app_g_a:pw@db/billing"),
+                "{class} lost the project's only credential"
+            );
+        }
+        // And a per-class entry OVERRIDES that url for its own class alone.
+        let projects = StaticCredentialProvider::projects_from_json(
+            r#"{"billing":{"url":"postgres://wamn_app_g_a:pw@db/billing",
+                 "credentials":{"callable-http":"postgres://wamn_http_admitter_x_a:pw@db/billing"}}}"#,
+            &base(),
+        )
+        .expect("a mixed project parses");
+        let cfg = projects.get("billing").expect("project billing");
+        assert_eq!(
+            cfg.select(AuthorityClass::CallableHttp)
+                .map(|c| c.database_url)
+                .as_deref(),
+            Some("postgres://wamn_http_admitter_x_a:pw@db/billing")
+        );
+        assert_eq!(
+            cfg.select(AuthorityClass::EventMaterializer)
+                .map(|c| c.database_url)
+                .as_deref(),
+            Some("postgres://wamn_app_g_a:pw@db/billing")
+        );
+    }
+
+    #[test]
+    fn a_credential_file_that_names_no_class_or_an_unknown_one_is_refused() {
+        assert!(
+            StaticCredentialProvider::projects_from_json(r#"{"billing":{}}"#, &base()).is_err(),
+            "a project naming no credential at all must refuse"
+        );
+        let error = StaticCredentialProvider::projects_from_json(
+            r#"{"billing":{"credentials":{"guest_sql":"postgres://u_a:pw@db/billing"}}}"#,
+            &base(),
+        )
+        .expect_err("an unrecognised class key must refuse rather than be dropped");
+        assert!(format!("{error:#}").contains("unknown authority class"));
+    }
+
+    /// *** THE `wamn-0h0g.22.6.7` REFUSAL, ON THE SELECTED CREDENTIAL. ***
+    ///
+    /// The check must read the credential the GUEST would actually connect with,
+    /// not whatever url the project happens to carry for some other authority.
+    /// This project's platform login carries `acme`'s tenant key and its
+    /// guest login carries `evil`'s, so a check that read the wrong credential
+    /// would ADMIT a cross-tenant guest read. Both directions are asserted.
+    #[test]
+    fn the_guest_tenant_check_reads_the_credential_the_guest_would_connect_with() {
+        let credentials = ClassCredentials::every_class(format!(
+            "postgres://wamn_app_{}_a:pw@db/billing",
+            app_scope_hash("acme", "billing")
+        ))
+        .with_class(
+            AuthorityClass::GuestSql,
+            format!(
+                "postgres://wamn_app_{}_a:pw@db/billing",
+                app_scope_hash("evil", "billing")
+            ),
+        );
+        let mut projects = HashMap::new();
+        projects.insert("billing".to_string(), project_config(credentials));
+        let provider = StaticCredentialProvider::new(projects, None);
+
+        assert!(
+            provider
+                .resolve("billing", AuthorityClass::GuestSql, Some("acme"))
+                .is_err(),
+            "the guest credential is minted for another tenant and must be REFUSED, \
+             not borrowed — reading the platform credential here would admit a \
+             cross-tenant read"
+        );
+        assert!(
+            provider
+                .resolve("billing", AuthorityClass::GuestSql, Some("evil"))
+                .expect("the guest credential's own tenant resolves")
+                .is_some()
+        );
+        assert!(
+            provider
+                .resolve("billing", AuthorityClass::GuestSql, None)
+                .is_err(),
+            "guest resolution without a tenant has no authority to check"
+        );
+        // The platform class is project-environment scoped: no tenant binding.
+        assert!(
+            provider
+                .resolve("billing", AuthorityClass::ExecutorPlatform, None)
+                .expect("platform resolution needs no tenant")
+                .is_some()
+        );
     }
 
     /// The acceptance-forbidden silent fallback. An unprovisioned project used
@@ -844,7 +1160,7 @@ mod tests {
                 "the child must run WITH the ambient url set, or it proves nothing"
             );
             assert!(
-                WamnPostgresConfig::from_env().database_url.is_none(),
+                WamnPostgresConfig::from_env().credentials.is_none(),
                 "from_env read an ambient WAMN_PG_URL; the runtime must not be its                  own second credential source"
             );
             return;
@@ -892,14 +1208,7 @@ mod tests {
 
     #[test]
     fn project_config_names_each_lifecycle_budget_and_refuses_the_retired_key() {
-        let base = WamnPostgresConfig {
-            database_url: None,
-            guest_pool_max_size: 14,
-            platform_pool_max_size: 2,
-            wait_timeout_ms: 100,
-            statement_timeout_ms: 100,
-            row_limit: 10,
-        };
+        let base = base();
         let projects = StaticCredentialProvider::projects_from_json(
             r#"{"p":{"url":"postgres://localhost/p","guest_pool_max_size":7,"platform_pool_max_size":3}}"#,
             &base,

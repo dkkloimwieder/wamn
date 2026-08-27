@@ -31,7 +31,7 @@ use wamn_runtime::plugins::wamn_jetstream::{
     self, WAMN_JETSTREAM_ID, WamnJetstream, WamnJetstreamConfig,
 };
 use wamn_runtime::plugins::wamn_postgres::{
-    self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
+    self, ClassCredentials, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
 
 const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
@@ -1361,7 +1361,9 @@ async fn build_materializer(
     let guest = std::fs::read(&args.component)
         .with_context(|| format!("read {}", args.component.display()))?;
     let mut pg_config = WamnPostgresConfig::from_env();
-    pg_config.database_url = Some(args.database_url.clone());
+    // wamn-0h0g.22.16: the gate names the authority each credential belongs to.
+    // No family is cut over, so its one url is written down for every class.
+    pg_config.credentials = Some(ClassCredentials::every_class(args.database_url.clone()));
     let pg = Arc::new(WamnPostgres::new(pg_config)?);
     pg.set_tenant(&resources.gate_id, &resources.tenant)?;
     pg.set_schema(&resources.gate_id, "wamn_run")?;
