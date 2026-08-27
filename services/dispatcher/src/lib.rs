@@ -90,9 +90,20 @@ pub struct DispatchArgs {
     #[arg(long, env = "WAMN_DISPATCH_PROJECTS_FILE")]
     pub projects_file: Option<PathBuf>,
 
-    /// Single-project fallback: app database URL. Overrides WAMN_PG_URL /
-    /// DATABASE_URL.
-    #[arg(long)]
+    /// Single-project fallback: the one app database URL this dispatcher
+    /// authenticates with when no projects file is given.
+    ///
+    /// `WAMN_PG_URL` is the DECLARED TRANSPORT, not a fallback: naming it on
+    /// the argument makes clap the single place the credential is read.
+    /// `wamn-0h0g.22.30` removed the two ambient sources (`WAMN_PG_URL` and
+    /// `DATABASE_URL`) that `resolve_projects` read behind it — an explicit
+    /// source plus any ambient source is the conflict
+    /// `credential_exactness::AmbientCredentialState` already declares, and the
+    /// dispatcher was its own second and third source. That mattered here
+    /// because `wamn-0h0g.22.24` cut this service onto per-database credential
+    /// generations: an ambient URL resolving to a shared or stale login would
+    /// quietly defeat that cutover.
+    #[arg(long, env = "WAMN_PG_URL")]
     pub database_url: Option<String>,
 
     /// Tenant claim for the single-project fallback.
@@ -478,6 +489,12 @@ pub fn epoch_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// The one message a dispatcher with no project source dies on. Named so the
+/// declaration-level test can assert it offers only sources that are still
+/// read (`wamn-0h0g.22.30`).
+const MISSING_PROJECTS_CONTEXT: &str =
+    "no projects: pass --projects-file, or --database-url / WAMN_PG_URL";
+
 /// Resolve the projects the dispatcher serves: the projects file, or the
 /// single-project fallback flags.
 fn resolve_projects(args: &DispatchArgs) -> anyhow::Result<Vec<ProjectSpec>> {
@@ -494,12 +511,14 @@ fn resolve_projects(args: &DispatchArgs) -> anyhow::Result<Vec<ProjectSpec>> {
             .map(|(name, input)| project_spec(name, input))
             .collect();
     }
+    // ONE source, read once, at trusted composition (`wamn-0h0g.22.30`). The
+    // `or_else` chain this replaces made the process its own second and third
+    // credential source; clap now resolves `--database-url` or its declared
+    // `WAMN_PG_URL` env, and nothing else is consulted.
     let url = args
         .database_url
         .clone()
-        .or_else(|| std::env::var("WAMN_PG_URL").ok())
-        .or_else(|| std::env::var("DATABASE_URL").ok())
-        .context("no projects: pass --projects-file or --database-url / WAMN_PG_URL")?;
+        .context(MISSING_PROJECTS_CONTEXT)?;
     Ok(vec![project_spec(
         "default".to_string(),
         ProjectSpecInput {
@@ -713,10 +732,67 @@ fn init_crypto() {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory as _;
+
     use super::{
-        DispatcherConfig, ProjectSpecInput, RUN_QUEUE_DEPTH_SQL, doorbell_subject, next_reconcile,
-        project_spec, reconcile_due, valid_tenant,
+        DispatchArgs, DispatcherConfig, MISSING_PROJECTS_CONTEXT, ProjectSpecInput,
+        RUN_QUEUE_DEPTH_SQL, doorbell_subject, next_reconcile, project_spec, reconcile_due,
+        valid_tenant,
     };
+
+    /// THE CREDENTIAL HAS EXACTLY ONE SOURCE (`wamn-0h0g.22.30`).
+    ///
+    /// Asserted on the clap DECLARATION rather than by mutating the process
+    /// environment, which is global and racy across a test binary's threads.
+    /// `resolve_projects` no longer consults the environment at all for the
+    /// credential, so what clap declares here IS the whole source set: one
+    /// argument, one env var. A reintroduced `DATABASE_URL` fallback would
+    /// either appear as a second declared env (caught by the equality below) or
+    /// as an `or_else` chain in `resolve_projects` — which this pins by leaving
+    /// `WAMN_PG_URL` the only database env any dispatcher argument names.
+    #[test]
+    fn the_database_credential_names_one_env_and_no_second_source() {
+        #[derive(clap::Parser)]
+        struct TestCli {
+            #[command(flatten)]
+            args: DispatchArgs,
+        }
+
+        let command = TestCli::command();
+        let database_envs: Vec<String> = command
+            .get_arguments()
+            .filter_map(|arg| arg.get_env())
+            .map(|env| env.to_string_lossy().into_owned())
+            .filter(|env| env.ends_with("PG_URL") || env.ends_with("DATABASE_URL"))
+            .collect();
+        assert_eq!(
+            database_envs,
+            ["WAMN_PG_URL"],
+            "the dispatcher credential must have exactly one declared source"
+        );
+
+        let database_url = command
+            .get_arguments()
+            .find(|arg| arg.get_id() == "database_url")
+            .expect("the dispatcher declares a database-url argument");
+        assert_eq!(
+            database_url.get_env().map(|env| env.to_string_lossy()),
+            Some("WAMN_PG_URL".into()),
+            "WAMN_PG_URL is the argument's declared transport, not a fallback \
+             read behind it"
+        );
+
+        // The `.context(...)` a missing credential surfaces must not advertise
+        // a source `resolve_projects` no longer reads. Asserted on the literal,
+        // not by running `resolve_projects`, which would read the ambient
+        // `WAMN_PG_URL` of whatever shell the test binary inherited.
+        assert!(
+            !MISSING_PROJECTS_CONTEXT.contains("DATABASE_URL"),
+            "the missing-credential error must not offer a removed ambient \
+             source: {MISSING_PROJECTS_CONTEXT}"
+        );
+        assert!(MISSING_PROJECTS_CONTEXT.contains("WAMN_PG_URL"));
+    }
 
     #[test]
     fn depth_sql_counts_claimable_not_parked() {
