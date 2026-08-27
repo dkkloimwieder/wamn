@@ -50,6 +50,10 @@ pub const EVENT_MATERIALIZER_ROLE: &str = "wamn_event_materializer";
 /// digest itself, collapsing both generations and three digest characters. This
 /// shorter frozen prefix keeps the derived login at 60 bytes.
 const EVENT_MATERIALIZER_GENERATION_PREFIX: &str = "wamn_materializer";
+/// Stable NOLOGIN role used by control-registry reader generations.
+pub const REGISTRY_READER_ROLE: &str = "wamn_registry_reader";
+/// Stable NOLOGIN role used by control-identity reader generations.
+pub const IDENTITY_READER_ROLE: &str = "wamn_identity_reader";
 
 pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 
@@ -66,6 +70,17 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// guest-sql, already mapped to [`WorkloadRoleFamily::App`]. Only the families
 /// land here; keying credential selection by authority class is
 /// `wamn-0h0g.22.8`.
+/// `wamn-0h0g.13.63` is the fourth deliberate expansion, from ten to twelve,
+/// admitting the two CONTROL-scoped reader families the T1 system database's
+/// two purported read-only consumers need. Scope follows the RESOURCE PLANE,
+/// not the consumer's home, so both are [`WorkloadRoleScopeKind::Control`] and
+/// neither may reuse the project-environment-scoped
+/// [`WorkloadRoleFamily::ServiceReader`]. TWO families, not one, because the
+/// two grant sets are disjoint and must stay so: `wamn-0h0g.12.116`'s consumer
+/// reads `registry.event_readers` and `wamn-0h0g.12.67`'s reads
+/// `identity.pats`, `identity.principals` and `identity.project_roles` — one
+/// family for both is how one role gets widened to the union. Only the
+/// families land here; the grants, Secrets and consumers are those two beads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
     EffectWriter,
@@ -78,6 +93,8 @@ pub enum WorkloadRoleFamily {
     ExecutorPlatform,
     HttpAdmitter,
     EventMaterializer,
+    RegistryReader,
+    IdentityReader,
 }
 
 impl WorkloadRoleFamily {
@@ -87,7 +104,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::EffectWriter,
         Self::ControlAuthor,
         Self::ManagementAdmitter,
@@ -98,6 +115,8 @@ impl WorkloadRoleFamily {
         Self::ExecutorPlatform,
         Self::HttpAdmitter,
         Self::EventMaterializer,
+        Self::RegistryReader,
+        Self::IdentityReader,
     ];
 
     /// Stable NOLOGIN ACL role inherited by this family's generations.
@@ -113,6 +132,8 @@ impl WorkloadRoleFamily {
             Self::ExecutorPlatform => EXECUTOR_PLATFORM_ROLE,
             Self::HttpAdmitter => HTTP_ADMITTER_ROLE,
             Self::EventMaterializer => EVENT_MATERIALIZER_ROLE,
+            Self::RegistryReader => REGISTRY_READER_ROLE,
+            Self::IdentityReader => IDENTITY_READER_ROLE,
         }
     }
 
@@ -122,7 +143,11 @@ impl WorkloadRoleFamily {
     /// fits the PostgreSQL identifier cap once the scope digest and generation
     /// suffix are appended. `ManagementAdmitter` (`wamn-0h0g.13.62`),
     /// `ExecutorPlatform` and `EventMaterializer` (`wamn-0fqa`) do not, so each
-    /// carries its own shorter frozen prefix.
+    /// carries its own shorter frozen prefix. `RegistryReader` and
+    /// `IdentityReader` (`wamn-0h0g.13.63`) are the first families to fit
+    /// EXACTLY: their 20-byte role names mint 63-byte logins, the largest
+    /// PostgreSQL stores untruncated, so they take the wildcard arm and the
+    /// exactness is pinned by test rather than left to be rediscovered.
     pub const fn generation_prefix(self) -> &'static str {
         match self {
             Self::ManagementAdmitter => MANAGEMENT_ADMITTER_GENERATION_PREFIX,
@@ -142,7 +167,11 @@ impl WorkloadRoleFamily {
             | Self::ExecutorPlatform
             | Self::HttpAdmitter
             | Self::EventMaterializer => WorkloadRoleScopeKind::ProjectEnvironment,
-            Self::ControlAuthor => WorkloadRoleScopeKind::Control,
+            // Scope follows the RESOURCE PLANE, not the consumer's home: these
+            // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
+            Self::ControlAuthor | Self::RegistryReader | Self::IdentityReader => {
+                WorkloadRoleScopeKind::Control
+            }
         }
     }
 
@@ -229,6 +258,8 @@ impl WorkloadRoleFamily {
             Self::ExecutorPlatform => b"wamn.executor-platform.scope.v0.1",
             Self::HttpAdmitter => b"wamn.http-admitter.scope.v0.1",
             Self::EventMaterializer => b"wamn.event-materializer.scope.v0.1",
+            Self::RegistryReader => b"wamn.registry-reader.scope.v0.1",
+            Self::IdentityReader => b"wamn.identity-reader.scope.v0.1",
         }
     }
 }
@@ -562,8 +593,9 @@ mod tests {
         }
     }
 
-    /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten).
-    const FAMILIES: [WorkloadRoleFamily; 10] = [
+    /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten;
+    /// `wamn-0h0g.13.63`: ten to twelve).
+    const FAMILIES: [WorkloadRoleFamily; 12] = [
         WorkloadRoleFamily::EffectWriter,
         WorkloadRoleFamily::ControlAuthor,
         WorkloadRoleFamily::ManagementAdmitter,
@@ -574,11 +606,13 @@ mod tests {
         WorkloadRoleFamily::ExecutorPlatform,
         WorkloadRoleFamily::HttpAdmitter,
         WorkloadRoleFamily::EventMaterializer,
+        WorkloadRoleFamily::RegistryReader,
+        WorkloadRoleFamily::IdentityReader,
     ];
 
     #[test]
     fn family_set_and_scope_classes_are_closed() {
-        // An eleventh variant fails to compile here as well as in the
+        // A thirteenth variant fails to compile here as well as in the
         // implementation, so the pinned vocabulary cannot silently grow.
         for (index, family) in FAMILIES.into_iter().enumerate() {
             let pinned = match family {
@@ -592,6 +626,8 @@ mod tests {
                 WorkloadRoleFamily::ExecutorPlatform => 7,
                 WorkloadRoleFamily::HttpAdmitter => 8,
                 WorkloadRoleFamily::EventMaterializer => 9,
+                WorkloadRoleFamily::RegistryReader => 10,
+                WorkloadRoleFamily::IdentityReader => 11,
             };
             assert_eq!(index, pinned, "{family:?}");
         }
@@ -608,6 +644,8 @@ mod tests {
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
+                WorkloadRoleScopeKind::Control,
+                WorkloadRoleScopeKind::Control,
             ],
         );
         assert_eq!(
@@ -623,6 +661,8 @@ mod tests {
                 "wamn_executor_platform",
                 "wamn_http_admitter",
                 "wamn_event_materializer",
+                "wamn_registry_reader",
+                "wamn_identity_reader",
             ],
         );
     }
@@ -729,6 +769,24 @@ mod tests {
                     project: "p",
                     environment: "dev",
                     database: "db",
+                },
+            ),
+            (
+                WorkloadRoleFamily::RegistryReader,
+                WorkloadRoleScope::Control {
+                    org: "o",
+                    project: "p",
+                    environment: "dev",
+                    database: "control",
+                },
+            ),
+            (
+                WorkloadRoleFamily::IdentityReader,
+                WorkloadRoleScope::Control {
+                    org: "o",
+                    project: "p",
+                    environment: "dev",
+                    database: "control",
                 },
             ),
         ];
@@ -890,6 +948,108 @@ mod tests {
         assert_eq!(
             WorkloadRoleFamily::HttpAdmitter.generation_prefix(),
             WorkloadRoleFamily::HttpAdmitter.acl_role()
+        );
+    }
+
+    /// The scope tuple the module's existing frozen rows already use. `database`
+    /// is an opaque framed field in the derivation, so reusing this tuple puts
+    /// the new identities in the same coordinate system as the old ones rather
+    /// than inventing a control-database name here.
+    const FROZEN_SCOPE: WorkloadRoleScope<'static> = WorkloadRoleScope::Control {
+        org: "acme",
+        project: "billing",
+        environment: "dev",
+        database: "wamn-db-acme--billing--dev--k3m9x2p7",
+    };
+
+    /// THE SCOPE LIE, CLOSED BY THE DERIVATION ITSELF (`wamn-0h0g.13.63`).
+    ///
+    /// Both control readers are `Control`-scoped because scope follows the
+    /// RESOURCE PLANE: their credentials reach the CONTROL database. The
+    /// convenient reuse — re-pointing either consumer's credential at the
+    /// already-existing `ServiceReader` — would encode a scope lie in a variant
+    /// that means `ProjectEnvironment`. It cannot be reintroduced quietly: the
+    /// grain check refuses before any role name exists, so the reuse fails here
+    /// rather than minting a plausible-looking login under the wrong plane.
+    #[test]
+    fn the_control_readers_cannot_be_reissued_as_the_project_environment_service_reader() {
+        for family in [
+            WorkloadRoleFamily::RegistryReader,
+            WorkloadRoleFamily::IdentityReader,
+        ] {
+            assert_eq!(
+                family.scope_kind(),
+                WorkloadRoleScopeKind::Control,
+                "{family:?}: scope follows the resource plane, and that plane is control"
+            );
+            workload_generation_role(family, FROZEN_SCOPE, CredentialGeneration::A)
+                .expect("a control reader derives under control scope");
+        }
+        assert_eq!(
+            WorkloadRoleFamily::ServiceReader.scope_kind(),
+            WorkloadRoleScopeKind::ProjectEnvironment,
+            "ServiceReader is the project-environment reader; that is why it is not reusable"
+        );
+        let error = workload_generation_role(
+            WorkloadRoleFamily::ServiceReader,
+            FROZEN_SCOPE,
+            CredentialGeneration::A,
+        )
+        .expect_err("ServiceReader accepted a control scope");
+        assert_eq!(error.family, WorkloadRoleFamily::ServiceReader);
+        assert_eq!(error.expected, WorkloadRoleScopeKind::ProjectEnvironment);
+        assert_eq!(error.actual, WorkloadRoleScopeKind::Control);
+    }
+
+    /// The two control readers' frozen strings and identities.
+    ///
+    /// `wamn-0h0g.13.63`. The derived logins were computed independently of this
+    /// module. Both land at EXACTLY 63 bytes — the largest PostgreSQL stores
+    /// untruncated — so the equality on the length is the guard: a longer role
+    /// name or a longer digest would be truncated silently, and truncation
+    /// drops the `_a`/`_b` suffix that keeps the two generations apart.
+    #[test]
+    fn the_two_control_reader_families_freeze_their_strings_and_identities() {
+        for (family, acl_role, scope_domain, role_a) in [
+            (
+                WorkloadRoleFamily::RegistryReader,
+                "wamn_registry_reader",
+                b"wamn.registry-reader.scope.v0.1".as_slice(),
+                "wamn_registry_reader_c8216ab3ed30b424606deacec7d0d7cb7e65649b_a",
+            ),
+            (
+                WorkloadRoleFamily::IdentityReader,
+                "wamn_identity_reader",
+                b"wamn.identity-reader.scope.v0.1".as_slice(),
+                "wamn_identity_reader_4ea81a9f35b250844e8e95f9985cf1e4f7c16dba_a",
+            ),
+        ] {
+            assert_eq!(family.acl_role(), acl_role, "{family:?}");
+            assert_eq!(family.scope_domain(), scope_domain, "{family:?}");
+            // The 20-byte role name fits, so no shorter frozen prefix is minted.
+            assert_eq!(family.generation_prefix(), acl_role, "{family:?}");
+            assert_eq!(acl_role.len() + SCOPE_HASH_HEX_LEN + 3, 63, "{family:?}");
+            let derived =
+                workload_generation_role(family, FROZEN_SCOPE, CredentialGeneration::A).unwrap();
+            assert_eq!(derived, role_a);
+            assert_eq!(derived.len(), 63, "{family:?}");
+        }
+        // Two families, two domains, two distinct identities on one scope: the
+        // disjoint grant sets `wamn-0h0g.12.116` and `wamn-0h0g.12.67` own can
+        // never converge on a single role.
+        assert_ne!(
+            workload_generation_role(
+                WorkloadRoleFamily::RegistryReader,
+                FROZEN_SCOPE,
+                CredentialGeneration::A
+            )
+            .unwrap(),
+            workload_generation_role(
+                WorkloadRoleFamily::IdentityReader,
+                FROZEN_SCOPE,
+                CredentialGeneration::A
+            )
+            .unwrap(),
         );
     }
 
