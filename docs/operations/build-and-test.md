@@ -325,6 +325,41 @@ Superuser, path `/postgres`. The legs share the `catalog` schema and the
 `wamn_app` role, so they run sequentially under one entry; the execution-pin
 cutover has a second entry.
 
+### `[CATALOG-PLANE]` — the catalog plane-residency refusal
+
+`services/ctl/tests/catalog_plane_residency_live.rs` (`wamn-0h0g.12.180`).
+
+```bash
+WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
+  cargo test -p wamn-ctl --test catalog_plane_residency_live -- --ignored
+```
+
+Superuser URL. Builds BOTH stores from the production artifacts and proves
+`ensure_catalog_storage` refuses a CONTROL database *before* it mutates
+cluster-global role state. The witness is `catalog.authoring_command_audit`, not
+a shared name — `catalog.catalogs` exists in both planes and cannot tell them
+apart. Proves an UPGRADE, not a virgin install: it retires the release-component
+migration block, proves reinstallation, and asserts a further pass is a no-op on
+the table inventory. Reserves the shared `wamn-ctl` lock and hands the database
+back with `PUBLIC CONNECT` restored.
+
+### `[PROVISION-ORDER]` — the documented provisioning order, end to end
+
+`services/ctl/tests/provisioning_order_live.rs` (`wamn-0h0g.12.179`).
+
+```bash
+WAMN_PROVISIONING_ORDER_PG18_URL=postgres://postgres:pw@127.0.0.1:PORT/postgres \
+  cargo test -p wamn-ctl --test provisioning_order_live -- --ignored --test-threads=1
+```
+
+**Needs a DISPOSABLE cluster** — it drops the cluster-global `wamn_app` and
+`wamn_dispatch_reader`. Two arms: an operator following the documented order
+completes it, and a refused prepare leaves exactly the state its documentation
+promises. The second arm is why the emitted `priv.sql` no longer grants
+`CONNECT` to the stable guest ACL role: `wamn_app` is cluster-global and
+generations inherit it, so one grant per environment reached EVERY environment
+on the cluster.
+
 ### `[EVT-READER]` — CDC event reader
 
 `services/cdc-reader/tests/event_reader_live.rs` (wamn-l5i9.10, D19 v3 §4).
@@ -447,9 +482,19 @@ docker run -d --name wamn-floor-pg -e POSTGRES_PASSWORD=probe \
   -p 127.0.0.1:5434:5432 postgres:18
 until psql postgres://postgres:probe@localhost:5434/postgres -Atqc 'select 1'; do :; done
 WAMN_TENANT_FLOOR_PG_URL=postgres://postgres:probe@localhost:5434/postgres \
-  cargo test -p wamn-control-provision --test deploy_sql_authority
+  cargo test -p wamn-control-provision --test deploy_sql_authority -- --test-threads=1
 docker rm -f wamn-floor-pg      # BY EXPLICIT NAME. Never prune.
 ```
+
+**`--test-threads=1` IS REQUIRED, NOT OPTIONAL.** Measured 2026-08-27 on a
+certified-empty cluster: without it this binary reports `4 passed; 1 failed`
+with `duplicate key value violates unique constraint "pg_authid_rolname_index",
+Key (rolname)=(wamn_app) already exists`. More than one test applies
+`postgres-init.sql`, whose `CREATE ROLE wamn_app` is **bare and unguarded**, and
+roles are CLUSTER-wide — so the parallel runner races two applications of the
+same unguarded create. Single-threaded it is `5 passed; 0 failed` and passes
+TWICE IN A ROW on the SAME cluster, which is the bar for a gate applying an
+artifact that carries a bare `CREATE ROLE`.
 
 Three arms: no guest-reachable relation keys on a settable claim; all 43
 re-keyed relations carry their `<table>_tkey` expression index (from
