@@ -55,6 +55,17 @@ pub const REGISTRY_READER_ROLE: &str = "wamn_registry_reader";
 /// Stable NOLOGIN role used by control-identity reader generations.
 pub const IDENTITY_READER_ROLE: &str = "wamn_identity_reader";
 
+/// The shared NOLOGIN group role every non-guest tenant-floor arm targets
+/// (`wamn-0h0g.22.17`).
+///
+/// ONE role, not one per family, and no `BYPASSRLS` anywhere. The tenant floor
+/// is the GUEST floor: narrowing it `TO wamn_app` does not EXEMPT a platform
+/// principal, because PostgreSQL DEFAULT-DENIES when RLS is enabled and no
+/// policy matches the connected role. Each governed relation therefore carries
+/// exactly one permissive arm `TO wamn_platform`, and the family's table grants
+/// stay the thing that limits what it can reach.
+pub const PLATFORM_GROUP_ROLE: &str = "wamn_platform";
+
 pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 
 /// Exhaustive provisioning families. Adding authority requires a code change.
@@ -173,6 +184,40 @@ impl WorkloadRoleFamily {
                 WorkloadRoleScopeKind::Control
             }
         }
+    }
+
+    /// Whether this family's generations are membered into
+    /// [`PLATFORM_GROUP_ROLE`] and so reach the permissive tenant-floor arm.
+    ///
+    /// DERIVED from the two facts that already decide it, never tabulated:
+    ///
+    /// * [`Self::App`] is the GUEST. The floor exists to admit it, and a
+    ///   platform arm would hand it every tenant's rows — the exact
+    ///   cross-tenant read `wamn-0h0g.22.6` closed.
+    /// * A [`WorkloadRoleScopeKind::Control`] family's credentials reach the
+    ///   CONTROL database, whose store carries its own restrictive
+    ///   `TO wamn_control_author` arm on a different authority derivation
+    ///   (`deploy/sql/control-portable-store.sql`). None of them holds a grant
+    ///   on any relation carrying the project-plane floor, so membership would
+    ///   be authority without a reader.
+    ///
+    /// Everything else — the eight families whose credentials reach a
+    /// project-environment or tenant database and are not the guest — is a
+    /// member. That includes the families with no grant set today
+    /// (`ServiceReader`, `ExecutorPlatform`, `HttpAdmitter`,
+    /// `EventMaterializer`): an RLS arm with no table grant behind it admits
+    /// nothing, and the alternative is that the day one of them ACQUIRES a
+    /// grant it reads zero rows with no error and no failing test.
+    ///
+    /// `EffectWriter` and `Retention` are `Tenant`-scoped and are members
+    /// anyway. Their login names carry a tenant DIGEST, but
+    /// `current_tenant_key` recovers a key only from the guest generation
+    /// pattern, and widening that regex is refused (`wamn-0h0g.22.17` owner
+    /// ruling). One shared arm therefore makes both cross-tenant on the
+    /// relations they hold grants on; the tenant predicate each keeps in its own
+    /// statements is what re-narrows them.
+    pub const fn is_platform_grain(self) -> bool {
+        !matches!(self, Self::App) && !matches!(self.scope_kind(), WorkloadRoleScopeKind::Control)
     }
 
     /// The family's operator-facing name, in the hyphenated convention.

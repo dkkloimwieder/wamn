@@ -232,11 +232,22 @@ Two distinct mechanisms, and they behave differently:
 **Nothing in this repository sets any `WAMN_*_PG_URL` or `WAMN_*_NATS_URL`.**
 Measured at `1bffa614`: grepping every `*.yaml`, `*.sh`, `*.toml`, `*.json` for
 `WAMN_CTL_PG_URL`, `WAMN_PROVISION_PG_URL`,
-`WAMN_MANAGEMENT_ADMITTER_PG18_URL`, `WAMN_READER_PG_URL` returns nothing. A
-gate whose variable nothing sets **has never executed**.
+`WAMN_MANAGEMENT_ADMITTER_PG18_URL`, `WAMN_READER_PG_URL` returns nothing.
+Re-measured at `wamn-0h0g.22.17` for a **fifth** server,
+`WAMN_PLATFORM_IDENTITY_PG_URL`
+(`services/scenario-worker/tests/management_live.rs`, recipe `[MGMT-LIVE]`
+below): also nothing. A gate whose variable nothing sets
+**has never executed**.
 `wamn-0h0g.15.137` inventory item 1 records what happened when wave 56 set one
 by hand for the first time: `services/dispatcher/tests/read_authority.rs`
 failed at four independent layers, three of which no measurement pass had found.
+`wamn-0h0g.22.17` armed `WAMN_PLATFORM_IDENTITY_PG_URL` for the first time and
+found the same shape: the run PASSES, and the only difference between a real run
+and the self-skip is the duration and one `eprintln!` libtest swallows. **Diff
+the duration.** Measured on that bead: unarmed `finished in 0.00s` with
+`skipping management_surface_…` under `--nocapture`; armed `finished in 0.65s`
+with no skip line and a `wamn-db-acme--receiving--dev--k3m9x2p7` database plus
+three minted generation logins left on the server.
 
 Two things are arranged so they cannot go unarmed.
 `deploy/gates/m1-gate-job.yaml` sets `WAMN_PG_URL`, `WAMN_PG_ADMIN_URL`,
@@ -450,11 +461,36 @@ The two relations that KEEP the claim (`wamn_run.operator_run_actions`,
 `wamn_run.run_queue`) are asserted as an exact set, so the sweep cannot pass by
 granting the guest access to them instead.
 
+`wamn-0h0g.22.17` adds two more tests to the same binary, for the SECOND arm
+every governed relation now carries. The floor is the GUEST floor, narrowed
+`TO wamn_app`; PostgreSQL default-denies when RLS is enabled and no policy
+matches the connected role, so that narrowing LOCKS OUT every platform-grain
+principal — at ZERO ROWS, with no error. One permissive arm `TO wamn_platform`
+per relation admits them. `every_governed_relation_carries_both_the_guest_floor_and_one_platform_arm`
+pins both counts per file (24/7/5/7), because adding a `TO` clause moves no
+governed clause, no retired clause and no expression index — a narrowing applied
+to 40 of the 43 passes every assertion that predates the bead.
+`the_platform_arm_admits_every_platform_family_from_the_server` asks `pg_policy`
+for the arms PER RELATION, asks `pg_auth_members` for the exact member set and
+its edge options, and then reads `wamn_run.effect_attempts` under three roles: a
+platform generation (all tenants), and a login in neither group holding the same
+table grant (zero rows).
+
+**`INHERIT TRUE` is the silent one.** Stable ACL roles are `NOINHERIT`, and
+PostgreSQL 16+ takes a membership's default `INHERIT` option from the member's
+`rolinherit` — so a bare `GRANT wamn_platform TO <acl_role>` lands
+`inherit_option = false` and every platform read returns zero rows with nothing
+raised. Measured on 18.6: bare grant 0 rows, `INHERIT TRUE` all rows.
+
 **This gate OWNS its server.** `postgres-init.sql` carries a bare
 `CREATE DATABASE wamn` and bare `CREATE ROLE`s, so the gate drops the database
-and all three roles before applying — and roles are cluster-wide. Point it only
-at a disposable server, never at one another suite is using. It passes twice in
-a row against a surviving cluster; that is the hermeticity check.
+and all four cluster roles (`wamn_app`, `wamn_scenario_author`,
+`wamn_effect_writer`, `wamn_platform`) plus its two probe roles before applying —
+and roles are cluster-wide. `wamn_platform` is the one that matters: a leftover
+healthy one carries last run's memberships, and a mutant that deletes the grant
+then passes. Point it only at a disposable server, never at one another suite is
+using. It passes twice in a row against a surviving cluster; that is the
+hermeticity check.
 
 **Host-side readiness only.** `docker exec … psql` returns success during
 postgres:18's init-then-restart while the published port is still down; the only
@@ -486,6 +522,46 @@ role derives no key and sees nothing even while setting the retired
 
 `--nocapture` and a grep for `skipping` is the only proof these ran: with the
 variable set the count is 0, without it 7.
+
+**These gates gained the same database precondition again at
+`wamn-0h0g.22.17`**: every emitted floor is now narrowed `TO wamn_app` and
+followed by an `AS PERMISSIVE FOR ALL TO wamn_platform` arm, so `wamn_platform`
+must exist or the `CREATE POLICY` fails outright. The three project-database
+`deploy/sql` files each create it themselves (advisory-locked, EXCEPTION-guarded)
+for exactly that reason; a gate that emits DDL rather than applying a file must
+create it, or apply `sql::ensure_platform_group_role_sql()` first.
+
+### `[MGMT-LIVE]` — the authenticated management authoring surface
+
+`services/scenario-worker/tests/management_live.rs`
+(`WAMN_PLATFORM_IDENTITY_PG_URL`). The FIFTH server. It provisions a control
+database AND a project-environment database, mints control-author,
+identity-reader and management-admitter generations, and drives the gate verb
+over HTTP.
+
+```bash
+docker run -d --name wamn-mgmt-pg -e POSTGRES_PASSWORD=probe \
+  -p 127.0.0.1:5437:5432 postgres:18
+until psql postgres://postgres:probe@localhost:5437/postgres -Atqc 'select 1'; do :; done
+WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:probe@localhost:5437/postgres \
+  cargo test -p wamn-scenario-worker --test management_live -- --nocapture
+docker rm -f wamn-mgmt-pg      # BY EXPLICIT NAME. Never prune.
+```
+
+Superuser, path `/postgres`, and it OWNS its server (it creates databases and
+cluster-wide roles). **It self-skips, so a green run is not evidence it ran** —
+see the arming section above for the duration diff that is.
+
+`wamn-0h0g.22.17` is what this gate proves that nothing else does: the
+management admitter reaches `catalog.wirings` and `catalog.component_library`
+under its OWN generation login. That family is
+`WorkloadRoleScope::ProjectEnvironment`, which has no tenant field, so
+`wamn_authority.current_tenant_key()` derives NULL for it and the guest floor
+can never admit it. Measured on the live project database this gate leaves
+behind, under the minted admitter with `rolbypassrls = false`: with the platform
+arm, 2 rows; with the arm dropped, **0 rows and no error**; with the pre-bead
+untargeted floor restored, `ERROR: permission denied for function
+current_tenant_key`.
 
 ### Other live gates that carry their command in-source
 

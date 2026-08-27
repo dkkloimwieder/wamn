@@ -1988,16 +1988,28 @@ fn environment_policy_row_security_at_record() -> RowSecurityObservation {
     RowSecurityObservation {
         enabled: true,
         forced: true,
-        policies: BTreeMap::from([(
-            "environment_policies_tenant".to_string(),
-            RowPolicyObservation {
-                command: "select".to_string(),
-                permissive: true,
-                roles: BTreeSet::from(["PUBLIC".to_string()]),
-                using_expression: Some(ENVIRONMENT_POLICY_TENANT_QUAL.to_string()),
-                check_expression: None,
-            },
-        )]),
+        policies: BTreeMap::from([
+            (
+                "environment_policies_tenant".to_string(),
+                RowPolicyObservation {
+                    command: "select".to_string(),
+                    permissive: true,
+                    roles: BTreeSet::from(["wamn_app".to_string()]),
+                    using_expression: Some(ENVIRONMENT_POLICY_TENANT_QUAL.to_string()),
+                    check_expression: None,
+                },
+            ),
+            (
+                "environment_policies_platform".to_string(),
+                RowPolicyObservation {
+                    command: "select".to_string(),
+                    permissive: true,
+                    roles: BTreeSet::from(["wamn_platform".to_string()]),
+                    using_expression: Some("true".to_string()),
+                    check_expression: None,
+                },
+            ),
+        ]),
     }
 }
 
@@ -4047,8 +4059,10 @@ fn repair_environment_policy_row_security_sql(schema: &BareSchemaName) -> String
            END LOOP; \
          END $environment_policy_rows$; \
          CREATE POLICY environment_policies_tenant ON {qualified} \
-           FOR SELECT USING (wamn_authority.tenant_key(tenant_id) \
-             = wamn_authority.current_tenant_key())"
+           FOR SELECT TO wamn_app USING (wamn_authority.tenant_key(tenant_id) \
+             = wamn_authority.current_tenant_key()); \
+         CREATE POLICY environment_policies_platform ON {qualified} \
+           AS PERMISSIVE FOR SELECT TO wamn_platform USING (true)"
     )
 }
 
@@ -4885,8 +4899,13 @@ mod tests {
     // and unreviewed objects appended after the canonical tail.
     const EVENT_REGISTRATIONS_TAIL: &str = "\
 CREATE POLICY event_registrations_tenant ON catalog.event_registrations
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY event_registrations_platform ON catalog.event_registrations
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX event_registrations_tkey
     ON catalog.event_registrations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.event_registrations TO wamn_app;
@@ -6322,7 +6341,7 @@ COMMIT;
             .get_mut("environment_policies_tenant")
             .expect("record policy");
         policy.command = "all".to_string();
-        policy.roles.insert("wamn_app".to_string());
+        policy.roles.insert("PUBLIC".to_string());
         policy.using_expression = Some("true".to_string());
         policy.check_expression = Some("true".to_string());
         row_security.policies.insert(
@@ -6339,7 +6358,16 @@ COMMIT;
         let repair = environment_policy_row_security_repair(&obs);
         assert!(repair.sql.contains("SELECT policy.polname"));
         assert!(repair.sql.contains("DROP POLICY %I"));
-        assert!(repair.sql.contains("FOR SELECT USING"));
+        assert!(repair.sql.contains("FOR SELECT TO wamn_app USING"));
+        // wamn-0h0g.22.17: the repair drops EVERY policy on the relation, so it
+        // must recreate BOTH arms. Recreating only the floor would silently
+        // revert the platform admission on every reconcile-run-plane.
+        assert!(
+            repair
+                .sql
+                .contains("CREATE POLICY environment_policies_platform")
+        );
+        assert!(repair.sql.contains("FOR SELECT TO wamn_platform USING (true)"));
         assert!(!repair.sql.contains("WITH CHECK"));
     }
 

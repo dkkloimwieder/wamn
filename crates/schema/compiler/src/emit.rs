@@ -31,6 +31,16 @@ pub(crate) fn tenant_key_index_name(table: &str) -> String {
     format!("{table}_tkey")
 }
 
+/// The guest LOGIN family's stable ACL role — the one the tenant floor admits.
+pub(crate) const GUEST_ROLE: &str = "wamn_app";
+
+/// The shared NOLOGIN group role every non-guest floor arm targets
+/// (`wamn-0h0g.22.17`). Mirrors
+/// `wamn_control_provision::workload_role::PLATFORM_GROUP_ROLE`; this crate does
+/// not depend on the provisioner, and a role name is the one thing both must
+/// spell identically or every platform read returns zero rows.
+pub(crate) const PLATFORM_GROUP_ROLE: &str = "wamn_platform";
+
 /// Transient-name prefix for a dropped table (and its indexes) renamed aside
 /// because the name is reclaimed in the same migration (see [`migrate_plan`]).
 pub(crate) const TEMP_DROP_PREFIX: &str = "wamn_mig_drop_";
@@ -244,8 +254,9 @@ fn create_table_op(entity: &Entity) -> Operation {
     }
 }
 
-/// The RLS floor for a table: enable + force RLS, the tenant policy, its
-/// expression index, and the wamn_app grant — one multi-statement operation.
+/// The RLS floor for a table: enable + force RLS, the tenant policy narrowed to
+/// the guest, the platform arm, the expression index, and the wamn_app grant —
+/// one multi-statement operation.
 ///
 /// The predicate derives the tenant from `current_user` (`wamn-0h0g.22.6`,
 /// option (c)) instead of from a `SET`-able claim: a session that can set its
@@ -253,6 +264,18 @@ fn create_table_op(entity: &Entity) -> Operation {
 /// the session cannot rewrite. Both halves are schema-qualified, because an
 /// unqualified call resolves through the caller's `search_path` — the same
 /// hijack one level down.
+///
+/// TWO ARMS, NOT ONE (`wamn-0h0g.22.17`). PostgreSQL DEFAULT-DENIES when RLS is
+/// enabled and no policy matches the connected role, so `TO wamn_app` does not
+/// EXEMPT a platform principal from the guest floor — it LOCKS IT OUT. Worse, it
+/// locks it out SILENTLY: `current_tenant_key` derives NULL for every login
+/// outside the guest generation convention, so the read returns ZERO ROWS rather
+/// than raising. Platform-grain families cannot be admitted by any narrowing of
+/// the guest predicate either — six of the twelve are
+/// `WorkloadRoleScope::ProjectEnvironment`, which has no tenant field at all, so
+/// their login names never encoded one. The single permissive arm
+/// `TO wamn_platform` is what admits them, and the table grants stay the thing
+/// that limits them.
 ///
 /// THE INDEX RIDES THIS EMISSION DELIBERATELY. `tenant_key` is IMMUTABLE, so
 /// the call is indexable; PostgreSQL matches that index only against the BARE
@@ -263,17 +286,26 @@ fn create_table_op(entity: &Entity) -> Operation {
 fn rls_op(entity: &Entity) -> Operation {
     let t = &entity.name;
     let policy = format!("{t}_tenant");
+    let platform_policy = format!("{t}_platform");
     let predicate = format!("{TENANT_KEY_FUNCTION}(tenant_id) = {CURRENT_TENANT_KEY_FUNCTION}()");
     let sql = format!(
         "ALTER TABLE {tbl} ENABLE ROW LEVEL SECURITY;\n\
          ALTER TABLE {tbl} FORCE ROW LEVEL SECURITY;\n\
          CREATE POLICY {pol} ON {tbl}\n    \
+         TO {guest}\n    \
          USING ({predicate})\n    \
          WITH CHECK ({predicate});\n\
+         CREATE POLICY {platform_pol} ON {tbl}\n    \
+         AS PERMISSIVE FOR ALL TO {platform}\n    \
+         USING (true)\n    \
+         WITH CHECK (true);\n\
          CREATE INDEX {idx} ON {tbl} (({TENANT_KEY_FUNCTION}(tenant_id)));\n\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {tbl} TO wamn_app",
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {tbl} TO {guest}",
         tbl = q(t),
         pol = q(&policy),
+        platform_pol = q(&platform_policy),
+        guest = GUEST_ROLE,
+        platform = PLATFORM_GROUP_ROLE,
         idx = q(&tenant_key_index_name(t)),
     );
     Operation {

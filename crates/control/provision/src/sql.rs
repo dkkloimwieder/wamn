@@ -8,7 +8,7 @@
 //! database name, a role password) travel as `$n` params or quoted literals.
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
-use crate::workload_role::{MANAGEMENT_ADMITTER_ROLE, WorkloadRoleFamily};
+use crate::workload_role::{MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE, WorkloadRoleFamily};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
 
@@ -400,6 +400,86 @@ pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
     )
 }
 
+/// Idempotently create or harden [`PLATFORM_GROUP_ROLE`], the shared NOLOGIN
+/// group every non-guest tenant-floor arm targets (`wamn-0h0g.22.17`).
+///
+/// EXCEPTION-GUARDED, not bare `IF NOT EXISTS`. Roles are CLUSTER-global, so two
+/// appliers racing on a cluster where the role is absent both take the `THEN`
+/// branch and the loser gets `duplicate_object`. The advisory lock serializes
+/// appliers that take it; the handler covers the ones that do not.
+///
+/// No grants, no ownership, `NOBYPASSRLS`: the role's whole purpose is to be
+/// NAMED by a policy's `TO` clause. What a platform family may actually reach
+/// stays its own table grants.
+pub fn ensure_platform_group_role_sql() -> String {
+    format!(
+        "DO $platform_group$ DECLARE role_name text := {role_lit}; BEGIN \
+           PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
+             EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+           ELSIF EXISTS (SELECT FROM pg_roles WHERE rolname = role_name \
+                         AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
+                              OR rolinherit OR rolreplication OR rolbypassrls \
+                              OR rolpassword IS NOT NULL)) THEN \
+             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+           END IF; \
+         EXCEPTION WHEN duplicate_object THEN NULL; \
+         END $platform_group$;",
+        role_lit = quote_literal(PLATFORM_GROUP_ROLE),
+    )
+}
+
+/// Converge one family's stable ACL role onto (or off) [`PLATFORM_GROUP_ROLE`].
+///
+/// # `INHERIT TRUE` is spelled, and omitting it fails SILENTLY
+///
+/// [`ensure_workload_acl_role_sql`] mints every stable ACL role `NOINHERIT`. In
+/// PostgreSQL 16+ a role's `rolinherit` supplies the DEFAULT `INHERIT` option
+/// for memberships granted TO it, and RLS role matching walks `pg_auth_members`
+/// by that PER-EDGE option — so a bare `GRANT wamn_platform TO
+/// wamn_effect_writer` lands `inherit_option = false` and the two-hop chain
+/// (generation login -> stable ACL role -> `wamn_platform`) dies. Nothing
+/// raises: the generation still holds its table grants, and the floor policy
+/// simply matches no row. Measured on PostgreSQL 18.6 against the real files —
+/// bare grant reads 0 rows, `INHERIT TRUE` reads all of them.
+///
+/// `ADMIN FALSE, SET FALSE` mirror
+/// [`normalize_workload_generation_membership_sql`]: the edge confers policy
+/// membership and nothing else. `REVOKE` precedes the `GRANT` so a replay that
+/// finds a drifted edge replaces it instead of leaving it, and so a family that
+/// stops being platform-grain loses the arm on the next converge.
+/// # IT DOES NOT ENSURE THE ACL ROLE, AND MUST NOT
+///
+/// [`ensure_workload_acl_role_sql`] HARDENS its target to `NOLOGIN PASSWORD
+/// NULL`. [`WorkloadRoleFamily::DispatchReader`]'s stable role is
+/// [`DISPATCH_READER_ROLE`], which the legacy shape mints as a LOGIN role with a
+/// password ([`ensure_dispatch_reader_role_sql`]) — so composing the ensure
+/// builder in here would silently revoke that credential every time this edge
+/// converged. The ACL role's lifecycle belongs to its own builder; this one only
+/// touches the edge, behind an existence guard so a caller that has not created
+/// the role yet gets a no-op rather than an error.
+pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
+    let acl_role = quote_ident(family.acl_role());
+    let acl_role_lit = quote_literal(family.acl_role());
+    let group = quote_ident(PLATFORM_GROUP_ROLE);
+    let grant = if family.is_platform_grain() {
+        format!(" GRANT {group} TO {acl_role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;")
+    } else {
+        String::new()
+    };
+    format!(
+        "{ensure_group} \
+         DO $platform_edge$ BEGIN \
+           IF EXISTS (SELECT FROM pg_roles WHERE rolname = {acl_role_lit}) THEN \
+             REVOKE {group} FROM {acl_role};{grant} \
+           END IF; \
+         END $platform_edge$;",
+        ensure_group = ensure_platform_group_role_sql(),
+    )
+}
+
 /// Converge the stable management-admitter role to its exact admission surface.
 ///
 /// This is the seventh [`WorkloadRoleFamily`]'s one family-specific privilege
@@ -696,10 +776,12 @@ pub fn normalize_workload_generation_membership_sql(
     };
     format!(
         "{ensure} \
+         {platform_arm} \
          {legacy_projection_revoke} \
          REVOKE {acl_role} FROM {role_ident}; \
          {grant}",
         ensure = ensure_workload_acl_role_sql(family),
+        platform_arm = platform_group_membership_sql(family),
         legacy_projection_revoke = legacy_projection_revoke,
         acl_role = quote_ident(family.acl_role()),
         grant = grant,

@@ -5,6 +5,13 @@
 //! `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
 //!
+//! `wamn-0h0g.22.17` then gave all 43 a SECOND arm. The floor is the GUEST
+//! floor, narrowed `TO wamn_app`; PostgreSQL default-denies when RLS is enabled
+//! and no policy matches the connected role, so that narrowing LOCKS OUT every
+//! platform principal rather than exempting it — and locks it out at zero rows,
+//! not at an error. One permissive arm `TO wamn_platform` per relation is what
+//! admits them, and their table grants stay the thing that limits them.
+//!
 //! # Why these tests read the files as text
 //!
 //! `wamn-hopk` R5 forbids tests that scan source as text, with ONE exemption:
@@ -28,6 +35,7 @@
 use std::process::Command;
 
 use wamn_control_provision::CredentialGeneration;
+use wamn_control_provision::sql;
 use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
@@ -44,6 +52,35 @@ const RETIRED: &str = "tenant_id = NULLIF(current_setting('app.tenant', true), '
 
 /// The governed predicate every swept policy carries.
 const GOVERNED: &str = "wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()";
+
+/// The narrowing that makes the floor the GUEST floor (`wamn-0h0g.22.17`),
+/// spelled with the `USING` that follows it so a `GRANT … TO wamn_app` on the
+/// same relation cannot be counted as one.
+const GUEST_TARGETED: &str = "TO wamn_app\n";
+
+/// The one permissive arm per governed relation. `AS PERMISSIVE` and the
+/// command are spelled out at every site, so this substring identifies an arm
+/// and nothing else.
+const PLATFORM_ARM: &str = "TO wamn_platform\n";
+
+/// The two roles this file's platform arm mints as probes. Named here so
+/// `reset` can drop them: roles are CLUSTER-wide, and the arm's whole point is
+/// that a leftover healthy membership masks a mutated builder.
+const PLATFORM_PROBE_OUTSIDER: &str = "wamn_floor_outsider";
+
+/// The effect-writer generation login the platform arm probes with, composed by
+/// the real mint rather than spelled by hand.
+fn platform_probe_writer() -> String {
+    workload_generation_role(
+        WorkloadRoleFamily::EffectWriter,
+        WorkloadRoleScope::Tenant {
+            tenant: "t1",
+            database: "wamn",
+        },
+        CredentialGeneration::A,
+    )
+    .expect("EffectWriter takes a tenant scope")
+}
 
 /// The two relations whose claim is HOST-INJECTED, measured from
 /// `has_table_privilege` rather than assumed: the guest ACL role holds nothing
@@ -115,6 +152,51 @@ fn the_swept_files_carry_the_governed_predicate_and_only_the_ruled_exceptions() 
     );
 }
 
+/// THE ARM COUNT, PER FILE, EXACT — because the existing guard above is BLIND
+/// to this change.
+///
+/// Adding a `TO` clause moves no governed clause, no retired clause and no
+/// expression index, so a narrowing applied to 40 of the 43 relations passes
+/// every assertion in this file that predates `wamn-0h0g.22.17`. That is the
+/// false-coverage shape, and this is what closes it: both halves of every
+/// relation's floor are counted, per file, against a number written down here.
+///
+/// Both directions matter and the second is the sharp one. A floor narrowed
+/// `TO wamn_app` with its platform arm MISSING does not raise — PostgreSQL
+/// default-denies when RLS is on and no policy matches the connected role, and
+/// `current_tenant_key` derives NULL outside the guest generation pattern — so
+/// the platform principal reads ZERO ROWS in silence. An arm count short by one
+/// is a silent cross-relation lockout, which is why it is `assert_eq!` and not
+/// a floor.
+#[test]
+fn every_governed_relation_carries_both_the_guest_floor_and_one_platform_arm() {
+    for (name, sql, governed, _) in FILES {
+        assert_eq!(
+            sql.matches(GUEST_TARGETED).count(),
+            governed,
+            "{name} must narrow exactly {governed} floor policies TO wamn_app"
+        );
+        assert_eq!(
+            sql.matches(PLATFORM_ARM).count(),
+            governed,
+            "{name} must carry exactly one permissive TO wamn_platform arm per \
+             governed relation ({governed})"
+        );
+    }
+    // The ruled exceptions keep the host-injected claim and get NO arm: they are
+    // not guest-reachable, so there is no lockout to repair.
+    assert_eq!(
+        RUN_QUEUE.matches(PLATFORM_ARM).count(),
+        0,
+        "run-queue.sql is host-injected and takes no platform arm"
+    );
+    // The rejected shortcut — BYPASSRLS — is NOT checked here. All three
+    // occurrences of the word in these files are prose ("no BYPASSRLS"), so a
+    // text count reads the comments, not the DDL. The role attribute is asserted
+    // from `pg_authid` in the live arm below, which is the only place it is a
+    // fact rather than a sentence.
+}
+
 fn psql(url: &str, database: Option<&str>, script: &str) -> String {
     let mut command = Command::new("psql");
     command
@@ -170,9 +252,28 @@ fn apply(url: &str, sql: &str) {
 /// `DROP OWNED BY` before `DROP ROLE`, inside an existence check: a leftover
 /// healthy role satisfies an `IF NOT EXISTS` guard elsewhere and would mask a
 /// mutated builder.
+///
+/// `wamn_platform` is in the list for exactly that reason and it is the one that
+/// matters most: it is the ONLY role a mutant can leave behind healthy. Drop the
+/// membership from the builder and re-run against a surviving cluster, and the
+/// edge granted by the PREVIOUS run still admits every platform read — the
+/// mutant passes and the arm it deleted is never missed.
 fn reset(admin_url: &str) {
     apply(admin_url, "DROP DATABASE IF EXISTS \"wamn\";\n");
-    for role in ["wamn_app", "wamn_scenario_author", "wamn_effect_writer"] {
+    // `DROP DATABASE` first is what makes the plain `DROP OWNED BY` below
+    // sufficient: it takes every in-database ACL entry naming these roles with
+    // it, and a role still named by a `relacl` cannot be dropped.
+    for role in [
+        "wamn_app",
+        "wamn_scenario_author",
+        "wamn_effect_writer",
+        "wamn_platform",
+        // Probe roles this file's live arms mint. A leftover one fails the next
+        // run's `CREATE ROLE` rather than masking anything, but the gate is
+        // supposed to be re-runnable against a surviving cluster.
+        PLATFORM_PROBE_OUTSIDER,
+        &platform_probe_writer(),
+    ] {
         apply(
             admin_url,
             &format!(
@@ -352,4 +453,276 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         ),
     );
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// THE PLATFORM ARM, AS THE SERVER SEES IT (`wamn-0h0g.22.17`).
+///
+/// # What this closes, and why the old arms could not see it
+///
+/// The floor was UNTARGETED, so it applied to every role — and it calls
+/// `wamn_authority.current_tenant_key()`, which only `wamn_app` may EXECUTE.
+/// Measured against these very files on PostgreSQL 18.6: `wamn_effect_writer`
+/// reading `wamn_run.effect_attempts` and `wamn_scenario_author` reading
+/// `catalog.catalog_heads` both got `ERROR: permission denied for function
+/// current_tenant_key`. Loud, and therefore survivable.
+///
+/// Narrowing the floor `TO wamn_app` turns that error into something worse.
+/// PostgreSQL DEFAULT-DENIES when RLS is enabled and no policy matches the
+/// connected role, so the narrowing does not EXEMPT a platform principal — it
+/// LOCKS IT OUT, at zero rows, with no exception at all. Every assertion here is
+/// therefore a ROW COUNT or a membership fact, never the absence of an error.
+///
+/// # The two-hop chain, and the silent way it dies
+///
+/// A policy `TO wamn_platform` admits a generation login only through
+/// generation login -> stable ACL role -> `wamn_platform`, and PostgreSQL 16+
+/// walks that by the PER-EDGE `inherit_option`. `ensure_workload_acl_role_sql`
+/// mints every stable ACL role `NOINHERIT`, and a role's `rolinherit` is the
+/// DEFAULT for memberships granted TO it — so a bare
+/// `GRANT wamn_platform TO wamn_effect_writer` lands `inherit_option = false`
+/// and every platform read silently returns zero. Measured both ways on 18.6:
+/// bare grant 0 rows, `INHERIT TRUE` all rows. The edge option is asserted below
+/// from `pg_auth_members`, not assumed from the builder's text.
+#[test]
+fn the_platform_arm_admits_every_platform_family_from_the_server() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_platform_arm_admits_every_platform_family_from_the_server \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+
+    reset(&admin);
+    apply(&admin, POSTGRES_INIT);
+    let base = admin.rsplit_once('/').expect("url names a database").0;
+    let db_url = format!("{base}/wamn");
+    for sql in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
+        apply(&db_url, sql);
+    }
+
+    // 1. THE GROUP ROLE IS A GROUP, NOT AN EXEMPTION. The rejected shortcut was
+    //    BYPASSRLS; this asserts the role that replaced it cannot connect, cannot
+    //    escalate, and above all does not bypass RLS.
+    //
+    //    `pg_authid`, NOT `pg_roles`: the view substitutes the literal
+    //    `'********'` for every row's `rolpassword`, so `rolpassword IS NOT NULL`
+    //    reads TRUE against `pg_roles` for a role that has no password at all.
+    let attributes = psql(
+        &db_url,
+        None,
+        "SELECT concat_ws(' ', rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, \
+                rolcreaterole, rolreplication, rolpassword IS NOT NULL) \
+           FROM pg_authid WHERE rolname = 'wamn_platform'",
+    );
+    assert_eq!(
+        attributes, "f f f f f f f",
+        "wamn_platform must be a NOLOGIN NOBYPASSRLS group role carrying no \
+         credential (order: login, super, bypassrls, createdb, createrole, \
+         replication, password set)"
+    );
+
+    // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH KIND, counted
+    //    PER RELATION rather than in total: a relation with two platform arms and
+    //    one with none sum to the same 43 and leave a silent lockout standing.
+    let missing_arm = psql(
+        &db_url,
+        None,
+        "SELECT coalesce(string_agg(rel, ' ' ORDER BY rel), '<none>') FROM (\
+           SELECT n.nspname||'.'||c.relname AS rel, c.oid AS oid \
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+            WHERE EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid \
+                            AND pg_get_expr(p.polqual, p.polrelid) \
+                                LIKE '%current_tenant_key%')) g \
+          WHERE (SELECT count(*) FROM pg_policy p JOIN pg_roles r ON r.oid = ANY(p.polroles) \
+                  WHERE p.polrelid = g.oid AND p.polpermissive \
+                    AND r.rolname = 'wamn_platform') <> 1",
+    );
+    assert_eq!(
+        missing_arm, "<none>",
+        "a governed relation does not carry exactly one permissive wamn_platform \
+         arm — every platform principal reads it at ZERO ROWS, silently"
+    );
+    let unnarrowed_floor = psql(
+        &db_url,
+        None,
+        "SELECT coalesce(string_agg(rel, ' ' ORDER BY rel), '<none>') FROM (\
+           SELECT n.nspname||'.'||c.relname AS rel \
+             FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%' \
+              AND p.polroles <> ARRAY[(SELECT oid FROM pg_roles WHERE rolname = 'wamn_app')]) t",
+    );
+    assert_eq!(
+        unnarrowed_floor, "<none>",
+        "the tenant floor is the GUEST floor and must name wamn_app alone"
+    );
+    // …and NOTHING on a governed relation is untargeted. An arm widened to
+    // PUBLIC still carries `USING (true)`, so it passes every predicate-shaped
+    // check above while handing every tenant's rows to any role holding the
+    // table grant. `polroles = '{0}'` is how PostgreSQL spells PUBLIC.
+    let public_arm = psql(
+        &db_url,
+        None,
+        "SELECT coalesce(string_agg(rel, ' ' ORDER BY rel), '<none>') FROM (\
+           SELECT n.nspname||'.'||c.relname AS rel \
+             FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+            WHERE p.polroles = '{0}' \
+              AND EXISTS (SELECT 1 FROM pg_policy g WHERE g.polrelid = c.oid \
+                            AND pg_get_expr(g.polqual, g.polrelid) \
+                                LIKE '%current_tenant_key%')) t",
+    );
+    assert_eq!(
+        public_arm, "<none>",
+        "a governed relation carries a policy targeting PUBLIC: the arm is one \
+         group role, not an open door"
+    );
+
+    // 3. THE MEMBER SET, FROM THE REAL BUILDER, WITH ITS EDGE OPTIONS.
+    //    `platform_group_membership_sql` is applied for ALL twelve families,
+    //    including the four that must NOT be members — its revoke arm is what
+    //    keeps a demoted family from silently retaining the arm.
+    //
+    //    The stable ACL role is ensured FIRST, by its own builder: the membership
+    //    builder deliberately does not create it (it would harden the legacy
+    //    LOGIN-capable `wamn_dispatch_reader` to NOLOGIN and destroy that
+    //    credential), so it no-ops against a family whose role does not exist yet.
+    for family in WorkloadRoleFamily::ALL {
+        apply(&db_url, &sql::ensure_workload_acl_role_sql(family));
+        apply(&db_url, &sql::platform_group_membership_sql(family));
+    }
+    let mut expected: Vec<&str> = WorkloadRoleFamily::ALL
+        .iter()
+        .filter(|family| family.is_platform_grain())
+        .map(|family| family.acl_role())
+        .collect();
+    // The host-only scenario-author group is not a WorkloadRoleFamily, but it
+    // holds SELECT on eight governed relations (measured from `relacl` against
+    // these files), so postgres-init.sql members it in for the same reason.
+    expected.push("wamn_scenario_author");
+    expected.sort_unstable();
+    let members = psql(
+        &db_url,
+        None,
+        "SELECT coalesce(string_agg(m.rolname, ' ' ORDER BY m.rolname), '<none>') \
+           FROM pg_auth_members am JOIN pg_roles m ON m.oid = am.member \
+           JOIN pg_roles g ON g.oid = am.roleid WHERE g.rolname = 'wamn_platform'",
+    );
+    assert_eq!(
+        members,
+        expected.join(" "),
+        "the wamn_platform member set moved: the guest family must never appear, \
+         and a control-plane family has no governed relation to reach"
+    );
+    let edges = psql(
+        &db_url,
+        None,
+        "SELECT concat_ws(' ', bool_and(am.inherit_option), bool_and(NOT am.admin_option), \
+                bool_and(NOT am.set_option)) \
+           FROM pg_auth_members am JOIN pg_roles g ON g.oid = am.roleid \
+          WHERE g.rolname = 'wamn_platform'",
+    );
+    assert_eq!(
+        edges, "t t t",
+        "every wamn_platform edge must be INHERIT TRUE, ADMIN FALSE, SET FALSE — \
+         a defaulted INHERIT option on a NOINHERIT ACL role reads ZERO ROWS in \
+         silence (order: inherit, no admin, no set)"
+    );
+    let guest_is_not_a_member = psql(
+        &db_url,
+        None,
+        "SELECT pg_has_role('wamn_app', 'wamn_platform', 'USAGE')",
+    );
+    assert_eq!(
+        guest_is_not_a_member, "f",
+        "the guest family must not reach the platform arm: it would read every \
+         tenant's rows, which is the exact hole wamn-0h0g.22.6 closed"
+    );
+
+    // 4. THE ADMISSION ITSELF, END TO END, over a relation whose grants the
+    //    schema of record already carries. Two tenants' rows; the platform
+    //    principal reads BOTH (it has no tenant grain to narrow to), the guest
+    //    reads ONE, and a login in neither group reads NONE.
+    let hash = "'sha256:' || repeat('0', 64)";
+    apply(
+        &db_url,
+        &format!(
+            "INSERT INTO wamn_run.effect_attempts \
+               (tenant_id, attempt_id, run_id, root_plan_hash, current_plan_hash, frame_id, \
+                local_node_id, source_artifact_hash, requirement_name, occurrence, seq, \
+                generation_fact_kind, attempt_started_at, attempt_deadline_at, \
+                attempt_input_ref, created_at) \
+             SELECT t, gen_random_uuid(), 'r', {hash}, {hash}, 0, 'n', {hash}, 'req', 0, 0, \
+                    'not-required', now(), now(), 'ref', now() \
+               FROM unnest(ARRAY['t1', 't2']) AS t;\n"
+        ),
+    );
+    let writer = platform_probe_writer();
+    // `outsider` holds the SAME table grant and NEITHER membership. Without it a
+    // platform read proves only that SELECT was granted, not that the arm is
+    // what admitted the rows.
+    apply(
+        &admin,
+        &format!(
+            "CREATE ROLE \"{writer}\" NOLOGIN NOSUPERUSER NOBYPASSRLS;\n\
+             GRANT wamn_effect_writer TO \"{writer}\" \
+               WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;\n\
+             CREATE ROLE {PLATFORM_PROBE_OUTSIDER} NOLOGIN NOSUPERUSER NOBYPASSRLS;\n"
+        ),
+    );
+    apply(
+        &db_url,
+        &format!(
+            "GRANT USAGE ON SCHEMA wamn_run TO {PLATFORM_PROBE_OUTSIDER};\n\
+             GRANT SELECT ON wamn_run.effect_attempts TO {PLATFORM_PROBE_OUTSIDER};\n"
+        ),
+    );
+    // A SUPERUSER FIXTURE MASKS RLS ENTIRELY, so the probe roles are asserted
+    // unprivileged from `pg_roles` before a single row is counted.
+    let unprivileged = psql(
+        &db_url,
+        None,
+        &format!(
+            "SELECT bool_and(NOT (rolsuper OR rolbypassrls)) FROM pg_roles \
+              WHERE rolname IN ('{writer}', '{PLATFORM_PROBE_OUTSIDER}', 'wamn_effect_writer', \
+                                'wamn_platform')"
+        ),
+    );
+    assert_eq!(
+        unprivileged, "t",
+        "a probe role that is superuser or BYPASSRLS proves nothing about RLS"
+    );
+    apply(
+        &db_url,
+        &format!(
+            "BEGIN;\n\
+             SET LOCAL ROLE \"{writer}\";\n\
+             DO $$ BEGIN\n\
+                 ASSERT (SELECT count(*) FROM wamn_run.effect_attempts) = 2, \
+                        'THE PLATFORM ARM DOES NOT ADMIT: a governed relation the \
+                         effect writer holds SELECT on reads short';\n\
+             END $$;\n\
+             COMMIT;\n\
+             BEGIN;\n\
+             SET LOCAL ROLE {PLATFORM_PROBE_OUTSIDER};\n\
+             DO $$ BEGIN\n\
+                 ASSERT (SELECT count(*) FROM wamn_run.effect_attempts) = 0, \
+                        'THE FLOOR LEAKS: a login in neither wamn_app nor \
+                         wamn_platform read rows';\n\
+             END $$;\n\
+             COMMIT;\n"
+        ),
+    );
+    // `DROP OWNED BY` FIRST, and in the project database, not the admin one:
+    // the outsider holds a schema USAGE and a table SELECT, and `DROP ROLE`
+    // refuses while an ACL entry names it. `DROP OWNED BY` is per-database.
+    apply(
+        &db_url,
+        &format!("DROP OWNED BY \"{writer}\", {PLATFORM_PROBE_OUTSIDER};\n"),
+    );
+    apply(
+        &admin,
+        &format!("DROP ROLE \"{writer}\";\nDROP ROLE {PLATFORM_PROBE_OUTSIDER};\n"),
+    );
 }

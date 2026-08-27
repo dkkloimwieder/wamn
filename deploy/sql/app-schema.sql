@@ -75,6 +75,28 @@
 -- raw key is shown once at creation, never stored; hashing is 4.2's job).
 
 CREATE SCHEMA app_system AUTHORIZATION postgres;
+
+-- The shared platform group role every non-guest tenant-floor arm below targets
+-- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
+-- `crates/control/provision/src/tenant_key.rs` already gives for its own
+-- bootstrap: naming a role that may not exist adds a new precondition to every
+-- applier — seven live gates plus the production path in `services/ctl` — and
+-- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without
+-- it.
+--
+-- EXCEPTION-guarded under the shared `wamn_role_bootstrap` advisory lock, the
+-- `ensure_platform_group_role_sql` shape. Roles are CLUSTER-global, so two
+-- appliers that do not both take the lock can each observe the role absent and
+-- both issue `CREATE ROLE`.
+DO $platform_group$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
+                 WHERE rolname = 'wamn_platform') THEN
+    CREATE ROLE wamn_platform NOLOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $platform_group$;
 GRANT USAGE ON SCHEMA app_system TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -155,8 +177,13 @@ CREATE TABLE app_system.users (
 ALTER TABLE app_system.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.users FORCE ROW LEVEL SECURITY;
 CREATE POLICY users_tenant ON app_system.users
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY users_platform ON app_system.users
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX users_tkey
     ON app_system.users ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.users TO wamn_app;
@@ -178,8 +205,13 @@ CREATE TABLE app_system.roles (
 ALTER TABLE app_system.roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.roles FORCE ROW LEVEL SECURITY;
 CREATE POLICY roles_tenant ON app_system.roles
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY roles_platform ON app_system.roles
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX roles_tkey
     ON app_system.roles ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.roles TO wamn_app;
@@ -203,8 +235,13 @@ CREATE TABLE app_system.user_roles (
 ALTER TABLE app_system.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.user_roles FORCE ROW LEVEL SECURITY;
 CREATE POLICY user_roles_tenant ON app_system.user_roles
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY user_roles_platform ON app_system.user_roles
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX user_roles_tkey
     ON app_system.user_roles ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.user_roles TO wamn_app;
@@ -225,8 +262,13 @@ CREATE TABLE app_system.permissions (
 ALTER TABLE app_system.permissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.permissions FORCE ROW LEVEL SECURITY;
 CREATE POLICY permissions_tenant ON app_system.permissions
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY permissions_platform ON app_system.permissions
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX permissions_tkey
     ON app_system.permissions ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.permissions TO wamn_app;
@@ -246,8 +288,13 @@ CREATE TABLE app_system.configurations (
 ALTER TABLE app_system.configurations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.configurations FORCE ROW LEVEL SECURITY;
 CREATE POLICY configurations_tenant ON app_system.configurations
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY configurations_platform ON app_system.configurations
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX configurations_tkey
     ON app_system.configurations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON app_system.configurations TO wamn_app;
@@ -276,8 +323,13 @@ CREATE TABLE app_system.audit_log (
 ALTER TABLE app_system.audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.audit_log FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_log_tenant ON app_system.audit_log
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY audit_log_platform ON app_system.audit_log
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX audit_log_tkey
     ON app_system.audit_log ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT ON app_system.audit_log TO wamn_app;
@@ -309,8 +361,13 @@ CREATE TABLE app_system.api_keys (
 ALTER TABLE app_system.api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.api_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY api_keys_tenant ON app_system.api_keys
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY api_keys_platform ON app_system.api_keys
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX api_keys_tkey
     ON app_system.api_keys ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON app_system.api_keys TO wamn_app;

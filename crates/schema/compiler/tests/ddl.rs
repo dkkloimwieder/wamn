@@ -31,6 +31,12 @@ const GATE_DATABASE: &str = "wamn-db-ddl-gate";
 /// definition of a security-critical function, even in a test, is exactly the
 /// drift `wamn-0h0g.22.6` cannot absorb.
 ///
+/// `wamn_platform` joins the role half at `wamn-0h0g.22.17`: every emitted floor
+/// now carries a permissive arm NAMING that role, and `CREATE POLICY ... TO
+/// <role>` fails outright against a cluster without it. Created NOLOGIN with no
+/// grants and no membership — the emitted arm is the only thing that references
+/// it, and what a platform principal may actually reach stays its table grants.
+///
 /// Advisory-locked because the gates in this file run in PARALLEL and share one
 /// database: two sessions racing `CREATE OR REPLACE FUNCTION` on the same
 /// object fail with `tuple concurrently updated`. Isolation by construction,
@@ -42,6 +48,10 @@ fn authority_preamble() -> String {
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
          BEGIN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
+         DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_platform') THEN \
+         BEGIN CREATE ROLE wamn_platform NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT \
+         NOREPLICATION NOBYPASSRLS; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; END IF; END $$;\n\
          SELECT pg_advisory_lock(722602);\n\
          {derivations}\n\
@@ -171,8 +181,18 @@ fn create_plan_is_additive_and_tenant_safe() {
 
 /// GENERATED SQL FROM A RUST BUILDER, and a security boundary, so the whole
 /// operation is pinned rather than sampled. `contains` cannot see a clause that
-/// was ADDED — a second permissive policy, a wider grant, a dropped FORCE — and
-/// on this operation an addition is as dangerous as a removal.
+/// was ADDED — a wider grant, a dropped FORCE, a third policy — and on this
+/// operation an addition is as dangerous as a removal.
+///
+/// The SECOND policy is deliberate (`wamn-0h0g.22.17`) and its shape is load
+/// bearing in both directions. The floor is the GUEST floor: `TO wamn_app`, so a
+/// platform principal matches no policy — and PostgreSQL default-denies when RLS
+/// is enabled and nothing matches, which means the exclusion is a ZERO-ROW READ
+/// rather than an error. The arm `TO wamn_platform` is what admits the
+/// project-environment-grain families whose login names carry no tenant at all.
+/// `USING (true)` is not a widening of the guest's authority: the guest is not a
+/// member of `wamn_platform`, and the arm reaches only what a family's table
+/// grants already allow.
 #[test]
 fn the_emitted_tenant_floor_is_frozen() {
     let notes = entity("en", "notes", vec![text_field("body")]);
@@ -188,8 +208,13 @@ fn the_emitted_tenant_floor_is_frozen() {
         "ALTER TABLE \"notes\" ENABLE ROW LEVEL SECURITY;\n\
          ALTER TABLE \"notes\" FORCE ROW LEVEL SECURITY;\n\
          CREATE POLICY \"notes_tenant\" ON \"notes\"\n    \
+         TO wamn_app\n    \
          USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())\n    \
          WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());\n\
+         CREATE POLICY \"notes_platform\" ON \"notes\"\n    \
+         AS PERMISSIVE FOR ALL TO wamn_platform\n    \
+         USING (true)\n    \
+         WITH CHECK (true);\n\
          CREATE INDEX \"notes_tkey\" ON \"notes\" ((wamn_authority.tenant_key(tenant_id)));\n\
          GRANT SELECT, INSERT, UPDATE, DELETE ON \"notes\" TO wamn_app"
     );

@@ -15,11 +15,16 @@
 //!
 //! 1. **the surface is exactly right** — swept over EVERY relation in the project
 //!    database, the reader holds zero write privileges and exactly two `SELECT`s,
-//!    owns nothing, and belongs to no role.
+//!    owns nothing, and belongs to exactly one role: `wamn_platform`, the shared
+//!    NOLOGIN group that confers no grant of its own and exists only to be named
+//!    by the tenant floor's permissive arm (`wamn-0h0g.22.17`).
 //! 2. **the reads still work** — both real dispatcher statements execute as the
-//!    reader and return the tenant's rows. This is the arm that matters most: an
+//!    reader and return the tenant's rows, AND the governed half of the surface
+//!    (`effect_attempts`) answers at all. This is the arm that matters most: an
 //!    authority reduction that silently reads NOTHING presents as a perfectly
-//!    healthy dispatcher (the wamn-0h0g.12.103 failure class).
+//!    healthy dispatcher (the wamn-0h0g.12.103 failure class). `run_queue` alone
+//!    cannot show it — that relation deliberately keeps the host-injected
+//!    `app.tenant` claim, so it answers identically with the membership missing.
 //! 3. **the writes are denied, for the RIGHT reason** — every refused statement is
 //!    deliberately RLS-legal for the pinned tenant, and each denial is checked to
 //!    be a privilege refusal and *not* a row-level-security refusal. Both raise
@@ -31,7 +36,9 @@
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
-use wamn_control_provision::{APP_ROLE, DISPATCH_READER_ROLE, project_env_database_name, sql};
+use wamn_control_provision::{
+    APP_ROLE, DISPATCH_READER_ROLE, WorkloadRoleFamily, project_env_database_name, sql,
+};
 use wamn_dispatcher::RUN_QUEUE_DEPTH_SQL;
 use wamn_run_state::queue::parked_due_sql;
 
@@ -262,6 +269,20 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     run_ok(&project_url, &surface);
     run_ok(&project_url, &surface);
 
+    // THE SECOND HALF OF THE READ SURFACE IS NOT A GRANT (`wamn-0h0g.22.17`).
+    // `DISPATCH_READER_RELATIONS` is `run_queue` PLUS `effect_attempts`, and only
+    // the first is host-injected. `effect_attempts` carries the tenant floor,
+    // whose key derives from `current_user` — and this role is named
+    // `wamn_dispatch_reader`, which matches no guest generation pattern. Before
+    // this bead the grant above bought `permission denied for function
+    // current_tenant_key`; once the floor was narrowed `TO wamn_app` it would buy
+    // a SILENT ZERO-ROW READ instead. The membership is what actually opens it,
+    // and it is applied through the real builder rather than spelled here.
+    run_ok(
+        &project_url,
+        &sql::platform_group_membership_sql(WorkloadRoleFamily::DispatchReader),
+    );
+
     // Seed two tenants. The second exists so every cross-tenant assertion below is
     // a discrimination rather than a query that matches nothing.
     run_ok(
@@ -282,6 +303,23 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
                ('{OTHER_TENANT}','run-b1','flow-b',1,'cat-b',1,'dev'); \
              INSERT INTO wamn_run.run_queue (tenant_id, run_id) VALUES \
                ('{TENANT}','run-a1'), ('{OTHER_TENANT}','run-b1');\n"
+        ),
+    );
+    // One effect-ledger row per tenant. `effect_attempts` is the GOVERNED half of
+    // the dispatch reader's surface, so a cross-tenant discrimination there needs
+    // two tenants present exactly as the queue seed above does.
+    run_ok(
+        &project_url,
+        &format!(
+            "INSERT INTO wamn_run.effect_attempts \
+               (tenant_id, attempt_id, run_id, root_plan_hash, current_plan_hash, frame_id, \
+                local_node_id, source_artifact_hash, requirement_name, occurrence, seq, \
+                generation_fact_kind, attempt_started_at, attempt_deadline_at, \
+                attempt_input_ref, created_at) \
+             SELECT t, gen_random_uuid(), 'run-x', 'sha256:' || repeat('0', 64), \
+                    'sha256:' || repeat('0', 64), 0, 'n', 'sha256:' || repeat('0', 64), \
+                    'req', 0, 0, 'not-required', now(), now(), 'ref', now() \
+               FROM unnest(ARRAY['{TENANT}', '{OTHER_TENANT}']) AS t;\n"
         ),
     );
 
@@ -337,10 +375,23 @@ DO $$ DECLARE writes int; reads int; app_writes int; BEGIN
                  AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls
             FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}'),
     'the dispatch reader must be a LOGIN role with every other attribute off';
-  -- NOINHERIT plus zero memberships: the grant inventory above is the whole story.
+  -- NOINHERIT plus EXACTLY ONE membership: `wamn_platform`, which confers no
+  -- grant of its own and exists only to be named by the tenant floor's permissive
+  -- arm (`wamn-0h0g.22.17`). The grant inventory above is still the whole story of
+  -- what this role may reach; this edge is what stops `effect_attempts` reading
+  -- zero rows in silence. `INHERIT TRUE` is spelled, and MUST be: PostgreSQL 16+
+  -- takes the edge's default from the member's `rolinherit`, and this role is
+  -- NOINHERIT, so a bare GRANT lands `inherit_option = false` and the arm never
+  -- matches.
   ASSERT (SELECT count(*) FROM pg_auth_members m
-           WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}')) = 0,
-    'the dispatch reader is a member of no role';
+           WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}')) = 1,
+    'the dispatch reader must carry exactly the wamn_platform edge';
+  ASSERT (SELECT bool_and(parent.rolname = 'wamn_platform' AND m.inherit_option
+                          AND NOT m.admin_option AND NOT m.set_option)
+            FROM pg_auth_members m
+            JOIN pg_roles parent ON parent.oid = m.roleid
+           WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}')),
+    'the dispatch reader edge is not exactly wamn_platform INHERIT TRUE';
   -- It owns nothing, anywhere (pg_shdepend is a shared catalog).
   ASSERT (SELECT count(*) FROM pg_shdepend d
            WHERE d.refclassid = 'pg_authid'::regclass AND d.deptype = 'o'
@@ -385,6 +436,27 @@ END $$;
     assert_eq!(
         depth, "1",
         "the queue-depth gauge must sample a non-zero depth"
+    );
+
+    // THE GOVERNED HALF OF THE SURFACE, READ FOR REAL. `run_queue` above proves
+    // nothing about the tenant floor: it deliberately KEEPS the host-injected
+    // `app.tenant` claim, so it answers identically with or without the platform
+    // membership. `effect_attempts` is the relation the reader was actually locked
+    // out of, and a count is the only honest probe — the lockout this bead repairs
+    // returns zero rows, not an error.
+    //
+    // TWO, not one. `wamn_dispatch_reader` is PROJECT-ENVIRONMENT grain — its name
+    // encodes no tenant and `WorkloadRoleScope::ProjectEnvironment` has no tenant
+    // field — so the permissive arm admits every tenant in the database. What
+    // narrows a dispatcher statement is the predicate the statement itself carries,
+    // exactly as `run_queue` above is narrowed by RLS on a claim the HOST injects.
+    let ledger = run_ok(
+        &reader_url,
+        &format!("{} SELECT count(*) FROM effect_attempts;\n", session()),
+    );
+    assert_eq!(
+        ledger, "2",
+        "the dispatch reader must reach the governed half of its own read surface"
     );
 
     // Cross-tenant rows exist but stay invisible: RLS, not the grant, scopes them.

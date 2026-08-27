@@ -8,7 +8,10 @@
 -- fixtures carry their own `runs` copy (postgres-init.sql schema
 -- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
 -- target of the crate's live-apply gate. Assumes pre-existing `wamn_app`,
--- `wamn_scenario_author` and stable `wamn_effect_writer` ACL roles. Role and
+-- `wamn_scenario_author` and stable `wamn_effect_writer` ACL roles;
+-- `wamn_platform` is the one role this file creates itself, because the floor
+-- arms below NAME it and a missing role is an apply-time failure rather than a
+-- degradation (`wamn-0h0g.22.17`). Role and
 -- scoped LOGIN credential-generation lifecycle is provisioning-owned; this
 -- artifact grants the stable role ledger append/read authority plus only the
 -- narrow run columns needed for its fenced runnable-state recheck.
@@ -34,6 +37,28 @@
 -- pointed at by `input_ref`/`output_ref`.
 
 CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
+
+-- The shared platform group role every non-guest tenant-floor arm below targets
+-- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
+-- `crates/control/provision/src/tenant_key.rs` already gives for its own
+-- bootstrap: naming a role that may not exist adds a new precondition to every
+-- applier — seven live gates plus the production path in `services/ctl` — and
+-- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without
+-- it.
+--
+-- EXCEPTION-guarded under the shared `wamn_role_bootstrap` advisory lock, the
+-- `ensure_platform_group_role_sql` shape. Roles are CLUSTER-global, so two
+-- appliers that do not both take the lock can each observe the role absent and
+-- both issue `CREATE ROLE`.
+DO $platform_group$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
+                 WHERE rolname = 'wamn_platform') THEN
+    CREATE ROLE wamn_platform NOLOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $platform_group$;
 REVOKE ALL PRIVILEGES ON SCHEMA wamn_run
     FROM PUBLIC, wamn_effect_writer;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
@@ -331,7 +356,11 @@ ALTER TABLE wamn_run.environment_policies FORCE ROW LEVEL SECURITY;
 CREATE POLICY environment_policies_tenant
 ON wamn_run.environment_policies
 FOR SELECT
+TO wamn_app
 USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY environment_policies_platform ON wamn_run.environment_policies
+    AS PERMISSIVE FOR SELECT TO wamn_platform
+    USING (true);
 CREATE INDEX environment_policies_tkey
     ON wamn_run.environment_policies ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.environment_policies
@@ -521,8 +550,13 @@ CREATE INDEX runs_run_deadline ON wamn_run.runs (tenant_id, run_deadline_at)
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_tenant ON wamn_run.runs
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY runs_platform ON wamn_run.runs
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX runs_tkey
     ON wamn_run.runs ((wamn_authority.tenant_key(tenant_id)));
 
@@ -647,8 +681,13 @@ CREATE INDEX effect_attempts_bulk_scope
 ALTER TABLE wamn_run.effect_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempts FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempts_tenant ON wamn_run.effect_attempts
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY effect_attempts_platform ON wamn_run.effect_attempts
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX effect_attempts_tkey
     ON wamn_run.effect_attempts ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts
@@ -699,8 +738,13 @@ CREATE TABLE wamn_run.effect_attempt_dispatches (
 ALTER TABLE wamn_run.effect_attempt_dispatches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempt_dispatches FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempt_dispatches_tenant ON wamn_run.effect_attempt_dispatches
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY effect_attempt_dispatches_platform ON wamn_run.effect_attempt_dispatches
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX effect_attempt_dispatches_tkey
     ON wamn_run.effect_attempt_dispatches ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_dispatches
@@ -740,8 +784,13 @@ CREATE TABLE wamn_run.effect_attempt_outcomes (
 ALTER TABLE wamn_run.effect_attempt_outcomes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempt_outcomes FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempt_outcomes_tenant ON wamn_run.effect_attempt_outcomes
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY effect_attempt_outcomes_platform ON wamn_run.effect_attempt_outcomes
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX effect_attempt_outcomes_tkey
     ON wamn_run.effect_attempt_outcomes ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_outcomes

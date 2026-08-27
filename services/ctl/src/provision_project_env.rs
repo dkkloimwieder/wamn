@@ -74,12 +74,13 @@ use url::Url;
 use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EffectWriterCredentialScope,
-    EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, WorkloadRoleFamily, WorkloadRoleScope,
-    WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind, compose_url,
-    effect_writer_credential, legacy_effect_writer_generation_role, project_env_database_name,
-    project_env_namespace, project_env_secret_name, render_project_env_database,
-    render_project_env_secret_manifest, render_workload_secret_manifest, sql,
-    validate_instance_suffix, validate_project_env, workload_generation_role,
+    EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, WorkloadRoleFamily,
+    WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind,
+    compose_url, effect_writer_credential, legacy_effect_writer_generation_role,
+    project_env_database_name, project_env_namespace, project_env_secret_name,
+    render_project_env_database, render_project_env_secret_manifest,
+    render_workload_secret_manifest, sql, validate_instance_suffix, validate_project_env,
+    workload_generation_role,
 };
 use wamn_control_provision::SystemReader;
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
@@ -763,6 +764,22 @@ impl WorkloadRoleState {
             && self.generation_children_exact
     }
 
+    /// THE ONE PARENT EDGE A STABLE ACL ROLE MAY CARRY (`wamn-0h0g.22.17`).
+    ///
+    /// A platform-grain family's ACL role is a member of
+    /// [`PLATFORM_GROUP_ROLE`], and it has to be: the tenant floor is narrowed
+    /// `TO wamn_app`, PostgreSQL default-denies when no policy matches the
+    /// connected role, and the permissive arm names the group. Nothing else may
+    /// appear here — an extra parent is authority this provisioner did not
+    /// confer.
+    fn expected_acl_parents(family: WorkloadRoleFamily) -> &'static [&'static str] {
+        if family.is_platform_grain() {
+            &[PLATFORM_GROUP_ROLE]
+        } else {
+            &[]
+        }
+    }
+
     fn has_acl_role_shape(&self, family: WorkloadRoleFamily) -> bool {
         !self.login
             && self.restrictive_attributes()
@@ -770,7 +787,7 @@ impl WorkloadRoleState {
             && !self.password_set
             && self.valid_until.is_none()
             && !self.valid_until_finite
-            && self.memberships.is_empty()
+            && self.memberships == Self::expected_acl_parents(family)
             && self.membership_options_exact
             && self
                 .member_roles

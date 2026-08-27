@@ -20,6 +20,19 @@
 //! `crates/control/provision/src/sql.rs`). A column absent from those lists is
 //! DENIED, not merely unmentioned, so a wider read here would fail closed at
 //! runtime rather than compile-time.
+//!
+//! # How this connection reaches a governed row at all (`wamn-0h0g.22.17`)
+//!
+//! Not by a claim. `wamn_management_admitter` is a project-environment-scoped
+//! family — `WorkloadRoleScope::ProjectEnvironment` has no tenant field, so its
+//! login name never encoded one — and the tenant floor derives its key from
+//! `current_user`. The floor is narrowed `TO wamn_app`, and PostgreSQL
+//! default-denies when RLS is enabled and no policy matches the connected role,
+//! so before this bead the admitter read every one of these relations at
+//! `ERROR: permission denied for function current_tenant_key`. It now reaches
+//! them through the one permissive `TO wamn_platform` arm each governed relation
+//! carries, which admits every tenant in the database; the `tenant_id = $1`
+//! predicate each statement below spells is what narrows it back down.
 
 use anyhow::{Context as _, bail};
 use serde_json::Value;
@@ -36,16 +49,32 @@ use wamn_runtime::plugins::wamn_postgres::{
     credential_exactness_probe, explicit_credential_source,
 };
 
-/// Inject the tenant every project-plane row policy resolves against.
+/// Pin the session's `search_path` before any admission read.
 ///
-/// Every relation this connection reads — `catalog.wirings`,
-/// `catalog.component_library`, and the connection records — FORCES row-level
-/// security keyed on `NULLIF(current_setting('app.tenant', true), '')`. One
-/// session-level injection therefore scopes them all identically; an uninjected
-/// session sees zero rows rather than another tenant's.
-const ADMISSION_SCOPE_SQL: &str = "SELECT \
-    pg_catalog.set_config('app.tenant', $1, false), \
-    pg_catalog.set_config('search_path', 'pg_catalog', false)";
+/// # The `app.tenant` injection that used to be here is DELETED, not moved
+///
+/// It claimed that every relation this connection reads keys its row policy on
+/// `NULLIF(current_setting('app.tenant', true), '')`. That stopped being true at
+/// `wamn-0h0g.22.6.3`, which swept all 43 guest-reachable relations onto
+/// `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`
+/// — a derivation from `current_user`, precisely so that a session CANNOT set
+/// its own tenant. The `set_config` call had therefore been buying nothing for
+/// several waves: it wrote a GUC no surviving policy reads.
+///
+/// Tenant scoping on this connection is not RLS-shaped and never was. The
+/// admitter is `wamn_management_admitter`, a project-environment-scoped family
+/// whose login name carries no tenant at all, so it reaches these relations
+/// through the permissive `TO wamn_platform` arm (`wamn-0h0g.22.17`) and sees
+/// every tenant the database holds. What narrows it is the EXPLICIT
+/// `tenant_id = $1` predicate every statement below carries — which is where the
+/// scoping was already being done, and now the only place it is claimed.
+///
+/// The `search_path` pin STAYS and is load-bearing: it resolves every unqualified
+/// builtin these statements and the server-side triggers reach through
+/// `pg_catalog` alone, closing the search-path hijack that
+/// `wamn_authority`'s own function bodies close the same way.
+const ADMISSION_SCOPE_SQL: &str =
+    "SELECT pg_catalog.set_config('search_path', 'pg_catalog', false)";
 
 /// Resolve the candidate wiring a test-set command names.
 ///
@@ -270,9 +299,9 @@ impl AdmissionSurface {
 
     async fn scope(&self) -> anyhow::Result<()> {
         self.client
-            .query_one(ADMISSION_SCOPE_SQL, &[&self.tenant_id.as_ref()])
+            .query_one(ADMISSION_SCOPE_SQL, &[])
             .await
-            .context("inject fixed admission tenant scope")?;
+            .context("pin the admission session search path")?;
         Ok(())
     }
 

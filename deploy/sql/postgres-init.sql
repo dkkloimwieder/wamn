@@ -10,6 +10,10 @@
 -- the one thing it cannot rewrite. A role outside the guest generation
 -- convention derives NULL and matches no row, and CHECK (tenant_id <> '')
 -- forbids a ''-tenant row, so the floor is structural rather than conventional.
+--
+-- `wamn-0h0g.22.17` gives every governed relation TWO arms: the tenant floor,
+-- narrowed `TO wamn_app`, and one permissive `TO wamn_platform` arm for the
+-- platform-grain principals whose login names carry no tenant at all.
 
 CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 
@@ -41,6 +45,37 @@ DO $effect_writer$ BEGIN
       NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
 END $effect_writer$;
+
+-- The shared platform group role every non-guest floor arm targets
+-- (`wamn-0h0g.22.17`). PostgreSQL DEFAULT-DENIES when RLS is enabled and no
+-- policy matches the connected role, so narrowing the floor `TO wamn_app` does
+-- not exempt a platform principal — it locks it out, and silently, at zero
+-- rows. The one permissive arm per relation is `TO wamn_platform`; this is the
+-- role it names. NOLOGIN, no grants of its own, NOBYPASSRLS: it carries policy
+-- membership only.
+--
+-- EXCEPTION-guarded under the same advisory lock, not bare `IF NOT EXISTS`:
+-- roles are cluster-global, so two appliers that do not both take the lock can
+-- each observe the role absent and both issue `CREATE ROLE`.
+DO $platform_group$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
+                 WHERE rolname = 'wamn_platform') THEN
+    CREATE ROLE wamn_platform NOLOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $platform_group$;
+
+-- INHERIT TRUE IS SPELLED, NOT DEFAULTED, AND THE OMISSION IS SILENT.
+-- Both roles below are NOINHERIT, and in PostgreSQL 16+ a role's `rolinherit`
+-- supplies the DEFAULT `INHERIT` option for memberships granted TO it — so a
+-- bare `GRANT wamn_platform TO wamn_effect_writer` lands `inherit_option =
+-- false`, the two-hop chain (generation login -> ACL role -> wamn_platform)
+-- dies, and the platform principal reads ZERO ROWS with no error at all.
+-- Measured on PostgreSQL 18.6: bare grant -> 0 rows, `INHERIT TRUE` -> all rows.
+GRANT wamn_platform TO wamn_scenario_author WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
+GRANT wamn_platform TO wamn_effect_writer WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 
 CREATE DATABASE wamn OWNER postgres;
 
@@ -138,8 +173,13 @@ CREATE INDEX bench_tenant_g_id ON s2.bench (tenant_id, g, id);
 ALTER TABLE s2.bench ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.bench FORCE ROW LEVEL SECURITY;
 CREATE POLICY bench_tenant ON s2.bench
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY bench_platform ON s2.bench
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX bench_tkey
     ON s2.bench ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.bench TO wamn_app;
@@ -161,8 +201,13 @@ FROM generate_series(1, 1000) gs,
 ALTER TABLE s2.rls_secrets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.rls_secrets FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_secrets_tenant ON s2.rls_secrets
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY rls_secrets_platform ON s2.rls_secrets
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX rls_secrets_tkey
     ON s2.rls_secrets ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.rls_secrets TO wamn_app;
@@ -187,8 +232,13 @@ CREATE TABLE s2.scratch (
 ALTER TABLE s2.scratch ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.scratch FORCE ROW LEVEL SECURITY;
 CREATE POLICY scratch_tenant ON s2.scratch
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY scratch_platform ON s2.scratch
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX scratch_tkey
     ON s2.scratch ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.scratch TO wamn_app;
@@ -204,8 +254,13 @@ CREATE TABLE s2.fkchild (
 ALTER TABLE s2.fkchild ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.fkchild FORCE ROW LEVEL SECURITY;
 CREATE POLICY fkchild_tenant ON s2.fkchild
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY fkchild_platform ON s2.fkchild
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX fkchild_tkey
     ON s2.fkchild ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.fkchild TO wamn_app;
@@ -239,8 +294,13 @@ CREATE TABLE s3.flows (
 ALTER TABLE s3.flows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.flows FORCE ROW LEVEL SECURITY;
 CREATE POLICY flows_tenant ON s3.flows
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY flows_platform ON s3.flows
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX flows_tkey
     ON s3.flows ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.flows TO wamn_app;
@@ -258,8 +318,13 @@ CREATE TABLE s3.sink (
 ALTER TABLE s3.sink ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.sink FORCE ROW LEVEL SECURITY;
 CREATE POLICY sink_tenant ON s3.sink
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY sink_platform ON s3.sink
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX sink_tkey
     ON s3.sink ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s3.sink TO wamn_app;
@@ -290,8 +355,13 @@ CREATE TABLE s3.runs (
 ALTER TABLE s3.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s3.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_tenant ON s3.runs
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY runs_platform ON s3.runs
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX runs_tkey
     ON s3.runs ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, DELETE ON s3.runs TO wamn_app;

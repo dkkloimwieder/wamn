@@ -40,6 +40,28 @@
 BEGIN;
 
 CREATE SCHEMA catalog AUTHORIZATION postgres;
+
+-- The shared platform group role every non-guest tenant-floor arm below targets
+-- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
+-- `crates/control/provision/src/tenant_key.rs` already gives for its own
+-- bootstrap: naming a role that may not exist adds a new precondition to every
+-- applier — seven live gates plus the production path in `services/ctl` — and
+-- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without
+-- it.
+--
+-- EXCEPTION-guarded under the shared `wamn_role_bootstrap` advisory lock, the
+-- `ensure_platform_group_role_sql` shape. Roles are CLUSTER-global, so two
+-- appliers that do not both take the lock can each observe the role absent and
+-- both issue `CREATE ROLE`.
+DO $platform_group$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
+                 WHERE rolname = 'wamn_platform') THEN
+    CREATE ROLE wamn_platform NOLOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $platform_group$;
 GRANT USAGE ON SCHEMA catalog TO wamn_app;
 GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author;
 
@@ -145,8 +167,13 @@ CREATE TABLE catalog.catalogs (
 ALTER TABLE catalog.catalogs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.catalogs FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalogs_tenant ON catalog.catalogs
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY catalogs_platform ON catalog.catalogs
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX catalogs_tkey
     ON catalog.catalogs ((wamn_authority.tenant_key(tenant_id)));
 -- wamn-0h0g.12.20: every production writer is the superuser publish/migrate
@@ -203,8 +230,13 @@ CREATE TABLE catalog.releases (
 ALTER TABLE catalog.releases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.releases FORCE ROW LEVEL SECURITY;
 CREATE POLICY releases_tenant ON catalog.releases
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY releases_platform ON catalog.releases
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX releases_tkey
     ON catalog.releases ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.releases TO wamn_app;
@@ -302,8 +334,13 @@ CREATE TABLE catalog.catalog_heads (
 ALTER TABLE catalog.catalog_heads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.catalog_heads FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalog_heads_tenant ON catalog.catalog_heads
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY catalog_heads_platform ON catalog.catalog_heads
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX catalog_heads_tkey
     ON catalog.catalog_heads ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.catalog_heads TO wamn_app;
@@ -341,8 +378,13 @@ CREATE UNIQUE INDEX connection_requirements_component_key
 ALTER TABLE catalog.connection_requirements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_requirements FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_requirements_tenant ON catalog.connection_requirements
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY connection_requirements_platform ON catalog.connection_requirements
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX connection_requirements_tkey
     ON catalog.connection_requirements ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_requirements TO wamn_app;
@@ -371,8 +413,13 @@ CREATE TABLE catalog.connection_instances (
 ALTER TABLE catalog.connection_instances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_instances FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_instances_tenant ON catalog.connection_instances
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY connection_instances_platform ON catalog.connection_instances
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX connection_instances_tkey
     ON catalog.connection_instances ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_instances TO wamn_app;
@@ -421,8 +468,13 @@ CREATE TABLE catalog.connection_generations (
 ALTER TABLE catalog.connection_generations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_generations FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_generations_tenant ON catalog.connection_generations
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY connection_generations_platform ON catalog.connection_generations
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX connection_generations_tkey
     ON catalog.connection_generations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_generations TO wamn_app;
@@ -477,8 +529,13 @@ CREATE UNIQUE INDEX connection_bindings_component_key
 ALTER TABLE catalog.connection_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_bindings FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_bindings_tenant ON catalog.connection_bindings
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY connection_bindings_platform ON catalog.connection_bindings
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX connection_bindings_tkey
     ON catalog.connection_bindings ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_bindings TO wamn_app;
@@ -508,8 +565,13 @@ ALTER TABLE catalog.connection_generation_retention ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.connection_generation_retention FORCE ROW LEVEL SECURITY;
 CREATE POLICY connection_generation_retention_tenant
     ON catalog.connection_generation_retention
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY connection_generation_retention_platform ON catalog.connection_generation_retention
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX connection_generation_retention_tkey
     ON catalog.connection_generation_retention ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_generation_retention TO wamn_app;
@@ -750,8 +812,13 @@ CREATE TABLE catalog.schema_migrations (
 ALTER TABLE catalog.schema_migrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.schema_migrations FORCE ROW LEVEL SECURITY;
 CREATE POLICY schema_migrations_tenant ON catalog.schema_migrations
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY schema_migrations_platform ON catalog.schema_migrations
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX schema_migrations_tkey
     ON catalog.schema_migrations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.schema_migrations TO wamn_app;
@@ -776,8 +843,13 @@ CREATE TABLE catalog.entities (
 ALTER TABLE catalog.entities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.entities FORCE ROW LEVEL SECURITY;
 CREATE POLICY entities_tenant ON catalog.entities
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY entities_platform ON catalog.entities
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX entities_tkey
     ON catalog.entities ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.entities TO wamn_app;
@@ -812,8 +884,13 @@ CREATE TABLE catalog.fields (
 ALTER TABLE catalog.fields ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.fields FORCE ROW LEVEL SECURITY;
 CREATE POLICY fields_tenant ON catalog.fields
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY fields_platform ON catalog.fields
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX fields_tkey
     ON catalog.fields ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.fields TO wamn_app;
@@ -844,8 +921,13 @@ CREATE TABLE catalog.relations (
 ALTER TABLE catalog.relations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.relations FORCE ROW LEVEL SECURITY;
 CREATE POLICY relations_tenant ON catalog.relations
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY relations_platform ON catalog.relations
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX relations_tkey
     ON catalog.relations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.relations TO wamn_app;
@@ -868,8 +950,13 @@ CREATE TABLE catalog.indexes (
 ALTER TABLE catalog.indexes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.indexes FORCE ROW LEVEL SECURITY;
 CREATE POLICY indexes_tenant ON catalog.indexes
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY indexes_platform ON catalog.indexes
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX indexes_tkey
     ON catalog.indexes ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.indexes TO wamn_app;
@@ -895,8 +982,13 @@ CREATE TABLE catalog.constraints (
 ALTER TABLE catalog.constraints ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.constraints FORCE ROW LEVEL SECURITY;
 CREATE POLICY constraints_tenant ON catalog.constraints
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY constraints_platform ON catalog.constraints
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX constraints_tkey
     ON catalog.constraints ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.constraints TO wamn_app;
@@ -923,8 +1015,13 @@ CREATE TABLE catalog.rls_policies (
 ALTER TABLE catalog.rls_policies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.rls_policies FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_policies_tenant ON catalog.rls_policies
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY rls_policies_platform ON catalog.rls_policies
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX rls_policies_tkey
     ON catalog.rls_policies ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.rls_policies TO wamn_app;
@@ -948,8 +1045,13 @@ CREATE TABLE catalog.seed_datasets (
 ALTER TABLE catalog.seed_datasets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.seed_datasets FORCE ROW LEVEL SECURITY;
 CREATE POLICY seed_datasets_tenant ON catalog.seed_datasets
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY seed_datasets_platform ON catalog.seed_datasets
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX seed_datasets_tkey
     ON catalog.seed_datasets ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.seed_datasets TO wamn_app;
@@ -999,8 +1101,13 @@ CREATE TABLE catalog.component_library (
 ALTER TABLE catalog.component_library ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.component_library FORCE ROW LEVEL SECURITY;
 CREATE POLICY component_library_tenant ON catalog.component_library
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY component_library_platform ON catalog.component_library
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX component_library_tkey
     ON catalog.component_library ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.component_library TO wamn_app;
@@ -1092,8 +1199,13 @@ CREATE TABLE catalog.wirings (
 ALTER TABLE catalog.wirings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.wirings FORCE ROW LEVEL SECURITY;
 CREATE POLICY wirings_tenant ON catalog.wirings
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY wirings_platform ON catalog.wirings
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX wirings_tkey
     ON catalog.wirings ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.wirings TO wamn_app;
@@ -1119,8 +1231,13 @@ CREATE TABLE catalog.wiring_tombstones (
 ALTER TABLE catalog.wiring_tombstones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.wiring_tombstones FORCE ROW LEVEL SECURITY;
 CREATE POLICY wiring_tombstones_tenant ON catalog.wiring_tombstones
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY wiring_tombstones_platform ON catalog.wiring_tombstones
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX wiring_tombstones_tkey
     ON catalog.wiring_tombstones ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.wiring_tombstones TO wamn_app;
@@ -1142,8 +1259,13 @@ CREATE TABLE catalog.wiring_activation (
 ALTER TABLE catalog.wiring_activation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.wiring_activation FORCE ROW LEVEL SECURITY;
 CREATE POLICY wiring_activation_tenant ON catalog.wiring_activation
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY wiring_activation_platform ON catalog.wiring_activation
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX wiring_activation_tkey
     ON catalog.wiring_activation ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.wiring_activation TO wamn_app;
@@ -1261,8 +1383,13 @@ CREATE TABLE catalog.wiring_activation_events (
 ALTER TABLE catalog.wiring_activation_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.wiring_activation_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY wiring_activation_events_tenant ON catalog.wiring_activation_events
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY wiring_activation_events_platform ON catalog.wiring_activation_events
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX wiring_activation_events_tkey
     ON catalog.wiring_activation_events ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.wiring_activation_events TO wamn_app;
@@ -1312,8 +1439,13 @@ CREATE TABLE catalog.release_components (
 ALTER TABLE catalog.release_components ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.release_components FORCE ROW LEVEL SECURITY;
 CREATE POLICY release_components_tenant ON catalog.release_components
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY release_components_platform ON catalog.release_components
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX release_components_tkey
     ON catalog.release_components ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.release_components TO wamn_app;
@@ -1344,8 +1476,13 @@ ALTER TABLE catalog.release_manifest_v2_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.release_manifest_v2_snapshots FORCE ROW LEVEL SECURITY;
 CREATE POLICY release_manifest_v2_snapshots_tenant
 ON catalog.release_manifest_v2_snapshots
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY release_manifest_v2_snapshots_platform ON catalog.release_manifest_v2_snapshots
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX release_manifest_v2_snapshots_tkey
     ON catalog.release_manifest_v2_snapshots ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.release_manifest_v2_snapshots TO wamn_app;
@@ -1420,8 +1557,13 @@ CREATE TABLE catalog.event_registrations (
 ALTER TABLE catalog.event_registrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.event_registrations FORCE ROW LEVEL SECURITY;
 CREATE POLICY event_registrations_tenant ON catalog.event_registrations
+    TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY event_registrations_platform ON catalog.event_registrations
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX event_registrations_tkey
     ON catalog.event_registrations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.event_registrations TO wamn_app;
