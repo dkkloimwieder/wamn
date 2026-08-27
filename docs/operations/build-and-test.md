@@ -695,6 +695,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `services/ctl/tests/author_wiring_gate_report_live.rs` | `WAMN_AUTHOR_WIRING_PROJECT_PG_URL` **and** `WAMN_AUTHOR_WIRING_CONTROL_PG_URL` | `cargo test -p wamn-ctl --test author_wiring_gate_report_live -- --ignored` |
 | `services/scenario-worker/tests/management_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-scenario-worker --test management_live` |
 | `crates/execution/run-state/tests/effect_writer_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --features native --test effect_writer_live -- --ignored` |
+| `crates/execution/run-state/tests/run_state_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --test run_state_live -- --include-ignored` |
 | `services/dispatcher/tests/read_authority.rs` | `WAMN_PROVISION_PG_URL` | `cargo test -p wamn-dispatcher --test read_authority` |
 | `crates/control/provision/tests/control_portable_store.rs` | `WAMN_CONTROL_PORTABLE_PG_URL` | `cargo test -p wamn-control-provision --test control_portable_store -- --include-ignored --test-threads=1` |
 | `crates/control/provision/tests/family_surface_grants.rs` | `WAMN_FAMILY_SURFACE_PG_URL` | `cargo test -p wamn-control-provision --test family_surface_grants` |
@@ -705,6 +706,17 @@ Rows carrying `-- --ignored` have **every** test in that binary marked
 them. Measured at `1bffa614` by counting `#[ignore]` against the test
 attributes in each file; the rows without it self-skip on an unset variable
 instead.
+
+`crates/execution/run-state/tests/run_state_live.rs` **cannot share a server
+with `crates/execution/run-state/tests/admission_live.rs`**, even though the two
+read the same variable. `admission_live` REVOKEs `ALL ... FROM PUBLIC` on the
+database it is pointed at and re-grants `CONNECT` to named roles only; measured
+on `wamn-0h0g.15.137.5`, the `postgres` database ACL afterwards is
+`postgres=CTc`, `wamn_app=c`, plus the two minted logins, and PUBLIC is gone —
+so `run_state_live`, whose every fenced leg opens with `CREATE TEMP TABLE`,
+then dies with `ERROR: permission denied to create temporary tables in database
+"postgres"`. Give each of the two its **own** container. Measured together on
+one: `admission_live` ok in 3.52s, `run_state_live` FAILED in 1.03s.
 
 `services/ctl/tests/release_manifest_mint_live.rs` is mixed: three plain
 `#[test]` and three `#[ignore]`. Run it both ways.

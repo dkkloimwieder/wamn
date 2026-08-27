@@ -40,6 +40,23 @@ fn app_preamble() -> &'static str {
      SET LOCAL app.tenant = 't1';"
 }
 
+/// The principal the fenced transitions actually run as.
+///
+/// `FENCED_PREFIX` and `grant_production_claim_sql` both open with
+/// `require_executor_platform_authority()`, which raises `42501` unless
+/// `CURRENT_USER` is a MEMBER of `wamn_executor_platform`; and `wamn_app` holds
+/// only `SELECT, DELETE` on `wamn_run.runs` plus a column-scoped `SELECT` on
+/// `wamn_run.run_queue`. A transition driven under [`app_preamble`] is
+/// therefore refused twice over — at the grant, before the authority guard ever
+/// evaluates — and cannot reach the semantics under test. The tenant fence is
+/// unaffected by the swap: every fenced statement carries its own
+/// `current_setting('app.tenant')` predicate, so `SET LOCAL app.tenant` is
+/// still what fences these legs.
+fn executor_preamble() -> &'static str {
+    "BEGIN; SET LOCAL ROLE wamn_executor_platform; SET LOCAL search_path TO wamn_run; \
+     SET LOCAL app.tenant = 't1';"
+}
+
 #[test]
 #[ignore = "requires WAMN_RUN_STORE_PG_URL and a throwaway PostgreSQL database"]
 fn run_state_live() {
@@ -53,9 +70,9 @@ fn run_state_live() {
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .expect("read run-queue DDL");
 
-    // `wamn_app` is re-stated rather than only created: the claim-time legs below
-    // prove the DDL's column grants by executing under this role, and a leftover
-    // role from an earlier database carrying SUPERUSER or BYPASSRLS would pass them
+    // `wamn_app` is re-stated rather than only created: the class-grant leg below
+    // proves the DDL's guest ACL by executing under this role, and a leftover
+    // role from an earlier database carrying SUPERUSER or BYPASSRLS would pass it
     // with no grants at all (wamn-0h0g.15.23).
     //
     // THE TWO WRITER ROLES BELOW ARE HAND-ROLLED, AND THAT IS A RULED DIVERGENCE
@@ -75,8 +92,9 @@ fn run_state_live() {
     // THE DRIFT CONTRACT. The `wamn_scenario_author` block below mirrors
     // `ensure_scenario_author_role_sql` in crates/schema/control/src/run_plane.rs, while
     // the `wamn_effect_writer` and `wamn_run_projection_writer` blocks mirror
-    // `ensure_effect_writer_acl_role_sql` in crates/control/provision/src/sql.rs. All
-    // three carry the production attributes exactly: NOLOGIN NOSUPERUSER NOCREATEDB
+    // `ensure_effect_writer_acl_role_sql` in crates/control/provision/src/sql.rs, and the
+    // `wamn_executor_platform` block mirrors `ensure_workload_acl_role_sql` in that same
+    // file. All four carry the production attributes exactly: NOLOGIN NOSUPERUSER NOCREATEDB
     // NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS. ANY CHANGE TO EITHER
     // PRODUCTION ATTRIBUTE SET UPDATES THIS BLOCK IN THE SAME COMMIT. The mirrored
     // surface is the attribute list and nothing else: the writer role NAMES are already
@@ -88,6 +106,17 @@ fn run_state_live() {
     // REOPEN TRIGGER: a SECOND consumer needing this attribute set. Minting a shared
     // cross-workspace home crate for one reader was rejected as infrastructure built for
     // a single caller; a second reader is when that crate earns its existence.
+    //
+    // THE EXECUTOR'S RUN-PLANE GRANTS AT THE END OF THIS SCRIPT ARE TEST-ONLY, and that
+    // is a measured statement, not a shortcut. deploy/sql/run-state.sql withdrew
+    // `wamn_app`'s write surface at `5a8645d3` and deferred the replacement to "their
+    // owning cutovers"; that cutover is unbuilt — no builder in
+    // crates/control/provision/src/sql.rs grants `wamn_executor_platform` anything on
+    // `wamn_run`, so there is no production grant for this gate to drive. The union
+    // grant below is the same test-only device `tests/admission_live.rs` uses for the
+    // same role and the same reason. WHEN THE EXECUTOR CUTOVER LANDS, THIS BLOCK IS
+    // REPLACED BY THAT BUILDER. What is NOT test-only is the membership: `runs_platform`
+    // is the only policy an executor session matches, and it is `TO wamn_platform`.
     success(
         &url,
         &format!(
@@ -110,6 +139,11 @@ fn run_state_live() {
                  CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
                END IF; \
+               IF NOT EXISTS \
+                 (SELECT FROM pg_roles WHERE rolname = 'wamn_executor_platform') THEN \
+                 CREATE ROLE wamn_executor_platform NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
              END $$; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
@@ -119,7 +153,14 @@ fn run_state_live() {
              VALUES ('t1','cat',1,'prod','0.1','draft'); \
              INSERT INTO catalog.releases \
                (tenant_id,catalog_id,catalog_version) \
-             VALUES ('t1','cat',1);"
+             VALUES ('t1','cat',1); \
+             GRANT wamn_platform TO wamn_executor_platform \
+               WITH INHERIT TRUE, SET FALSE, ADMIN FALSE; \
+             GRANT USAGE ON SCHEMA wamn_run, catalog TO wamn_executor_platform; \
+             GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA wamn_run, catalog \
+               TO wamn_executor_platform; \
+             GRANT EXECUTE ON FUNCTION wamn_authority.tenant_key(text), \
+               wamn_authority.current_tenant_key() TO wamn_executor_platform;"
         ),
     );
 
@@ -135,12 +176,14 @@ fn run_state_live() {
         "DO $$ DECLARE mirrored text; BEGIN \
            SELECT string_agg(rolname, ',' ORDER BY rolname) INTO mirrored FROM pg_roles \
             WHERE rolname IN \
-              ('wamn_effect_writer','wamn_run_projection_writer','wamn_scenario_author') \
+              ('wamn_effect_writer','wamn_executor_platform', \
+               'wamn_run_projection_writer','wamn_scenario_author') \
               AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin \
               AND NOT rolinherit AND NOT rolcreatedb AND NOT rolcreaterole \
               AND NOT rolreplication; \
            ASSERT mirrored = \
-                    'wamn_effect_writer,wamn_run_projection_writer,wamn_scenario_author', \
+                    'wamn_effect_writer,wamn_executor_platform,\
+                     wamn_run_projection_writer,wamn_scenario_author', \
                   'the mirrored roles must carry exactly the attributes \
                    ensure_scenario_author_role_sql and ensure_effect_writer_acl_role_sql mint \
                    (NOLOGIN NOSUPERUSER \
@@ -179,7 +222,7 @@ fn run_state_live() {
            ASSERT (SELECT caller_outcome_kind FROM runs WHERE run_id='release-1') = 'responded', \
                   'caller outcome persisted'; \
          END $$; COMMIT;",
-        app_preamble(),
+        executor_preamble(),
         release
     );
     success(&url, &release_script);
@@ -194,7 +237,7 @@ fn run_state_live() {
            ASSERT (SELECT result_code FROM replayed) = 'already-released', 'duplicate is replay'; \
            ASSERT (SELECT outcome_kind FROM replayed) = 'responded', 'stored kind returned'; \
          END $$; COMMIT;",
-        app_preamble(),
+        executor_preamble(),
         release
     );
     success(&url, &replay_script);
@@ -212,7 +255,7 @@ fn run_state_live() {
            ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='release-1'), \
                   'queue row removed atomically'; \
          END $$; COMMIT;",
-        app_preamble(),
+        executor_preamble(),
         terminalize
     );
     success(&url, &terminal_script);
@@ -275,11 +318,17 @@ fn run_state_live() {
            ASSERT (SELECT result_code FROM http_released_terminal) = 'terminalized', \
                   'released HTTP request terminalizes'; \
          END $$; COMMIT;",
-        app_preamble(),
+        executor_preamble(),
         terminalize
     );
     success(&url, &source_terminal_script);
 
+    // `release-1` is terminal AND already caller-released, so the typed answer is
+    // the stored CAS winner, not the bare terminal refusal: `classified` reads
+    // `run-terminal AND caller_released_at IS NOT NULL` as `already-released`, the
+    // arm `terminal_caller_replay_still_returns_the_stored_cas_winner` pins in
+    // src/transitions.rs. The bare `run-terminal` code is what a terminal run with
+    // no caller to release returns, and no leg here observes it.
     let post_terminal_script = format!(
         "{} PREPARE release_stmt \
            (text,text,text,bigint,text,text,int,text,text) AS {}; \
@@ -287,10 +336,10 @@ fn run_state_live() {
            EXECUTE release_stmt('release-1','release-1','worker-a',1, \
                                 'failed','{{\"error\":{{}}}}',500,NULL,'sha256:two'); \
          DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM refused) = 'run-terminal', \
+           ASSERT (SELECT result_code FROM refused) = 'already-released', \
                   'post-terminal transition is typed'; \
          END $$; COMMIT;",
-        app_preamble(),
+        executor_preamble(),
         release
     );
     success(&url, &post_terminal_script);
@@ -313,7 +362,7 @@ fn run_state_live() {
     let winner = thread::spawn(move || {
         success(
             &race_url,
-            "BEGIN; SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; \
+            "BEGIN; SET LOCAL ROLE wamn_executor_platform; SET LOCAL search_path TO wamn_run; \
              SET LOCAL app.tenant='t1'; \
              UPDATE run_queue SET lease_owner='winner', lease_generation=lease_generation+1, \
                     lease_expires_at=now()+interval '1 minute' \
@@ -335,7 +384,7 @@ fn run_state_live() {
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='race-1') = 'winner', \
                   'FenceLost writes no queue state'; \
          END $$; COMMIT;",
-        app_preamble(),
+        executor_preamble(),
         release
     );
     success(&url, &stale_script);
@@ -364,7 +413,7 @@ fn run_state_live() {
          EXECUTE terminal_stmt('fault-1','fault-1','worker-f',9, \
                                'failed','node-failed','null','terminal'); \
          SELECT 1/0; COMMIT;",
-        app_preamble(),
+        executor_preamble(),
         release,
         terminalize
     );
@@ -437,7 +486,7 @@ fn run_state_live() {
            ASSERT (SELECT release_version FROM runs WHERE run_id='record-effect') = 4, \
                   'each claim records its own pair'; \
          END $$; COMMIT;",
-        app_preamble(),
+        executor_preamble(),
         claim
     );
     success(&url, &record_script);
@@ -468,7 +517,7 @@ fn run_state_live() {
                   = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
                   'the refused rewrites left the recorded digest exactly as claimed'; \
          END $$; COMMIT;",
-        app_preamble()
+        executor_preamble()
     );
     success(&url, &refusal_script);
 
@@ -502,7 +551,7 @@ fn run_state_live() {
            ASSERT (SELECT release_version FROM runs WHERE run_id='record-claim') = 6, \
                   'the re-recorded pair survives the refused erasure'; \
          END $$; COMMIT;",
-        app_preamble()
+        executor_preamble()
     );
     success(&url, &erasure_script);
 
@@ -543,7 +592,7 @@ fn run_state_live() {
            ASSERT (SELECT release_version FROM runs WHERE run_id='record-effect') = 4, \
                   'the release the effect fired under is intact'; \
          END $$; COMMIT;",
-        app_preamble()
+        executor_preamble()
     );
     success(&url, &effect_script);
 
@@ -584,7 +633,7 @@ fn run_state_live() {
                     WHERE run_id='record-standard-effect') IS NULL, \
                   'the default class could not clear a record the park must clear'; \
          END $$; COMMIT;",
-        app_preamble()
+        executor_preamble()
     );
     success(&url, &standard_class_script);
 
@@ -701,7 +750,7 @@ fn run_state_live() {
            ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-unpaired') IS NULL, \
                   'the unclaimed run carries no release record'; \
          END $$; COMMIT;",
-        app_preamble()
+        executor_preamble()
     );
     success(&url, &paired_script);
 }
