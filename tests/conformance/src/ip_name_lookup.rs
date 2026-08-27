@@ -85,14 +85,6 @@ pub(super) fn compact(source: &str) -> String {
         .collect()
 }
 
-pub(super) fn require(source: &str, marker: &str, seam: &str) -> Result<(), String> {
-    if source.contains(marker) {
-        Ok(())
-    } else {
-        Err(format!("{seam} no longer contains `{marker}`"))
-    }
-}
-
 fn host(name: &str) -> Host<String> {
     Host::parse(name).expect("test host must parse")
 }

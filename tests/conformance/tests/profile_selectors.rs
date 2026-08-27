@@ -581,6 +581,32 @@ fn unknown_selector_modes_refuse_before_cargo() {
     fs::remove_dir_all(&scratch).expect("failed to remove refusal scratch directory");
 }
 
+/// wamn-0h0g.15.137.4: the needle set below is DERIVED from cargo metadata, so
+/// it inherits every ordinary-English package name in the workspace -- today
+/// `transform` and `http-request`. Nothing collides yet, but a comment in a
+/// selector tool reading "transform the manifest list" makes this guard report
+/// a hardcoded package name that is not there. Measured: it does, naming
+/// `tools/build-components` and `transform`.
+///
+/// THE COST IS DELIBERATE, the way a members-line change already is. Both
+/// alternatives were measured and are worse:
+///
+///   * comment-stripping the haystack cannot be done safely here -- both
+///     selector tools contain `$#`, so a line-based stripper deletes the
+///     executable line it sits on and blinds the guard silently;
+///   * a quote- or word-shaped needle wrapper misses the shapes that matter: a
+///     bare `m1 | proof | materializer)` case arm is a real hardcode this bare
+///     `contains` kills and a quoted shape would not;
+///   * an exclusion list of ordinary-English names is a HAND-WRITTEN needle set,
+///     which is precisely what deriving the set exists to avoid, and it would
+///     blind the guard on two of the seven component packages.
+///
+/// Nothing else kills the mutant this exists for. A tool that hardcodes a
+/// package list EQUAL to the canonical one passes every behavioural proof in
+/// this file, `selector_tools_execute_exact_fake_cargo_argv` included, and
+/// fails only here. So naming a package after an ordinary English word costs
+/// whoever adds it a rename or a fix to this guard. That is the price of the
+/// derivation, and it is the cheaper half of the trade.
 #[test]
 fn selector_tools_do_not_duplicate_canonical_package_inventory() {
     let root = repository_root();

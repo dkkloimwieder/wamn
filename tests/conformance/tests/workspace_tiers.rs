@@ -512,6 +512,16 @@ fn workspace_tier_helper_list_matches_manifest() {
 
     let helper_source = fs::read_to_string(root.join(WORKSPACE_TIER_HELPER))
         .expect("workspace tier helper must be readable");
+    // wamn-0h0g.15.137.4: this needle set is DERIVED from the role manifest and
+    // so inherits every ordinary-English package name in it -- today `transform`
+    // and `http-request`. Prose in the helper containing one false-fires; it was
+    // measured doing exactly that. The cost is DELIBERATE: the full ruling, and
+    // the measurements that rejected comment-stripping, a needle wrapper, and an
+    // exclusion list, are recorded at
+    // `selector_tools_do_not_duplicate_canonical_package_inventory` in
+    // profile_selectors.rs. Nothing else kills the mutant this exists for -- a
+    // helper hardcoding a package list EQUAL to the manifest passes every
+    // behavioural tier proof in this file and fails only here.
     for package in &roles.packages {
         assert!(
             !helper_source.contains(&package.name),
