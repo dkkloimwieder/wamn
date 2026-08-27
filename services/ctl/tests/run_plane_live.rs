@@ -1321,6 +1321,78 @@ async fn retired_effect_disposition_cutover_live() {
     retired_effect_disposition_cutover_leg(&su).await;
 }
 
+/// The reconciler plans NOTHING on the author's catalog surface that the FRESH
+/// INSTALL just produced (wamn-0h0g.22.20).
+///
+/// `AUTHORING_PRIVILEGE_SPECS` is the third emitter of the author's catalog
+/// grants and the only one that runs on every reconcile, so a revoke landed in
+/// `deploy/sql/catalog-schema.sql` and `ensure_authoring_catalog_privileges`
+/// alone is silently RE-GRANTED here, and `authoring_privileges_drifted` would
+/// report the revoked state AS DRIFT on every provisioned environment. The two
+/// must therefore be read against each other on a real server rather than
+/// against one another's constants.
+///
+/// Its own entry, and DRY-RUN only, on purpose. `current_noop_leg` makes the
+/// same reading inside `run_plane_reconcile_live`, but that binary's leg chain
+/// aborts long before reaching it on an unrelated pre-existing refusal
+/// (`VerifyEffectWriterRole` / `effect-writer-role-out-of-bounds`), and that is
+/// an APPLY-mode action. Planning never executes it, so this reading stays
+/// reachable while that stands.
+#[tokio::test]
+async fn authoring_privileges_at_record_plan_no_repair_live() {
+    let Some(url) = support::LockedUrl::optional() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the authoring-privilege drift gate");
+        return;
+    };
+    let su = connect(&url).await;
+    reset(&su).await;
+    let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
+    for ddl in [RUN_STATE_SQL, RUN_QUEUE_SQL] {
+        su.batch_execute(&rewrite_schema(ddl, &schema))
+            .await
+            .expect("apply the run-plane record");
+    }
+
+    let dry = reconcile_run_plane::reconcile(&su, &schema, false)
+        .await
+        .expect("dry-run plans");
+    let repairs: Vec<&str> = dry
+        .actions
+        .iter()
+        .filter(|action| action.kind == RunPlaneActionKind::RepairAuthoringPrivilege)
+        .map(|action| action.target.as_str())
+        .collect();
+    assert!(
+        repairs.is_empty(),
+        "the reconciler disagrees with the fresh install about the authoring \
+         surface and would re-grant on every pass: {repairs:?}"
+    );
+
+    // The reading has to be able to SEE a repair, or an empty plan for any
+    // reason at all reads as agreement. Re-open one dormant author read and
+    // require exactly that one relation back.
+    su.batch_execute("GRANT SELECT ON catalog.releases TO wamn_scenario_author")
+        .await
+        .expect("re-open one dormant author read");
+    let drifted = reconcile_run_plane::reconcile(&su, &schema, false)
+        .await
+        .expect("dry-run plans over the drifted surface");
+    let drifted_repairs: Vec<&str> = drifted
+        .actions
+        .iter()
+        .filter(|action| action.kind == RunPlaneActionKind::RepairAuthoringPrivilege)
+        .map(|action| action.target.as_str())
+        .collect();
+    assert_eq!(
+        drifted_repairs,
+        vec!["catalog.releases"],
+        "one re-opened author read must plan exactly one repair"
+    );
+}
+
 /// Persisted authored ordering bytes have no lossless global-FIFO backfill.
 /// Refuse under a flow-table lock before DDL, preserve the bytes, and converge
 /// once only default-omitted current graphs remain.
@@ -4404,8 +4476,7 @@ async fn two_plane_residency_leg(su: &Client) {
     );
     assert!(
         converge.actions.iter().any(|action| {
-            action.kind == RunPlaneActionKind::AddColumn
-                && action.target == "run_queue.lease_owner"
+            action.kind == RunPlaneActionKind::AddColumn && action.target == "run_queue.lease_owner"
         }),
         "the converge pass did not restore the record column: {:#?}",
         converge.actions

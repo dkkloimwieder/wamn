@@ -240,7 +240,6 @@ CREATE POLICY releases_platform ON catalog.releases
 CREATE INDEX releases_tkey
     ON catalog.releases ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.releases TO wamn_app;
-GRANT SELECT ON catalog.releases TO wamn_scenario_author;
 CREATE TRIGGER releases_immutable
 BEFORE UPDATE ON catalog.releases
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
@@ -344,7 +343,6 @@ CREATE POLICY catalog_heads_platform ON catalog.catalog_heads
 CREATE INDEX catalog_heads_tkey
     ON catalog.catalog_heads ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.catalog_heads TO wamn_app;
-GRANT SELECT ON catalog.catalog_heads TO wamn_scenario_author;
 
 -- BEGIN CONNECTION STORAGE MIGRATION (wamn-ko5r.6)
 -- Portable requirements retain their truthful minting grain. Legacy flow rows
@@ -388,7 +386,6 @@ CREATE POLICY connection_requirements_platform ON catalog.connection_requirement
 CREATE INDEX connection_requirements_tkey
     ON catalog.connection_requirements ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_requirements TO wamn_app;
-GRANT SELECT ON catalog.connection_requirements TO wamn_scenario_author;
 CREATE TRIGGER connection_requirements_immutable
 BEFORE UPDATE OR DELETE ON catalog.connection_requirements
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
@@ -423,7 +420,6 @@ CREATE POLICY connection_instances_platform ON catalog.connection_instances
 CREATE INDEX connection_instances_tkey
     ON catalog.connection_instances ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_instances TO wamn_app;
-GRANT SELECT ON catalog.connection_instances TO wamn_scenario_author;
 
 CREATE FUNCTION catalog.guard_connection_instance_update()
 RETURNS trigger
@@ -478,7 +474,6 @@ CREATE POLICY connection_generations_platform ON catalog.connection_generations
 CREATE INDEX connection_generations_tkey
     ON catalog.connection_generations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_generations TO wamn_app;
-GRANT SELECT ON catalog.connection_generations TO wamn_scenario_author;
 CREATE TRIGGER connection_generations_update_immutable
 BEFORE UPDATE ON catalog.connection_generations
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
@@ -539,7 +534,6 @@ CREATE POLICY connection_bindings_platform ON catalog.connection_bindings
 CREATE INDEX connection_bindings_tkey
     ON catalog.connection_bindings ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON catalog.connection_bindings TO wamn_app;
-GRANT SELECT ON catalog.connection_bindings TO wamn_scenario_author;
 CREATE TRIGGER connection_bindings_immutable
 BEFORE UPDATE OR DELETE ON catalog.connection_bindings
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();

@@ -1396,38 +1396,54 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "releases",
+        // wamn-0h0g.22.20 revoked the author SELECT on this relation and the
+        // five catalog specs below it. The authority was DORMANT, measured from
+        // the server: `pg_auth_members` carries no edge for
+        // `wamn_scenario_author` in either direction, it is NOLOGIN NOINHERIT,
+        // and it holds no CONNECT on the project database. There is no bead
+        // behind an evidence-reader story that would need these reads, so
+        // justifying them in a comment would reproduce `wamn-p3ze` -- a false
+        // justification living beside a real grant.
+        //
+        // THE REVOKE HAS THREE EMITTERS AND THIS IS THE ONE THAT UNDOES THE
+        // OTHER TWO. Left at `&["SELECT"]` while `catalog-schema.sql` and
+        // `publish_catalog::ensure_authoring_catalog_privileges` grant nothing,
+        // `RepairAuthoringPrivilege` re-grants on every reconcile and
+        // `authoring_privileges_drifted` reports the revoked state AS DRIFT on
+        // every provisioned environment. `the_catalog_ddl_and_the_authoring_specs_agree_on_the_author`
+        // pins the two against each other so neither can move alone.
         app: &["SELECT"],
-        author: &["SELECT"],
+        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "catalog_heads",
         app: &["SELECT"],
-        author: &["SELECT"],
+        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "connection_requirements",
         app: &["SELECT"],
-        author: &["SELECT"],
+        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "connection_instances",
         app: &["SELECT"],
-        author: &["SELECT"],
+        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "connection_generations",
         app: &["SELECT"],
-        author: &["SELECT"],
+        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "connection_bindings",
         app: &["SELECT"],
-        author: &["SELECT"],
+        author: &[],
     },
     // `runs` has a dedicated column-grant reconciler because capture_mode is
     // admission-owned while the remaining run columns retain app writes.
@@ -7628,6 +7644,71 @@ COMMIT;
         }
         let source = select_run_plane_helper_functions_sql();
         assert!(!source.contains("authoring_test_sets"), "{source}");
+    }
+
+    /// The FRESH-INSTALL emitter and the RECONCILE emitter must agree, relation
+    /// by relation, on what `wamn_scenario_author` holds (wamn-0h0g.22.20).
+    ///
+    /// This is the one assertion `observation_at_record` cannot make. That
+    /// fixture builds its privilege map FROM `AUTHORING_PRIVILEGE_SPECS`, so a
+    /// spec that disagrees with the shipped DDL stays self-consistent and every
+    /// planner test keeps passing while a provisioned environment converges
+    /// forever: the reconciler re-grants what the file never granted, and the
+    /// drift report names the revoked state as the drift. Reading the grants out
+    /// of `catalog-schema.sql` is the only way to make the two answer
+    /// independently.
+    ///
+    /// Comment lines are dropped before the scan. Static checked-in DDL cannot
+    /// otherwise tell a real declaration from a COMMENT mentioning one, and this
+    /// direction of the check would false-RED on a comment that merely quotes a
+    /// grant.
+    #[test]
+    fn the_catalog_ddl_and_the_authoring_specs_agree_on_the_author() {
+        let statements: Vec<&str> = CATALOG_SCHEMA_SQL
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with("--"))
+            .collect();
+        let granted_to_author: BTreeSet<String> = statements
+            .iter()
+            .filter_map(|line| {
+                let rest = line.strip_prefix("GRANT SELECT ON catalog.")?;
+                let relation = rest.strip_suffix(" TO wamn_scenario_author;")?;
+                Some(relation.to_string())
+            })
+            .collect();
+        let specified_for_author: BTreeSet<String> = AUTHORING_PRIVILEGE_SPECS
+            .iter()
+            .filter(|spec| matches!(spec.schema, AuthoringTableSchema::Catalog))
+            .filter(|spec| !spec.author.is_empty())
+            .map(|spec| spec.table.to_string())
+            .collect();
+        assert_eq!(
+            granted_to_author, specified_for_author,
+            "the fresh install and the reconciler disagree on the author's \
+             catalog surface; landing this revoke in a subset of its three \
+             emitters is strictly worse than landing none of it"
+        );
+
+        // The scan has to be able to SEE a grant, or the equality above is two
+        // empty sets agreeing with each other. The relations the confinement
+        // narrowed to `wamn_app` are the positive control: the same line shape,
+        // present in the file, differing only in the grantee.
+        let granted_to_app = statements
+            .iter()
+            .filter(|line| {
+                line.starts_with("GRANT SELECT ON catalog.") && line.ends_with(" TO wamn_app;")
+            })
+            .count();
+        assert!(
+            granted_to_app
+                >= AUTHORING_PRIVILEGE_SPECS
+                    .iter()
+                    .filter(|spec| matches!(spec.schema, AuthoringTableSchema::Catalog))
+                    .count(),
+            "the grant scan matched {granted_to_app} app grants, so its line \
+             shape no longer matches the file and the author scan proves nothing"
+        );
     }
 
     #[test]

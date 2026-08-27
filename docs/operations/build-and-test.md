@@ -622,6 +622,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `services/ctl/tests/terminalize_effect_uncertain_live.rs` | `WAMN_OPERATOR_TERMINALIZE_PG18_URL` | `cargo test -p wamn-ctl --test terminalize_effect_uncertain_live` |
 | `services/ctl/tests/release_manifest_mint_live.rs` | `WAMN_RELEASE_MANIFEST_MINT_PG_URL` | `cargo test -p wamn-ctl --test release_manifest_mint_live -- --ignored` |
 | `services/ctl/tests/protected_relations_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --features ops --test protected_relations_live -- --ignored` |
+| `services/ctl/tests/catalog_confinement_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test catalog_confinement_live` |
 | `services/scenario-worker/tests/management_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-scenario-worker --test management_live` |
 | `crates/execution/run-state/tests/effect_writer_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --features native --test effect_writer_live -- --ignored` |
 | `services/dispatcher/tests/read_authority.rs` | `WAMN_PROVISION_PG_URL` | `cargo test -p wamn-dispatcher --test read_authority` |

@@ -141,15 +141,9 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
             &[],
         )
         .await?;
-    let release_objects = [
-        release_row.get::<_, bool>(0),
-        release_row.get::<_, bool>(1),
-    ];
+    let release_objects = [release_row.get::<_, bool>(0), release_row.get::<_, bool>(1)];
     if release_objects.iter().all(|present| *present) {
-        let provenance_storage = [
-            release_row.get::<_, bool>(2),
-            release_row.get::<_, bool>(3),
-        ];
+        let provenance_storage = [release_row.get::<_, bool>(2), release_row.get::<_, bool>(3)];
         if !provenance_storage.iter().all(|present| *present) {
             let start = CATALOG_SCHEMA_SQL
                 .find("-- BEGIN DISPOSITION PROVENANCE STORAGE MIGRATION")
@@ -411,6 +405,31 @@ async fn ensure_connection_component_grain(client: &tokio_postgres::Client) -> a
         .context("migrate connection storage to the component grain")
 }
 
+/// The six catalog relations `wamn-0h0g.22.20` revoked `wamn_scenario_author`
+/// SELECT on, in `deploy/sql/catalog-schema.sql` order.
+///
+/// The authority was DORMANT, measured from the server on a fully provisioned
+/// environment: `pg_auth_members` carries no edge for the role in either
+/// direction, it is NOLOGIN NOINHERIT, and it holds no CONNECT on the project
+/// database. Nothing could reach these reads, and no bead describes a reader
+/// that would — writing a justification into the DDL comment instead would
+/// reproduce the `wamn-p3ze` defect exactly.
+///
+/// The list is `pub(crate)` because the revoke has THREE emitters and landing a
+/// subset is strictly worse than landing nothing: this converge, the fresh
+/// install in `deploy/sql/catalog-schema.sql`, and
+/// `wamn_schema_control::run_plane`'s `AUTHORING_PRIVILEGE_SPECS`, whose
+/// `RepairAuthoringPrivilege` would otherwise re-grant on every reconcile and
+/// report the revoked state as drift.
+pub(crate) const AUTHOR_DORMANT_CATALOG_RELATIONS: [&str; 6] = [
+    "releases",
+    "catalog_heads",
+    "connection_requirements",
+    "connection_instances",
+    "connection_generations",
+    "connection_bindings",
+];
+
 /// Converge the catalog schema's role grants on an ALREADY-PROVISIONED database.
 ///
 /// `deploy/sql/catalog-schema.sql` applies whole only on a fresh install, so this
@@ -421,17 +440,15 @@ async fn ensure_connection_component_grain(client: &tokio_postgres::Client) -> a
 /// wamn-0h0g.12.20-.12.29 confinement that leaves the guest-reachable `wamn_app`
 /// LOGIN read-only on the schema-of-record relations no production writer
 /// reaches through it. Each half asserts its own effective ACL before returning.
-async fn ensure_authoring_catalog_privileges(
-    client: &tokio_postgres::Client,
-) -> anyhow::Result<()> {
-    client
-        .batch_execute(
-            "REVOKE wamn_scenario_author FROM wamn_app; \
+///
+/// Held as a constant so the pinned-text proof below can read the batch this
+/// path actually sends, rather than a paraphrase of it.
+const CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL: &str = "REVOKE wamn_scenario_author FROM wamn_app; \
              GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.releases FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.releases TO wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.releases TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.catalog_heads FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.catalog_heads TO wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.catalog_heads TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.component_library FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.component_library TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.release_components FROM PUBLIC, wamn_app, wamn_scenario_author; \
@@ -439,14 +456,14 @@ async fn ensure_authoring_catalog_privileges(
              REVOKE ALL PRIVILEGES ON catalog.release_manifest_v2_snapshots FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.release_manifest_v2_snapshots TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.connection_requirements FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.connection_requirements TO wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.connection_requirements TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.connection_instances FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.connection_instances TO wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.connection_instances TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.connection_generations FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.connection_generations TO wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.connection_generations TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.connection_bindings FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.connection_bindings TO wamn_app, wamn_scenario_author; \
-             DO $effective_acl$ BEGIN \
+             GRANT SELECT ON catalog.connection_bindings TO wamn_app; \
+             DO $effective_acl$ DECLARE rel text; BEGIN \
                IF has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'DELETE') \
@@ -458,6 +475,22 @@ async fn ensure_authoring_catalog_privileges(
                  RAISE EXCEPTION USING ERRCODE = '42501', \
                    MESSAGE = 'authoring-effective-privilege-out-of-bounds:catalog'; \
                END IF; \
+               FOREACH rel IN ARRAY ARRAY[ \
+                 'catalog.releases', \
+                 'catalog.catalog_heads', \
+                 'catalog.connection_requirements', \
+                 'catalog.connection_instances', \
+                 'catalog.connection_generations', \
+                 'catalog.connection_bindings'] LOOP \
+                 IF to_regclass(rel) IS NULL THEN CONTINUE; END IF; \
+                 IF has_any_column_privilege( \
+                      'wamn_scenario_author', rel, 'SELECT,INSERT,UPDATE,REFERENCES') \
+                    OR has_table_privilege( \
+                         'wamn_scenario_author', rel, 'DELETE,TRUNCATE,TRIGGER') THEN \
+                   RAISE EXCEPTION USING ERRCODE = '42501', \
+                     MESSAGE = 'authoring-dormant-privilege-out-of-bounds:' || rel; \
+                 END IF; \
+               END LOOP; \
              END $effective_acl$; \
              DO $confine_catalog$ DECLARE rel text; BEGIN \
                FOREACH rel IN ARRAY ARRAY[ \
@@ -502,8 +535,13 @@ async fn ensure_authoring_catalog_privileges(
                      MESSAGE = 'catalog-registration-lock-grant-out-of-bounds'; \
                  END IF; \
                END IF; \
-             END $confine_catalog$;",
-        )
+             END $confine_catalog$;";
+
+async fn ensure_authoring_catalog_privileges(
+    client: &tokio_postgres::Client,
+) -> anyhow::Result<()> {
+    client
+        .batch_execute(CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL)
         .await
         .context("converge host-only catalog authoring privileges")
 }
@@ -728,4 +766,57 @@ pub fn seed_dataset_sql(
     let plan = wamn_schema_compiler::seed::compile(&dataset, cat, tenant)
         .map_err(|e| anyhow::anyhow!("seed compile: {e}"))?;
     plan.sql().map_err(|e| anyhow::anyhow!("seed sql: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AUTHOR_DORMANT_CATALOG_RELATIONS, CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL};
+
+    /// The CONVERGE emitter's own text, pinned (wamn-0h0g.22.20).
+    ///
+    /// This batch is the only path that reaches a database provisioned by an
+    /// earlier revision, and it re-runs on every publish and every
+    /// `migrate-catalog`. A grant restored here silently undoes the revoke
+    /// written into `deploy/sql/catalog-schema.sql` and
+    /// `AUTHORING_PRIVILEGE_SPECS` on every existing environment, and only the
+    /// live gate would otherwise see it.
+    #[test]
+    fn the_converge_grants_the_dormant_catalog_reads_to_nobody() {
+        for relation in AUTHOR_DORMANT_CATALOG_RELATIONS {
+            // The hazard first, so a widened batch is named as a widening rather
+            // than as a missing line shape.
+            assert!(
+                !CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL.contains(&format!(
+                    "catalog.{relation} TO wamn_app, wamn_scenario_author"
+                )),
+                "the converge restores the dormant author read on \
+                 catalog.{relation}; the revoke is landed in a subset of its \
+                 three emitters, which is strictly worse than landing none of it"
+            );
+            // The positive control: the app's own read is still emitted, so the
+            // assertion above is reading a line shape the batch actually carries.
+            let narrowed = format!("GRANT SELECT ON catalog.{relation} TO wamn_app; ");
+            assert!(
+                CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL.contains(&narrowed),
+                "the converge no longer grants catalog.{relation} to wamn_app, \
+                 so this proof is reading a line shape the batch does not carry"
+            );
+            // The blanket REVOKE is what makes the narrowed GRANT a revoke on an
+            // already-provisioned database rather than a no-op beside a
+            // surviving one.
+            let revoked = format!(
+                "REVOKE ALL PRIVILEGES ON catalog.{relation} \
+                 FROM PUBLIC, wamn_app, wamn_scenario_author; "
+            );
+            assert!(
+                CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL.contains(&revoked),
+                "catalog.{relation} keeps whatever an earlier revision granted"
+            );
+        }
+        assert!(
+            CONVERGE_AUTHORING_CATALOG_PRIVILEGES_SQL
+                .contains("authoring-dormant-privilege-out-of-bounds"),
+            "the converge asserts nothing about the author's surviving reads"
+        );
+    }
 }
