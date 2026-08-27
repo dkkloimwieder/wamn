@@ -485,6 +485,44 @@ pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
     )
 }
 
+/// `GRANT EXECUTE` on the tenant-key derivation for one stable ACL role.
+///
+/// # A WRITER needs this, not only a reader of the predicate
+///
+/// Every governed relation carries a `<table>_tkey` EXPRESSION INDEX over
+/// `wamn_authority.tenant_key(text)`, and PostgreSQL evaluates that expression
+/// while inserting or updating the row. So a family holding a COMPLETE table
+/// grant set and the `wamn_platform` floor arm still fails its INSERT with
+/// 42501 `permission denied for function tenant_key` unless it holds this
+/// (`wamn-0h0g.22.28`). Measured on PostgreSQL 18.6 as a login asserted NOT
+/// (`rolsuper` OR `rolbypassrls`): with the grant the row lands, without it the
+/// statement raises 42501 and the post-state is zero rows.
+///
+/// # Exactly this, and nothing beside it
+///
+/// * NOT `USAGE` on `wamn_authority`. An index expression is a stored, already
+///   resolved node tree, so no name resolution happens at insert time and only
+///   the function's EXECUTE ACL is checked. Measured: EXECUTE alone, with
+///   `has_schema_privilege(role, 'wamn_authority', 'USAGE') = false`, inserts.
+/// * NOT `current_tenant_key()`. That derivation is called only by the tenant
+///   floor policy, which `wamn-0h0g.22.17` narrowed `TO wamn_app`; a non-guest
+///   family matches the permissive `TO wamn_platform` arm, whose `USING (true)`
+///   calls nothing. Measured: the INSERT above succeeds with
+///   `has_function_privilege(role, 'wamn_authority.current_tenant_key()',
+///   'EXECUTE') = false`.
+/// * NOT to [`PLATFORM_GROUP_ROLE`]. That group carries POLICY MEMBERSHIP only
+///   and holds no privilege of its own; granting function EXECUTE to it would
+///   hand the derivation to every member, including the families that never
+///   write. It is granted here, beside the one family's own grant set, so the
+///   surface stays the measured production surface.
+fn grant_tenant_key_execute_sql(role: &str) -> String {
+    format!(
+        "GRANT EXECUTE ON FUNCTION {schema}.tenant_key(text) TO {role};",
+        schema = quote_ident(crate::tenant_key::TENANT_KEY_SCHEMA),
+        role = quote_ident(role),
+    )
+}
+
 /// Converge the stable management-admitter role to its exact admission surface.
 ///
 /// This is the seventh [`WorkloadRoleFamily`]'s one family-specific privilege
@@ -541,6 +579,9 @@ pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
          GRANT SELECT ({queue_select}), INSERT ({queue_insert}) \
            ON TABLE {schema}.\"run_queue\" TO {role};"
     ));
+    // `runs` carries `runs_tkey`, so the INSERT above is dead without this.
+    sql.push(' ');
+    sql.push_str(&grant_tenant_key_execute_sql(MANAGEMENT_ADMITTER_ROLE));
     sql
 }
 
@@ -1556,7 +1597,6 @@ mod tests {
             "GRANT TRUNCATE",
             "GRANT REFERENCES",
             "GRANT TRIGGER",
-            "GRANT EXECUTE",
             "flow_id",
             "flow_version",
             "plan_hash",
@@ -1565,6 +1605,46 @@ mod tests {
             assert!(!sql.contains(forbidden), "surface gained {forbidden:?}");
         }
         assert!(grant_management_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
+    }
+
+    /// THE INSERT ABOVE IS DEAD WITHOUT THIS, and the ordinary sweep is the only
+    /// place that says so before a cluster does (`wamn-0h0g.22.28`).
+    ///
+    /// `runs` carries the `runs_tkey` EXPRESSION INDEX over
+    /// `wamn_authority.tenant_key(text)`, and PostgreSQL evaluates an index
+    /// expression while inserting the row — so the column-exact `GRANT INSERT`
+    /// this surface emits raises 42501 `permission denied for function
+    /// tenant_key` without the one EXECUTE below. That defect shipped green for
+    /// four beads because the only test that could see it is `#[ignore]`d.
+    ///
+    /// The surface must carry EXACTLY ONE `GRANT EXECUTE` and it must be that
+    /// one: a second would be a widening this family's production statement does
+    /// not need, and the schema-USAGE and `current_tenant_key` grants are
+    /// measured NOT to be required.
+    #[test]
+    fn the_management_surface_grants_the_one_execute_its_tkey_index_needs() {
+        let sql = grant_management_admitter_surface_sql("wamn_run");
+        assert!(
+            sql.contains(
+                "GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
+                 TO \"wamn_management_admitter\""
+            ),
+            "the tkey expression index makes this EXECUTE load bearing for INSERT"
+        );
+        assert_eq!(
+            sql.matches("GRANT EXECUTE").count(),
+            1,
+            "exactly one function grant, and it is the tenant-key derivation"
+        );
+        for forbidden in [
+            "GRANT USAGE ON SCHEMA \"wamn_authority\"",
+            "current_tenant_key",
+        ] {
+            assert!(
+                !sql.contains(forbidden),
+                "index-expression evaluation needs neither: surface gained {forbidden:?}"
+            );
+        }
     }
 
     #[test]

@@ -184,6 +184,20 @@ fn surviving_authority_matrix_live() {
              {management_provision}"
         ),
     );
+    // `wamn-0h0g.22.28`: `runs` carries the `runs_tkey` EXPRESSION INDEX over
+    // `wamn_authority.tenant_key(text)`, and PostgreSQL evaluates an index
+    // expression while INSERTING the row — so the surface's column-exact INSERT
+    // is DEAD without one function EXECUTE, and every admission below this point
+    // raises 42501 `permission denied for function tenant_key`. Measured on
+    // PostgreSQL 18.6 before the grant existed: this test failed at the first
+    // admission with exactly that message.
+    //
+    // The two negatives are the measured boundary of that grant. An index
+    // expression is a stored, already resolved node tree, so schema USAGE is
+    // never checked; and the tenant floor policy that calls `current_tenant_key`
+    // is narrowed `TO wamn_app`, so this family matches only the permissive
+    // `TO wamn_platform` arm and never evaluates it. Both are asserted so a
+    // later widening of the surface has to move a named assertion.
     success(
         &url,
         &format!(
@@ -194,6 +208,14 @@ fn surviving_authority_matrix_live() {
                ASSERT NOT pg_catalog.has_column_privilege( \
                  'wamn_management_admitter', 'wamn_run.environment_policies', \
                  'durability_class', 'UPDATE'); \
+               ASSERT pg_catalog.has_function_privilege( \
+                 'wamn_management_admitter', \
+                 'wamn_authority.tenant_key(text)', 'EXECUTE'); \
+               ASSERT NOT pg_catalog.has_schema_privilege( \
+                 'wamn_management_admitter', 'wamn_authority', 'USAGE'); \
+               ASSERT NOT pg_catalog.has_function_privilege( \
+                 'wamn_management_admitter', \
+                 'wamn_authority.current_tenant_key()', 'EXECUTE'); \
                ASSERT EXISTS ( \
                  SELECT FROM pg_catalog.pg_authid \
                   WHERE rolname = 'wamn_management_admitter' \
