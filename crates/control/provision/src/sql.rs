@@ -8,7 +8,10 @@
 //! database name, a role password) travel as `$n` params or quoted literals.
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
-use crate::workload_role::{MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE, WorkloadRoleFamily};
+use crate::workload_role::{
+    EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE,
+    WorkloadRoleFamily,
+};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
 
@@ -233,6 +236,14 @@ pub fn grant_connect_sql(project: &str) -> String {
 pub const DISPATCH_READER_RELATIONS: [&str; 2] = ["run_queue", "effect_attempts"];
 
 /// Catalog relations read by the surviving management-admission statement.
+///
+/// ALSO the callable-HTTP admitter's WHOLE surface (`wamn-0h0g.22.37`). That is
+/// a MEASURED coincidence, not a shared abstraction: the admitter's one
+/// production statement,
+/// `wamn_runtime::plugins::wamn_postgres::claims::CONNECTION_EFFECT_SNAPSHOT_SQL`,
+/// names these six and no others. It is reused rather than copied because a
+/// second array of the same six strings is a second thing to keep true, and the
+/// two families' builders stay separate — which is where they actually differ.
 pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
     "wirings",
     "component_library",
@@ -240,6 +251,101 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
     "connection_bindings",
     "connection_instances",
     "connection_generations",
+];
+
+/// Catalog relations the executor-platform family reads (`wamn-0h0g.22.37`).
+///
+/// The union over its four wiring-resolution statements in
+/// `wamn_runtime::plugins::wamn_postgres::wiring_resolution`: `ACTIVE_WIRING_SQL`
+/// (`wiring_activation`, `catalog_heads`, `wirings`, `wiring_tombstones`,
+/// `component_library`), `RELEASE_WIRING_SQL` (`release_manifest_v2_snapshots`,
+/// `wirings`, `release_components`, `component_library`), `CANDIDATE_WIRING_SQL`
+/// and `RELEASE_COMPONENT_BINDINGS_READY_SQL` (the connection quartet). It is a
+/// SUPERSET of [`MANAGEMENT_ADMITTER_CATALOG_RELATIONS`] and deliberately not
+/// derived from it: the two surfaces agree on six relations today by
+/// measurement, and deriving one from the other would make a change to either
+/// statement silently widen the other family.
+///
+/// TABLE grain, not column grain — the [`grant_system_reader_surface_sql`]
+/// determination: this family holds no write privilege anywhere in `catalog`,
+/// so a column list would withhold only labels and timestamps while making a
+/// statement that reads one more column fail in production instead of at review.
+pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 11] = [
+    "wirings",
+    "component_library",
+    "connection_requirements",
+    "connection_bindings",
+    "connection_instances",
+    "connection_generations",
+    "catalog_heads",
+    "release_components",
+    "release_manifest_v2_snapshots",
+    "wiring_activation",
+    "wiring_tombstones",
+];
+
+/// Every `runs` column the executor-platform family WRITES, and no other
+/// (`wamn-0h0g.22.37`).
+///
+/// Read as a compiler off the SIX statements that `UPDATE runs` under
+/// [`crate::workload_role::WorkloadRoleFamily::ExecutorPlatform`] — the bead's
+/// premise said five, and the sixth is real:
+///
+/// * `queue::sql::clear_pre_effect_state_sql` — `state_json`, `release_version`,
+///   `manifest_digest`
+/// * `queue::sql::grant_production_claim_sql` — `status`, `release_version`,
+///   `manifest_digest`
+/// * `queue::sql::terminalize_effect_uncertain_claim_sql` — `status`,
+///   `fail_kind`, the caller-outcome family, `updated_at`
+/// * `queue::sql::terminalize_exhausted_production_sql` — `status`,
+///   `result_json`, the caller-outcome family, `updated_at`
+/// * `transitions::release_caller_sql` — the caller-outcome family, `updated_at`
+/// * `transitions::terminalize_sql` — `status`, `terminal_reason`,
+///   `result_json`, `fail_kind`, `updated_at`
+///
+/// The SELECT side is deliberately NOT column-scoped: `transitions::FENCED_PREFIX`
+/// locks the run with `SELECT r.* FROM runs AS r`, which needs SELECT on EVERY
+/// column of `runs`. A column list there would withhold nothing and break the
+/// fence, so relation-grain SELECT is the measured surface rather than a
+/// concession. Confining the WRITE is what a column list can still buy, and it
+/// buys a lot: this family matches the permissive `TO wamn_platform` floor arm,
+/// so a blanket `UPDATE` would let one claim rewrite any tenant's admission pins.
+pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 14] = [
+    "status",
+    "terminal_reason",
+    "fail_kind",
+    "result_json",
+    "state_json",
+    "release_version",
+    "manifest_digest",
+    "caller_outcome_kind",
+    "caller_outcome_json",
+    "caller_http_status",
+    "caller_release_node_id",
+    "caller_outcome_hash",
+    "caller_released_at",
+    "updated_at",
+];
+
+/// Every `run_queue` column the executor-platform family WRITES.
+///
+/// `queue::sql::advance_claim_attempts_sql` writes `attempts`;
+/// `queue::sql::grant_production_claim_sql` writes `lease_owner`,
+/// `lease_expires_at` and `lease_generation`;
+/// `queue::sql::renew_production_lease_sql` writes `lease_expires_at`. Nothing
+/// writes `available_at`, `priority`, `stream_seq`, `max_attempts` or
+/// `enqueued_at` — the FIFO position and the crash budget are admission's, and
+/// a claim that could move them could starve or resurrect another tenant's run.
+///
+/// SELECT stays relation grain for the same reason it does on `runs`:
+/// `transitions::FENCED_PREFIX` locks the queue row with
+/// `SELECT q.* FROM run_queue AS q`. DELETE has no column grain in PostgreSQL at
+/// all, so the two dequeue statements take it whole.
+pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
+    "lease_owner",
+    "lease_expires_at",
+    "lease_generation",
+    "attempts",
 ];
 /// `runs` columns read directly or through `RETURNING` by management admission.
 ///
@@ -593,6 +699,139 @@ fn quoted_column_list(columns: &[&str]) -> String {
         .join(", ")
 }
 
+/// Converge the stable callable-HTTP admitter role to its exact read surface
+/// (`wamn-0h0g.22.37`).
+///
+/// # The surface is ONE statement, and that is the whole finding
+///
+/// `AuthorityClass::CallableHttp` is selected from exactly one place in
+/// production — `WamnPostgres::connection_effect_snapshot` — and that method
+/// issues exactly one statement, `CONNECTION_EFFECT_SNAPSHOT_SQL`. Its `FROM`
+/// and `LEFT JOIN` clauses name [`MANAGEMENT_ADMITTER_CATALOG_RELATIONS`] and
+/// nothing else, so `USAGE` on `catalog` plus six `SELECT`s is the family's
+/// TOTAL authority anywhere in the cluster.
+///
+/// # What it deliberately does NOT hold
+///
+/// * NO `wamn_run` anything. The admitter authorizes an effect; it does not
+///   admit, claim, lease or terminalize a run. `schema` is therefore the REVOKE
+///   scope and never a grant scope — an environment where someone handed this
+///   family a run-plane privilege converges back on the next apply.
+/// * NO write of any grain, so no `wamn_authority.tenant_key(text)` EXECUTE
+///   either. That grant exists for the families whose INSERT or UPDATE makes
+///   PostgreSQL evaluate a `<table>_tkey` expression index; a pure reader never
+///   forms an index entry, and the one statement carries no predicate over the
+///   derivation for the planner to evaluate.
+/// * NO function EXECUTE at all. The statement calls only built-ins.
+///
+/// Run connected to the project-environment database as a principal owning both
+/// schemas (the database owner or the cluster superuser), AFTER
+/// `deploy/sql/catalog-schema.sql` and the run-plane files have been applied —
+/// the `REVOKE`/`GRANT` name relations that must already exist.
+pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
+    let role = quote_ident(HTTP_ADMITTER_ROLE);
+    let schema = quote_ident(schema);
+    let mut sql = format!(
+        "{ensure} \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA catalog TO {role};",
+        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::HttpAdmitter),
+    );
+    for relation in MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+        sql.push_str(&format!(
+            " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+            relation = quote_ident(relation),
+        ));
+    }
+    sql
+}
+
+/// Converge the stable executor-platform role to its exact claim surface
+/// (`wamn-0h0g.22.37`).
+///
+/// Derived from the NINE production call sites that select
+/// `AuthorityClass::ExecutorPlatform`: four in
+/// `wamn_runtime::plugins::wamn_postgres::production_claim`, four in the same
+/// module's `wiring_resolution` sibling, and the wiring-doorbell `LISTEN` in
+/// `claims` — which holds a connection open and names no relation, so it adds
+/// nothing here.
+///
+/// # The grains, and why each is the one it is
+///
+/// * `catalog`: `USAGE` plus TABLE-grain `SELECT` on
+///   [`EXECUTOR_PLATFORM_CATALOG_RELATIONS`]. No write of any kind.
+/// * `runs`: TABLE-grain `SELECT` because `transitions::FENCED_PREFIX` locks the
+///   row with `SELECT r.*`, and COLUMN-grain `UPDATE` over
+///   [`EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS`]. The admission pins, the wiring
+///   identity, the input and the durability class are all UNREACHABLE by this
+///   family as a result — which matters because the permissive
+///   `TO wamn_platform` floor arm is `USING (true)`, so a blanket `UPDATE` here
+///   would be a cross-tenant rewrite privilege.
+/// * `run_queue`: TABLE-grain `SELECT` (`SELECT q.*` in the same fence) and
+///   `DELETE` (PostgreSQL has no column-grain DELETE), plus COLUMN-grain
+///   `UPDATE` over [`EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS`] — the lease and
+///   the crash counter, never the FIFO position.
+/// * `effect_attempts`: `SELECT` only. The ledger is the effect writer's to
+///   append to; the claim path only asks whether a row exists.
+/// * `wamn_run.require_executor_platform_authority()`: every one of the ten
+///   run-plane statements opens with it. `deploy/sql/run-state.sql` leaves
+///   PUBLIC's default EXECUTE in place today, so this grant changes no answer
+///   yet — it is what keeps the family reaching its own guard the day PUBLIC is
+///   revoked, and it is the only reason the guard is not silently PUBLIC
+///   authority in the denial matrix.
+/// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
+///   carries the `runs_tkey` EXPRESSION INDEX over that function, and
+///   PostgreSQL evaluates an index expression while forming the new index entry
+///   an UPDATE requires. Four of the six `runs` writes change `status`, which
+///   participates in the partial-index predicates on `runs`, so those updates
+///   can never take the HOT path that would skip index maintenance: the
+///   evaluation — and therefore the EXECUTE check — is unconditional for them,
+///   exactly as it is for the management admitter's INSERT (`wamn-0h0g.22.28`).
+///   Schema `USAGE` on `wamn_authority` is NOT granted and is NOT needed: an
+///   index expression is a stored, already-resolved node tree, so no name
+///   resolution happens and only the function's EXECUTE ACL is checked.
+///
+/// Blanket revocation over BOTH schemas precedes every grant, so a replay
+/// NARROWS as well as grants. A table-level `REVOKE` carries that table's
+/// column-level ACL entries with it, which is what makes the column-exact
+/// `UPDATE` sets convergent rather than merely additive.
+pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
+    let role = quote_ident(EXECUTOR_PLATFORM_ROLE);
+    let schema = quote_ident(schema);
+    let mut sql = format!(
+        "{ensure} \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA catalog, {schema} TO {role};",
+        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::ExecutorPlatform),
+    );
+    for relation in EXECUTOR_PLATFORM_CATALOG_RELATIONS {
+        sql.push_str(&format!(
+            " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+            relation = quote_ident(relation),
+        ));
+    }
+    let run_update = quoted_column_list(&EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS);
+    let queue_update = quoted_column_list(&EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS);
+    sql.push_str(&format!(
+        " GRANT SELECT ON TABLE {schema}.\"runs\" TO {role}; \
+         GRANT UPDATE ({run_update}) ON TABLE {schema}.\"runs\" TO {role}; \
+         GRANT SELECT, DELETE ON TABLE {schema}.\"run_queue\" TO {role}; \
+         GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
+         GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role}; \
+         GRANT EXECUTE ON FUNCTION \
+           {schema}.\"require_executor_platform_authority\"() TO {role};"
+    ));
+    // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead
+    // without this on every write that changes an indexed column.
+    sql.push(' ');
+    sql.push_str(&grant_tenant_key_execute_sql(EXECUTOR_PLATFORM_ROLE));
+    sql
+}
+
 // --- T1 control-database read surfaces (wamn-0h0g.12.116, wamn-0h0g.12.67) ---
 //
 // The T1 system database's two read-only consumers both authenticated as
@@ -753,8 +992,29 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
         WorkloadRoleFamily::ManagementAdmitter => {
             Some(grant_management_admitter_surface_sql("wamn_run"))
         }
+        WorkloadRoleFamily::ExecutorPlatform => {
+            Some(grant_executor_platform_surface_sql("wamn_run"))
+        }
+        WorkloadRoleFamily::HttpAdmitter => Some(grant_http_admitter_surface_sql("wamn_run")),
         WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
         WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
+        // THE MEASURED SURFACE IS EMPTY, and the owner's determination is that
+        // an empty surface is served by NOT EXISTING (`wamn-0h0g.22.37`).
+        //
+        // `AuthorityClass::EventMaterializer` maps to this family and nothing
+        // in production selects it: there is no materializer consumer, so there
+        // is no statement, so there is no relation to name. The family stays an
+        // enum variant so the closed vocabulary stays complete and an admitted
+        // consumer inherits the whole lifecycle without an edit here.
+        //
+        // A revoke-only builder was considered and REFUSED. Credentials, a
+        // Secret and rotation machinery for a role that can reach nothing is
+        // provisioning for no consumer, and "reaches exactly its measured
+        // surface" is already satisfied by holding no grant at all.
+        //
+        // THE TRIGGER FOR MINTING A REAL BUILDER IS THE FIRST PRODUCTION
+        // MATERIALIZER CONSUMER — not a plan for one, and not a test fixture.
+        WorkloadRoleFamily::EventMaterializer => None,
         _ => None,
     }
 }
@@ -1645,6 +1905,134 @@ mod tests {
                 "index-expression evaluation needs neither: surface gained {forbidden:?}"
             );
         }
+    }
+
+    /// The grant set MINUS the shared role bootstrap, so a pin can be exact.
+    ///
+    /// `ensure_workload_acl_role_sql` is the same text for all twelve families
+    /// and is nobody's surface; splitting it off is what lets the two pins below
+    /// be byte-equality against the thing that actually varies, instead of
+    /// fragment `contains` checks that pass while a grant is deleted.
+    fn surface_grants(family: WorkloadRoleFamily, sql: &str) -> String {
+        sql.strip_prefix(&format!("{} ", ensure_workload_acl_role_sql(family)))
+            .expect("a family surface opens with its own role bootstrap")
+            .to_string()
+    }
+
+    /// THE CALLABLE-HTTP ADMITTER'S WHOLE SURFACE, PINNED AS A STRING
+    /// (`wamn-0h0g.22.37`).
+    ///
+    /// The live gate that measures this from the server is `#[ignore]`-free but
+    /// self-skipping, so it does not run in the ordinary sweep — and a mutant
+    /// that dies only in a live gate ships green. This is generated SQL from a
+    /// Rust builder, so byte-equality here is the only thing that catches the
+    /// builder moving in a plain `cargo test`.
+    #[test]
+    fn the_http_admitter_surface_is_six_catalog_selects_and_nothing_else() {
+        let sql = grant_http_admitter_surface_sql("wamn_run");
+        assert_eq!(
+            surface_grants(WorkloadRoleFamily::HttpAdmitter, &sql),
+            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, \"wamn_run\" \
+             FROM \"wamn_http_admitter\"; \
+             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, \"wamn_run\" \
+             FROM \"wamn_http_admitter\"; \
+             REVOKE ALL PRIVILEGES ON SCHEMA catalog, \"wamn_run\" \
+             FROM \"wamn_http_admitter\"; \
+             GRANT USAGE ON SCHEMA catalog TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"component_library\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
+             TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"connection_bindings\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"connection_instances\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\";",
+            "the callable-HTTP admitter reads six catalog relations and holds \
+             nothing on the run plane, no write of any grain, and no EXECUTE"
+        );
+        // The schema is an identifier position and is quoted, not interpolated.
+        assert!(grant_http_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
+    }
+
+    /// THE EXECUTOR-PLATFORM SURFACE, PINNED AS A STRING (`wamn-0h0g.22.37`).
+    ///
+    /// The column lists are spelled out here rather than derived from the
+    /// constants that produced them: deriving the expectation from the array
+    /// under test is the tautology this branch has paid for before, and it would
+    /// let a column be added to `EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS` with both
+    /// sides moving together.
+    #[test]
+    fn the_executor_platform_surface_is_column_exact_on_every_write() {
+        let sql = grant_executor_platform_surface_sql("wamn_run");
+        assert_eq!(
+            surface_grants(WorkloadRoleFamily::ExecutorPlatform, &sql),
+            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, \"wamn_run\" \
+             FROM \"wamn_executor_platform\"; \
+             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, \"wamn_run\" \
+             FROM \"wamn_executor_platform\"; \
+             REVOKE ALL PRIVILEGES ON SCHEMA catalog, \"wamn_run\" \
+             FROM \"wamn_executor_platform\"; \
+             GRANT USAGE ON SCHEMA catalog, \"wamn_run\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"component_library\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"connection_bindings\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"connection_instances\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"connection_generations\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"catalog_heads\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"release_components\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"release_manifest_v2_snapshots\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"wiring_activation\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"wiring_tombstones\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
+             GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_kind\", \"result_json\", \
+             \"state_json\", \"release_version\", \"manifest_digest\", \"caller_outcome_kind\", \
+             \"caller_outcome_json\", \"caller_http_status\", \"caller_release_node_id\", \
+             \"caller_outcome_hash\", \"caller_released_at\", \"updated_at\") \
+             ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT, DELETE ON TABLE \"wamn_run\".\"run_queue\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT UPDATE (\"lease_owner\", \"lease_expires_at\", \"lease_generation\", \
+             \"attempts\") ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE \"wamn_run\".\"effect_attempts\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT EXECUTE ON FUNCTION \
+             \"wamn_run\".\"require_executor_platform_authority\"() \
+             TO \"wamn_executor_platform\"; \
+             GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
+             TO \"wamn_executor_platform\";",
+            "the executor-platform grant set moved: it is TABLE SELECT where a \
+             fence reads r.*/q.*, COLUMN UPDATE everywhere it writes, DELETE only \
+             on the queue, and exactly two function grants"
+        );
+        // The admission pins, the frozen wiring identity and the authoritative
+        // input are UNREACHABLE by this family. Named literally, because they are
+        // absent from a constant and an absence proves nothing by itself.
+        for forbidden in [
+            "GRANT INSERT",
+            "GRANT TRUNCATE",
+            "GRANT REFERENCES",
+            "GRANT TRIGGER",
+            "GRANT UPDATE ON TABLE",
+            "GRANT DELETE ON TABLE \"wamn_run\".\"runs\"",
+            "\"input_json\"",
+            "\"binding_world_json\"",
+            "\"durability_class\"",
+            "\"wiring_hash\"",
+            "\"available_at\"",
+            "\"max_attempts\"",
+            "\"stream_seq\"",
+            "environment_policies",
+            "current_tenant_key",
+            "GRANT USAGE ON SCHEMA \"wamn_authority\"",
+        ] {
+            assert!(!sql.contains(forbidden), "surface gained {forbidden:?}");
+        }
+        assert!(grant_executor_platform_surface_sql("we\"ird").contains("\"we\"\"ird\""));
     }
 
     #[test]

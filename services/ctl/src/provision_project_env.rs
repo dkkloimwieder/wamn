@@ -1926,6 +1926,13 @@ fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
         WorkloadRoleFamily::IdentityReader => Some(StableGrantSet::IdentityReader),
         WorkloadRoleFamily::Retention => Some(StableGrantSet::Retention),
         WorkloadRoleFamily::DispatchReader => Some(StableGrantSet::DispatchReader),
+        // `wamn-0h0g.22.37`: both families acquired authority, so both acquire
+        // a denial matrix in the SAME edit. A family with one and not the other
+        // is exactly the bug
+        // `every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family`
+        // exists to catch.
+        WorkloadRoleFamily::ExecutorPlatform => Some(StableGrantSet::ExecutorPlatform),
+        WorkloadRoleFamily::HttpAdmitter => Some(StableGrantSet::HttpAdmitter),
         _ => None,
     }
 }
@@ -1939,6 +1946,8 @@ enum StableGrantSet {
     IdentityReader,
     Retention,
     DispatchReader,
+    ExecutorPlatform,
+    HttpAdmitter,
 }
 
 impl StableGrantSet {
@@ -1981,6 +1990,18 @@ impl StableGrantSet {
             Self::DispatchReader => {
                 verify_dispatch_reader_acl_role_inventory(role, database, inventory)
             }
+            Self::ExecutorPlatform => verify_executor_platform_acl_role_inventory(
+                role,
+                database,
+                required_database,
+                inventory,
+            ),
+            Self::HttpAdmitter => verify_http_admitter_acl_role_inventory(
+                role,
+                database,
+                required_database,
+                inventory,
+            ),
         }
     }
 }
@@ -2384,6 +2405,176 @@ fn verify_management_admitter_acl_role_inventory(
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact management-admission grant set"
+    );
+    Ok(())
+}
+
+/// The `aclexplode` inventory as `(kind, schema, object, privilege)` tuples.
+fn acl_tuples(inventory: &[RoleAcl]) -> BTreeSet<(String, String, String, String)> {
+    inventory
+        .iter()
+        .map(|acl| {
+            (
+                acl.object_kind.clone(),
+                acl.schema_name.clone(),
+                acl.object_name.clone(),
+                acl.privilege.clone(),
+            )
+        })
+        .collect()
+}
+
+/// THE EXECUTOR-PLATFORM DENIAL MATRIX (`wamn-0h0g.22.37`).
+///
+/// EQUALITY against the server's own `aclexplode` answer, never containment: a
+/// containment check passes a role that has ALSO acquired `INSERT` on `runs`,
+/// and this family's credentials match the permissive `TO wamn_platform` floor
+/// arm, so any privilege it holds it holds over EVERY tenant's rows.
+///
+/// The `routine` rows are part of the matrix, not an exemption. The surface
+/// grants two function EXECUTEs — its own authority guard and the tenant-key
+/// derivation the `runs_tkey` expression index makes load bearing — and
+/// `sql::role_database_acl_inventory_sql` reports routine ACLs, so omitting
+/// them here would refuse a correctly converged role. (The management-admitter
+/// matrix above does omit them and its `wamn-0h0g.22.28` grant is therefore
+/// unrepresented; that is a defect in that matrix, not a convention.)
+///
+/// An empty inventory is acceptable only OUTSIDE the target database: the
+/// project-environment database must carry the grant set, and this role must
+/// hold nothing anywhere else on the cluster.
+fn verify_executor_platform_acl_role_inventory(
+    role: &str,
+    database: &str,
+    required_database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    if inventory.is_empty() {
+        anyhow::ensure!(
+            database != required_database,
+            "stable role {role:?} has no executor-platform ACL in required database {database:?}"
+        );
+        return Ok(());
+    }
+    let actual = acl_tuples(inventory);
+    let mut expected = BTreeSet::from([
+        (
+            "schema".to_string(),
+            "catalog".to_string(),
+            "catalog".to_string(),
+            "USAGE".to_string(),
+        ),
+        (
+            "schema".to_string(),
+            "wamn_run".to_string(),
+            "wamn_run".to_string(),
+            "USAGE".to_string(),
+        ),
+        (
+            "relation".to_string(),
+            "wamn_run".to_string(),
+            "runs".to_string(),
+            "SELECT".to_string(),
+        ),
+        (
+            "relation".to_string(),
+            "wamn_run".to_string(),
+            "run_queue".to_string(),
+            "SELECT".to_string(),
+        ),
+        (
+            "relation".to_string(),
+            "wamn_run".to_string(),
+            "run_queue".to_string(),
+            "DELETE".to_string(),
+        ),
+        (
+            "relation".to_string(),
+            "wamn_run".to_string(),
+            "effect_attempts".to_string(),
+            "SELECT".to_string(),
+        ),
+        (
+            "routine".to_string(),
+            "wamn_run".to_string(),
+            "require_executor_platform_authority".to_string(),
+            "EXECUTE".to_string(),
+        ),
+        (
+            "routine".to_string(),
+            "wamn_authority".to_string(),
+            "tenant_key".to_string(),
+            "EXECUTE".to_string(),
+        ),
+    ]);
+    for relation in sql::EXECUTOR_PLATFORM_CATALOG_RELATIONS {
+        expected.insert((
+            "relation".to_string(),
+            "catalog".to_string(),
+            relation.to_string(),
+            "SELECT".to_string(),
+        ));
+    }
+    for (relation, columns) in [
+        ("runs", &sql::EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS[..]),
+        (
+            "run_queue",
+            &sql::EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS[..],
+        ),
+    ] {
+        for column in columns {
+            expected.insert((
+                "column".to_string(),
+                "wamn_run".to_string(),
+                format!("{relation}.{column}"),
+                "UPDATE".to_string(),
+            ));
+        }
+    }
+    anyhow::ensure!(
+        actual == expected,
+        "stable role {role:?} ACLs in database {database:?} are not the exact executor-platform grant set"
+    );
+    Ok(())
+}
+
+/// THE CALLABLE-HTTP ADMITTER DENIAL MATRIX (`wamn-0h0g.22.37`).
+///
+/// `USAGE` on `catalog` plus six `SELECT`s, and NOTHING on the run plane — the
+/// disjointness from the executor family is the security property, and it is
+/// asserted by equality for the same reason the two T1 readers' is. A `wamn_run`
+/// schema `USAGE` alone would fail here, which is what stops this credential
+/// being quietly reused for admission work.
+fn verify_http_admitter_acl_role_inventory(
+    role: &str,
+    database: &str,
+    required_database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    if inventory.is_empty() {
+        anyhow::ensure!(
+            database != required_database,
+            "stable role {role:?} has no callable-HTTP admitter ACL in required database {database:?}"
+        );
+        return Ok(());
+    }
+    let actual = acl_tuples(inventory);
+    let mut expected = BTreeSet::from([(
+        "schema".to_string(),
+        "catalog".to_string(),
+        "catalog".to_string(),
+        "USAGE".to_string(),
+    )]);
+    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+        expected.insert((
+            "relation".to_string(),
+            "catalog".to_string(),
+            relation.to_string(),
+            "SELECT".to_string(),
+        ));
+    }
+    anyhow::ensure!(
+        actual == expected,
+        "stable role {role:?} ACLs in database {database:?} are not the exact callable-HTTP admission grant set"
     );
     Ok(())
 }
@@ -4067,6 +4258,11 @@ mod tests {
                 // event, and a family with one and not the other is the bug
                 // this assertion exists to catch.
                 WorkloadRoleFamily::Retention,
+                // `wamn-0h0g.22.37`: the executor-platform and callable-HTTP
+                // families acquired the grant sets their MEASURED production
+                // surfaces derive, so both acquire a denial matrix with them.
+                WorkloadRoleFamily::ExecutorPlatform,
+                WorkloadRoleFamily::HttpAdmitter,
                 WorkloadRoleFamily::RegistryReader,
                 WorkloadRoleFamily::IdentityReader
             ],
@@ -4079,6 +4275,11 @@ mod tests {
         assert!(sql::stable_surface_sql(WorkloadRoleFamily::DispatchReader).is_none());
         for family in [
             WorkloadRoleFamily::ManagementAdmitter,
+            // `wamn-0h0g.22.37`: this batch applies both new surfaces, so the
+            // pre-prepare assertion must NOT fire for them — on a first prepare
+            // there is nothing converged yet to assert against.
+            WorkloadRoleFamily::ExecutorPlatform,
+            WorkloadRoleFamily::HttpAdmitter,
             WorkloadRoleFamily::RegistryReader,
             WorkloadRoleFamily::IdentityReader,
         ] {
@@ -4089,12 +4290,22 @@ mod tests {
                 family,
                 WorkloadRoleFamily::EffectWriter
                     | WorkloadRoleFamily::ManagementAdmitter
+                    | WorkloadRoleFamily::ExecutorPlatform
+                    | WorkloadRoleFamily::HttpAdmitter
                     | WorkloadRoleFamily::RegistryReader
                     | WorkloadRoleFamily::IdentityReader
             ) {
                 assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
             }
         }
+        // THE EVENT MATERIALIZER IS DELIBERATELY STILL `None`
+        // (`wamn-0h0g.22.37`). Its production surface was MEASURED EMPTY — no
+        // production consumer selects `AuthorityClass::EventMaterializer` — and
+        // the owner's determination is that an empty surface is served by not
+        // existing. Named here rather than left to the loop above so minting a
+        // builder for it has to move a named assertion.
+        assert!(sql::stable_surface_sql(WorkloadRoleFamily::EventMaterializer).is_none());
+        assert!(stable_grant_set(WorkloadRoleFamily::EventMaterializer).is_none());
     }
 
     /// THE DISJOINTNESS MATRIX, exercised from both sides
