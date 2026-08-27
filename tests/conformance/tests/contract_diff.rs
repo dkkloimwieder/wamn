@@ -7,13 +7,25 @@
 //! failure. It proves NOTHING about whether the guards those legs name are
 //! green, and it cannot: no real Cargo runs here.
 //!
-//! Guard health is proved by the leg targets themselves, each of which is an
-//! ordinary test target in the workspace sweep:
+//! Guard health is proved by running the leg targets for real, which is what
+//! `tools/contract-diff run` does and what this file never does:
 //!   * `-p wamn-authoring-model --test contract`
 //!   * `-p wamn-runtime --test flow_http_routing_wit_coherence`
-//!   * `-p flow-http --test adversarial` (the components workspace)
+//!   * `-p http-route --test adversarial` (the components workspace)
 //! Read a green here as "the orchestration is intact", never as "the contracts
 //! have not drifted".
+//!
+//! The first two legs are root-workspace default members, so `cargo test
+//! --workspace` also runs them. The third is NOT a root workspace member at
+//! all — `http-route` lives in `components/`, and no root sweep reaches it.
+//! `tools/contract-diff run` is therefore the only runner of record for leg 3,
+//! and `docs/operations/build-and-test.md` now records it in the sweep of
+//! record (wamn-0h0g.15.138). Do not read this file's green as covering it.
+//!
+//! The third leg was written here as `-p flow-http` until wamn-0h0g.15.138. No
+//! package by that name exists in either workspace, so anyone following this
+//! list hit the package-name trap: a bad `-p` ERRORS and greps as zero
+//! failures. Keep these three names in step with `tools/contract-diff` itself.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;

@@ -214,6 +214,32 @@ flow_http_routing_wit_coherence`, `http-route --test adversarial`).
 proves the *argv* against a fake cargo, so a green `contract_diff` is never
 evidence that the legs themselves are green.
 
+**`tools/contract-diff run` is the runner of record for those three legs, and
+it belongs in the sweep of record** (`wamn-0h0g.15.138`). Run it after the
+workspace sweep:
+
+```bash
+tools/contract-diff run > contract-diff.txt 2>&1
+```
+
+The reason it is not redundant with `cargo test --workspace`: legs 1 and 2 name
+`crates/authoring/model` and `crates/platform/runtime`, both root-workspace
+default members, so the sweep does run them. **Leg 3 names `http-route`, which
+is in the `components/` workspace and is not a root workspace member at all**
+(measured at `2179f9c7` from `cargo metadata --no-deps`: 35 root members,
+`http-route` absent). No root sweep reaches it. `tools/contract-diff run` is the
+only command in this document that does.
+
+**Measured at `2179f9c7`, unpiped: green — exit 0, 14 + 7 + 11 = 32 assertions
+passed, 0 failed.** Wall clock 7:46 cold in a fresh worktree (it builds both
+workspaces), **0.72s warm**. Warm, it is close to free; that cost is why the
+answer here is to run it rather than only to document that nobody does.
+
+That is the answer to "a green `contract_diff` proves nothing about guard
+health — so what does": **`tools/contract-diff run`, and nothing else in this
+file.** The `contract_diff` conformance test proves the plan; this command
+proves the legs. Neither substitutes for the other.
+
 ## Live gates: arming
 
 **Env-gated live tests are the single biggest source of false green in this
