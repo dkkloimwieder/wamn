@@ -332,7 +332,7 @@ async fn wamn_logging_absorbs_a_garbage_guest_context_without_trapping_the_guest
 /// registers, and every call reports `connection-unavailable`.
 fn offline_postgres() -> WamnPostgres {
     WamnPostgres::new(WamnPostgresConfig {
-        database_url: None,
+        credentials: None,
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
         wait_timeout_ms: 100,

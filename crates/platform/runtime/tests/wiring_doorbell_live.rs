@@ -28,7 +28,7 @@ use serde_json::Value;
 use tokio_postgres::NoTls;
 use wamn_catalog::{flip_activation, resolve_active_wiring};
 use wamn_router::{CacheInsert, Wiring, WiringCache, WiringNode};
-use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
 
 const TENANT: &str = "t1";
@@ -211,7 +211,7 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // gate builds the same plugin production does rather than a private URL.
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(url.clone()),
+            credentials: Some(ClassCredentials::every_class(url.clone())),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 5_000,

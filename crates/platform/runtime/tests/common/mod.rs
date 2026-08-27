@@ -23,7 +23,7 @@ use wamn_run_state::{
     effect_writer_generation_role,
 };
 use wamn_runtime::plugins::wamn_postgres::{
-    ProductionClaimResult, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, ProductionClaimResult, WamnPostgres, WamnPostgresConfig,
 };
 
 pub const TENANT: &str = "claim-live";
@@ -656,7 +656,7 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     let runtime_url = url_with_application_name(url, RUNTIME_APPLICATION_NAME)?;
 
     let plugin = Arc::new(WamnPostgres::new(WamnPostgresConfig {
-        database_url: Some(runtime_url),
+        credentials: Some(ClassCredentials::every_class(runtime_url)),
         guest_pool_max_size: 8,
         platform_pool_max_size: 8,
         wait_timeout_ms: 5_000,
