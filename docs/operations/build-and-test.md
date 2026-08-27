@@ -320,6 +320,14 @@ WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
 
 `WAMN_CTL_PG_URL` must be a **superuser** URL. Self-skips when unset.
 
+Two tests, both armed by that one variable and serialized by the shared
+`WAMN_CTL_PG_URL` lock.
+`impact_report_says_when_the_registration_edge_class_is_unevaluated`
+(wamn-0h0g.12.120) additionally MINTS a `wamn_app_<tenant key>_a` generation
+login — cluster-global, dropped in its own teardown — and DROPs
+`catalog.event_registrations` mid-test. Disposable server only, and give this
+binary its own container.
+
 ### `[EVT-REG/D24]` — registration-orphan guard
 
 `services/ctl/tests/orphan_guard_live.rs` (wamn-rmxa, wamn-0h0g.12.119). Three
