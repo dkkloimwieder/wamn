@@ -145,6 +145,16 @@ re-measures artifacts other lanes are still moving.
 Verify the package name before trusting `-p`: it is **`wamn-proof-conformance`**.
 A nonexistent name *errors* and greps as zero failures.
 
+The `deploy/platform` bill of materials (`wamn-0h0g.10.5`) is a static
+structural proof of the same kind, but it lives in `wamn-proof-system` — it
+belongs beside the conformance guards and was kept out of that package only so
+it would not collide with `wamn-0h0g.12.10`'s retained-manifest reconcile.
+Measured 6 passed / 0 failed on the `w65-deploy` branch, base `2179f9c7`:
+
+```bash
+cargo test -p wamn-proof-system --test deploy_platform_inventory
+```
+
 ### Known red
 
 **Measured at `c72194c7`: the lib is 62 passed / 1 failed, and all twenty

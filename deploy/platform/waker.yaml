@@ -112,8 +112,14 @@ spec:
             - "/runtime-cert/tls.crt"
             - "--nats-tls-key"
             - "/runtime-cert/tls.key"
-            # <doorbell-tenant>=<Deployment>: the tenant the dispatcher publishes
-            # (wamn.doorbell.demo-tenant) mapped to the executor Deployment to wake.
+            # <execution-target-id>=<Deployment>: the EXECUTION TARGET the
+            # dispatcher publishes at (wamn.doorbell.demo-tenant), mapped to the
+            # executor Deployment to wake. The left-hand side is the target, not
+            # the tenant — it must equal the `execution_target_id` of the
+            # matching entry in deploy/platform/dispatcher-projects.example.yaml,
+            # which renders it explicitly. The two read the same here only
+            # because the demo project's target and tenant are both
+            # `demo-tenant`.
             - "--wake"
             - "demo-tenant=executor"
           resources:

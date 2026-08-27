@@ -16,16 +16,29 @@
 # (bind_plugins binds only what is declared here).
 #
 # IDENTITY (host-injected, non-spoofable): `wamn.tenant` drives BOTH the
-# wamn:postgres RLS claim and the doorbell subject (`wamn.doorbell.<tenant>`);
-# `wamn.schema` is the search_path its unqualified runs/run_queue reads
-# resolve in; `wamn.project` selects the per-project pool. The WAMN_MAT_*
-# environment is guest-side SUBSCRIPTION config only (stream name + subject
-# segments + the tenant label for the event tenant-guard compare) — RLS holds
-# regardless of what the env claims.
+# wamn:postgres RLS claim and the doorbell subject; `wamn.schema` is the
+# search_path its unqualified runs/run_queue reads resolve in; `wamn.project`
+# selects the per-project pool. The WAMN_MAT_* environment is guest-side
+# SUBSCRIPTION config only (stream name + subject segments + the tenant label
+# for the event tenant-guard compare) — RLS holds regardless of what the env
+# claims.
 #
-# ONE TENANT PER WORKLOAD (v1): registrations, claims, and the doorbell are
-# tenant-scoped, so a multi-tenant project-env runs one materializer workload
-# per tenant. Multi-registration fan-out within the tenant is one workload
+# THE DOORBELL SEGMENT IS AN EXECUTION TARGET, NOT A TENANT —
+# `wamn.doorbell.<execution-target-id>` — and THIS WORKLOAD CARRIES NO KEY THAT
+# STATES ONE. The host derives it with `mvp_execution_target_id(wamn.tenant)`
+# in `crates/platform/runtime/src/plugins/wamn_jetstream.rs`, the MVP
+# tenant-to-target adapter. The explicit target that
+# `deploy/platform/dispatcher-projects.example.yaml` and
+# `deploy/platform/waker.yaml` now render therefore cannot be rendered here:
+# the guest config shape has to gain a key first, which is a plugin change and
+# not a manifest one. Until then this file is compatible only through the
+# adapter — the residual wamn-0h0g.5.9 owns, and the one placement row
+# wamn-0h0g.10.5 could not discharge in the manifests alone.
+#
+# ONE TENANT PER WORKLOAD (v1): registrations and claims are tenant-scoped, and
+# the doorbell is scoped to the target the adapter derives from that tenant, so
+# a multi-tenant project-env runs one materializer workload per tenant.
+# Multi-registration fan-out within the tenant is one workload
 # (a durable consumer per registration).
 #
 # EXACTLY-ONCE: run_id = <flow>:evt:<stream_seq> (zero-padded) + ON CONFLICT

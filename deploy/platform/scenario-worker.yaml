@@ -94,11 +94,13 @@
 # onto this family is wamn-0h0g.22.10. Landing the plumbing first makes that
 # cutover a traffic change rather than a plumbing change.
 #
-# NETWORK POSTURE: wamn-system ships egress policies only (runner-netpol.yaml,
-# there is no ingress policy, so this listener adds no
-# ingress exception and widens nothing. It is deliberately NOT labelled
-# `wamn.io/egress-profile: runner` — adopting the runner's egress ceiling for a
-# management workload is an owner posture decision, not this bead's.
+# NETWORK POSTURE: wamn-system ships NO NetworkPolicy at all. This sentence
+# used to read "egress policies only (runner-netpol.yaml," — a truncated clause
+# citing a file `ea71c1c4` deleted with the rest of the runner carriers, which
+# took the namespace's last policy with it. Corrected by wamn-0h0g.10.5's BoM
+# pass: with no policy of either direction in the tier, this listener adds no
+# ingress exception and widens nothing, and there is no egress ceiling left for
+# a management workload to adopt or decline.
 #
 # ONE REPLICA, NO LEADER: the surface holds one pooled author connection and
 # serializes commands behind it. Horizontal scale-out needs a connection-pool

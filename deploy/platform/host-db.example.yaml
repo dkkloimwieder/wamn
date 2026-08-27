@@ -9,12 +9,16 @@
 # The wamn:postgres plugin's from_env() default pool connects as this role for
 # project-scoped component SQL on every host in the group.
 #
-# NOT the runner's `wamn-runner-db` on purpose, even though the demo values
+# NOT the executor's `wamn-executor-db` on purpose, even though the demo values
 # point at the same fixture database: that Secret is per-PROJECT config owned by
-# deploy/platform/runner.yaml's lifecycle, while this one is per-ENVIRONMENT
+# deploy/platform/executor.yaml's lifecycle, while this one is per-ENVIRONMENT
 # config owned by the host Helm release. Sharing one Secret would make an edit
-# for the runner's project silently repoint every host in the group, and the two
-# demo values already differ (the runner's carries `?sslmode=disable`).
+# for the executor's project silently repoint every host in the group. This
+# clause named `wamn-runner-db` and `deploy/platform/runner.yaml` until
+# wamn-0h0g.10.5's BoM pass; `ea71c1c4` deleted both, and the executor inherited
+# the role. It also inherited no `.example` carrier — `wamn-executor-db` is the
+# one Secret this tier mounts that no file here declares (wamn-0h0g.10.5
+# reported it; the demo value's `?sslmode=disable` went with the deleted file).
 #
 # ORDER: apply this BEFORE the host release. A secretKeyRef the kubelet cannot
 # resolve leaves the host Pods in CreateContainerConfigError, never Running.

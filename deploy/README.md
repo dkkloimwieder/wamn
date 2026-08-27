@@ -18,8 +18,9 @@ lifecycle tiers because pre-tier provisioning runs before any tier exists.
   (`values-host-*.yaml`) with their host client certificates
   (`host-environment-certs*.yaml`).
 - **`gates/`** — gate/bench Job manifests (`*-job.yaml`) and their support
-  Deployments (`serve-echo`, `egress-escape`). Applied per gate run, deleted
-  after.
+  Deployment (`serve-echo`). Applied per gate run, deleted after. This bullet
+  named a second support Deployment, `egress-escape`, until `wamn-0h0g.10.5`'s
+  BoM pass; `ea71c1c4` deleted it with the rest of the runner carriers.
 - **`sql/`** — the standalone SQL schemas (`postgres-init`, `app-schema`,
   `catalog-schema`, `system-schema`, `run-queue`, `run-state`).
   Several are `include_str!`'d or read by tests — paths are load-bearing
@@ -28,6 +29,29 @@ lifecycle tiers because pre-tier provisioning runs before any tier exists.
 Placement judgment calls, recorded: `postgres.yaml` is platform (the shared
 long-lived fixture ~8 gates and the dispatcher point at, despite its bench
 header); `serve-echo` is gates (gate support, not product).
+
+**The `platform/` bullet above is illustrative; the BILL OF MATERIALS is
+`tests/system/tests/deploy_platform_inventory.rs` (`wamn-0h0g.10.5`).** Its
+`BILL_OF_MATERIALS` table names every manifest in the tier, the Kubernetes
+objects each one yields in document order, and the images each one schedules;
+the same file asserts that table against the directory, so the tier and the
+list cannot drift apart silently. Do not restate the inventory here — one
+carrier, and this is not it. Run it with:
+
+```bash
+cargo test -p wamn-proof-system --test deploy_platform_inventory
+```
+
+The proof also records what the tier MOUNTS but does not DECLARE. Three
+prerequisites are minted elsewhere on purpose (`wasmcloud-ca` by the
+runtime-operator release, `pg-init` by the bootstrap `kubectl create configmap`
+in `platform/postgres.yaml`'s header, `wamn-executor-db` by `wamn-ctl
+provision-project-env`). `wamn-executor-db` is the one that is a gap rather
+than a design: every other database credential in the tier ships an `.example`
+carrier, and the executor inherited the runner's Deployment role at `ea71c1c4`
+without inheriting `runner-db.example.yaml`. `wamn-0h0g.10.5` reports it; the
+carrier is not written here because its credential shape needs an owner
+decision, not a copy of the deleted file.
 
 Ordering recorded, **reconcile the run plane before publishing a release into
 it** (wamn-0h0g.8.26). `wamn-ctl reconcile-run-plane` — the per-project-env Job

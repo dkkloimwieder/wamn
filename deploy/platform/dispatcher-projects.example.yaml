@@ -53,13 +53,25 @@ metadata:
   namespace: wamn-system
 type: Opaque
 stringData:
-  # {"<project>": {"url": "...", "tenant": "...", "schema": "..."}} — the shape
-  # DispatchArgs::projects_file parses (services/dispatcher/src/lib.rs).
+  # {"<project>": {"url": "...", "tenant": "...", "execution_target_id": "...",
+  # "schema": "..."}} — the shape DispatchArgs::projects_file parses
+  # (services/dispatcher/src/lib.rs `ProjectSpecInput`).
   # `url` is the project's scoped read-only dispatch generation (LOGIN,
   # NOSUPERUSER, NOBYPASSRLS, INHERIT, exactly one membership and exactly one
   # database CONNECT); `tenant` becomes the session's app.tenant RLS claim;
   # `schema` its search_path. Tenant/schema are charset-guarded at startup (they
   # go into session SET literals).
+  #
+  # `execution_target_id` IS THE DOORBELL ROUTE (wamn-0h0g.5.9), and it is
+  # rendered EXPLICITLY below rather than left out. Omitted, `project_spec`
+  # falls back to `mvp_execution_target_id(tenant)` — the MVP tenant-to-target
+  # adapter — so the published subject would be a FUNCTION OF THE RLS CLAIM.
+  # Two things that are only incidentally equal today would then be one, and
+  # the first project whose target differs from its tenant would silently
+  # publish `wamn.doorbell.<tenant>` at a target nobody is subscribed to. The
+  # value written here is the subject segment `wamn.doorbell.<value>`, and it
+  # must equal the `--wake <execution-target-id>=<Deployment>` left-hand side
+  # in deploy/platform/waker.yaml or a wake hint reaches no waker.
   #
   # NOBYPASSRLS is correct BECAUSE the dispatcher is single-tenant per
   # connection: one entry here is one database and one `tenant`, and both of its
@@ -76,6 +88,7 @@ stringData:
       "demo": {
         "url": "postgres://wamn_dispatch_reader_e005c8cac3baea455b6e5929c8c932e34ed4552e_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn",
         "tenant": "demo-tenant",
+        "execution_target_id": "demo-tenant",
         "schema": "wamn_run"
       }
     }

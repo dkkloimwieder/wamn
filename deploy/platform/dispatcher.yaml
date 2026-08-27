@@ -70,7 +70,8 @@
 # publishes over the operator chart's mTLS NATS using the SAME
 # wasmcloud-runtime-tls cert the host groups use, whose CN maps to an
 # allow-all-subjects NATS user. The dispatcher only ever PUBLISHES on
-# wamn.doorbell.<tenant>; a publish-only NATS identity (own cert + scoped
+# wamn.doorbell.<execution-target-id> — the target each projects-file entry
+# names, NOT its tenant; a publish-only NATS identity (own cert + scoped
 # verify_and_map user in the chart config) is the right long-term shape.
 apiVersion: apps/v1
 kind: Deployment
