@@ -812,10 +812,24 @@ mod tests {
     /// environment, which is global and racy across a test binary's threads.
     /// `resolve_projects` no longer consults the environment at all for the
     /// credential, so what clap declares here IS the whole source set: one
-    /// argument, one env var. A reintroduced `DATABASE_URL` fallback would
-    /// either appear as a second declared env (caught by the equality below) or
-    /// as an `or_else` chain in `resolve_projects` — which this pins by leaving
-    /// `WAMN_PG_URL` the only database env any dispatcher argument names.
+    /// argument, one env var.
+    ///
+    /// THE LIMIT, RECORDED AND ACCEPTED (`wamn-0h0g.22.35`): THE DECLARATION IS
+    /// PINNED AND THE CHAIN IS NOT. A reintroduced ambient source that goes
+    /// through clap is caught — it shows up as a second declared env and the
+    /// equality below fails. One written by hand in the BODY of
+    /// `resolve_projects`, an `.or_else(|| std::env::var("DATABASE_URL").ok())`
+    /// on the credential, is NOT caught: that mutant survives this test. The
+    /// executor's pin carries the identical hole; it is ONE defect in a shared
+    /// pattern, not two.
+    ///
+    /// Accepted rather than fixed, because both deterministic kills cost more
+    /// than the hole. A source-text scan is forbidden outright — no test here
+    /// reads source as text. Process-environment mutation is global and racy
+    /// across a test binary's threads. And taking the environment as an
+    /// injected parameter would only catch a mutant that cooperated by using
+    /// the seam; a hand-written `std::env::var` reaches straight past it, so it
+    /// buys a false kill and a parameter no caller wants.
     #[test]
     fn the_database_credential_names_one_env_and_no_second_source() {
         #[derive(clap::Parser)]
