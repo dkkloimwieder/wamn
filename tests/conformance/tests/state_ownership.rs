@@ -1528,12 +1528,20 @@ fn durability_policy_projection_ownership_is_explicit_and_bounded() {
     // `expected_environment` to refuse a release whose carried environment is
     // not the one this database was provisioned for. The WRITER set is still
     // exactly the reconciler - this projection gains readers, never writers.
+    //
+    // `wamn-0h0g.9.13` widened it again, by the same rule and for the same
+    // reason: a file that reads a governed relation is named. The run-plane DDL
+    // reads this projection inside `wamn_run.pin_run_durability_class`, and
+    // `wamn-schema-control` carries that same trigger body as the definition it
+    // reconciles. Both are READER-ONLY here.
     assert_eq!(
         object.ownership.readers,
         [
             "ctl-reconcile-run-plane",
             "run-state",
-            "ctl-publish-release"
+            "ctl-publish-release",
+            "schema-control",
+            "run-state-schema-installer"
         ]
     );
     assert_eq!(

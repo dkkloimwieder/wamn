@@ -129,6 +129,21 @@
       "path": "services/cdc-reader",
       "role": "reader"
     },
+    "platform-runtime": {
+      "path": "crates/platform/runtime",
+      "role": "reader",
+      "note": "reader-only: the host's wiring-resolution and claim snapshots name catalog relations in production SQL but author none"
+    },
+    "event-materializer": {
+      "path": "crates/events/materializer",
+      "role": "reader",
+      "note": "reader-only: the materializer guest's registration sweep SQL"
+    },
+    "run-state-schema-installer": {
+      "path": "deploy/sql/run-state.sql",
+      "role": "reader",
+      "note": "reader-only: the run-plane DDL's trigger bodies read the durability projection and the effect ledger; the relations' migration owners are schema-control and run-state"
+    },
     "materializer": {
       "path": "components/execution/materializer",
       "role": "effect"
@@ -610,7 +625,7 @@
       "migration_owners": ["control-portable-store-installer"],
       "schema_source": "deploy/sql/control-portable-store.sql",
       "writers": ["control-portable-store-installer"],
-      "readers": ["scenario-worker"],
+      "readers": ["scenario-worker", "schema-control", "control-portable-store-installer"],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:control-portable-live"
     },
@@ -632,7 +647,7 @@
       "migration_owners": ["control-portable-store-installer"],
       "schema_source": "deploy/sql/control-portable-store.sql",
       "writers": ["control-portable-store-installer", "provision-store"],
-      "readers": ["provision-store"],
+      "readers": ["provision-store", "control-portable-store-installer"],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:control-portable-live"
     },
@@ -651,7 +666,10 @@
       ],
       "readers": [
         "schema-control",
-        "ctl-copy"
+        "ctl-copy",
+        "catalog-schema-installer",
+        "ctl-promote",
+        "ctl-publish-release"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -672,7 +690,12 @@
       ],
       "readers": [
         "ctl-publish",
-        "ctl-copy"
+        "ctl-copy",
+        "schema-control",
+        "catalog-schema-installer",
+        "ctl-migrate",
+        "ctl-promote",
+        "ctl-publish-release"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:catalog-live"
@@ -693,7 +716,10 @@
       "readers": [
         "schema-control",
         "ctl-copy",
-        "scenario-worker"
+        "scenario-worker",
+        "catalog-schema-installer",
+        "ctl-promote",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:catalog-live"
@@ -712,7 +738,10 @@
       "readers": [
         "schema-control",
         "run-state",
-        "scenario-worker"
+        "scenario-worker",
+        "catalog-schema-installer",
+        "ctl-promote",
+        "platform-runtime"
       ],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -732,7 +761,9 @@
         "schema-control",
         "run-state",
         "execution-host",
-        "scenario-worker"
+        "scenario-worker",
+        "ctl-promote",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -752,7 +783,8 @@
         "schema-control",
         "run-state",
         "execution-host",
-        "scenario-worker"
+        "scenario-worker",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -772,7 +804,9 @@
         "schema-control",
         "run-state",
         "execution-host",
-        "scenario-worker"
+        "scenario-worker",
+        "ctl-promote",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -789,7 +823,8 @@
         "schema-control"
       ],
       "readers": [
-        "schema-control"
+        "schema-control",
+        "catalog-schema-installer"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -945,7 +980,11 @@
       ],
       "readers": [
         "catalog-model",
-        "scenario-worker"
+        "scenario-worker",
+        "run-state",
+        "ctl-promote",
+        "ctl-publish-release",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -967,7 +1006,11 @@
         "catalog-model",
         "scenario-worker",
         "ctl-author-wiring",
-        "ctl-promote"
+        "ctl-promote",
+        "run-state",
+        "catalog-schema-installer",
+        "ctl-publish-release",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -984,7 +1027,9 @@
         "catalog-schema-installer"
       ],
       "readers": [
-        "catalog-model"
+        "catalog-model",
+        "catalog-schema-installer",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1002,7 +1047,9 @@
         "catalog-model"
       ],
       "readers": [
-        "catalog-model"
+        "catalog-model",
+        "ctl-promote",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1020,7 +1067,8 @@
         "catalog-model"
       ],
       "readers": [
-        "catalog-model"
+        "catalog-model",
+        "ctl-promote"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1037,7 +1085,8 @@
         "ctl-publish-release"
       ],
       "readers": [
-        "ctl-publish-release"
+        "ctl-publish-release",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:catalog-live"
@@ -1055,7 +1104,9 @@
       ],
       "readers": [
         "ctl-publish-release",
-        "ctl-promote"
+        "ctl-promote",
+        "catalog-schema-installer",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:catalog-live"
@@ -1075,7 +1126,8 @@
       "readers": [
         "schema-control",
         "ctl-copy",
-        "materializer"
+        "materializer",
+        "event-materializer"
       ],
       "compatibility_horizon": "frozen-0.1-event-contract-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1214,7 +1266,9 @@
       "readers": [
         "ctl-reconcile-run-plane",
         "run-state",
-        "ctl-publish-release"
+        "ctl-publish-release",
+        "schema-control",
+        "run-state-schema-installer"
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1233,10 +1287,11 @@
       "materializer"
       ],
       "readers": [
-      "run-state",
-      "execution-host",
-      "scenario-worker",
-        "materializer"
+        "run-state",
+        "execution-host",
+        "scenario-worker",
+        "materializer",
+        "schema-control"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1253,10 +1308,11 @@
         "run-state"
       ],
       "readers": [
-      "run-state",
-      "schema-control",
-      "execution-host",
-      "dispatcher"
+        "run-state",
+        "schema-control",
+        "execution-host",
+        "dispatcher",
+        "run-state-schema-installer"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1312,7 +1368,8 @@
       "readers": [
         "ctl-terminalize",
         "schema-control",
-        "scenario-worker"
+        "scenario-worker",
+        "run-state"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1333,7 +1390,8 @@
       "readers": [
         "run-state",
         "execution-host",
-        "dispatcher"
+        "dispatcher",
+        "schema-control"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
