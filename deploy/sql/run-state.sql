@@ -9,9 +9,11 @@
 -- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
 -- target of the crate's live-apply gate. Assumes pre-existing `wamn_app`,
 -- `wamn_scenario_author` and stable `wamn_effect_writer` ACL roles;
--- `wamn_platform` is the one role this file creates itself, because the floor
--- arms below NAME it and a missing role is an apply-time failure rather than a
--- degradation (`wamn-0h0g.22.17`). Role and
+-- `wamn_platform` and `wamn_run_retention` are the two roles this file creates
+-- itself, because it NAMES them -- the floor arms below target the first
+-- (`wamn-0h0g.22.17`) and the `runs` grants target the second
+-- (`wamn-0h0g.12.69`) -- and naming a role that may not exist is an apply-time
+-- failure rather than a degradation. Role and
 -- scoped LOGIN credential-generation lifecycle is provisioning-owned; this
 -- artifact grants the stable role ledger append/read authority plus only the
 -- narrow run columns needed for its fenced runnable-state recheck.
@@ -59,11 +61,33 @@ DO $platform_group$ BEGIN
   END IF;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $platform_group$;
+
+-- The stable run-retention ACL role the `runs` grants below name
+-- (`wamn-0h0g.12.69`). Created HERE for exactly the reason `wamn_platform` is:
+-- a `GRANT ... TO` a role that does not exist fails the whole apply, and every
+-- in-tree applier of this artifact -- a dozen live gates plus the production
+-- reconcile path -- would otherwise acquire a new precondition. The stable role
+-- is a grant carrier only; its scoped A/B LOGIN generations, their CONNECT and
+-- their Secret are provisioning-owned, exactly as the effect writer's are.
+--
+-- EXCEPTION-guarded under the shared advisory lock, the same shape and for the
+-- same reason: roles are CLUSTER-global and two appliers can each observe the
+-- role absent.
+DO $run_retention$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
+                 WHERE rolname = 'wamn_run_retention') THEN
+    CREATE ROLE wamn_run_retention NOLOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $run_retention$;
 REVOKE ALL PRIVILEGES ON SCHEMA wamn_run
-    FROM PUBLIC, wamn_effect_writer;
+    FROM PUBLIC, wamn_effect_writer, wamn_run_retention;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_scenario_author;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_effect_writer;
+GRANT USAGE ON SCHEMA wamn_run TO wamn_run_retention;
 
 -- ---------------------------------------------------------------------------
 -- The per-database authority derivations every tenant policy below calls
@@ -316,12 +340,18 @@ BEGIN
 END
 $$;
 
--- `wamn_app` retains DELETE only for tenant-scoped history pruning. The table
--- grant cannot express the prune statement's terminal-state predicate, so this
--- ordinary invoker-rights trigger makes that predicate caller-independent. An
+-- `wamn_run_retention` holds DELETE for history pruning, and `wamn_app` still
+-- retains it pending the guest-login retirement. The table grant cannot express
+-- the prune statement's terminal-state predicate, so this ordinary
+-- invoker-rights trigger makes that predicate caller-independent. An
 -- `effect-uncertain` run is deliberately not terminal: its operator resolution
 -- remains part of the durable audit floor and cannot be pruned as history
 -- (wamn-0h0g.12.128).
+--
+-- THE TRIGGER AND THE ROLE ARE INDEPENDENT LAYERS AND STAY THAT WAY
+-- (wamn-0h0g.12.69): the grant bounds WHO may delete, this trigger bounds WHAT
+-- may be deleted, and neither is absorbed into the other. The predicates and
+-- the failure modes differ, so each keeps its own probe.
 CREATE FUNCTION wamn_run.guard_terminal_run_delete()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -585,9 +615,38 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- read and terminal-history pruning surface; private management INSERT and
 -- executor UPDATE grants are provisioned to their dedicated authorities by
 -- their owning cutovers. `runs_terminal_delete_only` still confines retention.
+--
+-- `wamn_run_retention` (`wamn-0h0g.12.69`) is run history pruning's OWN
+-- principal, and the grant below is its ENTIRE authority anywhere in the
+-- cluster: `DELETE`, plus `SELECT` on EXACTLY the three columns the prune
+-- statement's WHERE clause reads. The `SELECT` is COLUMN-SCOPED and that is
+-- load bearing, not tidiness. `wamn_run_retention` is a member of
+-- `wamn_platform`, whose one permissive floor arm is `USING (true)`, so a
+-- table-level `SELECT` here would let a retention credential read EVERY
+-- tenant's `input_json`, `result_json` and `state_json` — measured. Column
+-- scoping is the only grant-shaped bound available: PostgreSQL privileges are
+-- relation- and column-shaped, never row-shaped, so what the shared arm buys
+-- retention is limited HERE or nowhere.
+--
+-- The membership itself is not optional. Measured on PostgreSQL 18.6: with the
+-- `wamn_platform` edge revoked, a retention generation holding exactly these
+-- grants reads zero rows and deletes zero rows — RLS is FORCEd and no policy
+-- matches the connected role, so PostgreSQL DEFAULT-DENIES silently. The arm is
+-- what makes retention work at all; the column list is what keeps it cheap.
+--
+-- It needs nothing on `wamn_run.run_queue`: measured, the `ON DELETE CASCADE`
+-- referential action in deploy/sql/run-queue.sql fires as an internal
+-- referential-integrity trigger that consults neither the deleter's table grants
+-- nor that relation's FORCE RLS policy, so a retention session holding zero
+-- queue privilege still cascades the queue row away. That is also the ONLY
+-- cascade out of `runs`: every other foreign key in the run plane is
+-- `NO ACTION`, so the effect ledgers are not reachable from a run delete and
+-- retention is granted nothing on them.
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
-    FROM PUBLIC, wamn_app, wamn_effect_writer;
+    FROM PUBLIC, wamn_app, wamn_effect_writer, wamn_run_retention;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
+GRANT SELECT (tenant_id, status, created_at), DELETE
+    ON wamn_run.runs TO wamn_run_retention;
 GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;
 -- The private effect writer may only recheck that the fenced run still has
 -- runnable state. Lease-generation authority remains outside this schema lane.

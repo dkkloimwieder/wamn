@@ -36,21 +36,29 @@
 # BOUNDED — an absent NATS delays startup by at most ~30s instead of wedging
 # it.
 #
-# DATABASE PRINCIPAL (wamn-0h0g.12.66): the dispatcher authenticates as
-# `wamn_dispatch_reader` — CONNECT, USAGE on the run-plane schema, and SELECT on
-# `run_queue` and `effect_attempts`. That is its entire database authority. It
-# previously used the shared `wamn_app` credential, which also carries
-# INSERT/UPDATE/DELETE on the queue and on every `catalog` relation.
+# DATABASE PRINCIPAL (wamn-0h0g.12.66, cut over to credential generations by
+# wamn-0h0g.22.24): the dispatcher authenticates as a per-database
+# `wamn_dispatch_reader_<40-hex>_<a|b>` GENERATION which inherits USAGE on the
+# run-plane schema and SELECT on `run_queue` and `effect_attempts`, and holds
+# CONNECT on its own database and no other. That is its entire database
+# authority. It previously used the shared `wamn_app` credential, which also
+# carries INSERT/UPDATE/DELETE on the queue and on every `catalog` relation, and
+# then the stable `wamn_dispatch_reader` LOGIN — cluster-global, and therefore a
+# session on every environment on the cluster once generations inherit it.
 #
-# ROLLOUT ORDER IS MANDATORY, and it is a THREE-STEP sequence per project
+# ROLLOUT ORDER IS MANDATORY, and it is a FOUR-STEP sequence per project
 # database, not one:
-#   1. apply the role SQL to the target cluster's superuser (creates the role);
+#   1. apply the role SQL to the target cluster's superuser (creates the stable
+#      NOLOGIN ACL role — a grant carrier, not a credential);
 #   2. apply the privilege SQL — the `ALTER DATABASE … OWNER TO` statement FIRST,
-#      then the CONNECT grants. An owner change rewrites the outgoing owner's ACL
-#      entry and carries away any CONNECT that merged into it, so a CONNECT
-#      issued before the owner statement is silently destroyed;
+#      then the CONNECT revokes. An owner change rewrites the outgoing owner's
+#      ACL entry and carries away whatever merged into it, so a statement issued
+#      before the owner statement is silently undone;
 #   3. apply the read-surface grants INSIDE each project database, after its
-#      run-plane schema exists.
+#      run-plane schema exists;
+#   4. prepare the dispatch-reader generation for that database and emit its
+#      Secret. THIS is the step that mints a credential; nothing before it can
+#      log in.
 # Only then update the wamn-dispatch-projects Secret and roll this Deployment.
 # Rolling first is not silent: the initial dial is fatal, and maxUnavailable: 0
 # with minReadySeconds: 30 means the new pod never becomes available and the old

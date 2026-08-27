@@ -267,6 +267,11 @@ fn reset(admin_url: &str) {
         "wamn_app",
         "wamn_scenario_author",
         "wamn_effect_writer",
+        // `wamn-0h0g.12.69`: run-state.sql creates and grants to this one for
+        // the same reason it creates `wamn_platform` — it NAMES it, and a GRANT
+        // to a missing role fails the whole apply. Dropped here BEFORE the group
+        // it is a member of, so the reset leaves no edge behind.
+        "wamn_run_retention",
         "wamn_platform",
         // Probe roles this file's live arms mint. A leftover one fails the next
         // run's `CREATE ROLE` rather than masking anything, but the gate is

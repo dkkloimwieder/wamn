@@ -87,7 +87,6 @@ fn action_args(
         // role-batch passwords, and this is one, so `None` is what a real
         // invocation carries.
         app_password: None,
-        dispatch_reader_password: None,
         app_host: None,
         app_port: 5432,
         namespace: "wamn-system".to_string(),

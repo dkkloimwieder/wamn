@@ -87,7 +87,6 @@ fn action_args(
         connection_limit: None,
         app_host: None,
         app_password: None,
-        dispatch_reader_password: None,
         app_port: 5432,
         namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
         secret_namespace: None,
@@ -110,8 +109,7 @@ fn action_args(
                     verb,
                     generation,
                 }),
-            secret: prepare
-                .map(|(_, path)| (WorkloadRoleFamily::App, path.to_path_buf())),
+            secret: prepare.map(|(_, path)| (WorkloadRoleFamily::App, path.to_path_buf())),
         },
     }
 }

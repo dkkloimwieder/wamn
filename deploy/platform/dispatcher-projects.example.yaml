@@ -11,17 +11,41 @@
 # by tests/conformance/tests/dispatcher_boundary.rs. Real per-project entries —
 # one per provisioned project DB — land with hosting/2.3 provisioning.
 #
-# THE PRINCIPAL IS NOT wamn_app (wamn-0h0g.12.66). The dispatcher has no separate
-# DB-URL Secret: its credential lives INSIDE this file, so this manifest is the
-# only place its database identity is stated and changing the role means changing
-# these URLs. `wamn_dispatch_reader` holds CONNECT, schema USAGE, and SELECT on
-# exactly the two relations above and nothing else; `wamn_app` additionally holds
-# INSERT/UPDATE/DELETE on the queue and on every `catalog` relation, plus EXECUTE
-# on a SECURITY DEFINER function — none of which the dispatcher has ever used.
+# THE PRINCIPAL IS NOT wamn_app (wamn-0h0g.12.66), AND SINCE wamn-0h0g.22.24 IT
+# IS NOT THE STABLE `wamn_dispatch_reader` ROLE EITHER. The dispatcher has no
+# separate DB-URL Secret: its credential lives INSIDE this file, so this manifest
+# is the only place its database identity is stated. Each `url` now names a
+# per-database credential GENERATION — `wamn_dispatch_reader_<40-hex>_<a|b>` —
+# which INHERITS the stable role's schema `USAGE` and `SELECT` on exactly the two
+# relations above and holds `CONNECT` on its own database and no other.
 #
-# ORDERING OBLIGATION: the role and its grants must exist BEFORE a pod carrying
-# these URLs starts, or the initial dial is fatal and the pod crash-loops. See the
-# rollout note in deploy/platform/dispatcher.yaml.
+# WHY THE STABLE ROLE CANNOT BE THE LOGIN. It is CLUSTER-GLOBAL and every
+# generation is a member of it `WITH INHERIT TRUE`, so a single
+# `GRANT CONNECT ON DATABASE … TO wamn_dispatch_reader` per environment is a
+# session on EVERY environment on the cluster — measured live on PostgreSQL 18
+# for the identical shape on `wamn_app` (wamn-0h0g.12.179). The provisioner's
+# privilege batch now REVOKES that grant, and
+# `services/ctl/tests/dispatch_reader_provisioning_live.rs` asserts a generation
+# minted for one database is refused a session on a neighbouring one.
+#
+# WHERE THE URL COMES FROM, and how it rotates:
+#
+#   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
+#     --tenant <tenant> --system-database-url <t1-superuser-url> \
+#     --target-admin-database-url <project-env-superuser-url> \
+#     --prepare-dispatch-reader-generation a \
+#     --emit-dispatch-reader-secret ./dispatch-reader.json
+#
+# writes a `wamn-dispatch-reader-<org>--<project>--<env>` Secret carrying one
+# `url` key. Copy that value into the entry below. ROTATION is the ordinary A/B
+# lifecycle and needs no downtime: prepare generation `b`, update this Secret,
+# roll the Deployment (`maxUnavailable: 0` keeps the old replicas sweeping until
+# the new ones dial successfully), then retire generation `a`. Never `ALTER ROLE`
+# a password in place — the generation IS the rotation unit.
+#
+# ORDERING OBLIGATION: the generation and the stable role's grants must exist
+# BEFORE a pod carrying these URLs starts, or the initial dial is fatal and the
+# pod crash-loops. See the rollout note in deploy/platform/dispatcher.yaml.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -31,10 +55,11 @@ type: Opaque
 stringData:
   # {"<project>": {"url": "...", "tenant": "...", "schema": "..."}} — the shape
   # DispatchArgs::projects_file parses (services/dispatcher/src/lib.rs).
-  # `url` is the project's scoped read-only dispatch connection (LOGIN,
-  # NOSUPERUSER, NOINHERIT, NOBYPASSRLS); `tenant` becomes the session's
-  # app.tenant RLS claim; `schema` its search_path. Tenant/schema are
-  # charset-guarded at startup (they go into session SET literals).
+  # `url` is the project's scoped read-only dispatch generation (LOGIN,
+  # NOSUPERUSER, NOBYPASSRLS, INHERIT, exactly one membership and exactly one
+  # database CONNECT); `tenant` becomes the session's app.tenant RLS claim;
+  # `schema` its search_path. Tenant/schema are charset-guarded at startup (they
+  # go into session SET literals).
   #
   # NOBYPASSRLS is correct BECAUSE the dispatcher is single-tenant per
   # connection: one entry here is one database and one `tenant`, and both of its
@@ -42,10 +67,14 @@ stringData:
   # policy therefore admits exactly the rows it already read as wamn_app. A
   # bypassing role would widen the read to every tenant in the database for no
   # gain.
+  #
+  # The demo login below is the REAL derived name for the project-environment
+  # demo/demo/dev in the fixture pod's `wamn` database; substitute the password
+  # the prepare minted.
   projects.json: |
     {
       "demo": {
-        "url": "postgres://wamn_dispatch_reader:wamn_dispatch_reader@postgres.wamn-system.svc.cluster.local:5432/wamn",
+        "url": "postgres://wamn_dispatch_reader_e005c8cac3baea455b6e5929c8c932e34ed4552e_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn",
         "tenant": "demo-tenant",
         "schema": "wamn_run"
       }

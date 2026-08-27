@@ -15,7 +15,30 @@
 -- narrowed `TO wamn_app`, and one permissive `TO wamn_platform` arm for the
 -- platform-grain principals whose login names carry no tenant at all.
 
-CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+-- GUARDED, like every other role in this file (`wamn-0h0g.12.186`). It was a
+-- BARE `CREATE ROLE` and roles are CLUSTER-global, so re-applying this artifact
+-- against a cluster that already carries the role failed the WHOLE FILE at its
+-- first statement with `role "wamn_app" already exists` — measured. Nothing
+-- downstream of line 18 ran, which is why
+-- `crates/control/provision/tests/deploy_sql_authority.rs` reads 4 passed / 1
+-- failed under parallel test threads and 5/0 single-threaded.
+--
+-- EXCEPTION-guarded and advisory-locked, not bare `IF NOT EXISTS`: two appliers
+-- that do not both take the lock can each observe the role absent and both
+-- issue `CREATE ROLE`, and the loser gets `duplicate_object`.
+--
+-- It deliberately does NOT re-stamp the password on an existing role, matching
+-- `ensure_app_role_sql` and every sibling below: a harden pass must not
+-- overwrite a credential an operator rotated out of band. Whether this role
+-- should be a LOGIN at all is `wamn-0h0g.12.140`'s cutover, not this guard's.
+DO $app$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN
+    CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOBYPASSRLS;
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $app$;
 
 -- The host-only scenario-author group role (11.2/12g). Roles are CLUSTER-global,
 -- so creating it here is what makes the canonical run-plane DDL
@@ -46,6 +69,21 @@ DO $effect_writer$ BEGIN
   END IF;
 END $effect_writer$;
 
+-- Stable host-only ACL role for run-history retention (`wamn-0h0g.12.69`). Its
+-- scoped A/B LOGIN generations, their CONNECT and their Secret are provisioned
+-- separately; this local fixture needs only the NOLOGIN grant carrier, exactly
+-- as it does for the effect writer above, so canonical run-state.sql can be
+-- applied against it.
+DO $run_retention$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
+                 WHERE rolname = 'wamn_run_retention') THEN
+    CREATE ROLE wamn_run_retention NOLOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $run_retention$;
+
 -- The shared platform group role every non-guest floor arm targets
 -- (`wamn-0h0g.22.17`). PostgreSQL DEFAULT-DENIES when RLS is enabled and no
 -- policy matches the connected role, so narrowing the floor `TO wamn_app` does
@@ -68,7 +106,7 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END $platform_group$;
 
 -- INHERIT TRUE IS SPELLED, NOT DEFAULTED, AND THE OMISSION IS SILENT.
--- Both roles below are NOINHERIT, and in PostgreSQL 16+ a role's `rolinherit`
+-- Every role below is NOINHERIT, and in PostgreSQL 16+ a role's `rolinherit`
 -- supplies the DEFAULT `INHERIT` option for memberships granted TO it — so a
 -- bare `GRANT wamn_platform TO wamn_effect_writer` lands `inherit_option =
 -- false`, the two-hop chain (generation login -> ACL role -> wamn_platform)
@@ -76,6 +114,7 @@ END $platform_group$;
 -- Measured on PostgreSQL 18.6: bare grant -> 0 rows, `INHERIT TRUE` -> all rows.
 GRANT wamn_platform TO wamn_scenario_author WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 GRANT wamn_platform TO wamn_effect_writer WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
+GRANT wamn_platform TO wamn_run_retention WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 
 CREATE DATABASE wamn OWNER postgres;
 

@@ -1,19 +1,46 @@
-# EXAMPLE per-project-env app-role DB Secret for the run-history retention
+# EXAMPLE per-project-env RETENTION DB Secret for the run-history retention
 # CronJob (deploy/platform/run-retention.example.yaml, which references it as
 # `WAMN_PG_URL` via secretKeyRef). DELIBERATELY a separate manifest — the
 # dispatcher-projects/runner-db/runner-credentials precedent: it is
 # per-project-env config, so re-applying the CronJob manifest never clobbers a
 # customized Secret back to this demo value.
 #
-# `url` is the project-env's app (wamn_app, NOSUPERUSER) connection string.
-# Pruning is an ordinary tenant-scoped DELETE that role is granted — NO
-# superuser. RLS scopes the delete to the `--tenant` the CronJob passes, so this
-# credential is not a substitute for the tenant/schema arguments.
+# THE PRINCIPAL IS NOT wamn_app ANY MORE (wamn-0h0g.12.69). `url` is a scoped
+# `wamn_run_retention` credential GENERATION: a per-(tenant, database) LOGIN
+# whose stable ACL role holds `DELETE` plus a THREE-COLUMN `SELECT` on
+# `wamn_run.runs` and nothing else anywhere in the cluster. It cannot read a run
+# payload, cannot touch the queue, and reaches no other relation. The value here
+# used to be the shared `wamn_app` login, which carries the whole application
+# grant set — the over-grant this bead names.
+#
+# IN A PROVISIONED ENVIRONMENT YOU DO NOT HAND-WRITE THIS FILE. The generation,
+# its password, its `VALID UNTIL` and the Secret are minted together by:
+#
+#   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
+#     --tenant <tenant> --system-database-url <t1-superuser-url> \
+#     --target-admin-database-url <project-env-superuser-url> \
+#     --prepare-retention-generation a \
+#     --emit-retention-secret ./retention-secret.json
+#
+# which writes a Secret named `wamn-retention-<org>--<project>--<env>` carrying
+# the same single `url` key. ROTATION is the ordinary A/B lifecycle: prepare the
+# other generation, apply the emitted Secret, let the CronJob pick it up on its
+# next tick, then `--retire-retention-generation` the old one. Never edit the
+# role's password in place — the generation IS the rotation unit.
+#
+# THE LOGIN NAME IS NOT COSMETIC. `wamn_run_retention_<40-hex>_<a|b>` carries the
+# 160-bit digest of (tenant, database), and `prune-run-history` REFUSES unless
+# that digest matches the `--tenant` it was given, recomputed against
+# `current_database()` read back from the server. Pointing this Secret at another
+# tenant's credential, or at `wamn_app`, does not prune the wrong rows — it
+# refuses before any statement runs. The demo value below is the REAL derived
+# name for tenant `poc-f1` in the fixture pod's `wamn` database; substitute the
+# password `prepare` minted.
 #
 # ONE PER PROJECT-ENV, named after it (`poc-f1` here) exactly like the CronJob
 # it feeds. It is NOT the runner's `wamn-runner-db`: that Secret is the demo
 # project's credential (tenant demo-tenant / schema wamn_runner_demo), a
-# different project-env from this one.
+# different project-env from this one, and the two are not interchangeable.
 #
 # ORDER: apply this BEFORE the CronJob. A secretKeyRef the kubelet cannot
 # resolve leaves the Job Pod in CreateContainerConfigError, and with
@@ -28,4 +55,4 @@ metadata:
   labels: { app: run-retention, project-env: poc-f1 }
 type: Opaque
 stringData:
-  url: "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn"
+  url: "postgres://wamn_run_retention_b89d1a53ff6cfd310f4271f860f86983584cc4e7_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn"

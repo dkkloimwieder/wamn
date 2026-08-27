@@ -13,8 +13,9 @@
 //! the runbook/Job applies the emitted artifacts, in this order:
 //!
 //! 1. the `wamn_db_owner` title role must exist **before** the `Database` CR
-//!    (its `owner`), and the shared `wamn_app` + scoped `wamn_dispatch_reader`
-//!    roles with it: apply the emitted
+//!    (its `owner`), and the stable `wamn_app` + `wamn_dispatch_reader` ACL
+//!    roles with it — both NOLOGIN grant carriers, neither a credential: apply
+//!    the emitted
 //!    **role SQL** to the target cluster's superuser. Applying the CR first
 //!    fails reconciliation — CNPG maps `spec.owner` straight to `CREATE DATABASE
 //!    … OWNER` / `ALTER DATABASE … OWNER TO`;
@@ -23,7 +24,7 @@
 //!    and re-owns an already-existing one to it;
 //! 3. apply the emitted **privilege SQL** (`ALTER DATABASE … OWNER TO
 //!    wamn_db_owner`, then `REVOKE CONNECT, TEMPORARY FROM PUBLIC` / `REVOKE
-//!    CONNECT FROM wamn_app` / `GRANT CONNECT TO wamn_dispatch_reader`) — the
+//!    CONNECT FROM wamn_app` / `REVOKE CONNECT FROM wamn_dispatch_reader`) — the
 //!    thin imperative step the `Database` CRD does
 //!    not cover (topology fact 3), run **after** the database exists. The owner
 //!    statement is first and must stay first: `ALTER DATABASE … OWNER TO`
@@ -34,11 +35,12 @@
 //!    stable `wamn_app` ACL role, and step 4's generation actions refuse to run
 //!    until it has (`wamn-0h0g.12.179`);
 //! 4. `kubectl apply -f` the emitted **credential Secret** and any independently
-//!    requested management-author / route-caller PAT Secrets, then run the
-//!    guest family's generation prepare — the per-tenant LOGIN it mints is what
-//!    actually reaches the database. `wamn_app` itself does not: it is the
-//!    stable NOLOGIN ACL role those generations inherit, and it must stay
-//!    connection-free (see [`privilege_sql`]).
+//!    requested management-author / route-caller PAT Secrets, then run each
+//!    family's generation prepare — the LOGIN it mints is what actually reaches
+//!    the database. The stable ACL roles do not: they are NOLOGIN grant carriers
+//!    those generations inherit, and every one of them must stay connection-free
+//!    (see [`privilege_sql`]). `wamn-0h0g.22.24` moved the last holdout,
+//!    `wamn_dispatch_reader`, onto that shape.
 //!
 //! What this tool does directly (given `--system-database-url`): read the org's
 //! placement to pick the target cluster, and record `registry.projects` +
@@ -71,6 +73,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{Config as PgConfig, GenericClient, NoTls};
 use url::Url;
 
+use wamn_control_provision::SystemReader;
 use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EffectWriterCredentialScope,
@@ -82,7 +85,6 @@ use wamn_control_provision::{
     render_workload_secret_manifest, sql, validate_instance_suffix, validate_project_env,
     workload_generation_role,
 };
-use wamn_control_provision::SystemReader;
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_platform_identity::{
     IdentityErrorKind, Principal, PrincipalKind, PrincipalStatus, assign_project_role,
@@ -136,8 +138,7 @@ pub struct ProvisionProjectEnvArgs {
     /// role SQL). Supply it with `--app-password` or the env var
     /// `WAMN_APP_PASSWORD`.
     ///
-    /// **Deliberately has no `default_value`**, matching
-    /// `--dispatch-reader-password` below. A default here provisioned every
+    /// **Deliberately has no `default_value`.** A default here provisioned every
     /// project-env with a publicly known password on a `LOGIN` role that
     /// guest-authored SQL executes as; a 2026-08-19 verifier read measured it
     /// live on every cluster the role existed on, because nothing ever
@@ -161,26 +162,6 @@ pub struct ProvisionProjectEnvArgs {
         required_unless_present_any = ["revoke_pat_prefix", WORKLOAD_ACTION_GROUP]
     )]
     pub app_password: Option<String>,
-
-    /// Password for the scoped `wamn_dispatch_reader` login role — the
-    /// dispatcher's own credential (wamn-0h0g.12.66), never the runtime's.
-    /// Env `WAMN_DISPATCH_READER_PASSWORD`.
-    ///
-    /// **Deliberately has no `default_value`** — as `--app-password` above now
-    /// also does not, since wamn-0h0g.12.129 closed that gap.
-    /// A default here would provision every project-env with a publicly known
-    /// password on a role that is `LOGIN` and reachable from outside the
-    /// cluster; provisioning refuses instead.
-    ///
-    /// Mode-scoped on the same credential-free modes as `--app-password` above:
-    /// both feed [`role_sql`], so both are owed by exactly the invocations that
-    /// reach it (wamn-0h0g.12.141).
-    #[arg(
-        long,
-        env = "WAMN_DISPATCH_READER_PASSWORD",
-        required_unless_present_any = ["revoke_pat_prefix", WORKLOAD_ACTION_GROUP]
-    )]
-    pub dispatch_reader_password: Option<String>,
 
     /// Host the runtime reaches the project-env database at. Defaults to the
     /// target cluster's read-write service `<cluster>-rw`.
@@ -265,7 +246,6 @@ pub struct ProvisionProjectEnvArgs {
     )]
     pub revoke_pat_prefix: Option<String>,
 }
-
 
 /// The id of the ONE group every derived workload action flag belongs to.
 ///
@@ -458,16 +438,22 @@ impl ProvisionProjectEnvArgs {
 /// CR because `wamn_db_owner` is its `spec.owner` and the CR cannot reconcile
 /// against a role that does not exist yet; `wamn_dispatch_reader` is here
 /// (wamn-0h0g.12.122) because it is cluster-global exactly as they are, and
-/// because the dispatcher's projects file already names it.
+/// because the reconcile step's read-surface grants name it.
+///
+/// It takes NO dispatch-reader password any more (`wamn-0h0g.22.24`). The role
+/// is minted by the generic ACL-role builder as a connection-free NOLOGIN grant
+/// carrier; the dispatcher's credential is a GENERATION, and a generation's
+/// password is CREATED by its own prepare action rather than handed to
+/// provisioning on a flag.
 ///
 /// `pub` so the live gate applies the SAME text production uses instead of a
 /// hand-transcribed copy — the `reconcile_run_plane::reconcile` precedent.
-pub fn role_sql(app_password: &str, dispatch_reader_password: &str) -> String {
+pub fn role_sql(app_password: &str) -> String {
     format!(
         "{app}\n{owner}\n{reader}\n",
         app = sql::ensure_app_role_sql(app_password),
         owner = sql::ensure_db_owner_role_sql(),
-        reader = sql::ensure_dispatch_reader_role_sql(dispatch_reader_password),
+        reader = sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
     )
 }
 
@@ -492,11 +478,15 @@ pub fn role_sql(app_password: &str, dispatch_reader_password: &str) -> String {
 /// that is not connection-free, and the `REVOKE` is what converges an
 /// environment provisioned before the cutover back under that refusal.
 ///
-/// `wamn_dispatch_reader` keeps its `CONNECT`: that family is NOT cut over —
-/// the dispatcher still authenticates as the stable role itself
-/// (`deploy/platform/dispatcher-projects.example.yaml`), and
-/// `grant_dispatch_reader_connect_sql` is ADDITIVE to the `PUBLIC` confinement
-/// rather than a replacement for it.
+/// **`wamn_dispatch_reader` is REVOKED for the identical reason
+/// (`wamn-0h0g.22.24`).** It was the LAST family still on the stable-LOGIN
+/// shape: the dispatcher authenticated as the cluster-global role itself and
+/// this batch GRANTED it `CONNECT` per environment, so its generations — once
+/// the family gained any — would inherit reach into every environment on the
+/// cluster, exactly as the guest's did. The dispatcher now mounts a
+/// dispatch-reader GENERATION, `prepare_workload_generation_sql` grants that
+/// generation `CONNECT` on its one database, and this `REVOKE` is what converges
+/// a pre-cutover environment back under the prepare's refusal.
 ///
 /// `pub` for the same reason as [`role_sql`].
 pub fn privilege_sql(database: &str) -> String {
@@ -508,7 +498,7 @@ pub fn privilege_sql(database: &str) -> String {
          {reader_connect}\n",
         owner = sql::set_database_owner_sql(database),
         app = quote_ident(APP_ROLE),
-        reader_connect = sql::grant_dispatch_reader_connect_sql(database),
+        reader_connect = sql::revoke_dispatch_reader_connect_sql(database),
     )
 }
 
@@ -613,24 +603,20 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         .app_host
         .clone()
         .unwrap_or_else(|| format!("{cluster}-rw"));
-    // Both credentials are `required_unless_present_any` over the modes
-    // that provision nothing, and every one of those has already returned
-    // above. A missing credential here is a broken parser contract, not a user
-    // error: re-checking it would plant a second, weaker enforcement point and
-    // hollow out the parse-time refusal (wamn-0h0g.12.141).
+    // `--app-password` is `required_unless_present_any` over the modes that
+    // provision nothing, and every one of those has already returned above. A
+    // missing credential here is a broken parser contract, not a user error:
+    // re-checking it would plant a second, weaker enforcement point and hollow
+    // out the parse-time refusal (wamn-0h0g.12.141).
     let app_password = args
         .app_password
         .as_deref()
         .expect("clap requires --app-password on every provisioning invocation");
-    let dispatch_reader_password = args
-        .dispatch_reader_password
-        .as_deref()
-        .expect("clap requires --dispatch-reader-password on every provisioning invocation");
     let app_url = compose_url(APP_ROLE, app_password, &app_host, args.app_port, &db_name);
 
     // Render the artifacts the runbook applies.
     let db_cr = render_project_env_database(&triple, &instance, &cluster, args.connection_limit);
-    let role_sql = role_sql(app_password, dispatch_reader_password);
+    let role_sql = role_sql(app_password);
     let privilege_sql = privilege_sql(&db_name);
     let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace, &app_url);
 
@@ -1380,9 +1366,13 @@ where
     // condition is the absence of a stable surface, not a family name.
     if sql::stable_surface_sql(lifecycle.family).is_none()
         && let Some(grant_set) = stable_grant_set(lifecycle.family)
-        && read_workload_role_state(&transaction, lifecycle.family.acl_role(), &lifecycle.label())
-            .await?
-            .is_some()
+        && read_workload_role_state(
+            &transaction,
+            lifecycle.family.acl_role(),
+            &lifecycle.label(),
+        )
+        .await?
+        .is_some()
     {
         verify_role_acl_inventory(
             admin_config,
@@ -1934,6 +1924,8 @@ fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
         WorkloadRoleFamily::ManagementAdmitter => Some(StableGrantSet::ManagementAdmitter),
         WorkloadRoleFamily::RegistryReader => Some(StableGrantSet::RegistryReader),
         WorkloadRoleFamily::IdentityReader => Some(StableGrantSet::IdentityReader),
+        WorkloadRoleFamily::Retention => Some(StableGrantSet::Retention),
+        WorkloadRoleFamily::DispatchReader => Some(StableGrantSet::DispatchReader),
         _ => None,
     }
 }
@@ -1945,6 +1937,8 @@ enum StableGrantSet {
     ManagementAdmitter,
     RegistryReader,
     IdentityReader,
+    Retention,
+    DispatchReader,
 }
 
 impl StableGrantSet {
@@ -1983,6 +1977,10 @@ impl StableGrantSet {
                 required_database,
                 inventory,
             ),
+            Self::Retention => verify_retention_acl_role_inventory(role, database, inventory),
+            Self::DispatchReader => {
+                verify_dispatch_reader_acl_role_inventory(role, database, inventory)
+            }
         }
     }
 }
@@ -2168,6 +2166,136 @@ fn verify_effect_writer_acl_role_inventory(
     }
     Ok(())
 }
+
+/// The exact run-retention grant set, measured from the SERVER's ACL catalogs
+/// (`wamn-0h0g.12.69`).
+///
+/// Deliberately the effect writer's shape — iterate whatever schemas the role
+/// holds anything in and require each to be EXACTLY this set — because retention
+/// is likewise a tenant-scoped family whose grants land inside each project-env
+/// database's run-plane schema, and a widened grant in a schema nobody thought
+/// to name is exactly the drift a per-schema allow-list would miss.
+///
+/// The `SELECT` is COLUMN-scoped and the assertion has to keep it that way. The
+/// role is a `wamn_platform` member, that group's floor arm on `wamn_run.runs`
+/// is `USING (true)`, and PostgreSQL grants are relation- and column-shaped
+/// rather than row-shaped — so this column list is the only thing standing
+/// between a retention credential and every tenant's run payloads. A
+/// `("relation", "runs", "SELECT")` entry appearing here is that regression, and
+/// it fails as an unexpected member of the exact set.
+fn verify_retention_acl_role_inventory(
+    role: &str,
+    database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
+    for acl in inventory {
+        anyhow::ensure!(
+            matches!(acl.object_kind.as_str(), "schema" | "relation" | "column"),
+            "stable role {role:?} carries non-retention {} ACL in database {database:?}",
+            acl.object_kind
+        );
+        by_schema
+            .entry(acl.schema_name.clone())
+            .or_default()
+            .insert((
+                acl.object_kind.clone(),
+                acl.object_name.clone(),
+                acl.privilege.clone(),
+            ));
+    }
+    for (schema, actual) in by_schema {
+        anyhow::ensure!(
+            !schema.starts_with("pg_")
+                && !matches!(
+                    schema.as_str(),
+                    "public" | "information_schema" | "wamn_system" | "catalog" | "app"
+                ),
+            "stable role {role:?} carries retention ACLs in reserved schema {schema:?} in database {database:?}"
+        );
+        let mut expected =
+            BTreeSet::from([("schema".to_string(), schema.clone(), "USAGE".to_string())]);
+        expected.insert((
+            "relation".to_string(),
+            "runs".to_string(),
+            "DELETE".to_string(),
+        ));
+        for column in RETENTION_RUN_READ_COLUMNS {
+            expected.insert((
+                "column".to_string(),
+                format!("runs.{column}"),
+                "SELECT".to_string(),
+            ));
+        }
+        anyhow::ensure!(
+            actual == expected,
+            "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact run-retention grant set"
+        );
+    }
+    Ok(())
+}
+
+/// The exact dispatcher read surface, measured from the SERVER's ACL catalogs
+/// (`wamn-0h0g.22.24`).
+///
+/// The dispatcher's whole database surface is two `SELECT`s over
+/// [`sql::DISPATCH_READER_RELATIONS`], so the stable ACL role holds schema
+/// `USAGE` plus `SELECT` on exactly those two relations. It is asserted PER
+/// SCHEMA and exactly, the effect writer's shape, because a dispatch-reader
+/// generation now inherits everything this role holds in every database the
+/// role has grants in — and until this bead the family had no denial matrix at
+/// all, because it had no generations to guard.
+fn verify_dispatch_reader_acl_role_inventory(
+    role: &str,
+    database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
+    for acl in inventory {
+        anyhow::ensure!(
+            matches!(acl.object_kind.as_str(), "schema" | "relation" | "column"),
+            "stable role {role:?} carries non-reader {} ACL in database {database:?}",
+            acl.object_kind
+        );
+        by_schema
+            .entry(acl.schema_name.clone())
+            .or_default()
+            .insert((
+                acl.object_kind.clone(),
+                acl.object_name.clone(),
+                acl.privilege.clone(),
+            ));
+    }
+    for (schema, actual) in by_schema {
+        anyhow::ensure!(
+            !schema.starts_with("pg_")
+                && !matches!(
+                    schema.as_str(),
+                    "public" | "information_schema" | "wamn_system" | "catalog" | "app"
+                ),
+            "stable role {role:?} carries dispatch-reader ACLs in reserved schema {schema:?} in database {database:?}"
+        );
+        let mut expected =
+            BTreeSet::from([("schema".to_string(), schema.clone(), "USAGE".to_string())]);
+        for relation in sql::DISPATCH_READER_RELATIONS {
+            expected.insert((
+                "relation".to_string(),
+                relation.to_string(),
+                "SELECT".to_string(),
+            ));
+        }
+        anyhow::ensure!(
+            actual == expected,
+            "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact dispatch-reader grant set"
+        );
+    }
+    Ok(())
+}
+
+/// The only `runs` columns run-history pruning reads: the three its `WHERE`
+/// clause names. `run_id` is deliberately absent — the statement never selects
+/// it, and the verb reports a COUNT rather than a list.
+const RETENTION_RUN_READ_COLUMNS: [&str; 3] = ["tenant_id", "status", "created_at"];
 
 fn verify_management_admitter_acl_role_inventory(
     role: &str,
@@ -2936,17 +3064,24 @@ mod tests {
     fn parse_argv(argv: Vec<String>) -> Result<ProvisionProjectEnvArgs, clap::Error> {
         let matches = TestCli::command()
             .mut_arg("app_password", |arg| arg.env(None::<&str>))
-            .mut_arg("dispatch_reader_password", |arg| arg.env(None::<&str>))
             .try_get_matches_from(argv)?;
         TestCli::from_arg_matches(&matches).map(|cli| cli.args)
     }
 
     /// `["test", "--org", .., "--env", "dev"]` plus whatever the caller adds.
     fn action_argv(extra: &[&str]) -> Vec<String> {
-        let mut argv: Vec<String> = ["test", "--org", "acme", "--project", "billing", "--env", "dev"]
-            .iter()
-            .map(|arg| (*arg).to_string())
-            .collect();
+        let mut argv: Vec<String> = [
+            "test",
+            "--org",
+            "acme",
+            "--project",
+            "billing",
+            "--env",
+            "dev",
+        ]
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect();
         argv.extend(extra.iter().map(|arg| (*arg).to_string()));
         argv
     }
@@ -2961,13 +3096,10 @@ mod tests {
             "--env",
             "dev",
             // Required with no default on a PROVISIONING invocation
-            // (wamn-0h0g.12.122), which is every invocation this helper builds.
+            // (wamn-0h0g.12.129), which is every invocation this helper builds.
             // The credential-free modes are exempt (wamn-0h0g.12.141) and
             // must therefore be parsed bare — see
-            // `the_credential_free_modes_parse_without_either_password`.
-            "--dispatch-reader-password",
-            "reader-probe",
-            // Likewise since wamn-0h0g.12.129.
+            // `the_credential_free_modes_parse_without_a_password`.
             "--app-password",
             "app-probe",
         ];
@@ -2993,8 +3125,6 @@ mod tests {
                 "acme-dev",
                 "--app-password",
                 "app-probe",
-                "--dispatch-reader-password",
-                "reader-probe",
                 "--emit-secret",
                 "/tmp/db.json",
             ];
@@ -3223,20 +3353,17 @@ mod tests {
         assert!(both.emit_management_author_pat_secret.is_some());
         assert!(both.emit_route_caller_pat_secret.is_some());
 
-        // `--dispatch-reader-password` (wamn-0h0g.12.122) and `--app-password`
-        // (wamn-0h0g.12.129) are required with no default, but only where they
-        // are consumed: wamn-0h0g.12.141 scoped both to the provisioning modes,
-        // so revoke-only may carry them and need not. Passing them here keeps
-        // this case about the PAT flags; the exemption itself is proven by
-        // `the_credential_free_modes_parse_without_either_password`.
+        // `--app-password` (wamn-0h0g.12.129) is required with no default, but
+        // only where it is consumed: wamn-0h0g.12.141 scoped it to the
+        // provisioning modes, so revoke-only may carry it and need not. Passing
+        // it here keeps this case about the PAT flags; the exemption itself is
+        // proven by `the_credential_free_modes_parse_without_a_password`.
         let revoke = TestCli::try_parse_from([
             "test",
             "--system-database-url",
             "postgresql://postgres@localhost/postgres",
             "--revoke-pat-prefix",
             "0123456789abcdef",
-            "--dispatch-reader-password",
-            "reader-probe",
             "--app-password",
             "app-probe",
         ])
@@ -3459,37 +3586,46 @@ mod tests {
 
     /// wamn-0h0g.12.122. The emitted privilege batch is PINNED whole: a runtime
     /// gate that only asserts "the reader can connect" stays green when a
-    /// builder is swapped for a wider one, and stays green when the `CONNECT`
-    /// grant drifts back above the owner statement on a database that happens
-    /// to be owned by `wamn_db_owner` already. The frozen literal is the guard.
+    /// builder is swapped for a wider one, and stays green when a `CONNECT`
+    /// statement drifts back above the owner statement on a database that
+    /// happens to be owned by `wamn_db_owner` already. The frozen literal is the
+    /// guard.
     ///
-    /// wamn-0h0g.12.179 re-pins it: the batch REVOKES `CONNECT` from the stable
-    /// `wamn_app` ACL role instead of granting it.
+    /// wamn-0h0g.12.179 re-pinned it once, moving `wamn_app` from granted to
+    /// revoked. wamn-0h0g.22.24 re-pins it again for the LAST stable-LOGIN
+    /// family: `wamn_dispatch_reader` moves the same way, and the batch now
+    /// grants `CONNECT` to NOBODY. Every principal that reaches a project-env
+    /// database is a generation, and a generation is granted `CONNECT` directly
+    /// by its own prepare.
     #[test]
-    fn the_privilege_batch_grants_reader_connect_after_the_owner_statement() {
+    fn the_privilege_batch_revokes_every_stable_role_connect_after_the_owner_statement() {
         let batch = privilege_sql("wamn-db-acme--billing--dev");
         assert_eq!(
             batch,
             "ALTER DATABASE \"wamn-db-acme--billing--dev\" OWNER TO \"wamn_db_owner\";\n\
              REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-acme--billing--dev\" FROM PUBLIC; \
              REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM \"wamn_app\";\n\
-             GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_dispatch_reader\";\n"
+             REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" \
+             FROM \"wamn_dispatch_reader\";\n"
         );
 
         // The ordering assertion, stated independently of the frozen literal so
-        // a deliberate re-pin cannot silently drop it.
+        // a deliberate re-pin cannot silently drop it. `ALTER DATABASE … OWNER
+        // TO` rewrites the outgoing owner's ACL entry, so a revoke applied
+        // before it can be undone by what the owner change carries over.
         let owner = batch
             .find("ALTER DATABASE")
             .expect("the owner statement is emitted");
-        let reader_connect = batch
-            .find("GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_dispatch_reader\"")
-            .expect("the reader CONNECT grant is emitted");
+        let reader_revoke = batch
+            .find("REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM \"wamn_dispatch_reader\"")
+            .expect("the reader CONNECT revoke is emitted");
         assert!(
-            owner < reader_connect,
-            "reader CONNECT must follow ALTER DATABASE … OWNER TO: {batch}"
+            owner < reader_revoke,
+            "reader CONNECT revoke must follow ALTER DATABASE … OWNER TO: {batch}"
         );
 
-        // The additive grant must not have displaced the PUBLIC confinement.
+        // NOBODY is granted CONNECT here, and the PUBLIC confinement stands.
+        assert!(!batch.contains("GRANT CONNECT"));
         assert!(batch.contains("REVOKE CONNECT, TEMPORARY ON DATABASE"));
     }
 
@@ -3519,41 +3655,47 @@ mod tests {
         );
     }
 
-    /// The role batch must actually CREATE the principal the dispatcher's
-    /// projects file names. Before wamn-0h0g.12.122 the example manifest named
-    /// a role production provisioning never created.
+    /// The role batch must actually CREATE the principal the reconcile step's
+    /// read-surface grants name. Before wamn-0h0g.12.122 the example manifest
+    /// named a role production provisioning never created; wamn-0h0g.22.24 keeps
+    /// it created, as a NOLOGIN carrier rather than a credential.
     #[test]
     fn the_role_batch_creates_the_dispatch_reader_from_the_shipped_builder() {
-        let batch = role_sql("app-secret", "reader-secret");
+        let batch = role_sql("app-secret");
         assert_eq!(
             batch,
             format!(
                 "{app}\n{owner}\n{reader}\n",
                 app = sql::ensure_app_role_sql("app-secret"),
                 owner = sql::ensure_db_owner_role_sql(),
-                reader = sql::ensure_dispatch_reader_role_sql("reader-secret"),
+                reader = sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
             )
         );
-        assert!(batch.contains(
-            "CREATE ROLE \"wamn_dispatch_reader\" LOGIN PASSWORD 'reader-secret' NOSUPERUSER \
-             NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
-        ));
-        // Each password reaches its own builder: a swapped argument would hand
-        // the dispatcher the shared application credential.
+        assert!(batch.contains("'wamn_dispatch_reader'"));
+        // The one password in this batch reaches the one role that still takes
+        // one. A dispatch reader carrying ANY password is the retired shape.
         assert!(
             batch.contains("CREATE ROLE \"wamn_app\" LOGIN PASSWORD 'app-secret'"),
             "app role lost its own password: {batch}"
         );
-        assert!(!batch.contains("\"wamn_dispatch_reader\" LOGIN PASSWORD 'app-secret'"));
+        assert_eq!(batch.matches("PASSWORD 'app-secret'").count(), 1);
+        assert!(!batch.contains("\"wamn_dispatch_reader\" LOGIN"));
     }
 
-    /// The owner ruling: no `default_value`. This test exists so the argument
-    /// cannot quietly re-acquire one. `--app-password` above carried the same
-    /// defect when this was written; wamn-0h0g.12.129 has since removed it, so
-    /// both credentials on this command now refuse rather than defaulting.
+    /// `wamn-0h0g.22.24` RETIRED `--dispatch-reader-password`, and this is the
+    /// pin that keeps it retired.
+    ///
+    /// The flag existed because the dispatcher authenticated as the stable,
+    /// cluster-global `wamn_dispatch_reader` LOGIN. That shape is the hazard
+    /// `wamn-0h0g.12.179` measured live for the guest — a cluster-global role
+    /// with a per-database `GRANT CONNECT` reaches every database on the
+    /// cluster, because its generations inherit `WITH INHERIT TRUE`. The family
+    /// is now on generations, so provisioning mints no dispatcher credential at
+    /// all and there is nothing to pass. A reintroduced flag would be a
+    /// reintroduced shared login.
     #[test]
-    fn the_dispatch_reader_password_has_no_default() {
-        let error = parse_without_password_envs([
+    fn provisioning_mints_no_dispatch_reader_credential() {
+        let parsed = parse_without_password_envs([
             "test",
             "--org",
             "acme",
@@ -3566,22 +3708,32 @@ mod tests {
             "--emit-secret",
             "/tmp/db.json",
         ])
-        .expect_err("provisioning accepted a missing --dispatch-reader-password");
-        assert_eq!(
-            error.kind(),
-            clap::error::ErrorKind::MissingRequiredArgument
-        );
-        assert!(
-            error.to_string().contains("--dispatch-reader-password"),
-            "unexpected missing-argument error: {error}"
-        );
-        assert_eq!(
-            parse_args(&["--emit-secret", "/tmp/db.json"])
-                .unwrap()
-                .dispatch_reader_password
-                .as_deref(),
-            Some("reader-probe")
-        );
+        .expect("provisioning needs no dispatch-reader credential");
+        assert!(parsed.emit_secret.is_some());
+        // The flag is gone from the parser, not merely unused by this call.
+        let rejected = parse_without_password_envs([
+            "test",
+            "--org",
+            "acme",
+            "--project",
+            "billing",
+            "--env",
+            "dev",
+            "--app-password",
+            "app-probe",
+            "--emit-secret",
+            "/tmp/db.json",
+            "--dispatch-reader-password",
+            "reader-probe",
+        ])
+        .expect_err("the retired dispatch-reader credential flag still parses");
+        assert_eq!(rejected.kind(), clap::error::ErrorKind::UnknownArgument);
+        // And the role batch mints a connection-free NOLOGIN carrier, never a
+        // login with a password.
+        let batch = role_sql("app-secret");
+        assert!(batch.contains("'wamn_dispatch_reader'"));
+        assert!(!batch.contains("\"wamn_dispatch_reader\" LOGIN"));
+        assert!(batch.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL"));
     }
 
     /// The sibling guard for `--app-password` (wamn-0h0g.12.129). A default
@@ -3598,8 +3750,6 @@ mod tests {
             "billing",
             "--env",
             "dev",
-            "--dispatch-reader-password",
-            "reader-probe",
             "--emit-secret",
             "/tmp/db.json",
         ])
@@ -3627,7 +3777,7 @@ mod tests {
     /// ignores ambient credential variables so they cannot contaminate the
     /// asserted command-line shape.
     #[test]
-    fn the_credential_free_modes_parse_without_either_password() {
+    fn the_credential_free_modes_parse_without_a_password() {
         let revoke = parse_without_password_envs([
             "test",
             "--system-database-url",
@@ -3637,7 +3787,6 @@ mod tests {
         ])
         .expect("revoke provisions nothing and needs no database credential");
         assert!(revoke.app_password.is_none());
-        assert!(revoke.dispatch_reader_password.is_none());
 
         // EVERY family's action, derived — not the six that were remembered.
         // `wamn-0h0g.22.16` measured that the guest family's three flags were
@@ -3658,16 +3807,11 @@ mod tests {
                 "{action} acquired an --app-password"
             );
             assert!(
-                parsed.dispatch_reader_password.is_none(),
-                "{action} acquired a --dispatch-reader-password"
-            );
-            assert!(
                 parsed.emit_secret.is_none(),
                 "{action} was made to name a database Secret it would discard"
             );
         }
     }
-
 
     /// Every derived action flag, in family order.
     fn every_action_flag() -> Vec<String> {
@@ -3721,16 +3865,15 @@ mod tests {
         }
         assert_eq!(
             survivors.len(),
-            3,
-            "the two passwords and the database Secret are the arguments a \
-             provisioning-only invocation owes"
+            2,
+            "the app password and the database Secret are the arguments a \
+             provisioning-only invocation owes — wamn-0h0g.22.24 retired the \
+             third, `--dispatch-reader-password`, with the stable-LOGIN shape \
+             that needed it"
         );
 
         for family in WorkloadRoleFamily::ALL {
-            let mut spellings = vec![
-                workload_secret_flag(family),
-                workload_secret_id(family),
-            ];
+            let mut spellings = vec![workload_secret_flag(family), workload_secret_id(family)];
             for verb in WorkloadActionVerb::ALL {
                 spellings.push(workload_action_flag(family, verb));
                 spellings.push(workload_action_id(family, verb));
@@ -3838,8 +3981,13 @@ mod tests {
             for verb in [WorkloadActionVerb::Retire, WorkloadActionVerb::Abort] {
                 let other_verb = format!("--{}", workload_action_flag(family, verb));
                 assert!(
-                    parse_argv(action_argv(&[&other_verb, "a", &secret, "/tmp/workload.json"]))
-                        .is_err(),
+                    parse_argv(action_argv(&[
+                        &other_verb,
+                        "a",
+                        &secret,
+                        "/tmp/workload.json"
+                    ]))
+                    .is_err(),
                     "{secret} accompanied {other_verb}"
                 );
             }
@@ -3849,8 +3997,13 @@ mod tests {
                 }
                 let foreign = format!("--{}", workload_secret_flag(other));
                 assert!(
-                    parse_argv(action_argv(&[&prepare, "a", &foreign, "/tmp/workload.json"]))
-                        .is_err(),
+                    parse_argv(action_argv(&[
+                        &prepare,
+                        "a",
+                        &foreign,
+                        "/tmp/workload.json"
+                    ]))
+                    .is_err(),
                     "{prepare} accepted {foreign}, another family's Secret"
                 );
             }
@@ -3904,14 +4057,26 @@ mod tests {
             [
                 WorkloadRoleFamily::EffectWriter,
                 WorkloadRoleFamily::ManagementAdmitter,
+                // `wamn-0h0g.22.24`: the dispatch reader acquired GENERATIONS,
+                // so its long-standing grant set finally has an inheritor to
+                // guard and acquires a denial matrix with them.
+                WorkloadRoleFamily::DispatchReader,
+                // `wamn-0h0g.12.69`: run retention acquired authority — DELETE
+                // plus a three-column SELECT on `runs` — so it acquires a
+                // denial matrix here at the same time. The two are the same
+                // event, and a family with one and not the other is the bug
+                // this assertion exists to catch.
+                WorkloadRoleFamily::Retention,
                 WorkloadRoleFamily::RegistryReader,
                 WorkloadRoleFamily::IdentityReader
             ],
             "a family acquired a grant set without acquiring authority"
         );
-        // The pre-prepare grant-set assertion fires for the family whose grant
+        // The pre-prepare grant-set assertion fires for the families whose grant
         // set is converged ELSEWHERE, and not for the ones this batch applies.
         assert!(sql::stable_surface_sql(WorkloadRoleFamily::EffectWriter).is_none());
+        assert!(sql::stable_surface_sql(WorkloadRoleFamily::Retention).is_none());
+        assert!(sql::stable_surface_sql(WorkloadRoleFamily::DispatchReader).is_none());
         for family in [
             WorkloadRoleFamily::ManagementAdmitter,
             WorkloadRoleFamily::RegistryReader,

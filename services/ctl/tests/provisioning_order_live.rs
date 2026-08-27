@@ -35,7 +35,6 @@ const ENVIRONMENT: &str = "dev";
 const TENANT: &str = "tenant-order";
 const INSTANCE: &str = "k3m9x2p7";
 const APP_PASSWORD: &str = "app-secret-order";
-const READER_PASSWORD: &str = "reader-secret-order";
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -76,7 +75,6 @@ fn prepare_args(
         connection_limit: None,
         app_host: None,
         app_password: None,
-        dispatch_reader_password: None,
         app_port: 5432,
         namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
         secret_namespace: None,
@@ -203,7 +201,7 @@ async fn reset_cluster(catalog: &Client, database: &str, roles: &[&str]) {
 /// rewrite, which is the ordering hazard `privilege_sql` documents.
 async fn apply_documented_order(catalog: &Client, database: &str) {
     catalog
-        .batch_execute(&role_sql(APP_PASSWORD, READER_PASSWORD))
+        .batch_execute(&role_sql(APP_PASSWORD))
         .await
         .expect("step 1: role SQL");
     catalog
@@ -250,12 +248,16 @@ async fn the_documented_provisioning_order_completes_end_to_end() {
         "the emitted privilege SQL granted the stable guest ACL role CONNECT, \
          which --prepare-guest-generation refuses"
     );
-    // ... and the dispatcher's stable LOGIN role, which is NOT cut over to
-    // generations, keeps the CONNECT the shipped projects file needs.
-    assert_eq!(
-        connect_databases(&catalog, DISPATCH_READER_ROLE).await,
-        vec![database.clone()],
-        "the dispatcher's stable role must keep CONNECT on the project database"
+    // ... and so is the dispatcher's, since `wamn-0h0g.22.24` cut that family
+    // over too. It was the LAST stable-LOGIN principal; the batch now grants
+    // CONNECT to nobody, and every consumer is a generation.
+    assert!(
+        connect_databases(&catalog, DISPATCH_READER_ROLE)
+            .await
+            .is_empty(),
+        "the emitted privilege SQL granted the stable dispatch-reader ACL role \
+         CONNECT, which every dispatch-reader generation inherits into every \
+         database on the cluster"
     );
     // Ownership converged FIRST and stayed converged.
     let owner: String = catalog

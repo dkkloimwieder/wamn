@@ -2236,6 +2236,13 @@
             "insert(wiring_id)",
             "insert(wiring_version)"
           ]
+        },
+        {
+          "role": "wamn_run_retention",
+          "basis": "grant",
+          "operations": [
+            "delete"
+          ]
         }
       ],
       "author-reachable": "author SQL, RLS-bounded",

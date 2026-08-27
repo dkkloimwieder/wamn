@@ -24,14 +24,29 @@ use wamn_pg_core::quote_literal;
 /// no-op. `NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS` — the role can only
 /// do DML under RLS on tables explicitly granted to it (the S2/2.2 model). In
 /// production the role is pre-created once; this makes the tool self-contained.
+///
+/// EXCEPTION-guarded under the shared `wamn_role_bootstrap` advisory lock
+/// (`wamn-0h0g.12.186`), the [`ensure_platform_group_role_sql`] shape. Bare
+/// `IF NOT EXISTS` is NOT idempotent under concurrency: roles are CLUSTER-global,
+/// so two provisioners racing on a cluster where the role is absent both take
+/// the `THEN` branch and the loser gets `duplicate_object`. The lock serializes
+/// appliers that take it; the handler covers the ones that do not.
+///
+/// It deliberately keeps NO harden arm and re-stamps NO password on an existing
+/// role: a replay must not overwrite a credential rotated out of band. Whether
+/// this role should be `LOGIN` at all is `wamn-0h0g.12.140`'s cutover — after
+/// it, every guest session is a per-tenant generation and
+/// [`ensure_workload_acl_role_sql`] is what this builder becomes.
 pub fn ensure_app_role_sql(password: &str) -> String {
     format!(
-        "DO $$ BEGIN \
+        "DO $app_role$ BEGIN \
+           PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
              CREATE ROLE {role} LOGIN PASSWORD {pw} \
                NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
            END IF; \
-         END $$;",
+         EXCEPTION WHEN duplicate_object THEN NULL; \
+         END $app_role$;",
         role = quote_ident(APP_ROLE),
         role_lit = quote_literal(APP_ROLE),
         pw = quote_literal(password),
@@ -159,9 +174,28 @@ pub fn database_exists_sql() -> &'static str {
 ///
 /// This is the "thin imperative privilege step" the CNPG `Database` CRD does not
 /// cover (per-project-env provisioning, wamn-q3n.7): the CRD creates the database
-/// declaratively, but `REVOKE CONNECT FROM PUBLIC` / `GRANT` is run here. It is
-/// defense-in-depth — the primary cross-project isolation is that a component is
-/// routed to exactly one project's database (see the crate docs).
+/// declaratively, but `REVOKE CONNECT FROM PUBLIC` / `GRANT` is run here.
+///
+/// # THE `GRANT` HALF CONFINES NOTHING, AND THE CLAIM THAT IT DID IS RETRACTED
+///
+/// This doc used to call the `GRANT` defense-in-depth behind the routing of a
+/// component to exactly one project database. `wamn-0h0g.12.179` MEASURED that
+/// layer on a certified-fresh PostgreSQL 18 and it does not confine at all:
+/// [`APP_ROLE`] is CLUSTER-GLOBAL and every per-tenant generation is a member of
+/// it `WITH INHERIT TRUE`, so a single `GRANT CONNECT` per environment lets a
+/// generation minted for ONE project-env database open a real session on ANY
+/// OTHER the batch has run against. `wamn-0h0g.22.24` measured the identical
+/// shape for [`DISPATCH_READER_ROLE`]. CONNECT belongs to the GENERATION, which
+/// [`prepare_workload_generation_sql`] grants it directly and only for its own
+/// database.
+///
+/// The production per-project-env path therefore does NOT call this builder any
+/// more: `provision_project_env::privilege_sql` REVOKES both stable roles
+/// instead. What still reaches it is the LEGACY `provision-project` verb
+/// (`services/ctl/src/provision.rs`, through [`grant_connect_sql`]) and a set of
+/// live-gate fixtures that use it to give `wamn_app` a dialable session of their
+/// own. Confining or deleting that path is `wamn-0h0g.12.185`; until it lands,
+/// the `PUBLIC` revoke is the only half of this batch that confines anything.
 pub fn grant_connect_on_database_sql(database: &str) -> String {
     let db = quote_ident(database);
     format!(
@@ -280,59 +314,29 @@ pub const MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS: [&str; 2] = ["tenant_id", "r
 pub const MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS: [&str; 4] =
     ["tenant_id", "run_id", "available_at", "stream_seq"];
 
-/// Idempotently create or harden the cluster-global dispatcher reader.
+/// `REVOKE CONNECT ON DATABASE "<database>" FROM "wamn_dispatch_reader"`.
 ///
-/// Create-or-*harden* under the shared `wamn_role_bootstrap` advisory lock — the
-/// [`ensure_control_author_acl_role_sql`] shape, so a replay that finds a drifted
-/// attribute re-`ALTER`s it instead of reporting success. Unlike the stable ACL
-/// roles this one is `LOGIN`: it IS the connection principal (the dispatcher's
-/// projects file carries its URL), so the drift predicate treats a role that has
-/// LOST `LOGIN` as drifted too.
+/// **This used to GRANT, and the reversal is the whole of `wamn-0h0g.22.24`.**
+/// `wamn_dispatch_reader` is CLUSTER-GLOBAL and its generations are members
+/// `WITH INHERIT TRUE`, so one `GRANT CONNECT` per environment reached EVERY
+/// environment on the cluster — the identical defect `wamn-0h0g.12.179` measured
+/// live for the guest and closed in [`grant_connect_on_database_sql`]'s caller.
+/// CONNECT belongs to the GENERATION, which
+/// [`prepare_workload_generation_sql`] grants it directly and only on the one
+/// database that generation was minted for.
 ///
-/// Table and schema grants deliberately do not live here — they are
-/// database-scoped and land in [`grant_dispatch_reader_read_surface_sql`], applied
-/// inside each project-env database once its run-plane schema exists.
+/// **Order is load-bearing exactly as it is for the owner statement:** run this
+/// AFTER [`set_database_owner_sql`]. `ALTER DATABASE … OWNER TO` rewrites the
+/// outgoing owner's ACL entry, and a revoke applied before it can be undone by
+/// the entry the owner change carries over.
 ///
-/// The password is set at creation only, exactly as [`ensure_app_role_sql`] does
-/// for the role this one replaces: rotating it is a `Secret` edit plus an
-/// `ALTER ROLE`, not a generation pair. The dispatcher's credential is mounted
-/// config, not a saga-managed A/B slot.
-pub fn ensure_dispatch_reader_role_sql(password: &str) -> String {
+/// It is what CONVERGES a pre-cutover environment: an environment provisioned
+/// while the reader was a stable LOGIN still carries that `CONNECT`, and the
+/// dispatch-reader generation prepare refuses until this has run, because
+/// `verify_stable_workload_role` requires a connection-free stable ACL role.
+pub fn revoke_dispatch_reader_connect_sql(database: &str) -> String {
     format!(
-        "DO $dispatch_reader$ BEGIN \
-           PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles \
-                          WHERE rolname = {role_lit}) THEN \
-             CREATE ROLE {role} LOGIN PASSWORD {pw} NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles \
-                         WHERE rolname = {role_lit} \
-                           AND (NOT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-                                OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
-             ALTER ROLE {role} LOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
-         END $dispatch_reader$;",
-        role = quote_ident(DISPATCH_READER_ROLE),
-        role_lit = quote_literal(DISPATCH_READER_ROLE),
-        pw = quote_literal(password),
-    )
-}
-
-/// `GRANT CONNECT ON DATABASE "<database>" TO "wamn_dispatch_reader"`.
-///
-/// **Order is load-bearing exactly as it is for [`grant_connect_on_database_sql`]:
-/// this must run AFTER [`set_database_owner_sql`].** `ALTER DATABASE … OWNER TO`
-/// rewrites the outgoing owner's ACL entry, and any `CONNECT` granted while that
-/// role still owned the database is carried away with it.
-///
-/// Separate from [`grant_connect_on_database_sql`] on purpose: that builder
-/// confines `CONNECT` to [`APP_ROLE`] and revokes `PUBLIC`, and the dispatcher
-/// reader is an ADDITIONAL principal on the same database, not a replacement.
-/// Emit both, in either order, after the owner statement.
-pub fn grant_dispatch_reader_connect_sql(database: &str) -> String {
-    format!(
-        "GRANT CONNECT ON DATABASE {db} TO {role};",
+        "REVOKE CONNECT ON DATABASE {db} FROM {role};",
         db = quote_ident(database),
         role = quote_ident(DISPATCH_READER_ROLE),
     )
@@ -450,16 +454,17 @@ pub fn ensure_platform_group_role_sql() -> String {
 /// membership and nothing else. `REVOKE` precedes the `GRANT` so a replay that
 /// finds a drifted edge replaces it instead of leaving it, and so a family that
 /// stops being platform-grain loses the arm on the next converge.
-/// # IT DOES NOT ENSURE THE ACL ROLE, AND MUST NOT
+/// # IT DOES NOT ENSURE THE ACL ROLE
 ///
-/// [`ensure_workload_acl_role_sql`] HARDENS its target to `NOLOGIN PASSWORD
-/// NULL`. [`WorkloadRoleFamily::DispatchReader`]'s stable role is
-/// [`DISPATCH_READER_ROLE`], which the legacy shape mints as a LOGIN role with a
-/// password ([`ensure_dispatch_reader_role_sql`]) — so composing the ensure
-/// builder in here would silently revoke that credential every time this edge
-/// converged. The ACL role's lifecycle belongs to its own builder; this one only
-/// touches the edge, behind an existence guard so a caller that has not created
-/// the role yet gets a no-op rather than an error.
+/// Historically it could not: [`WorkloadRoleFamily::DispatchReader`]'s stable
+/// role was minted as a LOGIN with a password, and [`ensure_workload_acl_role_sql`]
+/// HARDENS its target to `NOLOGIN PASSWORD NULL`, so composing the ensure builder
+/// in here would have revoked that credential every time this edge converged.
+/// `wamn-0h0g.22.24` retired that shape and the hazard with it. The separation
+/// stays anyway, because it is the right one: an ACL role's lifecycle belongs to
+/// its own builder, and this one only touches the edge — behind an existence
+/// guard, so a caller that has not created the role yet gets a no-op rather than
+/// an error.
 pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
     let acl_role = quote_ident(family.acl_role());
     let acl_role_lit = quote_literal(family.acl_role());
@@ -1318,8 +1323,18 @@ mod tests {
     fn ensure_app_role_is_least_privilege_and_idempotent() {
         let sql = ensure_app_role_sql("wamn_app");
         assert!(sql.contains("IF NOT EXISTS"), "idempotent guard");
+        // `IF NOT EXISTS` alone is NOT idempotent under concurrency
+        // (`wamn-0h0g.12.186`): roles are cluster-global, so two provisioners
+        // that both find the role absent both issue CREATE and the loser gets
+        // `duplicate_object`. The lock serializes the ones that take it; the
+        // handler covers the ones that do not, and BOTH are required.
+        assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
+        assert!(sql.contains("EXCEPTION WHEN duplicate_object THEN NULL"));
         assert!(sql.contains("CREATE ROLE \"wamn_app\""));
         assert!(sql.contains("PASSWORD 'wamn_app'"));
+        // No harden arm, and therefore no re-stamped password on a replay.
+        assert!(!sql.contains("ALTER ROLE"));
+        assert_eq!(sql.matches("PASSWORD").count(), 1);
         // Least privilege — every restrictive attribute is present.
         for attr in ["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOBYPASSRLS"] {
             assert!(sql.contains(attr), "missing {attr}");
@@ -1402,36 +1417,27 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_reader_role_is_a_hardened_login_reader() {
-        let sql = ensure_dispatch_reader_role_sql("s3cret");
-        // The house create-or-harden shape: advisory-locked, so two provisioners
-        // racing the bootstrap serialize instead of one losing to a duplicate-key.
+    fn the_dispatch_reader_is_a_connection_free_stable_acl_role() {
+        // `wamn-0h0g.22.24`: the family HAD its own create-or-harden builder that
+        // minted a LOGIN role with a documented default password, because the
+        // dispatcher authenticated as the stable role itself. It now takes the
+        // generic ACL-role builder like every other family, and the assertion
+        // that matters is the NEGATIVE one — a builder that reintroduces LOGIN or
+        // a password hands a cluster-global credential CONNECT that its
+        // generations inherit into every database on the cluster.
+        let sql = ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader);
         assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
-        assert!(sql.contains("CREATE ROLE \"wamn_dispatch_reader\" LOGIN PASSWORD 's3cret'"));
-        assert!(sql.contains("ALTER ROLE \"wamn_dispatch_reader\" LOGIN"));
-        for attr in [
-            "NOSUPERUSER",
-            "NOCREATEDB",
-            "NOCREATEROLE",
-            "NOINHERIT",
-            "NOREPLICATION",
-            "NOBYPASSRLS",
-        ] {
-            assert!(sql.contains(attr), "missing {attr}");
-        }
-        // THE DRIFT PREDICATE IS THE HARDEN ARM. This role is LOGIN, so a role
-        // that has LOST login is drifted — the negation that the NOLOGIN sibling
-        // builders spell the other way round. Drop `NOT rolcanlogin` and a
-        // de-loginned reader is reported healthy while the dispatcher cannot
-        // authenticate.
-        assert!(sql.contains("NOT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole"));
-        assert!(sql.contains("OR rolinherit OR rolreplication OR rolbypassrls"));
-        // The ALTER deliberately carries no PASSWORD: a harden pass must not
-        // silently re-stamp a credential the operator rotated out of band.
-        let alter = sql.split("ELSIF").nth(1).expect("harden arm");
-        assert!(!alter.contains("PASSWORD"));
-        // A password with a quote is escaped, not injected.
-        assert!(ensure_dispatch_reader_role_sql("a'b").contains("PASSWORD 'a''b'"));
+        assert!(sql.contains("'wamn_dispatch_reader'"));
+        assert!(sql.contains("CREATE ROLE %I NOLOGIN"));
+        assert!(sql.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL"));
+        assert!(
+            !sql.contains("PASSWORD '"),
+            "the stable role carries no credential"
+        );
+        // The harden arm treats a role that CAN log in as drifted — the exact
+        // negation the retired builder spelled the other way round.
+        assert!(sql.contains("rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole"));
+        assert!(sql.contains("OR rolpassword IS NOT NULL"));
         // This builder owns the role identity only — never a grant.
         for forbidden in ["ON SCHEMA", "ON TABLE", "CONNECT ON DATABASE"] {
             assert!(!sql.contains(forbidden), "role builder leaked a grant");
@@ -1784,24 +1790,37 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_reader_connect_is_additive_and_leaves_the_app_role_builder_alone() {
-        let sql = grant_dispatch_reader_connect_sql("wamn-db-acme--billing--dev");
+    fn the_dispatch_reader_connect_builder_revokes_and_never_grants() {
+        let sql = revoke_dispatch_reader_connect_sql("wamn-db-acme--billing--dev");
         assert_eq!(
             sql,
-            "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" \
-             TO \"wamn_dispatch_reader\";"
+            "REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" \
+             FROM \"wamn_dispatch_reader\";"
         );
-        // ADDITIVE, never a replacement: this builder must not revoke PUBLIC or
-        // touch wamn_app — that is grant_connect_on_database_sql's job, and both
-        // principals need CONNECT on the same database.
-        assert!(!sql.contains("REVOKE"));
+        // `wamn-0h0g.22.24`: the direction is the fix. A `GRANT` here is
+        // cluster-global reach, because every dispatch-reader generation is a
+        // member of this role WITH INHERIT TRUE.
+        assert!(!sql.contains("GRANT"));
+        // It touches ONE principal, so one edit cannot move both.
         assert!(!sql.contains(APP_ROLE));
-        // …and the app-role builder stays free of the reader, so one edit cannot
-        // widen both principals at once.
         assert!(
             !grant_connect_on_database_sql("wamn-db-acme--billing--dev")
                 .contains(DISPATCH_READER_ROLE)
         );
+        // The generation is where CONNECT lives now, and only for its own
+        // database.
+        let generation = prepare_workload_generation_sql(
+            WorkloadRoleFamily::DispatchReader,
+            "wamn-db-acme--billing--dev",
+            "wamn_dispatch_reader_0123456789abcdef0123456789abcdef01234567_a",
+            "pw",
+            "2030-01-01T00:00:00Z",
+        );
+        assert!(generation.contains(
+            "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" \
+             TO \"wamn_dispatch_reader_0123456789abcdef0123456789abcdef01234567_a\";"
+        ));
+        assert_eq!(generation.matches("GRANT CONNECT ON DATABASE").count(), 1);
     }
 
     #[test]

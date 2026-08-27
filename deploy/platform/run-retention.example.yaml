@@ -4,18 +4,28 @@
 # retention window is pruned on a cadence — no new long-lived service, no queue.
 #
 # WHY (platform-plan risk #5): accumulated run history is a storage-cost driver,
-# so the hot `runs` store must be bounded. This verb DELETEs the tenant's runs
-# in a TERMINAL state (completed / failed / infrastructure-failure) older than
-# `--retention-days`; retained run-child rows
-# cascade through their canonical `ON DELETE CASCADE` FKs. It is idempotent and
+# so the hot `runs` store must be bounded. This verb DELETEs the named tenant's
+# runs in a TERMINAL state (completed / failed / infrastructure-failure) older
+# than `--retention-days`; the run's `run_queue` row — the ONE cascade out of
+# `runs` — goes with it through its `ON DELETE CASCADE`. It is idempotent and
 # safe to repeat.
 #
-# ROLE (differs from the reconcile CronJobs): pruning is an ORDINARY tenant-scoped
-# DELETE the `wamn_app` role is granted — NO superuser needed. The verb connects
-# as `wamn_app`, sets the `app.tenant` claim RLS scopes the delete to, and pins
-# `search_path` to the run-plane schema. Deploy ONE CronJob per project-env,
-# substituting the schema, the tenant, and the app-URL Secret
-# (deploy/platform/run-retention-db.example.yaml).
+# ROLE (wamn-0h0g.12.69, and it is NOT wamn_app any more): pruning runs as a
+# scoped `wamn_run_retention` credential GENERATION whose entire cluster-wide
+# authority is `DELETE` plus a three-column `SELECT` on `wamn_run.runs`. It
+# needs no superuser, no queue privilege, and no `app.tenant` claim — the tenant
+# reaches the statement as a bound parameter, and the verb REFUSES unless the
+# connected generation's own name proves it was minted for that tenant in that
+# database. A CronJob pointed at the wrong Secret therefore FAILS LOUDLY instead
+# of reporting `pruned 0 terminal run(s)` and exiting 0.
+#
+# TWO INDEPENDENT LAYERS, and neither replaces the other: this role bounds WHO
+# may delete; the `runs_terminal_delete_only` trigger in
+# deploy/sql/run-state.sql bounds WHAT may be deleted (wamn-0h0g.12.128). A
+# non-terminal run is refused by the trigger even under this role.
+#
+# Deploy ONE CronJob per project-env, substituting the schema, the tenant, and
+# the retention Secret (deploy/platform/run-retention-db.example.yaml).
 #
 # v0 LIMITATION: retention is age-based only.
 #
@@ -67,10 +77,10 @@ spec:
                   "--retention-days", "30",
                 ]
               env:
-                # App-role connection — pruning is a tenant-scoped DELETE the
-                # non-superuser `wamn_app` role is granted (no ALTER, no
-                # ownership). The demo project envs live in the fixture pod's
-                # `wamn` database.
+                # Retention-generation connection — a per-(tenant, database)
+                # LOGIN with no ALTER, no ownership, no queue privilege and no
+                # run-payload read. The demo project envs live in the fixture
+                # pod's `wamn` database.
                 #
                 # A Secret REFERENCE, never inline plaintext (R8b — actual
                 # credential material lives in K8s Secrets; see

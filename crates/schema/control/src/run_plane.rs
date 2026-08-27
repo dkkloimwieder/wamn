@@ -2544,6 +2544,21 @@ ALTER TABLE {target}.runs DROP COLUMN IF EXISTS gate_report_id;"#
     )
 }
 
+/// The convergent mirror of `deploy/sql/run-state.sql`'s `runs` ACL block.
+///
+/// The `wamn_run_retention` arm (`wamn-0h0g.12.69`) is EXISTENCE-GUARDED rather
+/// than emitted bare: the stable retention ACL role is created by the schema
+/// header section and by provisioning, and a repair that names a role the target
+/// cluster has not been bootstrapped with would fail the whole batch instead of
+/// converging the privileges it CAN. Its `REVOKE`s precede its `GRANT` for the
+/// same reason every other arm's do — the batch must narrow a widened grant, not
+/// merely add the intended one — and BOTH a column-wide and a table-wide
+/// `REVOKE` are issued, because a table-level `GRANT SELECT` and a per-column
+/// one are separate ACL entries and revoking either alone leaves the other
+/// standing. The re-grant is column-scoped to exactly the three columns the
+/// prune statement's `WHERE` clause reads: retention is a `wamn_platform`
+/// member, that group's floor arm is `USING (true)`, and a table-level `SELECT`
+/// would therefore expose every tenant's run payload columns.
 fn repair_run_capture_privilege_sql(
     schema: &BareSchemaName,
     available_columns: impl IntoIterator<Item = String>,
@@ -2565,6 +2580,16 @@ fn repair_run_capture_privilege_sql(
            FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
          GRANT SELECT, DELETE ON TABLE {qualified} TO wamn_app; \
          GRANT SELECT ON TABLE {qualified} TO {SCENARIO_AUTHOR_ROLE}; \
+         DO $run_retention_acl$ BEGIN \
+           IF EXISTS (SELECT FROM pg_catalog.pg_roles \
+                       WHERE rolname = 'wamn_run_retention') THEN \
+             EXECUTE 'REVOKE ALL PRIVILEGES ({all_columns}) ON TABLE {qualified} \
+                        FROM wamn_run_retention'; \
+             EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE {qualified} FROM wamn_run_retention'; \
+             EXECUTE 'GRANT SELECT (\"tenant_id\", \"status\", \"created_at\"), DELETE \
+                        ON TABLE {qualified} TO wamn_run_retention'; \
+           END IF; \
+         END $run_retention_acl$; \
          DO $run_capture_acl$ BEGIN \
            IF EXISTS ( \
                 SELECT 1 \

@@ -35,15 +35,43 @@ pub(crate) fn execution_input_sql(run_alias: &str) -> String {
 }
 
 /// Prune terminal run history older than a retention window (9.6, wamn-srb): the
-/// `prune-run-history` verb's statement. DELETE the current tenant's `runs` rows
-/// in a TERMINAL state ([`RunStatus::is_terminal`] — completed / failed /
-/// infrastructure-failure) whose `created_at` predates `$1` days ago.
+/// `prune-run-history` verb's statement. DELETE `$1`'s `runs` rows in a TERMINAL
+/// state ([`RunStatus::is_terminal`] — completed / failed /
+/// infrastructure-failure) whose `created_at` predates `$2` days ago.
 /// Any surviving `run_queue` rows cascade
 /// via their `ON DELETE CASCADE` FK to `runs`. A `dispatched`/`running` run is
 /// never pruned (it may still complete). Age-based
 /// only in v0; no execution-lineage metadata participates.
-/// Param: `$1` retention_days. RLS + the explicit tenant predicate scope it to
-/// the claimed tenant, exactly like the other builders.
+/// Params: `$1` tenant, `$2` retention_days.
+///
+/// # The tenant is a BOUND PARAMETER, and that is the whole point
+///
+/// This predicate used to read `current_setting('app.tenant', true)`, which is
+/// the RETIRED tenant keying: `wamn-0h0g.22.6` re-keyed `runs`' floor onto
+/// `wamn_authority.tenant_key(tenant_id) =
+/// wamn_authority.current_tenant_key()`, and the `app.tenant` claim survives
+/// only on `operator_run_actions` and `run_queue`. A GUC-shaped predicate has
+/// one failure mode no amount of care removes: `current_setting(_, true)`
+/// returns NULL when the claim was never injected, `tenant_id = NULL` is NULL,
+/// and the statement reports ZERO ROWS DELETED with no error — measured on
+/// PostgreSQL 18.6 as `DELETE 0` under the dedicated retention role
+/// (`wamn-0h0g.12.69`). A bound parameter cannot be forgotten: it is either
+/// supplied or the statement does not execute.
+///
+/// Dropping the claim costs nothing the cascade needs. Measured on the same
+/// server: the `run_queue` `ON DELETE CASCADE` fires as an internal
+/// referential-integrity trigger that consults neither the deleter's table
+/// grants nor `run_queue`'s FORCE-RLS `app.tenant` policy, so the queue row
+/// still goes with the run in a session that never set the GUC and holds no
+/// privilege on that relation at all.
+///
+/// WHAT THIS BUILDER DOES NOT DO is decide WHOSE history may be pruned. Under
+/// the shared `wamn_platform` floor arm a retention credential matches every
+/// tenant's rows, so binding the tenant makes the statement exact but not
+/// confined. Proving that the connected identity is the one THIS tenant's
+/// retention credential was minted for belongs to the verb
+/// (`services/ctl/src/prune_run_history.rs`), which refuses before it ever
+/// reaches this statement.
 pub fn prune_terminal_runs_sql() -> String {
     let terminal: Vec<String> = RunStatus::ALL
         .into_iter()
@@ -52,9 +80,9 @@ pub fn prune_terminal_runs_sql() -> String {
         .collect();
     format!(
         "DELETE FROM runs \
-          WHERE tenant_id = current_setting('app.tenant', true) \
+          WHERE tenant_id = $1 \
             AND status IN ({statuses}) \
-            AND created_at < now() - ($1::bigint * interval '1 day')",
+            AND created_at < now() - ($2::bigint * interval '1 day')",
         statuses = terminal.join(", "),
     )
 }
@@ -99,16 +127,16 @@ mod tests {
         }
     }
 
-    /// The 9.6 prune statement targets `runs`, scoped to the claim, and only
-    /// TERMINAL statuses over an age predicate — never a
+    /// The 9.6 prune statement targets `runs`, scoped to the BOUND tenant, and
+    /// only TERMINAL statuses over an age predicate — never a
     /// `running`/`dispatched` run.
     #[test]
     fn prune_targets_terminal_runs_only() {
         let sql = prune_terminal_runs_sql();
         assert!(sql.starts_with("DELETE FROM runs"), "{sql}");
-        assert!(sql.contains("current_setting('app.tenant', true)"), "{sql}");
+        assert!(sql.contains("WHERE tenant_id = $1"), "{sql}");
         assert!(
-            sql.contains("created_at < now() - ($1::bigint * interval '1 day')"),
+            sql.contains("created_at < now() - ($2::bigint * interval '1 day')"),
             "{sql}"
         );
         // Exactly the terminal statuses appear; the non-terminal ones never do.

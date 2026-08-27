@@ -1,11 +1,17 @@
-//! Live-apply gate for the dispatcher principal's PROVISIONING (wamn-0h0g.12.122).
+//! Live-apply gate for the dispatcher principal's PROVISIONING (wamn-0h0g.12.122,
+//! cut over to credential generations by wamn-0h0g.22.24).
 //!
-//! `wamn-0h0g.12.66` landed the three builders and re-pointed
+//! `wamn-0h0g.12.66` landed the builders and re-pointed
 //! `deploy/platform/dispatcher-projects.example.yaml` at `wamn_dispatch_reader`,
 //! but nothing called them: the shipped manifest named a role production
-//! provisioning did not create. This gate proves `provision-project-env`'s own
-//! emitted batches now do, by applying THE SAME text the subcommand emits —
-//! [`role_sql`] and [`privilege_sql`], not a transcription.
+//! provisioning did not create. `wamn-0h0g.12.122` made provisioning create it.
+//! `wamn-0h0g.22.24` then took its LOGIN away, because a cluster-global role
+//! with a per-database `GRANT CONNECT` is reach across every database on the
+//! cluster the moment the family gains generations that inherit it — the defect
+//! `wamn-0h0g.12.179` measured live for the guest.
+//!
+//! This gate applies THE SAME text the subcommand emits — [`role_sql`] and
+//! [`privilege_sql`], not a transcription.
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** URL (path `/postgres`) of a throwaway
 //! Postgres — the variable `run_plane_live` uses, so one container serves both.
@@ -17,19 +23,28 @@
 //!
 //! Four proofs:
 //!
-//! 1. **the role and the CONNECT grant land**, from the real emitted batches;
-//! 2. **replay is a no-op**, proven by applying each batch TWICE and diffing
-//!    every `aclitem` on the database plus every attribute of the role;
-//! 3. **the CONNECT grant sits on the surviving side of the owner statement** —
+//! 1. **the stable role lands connection-free**, from the real emitted batches —
+//!    NOLOGIN, no password, and NO database `CONNECT` entry of its own;
+//! 2. **replay is a no-op, and a pre-cutover environment CONVERGES**, proven by
+//!    applying each batch twice and diffing every `aclitem` on the database plus
+//!    every attribute of the role, then by re-introducing the retired `GRANT`
+//!    and watching the shipped batch take it away;
+//! 3. **the revoke sits on the surviving side of the owner statement** —
 //!    measured, not assumed, and the measurement is ASYMMETRIC (see
 //!    `owner_statement_asymmetry_leg`);
-//! 4. **the dispatcher can dial**, as the new principal, with no manual SQL.
+//! 4. **the cross-database reach is CLOSED** — a dispatch-reader generation
+//!    minted for one database opens a session on that database and is REFUSED on
+//!    a neighbouring one. Both directions, because an arm that only shows the
+//!    refusal cannot tell a closed reach from a broken credential.
 
 mod support;
 
 use tokio_postgres::{Client, NoTls};
 
-use wamn_control_provision::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, sql};
+use wamn_control_provision::{
+    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, DISPATCH_READER_ROLE, WorkloadRoleFamily,
+    WorkloadRoleScope, sql, workload_generation_role,
+};
 use wamn_ctl::provision_project_env::{privilege_sql, role_sql};
 
 /// `ensure_app_role_sql` sets the password at CREATION ONLY, and `wamn_app` is
@@ -37,9 +52,13 @@ use wamn_ctl::provision_project_env::{privilege_sql, role_sql};
 /// (`run_plane_live::reset` dials it as `wamn_app`/`wamn_app`). Using any other
 /// value here would silently break those gates on whichever ran second.
 const APP_PASSWORD: &str = "wamn_app";
-const READER_PASSWORD: &str = "reader-provisioning-probe";
+const GENERATION_PASSWORD: &str = "reader-generation-probe";
 const DATABASE: &str = "wamn-db-probe--dispatch--dev";
 const ORDERING_DATABASE: &str = "wamn-db-probe--ordering--dev";
+/// The NEIGHBOUR the cross-database arm proves is unreachable. It is a real
+/// provisioned environment, not an empty database: the reach this closes was
+/// measured between two environments on one cluster.
+const NEIGHBOUR_DATABASE: &str = "wamn-db-probe--neighbour--dev";
 
 async fn connect(url: &str) -> Client {
     let (client, conn) = tokio_postgres::connect(url, NoTls).await.expect("connect");
@@ -49,14 +68,44 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-async fn connect_to(url: &str, database: &str, role: &str, password: &str) -> Client {
+fn role_config(url: &str, database: &str, role: &str, password: &str) -> tokio_postgres::Config {
     let mut config: tokio_postgres::Config = url.parse().expect("parse Postgres URL");
     config.dbname(database).user(role).password(password);
-    let (client, conn) = config.connect(NoTls).await.expect("dial as role");
+    config
+}
+
+async fn connect_to(url: &str, database: &str, role: &str, password: &str) -> Client {
+    let (client, conn) = role_config(url, database, role, password)
+        .connect(NoTls)
+        .await
+        .expect("dial as role");
     tokio::spawn(async move {
         let _ = conn.await;
     });
     client
+}
+
+/// The FALLIBLE dial. A refusal arm that used `connect_to` would panic on the
+/// outcome it is trying to assert.
+async fn try_connect_to(
+    url: &str,
+    database: &str,
+    role: &str,
+    password: &str,
+) -> Result<(), String> {
+    match role_config(url, database, role, password)
+        .connect(NoTls)
+        .await
+    {
+        Ok((client, conn)) => {
+            tokio::spawn(async move {
+                let _ = conn.await;
+            });
+            drop(client);
+            Ok(())
+        }
+        Err(error) => Err(format!("{error:?}")),
+    }
 }
 
 /// `CREATE`/`DROP DATABASE` are forbidden inside a transaction block, and a
@@ -73,10 +122,30 @@ async fn run_alone(client: &Client, statement: &str) {
 /// role's privileges on objects in the current database *and* on shared objects,
 /// which is where a previous run's database `CONNECT` lives.
 ///
-/// Only the reader is dropped. `wamn_app` and `wamn_db_owner` are shared with
-/// every other gate against this container and are left to their own idempotent
-/// create-or-harden builders inside [`role_sql`].
+/// The GENERATIONS are dropped first and BY PATTERN, not by name: a leftover
+/// healthy generation from an earlier run sits happily inside
+/// `prepare_workload_generation_sql`'s `IF NOT EXISTS` and would mask a mutated
+/// builder — and it is the generation, not the stable role, that carries
+/// `CONNECT` now.
+///
+/// Only the reader family is dropped. `wamn_app` and `wamn_db_owner` are shared
+/// with every other gate against this container and are left to their own
+/// idempotent create-or-harden builders inside [`role_sql`].
 async fn drop_reader_role(su: &Client) {
+    run_alone(
+        su,
+        &format!(
+            "DO $generations$ DECLARE generation record; BEGIN \
+               FOR generation IN SELECT rolname FROM pg_catalog.pg_roles \
+                                  WHERE rolname ~ '^{DISPATCH_READER_ROLE}_[0-9a-f]{{40}}_[ab]$' \
+               LOOP \
+                 EXECUTE format('DROP OWNED BY %I', generation.rolname); \
+                 EXECUTE format('DROP ROLE %I', generation.rolname); \
+               END LOOP; \
+             END $generations$;"
+        ),
+    )
+    .await;
     run_alone(
         su,
         &format!(
@@ -90,6 +159,22 @@ async fn drop_reader_role(su: &Client) {
         ),
     )
     .await;
+}
+
+/// The dispatch-reader A generation for one database, DERIVED from the same
+/// builder `provision-project-env` uses rather than spelled.
+fn reader_generation(database: &str) -> String {
+    workload_generation_role(
+        WorkloadRoleFamily::DispatchReader,
+        WorkloadRoleScope::ProjectEnvironment {
+            org: "probe",
+            project: "dispatch",
+            environment: "dev",
+            database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("the dispatch reader takes a project-environment scope")
 }
 
 /// Every `aclitem` on the database, rendered and sorted under the `C` collation
@@ -109,11 +194,17 @@ async fn database_acl(su: &Client, database: &str) -> Vec<String> {
 }
 
 /// Every attribute the role builder claims to converge, in one row.
+///
+/// `pg_authid`, NOT `pg_roles`, for the password: the view substitutes the
+/// literal `'********'` for every row's `rolpassword`, so `IS NOT NULL` reads
+/// TRUE against `pg_roles` for a role that has no password at all — and "carries
+/// no credential" is the whole assertion this bead added.
 async fn role_attributes(su: &Client, role: &str) -> Option<Vec<bool>> {
     su.query_opt(
         "SELECT ARRAY[rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, \
-                      rolinherit, rolreplication, rolbypassrls] \
-           FROM pg_catalog.pg_roles WHERE rolname = $1",
+                      rolinherit, rolreplication, rolbypassrls, \
+                      rolpassword IS NOT NULL] \
+           FROM pg_catalog.pg_authid WHERE rolname = $1",
         &[&role],
     )
     .await
@@ -138,12 +229,13 @@ async fn dispatch_reader_provisioning_live() {
         return;
     };
     let su = connect(&url).await;
-    provisioned_reader_is_idempotent_and_dialable_leg(&su, &url).await;
+    provisioned_reader_is_idempotent_and_connection_free_leg(&su, &url).await;
     owner_statement_asymmetry_leg(&su).await;
+    cross_database_reach_is_closed_leg(&su, &url).await;
 }
 
-/// The whole provisioning path, applied twice, diffed, and then dialed.
-async fn provisioned_reader_is_idempotent_and_dialable_leg(su: &Client, url: &str) {
+/// The whole provisioning path, applied twice and diffed.
+async fn provisioned_reader_is_idempotent_and_connection_free_leg(su: &Client, url: &str) {
     run_alone(
         su,
         &format!("DROP DATABASE IF EXISTS \"{DATABASE}\" WITH (FORCE)"),
@@ -152,15 +244,17 @@ async fn provisioned_reader_is_idempotent_and_dialable_leg(su: &Client, url: &st
     drop_reader_role(su).await;
 
     // Step 1 of the runbook: the role batch, to the target cluster's superuser.
-    let roles = role_sql(APP_PASSWORD, READER_PASSWORD);
+    let roles = role_sql(APP_PASSWORD);
     run_alone(su, &roles).await;
     let hardened = role_attributes(su, DISPATCH_READER_ROLE)
         .await
         .expect("the role batch created the dispatch reader");
     assert_eq!(
         hardened,
-        vec![true, false, false, false, false, false, false],
-        "LOGIN, and nothing else: {hardened:?}"
+        vec![false, false, false, false, false, false, false, false],
+        "NOLOGIN and NOTHING else — no password, no attribute (order: login, \
+         super, createdb, createrole, inherit, replication, bypassrls, password \
+         set): {hardened:?}"
     );
 
     // Replay leg: the create-or-harden block must converge, not error.
@@ -172,17 +266,22 @@ async fn provisioned_reader_is_idempotent_and_dialable_leg(su: &Client, url: &st
     );
 
     // A drifted attribute is re-hardened rather than reported as success — the
-    // arm that separates create-or-HARDEN from CREATE IF NOT EXISTS.
+    // arm that separates create-or-HARDEN from CREATE IF NOT EXISTS. The drift
+    // seeded here is EXACTLY the retired shape: a LOGIN role with a password,
+    // which is what a pre-wamn-0h0g.22.24 cluster carries.
     run_alone(
         su,
-        &format!("ALTER ROLE \"{DISPATCH_READER_ROLE}\" BYPASSRLS CREATEDB"),
+        &format!(
+            "ALTER ROLE \"{DISPATCH_READER_ROLE}\" LOGIN PASSWORD 'legacy' BYPASSRLS CREATEDB"
+        ),
     )
     .await;
     run_alone(su, &roles).await;
     assert_eq!(
         role_attributes(su, DISPATCH_READER_ROLE).await.as_ref(),
         Some(&hardened),
-        "a drifted reader was not re-hardened"
+        "a pre-cutover LOGIN reader was not re-hardened to a connection-free \
+         NOLOGIN carrier"
     );
 
     // Step 2 stand-in for production's CNPG `Database` CR. An EXISTING
@@ -206,36 +305,64 @@ async fn provisioned_reader_is_idempotent_and_dialable_leg(su: &Client, url: &st
     );
 
     // The exact converged ACL. Pinned whole, so a widened grant (`CTc`), a lost
-    // `PUBLIC` revoke (an `=Tc/…` entry), or a reader that never arrives all
-    // fail here rather than passing a "can it connect" smoke.
+    // `PUBLIC` revoke (an `=Tc/…` entry), or a re-appearing stable-role entry
+    // all fail here rather than passing a "can it connect" smoke.
     //
-    // `wamn_app` is ABSENT (wamn-0h0g.12.179): it is the stable NOLOGIN guest
-    // ACL role every per-tenant generation INHERITS, so a `CONNECT` entry here
-    // reaches every project-env database on the cluster, and
-    // `--prepare-guest-generation` refuses the result.
+    // BOTH stable ACL roles are ABSENT. Each is cluster-global and each has
+    // generations that INHERIT it, so a `CONNECT` entry here reaches every
+    // project-env database on the cluster — measured for `wamn_app` at
+    // wamn-0h0g.12.179 and closed for `wamn_dispatch_reader` at
+    // wamn-0h0g.22.24.
     assert_eq!(
         first,
-        vec![
-            format!("{DB_OWNER_ROLE}=CTc/{DB_OWNER_ROLE}"),
-            format!("{DISPATCH_READER_ROLE}=c/{DB_OWNER_ROLE}"),
-        ],
+        vec![format!("{DB_OWNER_ROLE}=CTc/{DB_OWNER_ROLE}")],
         "converged database ACL"
     );
+    for stable in [APP_ROLE, DISPATCH_READER_ROLE] {
+        assert!(
+            !can_connect(su, stable, DATABASE).await,
+            "the emitted privilege batch must leave the stable {stable} ACL role \
+             connection free: {first:?}"
+        );
+    }
+
+    // The CONVERGENCE direction, which "stopped granting" would not prove: seed
+    // exactly what a pre-cutover environment carries and watch the shipped batch
+    // take it away.
+    run_alone(
+        su,
+        &format!("GRANT CONNECT ON DATABASE \"{DATABASE}\" TO \"{DISPATCH_READER_ROLE}\""),
+    )
+    .await;
+    assert!(can_connect(su, DISPATCH_READER_ROLE, DATABASE).await);
+    run_alone(su, &privileges).await;
     assert!(
-        !can_connect(su, APP_ROLE, DATABASE).await,
-        "the emitted privilege batch must leave the stable guest ACL role \
-         connection free: {first:?}"
+        !can_connect(su, DISPATCH_READER_ROLE, DATABASE).await,
+        "the shipped batch must REVOKE a pre-cutover reader CONNECT, not merely \
+         stop granting one"
     );
 
-    // Proof 4: the dispatcher dials the freshly provisioned environment as the
-    // new principal, with no manual SQL between provisioning and the dial.
-    let reader = connect_to(url, DATABASE, DISPATCH_READER_ROLE, READER_PASSWORD).await;
+    // And the GENERATION is the thing that dials, with no manual SQL between
+    // provisioning and the dial.
+    let generation = reader_generation(DATABASE);
+    run_alone(
+        su,
+        &sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::DispatchReader,
+            DATABASE,
+            &generation,
+            GENERATION_PASSWORD,
+            "2100-01-01T00:00:00Z",
+        ),
+    )
+    .await;
+    let reader = connect_to(url, DATABASE, &generation, GENERATION_PASSWORD).await;
     let who: String = reader
         .query_one("SELECT current_user::text", &[])
         .await
         .expect("the reader session works")
         .get(0);
-    assert_eq!(who, DISPATCH_READER_ROLE);
+    assert_eq!(who, generation);
     drop(reader);
 
     run_alone(su, &format!("DROP DATABASE \"{DATABASE}\" WITH (FORCE)")).await;
@@ -245,23 +372,20 @@ async fn provisioned_reader_is_idempotent_and_dialable_leg(su: &Client, url: &st
 /// **A measured premise correction, kept as a test so it cannot rot.**
 ///
 /// `provision_project_env::privilege_sql` emits its statements after
-/// `ALTER DATABASE … OWNER TO`, and `grant_dispatch_reader_connect_sql`'s doc
-/// says the order is "load-bearing exactly as it is for
-/// `grant_connect_on_database_sql`". Measured on PostgreSQL, it is NOT
-/// symmetric: `ALTER DATABASE … OWNER TO` rewrites only the OUTGOING OWNER's ACL
-/// entry, so
+/// `ALTER DATABASE … OWNER TO`. Measured on PostgreSQL the effect of that
+/// statement is NOT symmetric: it rewrites only the OUTGOING OWNER's ACL entry,
+/// so
 ///
 /// * `wamn_app`, which owned the database, loses the `CONNECT` that had merged
 ///   into `wamn_app=CTc/wamn_app` — the hazard measured at `47b404cf`; while
 /// * `wamn_dispatch_reader`, which never owns it, keeps `c` and only has its
 ///   GRANTOR rewritten (`reader=c/wamn_app` → `reader=c/wamn_db_owner`).
 ///
-/// A reordering regression therefore breaks one side and leaves the dispatcher
-/// working — a one-sided break a reader-only probe would miss. The asymmetry is
-/// still measured on `wamn_app` because it is the only role that can be the
-/// OUTGOING OWNER of a pre-`wamn-0h0g.12.108` environment; what changed at
-/// wamn-0h0g.12.179 is the closing assertion, since the shipped batch now
-/// REVOKES `wamn_app`'s `CONNECT` rather than putting it back.
+/// That asymmetry is exactly why the REVOKE must follow the owner statement
+/// too, and why a reordering regression is one-sided and easy to miss: the
+/// re-ownership would clear one role's entry by accident and leave the other's
+/// standing, so a batch that revoked before the owner change would look correct
+/// for `wamn_app` and leave the dispatcher reachable.
 async fn owner_statement_asymmetry_leg(su: &Client) {
     run_alone(
         su,
@@ -269,18 +393,20 @@ async fn owner_statement_asymmetry_leg(su: &Client) {
     )
     .await;
     drop_reader_role(su).await;
-    run_alone(su, &role_sql(APP_PASSWORD, READER_PASSWORD)).await;
+    run_alone(su, &role_sql(APP_PASSWORD)).await;
     run_alone(
         su,
         &format!("CREATE DATABASE \"{ORDERING_DATABASE}\" OWNER \"{APP_ROLE}\""),
     )
     .await;
 
-    // The MIS-ordered batch: both grants first, then the owner statement.
+    // The RETIRED shape, re-created by hand because the shipped builders no
+    // longer produce it: both stable roles granted CONNECT before the owner
+    // statement.
     run_alone(su, &sql::grant_connect_on_database_sql(ORDERING_DATABASE)).await;
     run_alone(
         su,
-        &sql::grant_dispatch_reader_connect_sql(ORDERING_DATABASE),
+        &format!("GRANT CONNECT ON DATABASE \"{ORDERING_DATABASE}\" TO \"{DISPATCH_READER_ROLE}\""),
     )
     .await;
     assert!(can_connect(su, APP_ROLE, ORDERING_DATABASE).await);
@@ -303,33 +429,111 @@ async fn owner_statement_asymmetry_leg(su: &Client) {
         "a non-owner grantee lost CONNECT across re-ownership: {acl:?}"
     );
 
-    // And the shipped order restores the reader — and ONLY the reader. The
-    // stable guest ACL role stays connection free through a batch applied to a
-    // database it used to own, which is the pre-cutover environment
-    // wamn-0h0g.12.179 has to converge.
+    // The shipped order then takes the SURVIVING entry away. That is the whole
+    // reason the reader's revoke has to follow the owner statement: before it,
+    // re-ownership would carry the revoke's effect off again.
     run_alone(su, &privilege_sql(ORDERING_DATABASE)).await;
-    assert!(
-        !can_connect(su, APP_ROLE, ORDERING_DATABASE).await,
-        "the shipped batch re-granted the stable guest ACL role CONNECT"
+    for stable in [APP_ROLE, DISPATCH_READER_ROLE] {
+        assert!(
+            !can_connect(su, stable, ORDERING_DATABASE).await,
+            "the shipped batch left {stable} connectable on a re-owned database"
+        );
+    }
+    assert_eq!(
+        database_acl(su, ORDERING_DATABASE).await,
+        vec![format!("{DB_OWNER_ROLE}=CTc/{DB_OWNER_ROLE}")],
+        "the converged ACL on a re-owned database names the title role alone"
     );
-    assert!(can_connect(su, DISPATCH_READER_ROLE, ORDERING_DATABASE).await);
-
-    // The other direction of the same contract: a pre-cutover environment where
-    // the grant is ALREADY present must converge, not merely fail to re-add it.
-    run_alone(su, &sql::grant_connect_on_database_sql(ORDERING_DATABASE)).await;
-    assert!(can_connect(su, APP_ROLE, ORDERING_DATABASE).await);
-    run_alone(su, &privilege_sql(ORDERING_DATABASE)).await;
-    assert!(
-        !can_connect(su, APP_ROLE, ORDERING_DATABASE).await,
-        "the shipped batch must REVOKE a pre-cutover stable-role CONNECT, not \
-         just stop granting one"
-    );
-    assert!(can_connect(su, DISPATCH_READER_ROLE, ORDERING_DATABASE).await);
 
     run_alone(
         su,
         &format!("DROP DATABASE \"{ORDERING_DATABASE}\" WITH (FORCE)"),
     )
     .await;
+    drop_reader_role(su).await;
+}
+
+/// **THE RULED PROOF (`wamn-0h0g.22.24` step 5): a dispatch-reader generation
+/// minted for ONE database cannot open a session on another.**
+///
+/// This is the reach `wamn-0h0g.12.179` measured live for the guest and the
+/// reason the stable role's `CONNECT` had to go: `wamn_dispatch_reader` is
+/// cluster-global, its generations are members `WITH INHERIT TRUE`, and
+/// `has_database_privilege` resolves through membership — so a single
+/// `GRANT CONNECT` per environment on the stable role was a session on every
+/// environment.
+///
+/// BOTH DIRECTIONS ARE ASSERTED. A refusal on its own cannot distinguish a
+/// closed reach from a credential that never worked, so the positive control
+/// runs first, against the same credential, in the same leg.
+async fn cross_database_reach_is_closed_leg(su: &Client, url: &str) {
+    for database in [DATABASE, NEIGHBOUR_DATABASE] {
+        run_alone(
+            su,
+            &format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)"),
+        )
+        .await;
+    }
+    drop_reader_role(su).await;
+    run_alone(su, &role_sql(APP_PASSWORD)).await;
+
+    // TWO provisioned environments on one cluster, both through the shipped
+    // batches — the exact topology the reach crossed.
+    for database in [DATABASE, NEIGHBOUR_DATABASE] {
+        run_alone(su, &format!("CREATE DATABASE \"{database}\"")).await;
+        run_alone(su, &privilege_sql(database)).await;
+    }
+
+    // One generation, minted for DATABASE only.
+    let generation = reader_generation(DATABASE);
+    run_alone(
+        su,
+        &sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::DispatchReader,
+            DATABASE,
+            &generation,
+            GENERATION_PASSWORD,
+            "2100-01-01T00:00:00Z",
+        ),
+    )
+    .await;
+
+    // THE ACL POST-STATE, from the server, before a single dial: the generation
+    // holds CONNECT on its own database and on nothing else, and the stable role
+    // it inherits holds none at all. `has_database_privilege` resolves through
+    // membership, so this is the transitive answer, not the direct grant.
+    assert!(
+        can_connect(su, &generation, DATABASE).await,
+        "the minted generation cannot reach the database it was minted for"
+    );
+    assert!(
+        !can_connect(su, &generation, NEIGHBOUR_DATABASE).await,
+        "the generation reaches a NEIGHBOURING project-env database — the \
+         cluster-global stable role is handing out CONNECT again"
+    );
+    assert!(
+        !can_connect(su, DISPATCH_READER_ROLE, DATABASE).await
+            && !can_connect(su, DISPATCH_READER_ROLE, NEIGHBOUR_DATABASE).await,
+        "the stable dispatch-reader ACL role holds CONNECT somewhere; every \
+         generation inherits it"
+    );
+
+    // AND THE REAL SESSIONS, because an ACL read is a claim about what the
+    // server would do and a dial is what it does.
+    try_connect_to(url, DATABASE, &generation, GENERATION_PASSWORD)
+        .await
+        .expect("the generation must open a session on its OWN database");
+    let refusal = try_connect_to(url, NEIGHBOUR_DATABASE, &generation, GENERATION_PASSWORD)
+        .await
+        .expect_err("the generation opened a session on a NEIGHBOURING database");
+    assert!(
+        refusal.contains("42501") || refusal.to_lowercase().contains("permission denied"),
+        "the neighbour refused for the wrong reason (a wrong password or a \
+         missing database would prove nothing about reach): {refusal}"
+    );
+
+    for database in [DATABASE, NEIGHBOUR_DATABASE] {
+        run_alone(su, &format!("DROP DATABASE \"{database}\" WITH (FORCE)")).await;
+    }
     drop_reader_role(su).await;
 }

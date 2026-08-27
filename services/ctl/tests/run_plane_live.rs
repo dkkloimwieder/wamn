@@ -75,8 +75,9 @@ mod support;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
-    CredentialGeneration, DISPATCH_READER_ROLE, effect_writer_generation_role,
-    project_env_database_name, sql as provision_sql,
+    CredentialGeneration, DISPATCH_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
+    effect_writer_generation_role, project_env_database_name, sql as provision_sql,
+    workload_generation_role,
 };
 use wamn_ctl::reconcile_run_plane::{
     self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneArgs, ReconcileTargetError,
@@ -342,6 +343,22 @@ fn target_guard_args(
     }
 }
 
+/// The dispatch-reader A generation this leg dials as, DERIVED from the same
+/// builder `provision-project-env` uses rather than spelled (`wamn-0h0g.22.24`).
+fn dispatch_reader_generation(database: &str) -> String {
+    workload_generation_role(
+        WorkloadRoleFamily::DispatchReader,
+        WorkloadRoleScope::ProjectEnvironment {
+            org: "acme",
+            project: "billing",
+            environment: "dev",
+            database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("the dispatch reader takes a project-environment scope")
+}
+
 async fn connect_as(url: &str, role: &str, password: &str) -> Client {
     let mut config: tokio_postgres::Config = url.parse().expect("parse Postgres URL");
     config.user(role).password(password);
@@ -403,6 +420,13 @@ async fn reset(su: &Client) {
         "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
          DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
          DROP SCHEMA IF EXISTS catalog CASCADE; \
+         DO $reader_generations$ DECLARE generation record; BEGIN \
+           FOR generation IN SELECT rolname FROM pg_roles \
+                              WHERE rolname ~ '^{DISPATCH_READER_ROLE}_[0-9a-f]{{40}}_[ab]$' LOOP \
+             EXECUTE format('DROP OWNED BY %I', generation.rolname); \
+             EXECUTE format('DROP ROLE %I', generation.rolname); \
+           END LOOP; \
+         END $reader_generations$; \
          DO $reader$ BEGIN \
            IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}') THEN \
              EXECUTE 'DROP OWNED BY {DISPATCH_READER_ROLE}'; \
@@ -833,18 +857,59 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
         .expect("read current database")
         .get(0);
 
-    // Provisioning's half (wamn-0h0g.12.122), from the SAME builders
-    // `provision-project-env` emits: the role, and CONNECT on this database.
-    // Everything after this point must come from the reconciler alone — that is
-    // what "no manual SQL" means.
-    su.batch_execute(&provision_sql::ensure_dispatch_reader_role_sql(
-        DISPATCH_READER_PASSWORD,
+    // Provisioning's half (wamn-0h0g.12.122, cut over to generations by
+    // wamn-0h0g.22.24), from the SAME builders `provision-project-env` emits:
+    // the connection-free stable ACL role, the REVOKE that converges a
+    // pre-cutover CONNECT off it, and one A/B generation which is the only thing
+    // that can actually log in. Everything after this point must come from the
+    // reconciler alone — that is what "no manual SQL" means.
+    let reader_generation = dispatch_reader_generation(&database);
+    su.batch_execute(&provision_sql::ensure_workload_acl_role_sql(
+        WorkloadRoleFamily::DispatchReader,
     ))
     .await
-    .expect("mint the dispatch reader");
-    su.batch_execute(&provision_sql::grant_dispatch_reader_connect_sql(&database))
+    .expect("mint the stable dispatch-reader ACL role");
+    su.batch_execute(&provision_sql::revoke_dispatch_reader_connect_sql(
+        &database,
+    ))
+    .await
+    .expect("converge the stable dispatch reader off CONNECT");
+    su.batch_execute(&provision_sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::DispatchReader,
+        &database,
+        &reader_generation,
+        DISPATCH_READER_PASSWORD,
+        "2100-01-01T00:00:00Z",
+    ))
+    .await
+    .expect("prepare the dispatch-reader generation");
+    // The STABLE role is connection-free and the GENERATION holds the CONNECT.
+    // Asserted from the server, because that inversion is the whole bead.
+    let stable_connect: bool = su
+        .query_one(
+            &format!("SELECT has_database_privilege('{DISPATCH_READER_ROLE}', $1, 'CONNECT')"),
+            &[&database],
+        )
         .await
-        .expect("grant the dispatch reader CONNECT");
+        .expect("read stable dispatch-reader CONNECT")
+        .get(0);
+    assert!(
+        !stable_connect,
+        "the cluster-global dispatch reader still holds CONNECT: every generation \
+         inherits it into every database on the cluster"
+    );
+    let generation_connect: bool = su
+        .query_one(
+            "SELECT has_database_privilege($1, $2, 'CONNECT')",
+            &[&reader_generation, &database],
+        )
+        .await
+        .expect("read generation CONNECT")
+        .get(0);
+    assert!(
+        generation_connect,
+        "the generation cannot reach its database"
+    );
 
     // A schema at the schema of record still owes the reader its read surface:
     // deploy/sql grants the reader nothing, and this verb is where it lands.
@@ -881,7 +946,7 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
 
     // The dispatcher dials and reads, with no manual SQL between provisioning
     // and the read.
-    let reader = connect_as(url, DISPATCH_READER_ROLE, DISPATCH_READER_PASSWORD).await;
+    let reader = connect_as(url, &reader_generation, DISPATCH_READER_PASSWORD).await;
     for relation in ["run_queue", "effect_attempts"] {
         reader
             .query_one(&format!("SELECT count(*) FROM {SCHEMA}.{relation}"), &[])
@@ -935,7 +1000,7 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
         narrowed.actions
     );
 
-    let reader = connect_as(url, DISPATCH_READER_ROLE, DISPATCH_READER_PASSWORD).await;
+    let reader = connect_as(url, &reader_generation, DISPATCH_READER_PASSWORD).await;
     let error = reader
         .batch_execute(&format!("SELECT count(*) FROM {SCHEMA}.runs"))
         .await

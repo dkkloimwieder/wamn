@@ -37,7 +37,8 @@ use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 use wamn_control_provision::{
-    APP_ROLE, DISPATCH_READER_ROLE, WorkloadRoleFamily, project_env_database_name, sql,
+    APP_ROLE, CredentialGeneration, DISPATCH_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
+    project_env_database_name, sql, workload_generation_role,
 };
 use wamn_dispatcher::RUN_QUEUE_DEPTH_SQL;
 use wamn_run_state::queue::parked_due_sql;
@@ -48,6 +49,28 @@ const TENANT: &str = "t-a";
 const OTHER_TENANT: &str = "t-b";
 const SCHEMA: &str = "wamn_run";
 const READER_PASSWORD: &str = "dispatch-reader-probe";
+/// The project-environment triple the probe's database and its dispatch-reader
+/// generation both derive from. Naming it once is what keeps the login the gate
+/// dials and the database it dials into the SAME scope.
+const ORG: &str = "probe";
+const PROJECT: &str = "dispatch";
+const ENVIRONMENT: &str = "dev";
+
+/// The dispatch-reader A generation this gate dials as, DERIVED from the same
+/// builder `provision-project-env` uses rather than spelled (`wamn-0h0g.22.24`).
+fn reader_generation(database: &str) -> String {
+    workload_generation_role(
+        WorkloadRoleFamily::DispatchReader,
+        WorkloadRoleScope::ProjectEnvironment {
+            org: ORG,
+            project: PROJECT,
+            environment: ENVIRONMENT,
+            database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("the dispatch reader takes a project-environment scope")
+}
 
 fn psql(url: &str, script: &str) -> std::process::Output {
     let mut child = Command::new("psql")
@@ -141,11 +164,21 @@ fn assert_denied(url: &str, label: &str, statement: &str) {
     );
 }
 
-/// The same statement must SUCCEED as `wamn_app` with the same tenant claim, inside
-/// a transaction that is rolled back. This is what makes [`assert_denied`]
-/// non-vacuous: it proves the statement is well-formed, FK-satisfiable and
-/// RLS-legal, so the reader's refusal can only have been the missing grant.
-fn assert_permitted_to_app_role(url: &str, label: &str, statement: &str) {
+/// The same statement must SUCCEED for a principal that HOLDS the grant, with the
+/// same tenant claim, inside a transaction that is rolled back. This is what
+/// makes [`assert_denied`] non-vacuous: it proves the statement is well-formed,
+/// FK-satisfiable and RLS-legal, so the reader's refusal can only have been the
+/// missing grant.
+///
+/// The replay principal is NOT `wamn_app` any more, and this is a measured
+/// correction rather than a preference. `wamn-0h0g.22.6.3` took the guest ACL
+/// role's queue DML away: `deploy/sql/run-queue.sql` REVOKEs everything from
+/// `wamn_app` and contains ZERO grants to it, so replaying a queue write as
+/// `wamn_app` fails with `permission denied for table run_queue` and the arm
+/// reports a broken control instead of a proof. Each queue statement now names
+/// the principal the schema of record actually grants it to, or names none at
+/// all — see the arm list.
+fn assert_permitted_to(url: &str, role: &str, label: &str, statement: &str) {
     let script = format!(
         "BEGIN; SET LOCAL search_path TO {SCHEMA}; SET LOCAL app.tenant TO '{TENANT}'; \
          {statement}; ROLLBACK;\n"
@@ -153,7 +186,7 @@ fn assert_permitted_to_app_role(url: &str, label: &str, statement: &str) {
     let out = psql(url, &script);
     assert!(
         out.status.success(),
-        "non-vacuity arm {label:?} failed as {APP_ROLE} — the matching denial proved nothing:\
+        "non-vacuity arm {label:?} failed as {role} — the matching denial proved nothing:\
          \n--- stderr ---\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
@@ -168,7 +201,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         );
         return;
     };
-    let database = project_env_database_name("acme", "dispatch", "dev", "k3m9x2p7");
+    let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, "k3m9x2p7");
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
     // HERMETIC: drop the database AND the reader role first. A leftover healthy
@@ -180,8 +213,10 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     // because some objects depend on it: privileges for database …" — and the
     // grantee's own database is not exempt. Reverse these two statements and both
     // the preamble and the teardown break.
+    let generation = reader_generation(&database);
     let teardown = format!(
-        "{drop_db};\nDROP ROLE IF EXISTS \"{DISPATCH_READER_ROLE}\";\n",
+        "{drop_db};\nDROP ROLE IF EXISTS \"{generation}\";\n\
+         DROP ROLE IF EXISTS \"{DISPATCH_READER_ROLE}\";\n",
         drop_db = sql::drop_database_named_sql(&database),
     );
     run_ok(&url, &teardown);
@@ -195,7 +230,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
             app = sql::ensure_app_role_sql(APP_ROLE),
             owner = sql::ensure_db_owner_role_sql(),
             effect = sql::ensure_effect_writer_acl_role_sql(),
-            reader = sql::ensure_dispatch_reader_role_sql(READER_PASSWORD),
+            reader = sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
         ),
     );
     run_ok(
@@ -208,33 +243,43 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
          END $$;\n",
     );
     // IDEMPOTENCY, arm 1: the role builder applied a SECOND time is a clean no-op.
-    run_ok(&url, &sql::ensure_dispatch_reader_role_sql(READER_PASSWORD));
+    run_ok(
+        &url,
+        &sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
+    );
 
     // RE-HARDEN. The hermetic preamble drops the role, so the builder's CREATE arm
     // is the only one any other assertion here reaches and its `ELSIF` re-harden
     // would be dead code. Drift the role on purpose, re-apply, and require
     // convergence — this is the arm that separates "creates a correct role" from
     // "keeps a role correct", which is the whole point of a convergent builder.
+    // The drift seeded here is EXACTLY the shape `wamn-0h0g.22.24` retired — a
+    // cluster-global LOGIN role carrying a password — because that is what a
+    // pre-cutover cluster has and what the harden arm has to take away.
     run_ok(
         &url,
         &format!(
-            "ALTER ROLE \"{DISPATCH_READER_ROLE}\" BYPASSRLS CREATEDB INHERIT NOLOGIN;\n\
+            "ALTER ROLE \"{DISPATCH_READER_ROLE}\" LOGIN PASSWORD 'legacy' BYPASSRLS CREATEDB;\n\
              DO $$ BEGIN \
-               ASSERT (SELECT rolbypassrls AND NOT rolcanlogin FROM pg_roles \
+               ASSERT (SELECT rolbypassrls AND rolcanlogin FROM pg_roles \
                         WHERE rolname = '{DISPATCH_READER_ROLE}'), \
                  'the drift seed must really take, or the re-harden proof is vacuous'; \
              END $$;\n"
         ),
     );
-    run_ok(&url, &sql::ensure_dispatch_reader_role_sql(READER_PASSWORD));
+    run_ok(
+        &url,
+        &sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
+    );
     run_ok(
         &url,
         &format!(
             "DO $$ BEGIN \
-               ASSERT (SELECT rolcanlogin AND NOT rolbypassrls AND NOT rolcreatedb \
-                              AND NOT rolinherit \
-                         FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}'), \
-                 'a drifted dispatch reader must be re-hardened, not reported healthy'; \
+               ASSERT (SELECT NOT rolcanlogin AND rolpassword IS NULL AND NOT rolbypassrls \
+                              AND NOT rolcreatedb AND NOT rolinherit \
+                         FROM pg_authid WHERE rolname = '{DISPATCH_READER_ROLE}'), \
+                 'a pre-cutover LOGIN dispatch reader must be re-hardened to a \
+                  connection-free NOLOGIN carrier, not reported healthy'; \
              END $$;\n"
         ),
     );
@@ -247,7 +292,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         "{owner};\n{connect}\n{reader_connect}\n",
         owner = sql::set_database_owner_sql(&database),
         connect = sql::grant_connect_on_database_sql(&database),
-        reader_connect = sql::grant_dispatch_reader_connect_sql(&database),
+        reader_connect = sql::revoke_dispatch_reader_connect_sql(&database),
     );
     run_ok(&url, &privilege_sql);
     // IDEMPOTENCY, arm 2: the privilege batch is convergent, not one-shot.
@@ -281,6 +326,21 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     run_ok(
         &project_url,
         &sql::platform_group_membership_sql(WorkloadRoleFamily::DispatchReader),
+    );
+
+    // THE CREDENTIAL IS A GENERATION, NOT THE STABLE ROLE (`wamn-0h0g.22.24`).
+    // The stable role above is a NOLOGIN grant carrier with no CONNECT of its
+    // own; this is the only thing in the cluster that can open a dispatcher
+    // session, and it holds CONNECT on exactly one database.
+    run_ok(
+        &project_url,
+        &sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::DispatchReader,
+            &database,
+            &generation,
+            READER_PASSWORD,
+            "2100-01-01T00:00:00Z",
+        ),
     );
 
     // Seed two tenants. The second exists so every cross-tenant assertion below is
@@ -366,15 +426,42 @@ DO $$ DECLARE writes int; reads int; app_writes int; BEGIN
   ASSERT has_schema_privilege('{DISPATCH_READER_ROLE}', '{SCHEMA}', 'USAGE');
   ASSERT NOT has_schema_privilege('{DISPATCH_READER_ROLE}', '{SCHEMA}', 'CREATE'),
     'the dispatch reader can create objects in the run-plane schema';
-  ASSERT has_database_privilege('{DISPATCH_READER_ROLE}', '{database}', 'CONNECT');
-  ASSERT NOT has_database_privilege('{DISPATCH_READER_ROLE}', '{database}', 'CREATE');
-  ASSERT NOT has_database_privilege('{DISPATCH_READER_ROLE}', '{database}', 'TEMPORARY');
+  -- CONNECT BELONGS TO THE GENERATION, NEVER TO THE STABLE ROLE
+  -- (`wamn-0h0g.22.24`). The stable role is CLUSTER-GLOBAL and every generation
+  -- inherits it WITH INHERIT TRUE, so a CONNECT here is a session on every
+  -- database on the cluster. `has_database_privilege` resolves THROUGH
+  -- membership, which is why the generation reads true while its parent reads
+  -- false — and why the parent reading true would be the whole defect back.
+  ASSERT NOT has_database_privilege('{DISPATCH_READER_ROLE}', '{database}', 'CONNECT'),
+    'the cluster-global dispatch reader holds CONNECT; every generation inherits it';
+  ASSERT has_database_privilege('{generation}', '{database}', 'CONNECT');
+  ASSERT NOT has_database_privilege('{generation}', '{database}', 'CREATE');
+  ASSERT NOT has_database_privilege('{generation}', '{database}', 'TEMPORARY');
+  ASSERT (SELECT count(*) FROM pg_database d
+           WHERE d.datname <> '{database}' AND NOT d.datistemplate
+             AND has_database_privilege('{generation}', d.oid, 'CONNECT')) = 0,
+    'the generation reaches a database other than the one it was minted for';
 
-  -- The role attributes the builder promised.
-  ASSERT (SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+  -- The STABLE role's attributes: a connection-free NOLOGIN grant carrier.
+  ASSERT (SELECT NOT rolcanlogin AND rolpassword IS NULL AND NOT rolsuper
+                 AND NOT rolcreatedb AND NOT rolcreaterole
                  AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls
-            FROM pg_roles WHERE rolname = '{DISPATCH_READER_ROLE}'),
-    'the dispatch reader must be a LOGIN role with every other attribute off';
+            FROM pg_authid WHERE rolname = '{DISPATCH_READER_ROLE}'),
+    'the stable dispatch reader must be NOLOGIN, credential-free, and otherwise bare';
+  -- The GENERATION's: a login that inherits, and nothing else.
+  ASSERT (SELECT rolcanlogin AND rolinherit AND NOT rolsuper AND NOT rolcreatedb
+                 AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls
+            FROM pg_authid WHERE rolname = '{generation}'),
+    'the dispatch-reader generation must be an inheriting, non-bypassing LOGIN';
+  ASSERT (SELECT count(*) FROM pg_auth_members m
+           WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = '{generation}')) = 1,
+    'the generation must carry exactly the stable-role edge';
+  ASSERT (SELECT bool_and(parent.rolname = '{DISPATCH_READER_ROLE}' AND m.inherit_option
+                          AND NOT m.admin_option AND NOT m.set_option)
+            FROM pg_auth_members m
+            JOIN pg_roles parent ON parent.oid = m.roleid
+           WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = '{generation}')),
+    'the generation edge is not exactly the stable role INHERIT TRUE, SET FALSE';
   -- NOINHERIT plus EXACTLY ONE membership: `wamn_platform`, which confers no
   -- grant of its own and exists only to be named by the tenant floor's permissive
   -- arm (`wamn-0h0g.22.17`). The grant inventory above is still the whole story of
@@ -403,7 +490,7 @@ END $$;
     );
 
     // --- proof 2: the real dispatcher statements still work -----------------
-    let reader_url = role_url(&url, DISPATCH_READER_ROLE, READER_PASSWORD, &database);
+    let reader_url = role_url(&url, &generation, READER_PASSWORD, &database);
 
     let identity = run_ok(
         &reader_url,
@@ -415,8 +502,9 @@ END $$;
     );
     assert_eq!(
         identity,
-        format!("{DISPATCH_READER_ROLE}|{database}|false"),
-        "the dispatcher's runtime identity is not the scoped, non-bypassing reader"
+        format!("{generation}|{database}|false"),
+        "the dispatcher's runtime identity is not the scoped, non-bypassing \
+         reader GENERATION"
     );
 
     // THE ARM THAT MATTERS MOST. A reduction that silently reads zero rows looks
@@ -499,47 +587,75 @@ END $$;
     let lock_queue_sql = format!("SELECT 1 FROM run_queue WHERE tenant_id = '{TENANT}' FOR UPDATE");
     let read_runs_plpgsql = format!("PERFORM 1 FROM runs WHERE tenant_id = '{TENANT}'");
     let read_runs_sql = format!("SELECT 1 FROM runs WHERE tenant_id = '{TENANT}'");
-    // No replay arm: `wamn_app` holds SELECT but not INSERT on the ledger either,
-    // so there is no principal to prove the statement legal with. It stays because
-    // privilege is checked BEFORE column constraints — a 42501 here can only be the
-    // missing grant — and the RLS discrimination in `assert_denied` still applies.
+    // No replay arm: no in-tree principal holds INSERT on the ledger, so there is
+    // none to prove the statement legal with. It stays because privilege is
+    // checked BEFORE column constraints — a 42501 here can only be the missing
+    // grant — and the RLS discrimination in `assert_denied` still applies.
     let insert_ledger =
         format!("INSERT INTO effect_attempts (tenant_id, run_id) VALUES ('{TENANT}','run-a1')");
 
+    // The management admitter is the ONE principal the schema of record grants a
+    // queue write to (`grant_management_admitter_surface_sql`: column-scoped
+    // INSERT on `tenant_id, run_id, available_at, stream_seq`). It is a NOLOGIN
+    // stable ACL role like every other, so the replay dials a GENERATION of it —
+    // minted here by the real builder, exactly as the dispatch reader's is.
+    let admitter_generation = workload_generation_role(
+        WorkloadRoleFamily::ManagementAdmitter,
+        WorkloadRoleScope::ProjectEnvironment {
+            org: ORG,
+            project: PROJECT,
+            environment: ENVIRONMENT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("the management admitter takes a project-environment scope");
+    run_ok(
+        &project_url,
+        &sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::ManagementAdmitter,
+            &database,
+            &admitter_generation,
+            READER_PASSWORD,
+            "2100-01-01T00:00:00Z",
+        ),
+    );
     let app_url = role_url(&url, APP_ROLE, APP_ROLE, &database);
+    let admitter_url = role_url(&url, &admitter_generation, READER_PASSWORD, &database);
     for (label, plpgsql, replay) in [
         (
             "INSERT into run_queue",
             insert_queue.as_str(),
-            Some(insert_queue.as_str()),
+            Some((admitter_url.as_str(), insert_queue.as_str())),
         ),
-        (
-            "UPDATE run_queue",
-            update_queue.as_str(),
-            Some(update_queue.as_str()),
-        ),
-        (
-            "DELETE from run_queue",
-            delete_queue.as_str(),
-            Some(delete_queue.as_str()),
-        ),
+        // No replay arm for the three below: since `wamn-0h0g.22.6.3` NOTHING in
+        // this tree holds UPDATE or DELETE on `run_queue` — the executor-platform
+        // family that will is admitted to the vocabulary but has no grant set yet
+        // — so there is no principal to prove them legal with. `assert_denied`
+        // still discriminates a privilege refusal from an RLS one, which is the
+        // half that could otherwise pass for the wrong reason.
+        ("UPDATE run_queue", update_queue.as_str(), None),
+        ("DELETE from run_queue", delete_queue.as_str(), None),
         (
             "SELECT FOR UPDATE on run_queue",
             lock_queue_plpgsql.as_str(),
-            Some(lock_queue_sql.as_str()),
+            None,
         ),
         (
+            // `wamn_app` DOES still hold SELECT on `runs`, so this arm keeps a
+            // real replay principal.
             "SELECT from runs",
             read_runs_plpgsql.as_str(),
-            Some(read_runs_sql.as_str()),
+            Some((app_url.as_str(), read_runs_sql.as_str())),
         ),
         ("INSERT into effect_attempts", insert_ledger.as_str(), None),
     ] {
         assert_denied(&reader_url, label, plpgsql);
-        if let Some(replay) = replay {
-            assert_permitted_to_app_role(&app_url, label, replay);
+        if let Some((replay_url, replay)) = replay {
+            assert_permitted_to(replay_url, "the granted principal", label, replay);
         }
     }
+    let _ = lock_queue_sql;
 
     // Teardown: self-contained; never touches a shared database.
     run_ok(&url, &teardown);

@@ -79,7 +79,6 @@ fn action_args(
         // exempts them from both flags — so `None` is what a real invocation of
         // these actions carries.
         app_password: None,
-        dispatch_reader_password: None,
         app_host: None,
         app_port: 5432,
         namespace: "wamn-system".to_string(),
@@ -103,8 +102,7 @@ fn action_args(
                     verb,
                     generation,
                 }),
-            secret: prepare
-                .map(|(_, path)| (WorkloadRoleFamily::EffectWriter, path.to_path_buf())),
+            secret: prepare.map(|(_, path)| (WorkloadRoleFamily::EffectWriter, path.to_path_buf())),
         },
     }
 }
