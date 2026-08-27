@@ -268,22 +268,7 @@ impl ReleaseManifestSource {
                     "release-manifest-artifact-body-unavailable",
                 )
             })?;
-        if i64::try_from(canonical_bytes.len()).unwrap_or(i64::MAX) != blobs.layer.size {
-            return Err(ReleaseManifestFetchError::mismatched(
-                &named,
-                "release-manifest-artifact-body-size-mismatch",
-            ));
-        }
-        // `component_digest` is a plain `sha256:<hex>` over bytes; a serving
-        // manifest's identity is that same function over its canonical
-        // encoding, so this proves the transferred body against the pod
-        // template's name rather than against the registry's own bookkeeping.
-        if component_digest(&canonical_bytes) != manifest_digest {
-            return Err(ReleaseManifestFetchError::mismatched(
-                &named,
-                "release-manifest-artifact-body-digest-mismatch",
-            ));
-        }
+        verify_transferred_body(&canonical_bytes, blobs.layer.size, manifest_digest, &named)?;
         Ok(canonical_bytes)
     }
 }
@@ -323,4 +308,97 @@ fn registry_client(registry: &str, insecure_registry: bool, ca_bundles: Vec<Vec<
 /// The mint and the mount reader share this ceiling; the puller enforces it too.
 fn manifest_byte_ceiling() -> i64 {
     i64::try_from(MAX_SERVING_MANIFEST_BYTES).unwrap_or(i64::MAX)
+}
+
+/// Refuse a transferred body the layer descriptor or the named digest contradicts.
+///
+/// The same shape as
+/// [`verify_component_body`](crate::component_artifact_source) next door, and
+/// for the same reason: these are the arms that catch a registry or proxy which
+/// lies about what it served, so they must be provable without one.
+///
+/// The size arm is reachable through the wire — nothing upstream compares the
+/// declared length to the delivered one — and a stub that overstates it is what
+/// kills that mutant. The digest arm is not: MEASURED against `oci-client`
+/// 0.17, `pull_blob` digests the streamed body against the layer descriptor it
+/// was handed (`client.rs`, `layer_digester`) and
+/// [`verify_release_manifest_artifact_layout`] has already pinned that
+/// descriptor to the digest the pod template named, so on the `Ok` path the two
+/// are equal by construction and no served body can reach this comparison
+/// unequal. It is kept as defense in depth against that upstream check being
+/// dropped, and a direct call is the only instrument that can hold it.
+fn verify_transferred_body(
+    canonical_bytes: &[u8],
+    descriptor_size: i64,
+    expected_digest: &str,
+    reference: &str,
+) -> Result<(), ReleaseManifestFetchError> {
+    if i64::try_from(canonical_bytes.len()).unwrap_or(i64::MAX) != descriptor_size {
+        return Err(ReleaseManifestFetchError::mismatched(
+            reference,
+            "release-manifest-artifact-body-size-mismatch",
+        ));
+    }
+    // `component_digest` is a plain `sha256:<hex>` over bytes; a serving
+    // manifest's identity is that same function over its canonical encoding, so
+    // this proves the transferred body against the pod template's name rather
+    // than against the registry's own bookkeeping.
+    if component_digest(canonical_bytes) != expected_digest {
+        return Err(ReleaseManifestFetchError::mismatched(
+            reference,
+            "release-manifest-artifact-body-digest-mismatch",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REFERENCE: &str = "registry.example:5000/wamn/releases:tag";
+
+    #[test]
+    fn a_body_the_layer_descriptor_overstates_refuses_as_a_size_mismatch() {
+        let canonical = br#"{"format-version":2}"#;
+        let exact = i64::try_from(canonical.len()).expect("fixture length fits");
+
+        verify_transferred_body(canonical, exact, &component_digest(canonical), REFERENCE)
+            .expect("a body served exactly as the descriptor declares verifies");
+
+        let error = verify_transferred_body(
+            canonical,
+            exact + 1,
+            &component_digest(canonical),
+            REFERENCE,
+        )
+        .expect_err("a descriptor declaring more bytes than were served refuses");
+
+        assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
+        assert_eq!(
+            error.refusal(),
+            "release-manifest-artifact-body-size-mismatch"
+        );
+    }
+
+    #[test]
+    fn a_body_the_named_digest_does_not_address_refuses_as_a_digest_mismatch() {
+        let canonical = br#"{"format-version":2}"#;
+        // Same length as the named bytes, so the size arm cannot be what fires.
+        let served = br#"{"Format-version":2}"#;
+        assert_eq!(served.len(), canonical.len());
+        let exact = i64::try_from(served.len()).expect("fixture length fits");
+
+        verify_transferred_body(served, exact, &component_digest(served), REFERENCE)
+            .expect("a body the descriptor and the name both address verifies");
+
+        let error = verify_transferred_body(served, exact, &component_digest(canonical), REFERENCE)
+            .expect_err("a body the named digest does not address refuses");
+
+        assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
+        assert_eq!(
+            error.refusal(),
+            "release-manifest-artifact-body-digest-mismatch"
+        );
+    }
 }

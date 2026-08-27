@@ -432,6 +432,10 @@ async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
 /// Pinning the literal here is what makes that fact load-bearing: if a future
 /// `oci-client` stops verifying, this assertion fails, and the digest arm in
 /// `pull_verified` becomes the one that has to hold.
+///
+/// That arm is not left unwatched in the meantime: no wire fixture can reach
+/// it, so it is held by a direct call in
+/// `release_manifest_source::tests::a_body_the_named_digest_does_not_address_refuses_as_a_digest_mismatch`.
 #[tokio::test]
 async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
     let canonical = br#"{"format-version":2}"#;
