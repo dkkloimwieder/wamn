@@ -1,82 +1,101 @@
-# Data access — sqlx integration (rev 4.1 patch, future work)
+# Data access — sqlx integration (rev 3, aligned to the base-application POC)
 
-Status: DRAFT rev 2 · 2026-08-26 · amends exe-model §Developer surface ·
-evidence: wamn-0h0g.22.13 (receipt 5c464ae) + external review adopted
-(two-sibling verification, transport-parity rule, weld set).
+Status: DRAFT rev 3 · 2026-08-27 · aligned to
+`wamn_base_application_poc_revised.md` + receiving scenario · supersedes
+rev 2's generic-entity default · evidence: wamn-0h0g.22.13 (receipt
+5c464ae). Scope: post-merge product work (Phase B item-4 successor);
+nothing here rides the scope-reduction RC.
 
-## Ruling — one schema, three layers, checked where each build runs
+## Schema authority (one way, no DSL)
 
-| Layer | Checking | Transport |
+```text
+migration SQL (per package, ordered stream)
+  → PostgreSQL (the authority)
+  → pg_catalog introspection (configured schemas, closed object set)
+  → normalized WAMN catalog IR (derived artifact — never edited)
+  → generated artifacts
+```
+
+The effective schema is exact platform migrations + exact client-overlay
+migrations. The IR is a release artifact, not a schema-editing surface.
+
+## The three layers (rev 2's table, corrected)
+
+| Layer | Checking | Notes |
 |---|---|---|
-| Platform-generated artifacts (generated CRUD, catalog-specific modules, base apps) | **Compile-time, two-sibling**: generator emits typed models + exact `.sql` files; a native verifier target runs `query_file_as!` against real `sqlx::Postgres` on an ephemeral DB carrying the applied catalog, `cargo sqlx prepare --check` in CI; the wasm target executes the **same files** via `query_as::<WamnPostgres,_>` | `wamn:postgres` |
-| Tenant/developer components | **Runtime-checked** generic sqlx over the custom Database (.22.13: macros type-bind to built-in drivers; masquerade impossible). Drift caught at the gate against the real applied catalog | `wamn:postgres` — guests never hold sockets or credentials |
-| Wirer/editor arbitrary queries | Runtime validation + bounded execution only | via `entity` |
+| **Application SQL corpus** — generated CRUD/lock/mutation SQL **plus authored named query/projection SQL** (`query/*.sql`) | **Compile-time, two-sibling**: native verifier runs `query_file!`/`query_file_as!` against `sqlx::Postgres` on the exact effective schema, `cargo sqlx prepare --check` in CI; the wasm artifact executes the **same files** via the `WamnPostgres` custom Database over `wamn:postgres` | Corpus identity welded into the package record |
+| Tenant/developer + workflow-editor arbitrary SQL | **Runtime-checked** over `WamnPostgres`; gate + bounded execution | `.22.13` unchanged |
+| External consumers | Generated routes → registered operations | CallerIdentity → permission check; host-selected DB identity → privileges/RLS |
 
-**Structural invariant:** the SQL verified through `sqlx::Postgres` == the
-SQL executed through `WamnPostgres`, enforced by *one generated file
-consumed by both targets* — never two emitted strings compared after.
-(Macro expansion type-binds queries to the checking driver; the checked
-object cannot ship. The file is the contract; `.sqlx/` is build evidence.)
+**Structural invariant (unchanged):** verified SQL == executed SQL, by
+one generated/authored file consumed by both targets. `.sqlx/` is build
+evidence, never contract. **Type-parity refusal (unchanged):** generation
+refuses PostgreSQL types outside the `wamn:postgres` value contract.
 
-**Transport-parity rejection:** `wamn:postgres` exposes a bounded type
-vocabulary (bool, int, float, text, bytes, numeric, timestamptz, JSON,
-UUID, null). Generation **refuses** any checked query whose parameters or
-outputs fall outside the runtime mapping.
+## Generated access — supersedes the generic entity
 
-**Honest guarantee boundary:** the verifier proves SQL validity against
-the exact catalog, bind counts/types, and result column names/types/
-nullability vs the generated models — nothing more. RLS under production
-`current_user`, role privileges, transactional invariants, lock ordering,
-and transport encode-parity remain generated integration cases.
+No universal runtime controller with `call(operation_id, json)`
+authority. The generator emits **package-owned typed accessors and
+registered operations** — closed CRUD set `get/query/create/update/
+delete` (per model, exposure declared; operational records may be
+read-only with mutation via commands) — and one data-access kernel
+compiled into narrow artifacts (CRUD/data, transaction-command,
+projection/BFF, integration). Rev 2's generic-entity MVP default is
+superseded: typed, catalog-specific generation IS the model.
 
-**Weld on the released artifact:** catalog identity/hash · generated
-model hash · SQL-file-set hash · verification success · runtime
-component digest.
+Semantics fixed by the POC: three-state update (absent/null/value),
+server-owned fields refused on input, optimistic concurrency via a
+declared revision field (`not_found` / `concurrency_conflict` / new
+revision — no silent last-writer-wins), array envelope with
+`per_input` semantics and per-item `request_id`.
 
-## entity — both forms, assigned
+## Transactions
 
-Generic `entity` (relation/filter as parameters, runtime-checked) stays
-the **MVP default** — one warm pool across all CRUD routes, instant
-document-emission generation, correctness proven by auto-written gate
-cases against the real catalog. The **catalog-specific compiled entity**
-(per-relation typed accessors, two-sibling verified) is the demand-gated
-typed tier (`.22.4`) — cheap once 2b exists; trigger: a typed-consumer
-pipeline names it.
+CRUD: implicit. Complex atomicity: registered **command** operations —
+one explicit transaction inside one component invocation. **A
+transaction resource never crosses a wiring edge**; wirings compose
+coarse operations. `per_input`: one transaction per outer array item;
+cross-item atomicity out of scope.
+
+## Package weld (replaces rev 2's five-part weld)
+
+Each immutable application package records: `verified_schema_state_id` ·
+`required_schema_contract` · `required_platform_policy_contract` ·
+application SQL corpus identity · source/toolchain provenance. An
+additive base schema may satisfy an unchanged overlay's contracts
+without rebuilding it.
+
+## Compile-time proves / integration still proves
+
+Compile: SQL parses against the exact effective schema; bind counts and
+types; result columns/types/nullability vs generated models; routes
+reference real registered operations; contracts and clients compile.
+Integration: `current_user` RLS + production privileges; operation
+authorization before mutation; `WamnPostgres` type parity; constraints
+and data-dependent behavior; locks/optimistic concurrency; rollback and
+idempotency; business invariants.
 
 ## Work items
 
-1. **`.22.2a` — runtime transport:** custom sqlx `Database` over
-   `wamn:postgres`; generic query/decode, `FromRow`, typed errors; no
-   WIT widening. The only execution path for all layers.
-2. **`.22.2b` — verifier sibling harness:** generator emits models +
-   `.sql` files; native target `query_file_as!` + `prepare --check`
-   against ephemeral applied-catalog Postgres; transport-parity
-   rejection; weld emission. Red build on schema/SQL mismatch or
-   unsupported type.
-3. **`.22.4` — catalog-specific compiled entity:** demand-gated, shape
-   per above.
-4. **Shelved:** compile-checking for tenant components (own checker over
-   offline-cache format) — trigger: a client names it.
-
-## Spec deltas (rev 4.1)
-
-Replace the developer-surface data-access paragraph with: *`wamn:postgres`
-remains the credential-hiding production boundary. Tenant components and
-editor queries use a runtime-checked custom sqlx Database over it — no
-macro or offline-cache claim (.22.13, scope: third-party components
-only). Platform-generated artifacts are compile-checked per catalog
-version via the two-sibling scheme; the released artifact is welded to
-catalog identity and query set. Compile-time verification covers SQL
-shape and typing; authority, RLS, transactions, and transport parity are
-separately proved.* Closure rule: platform artifacts bind `catalog ≥` to
-the weld (compile-derived); developer components bind the declared build
-fact, enforced at gate.
+1. **`.22.2a` — `WamnPostgres` transport** (unchanged) + the explicit
+   **transaction runner** commands require. The only execution path.
+2. **`.22.2b` — verifier sibling harness**, now over the full corpus
+   (generated + authored `query/*.sql`), on the exact effective schema
+   (base + overlay migrations applied); parity refusal; weld emission.
+3. **Introspection → IR pipeline** (new): pg_catalog reader over the
+   closed supported object set, normalized IR, refused-object
+   enforcement (§4.3 of the POC).
+4. **CRUD/operation generator** per POC semantics above, emitting
+   models, static SQL, accessors, contracts, TS clients, cases.
+5. **Shelved (unchanged):** compile-checking for tenant components —
+   trigger: a client names it.
 
 ## Acceptance
 
-2a: entity ops execute through the seam under RLS with per-effect spans.
-2b: a broken generated query fails the platform build naming the column;
-an out-of-vocabulary type is refused at generation; catalog migration
-re-runs the check; verified `.sql` file is byte-identical to the shipped
-one. Gate: a developer component with a stale column fails its cases at
-authoring, not in prod.
+2a: commands run one explicit transaction through the seam under RLS
+with per-effect spans. 2b: a broken corpus file fails the build naming
+the column; an out-of-vocabulary type refuses at generation; overlay
+migration re-runs the check; verified file byte-identical to shipped.
+Generator: update preserves all three field states; revision conflict
+returns `concurrency_conflict`; server-owned field on input refuses;
+a route referencing an unregistered operation fails the build.
