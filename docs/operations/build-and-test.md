@@ -708,6 +708,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `crates/control/provision/tests/dump.rs` | `WAMN_DUMP_PG_URL` | `cargo test -p wamn-control-provision --features ops --test dump` |
 | `crates/control/provision/tests/restore.rs` | `WAMN_RESTORE_PG_URL` | `cargo test -p wamn-control-provision --features ops --test restore` |
 | `crates/control/provision/tests/family_surface_grants.rs` | `WAMN_FAMILY_SURFACE_PG_URL` | `cargo test -p wamn-control-provision --test family_surface_grants` |
+| `crates/control/provision/tests/family_denial_matrix.rs` | `WAMN_DENIAL_MATRIX_PG_URL` | `cargo test -p wamn-control-provision --test family_denial_matrix -- --test-threads=1` |
 | `crates/execution/run-state/tests/store.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --test store` |
 | `crates/identity/platform/tests/identity_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-platform-identity --test identity_live` |
 | `crates/identity/platform/tests/pat_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-platform-identity --test pat_live` |
