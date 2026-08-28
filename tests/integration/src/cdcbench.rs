@@ -69,7 +69,10 @@ use tokio_postgres::{Client, NoTls};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use crate::ctl_process;
-use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, cdc_object_name,
+    event_stream_name, sql as provision_sql, workload_generation_role,
+};
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
@@ -160,6 +163,8 @@ const ENV: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const TENANT: &str = "ccdc-tenant";
 const CDC_PW: &str = "wamn_cdc_pw";
+const APP_PW: &str = "ccdc-app-generation";
+const APP_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 const CATALOG_ID: &str = "poc-material-receiving";
 
 // The shipped DDL + retained receiving catalog, compiled in (drift-proof).
@@ -211,23 +216,34 @@ fn role_url(super_url: &str, role: &str, pw: &str) -> String {
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, conn) = tokio_postgres::connect(url, NoTls)
         .await
-        .with_context(|| format!("connect {url}"))?;
+        .context("connect PostgreSQL")?;
     tokio::spawn(async move {
         let _ = conn.await;
     });
     Ok(client)
 }
 
-/// A wamn_app writer pinned to the app schema + tenant claim (the RLS floor
-/// the production write path runs under — the C-WAL-0 discipline).
+fn app_generation_role() -> anyhow::Result<String> {
+    workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database: DB,
+        },
+        CredentialGeneration::A,
+    )
+    .context("derive cdcbench App generation")
+}
+
+/// An App-generation writer pinned to the app schema (the RLS floor derives
+/// its tenant from `current_user`, as the production write path does).
 async fn connect_app(admin_url: &str) -> anyhow::Result<Client> {
-    let client = connect(&role_url(admin_url, "wamn_app", "wamn_app")).await?;
+    let role = app_generation_role()?;
+    let client = connect(&role_url(admin_url, &role, APP_PW)).await?;
     client
-        .batch_execute(&format!(
-            "SET search_path TO app; SET app.tenant TO '{TENANT}';"
-        ))
+        .batch_execute("SET search_path TO app")
         .await
-        .context("set search_path + tenant claim")?;
+        .context("set App generation search_path")?;
     Ok(client)
 }
 
@@ -392,6 +408,7 @@ fn unix_ms() -> i64 {
 async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, ENV);
+    let app_role = app_generation_role()?;
 
     // Hermetic preamble (leftovers mask): slot, database, role.
     let admin = connect(admin_url).await?;
@@ -405,6 +422,10 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
         .await
         .context("drop leftover role")?;
     admin
+        .batch_execute(&format!("DROP ROLE IF EXISTS {app_role}"))
+        .await
+        .context("drop leftover App generation")?;
+    admin
         .batch_execute(&format!("CREATE DATABASE {DB}"))
         .await
         .context("create db")?;
@@ -412,13 +433,19 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     let db = connect(&swap_db(admin_url, DB)).await?;
     db.batch_execute(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
-         THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;\n\
-         DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
-         THEN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' \
-           NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$;",
+         THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;",
     )
     .await
-    .context("roles")?;
+    .context("system role")?;
+    db.batch_execute(&provision_sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        DB,
+        &app_role,
+        APP_PW,
+        APP_EXPIRES_AT,
+    ))
+    .await
+    .context("prepare App generation")?;
     for (name, ddl) in [
         ("system-schema.sql", SYSTEM_SQL),
         ("catalog-schema.sql", CATALOG_SQL),
@@ -539,6 +566,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
 /// slot with it), role, stream. Zero residue — the §11 never-leave-a-slot rule.
 async fn teardown(admin_url: &str, nats_url: &str) {
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
+    let app_role = app_generation_role().ok();
     if let Ok(admin) = connect(admin_url).await {
         // Slot drop must run on the slot's database; DROP DATABASE WITH FORCE
         // is the backstop that takes an idle slot down with the DB.
@@ -551,6 +579,11 @@ async fn teardown(admin_url: &str, nats_url: &str) {
         let _ = admin
             .batch_execute(&format!("DROP ROLE IF EXISTS {cdc_name}"))
             .await;
+        if let Some(app_role) = app_role {
+            let _ = admin
+                .batch_execute(&format!("DROP ROLE IF EXISTS {app_role}"))
+                .await;
+        }
     }
     if let Ok(nats) = async_nats::connect(nats_url).await {
         let js = async_nats::jetstream::new(nats);
@@ -612,13 +645,13 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
     let ins_narrow = app
         .prepare(
             "INSERT INTO \"suppliers\" (tenant_id, name, contact_email, standard_cost) \
-             VALUES (current_setting('app.tenant', true), $1, $2, $3::text::numeric)",
+             VALUES ($1, $2, $3, $4::text::numeric)",
         )
         .await?;
     let ins_wide = app
         .prepare(
             "INSERT INTO \"users\" (tenant_id, email, display_name, cert_level) \
-             VALUES (current_setting('app.tenant', true), $1, $2, $3)",
+             VALUES ($1, $2, $3, $4)",
         )
         .await?;
 
@@ -715,6 +748,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
                     app.execute(
                         &ins_wide,
                         &[
+                            &TENANT,
                             &format!("u{i}@example.test"),
                             &Some(crate::walbench::wide_blob(i, args.wide_bytes)),
                             &Some("L1"),
@@ -725,6 +759,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
                     app.execute(
                         &ins_narrow,
                         &[
+                            &TENANT,
                             &format!("sup-{i}"),
                             &Some(format!("s{i}@example.test")),
                             &"12.50",
@@ -865,8 +900,8 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
     let app = connect_app(&args.admin_database_url).await?;
     app.execute(
         "INSERT INTO \"suppliers\" (tenant_id, name) \
-         VALUES (current_setting('app.tenant', true), 'lag-warm')",
-        &[],
+         VALUES ($1, 'lag-warm')",
+        &[&TENANT],
     )
     .await?;
     let warm_deadline = Instant::now() + Duration::from_secs(60);
@@ -897,7 +932,7 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
                 let ins = app
                     .prepare(
                         "INSERT INTO \"suppliers\" (tenant_id, name) \
-                         VALUES (current_setting('app.tenant', true), $1)",
+                         VALUES ($1, $2)",
                     )
                     .await?;
                 let start = Instant::now();
@@ -905,7 +940,7 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
                 while start.elapsed().as_secs_f64() < step_secs as f64 {
                     let due = (start.elapsed().as_secs_f64() * per_writer) as u64 + 1;
                     while sent < due {
-                        app.execute(&ins, &[&format!("lag-{rate}-{w}-{sent}")])
+                        app.execute(&ins, &[&TENANT, &format!("lag-{rate}-{w}-{sent}")])
                             .await?;
                         sent += 1;
                     }
@@ -1070,7 +1105,7 @@ async fn ri_leg(
     let s_ins = app
         .prepare(
             "INSERT INTO \"suppliers\" (tenant_id, name, contact_email, standard_cost) \
-             VALUES (current_setting('app.tenant', true), $1, $2, $3::text::numeric) \
+             VALUES ($1, $2, $3, $4::text::numeric) \
              RETURNING id::text",
         )
         .await?;
@@ -1086,6 +1121,7 @@ async fn ri_leg(
             .query_one(
                 &s_ins,
                 &[
+                    &TENANT,
                     &format!("sup-{regime}-{i}"),
                     &Some(format!("s{i}@example.test")),
                     &"12.50",
@@ -1117,7 +1153,7 @@ async fn ri_leg(
     let u_ins = app
         .prepare(
             "INSERT INTO \"users\" (tenant_id, email, display_name, cert_level) \
-             VALUES (current_setting('app.tenant', true), $1, $2, $3) \
+             VALUES ($1, $2, $3, $4) \
              RETURNING id::text",
         )
         .await?;
@@ -1136,6 +1172,7 @@ async fn ri_leg(
             .query_one(
                 &u_ins,
                 &[
+                    &TENANT,
                     &format!("u-{regime}-{i}@example.test"),
                     &Some(crate::walbench::wide_blob(i, wide_bytes)),
                     &Some("L1"),
@@ -1314,7 +1351,7 @@ async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result
     let mut reader = spawn_reader(&args.admin_database_url, &args.nats_url)?;
 
     // Warm write as the superuser with an explicit tenant (no dependence on a
-    // wamn_app password on a shared cluster); `sw-warm` never parses as a seq.
+    // workload credential during reader warm-up); `sw-warm` never parses as a seq.
     db.execute(
         "INSERT INTO app.suppliers (tenant_id, name) VALUES ($1, 'sw-warm')",
         &[&TENANT],

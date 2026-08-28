@@ -5,6 +5,10 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
+    workload_generation_role,
+};
 use wamn_run_state::queue::{
     advance_claim_attempts_sql, clear_pre_effect_state_sql, grant_production_claim_sql,
     renew_production_lease_sql, select_exhausted_production_sql,
@@ -39,9 +43,8 @@ fn success(url: &str, script: &str) -> String {
     String::from_utf8(output.stdout).expect("psql stdout is utf-8")
 }
 
-fn app_preamble() -> &'static str {
-    "BEGIN; SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; \
-     SET LOCAL app.tenant = 't1';"
+fn app_preamble(app_login: &str) -> String {
+    format!("BEGIN; SET LOCAL ROLE {app_login}; SET LOCAL search_path TO wamn_run;")
 }
 
 /// The generation login the fenced transitions actually run as.
@@ -52,10 +55,10 @@ fn app_preamble() -> &'static str {
 /// only `SELECT, DELETE` on `wamn_run.runs` plus a column-scoped `SELECT` on
 /// `wamn_run.run_queue`. A transition driven under [`app_preamble`] is
 /// therefore refused twice over — at the grant, before the authority guard ever
-/// evaluates — and cannot reach the semantics under test. The tenant fence is
-/// unaffected by the swap: every fenced statement carries its own
-/// `current_setting('app.tenant')` predicate, so `SET LOCAL app.tenant` is
-/// still what fences these legs.
+/// evaluates — and cannot reach the semantics under test. The App generation's
+/// tenant comes from `current_user`; the executor statements below retain their
+/// host-injected `app.tenant` input because those statements key their own queue
+/// predicates from it.
 ///
 /// A MINTED GENERATION, NOT THE BARE ACL ROLE (`wamn-0h0g.22.31`). The stable
 /// role is `NOLOGIN` and nothing in production ever authenticates as it — the
@@ -86,10 +89,10 @@ fn run_state_live() {
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .expect("read run-queue DDL");
 
-    // `wamn_app` is re-stated rather than only created: the class-grant leg below
-    // proves the DDL's guest ACL by executing under this role, and a leftover
-    // role from an earlier database carrying SUPERUSER or BYPASSRLS would pass it
-    // with no grants at all (wamn-0h0g.15.23).
+    // The class-grant leg below proves the DDL's guest ACL through a prepared
+    // App generation. Its production builder also converges the stable
+    // `wamn_app` carrier to NOLOGIN/NOINHERIT/passwordless, so a drifted cluster
+    // role cannot make the leg pass through ambient authority.
     //
     // THE TWO WRITER ROLES BELOW ARE HAND-ROLLED, AND THAT IS A RULED DIVERGENCE
     // (wamn-0h0g.20.15: accept the divergence, comment it, close at P3). Every other
@@ -151,16 +154,32 @@ fn run_state_live() {
     // arm. If a leg below ever needs it, that is a real widening to argue, not a fixture
     // gap to patch.
     //
-    // THE GENERATION IS DROPPED BEFORE IT IS MINTED, inside an existence check.
-    // Roles are CLUSTER-wide, so a login left behind by an earlier run of this suite
-    // satisfies every `IF NOT EXISTS` in the builder and would let a MUTATED builder pass
-    // on the previous run's role. `DROP OWNED BY` first, because a role holding any grant
-    // cannot be dropped.
-    let executor_generation = wamn_control_provision::sql::prepare_workload_generation_sql(
-        wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,
-        &success(&url, "SELECT current_database();")
-            .trim()
-            .to_string(),
+    // BOTH GENERATIONS are dropped before they are minted. Roles are
+    // CLUSTER-wide, so a login left behind by an earlier run could let a
+    // mutated builder pass on stale state. `DROP OWNED BY` first, because a role
+    // holding any grant cannot be dropped.
+    let database = success(&url, "SELECT current_database();")
+        .trim()
+        .to_string();
+    let app_login = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: "t1",
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("derive the transitions App generation");
+    let app_generation = provision_sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &database,
+        &app_login,
+        "transitions-app-proof-password",
+        "2099-01-01T00:00:00Z",
+    );
+    let executor_generation = provision_sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::ExecutorPlatform,
+        &database,
         EXECUTOR_LOGIN,
         "transitions-proof-password",
         "2099-01-01T00:00:00Z",
@@ -169,10 +188,9 @@ fn run_state_live() {
         &url,
         &format!(
             "DO $$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                 CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
-               ELSE \
-                 ALTER ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+               IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{app_login}') THEN \
+                 EXECUTE format('DROP OWNED BY %I', '{app_login}'); \
+                 EXECUTE format('DROP ROLE %I', '{app_login}'); \
                END IF; \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
                  CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
@@ -197,6 +215,7 @@ fn run_state_live() {
                  EXECUTE format('DROP ROLE %I', '{EXECUTOR_LOGIN}'); \
                END IF; \
              END $$; \
+             {app_generation} \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              {catalog} {run_state} {run_queue} \
@@ -212,8 +231,8 @@ fn run_state_live() {
         ),
     );
 
-    // The three mirrored role blocks above are create-only — unlike `wamn_app` they have
-    // no `ELSE ALTER` arms — and roles are CLUSTER-WIDE, so a role left behind by an
+    // The mirrored role blocks above are create-only — unlike builder-owned `wamn_app`
+    // they have no `ELSE ALTER` arms — and roles are CLUSTER-WIDE, so a role left behind by an
     // earlier database is silently kept with whatever attributes it already carries.
     // This is the leg that makes the drift contract checkable rather than aspirational:
     // it reds both when a block above stops matching the production attribute set and
@@ -251,6 +270,31 @@ fn run_state_live() {
         &url,
         &format!(
             "DO $$ BEGIN \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_authid \
+                  WHERE rolname = 'wamn_app' AND NOT rolcanlogin \
+                    AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole \
+                    AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls \
+                    AND rolpassword IS NULL), \
+                 'the stable App role must be a passwordless NOLOGIN ACL carrier'; \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_authid \
+                  WHERE rolname = '{app_login}' \
+                    AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
+                    AND NOT rolcreaterole AND rolinherit AND NOT rolreplication \
+                    AND NOT rolbypassrls AND rolpassword IS NOT NULL \
+                    AND rolvaliduntil IS NOT NULL), \
+                 'the App principal must be a minted, non-bypassing generation'; \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_auth_members AS membership \
+                 JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
+                 JOIN pg_catalog.pg_roles AS child ON child.oid = membership.member \
+                  WHERE parent.rolname = 'wamn_app' \
+                    AND child.rolname = '{app_login}' \
+                    AND NOT membership.admin_option \
+                    AND membership.inherit_option \
+                    AND NOT membership.set_option), \
+                 'the App generation must INHERIT the stable ACL role'; \
                ASSERT EXISTS ( \
                  SELECT FROM pg_catalog.pg_authid \
                   WHERE rolname = '{EXECUTOR_LOGIN}' \
@@ -739,7 +783,7 @@ fn run_state_live() {
              ASSERT refusal = 'permission denied for table runs', refusal; \
            END; \
          END $$; COMMIT;",
-        app_preamble()
+        app_preamble(&app_login)
     );
     success(&url, &class_grant_script);
 

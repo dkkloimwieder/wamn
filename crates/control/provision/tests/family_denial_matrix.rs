@@ -579,36 +579,13 @@ fn build(admin: String) -> Fixture {
 
 /// Prepare one family's stable surface and one generation login.
 ///
-/// # The guest is hand-minted, and that is a measured fact rather than a taste
-///
-/// `sql::prepare_workload_generation_sql` composes
-/// `ensure_workload_acl_role_sql`, which HARDENS its target to
-/// `NOLOGIN PASSWORD NULL NOINHERIT`. `deploy/sql/postgres-init.sql` creates
-/// `wamn_app` as `LOGIN PASSWORD 'wamn_app'` with `INHERIT`. Measured on
-/// PostgreSQL 18.6 against these very artifacts: running the ensure batch over
-/// `wamn_app` flips it to `NOLOGIN PASSWORD NULL NOINHERIT`. Using the generic
-/// prepare for the guest here would therefore have this gate mutate the very
-/// role it is measuring. The membership edge is spelled exactly as the
-/// production builder spells it — `WITH ADMIN FALSE, INHERIT TRUE, SET FALSE` —
-/// because PostgreSQL 16+ takes a new membership's `INHERIT` default from the
-/// MEMBER's `rolinherit`, and a bare `GRANT` onto a `NOINHERIT` role lands
-/// `inherit_option = false`, which reads ZERO ROWS with no error.
+/// The guest now takes the same generic prepare path as every other family.
+/// `postgres-init.sql` and `ensure_workload_acl_role_sql(App)` both converge
+/// `wamn_app` to `NOLOGIN PASSWORD NULL NOINHERIT`, so preparing a generation
+/// no longer repairs a contradictory install-time LOGIN as a side effect. This
+/// gate therefore exercises the production App builder directly.
 fn mint(db_url: &str, family: WorkloadRoleFamily) {
     let login = generation(family);
-    if family == WorkloadRoleFamily::App {
-        apply(
-            db_url,
-            "mint the guest generation",
-            &format!(
-                "CREATE ROLE \"{login}\" LOGIN PASSWORD '{PROBE_PASSWORD}' \
-                   NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;\n\
-                 GRANT {role} TO \"{login}\" WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;\n\
-                 GRANT CONNECT ON DATABASE \"{DATABASE}\" TO \"{login}\";\n",
-                role = family.acl_role(),
-            ),
-        );
-        return;
-    }
     apply(
         db_url,
         "prepare a workload generation",

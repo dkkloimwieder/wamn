@@ -18,6 +18,10 @@ use wamn_catalog::{
     ServingRegistrationInput, ServingRelease, ServingWiring, WiringDocument, WiringEventOperation,
     WiringNode, WiringTerminal,
 };
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
+    workload_generation_role,
+};
 use wamn_ctl::author_wiring::{
     AuthorWiringArgs, AuthorWiringErrorKind, AuthorWiringRequest, author_wiring,
 };
@@ -55,6 +59,8 @@ const RUN_STATE_SCHEMA: &str = include_str!("../../../deploy/sql/run-state.sql")
 const RUN_SCHEMA: &str = "wamn_run";
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
+const APP_GENERATION_PASSWORD: &str = "release-manifest-app-generation";
+const APP_GENERATION_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 
 #[test]
 fn resolved_exposure_hash_round_trips_through_serving_manifest_admission() {
@@ -189,6 +195,68 @@ async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
         let _ = connection.await;
     });
     (client, task)
+}
+
+fn app_generation(database_url: &str) -> (String, String) {
+    let parsed = url::Url::parse(database_url).expect("the live database URL parses");
+    let database = parsed.path().trim_start_matches('/').to_string();
+    assert!(
+        !database.is_empty(),
+        "the live database URL names a database"
+    );
+    let role = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("derive the release-manifest App generation");
+    (database, role)
+}
+
+async fn prepare_app_generation(admin: &Client, database_url: &str) -> (String, String, String) {
+    let (database, role) = app_generation(database_url);
+    admin
+        .batch_execute(&provision_sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &role,
+            APP_GENERATION_PASSWORD,
+            APP_GENERATION_EXPIRES_AT,
+        ))
+        .await
+        .expect("prepare the release-manifest App generation");
+    let mut reader_url = url::Url::parse(database_url).expect("the live database URL parses");
+    reader_url
+        .set_username(&role)
+        .expect("name the App generation");
+    reader_url
+        .set_password(Some(APP_GENERATION_PASSWORD))
+        .expect("carry the App generation password");
+    (database, role, reader_url.to_string())
+}
+
+async fn drop_app_generation(admin: &Client, database: &str, role: &str) {
+    admin
+        .batch_execute(&provision_sql::retire_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            database,
+            role,
+        ))
+        .await
+        .expect("retire the release-manifest App generation");
+    admin
+        .batch_execute(&provision_sql::terminate_workload_generation_sessions_sql(
+            role,
+        ))
+        .await
+        .expect("drain the release-manifest App generation");
+    admin
+        .batch_execute(&format!("DROP ROLE \"{role}\""))
+        .await
+        .expect("drop the release-manifest App generation");
 }
 
 async fn provision(admin: &Client) {
@@ -1149,21 +1217,11 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
     // rather than being handed a file a human copied out of PostgreSQL. It runs
     // on the least-privileged production connection, whose forced row-level
     // security reveals the snapshot only under the claimed tenant.
-    admin
-        .batch_execute("ALTER ROLE wamn_app LOGIN PASSWORD 'release-reader'")
-        .await
-        .expect("give the app role a live-test password");
-    let mut reader_url = url::Url::parse(&url).expect("the live database URL parses");
-    reader_url
-        .set_username("wamn_app")
-        .expect("name the app role");
-    reader_url
-        .set_password(Some("release-reader"))
-        .expect("carry the app role password");
+    let (app_database, app_role, reader_url) = prepare_app_generation(&admin, &url).await;
 
     wamn_ctl::push_release_manifest::run(PushReleaseManifestArgs {
         manifest: None,
-        database_url: Some(reader_url.to_string()),
+        database_url: Some(reader_url),
         org: ORG.to_string(),
         project: PROJECT.to_string(),
         tenant: Some(TENANT.to_string()),
@@ -1194,6 +1252,7 @@ async fn the_publish_verbs_carry_a_first_release_from_mint_to_oci() {
     );
 
     std::fs::remove_dir_all(&documents).expect("remove the interim document directory");
+    drop_app_generation(&admin, &app_database, &app_role).await;
     drop(admin);
     let _ = task.await;
 }
@@ -1296,10 +1355,10 @@ async fn a_release_with_no_projected_environment_policy_refuses() {
     );
     assert_no_release_was_frozen(&admin).await;
 
-    // The privilege question this precondition rests on, answered on a role that
-    // does not bypass row security: `wamn_app` may SELECT the relation, and sees
-    // only the tenant its `app.tenant` claim names. The superuser the mint
-    // connects as in this fixture could not have shown either.
+    // The privilege question this precondition rests on, answered on a prepared
+    // App generation that does not bypass row security. Its inherited
+    // `wamn_app` grant reaches the relation, while `current_user` fixes the one
+    // tenant it may see. The superuser the mint uses could prove neither fact.
     admin
         .execute(
             "INSERT INTO wamn_run.environment_policies \
@@ -1309,18 +1368,8 @@ async fn a_release_with_no_projected_environment_policy_refuses() {
         )
         .await
         .expect("project two tenants' environment facts");
-    admin
-        .batch_execute("ALTER ROLE wamn_app LOGIN PASSWORD 'w71b-policy-reader'")
-        .await
-        .expect("give the app role a live-test password");
-    let mut reader_url = url::Url::parse(&url).expect("the live database URL parses");
-    reader_url
-        .set_username("wamn_app")
-        .expect("name the app role");
-    reader_url
-        .set_password(Some("w71b-policy-reader"))
-        .expect("carry the app role password");
-    let (reader, reader_task) = connect(reader_url.as_str()).await;
+    let (app_database, app_role, reader_url) = prepare_app_generation(&admin, &url).await;
+    let (reader, reader_task) = connect(&reader_url).await;
     let bypasses: bool = reader
         .query_one(
             "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user",
@@ -1341,13 +1390,13 @@ async fn a_release_with_no_projected_environment_policy_refuses() {
         .get(0);
     assert!(
         granted,
-        "the production app role cannot SELECT the provisioned environment fact"
+        "the production App generation cannot SELECT the provisioned environment fact"
     );
-    for (claim, visible) in [(TENANT, 1_i64), ("other-tenant", 1), ("absent-tenant", 0)] {
+    for (claim, visible) in [(TENANT, 1_i64), ("other-tenant", 0), ("absent-tenant", 0)] {
         reader
             .execute("SELECT set_config('app.tenant', $1, false)", &[&claim])
             .await
-            .expect("claim the reading tenant");
+            .expect("attempt to spoof the reading tenant");
         let rows: i64 = reader
             .query_one(
                 "SELECT count(*) FROM wamn_run.environment_policies WHERE tenant_id = $1",
@@ -1378,6 +1427,7 @@ async fn a_release_with_no_projected_environment_policy_refuses() {
     std::fs::remove_dir_all(&documents).expect("remove the interim document directory");
     drop(reader);
     let _ = reader_task.await;
+    drop_app_generation(&admin, &app_database, &app_role).await;
     drop(admin);
     let _ = task.await;
 }

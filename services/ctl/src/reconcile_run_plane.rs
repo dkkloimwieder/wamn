@@ -90,9 +90,9 @@ use wamn_schema_control::{
 /// lock-taking members preflight before migration. `FailureDetailCutover` is
 /// the deliberate exception: its one `ALTER TABLE ... DROP COLUMN ... RESTRICT`
 /// is transactional, so a dependent-object refusal rolls back both column drops.
-/// `ensure_wamn_app_role` is
-/// itself a WRITE: it `CREATE ROLE`s `wamn_app`, hardens `wamn_scenario_author`,
-/// and `REVOKE`s the membership between them. So the property this buys is
+/// `ensure_wamn_app_role` is itself a WRITE: it creates or hardens `wamn_app`
+/// as a passwordless NOLOGIN ACL role, hardens `wamn_scenario_author`, and
+/// `REVOKE`s the membership between them. So the property this buys is
 /// **refuse before you mutate** — the reconciler must not create or re-harden
 /// cluster roles on a database it is about to refuse to touch. A refusal fails
 /// the batch, `reconcile` returns `Err`, and the bootstrap below never runs.

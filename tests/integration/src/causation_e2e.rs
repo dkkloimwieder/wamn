@@ -21,7 +21,10 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use crate::release_fixture::{ReleaseFixture, load_release};
-use wamn_control_provision::sql as provision_sql;
+use wamn_control_provision::{
+    APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
+    workload_generation_role,
+};
 use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
 use wamn_control_registry::sql as registry_sql;
 use wamn_event_wire::Op;
@@ -47,15 +50,16 @@ const CDC_BACKEND_TERMINATION_TIMEOUT_MS: i64 = 15_000;
 // Long enough to expose fire-and-forget termination, while automatic resume
 // keeps even a failed cleanup probe independently bounded.
 const CDC_WITNESS_RESUME_DELAY_SECS: u64 = 1;
+const APP_GENERATION_EXPIRES_AT: &str = "2100-01-01T00:00:00Z";
 
-#[derive(Debug, Args)]
+#[derive(Args)]
 pub struct CausationE2eArgs {
     /// The compiled production materializer component.
     #[arg(long, default_value = "/bench/materializer.wasm")]
     pub component: PathBuf,
 
-    /// Loopback application-role URL used as the template for the scratch project database.
-    #[arg(long, env = "WAMN_PG_URL")]
+    /// Job-scoped application-generation URL, populated only after provisioning.
+    #[arg(skip)]
     pub database_url: String,
 
     /// Loopback superuser URL used only to create/drop the scratch project database.
@@ -83,7 +87,7 @@ pub struct CausationE2eArgs {
     pub timeout_secs: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct GateResources {
     job_name: String,
     job_uid: String,
@@ -94,6 +98,8 @@ struct GateResources {
     system_database: String,
     schema: String,
     table: String,
+    app_generation: String,
+    app_password: String,
     cdc_name: String,
     cdc_password: String,
     stream: String,
@@ -146,24 +152,36 @@ impl GateResources {
         let suffix = uid;
         let owner = format!("wamn-m1-job:{}/{}", args.job_name, args.job_uid);
         let tenant = format!("t-{suffix}");
+        let project_database = format!("m1p_{suffix}");
+        let app_generation = workload_generation_role(
+            WorkloadRoleFamily::App,
+            WorkloadRoleScope::Tenant {
+                tenant: &tenant,
+                database: &project_database,
+            },
+            CredentialGeneration::A,
+        )
+        .context("derive the Job-scoped M1 application generation")?;
         let catalog_id = format!("c-{suffix}");
         let registration_id = format!("r-{suffix}");
         let durable = format!("mat_{tenant}_{catalog_id}_{registration_id}");
-        let mut secret = [0u8; 24];
+        let mut secret = [0u8; 48];
         std::fs::File::open("/dev/urandom")
             .context("open operating-system random source")?
             .read_exact(&mut secret)
-            .context("read run-scoped CDC secret")?;
+            .context("read run-scoped PostgreSQL secrets")?;
         let resources = Self {
             job_name: args.job_name.clone(),
             job_uid: args.job_uid.clone(),
             gate_id: format!("wamn-m1-{suffix}"),
-            project_database: format!("m1p_{suffix}"),
+            project_database,
             system_database: format!("m1y_{suffix}"),
             schema: format!("m1s_{suffix}"),
             table: format!("receipts_{suffix}"),
+            app_generation,
+            app_password: hex::encode(&secret[..24]),
             cdc_name: format!("m1cdc_{suffix}"),
-            cdc_password: hex::encode(secret),
+            cdc_password: hex::encode(&secret[24..]),
             stream: format!("M1_{suffix}"),
             org: format!("o-{}", &suffix[..10]),
             project: format!("p-{}", &suffix[10..20]),
@@ -219,6 +237,7 @@ impl GateResources {
             (&self.system_database, "system database"),
             (&self.schema, "scratch schema"),
             (&self.table, "scratch table"),
+            (&self.app_generation, "application generation"),
             (&self.cdc_name, "CDC role/publication/slot"),
         ] {
             pg_identifier(name, label)?;
@@ -270,6 +289,7 @@ impl GateResources {
                 "suffix": self.suffix,
                 "project_database": self.project_database,
                 "system_database": self.system_database,
+                "app_generation": self.app_generation,
                 "cdc_role": self.cdc_name,
                 "schema": self.schema,
                 "table": self.table,
@@ -342,6 +362,7 @@ struct GateState {
 struct SetupLedger {
     project_database: bool,
     system_database: bool,
+    app_generation: bool,
     cdc_role: bool,
     schema: bool,
     publication: bool,
@@ -451,7 +472,7 @@ fn registration_json(resources: &GateResources) -> String {
     .to_json()
 }
 
-fn role_url(admin_url: &str, resources: &GateResources) -> anyhow::Result<String> {
+fn role_url(admin_url: &str, role: &str, password: &str) -> anyhow::Result<String> {
     let plain = admin_url
         .split('?')
         .next()
@@ -462,9 +483,18 @@ fn role_url(admin_url: &str, resources: &GateResources) -> anyhow::Result<String
     let (_, host_and_path) = after_scheme
         .rsplit_once('@')
         .context("PostgreSQL URL must carry userinfo")?;
+    Ok(format!("postgres://{role}:{password}@{host_and_path}"))
+}
+
+fn app_database_url(admin_url: &str, resources: &GateResources) -> anyhow::Result<String> {
+    let plain = role_url(
+        admin_url,
+        &resources.app_generation,
+        &resources.app_password,
+    )?;
     Ok(format!(
-        "postgres://{}:{}@{host_and_path}",
-        resources.cdc_name, resources.cdc_password
+        "{}?sslmode=disable",
+        swap_database(&plain, &resources.project_database)?
     ))
 }
 
@@ -503,7 +533,7 @@ fn disposable_args(
     );
     Ok(CausationE2eArgs {
         component: args.component.clone(),
-        database_url: swap_database(&args.database_url, &resources.project_database)?,
+        database_url: app_database_url(&args.admin_database_url, resources)?,
         admin_database_url: swap_database(&args.admin_database_url, &resources.project_database)?,
         system_database_url: swap_database(&args.system_database_url, &resources.system_database)?,
         nats_url: args.nats_url.clone(),
@@ -518,7 +548,7 @@ async fn provision_databases(
     resources: &GateResources,
     state: &mut GateState,
 ) -> anyhow::Result<CausationE2eArgs> {
-    let project_admin = connect(&args.admin_database_url).await?;
+    let mut project_admin = connect(&args.admin_database_url).await?;
     project_admin
         .batch_execute(&format!("CREATE DATABASE {}", resources.project_database))
         .await
@@ -547,26 +577,45 @@ async fn provision_databases(
 
     // Production converges this cluster-wide floor before granting each
     // workload identity its exact database. The sibling database must start
-    // behind the floor, while the positive M1 path still needs wamn_app on the
-    // project database. M-CONNECT-FLOOR: deleting the floor makes the sibling
-    // logical-replication connection succeed and the named proof below fail.
+    // behind the floor, while the positive M1 path grants CONNECT only to its
+    // Job-scoped App generation. M-CONNECT-FLOOR: deleting the floor makes the
+    // sibling logical-replication connection succeed and the named proof below
+    // fail.
     project_admin
         .batch_execute(provision_sql::revoke_public_connect_floor_sql())
         .await
         .context("converge production PUBLIC CONNECT floor")?;
-    project_admin
-        .batch_execute(&provision_sql::grant_connect_on_database_sql(
+    let generation = project_admin.transaction().await?;
+    generation
+        .batch_execute(&provision_sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
             &resources.project_database,
+            &resources.app_generation,
+            &resources.app_password,
+            APP_GENERATION_EXPIRES_AT,
         ))
         .await
-        .context("grant wamn_app CONNECT on the exact project database")?;
-    disposable_args(args, resources)
+        .context("prepare the Job-scoped M1 application generation")?;
+    generation
+        .batch_execute(&format!(
+            "COMMENT ON ROLE {} IS '{}'",
+            resources.app_generation, resources.owner
+        ))
+        .await
+        .context("mark the Job-scoped M1 application generation owner")?;
+    generation.commit().await?;
+    state.ledger.app_generation = true;
+    require_stable_app_role(&project_admin, Some(&resources.app_generation)).await?;
+    require_app_generation(&project_admin, resources).await?;
+    let disposable = disposable_args(args, resources)?;
+    require_loopback_url(&disposable.database_url, "application generation URL")?;
+    Ok(disposable)
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
         .await
-        .with_context(|| format!("connect PostgreSQL at {url}"))?;
+        .context("connect PostgreSQL")?;
     tokio::spawn(async move {
         let _ = connection.await;
     });
@@ -601,11 +650,6 @@ fn expected_sidecar_hba() -> serde_json::Value {
             "auth": "trust", "error": null
         },
         {
-            "type": "host", "database": ["all"], "user": ["wamn_app"],
-            "address": "127.0.0.1", "netmask": "255.255.255.255",
-            "auth": "trust", "error": null
-        },
-        {
             "type": "host", "database": ["all"], "user": ["all"],
             "address": "all", "netmask": null,
             "auth": "scram-sha-256", "error": null
@@ -622,7 +666,6 @@ fn require_exact_sidecar_hba(observed: &serde_json::Value) -> anyhow::Result<()>
 }
 
 async fn preflight_isolated_postgres(args: &CausationE2eArgs) -> anyhow::Result<Client> {
-    require_loopback_url(&args.database_url, "application URL")?;
     require_loopback_url(&args.admin_database_url, "project admin URL")?;
     require_loopback_url(&args.system_database_url, "system admin URL")?;
     ensure!(
@@ -669,16 +712,14 @@ async fn preflight_isolated_postgres(args: &CausationE2eArgs) -> anyhow::Result<
 }
 
 async fn setup_isolated_roles(admin: &mut Client, resources: &GateResources) -> anyhow::Result<()> {
+    let app_role = provision_sql::ensure_app_acl_role_sql();
     let transaction = admin.transaction().await?;
     transaction
         .batch_execute(&format!(
-            "DO $m1$ BEGIN \
+            "{app_role} \
+             DO $m1$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN \
                  CREATE ROLE wamn_system LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOREPLICATION NOBYPASSRLS; \
-               END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-                 CREATE ROLE wamn_app LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOREPLICATION NOBYPASSRLS; \
                END IF; \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN \
@@ -704,8 +745,12 @@ async fn setup_isolated_roles(admin: &mut Client, resources: &GateResources) -> 
         .await
         .context("create canonical roles inside isolated PostgreSQL")?;
     transaction.commit().await?;
+    admin
+        .batch_execute(&provision_sql::drain_app_role_sessions_sql())
+        .await
+        .context("drain retired shared application-role sessions")?;
     require_role(admin, "wamn_system", true, true).await?;
-    require_role(admin, "wamn_app", true, true).await?;
+    require_stable_app_role(admin, None).await?;
     require_role(admin, "wamn_scenario_author", false, false).await?;
     require_role(admin, "wamn_effect_writer", false, false).await?;
     require_role(admin, "wamn_run_projection_writer", false, false).await?;
@@ -736,6 +781,72 @@ async fn require_role(
             && !row.get::<_, bool>(5)
             && !row.get::<_, bool>(6),
         "pre-existing PostgreSQL role {role} has privilege drift"
+    );
+    Ok(())
+}
+
+async fn require_stable_app_role(
+    client: &Client,
+    expected_generation: Option<&str>,
+) -> anyhow::Result<()> {
+    let row = client
+        .query_opt(provision_sql::workload_generation_state_sql(), &[&APP_ROLE])
+        .await?
+        .context("the stable wamn_app ACL role is absent")?;
+    let expected_members = expected_generation
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    ensure!(
+        !row.get::<_, bool>("rolcanlogin")
+            && !row.get::<_, bool>("rolsuper")
+            && !row.get::<_, bool>("rolinherit")
+            && !row.get::<_, bool>("rolcreaterole")
+            && !row.get::<_, bool>("rolcreatedb")
+            && !row.get::<_, bool>("rolreplication")
+            && !row.get::<_, bool>("rolbypassrls")
+            && !row.get::<_, bool>("password_set")
+            && row.get::<_, Vec<String>>("memberships").is_empty()
+            && row.get::<_, bool>("membership_options_exact")
+            && row.get::<_, Vec<String>>("member_roles") == expected_members
+            && row.get::<_, bool>("member_options_exact")
+            && row.get::<_, bool>("generation_children_exact")
+            && row.get::<_, Vec<String>>("connect_databases").is_empty()
+            && row.get::<_, i64>("sessions") == 0
+            && row.get::<_, i64>("owned_objects") == 0,
+        "stable wamn_app is not the exact passwordless NOLOGIN NOINHERIT ACL carrier"
+    );
+    Ok(())
+}
+
+async fn require_app_generation(client: &Client, resources: &GateResources) -> anyhow::Result<()> {
+    let row = client
+        .query_opt(
+            provision_sql::workload_generation_state_sql(),
+            &[&resources.app_generation],
+        )
+        .await?
+        .context("the Job-scoped M1 application generation is absent")?;
+    ensure!(
+        row.get::<_, bool>("rolcanlogin")
+            && !row.get::<_, bool>("rolsuper")
+            && row.get::<_, bool>("rolinherit")
+            && !row.get::<_, bool>("rolcreaterole")
+            && !row.get::<_, bool>("rolcreatedb")
+            && !row.get::<_, bool>("rolreplication")
+            && !row.get::<_, bool>("rolbypassrls")
+            && row.get::<_, bool>("password_set")
+            && row.get::<_, bool>("valid_until_finite")
+            && row.get::<_, Option<String>>("valid_until").as_deref()
+                == Some(APP_GENERATION_EXPIRES_AT)
+            && row.get::<_, Vec<String>>("memberships") == vec![APP_ROLE.to_string()]
+            && row.get::<_, bool>("membership_options_exact")
+            && row.get::<_, Vec<String>>("member_roles").is_empty()
+            && row.get::<_, Vec<String>>("connect_databases")
+                == vec![resources.project_database.clone()]
+            && row.get::<_, i64>("sessions") == 0
+            && row.get::<_, i64>("owned_objects") == 0,
+        "Job-scoped M1 application generation is not an exact active credential"
     );
     Ok(())
 }
@@ -819,7 +930,8 @@ async fn setup_project(
         .query_one("SELECT current_database()", &[])
         .await?
         .get(0);
-    require_role(&admin, "wamn_app", true, true).await?;
+    require_stable_app_role(&admin, Some(&resources.app_generation)).await?;
+    require_app_generation(&admin, resources).await?;
     require_role(&admin, "wamn_scenario_author", false, false).await?;
     require_role(&admin, "wamn_effect_writer", false, false).await?;
     require_role(&admin, "wamn_run_projection_writer", false, false).await?;
@@ -967,7 +1079,11 @@ fn reader_args(args: &CausationE2eArgs, resources: &GateResources) -> anyhow::Re
         project: resources.project.clone(),
         env: resources.env.clone(),
         system_database_url: args.system_database_url.clone(),
-        cdc_url: role_url(&args.admin_database_url, resources)?,
+        cdc_url: role_url(
+            &args.admin_database_url,
+            &resources.cdc_name,
+            &resources.cdc_password,
+        )?,
         nats_url: args.nats_url.clone(),
         stream_replicas: 1,
     })
@@ -1001,7 +1117,11 @@ fn prove_replication_protocol_confinement(
     args: &CausationE2eArgs,
     resources: &GateResources,
 ) -> anyhow::Result<PgReplicationConnection> {
-    let own_plain = role_url(&args.admin_database_url, resources)?;
+    let own_plain = role_url(
+        &args.admin_database_url,
+        &resources.cdc_name,
+        &resources.cdc_password,
+    )?;
     let own_logical_url = replication_url(&own_plain, "database");
 
     // Positive control: the repository's production HBA rule admits a logical
@@ -1132,7 +1252,11 @@ async fn prove_cdc_dml_confinement(
     // this actual boundary attempt; UPDATE/DELETE-only mutants fail inventory.
     let sql_url = format!(
         "{}?sslmode=disable",
-        role_url(&args.admin_database_url, resources)?
+        role_url(
+            &args.admin_database_url,
+            &resources.cdc_name,
+            &resources.cdc_password,
+        )?
     );
     let (client, connection) = tokio_postgres::connect(&sql_url, NoTls)
         .await
@@ -1223,6 +1347,14 @@ async fn commit_tenant_event(
     resources: &GateResources,
 ) -> anyhow::Result<()> {
     let mut app = connect(&args.database_url).await?;
+    let current_user: String = app
+        .query_one("SELECT current_user::text", &[])
+        .await?
+        .get(0);
+    ensure!(
+        current_user == resources.app_generation,
+        "tenant commit did not dial the Job-scoped M1 application generation"
+    );
     app.batch_execute(&format!(
         "SET search_path TO {}; SET app.tenant TO '{}';",
         resources.schema, resources.tenant
@@ -2186,8 +2318,15 @@ async fn cleanup(
             .await;
             let role =
                 postgres_owner(&project_admin, "pg_roles", "pg_authid", &resources.cdc_name).await;
-            let database_owned = match database {
-                Ok(None) => false,
+            let app_generation = postgres_owner(
+                &project_admin,
+                "pg_roles",
+                "pg_authid",
+                &resources.app_generation,
+            )
+            .await;
+            let (database_owned, mut database_absent) = match database {
+                Ok(None) => (false, true),
                 Ok(Some(owner)) => match require_owner(
                     "database",
                     &resources.project_database,
@@ -2195,15 +2334,15 @@ async fn cleanup(
                     resources,
                     state.ledger.project_database || durable_owner,
                 ) {
-                    Ok(()) => true,
+                    Ok(()) => (true, false),
                     Err(error) => {
                         errors.push(error.to_string());
-                        false
+                        (false, false)
                     }
                 },
                 Err(error) => {
                     errors.push(format!("inspect project database ownership: {error:#}"));
-                    false
+                    (false, false)
                 }
             };
             let role_owned = match role {
@@ -2226,6 +2365,28 @@ async fn cleanup(
                     false
                 }
             };
+            let (app_generation_owned, mut app_generation_confined) = match app_generation {
+                Ok(None) => (false, true),
+                Ok(Some(owner)) => match require_owner(
+                    "role",
+                    &resources.app_generation,
+                    owner.as_deref(),
+                    resources,
+                    state.ledger.app_generation,
+                ) {
+                    Ok(()) => (true, false),
+                    Err(error) => {
+                        errors.push(error.to_string());
+                        (false, false)
+                    }
+                },
+                Err(error) => {
+                    errors.push(format!(
+                        "inspect application generation ownership: {error:#}"
+                    ));
+                    (false, false)
+                }
+            };
             if role_owned
                 && let Err(error) = project_admin
                     .batch_execute(&format!("ALTER ROLE {} NOLOGIN", resources.cdc_name))
@@ -2233,7 +2394,42 @@ async fn cleanup(
             {
                 errors.push(format!("disable CDC role: {error:#}"));
             }
-            if database_owned && cdc_sessions_quiesced {
+            if app_generation_owned {
+                match project_admin
+                    .batch_execute(&format!(
+                        "ALTER ROLE {} NOLOGIN PASSWORD NULL",
+                        resources.app_generation
+                    ))
+                    .await
+                {
+                    Ok(()) => match project_admin
+                        .query_one(
+                            "SELECT count(*) FROM pg_stat_activity \
+                             WHERE usename=$1 AND datname IS DISTINCT FROM $2",
+                            &[&resources.app_generation, &resources.project_database],
+                        )
+                        .await
+                    {
+                        Ok(row) => {
+                            let off_scratch: i64 = row.get(0);
+                            if off_scratch == 0 {
+                                app_generation_confined = true;
+                            } else {
+                                errors.push(format!(
+                                    "exact application generation had {off_scratch} off-scratch session(s)"
+                                ));
+                            }
+                        }
+                        Err(error) => errors.push(format!(
+                            "inspect exact application-generation sessions: {error:#}"
+                        )),
+                    },
+                    Err(error) => errors.push(format!(
+                        "disable exact application generation before cleanup: {error:#}"
+                    )),
+                }
+            }
+            if database_owned && cdc_sessions_quiesced && app_generation_confined {
                 let scratch_url =
                     swap_database(&args.admin_database_url, &resources.project_database);
                 match scratch_url {
@@ -2294,6 +2490,38 @@ async fn cleanup(
                     .await
                 {
                     errors.push(format!("drop exact project database: {error:#}"));
+                } else {
+                    database_absent = true;
+                }
+            }
+            if app_generation_owned && app_generation_confined && database_absent {
+                match project_admin
+                    .query_one(
+                        "SELECT count(*) FROM pg_stat_activity WHERE usename=$1",
+                        &[&resources.app_generation],
+                    )
+                    .await
+                {
+                    Ok(row) if row.get::<_, i64>(0) == 0 => {
+                        if let Err(error) = project_admin
+                            .batch_execute(&format!(
+                                "DROP OWNED BY {}; DROP ROLE {}",
+                                resources.app_generation, resources.app_generation
+                            ))
+                            .await
+                        {
+                            errors.push(format!(
+                                "drop exact application generation: {error:#}"
+                            ));
+                        }
+                    }
+                    Ok(row) => errors.push(format!(
+                        "exact application-generation sessions remained after database cleanup: count={}",
+                        row.get::<_, i64>(0)
+                    )),
+                    Err(error) => errors.push(format!(
+                        "verify application-generation sessions after database cleanup: {error:#}"
+                    )),
                 }
             }
             if role_owned
@@ -2490,6 +2718,28 @@ async fn verify_clean(
             }
             match project_admin
                 .query_one(
+                    "SELECT NOT EXISTS (SELECT FROM pg_roles WHERE rolname=$1)",
+                    &[&resources.app_generation],
+                )
+                .await
+            {
+                Ok(row) => record_absence(
+                    &mut errors,
+                    phase,
+                    "app-generation",
+                    &resources.app_generation,
+                    row.get::<_, bool>(0),
+                ),
+                Err(error) => record_unknown(
+                    &mut errors,
+                    phase,
+                    "app-generation",
+                    &resources.app_generation,
+                    &error.to_string(),
+                ),
+            }
+            match project_admin
+                .query_one(
                     "SELECT count(*) FROM pg_stat_activity WHERE usename=$1",
                     &[&resources.cdc_name],
                 )
@@ -2538,6 +2788,7 @@ async fn verify_clean(
                 ("cdc-role", resources.cdc_name.as_str()),
                 ("cdc-role-login", resources.cdc_name.as_str()),
                 ("cdc-role-sessions", resources.cdc_name.as_str()),
+                ("app-generation", resources.app_generation.as_str()),
                 ("schema", resources.schema.as_str()),
                 ("table", resources.table.as_str()),
                 ("publication", resources.cdc_name.as_str()),
@@ -2805,7 +3056,7 @@ mod tests {
     fn args() -> CausationE2eArgs {
         CausationE2eArgs {
             component: "/bench/materializer.wasm".into(),
-            database_url: "postgres://wamn_app@127.0.0.1:5432/postgres?sslmode=disable".into(),
+            database_url: String::new(),
             admin_database_url: "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable"
                 .into(),
             system_database_url: "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable"
@@ -2952,15 +3203,23 @@ mod tests {
         let base = args();
         let resources = GateResources::from_args(&base).unwrap();
         let scoped = disposable_args(&base, &resources).unwrap();
-        require_loopback_url(&base.database_url, "application URL").unwrap();
+        require_loopback_url(&scoped.database_url, "application generation URL").unwrap();
         require_loopback_url(&base.admin_database_url, "admin URL").unwrap();
-        assert_eq!(
-            scoped.database_url,
-            format!(
-                "postgres://wamn_app@127.0.0.1:5432/{}?sslmode=disable",
-                resources.project_database
-            )
+        assert!(
+            scoped
+                .database_url
+                .starts_with(&format!("postgres://{}:", resources.app_generation))
         );
+        assert!(
+            scoped
+                .database_url
+                .contains(&format!(":{}@", resources.app_password))
+        );
+        assert!(scoped.database_url.ends_with(&format!(
+            "@127.0.0.1:5432/{}?sslmode=disable",
+            resources.project_database
+        )));
+        assert!(!scoped.database_url.contains("postgres://wamn_app@"));
         assert_eq!(
             scoped.admin_database_url,
             format!(
@@ -3000,10 +3259,11 @@ mod tests {
         assert!(!job.contains("host ${project_database} ${cdc_role}"));
         assert!(!job.contains("host all ${cdc_role}"));
         let admin_allow = job.find("local all postgres trust").unwrap();
-        let app_allow = job.find("host all wamn_app 127.0.0.1/32 trust").unwrap();
         let production = job.find("host all all all scram-sha-256").unwrap();
-        assert!(admin_allow < app_allow && app_allow < production);
-        assert!(job.contains("postgres://wamn_app@127.0.0.1:5432/postgres"));
+        assert!(admin_allow < production);
+        assert!(!job.contains("host all wamn_app"));
+        assert!(!job.contains("WAMN_PG_URL"));
+        assert!(!job.contains("postgres://wamn_app"));
         assert!(job.contains("value: sha256:POST_BUILD_MAIN_IMAGE_ID"));
         assert!(job.contains("M1_MAIN_IMAGE_ID=%s"));
         assert!(!job.contains("m1-388c99b3-debug"));
@@ -3031,7 +3291,7 @@ mod tests {
         // guard; the live START/BACKUP probes also kill coupled broadening.
         let mut physical_admission = exact.as_array().unwrap().clone();
         physical_admission.insert(
-            3,
+            2,
             serde_json::json!({
                 "type": "host", "database": ["replication"], "user": ["all"],
                 "address": "all", "netmask": null,
@@ -3041,7 +3301,7 @@ mod tests {
         assert!(require_exact_sidecar_hba(&serde_json::Value::Array(physical_admission)).is_err());
 
         let mut reordered = exact.as_array().unwrap().clone();
-        reordered.swap(2, 3);
+        reordered.swap(1, 2);
         assert!(require_exact_sidecar_hba(&serde_json::Value::Array(reordered)).is_err());
     }
 
@@ -3066,17 +3326,19 @@ mod tests {
         assert_eq!(first.system_database, retry.system_database);
         assert_eq!(first.schema, retry.schema);
         assert_eq!(first.table, retry.table);
+        assert_eq!(first.app_generation, retry.app_generation);
         assert_eq!(first.cdc_name, retry.cdc_name);
         assert_eq!(first.stream, retry.stream);
         assert_eq!(first.durable, retry.durable);
         assert_eq!(first.report_dir, retry.report_dir);
-        assert_ne!(first.cdc_password, retry.cdc_password);
+        assert!(first.app_password != retry.app_password);
+        assert!(first.cdc_password != retry.cdc_password);
         assert_ne!(first.owner, retry.owner);
 
         let mut second_args = args();
         second_args.job_uid = "22345678-1234-4abc-8def-1234567890ab".into();
         let second = GateResources::from_args(&second_args).unwrap();
-        assert_ne!(first, second);
+        assert!(first != second);
         for identifier in [
             &first.project_database,
             &first.system_database,
@@ -3087,6 +3349,11 @@ mod tests {
             assert!(identifier.len() <= 63);
             assert!(identifier.contains(&first.suffix));
         }
+        assert!(first.app_generation.len() <= 63);
+        assert!(first.app_generation.starts_with("wamn_app_"));
+        let record = first.resource_record();
+        assert!(record.get("app_password").is_none());
+        assert!(record.get("cdc_password").is_none());
         assert!(first.stream.len() <= 255);
         assert!(first.durable.len() <= 255);
         assert!(first.durable.contains(&first.suffix));

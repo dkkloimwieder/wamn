@@ -8,7 +8,8 @@
 //!   (`wamn-ctl provision-project`), then prove routing/resolution
 //!   (a marker witness resolved through the plugin's own `StaticCredentialProvider`),
 //!   database-level isolation (no cross-database queries), least privilege
-//!   (`wamn_app` is `NOSUPERUSER NOCREATEDB`), and the emitted `Secret` layout.
+//!   (the App generation is `NOSUPERUSER NOCREATEDB`), and the emitted legacy
+//!   `Secret` layout without dialing its retired stable-role credential.
 //! * **orgpair** — a **dedicated** org with two project-envs (`prod` + `dev`) as
 //!   two per-project-env databases (`wamn-db-<org>--<project>--<env>--<instance>`, provisioned
 //!   via the REAL wamn-q3n.7 role/create/grant builders as a plain-SQL stand-in for
@@ -37,8 +38,9 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::saga as provision_saga;
 use wamn_control_provision::{
-    APP_ROLE, DB_OWNER_ROLE, compose_url, database_name, project_env_database_name,
-    render_project_env_secret_manifest, secret, sql,
+    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
+    compose_url, database_name, project_env_database_name, project_env_guest_secret_name,
+    render_guest_secret_manifest, secret, sql, workload_generation_role,
 };
 use wamn_control_registry::sql as reg_sql;
 use wamn_control_registry::{Org, OrgEnvPolicy, Template, Triple};
@@ -86,7 +88,11 @@ const PROJECT_A: &str = "provbench-a";
 const PROJECT_B: &str = "provbench-b";
 const MARKER_A: i32 = 111;
 const MARKER_B: i32 = 222;
-const APP_PASSWORD: &str = "wamn_app";
+const TENANT_A: &str = "provbench-a-tenant";
+const TENANT_B: &str = "provbench-b-tenant";
+const LEGACY_APP_PASSWORD: &str = "wamn_app";
+const APP_GENERATION_PASSWORD: &str = "provisionbench-app-generation";
+const APP_GENERATION_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 
 pub async fn run(args: ProvisionBenchArgs) -> anyhow::Result<()> {
     let admin_url = args.admin_database_url.as_deref().context(
@@ -143,12 +149,13 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
     //    fresh CREATE ... OWNER clause.
     create_admin_owned_legacy_database(admin_url, PROJECT_A).await?;
 
-    // 2. Provision both projects through the production path; capture the
-    //    emitted app-role URLs. A must converge; B must arrive correctly owned.
-    let url_a = provision_project(admin_url, PROJECT_A)
+    // 2. Provision both projects through the production path; capture its
+    //    retained stable-role URLs as output-shape evidence only. A must
+    //    converge; B must arrive correctly owned.
+    let legacy_url_a = provision_project(admin_url, PROJECT_A)
         .await
         .context("provision project a")?;
-    let url_b = provision_project(admin_url, PROJECT_B)
+    let _legacy_url_b = provision_project(admin_url, PROJECT_B)
         .await
         .context("provision project b")?;
     assert_legacy_database_authority(admin_url).await?;
@@ -160,10 +167,27 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
     let replay_url_a = provision_project(admin_url, PROJECT_A)
         .await
         .context("re-provision app-owned project a")?;
-    if replay_url_a != url_a {
+    if replay_url_a != legacy_url_a {
         bail!("re-provision changed project a's emitted credential URL");
     }
     assert_legacy_database_authority(admin_url).await?;
+
+    // The legacy URL above is never dialed. Revoke the stable role's retained
+    // legacy CONNECT grants before any positive session, then use the
+    // production generation derivation and preparation lifecycle.
+    admin_batch(
+        admin_url,
+        &format!(
+            "REVOKE CONNECT ON DATABASE \"{}\" FROM \"{APP_ROLE}\"; \
+             REVOKE CONNECT ON DATABASE \"{}\" FROM \"{APP_ROLE}\";",
+            database_name(PROJECT_A),
+            database_name(PROJECT_B),
+        ),
+        "retire legacy stable-role CONNECT grants",
+    )
+    .await?;
+    let url_a = prepare_app_generation(admin_url, &database_name(PROJECT_A), TENANT_A).await?;
+    let url_b = prepare_app_generation(admin_url, &database_name(PROJECT_B), TENANT_B).await?;
 
     // 3. Seed each database with a distinct marker (routing witness) and a
     //    project-private table (isolation witness). provision-project delivers
@@ -182,15 +206,13 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
         .context("parse emitted projects-file json")?;
     let provider = StaticCredentialProvider::new(projects, None);
 
-    // Resolved as a PLATFORM class: the witness below is about which PROJECT a
-    // credential routes to. Guest resolution additionally verifies the
-    // credential's tenant binding (wamn-0h0g.22.6.7), and mixing the two would
-    // make a routing failure and a tenant-binding failure indistinguishable.
+    // Resolve as the production guest class so the same proof covers database
+    // routing and the generation login's tenant binding.
     let cfg_a = provider
-        .resolve(PROJECT_A, AuthorityClass::ExecutorPlatform, None)?
+        .resolve(PROJECT_A, AuthorityClass::GuestSql, Some(TENANT_A))?
         .with_context(|| format!("resolve {PROJECT_A}"))?;
     let cfg_b = provider
-        .resolve(PROJECT_B, AuthorityClass::ExecutorPlatform, None)?
+        .resolve(PROJECT_B, AuthorityClass::GuestSql, Some(TENANT_B))?
         .with_context(|| format!("resolve {PROJECT_B}"))?;
 
     // 5a. Routing witness: each resolved URL reaches its own project's database.
@@ -211,28 +233,29 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
     assert_invisible(&client_b, "only_in_a").await?;
     println!("  isolation: each project's connection cannot see the other's tables");
 
-    // 5c. Least privilege: the resolved connection is the NOSUPERUSER/NOCREATEDB
-    //     runtime role (read from the app connection itself).
+    // 5c. Least privilege: the resolved connection is the
+    //     NOSUPERUSER/NOCREATEDB App generation (read from itself).
     let (is_super, can_createdb) = role_attrs(&client_a).await?;
     if is_super || can_createdb {
-        bail!("least-privilege FAIL: wamn_app super={is_super} createdb={can_createdb}");
+        bail!("least-privilege FAIL: App generation super={is_super} createdb={can_createdb}");
     }
-    println!("  least privilege: wamn_app is NOSUPERUSER NOCREATEDB");
+    println!("  least privilege: App generation is NOSUPERUSER NOCREATEDB");
 
     drop(client_a);
     drop(client_b);
     let _ = task_a.await;
     let _ = task_b.await;
 
-    // 6. Credential layout: the emitted Secret carries the name + URL 5x0.1 reads.
-    let sec = secret::render_secret_manifest(PROJECT_A, "wamn-system", &url_a);
+    // 6. Legacy output layout: `.12.185` still owns deleting this stable-role
+    //    URL. Pin its Secret shape, but do not use it for authentication.
+    let sec = secret::render_secret_manifest(PROJECT_A, "wamn-system", &legacy_url_a);
     let ok_name = sec["metadata"]["name"] == format!("wamn-db-{PROJECT_A}");
-    let ok_url = sec["stringData"]["url"] == url_a;
+    let ok_url = sec["stringData"]["url"] == legacy_url_a;
     if !ok_name || !ok_url {
-        bail!("secret layout FAIL: name_ok={ok_name} url_ok={ok_url} ({sec})");
+        bail!("secret layout FAIL: name_ok={ok_name} url_ok={ok_url}");
     }
     println!(
-        "  secret layout: {} carries the app-role url",
+        "  legacy secret layout: {} carries the stable-role output URL (not dialed)",
         sec["metadata"]["name"]
     );
 
@@ -251,7 +274,7 @@ async fn provision_project(admin_url: &str, project: &str) -> anyhow::Result<Str
         "--project",
         project,
         "--app-password",
-        APP_PASSWORD,
+        LEGACY_APP_PASSWORD,
     ])
     .await?;
     let stdout = String::from_utf8(output.stdout).context("provision output is UTF-8")?;
@@ -290,8 +313,9 @@ async fn create_admin_owned_legacy_database(admin_url: &str, project: &str) -> a
     .await
 }
 
-/// Drift a provisioned database onto the guest-reachable login role so replay
-/// proves that ownership convergence precedes the CONNECT grant.
+/// Drift a provisioned database onto the retired stable App ACL role so replay
+/// proves that ownership convergence precedes the legacy CONNECT grant. This is
+/// a posture fixture, not an authentication path.
 async fn drift_legacy_database_to_app_owner(admin_url: &str, project: &str) -> anyhow::Result<()> {
     let db = database_name(project);
     admin_batch(
@@ -301,10 +325,10 @@ async fn drift_legacy_database_to_app_owner(admin_url: &str, project: &str) -> a
              DO $$ BEGIN \
                ASSERT (SELECT pg_get_userbyid(datdba) FROM pg_database \
                         WHERE datname = '{db}') = '{APP_ROLE}', \
-                 'login-owner drift must take before replay'; \
+                 'stable-role owner drift must take before replay'; \
              END $$;"
         ),
-        "drift legacy database onto login owner",
+        "drift legacy database onto stable App role owner",
     )
     .await
 }
@@ -358,14 +382,50 @@ async fn admin_batch(admin_url: &str, sql: &str, context: &str) -> anyhow::Resul
     Ok(())
 }
 
+fn app_generation_role(tenant: &str, database: &str) -> anyhow::Result<String> {
+    workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant { tenant, database },
+        CredentialGeneration::A,
+    )
+    .context("derive App generation")
+}
+
+async fn prepare_app_generation(
+    admin_url: &str,
+    database: &str,
+    tenant: &str,
+) -> anyhow::Result<String> {
+    let role = app_generation_role(tenant, database)?;
+    admin_batch(
+        admin_url,
+        &sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            database,
+            &role,
+            APP_GENERATION_PASSWORD,
+            APP_GENERATION_EXPIRES_AT,
+        ),
+        "prepare App generation",
+    )
+    .await?;
+    app_url_for(admin_url, database, tenant)
+}
+
 /// Drop both gate project databases (pure builder), if present. Autocommit.
 async fn drop_projects(admin_url: &str) -> anyhow::Result<()> {
     let (client, task) = connect(admin_url).await.context("admin connect")?;
-    for project in [PROJECT_A, PROJECT_B] {
+    for (project, tenant) in [(PROJECT_A, TENANT_A), (PROJECT_B, TENANT_B)] {
+        let database = database_name(project);
         client
             .batch_execute(&sql::drop_database_sql(project))
             .await
-            .with_context(|| format!("drop {}", database_name(project)))?;
+            .with_context(|| format!("drop {database}"))?;
+        let role = app_generation_role(tenant, &database)?;
+        client
+            .batch_execute(&format!("DROP ROLE IF EXISTS \"{role}\""))
+            .await
+            .with_context(|| format!("drop App generation for {database}"))?;
     }
     drop(client);
     let _ = task.await;
@@ -406,6 +466,10 @@ struct EnvSpec {
     env: &'static str,
     instance: &'static str,
     marker: i32,
+}
+
+fn tier_tenant(org: &Org, project: &str, environment: &str) -> String {
+    format!("{}-{project}-{environment}", org.id)
 }
 
 /// A **dedicated** org (the `standard` template: owns per-recovery-domain
@@ -478,19 +542,18 @@ async fn tier_scenario(
     // Clean slate for the per-project-env databases (a prior failed run).
     drop_env_dbs(admin_url, org, project, envs).await?;
 
-    // 1. Provision each project-env database (the plain-SQL stand-in for the CNPG
-    //    Database CRD: ensure the shared role, CREATE DATABASE with the
-    //    per-project-env name, confine CONNECT), seed a routing + isolation
-    //    witness, and compose the app-role URL — collected into the projects-file
-    //    JSON the plugin resolves.
+    // 1. Provision each project-env database (the plain-SQL stand-in for the
+    //    CNPG Database CRD), prepare its tenant-scoped App generation, seed a
+    //    routing + isolation witness, and collect the generation URL into the
+    //    projects-file JSON the plugin resolves.
     let mut entries = serde_json::Map::new();
     for spec in envs {
         wamn_control_provision::validate_project_env(&org.id, project, spec.env)
             .map_err(|e| anyhow::anyhow!("project-env name: {e}"))?;
         let db = project_env_database_name(&org.id, project, spec.env, spec.instance);
-        provision_env_scaffold(admin_url, &db).await?;
+        let tenant = tier_tenant(org, project, spec.env);
+        let url = provision_env_scaffold(admin_url, &db, &tenant).await?;
         seed_env_witness(admin_url, &db, project, spec.env, spec.marker).await?;
-        let url = app_url_for(admin_url, &db)?;
         entries.insert(db.clone(), secret::projects_file_entry(&url));
     }
 
@@ -507,10 +570,9 @@ async fn tier_scenario(
     let mut conns: Vec<(&'static str, Client, Conn)> = Vec::new();
     for spec in envs {
         let db = project_env_database_name(&org.id, project, spec.env, spec.instance);
-        // Routing witness again: a PLATFORM class, so a project-env routing
-        // failure cannot be confused with a tenant-binding refusal.
+        let tenant = tier_tenant(org, project, spec.env);
         let cfg = provider
-            .resolve(&db, AuthorityClass::ExecutorPlatform, None)?
+            .resolve(&db, AuthorityClass::GuestSql, Some(&tenant))?
             .with_context(|| format!("resolve {db}"))?;
         let (client, task) = connect(&cfg.database_url)
             .await
@@ -547,33 +609,36 @@ async fn tier_scenario(
         println!("  isolation: single project-env database (per-DB isolation is the orgpair mode)");
     }
 
-    // 2c. Least privilege (read from the app connection itself).
+    // 2c. Least privilege (read from the App generation itself).
     let (is_super, can_createdb) = role_attrs(&conns[0].1).await?;
     if is_super || can_createdb {
-        bail!("least-privilege FAIL: wamn_app super={is_super} createdb={can_createdb}");
+        bail!("least-privilege FAIL: App generation super={is_super} createdb={can_createdb}");
     }
-    println!("  least privilege: wamn_app is NOSUPERUSER NOCREATEDB");
+    println!("  least privilege: App generation is NOSUPERUSER NOCREATEDB");
 
     for (_, client, task) in conns {
         drop(client);
         let _ = task.await;
     }
 
-    // 2d. Credential layout: the per-project-env Secret carries the db name, URL,
-    //     and the identity triple (labels).
+    // 2d. Credential layout: the App-generation Secret carries its URL, tenant
+    //     key, and identity triple.
     let triple0 = Triple::new(&org.id, project, envs[0].env);
     let db0 = project_env_database_name(&org.id, project, envs[0].env, envs[0].instance);
-    let url0 = app_url_for(admin_url, &db0)?;
-    let sec = render_project_env_secret_manifest(&triple0, "wamn-system", &url0);
-    let ok_name = sec["metadata"]["name"]
-        == wamn_control_provision::project_env_secret_name(&org.id, project, envs[0].env);
+    let tenant0 = tier_tenant(org, project, envs[0].env);
+    let url0 = app_url_for(admin_url, &db0, &tenant0)?;
+    let tenant_key = wamn_control_provision::tenant_key::tenant_key(&tenant0, &db0);
+    let sec = render_guest_secret_manifest(&triple0, "wamn-system", &tenant0, &tenant_key, &url0);
+    let ok_name =
+        sec["metadata"]["name"] == project_env_guest_secret_name(&org.id, project, envs[0].env);
     let ok_url = sec["stringData"]["url"] == url0;
     let ok_labels = sec["metadata"]["labels"]["wamn.org"] == org.id.as_str()
-        && sec["metadata"]["labels"]["wamn.env"] == envs[0].env;
+        && sec["metadata"]["labels"]["wamn.env"] == envs[0].env
+        && sec["metadata"]["labels"]["wamn.tenant-key"] == tenant_key;
     if !ok_name || !ok_url || !ok_labels {
-        bail!("secret layout FAIL: name={ok_name} url={ok_url} labels={ok_labels} ({sec})");
+        bail!("secret layout FAIL: name={ok_name} url={ok_url} labels={ok_labels}");
     }
-    println!("  secret layout: {db0} carries the app-role url + identity triple");
+    println!("  secret layout: {db0} carries the App-generation url + identity triple");
 
     // 3. Registry rows: the org, its template-stamped policy set (8df.4 — the
     //    composite (org, env) FK requires them before any project-env row), its
@@ -729,25 +794,36 @@ async fn tier_scenario(
     Ok(())
 }
 
-/// Provision one per-project-env database as superuser scaffolding: ensure the
-/// shared role, `CREATE DATABASE` (the per-project-env name), confine CONNECT.
-async fn provision_env_scaffold(admin_url: &str, db: &str) -> anyhow::Result<()> {
+/// Provision one per-project-env database as superuser scaffolding, then prepare
+/// the exact tenant-scoped App generation that may connect to it.
+async fn provision_env_scaffold(admin_url: &str, db: &str, tenant: &str) -> anyhow::Result<String> {
     let (client, task) = connect(admin_url).await.context("admin connect")?;
     client
-        .batch_execute(&sql::ensure_app_role_sql(APP_PASSWORD))
+        .batch_execute(&sql::ensure_app_role_sql(LEGACY_APP_PASSWORD))
         .await
         .context("ensure wamn_app role")?;
+    client
+        .batch_execute(&sql::drain_app_role_sessions_sql())
+        .await
+        .context("drain retired wamn_app login sessions")?;
     client
         .batch_execute(&sql::create_database_named_sql(db))
         .await
         .with_context(|| format!("create database {db}"))?;
     client
-        .batch_execute(&sql::grant_connect_on_database_sql(db))
+        .batch_execute(sql::revoke_public_connect_floor_sql())
         .await
-        .with_context(|| format!("confine CONNECT on {db}"))?;
+        .context("converge cluster PUBLIC CONNECT floor")?;
+    client
+        .batch_execute(&format!(
+            "REVOKE CONNECT, TEMPORARY ON DATABASE \"{db}\" FROM PUBLIC; \
+             REVOKE CONNECT ON DATABASE \"{db}\" FROM \"{APP_ROLE}\";"
+        ))
+        .await
+        .with_context(|| format!("converge stable-role posture on {db}"))?;
     drop(client);
     let _ = task.await;
-    Ok(())
+    prepare_app_generation(admin_url, db, tenant).await
 }
 
 /// Seed a routing marker + a per-env private table into a project-env database.
@@ -792,6 +868,12 @@ async fn drop_env_dbs(
             .batch_execute(&sql::drop_database_named_sql(&db))
             .await
             .with_context(|| format!("drop {db}"))?;
+        let tenant = tier_tenant(org, project, spec.env);
+        let role = app_generation_role(&tenant, &db)?;
+        client
+            .batch_execute(&format!("DROP ROLE IF EXISTS \"{role}\""))
+            .await
+            .with_context(|| format!("drop App generation for {db}"))?;
     }
     drop(client);
     let _ = task.await;
@@ -804,9 +886,9 @@ fn private_table(project: &str, env: &str) -> String {
     format!("only_in_{}_{}", project.replace('-', "_"), env)
 }
 
-/// Compose the app-role connection URL for a project-env database, reusing the
-/// superuser URL's host/port (the app role reaches the same cluster).
-fn app_url_for(admin_url: &str, db: &str) -> anyhow::Result<String> {
+/// Compose one prepared App-generation URL, reusing the superuser URL's host and
+/// port while naming only the exact database in its tenant scope.
+fn app_url_for(admin_url: &str, db: &str, tenant: &str) -> anyhow::Result<String> {
     let config: tokio_postgres::Config = admin_url.parse().context("parse admin database url")?;
     let host = config
         .get_hosts()
@@ -817,7 +899,8 @@ fn app_url_for(admin_url: &str, db: &str) -> anyhow::Result<String> {
         })
         .context("admin url has no TCP host")?;
     let port = config.get_ports().first().copied().unwrap_or(5432);
-    Ok(compose_url(APP_ROLE, APP_PASSWORD, &host, port, db))
+    let role = app_generation_role(tenant, db)?;
+    Ok(compose_url(&role, APP_GENERATION_PASSWORD, &host, port, db))
 }
 
 // ============================================================================

@@ -6,23 +6,29 @@
 //!
 //! One test per adjudicated class:
 //! - `users` / `roles` / `user_roles` / `permissions` / `api_keys` are the rows
-//!   the trust chain reads as authorization INPUT, so `wamn_app` may read them
-//!   and nothing more;
+//!   the trust chain reads as authorization INPUT, so an App generation may
+//!   inherit their stable `wamn_app` reads and nothing more;
 //! - `audit_log` takes appends from the audited party and refuses rewrites;
 //! - `configurations` stays fully writable — the class the platform has no
 //!   jurisdiction over, and the control proving the other two tests fail for the
 //!   revoked privilege rather than for an over-broad narrowing.
 //!
-//! Gated on `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness provisions
-//! `wamn_app`) and skipped cleanly when unset — the `tests/schema.rs`
+//! Gated on `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness prepares one
+//! tenant-scoped App generation) and skipped cleanly when unset — the `tests/schema.rs`
 //! live-apply convention.
 
 use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+};
+
 /// The tenant every probe runs under, and the user its seeded rows belong to.
 const TENANT: &str = "t1";
 const U1: &str = "11111111-1111-1111-1111-111111111111";
+const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
+const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
 /// Each test rebuilds `app_system` in the target database, so they take turns
 /// (cargo runs the tests in one binary on parallel threads).
@@ -45,16 +51,49 @@ fn live_url(test: &str) -> Option<String> {
     }
 }
 
-/// The superuser prelude: a production-shaped `wamn_app` (NOSUPERUSER, no
-/// BYPASSRLS), a fresh `app_system` applied verbatim from the DDL of record, and
-/// one tenant's rows for the probes to aim at. Seeded as the superuser, so the
-/// seed itself is unaffected by the grants under test.
-fn prelude() -> String {
-    let mut script = String::from(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-         CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$;\n\
-         DROP SCHEMA IF EXISTS app_system CASCADE;\n",
+fn current_database(url: &str) -> String {
+    use std::process::Command;
+
+    let output = Command::new("psql")
+        .arg(url)
+        .args(["-X", "-Atq", "-c", "SELECT current_database()"])
+        .output()
+        .expect("spawn psql (is it installed?)");
+    assert!(
+        output.status.success(),
+        "current_database() probe failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let database = String::from_utf8(output.stdout).expect("database name is utf-8");
+    let database = database.trim();
+    assert!(!database.is_empty(), "current_database() returned no name");
+    database.to_owned()
+}
+
+/// The superuser prelude: a production-prepared tenant-scoped App generation,
+/// the stable passwordless `wamn_app` ACL carrier it inherits, a fresh
+/// `app_system` applied verbatim from the DDL of record, and one tenant's rows.
+/// Seeded as the superuser, so the seed itself is unaffected by the grants under
+/// test. Returns the generation name for the probes' `current_user`.
+fn prelude(url: &str) -> (String, String) {
+    let database = current_database(url);
+    let app_generation = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("App accepts tenant scope");
+    let mut script = sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &database,
+        &app_generation,
+        APP_GENERATION_PASSWORD,
+        APP_GENERATION_VALID_UNTIL,
+    );
+    script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
     script.push_str(&app_schema_sql());
     script.push_str(&format!(
         r#"
@@ -67,7 +106,7 @@ INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALU
 INSERT INTO app_system.audit_log (tenant_id, actor_id, action) VALUES ('{TENANT}','{U1}','user.login');
 "#
     ));
-    script
+    (app_generation, script)
 }
 
 const TEARDOWN: &str = "\nDROP SCHEMA app_system CASCADE;\n";
@@ -101,14 +140,14 @@ fn run(url: &str, script: &str) {
 }
 
 /// The five relations the trust chain resolves `app.user_id` / `app.role` from
-/// are readable by `wamn_app` and writable by nobody through it: author SQL that
+/// are readable through `wamn_app` and writable by nobody through it: author SQL that
 /// could insert its own `user_roles` row would be minting the input its own
 /// generated policies are then evaluated against.
 ///
-/// Each denied statement is RLS-LEGAL for the probe tenant — same tenant claim,
+/// Each denied statement is RLS-LEGAL for the probe tenant — same generation,
 /// FKs satisfied, no key collision — so `42501` here is the revoked privilege and
 /// not a `WITH CHECK` rejection, which shares the SQLSTATE. That the tenant floor
-/// does admit such a row under `wamn_app` is what the other two tests prove.
+/// does admit such a row under the App generation is what the other two tests prove.
 #[test]
 fn author_sql_cannot_write_the_relations_that_authorize_it() {
     let Some(url) = live_url("author_sql_cannot_write_the_relations_that_authorize_it") else {
@@ -116,7 +155,7 @@ fn author_sql_cannot_write_the_relations_that_authorize_it() {
     };
     let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
 
-    let mut script = prelude();
+    let (app_generation, mut script) = prelude(&url);
     script.push_str(&format!(
         r#"
 DO $$
@@ -133,12 +172,13 @@ BEGIN
 END $$;
 
 BEGIN;
-SET LOCAL ROLE wamn_app;
-SET LOCAL app.tenant = '{TENANT}';
+SET LOCAL ROLE {app_generation};
 
 DO $$ BEGIN
+  ASSERT current_user = '{app_generation}',
+    'the tenant authority is the prepared App generation';
   ASSERT (SELECT count(*) FROM app_system.users) = 1,
-    'the tenant claim is live and users is still readable';
+    'the generation-derived tenant is live and users is still readable';
   ASSERT (SELECT count(*) FROM app_system.user_roles) = 1,
     'the role linkage 4.2 resolves app.role from is still readable';
 END $$;
@@ -184,7 +224,7 @@ ROLLBACK;
 /// header's append-only claim is actually cashed.
 ///
 /// The successful append also proves the tenant floor admits a well-formed
-/// same-tenant row under `wamn_app`, which is what lets the sibling test read a
+/// same-tenant row under the App generation, which is what lets the sibling test read a
 /// `42501` as "privilege revoked" rather than "policy rejected".
 #[test]
 fn the_audited_party_may_append_to_its_trail_but_not_rewrite_it() {
@@ -193,7 +233,7 @@ fn the_audited_party_may_append_to_its_trail_but_not_rewrite_it() {
     };
     let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
 
-    let mut script = prelude();
+    let (app_generation, mut script) = prelude(&url);
     script.push_str(&format!(
         r#"
 DO $$ BEGIN
@@ -210,10 +250,11 @@ DO $$ BEGIN
 END $$;
 
 BEGIN;
-SET LOCAL ROLE wamn_app;
-SET LOCAL app.tenant = '{TENANT}';
+SET LOCAL ROLE {app_generation};
 
 DO $$ BEGIN
+  ASSERT current_user = '{app_generation}',
+    'the tenant authority is the prepared App generation';
   INSERT INTO app_system.audit_log (tenant_id, actor_id, action)
     VALUES ('{TENANT}', '{U1}', 'probe.append');
   ASSERT (SELECT count(*) FROM app_system.audit_log) = 2,
@@ -253,7 +294,7 @@ fn a_project_still_owns_its_own_configuration() {
     };
     let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
 
-    let mut script = prelude();
+    let (app_generation, mut script) = prelude(&url);
     script.push_str(&format!(
         r#"
 DO $$
@@ -266,10 +307,11 @@ BEGIN
 END $$;
 
 BEGIN;
-SET LOCAL ROLE wamn_app;
-SET LOCAL app.tenant = '{TENANT}';
+SET LOCAL ROLE {app_generation};
 
 DO $$ BEGIN
+  ASSERT current_user = '{app_generation}',
+    'the tenant authority is the prepared App generation';
   INSERT INTO app_system.configurations (tenant_id, config_key, config_value)
     VALUES ('{TENANT}', 'probe', 'true'::jsonb);
   ASSERT (SELECT count(*) FROM app_system.configurations WHERE config_key = 'probe') = 1,

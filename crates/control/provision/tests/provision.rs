@@ -5,10 +5,11 @@
 //! (no DB dependency in the crate), the wamn-schema-compiler / wamn-schema-compiler / wamn-schema-compiler pattern.
 //!
 //! It drives the **real** builders and asserts their effects on the live
-//! cluster: the least-privilege app role and NOLOGIN title role exist, the
-//! project database is created under the title role, and CONNECT is confined to
-//! `wamn_app` with `PUBLIC` revoked (the isolation backstop — dropping either
-//! half of `grant_connect_sql` fails an assertion).
+//! cluster: a legacy password-bearing app LOGIN converges to the passwordless
+//! NOLOGIN ACL role, the NOLOGIN title role exists, the project database is
+//! created under the title role, and CONNECT is confined to `wamn_app` with
+//! `PUBLIC` revoked (the isolation backstop — dropping either half of
+//! `grant_connect_sql` fails an assertion).
 //! End-to-end routing / resolution / cross-database isolation is the
 //! `provisionbench` gate's job (it needs two live app-role connections).
 
@@ -33,8 +34,22 @@ fn provisioning_builders_apply_on_postgres() {
     // Clean slate (a prior failed run may have left the database).
     script.push_str(&sql::drop_database_sql(project));
     script.push_str(";\n");
+    // Seed the retired shared-login posture so this proves convergence, not
+    // only the fresh-create arm. The candidate is test-owned and deliberately
+    // unrelated to any historical production password.
+    script.push_str(
+        "DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
+             CREATE ROLE wamn_app LOGIN PASSWORD 'retired-shared-probe' INHERIT; \
+           ELSE \
+             ALTER ROLE wamn_app LOGIN PASSWORD 'retired-shared-probe' INHERIT; \
+           END IF; \
+         END $$;\n",
+    );
     // The real builders under test.
     script.push_str(&sql::ensure_app_role_sql("wamn_app"));
+    script.push('\n');
+    script.push_str(&sql::drain_app_role_sessions_sql());
     script.push('\n');
     script.push_str(sql::ensure_db_owner_role_sql());
     script.push('\n');
@@ -68,14 +83,18 @@ fn provisioning_builders_apply_on_postgres() {
            END IF; \
          END $$;\n"
     ));
-    // The shared app role is least-privilege.
+    // The shared app role is a stable passwordless NOLOGIN ACL carrier.
     script.push_str(
         "DO $$ DECLARE r pg_roles%ROWTYPE; BEGIN \
            SELECT * INTO r FROM pg_roles WHERE rolname = 'wamn_app'; \
            IF r IS NULL THEN RAISE EXCEPTION 'wamn_app role missing'; END IF; \
-           IF r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolbypassrls THEN \
-             RAISE EXCEPTION 'wamn_app is not least-privilege (super=% createdb=% createrole=% bypassrls=%)', \
-               r.rolsuper, r.rolcreatedb, r.rolcreaterole, r.rolbypassrls; \
+           IF r.rolcanlogin OR r.rolsuper OR r.rolcreatedb OR r.rolcreaterole \
+              OR r.rolinherit OR r.rolreplication OR r.rolbypassrls THEN \
+             RAISE EXCEPTION 'wamn_app is not a NOLOGIN ACL role'; \
+           END IF; \
+           IF (SELECT rolpassword IS NOT NULL FROM pg_authid \
+                WHERE rolname = 'wamn_app') THEN \
+             RAISE EXCEPTION 'wamn_app retained a password verifier'; \
            END IF; \
          END $$;\n",
     );

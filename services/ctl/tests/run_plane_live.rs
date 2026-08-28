@@ -417,9 +417,15 @@ async fn seed_run_admission_facts(
 /// reader left behind by another gate against the same container would make
 /// `current_noop_leg`'s first plan legitimately non-empty. `DROP OWNED BY` is
 /// what makes the role droppable: `DROP ROLE` refuses while any acl entry
-/// anywhere still names it. `wamn_app` and the two writer roles are only
-/// created-or-hardened because other legs dial them.
+/// anywhere still names it. `wamn_app` and the two writer roles are created or
+/// hardened because the run-plane DDL and reconciler name them.
 async fn reset(su: &Client) {
+    su.batch_execute(&provision_sql::ensure_app_acl_role_sql())
+        .await
+        .expect("harden stable app ACL role");
+    su.batch_execute(&provision_sql::drain_app_role_sessions_sql())
+        .await
+        .expect("drain retired app login sessions after hardening commit");
     su.batch_execute(&format!(
         "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
          DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
@@ -437,9 +443,6 @@ async fn reset(su: &Client) {
              EXECUTE 'DROP ROLE {DISPATCH_READER_ROLE}'; \
            END IF; \
          END $reader$; \
-         DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
-           THEN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOBYPASSRLS; \
-         END IF; END $$; \
          DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
              CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
@@ -466,7 +469,7 @@ async fn reset(su: &Client) {
          REVOKE wamn_scenario_author FROM wamn_app; \
          DO $$ BEGIN \
            EXECUTE format( \
-             'GRANT CONNECT ON DATABASE %I TO wamn_app', current_database() \
+             'REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database() \
            ); \
            EXECUTE format( \
              'REVOKE CONNECT ON DATABASE %I FROM wamn_effect_writer, wamn_run_projection_writer', current_database() \
@@ -2483,12 +2486,9 @@ async fn drop_generation_role(su: &Client, role: &str) {
 ///
 /// The login name is DERIVED by the production builder, never spelled, so the
 /// digest under test is the digest `provision-project-env` would mint. The
-/// membership edge is written here rather than taken from
-/// `normalize_workload_generation_membership_sql`: that builder composes
-/// `ensure_workload_acl_role_sql`, which would harden this fixture's `wamn_app`
-/// to `NOLOGIN PASSWORD NULL` and strand the legs that dial it directly.
-/// `INHERIT TRUE` is spelled because PostgreSQL 16+ matches a policy's `TO`
-/// clause on the PER-EDGE inherit option.
+/// production prepare builder also supplies the exact membership edge, direct
+/// database `CONNECT`, finite expiry and stable-role hardening. No proof
+/// authenticates as the stable `wamn_app` ACL role.
 async fn mint_guest_generation(su: &Client, url: &str, tenant: &str) -> (String, Client) {
     let database: String = su
         .query_one("SELECT current_database()", &[])
@@ -2505,14 +2505,15 @@ async fn mint_guest_generation(su: &Client, url: &str, tenant: &str) -> (String,
     )
     .expect("the guest family takes a tenant scope");
     drop_generation_role(su, &generation).await;
-    su.batch_execute(&format!(
-        "CREATE ROLE \"{generation}\" LOGIN PASSWORD '{GUEST_GENERATION_PASSWORD}' \
-           NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
-         GRANT wamn_app TO \"{generation}\" WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; \
-         GRANT CONNECT ON DATABASE \"{database}\" TO \"{generation}\";"
+    su.batch_execute(&provision_sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &database,
+        &generation,
+        GUEST_GENERATION_PASSWORD,
+        "2100-01-01T00:00:00Z",
     ))
     .await
-    .expect("mint the guest generation login");
+    .expect("mint the guest generation login through the production builder");
     // A SUPERUSER (or BYPASSRLS) FIXTURE MASKS RLS ENTIRELY, so the probe role
     // is asserted unprivileged from `pg_roles` — across everything it inherits,
     // because the attribute is recovered through the whole membership chain.
@@ -4305,8 +4306,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     drop_database(su, sentinel_database).await;
 }
 
-async fn visible_environment_policy_rows(url: &str, tenant: &str) -> i64 {
-    let app = connect_as(url, "wamn_app", "wamn_app").await;
+async fn visible_environment_policy_rows(app: &Client, tenant: &str) -> i64 {
     app.query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])
         .await
         .expect("set app tenant for environment-policy probe");
@@ -4485,6 +4485,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     ))
     .await
     .expect("seed projected environment policy");
+    let (guest_generation, guest) = mint_guest_generation(su, url, "t2").await;
 
     let mutants = [
         (
@@ -4522,7 +4523,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
             .unwrap_or_else(|error| panic!("install {mutant} mutant: {error}"));
         if mutant == "disabled RLS" {
             assert_eq!(
-                visible_environment_policy_rows(url, "t2").await,
+                visible_environment_policy_rows(&guest, "t2").await,
                 1,
                 "the disabled-RLS mutant must expose the foreign tenant row"
             );
@@ -4541,7 +4542,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
         assert_eq!(applied.actions, dry.actions, "{mutant} plan changed");
         if mutant == "disabled RLS" {
             assert_eq!(
-                visible_environment_policy_rows(url, "t2").await,
+                visible_environment_policy_rows(&guest, "t2").await,
                 0,
                 "the repaired policy must hide the foreign tenant row"
             );
@@ -4556,6 +4557,8 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
             again.actions
         );
     }
+    drop(guest);
+    drop_generation_role(su, &guest_generation).await;
 }
 
 /// The idempotence contract: a schema AT the schema of record plans nothing —

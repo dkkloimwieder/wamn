@@ -26,7 +26,7 @@ use wamn_control_provision::{
 };
 use wamn_ctl::provision_project_env::{
     self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadGenerationArgs, privilege_sql, role_sql,
+    WorkloadGenerationArgs, privilege_sql, role_posture_sql,
 };
 
 const ORG: &str = "pg18order";
@@ -201,9 +201,13 @@ async fn reset_cluster(catalog: &Client, database: &str, roles: &[&str]) {
 /// rewrite, which is the ordering hazard `privilege_sql` documents.
 async fn apply_documented_order(catalog: &Client, database: &str) {
     catalog
-        .batch_execute(&role_sql(APP_PASSWORD))
+        .batch_execute(&role_posture_sql(APP_PASSWORD))
         .await
-        .expect("step 1: role SQL");
+        .expect("step 1a: role posture SQL");
+    catalog
+        .batch_execute(&sql::drain_app_role_sessions_sql())
+        .await
+        .expect("step 1b: retired shared-login session drain");
     catalog
         .batch_execute(&format!("CREATE DATABASE \"{database}\""))
         .await
@@ -269,6 +273,18 @@ async fn the_documented_provisioning_order_completes_end_to_end() {
         .expect("read converged database owner")
         .get(0);
     assert_eq!(owner, "wamn_db_owner");
+
+    // This is the role batch's own post-state, before generation preparation
+    // gets any chance to harden it as a side effect.
+    let stable_before_prepare = role_state(&catalog, APP_ROLE)
+        .await
+        .expect("the role batch created the stable guest ACL role");
+    assert!(
+        !stable_before_prepare.get::<_, bool>("rolcanlogin")
+            && !stable_before_prepare.get::<_, bool>("rolinherit")
+            && !stable_before_prepare.get::<_, bool>("password_set"),
+        "role_sql must itself leave wamn_app NOLOGIN, NOINHERIT and passwordless"
+    );
 
     let target_url = database_url(&admin_url, &database);
     let path_a = secret_path("a");

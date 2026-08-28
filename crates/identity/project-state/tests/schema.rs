@@ -3,18 +3,24 @@
 //! Two layers (the `wamn-control-registry` / `deploy/sql/system-schema.sql` precedent):
 //! - a **drift guard** tying `deploy/sql/app-schema.sql` to the `wamn-project-state`
 //!   model (the schema name, each table + its pinned columns, the RLS floor +
-//!   a45 empty-claim hardening, the `users.status` CHECK literals from
+//!   a45 empty-tenant-row hardening, the `users.status` CHECK literals from
 //!   `UserStatus::as_str`, and the FK cascades);
 //! - a **live-apply gate** proving the DB-enforced behavior — tenant RLS
-//!   isolation, the FK cascades (and audit-log immutability), the empty-claim /
+//!   isolation, the FK cascades (and audit-log immutability), the empty-tenant /
 //!   status CHECKs, and that `users.id` (uuid) + `roles.name` (text) are the
 //!   right targets for a REAL compiled 3.5 RLS policy — gated on
-//!   `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness provisions `wamn_app`)
+//!   `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness prepares App generations)
 //!   and skipped cleanly when unset (mirrors wamn-schema-compiler / wamn-schema-compiler / wamn-control-registry).
 
 use std::path::Path;
 
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+};
 use wamn_project_state::{SCHEMA_NAME, TABLES, UserStatus};
+
+const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
+const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
 fn deploy_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")
@@ -197,9 +203,37 @@ fn fk_cascades_are_pinned() {
 
 // --- live-apply gate --------------------------------------------------------
 
+fn current_database(url: &str) -> String {
+    use std::process::Command;
+
+    let output = Command::new("psql")
+        .arg(url)
+        .args(["-X", "-Atq", "-c", "SELECT current_database()"])
+        .output()
+        .expect("spawn psql (is it installed?)");
+    assert!(
+        output.status.success(),
+        "current_database() probe failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let database = String::from_utf8(output.stdout).expect("database name is utf-8");
+    let database = database.trim();
+    assert!(!database.is_empty(), "current_database() returned no name");
+    database.to_owned()
+}
+
+fn app_generation(database: &str, tenant: &str) -> String {
+    workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant { tenant, database },
+        CredentialGeneration::A,
+    )
+    .expect("App accepts tenant scope")
+}
+
 /// Apply `deploy/sql/app-schema.sql` to a throwaway Postgres and assert the live,
 /// DB-enforced behavior. Set `WAMN_SYSSCHEMA_PG_URL` to a superuser URL (the
-/// harness provisions `wamn_app`); skipped when unset.
+/// harness prepares tenant-scoped App generations); skipped when unset.
 #[test]
 fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
     let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
@@ -230,14 +264,32 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
+    const TENANT_1: &str = "t1";
+    const TENANT_2: &str = "t2";
 
-    let mut script = String::new();
-    // Provision wamn_app (NOSUPERUSER, no BYPASSRLS — as in production) and a
-    // fresh app_system + a test schema for the data table.
+    let database = current_database(&url);
+    let tenant_1_app = app_generation(&database, TENANT_1);
+    let tenant_2_app = app_generation(&database, TENANT_2);
+
+    // Production preparation hardens the stable ACL carrier to passwordless
+    // NOLOGIN/NOINHERIT and makes each tenant generation the only LOGIN.
+    let mut script = sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &database,
+        &tenant_1_app,
+        APP_GENERATION_PASSWORD,
+        APP_GENERATION_VALID_UNTIL,
+    );
+    script.push('\n');
+    script.push_str(&sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &database,
+        &tenant_2_app,
+        APP_GENERATION_PASSWORD,
+        APP_GENERATION_VALID_UNTIL,
+    ));
     script.push_str(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-         CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$;\n\
-         DROP SCHEMA IF EXISTS app_system CASCADE;\n\
+        "\nDROP SCHEMA IF EXISTS app_system CASCADE;\n\
          DROP SCHEMA IF EXISTS wamn_sysschema_test CASCADE;\n",
     );
     // The schema itself (deploy/sql/app-schema.sql, applied verbatim as the superuser).
@@ -269,12 +321,13 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
          INSERT INTO wamn_sysschema_test.docs (tenant_id, owner_id, body) VALUES ('t1','{U1}','a'),('t1','{U2}','b');\n"
     ));
 
-    // Tenant isolation as wamn_app under app.tenant='t1': sees only t1's rows.
-    script.push_str(
+    // Tenant isolation follows current_user's prepared scope: tenant 1 sees only
+    // tenant 1's rows without any settable tenant claim.
+    script.push_str(&format!(
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
-         SET LOCAL app.tenant = 't1';\n\
+         SET LOCAL ROLE {tenant_1_app};\n\
          DO $$ BEGIN\n\
+           ASSERT current_user='{tenant_1_app}', 'tenant authority is the prepared tenant-1 generation';\n\
            ASSERT (SELECT count(*) FROM app_system.users)=2, 't1 sees its 2 users, not t2''s';\n\
            ASSERT (SELECT count(*) FROM app_system.roles)=1, 't1 sees its role';\n\
            ASSERT (SELECT count(*) FROM app_system.user_roles)=1, 't1 sees its grant';\n\
@@ -283,44 +336,46 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
            ASSERT (SELECT count(*) FROM app_system.configurations)=1, 't1 sees its config';\n\
            ASSERT (SELECT count(*) FROM app_system.audit_log)=2, 't1 sees its 2 audit rows';\n\
          END $$;\n\
-         COMMIT;\n",
-    );
-    // The other tenant sees only ITS row; an empty claim sees nothing (a45).
-    script.push_str(
+         COMMIT;\n"
+    ));
+    // Tenant 2 sees only its row. Spoofing the retired app.tenant claim does not
+    // move tenant 1, and the stable ACL carrier itself maps to no tenant.
+    script.push_str(&format!(
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
-         SET LOCAL app.tenant = 't2';\n\
+         SET LOCAL ROLE {tenant_2_app};\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=1, 't2 sees only its user'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
+         SET LOCAL ROLE {tenant_1_app};\n\
+         SET LOCAL app.tenant = '{TENANT_2}';\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=2, 'a settable tenant claim cannot spoof tenant 2'; END $$;\n\
+         COMMIT;\n\
+         BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
-         SET LOCAL app.tenant = '';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=0, 'an empty tenant claim sees nothing'; END $$;\n\
-         COMMIT;\n",
-    );
+         SET LOCAL app.tenant = '{TENANT_1}';\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=0, 'the stable ACL carrier derives no tenant'; END $$;\n\
+         COMMIT;\n"
+    ));
     // Claim integration: the compiled 3.5 ownership policy filters the data table
     // by app.user_id (= a users.id) and honors the exempt role (= a roles.name).
     script.push_str(&format!(
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL ROLE {tenant_1_app};\n\
          SET LOCAL search_path TO wamn_sysschema_test;\n\
-         SET LOCAL app.tenant = 't1';\n\
          SET LOCAL app.role = 'inspector';\n\
          SET LOCAL app.user_id = '{U1}';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM docs)=1, 'app.user_id (=a users.id) sees only its own row'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL ROLE {tenant_1_app};\n\
          SET LOCAL search_path TO wamn_sysschema_test;\n\
-         SET LOCAL app.tenant = 't1';\n\
          SET LOCAL app.role = 'admin';\n\
          SET LOCAL app.user_id = '{U2}';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM docs)=2, 'app.role admin (a roles.name) is exempt — sees all'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL ROLE {tenant_1_app};\n\
          SET LOCAL search_path TO wamn_sysschema_test;\n\
-         SET LOCAL app.tenant = 't1';\n\
          SET LOCAL app.role = 'inspector';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM docs)=0, 'no app.user_id claim denies ownership'; END $$;\n\
          COMMIT;\n"

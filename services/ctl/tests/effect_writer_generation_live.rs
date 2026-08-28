@@ -15,8 +15,8 @@ use url::Url;
 
 use wamn_control_provision::{
     CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_ROLE,
-    EffectWriterCredentialScope, WorkloadRoleFamily, effect_writer_generation_role,
-    project_env_database_name, sql,
+    EffectWriterCredentialScope, WorkloadRoleFamily, WorkloadRoleScope,
+    effect_writer_generation_role, project_env_database_name, sql, workload_generation_role,
 };
 use wamn_ctl::provision_project_env::{
     self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
@@ -30,6 +30,8 @@ const ENVIRONMENT: &str = "dev";
 const TENANT: &str = "tenant-live";
 const INSTANCE: &str = "k3m9x2p7";
 const LEDGER_SCHEMA: &str = "wamn_runner_demo";
+const APP_GENERATION_PASSWORD: &str = "effect-writer-app-probe-0123456789abcdef0123456789abcdef";
+const APP_GENERATION_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 
 async fn connect(url: &str) -> Client {
@@ -43,6 +45,17 @@ async fn connect(url: &str) -> Client {
 fn database_url(admin_url: &str, database: &str) -> String {
     let mut url = Url::parse(admin_url).expect("parse PG18 admin URL");
     url.set_path(&format!("/{database}"));
+    url.set_query(None);
+    url.set_fragment(None);
+    url.into()
+}
+
+fn role_database_url(admin_url: &str, database: &str, role: &str, password: &str) -> String {
+    let mut url = Url::parse(admin_url).expect("parse PG18 admin URL");
+    url.set_path(&format!("/{database}"));
+    url.set_username(role).expect("set scoped generation user");
+    url.set_password(Some(password))
+        .expect("set scoped generation password");
     url.set_query(None);
     url.set_fragment(None);
     url.into()
@@ -278,6 +291,15 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
     let role_a = effect_writer_generation_role(TENANT, &database, CredentialGeneration::A);
     let role_b = effect_writer_generation_role(TENANT, &database, CredentialGeneration::B);
+    let app_role = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("derive ordinary App generation");
     catalog
         .batch_execute(&format!(
             "DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)"
@@ -287,16 +309,18 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
     catalog
         .batch_execute(&format!(
             "DROP ROLE IF EXISTS \"{role_a}\"; DROP ROLE IF EXISTS \"{role_b}\"; \
-             DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
-               THEN CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                 NOREPLICATION NOBYPASSRLS; END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles \
+             DROP ROLE IF EXISTS \"{app_role}\"; \
+             DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles \
                               WHERE rolname = 'wamn_run_projection_writer') \
                THEN CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
                  NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; END $$;"
         ))
         .await
         .expect("reset lifecycle roles");
+    catalog
+        .batch_execute(&sql::ensure_app_acl_role_sql())
+        .await
+        .expect("converge stable App ACL role");
     catalog
         .batch_execute(&format!("CREATE DATABASE \"{database}\""))
         .await
@@ -552,18 +576,64 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
             "generation read non-ledger object in {schema}"
         );
     }
-    let app_probe = connect(&target_url).await;
-    app_probe
-        .batch_execute("SET ROLE wamn_app")
+    target
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &app_role,
+            APP_GENERATION_PASSWORD,
+            APP_GENERATION_EXPIRES_AT,
+        ))
         .await
-        .expect("assume ordinary app role");
-    assert!(
-        app_probe
-            .simple_query("INSERT INTO wamn_runner_demo.effect_attempts VALUES (1)")
-            .await
-            .is_err(),
-        "wamn_app wrote the private ledger"
+        .expect("prepare ordinary App generation");
+    let app_probe = connect(&role_database_url(
+        &admin_url,
+        &database,
+        &app_role,
+        APP_GENERATION_PASSWORD,
+    ))
+    .await;
+    let app_identity = app_probe
+        .query_one(
+            "SELECT current_user::text, \
+                    pg_has_role(current_user, 'wamn_app', 'MEMBER')",
+            &[],
+        )
+        .await
+        .expect("inspect ordinary App-generation ledger ACL");
+    assert_eq!(app_identity.get::<_, String>(0), app_role);
+    assert!(app_identity.get::<_, bool>(1));
+    let app_has_insert: bool = target
+        .query_one(
+            "SELECT has_table_privilege($1, \
+                    'wamn_runner_demo.effect_attempts', 'INSERT')",
+            &[&app_role],
+        )
+        .await
+        .expect("inspect ordinary App-generation table privilege")
+        .get(0);
+    assert!(!app_has_insert);
+    let app_insert = app_probe
+        .simple_query("INSERT INTO wamn_runner_demo.effect_attempts VALUES (1)")
+        .await
+        .expect_err("ordinary App generation wrote the private ledger");
+    assert_eq!(
+        app_insert.code(),
+        Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE)
     );
+    drop(app_probe);
+    target
+        .batch_execute(&sql::retire_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &app_role,
+        ))
+        .await
+        .expect("retire ordinary App generation");
+    target
+        .batch_execute(&sql::terminate_workload_generation_sessions_sql(&app_role))
+        .await
+        .expect("terminate ordinary App-generation sessions");
 
     provision_project_env::run(action_args(
         &target_url,
@@ -682,7 +752,9 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         .await
         .expect("drop lifecycle database");
     catalog
-        .batch_execute(&format!("DROP ROLE \"{role_a}\"; DROP ROLE \"{role_b}\";"))
+        .batch_execute(&format!(
+            "DROP ROLE \"{role_a}\"; DROP ROLE \"{role_b}\"; DROP ROLE \"{app_role}\";"
+        ))
         .await
         .expect("clean scoped lifecycle roles while retaining stable ACL roles");
     catalog

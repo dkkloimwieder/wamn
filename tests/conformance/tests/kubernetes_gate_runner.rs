@@ -178,10 +178,11 @@ case "$command" in
           record_uid='22345678-1234-4abc-8def-1234567890ab'
           record_suffix='2234567812344abc8def1234567890ab'
         fi
-        printf 'M1_RESOURCE_RECORD {"job_name":"m1-gate-generated","job_uid":"%s","suffix":"%s","project_database":"m1p","system_database":"m1y","cdc_role":"m1cdc","schema":"m1s","table":"receipts","publication":"m1pub","slot":"m1slot","stream":"M1","durable":"mat","report_dir":"/tmp/m1","org":"o","project":"p","environment":"e","tenant":"t","catalog":"c","flow":"f","registration":"r","entity":"x","root_run":"root","source_run":"source"}\n' "$record_uid" "$record_suffix"
+        printf 'M1_RESOURCE_RECORD {"job_name":"m1-gate-generated","job_uid":"%s","suffix":"%s","project_database":"m1p","system_database":"m1y","app_generation":"m1app","cdc_role":"m1cdc","schema":"m1s","table":"receipts","publication":"m1pub","slot":"m1slot","stream":"M1","durable":"mat","report_dir":"/tmp/m1","org":"o","project":"p","environment":"e","tenant":"t","catalog":"c","flow":"f","registration":"r","entity":"x","root_run":"root","source_run":"source"}\n' "$record_uid" "$record_suffix"
         printf 'M1_MAIN_IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
         entries=(
           'project-database=m1p' 'system-database=m1y'
+          'app-generation=m1app'
           'cdc-role=m1cdc' 'cdc-role-login=m1cdc' 'cdc-role-sessions=m1cdc'
           'schema=m1s' 'table=receipts' 'publication=m1pub' 'slot=m1slot'
           'stream=M1' 'durable=mat' 'report-dir=/tmp/m1' 'org=o' 'project=p'

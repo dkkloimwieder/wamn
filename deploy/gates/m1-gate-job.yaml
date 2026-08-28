@@ -13,13 +13,16 @@
 # The Job uses one build-scoped named tag with imagePullPolicy Never; the runner
 # binds that tag to an identical complete manifest/runtime/config tuple on all
 # three nodes before server dry-run.
-# Both scratch databases and every canonical fixture role live only in that
-# server. The gate uses loopback URLs and no PostgreSQL Secret, Service, DNS
-# name, PVC, or cluster RBAC. The Pod reads its generated Job name and Job UID
-# from automatic Job labels. The full UID is the one run suffix for both
-# disposable databases, CDC role/publication/slot, scratch schema/table,
-# JetStream stream and durable, logical fixture identities, and report
-# directory. Shared PostgreSQL is never contacted.
+# Both scratch databases, every canonical fixture role, and the job-scoped App
+# generation live only in that server. The gate mints the generation credential
+# in-process, dials it through the production SCRAM rule, and does not place it
+# in the manifest or environment. The gate otherwise uses loopback URLs and no
+# PostgreSQL Secret, Service, DNS name, PVC, or cluster RBAC. The Pod reads its
+# generated Job name and Job UID from automatic Job labels. The full UID is the
+# one run suffix for both disposable databases, the App generation, CDC
+# role/publication/slot, scratch schema/table, JetStream stream and durable,
+# logical fixture identities, and report directory. Shared PostgreSQL is never
+# contacted.
 #
 # Preconditions: evt-nats has JetStream enabled. PostgreSQL is self-contained.
 #
@@ -99,7 +102,6 @@ spec:
               cat >"$PGDATA/pg_hba.conf" <<EOF
               local all postgres trust
               host all postgres 127.0.0.1/32 trust
-              host all wamn_app 127.0.0.1/32 trust
               host all all all scram-sha-256
               EOF
               chmod 600 "$PGDATA/pg_hba.conf"
@@ -178,8 +180,6 @@ spec:
                   fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
             - name: WAMN_GATE_MAIN_IMAGE_ID
               value: sha256:POST_BUILD_MAIN_IMAGE_ID
-            - name: WAMN_PG_URL
-              value: postgres://wamn_app@127.0.0.1:5432/postgres?sslmode=disable
             - name: WAMN_PG_ADMIN_URL
               value: postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable
             - name: WAMN_SYSTEM_ADMIN_URL

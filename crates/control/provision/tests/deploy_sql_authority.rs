@@ -419,15 +419,39 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
     };
 
     // HERMETIC, and it has to be: `postgres-init.sql` carries a bare
-    // `CREATE DATABASE wamn` and bare `CREATE ROLE`s, so a second run against a
-    // surviving cluster fails on the first statement — and a run that found the
-    // database already populated would be asserting against LAST run's schema,
-    // not this build's. Roles are CLUSTER-wide, so this gate OWNS its server:
-    // point it only at a disposable one.
+    // `CREATE DATABASE wamn`, and a run that found the database already
+    // populated would be asserting against LAST run's schema, not this build's.
+    // Roles are CLUSTER-wide, so this gate OWNS its server: point it only at a
+    // disposable one.
     reset(&admin);
+    // Seed the retired shared-login posture so the REAL init artifact must
+    // converge it. The candidate is test-owned and deliberately unrelated to
+    // any historical production password.
+    apply(
+        &admin,
+        "CREATE ROLE wamn_app LOGIN PASSWORD 'retired-shared-probe' INHERIT;\n",
+    );
     apply(&admin, POSTGRES_INIT);
+    assert!(
+        POSTGRES_INIT
+            .contains("ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = 'wamn_app'"),
+        "postgres-init.sql must inspect the real verifier catalog, not pg_roles' masked password"
+    );
     let base = admin.rsplit_once('/').expect("url names a database").0;
     let db_url = format!("{base}/wamn");
+    let app_attributes = psql(
+        &db_url,
+        None,
+        "SELECT concat_ws(' ', rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, \
+                rolcreaterole, rolinherit, rolreplication, rolpassword IS NOT NULL) \
+           FROM pg_authid WHERE rolname = 'wamn_app'",
+    );
+    assert_eq!(
+        app_attributes, "f f f f f f f f",
+        "postgres-init.sql did not converge the retired shared LOGIN to a \
+         passwordless NOLOGIN NOINHERIT ACL role (order: login, super, \
+         bypassrls, createdb, createrole, inherit, replication, password set)"
+    );
     for sql in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         apply(&db_url, sql);
     }

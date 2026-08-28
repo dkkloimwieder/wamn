@@ -1,6 +1,10 @@
 //! Persisted status vocabulary and canonical run-state DDL tests.
 
 use serde_json::json;
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
+    workload_generation_role,
+};
 use wamn_run_state::{EffectUncertainFailure, FailKind, RunStatus};
 
 // ---- status vocabularies ---------------------------------------------------
@@ -322,9 +326,25 @@ fn run_delete_is_guarded_by_the_exact_terminal_vocabulary() {
 
 // ---- live-apply gate (optional) --------------------------------------------
 
+fn live_database(url: &str) -> String {
+    let output = std::process::Command::new("psql")
+        .args(["-X", "-Atq", url, "-c", "SELECT current_database()"])
+        .output()
+        .expect("query the live run-state database name");
+    assert!(
+        output.status.success(),
+        "querying the live run-state database name failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("the live run-state database name is UTF-8")
+        .trim()
+        .to_string()
+}
+
 /// Apply `deploy/sql/run-state.sql` to a throwaway Postgres and assert the tenant RLS
 /// isolates rows and the idempotency index dedupes. Gated on
-/// `WAMN_RUN_STORE_PG_URL` (a superuser URL — the harness provisions `wamn_app`);
+/// `WAMN_RUN_STORE_PG_URL` (a superuser URL — the harness prepares an App generation);
 /// skips cleanly when unset. Mirrors the wamn-schema-compiler / wamn-schema-compiler / wamn-schema-compiler gates.
 #[test]
 fn run_state_schema_applies_and_isolates_on_postgres() {
@@ -340,12 +360,46 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         "/../../../deploy/sql/run-state.sql"
     ))
     .expect("read deploy/sql/run-state.sql");
+    let database = live_database(&url);
+    let app_role = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: "t1",
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("derive the live run-state App generation");
+    let prepare_app = provision_sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &database,
+        &app_role,
+        "run-state-store-proof-password",
+        "2099-01-01T00:00:00Z",
+    );
+    let ensure_effect_writer = provision_sql::ensure_effect_writer_acl_role_sql();
+    let retire_app = provision_sql::retire_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &database,
+        &app_role,
+    );
+    let drain_app = provision_sql::terminate_workload_generation_sessions_sql(&app_role);
 
     let mut script = String::new();
-    // Provision wamn_app (NOSUPERUSER/NOBYPASSRLS, like production) + a fresh schema.
-    script.push_str(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-         CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$;\n\
+    // Prepare the production-shaped App identity and a fresh schema.
+    script.push_str(&format!(
+        "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{app_role}') THEN \
+           EXECUTE format('DROP OWNED BY %I', '{app_role}'); \
+           EXECUTE format('DROP ROLE %I', '{app_role}'); \
+         END IF; END $$;\n\
+         DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN \
+             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+         END $$;\n\
+         {ensure_effect_writer}\n\
+         {prepare_app}\n\
          DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
          CREATE SCHEMA catalog;\n\
@@ -355,8 +409,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          );\n\
          INSERT INTO catalog.releases VALUES\n\
            ('t1','run-state-fixture',1), ('t2','run-state-fixture',1),\n\
-           ('t3','run-state-fixture',1);\n",
-    );
+           ('t3','run-state-fixture',1);\n"
+    ));
     script.push_str(&ddl);
     script.push('\n');
     script.push_str(
@@ -377,21 +431,22 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            ('t2','run-b','f',1,'run-state-fixture',1,'test',\
             'fixture-wiring',1,'running','k-b');\n",
     );
-    // As wamn_app under tenant t1: sees only t1's run.
-    script.push_str(
+    // The generation's `current_user` derives tenant t1 and sees only that
+    // tenant's run without trusting a settable claim.
+    script.push_str(&format!(
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL ROLE {app_role};\n\
          SET LOCAL search_path TO wamn_run;\n\
-         SET LOCAL app.tenant = 't1';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM runs) = 1, 't1 sees only its run'; END $$;\n\
-         COMMIT;\n",
-    );
-    // No claim -> zero rows (safe default).
+         COMMIT;\n"
+    ));
+    // Intentional refusal fixture: the stable ACL role carries no tenant key,
+    // so even a superuser's SET ROLE probe sees zero rows.
     script.push_str(
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
          SET LOCAL search_path TO wamn_run;\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM runs) = 0, 'no tenant claim denies all'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM runs) = 0, 'stable role has no tenant'; END $$;\n\
          COMMIT;\n",
     );
     // The idempotency index rejects a duplicate (tenant, key); a different tenant
@@ -419,7 +474,12 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            WHERE tenant_id='t1' AND run_id='run-a';\n\
          DELETE FROM wamn_run.runs WHERE tenant_id='t1' AND run_id='run-a';\n",
     );
-    script.push_str("DROP SCHEMA wamn_run CASCADE; DROP SCHEMA catalog CASCADE;\n");
+    script.push_str(&format!(
+        "DROP SCHEMA wamn_run CASCADE; DROP SCHEMA catalog CASCADE;\n\
+         {retire_app}\n\
+         {drain_app}\n\
+         DROP ROLE \"{app_role}\";\n"
+    ));
 
     use std::io::Write;
     use std::process::{Command as Proc, Stdio};
@@ -440,7 +500,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     let out = child.wait_with_output().unwrap();
     assert!(
         out.status.success(),
-        "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
+        "psql failed:\n--- stderr ---\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
 }

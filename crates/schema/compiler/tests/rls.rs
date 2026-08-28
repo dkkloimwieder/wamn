@@ -5,6 +5,11 @@
 
 use std::path::{Path, PathBuf};
 
+use wamn_control_provision::tenant_key::authority_derivations_sql;
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
+    workload_generation_role,
+};
 use wamn_schema_compiler::rls::{AccessPolicy, Command, CommandGrant, CompileError, Rule, compile};
 use wamn_schema_model::{Catalog, Entity, Field, FieldType};
 
@@ -340,10 +345,26 @@ fn notes_catalog() -> Catalog {
     }
 }
 
+fn live_database(url: &str) -> String {
+    let output = std::process::Command::new("psql")
+        .args(["-X", "-Atq", url, "-c", "SELECT current_database()"])
+        .output()
+        .expect("query the live RLS database name");
+    assert!(
+        output.status.success(),
+        "querying the live RLS database name failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("the live RLS database name is UTF-8")
+        .trim()
+        .to_string()
+}
+
 /// Apply the tenant floor + a compiled ownership policy, then assert the
-/// restrictive policy filters rows for the `wamn_app` role under session claims.
+/// restrictive policy filters rows for a prepared App generation.
 /// Gated on `WAMN_RLS_PG_URL` (a superuser URL — the harness provisions the
-/// `wamn_app` role and an ephemeral schema). Skips cleanly when unset.
+/// generation and an ephemeral schema). Skips cleanly when unset.
 #[test]
 fn compiled_policy_filters_rows_on_postgres() {
     let Ok(url) = std::env::var("WAMN_RLS_PG_URL") else {
@@ -367,54 +388,89 @@ fn compiled_policy_filters_rows_on_postgres() {
 
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
+    const TENANT: &str = "t1";
+
+    let database = live_database(&url);
+    let app_role = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("derive the live RLS App generation");
+    let prepare_app = provision_sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &database,
+        &app_role,
+        "rls-proof-password",
+        "2099-01-01T00:00:00Z",
+    );
+    let retire_app = provision_sql::retire_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &database,
+        &app_role,
+    );
+    let drain_app = provision_sql::terminate_workload_generation_sessions_sql(&app_role);
 
     let mut script = String::new();
-    script.push_str(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-         CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$;\n\
+    script.push_str(&format!(
+        "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{app_role}') THEN \
+           EXECUTE format('DROP OWNED BY %I', '{app_role}'); \
+           EXECUTE format('DROP ROLE %I', '{app_role}'); \
+         END IF; END $$;\n\
+         {}\n\
+         {prepare_app}\n\
+         {}\n\
          DROP SCHEMA IF EXISTS wamn_rls_test CASCADE;\n\
          CREATE SCHEMA wamn_rls_test AUTHORIZATION CURRENT_USER;\n\
          GRANT USAGE ON SCHEMA wamn_rls_test TO wamn_app;\n\
          SET search_path TO wamn_rls_test;\n",
-    );
+        provision_sql::ensure_db_owner_role_sql(),
+        authority_derivations_sql(&database),
+    ));
     script.push_str(&floor.sql().unwrap());
     script.push_str(&policies.sql().unwrap());
     // Seed as the (superuser) owner — superusers bypass RLS.
     script.push_str(&format!(
         "INSERT INTO notes (tenant_id, owner_id, body) VALUES ('t1','{U1}','a'),('t1','{U2}','b');\n"
     ));
-    // As wamn_app with claims: an inspector sees only their own row…
+    // The generation's `current_user` supplies tenant identity; the remaining
+    // policy claims select the inspector's row within that tenant.
     script.push_str(&format!(
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL ROLE {app_role};\n\
          SET LOCAL search_path TO wamn_rls_test;\n\
-         SET LOCAL app.tenant = 't1';\n\
          SET LOCAL app.role = 'inspector';\n\
          SET LOCAL app.user_id = '{U1}';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM notes) = 1, 'inspector sees only own row'; END $$;\n\
          COMMIT;\n"
     ));
     // …an exempt admin sees both…
-    script.push_str(
+    script.push_str(&format!(
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL ROLE {app_role};\n\
          SET LOCAL search_path TO wamn_rls_test;\n\
-         SET LOCAL app.tenant = 't1';\n\
          SET LOCAL app.role = 'admin';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM notes) = 2, 'admin (exempt) sees all rows'; END $$;\n\
-         COMMIT;\n",
-    );
+         COMMIT;\n"
+    ));
     // …and with no user claim, ownership denies everything (safe default).
-    script.push_str(
+    script.push_str(&format!(
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_app;\n\
+         SET LOCAL ROLE {app_role};\n\
          SET LOCAL search_path TO wamn_rls_test;\n\
-         SET LOCAL app.tenant = 't1';\n\
          SET LOCAL app.role = 'inspector';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM notes) = 0, 'no user claim denies all'; END $$;\n\
-         COMMIT;\n",
-    );
-    script.push_str("DROP SCHEMA wamn_rls_test CASCADE;\n");
+         COMMIT;\n"
+    ));
+    script.push_str(&format!(
+        "DROP SCHEMA wamn_rls_test CASCADE;\n\
+         {retire_app}\n\
+         {drain_app}\n\
+         DROP ROLE \"{app_role}\";\n"
+    ));
 
     use std::io::Write;
     use std::process::{Command as Proc, Stdio};
@@ -435,7 +491,7 @@ fn compiled_policy_filters_rows_on_postgres() {
     let out = child.wait_with_output().unwrap();
     assert!(
         out.status.success(),
-        "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
+        "psql failed:\n--- stderr ---\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
 }

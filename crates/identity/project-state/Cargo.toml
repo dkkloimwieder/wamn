@@ -11,6 +11,7 @@ license.workspace = true
 # The live-apply gate proves the schema's uuid/text claim columns are the right
 # targets for a REAL compiled 3.5 RLS policy — so it links the RLS builder and
 # its inputs (dev-only; the crate itself stays dependency-free).
+wamn-control-provision = { workspace = true }
 wamn-schema-model = { workspace = true }
 wamn-schema-compiler = { workspace = true }
 

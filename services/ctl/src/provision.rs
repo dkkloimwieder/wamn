@@ -11,11 +11,12 @@
 //! * a per-project database `wamn-db-<project>`, owned by the stable NOLOGIN
 //!   `wamn_db_owner` title role, empty and RLS-ready — the input 2.4 (system
 //!   schema) consumes;
-//! * the shared, least-privilege `wamn_app` role (idempotently ensured), granted
-//!   `CONNECT` on the project database with `PUBLIC` revoked;
-//! * the app-role connection URL, optionally as a `WAMN_PG_PROJECTS_FILE` entry
-//!   (`--emit-projects-file`) and/or a Kubernetes `Secret` manifest
-//!   (`--emit-secret`, JSON — `kubectl apply -f` accepts it).
+//! * the shared, passwordless NOLOGIN `wamn_app` ACL role (idempotently
+//!   ensured), granted `CONNECT` on the project database with `PUBLIC` revoked;
+//! * the legacy app-role connection URL, optionally as a
+//!   `WAMN_PG_PROJECTS_FILE` entry (`--emit-projects-file`) and/or a Kubernetes
+//!   `Secret` manifest (`--emit-secret`, JSON — `kubectl apply -f` accepts it).
+//!   `wamn-0h0g.12.185` owns removing this now-non-authenticating surface.
 //!
 //! Re-runs are idempotent at the intended boundary (create-if-absent; the
 //! shared-cluster guardrail): an already-provisioned project converges title
@@ -46,9 +47,12 @@ pub struct ProvisionProjectArgs {
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: Option<String>,
 
-    /// Password for the shared `wamn_app` role (used when the role is first
-    /// created and embedded in the emitted URL). Supply it with
+    /// Password embedded in the legacy shared-app URL output. Supply it with
     /// `--app-password` or the env var `WAMN_APP_PASSWORD`.
+    ///
+    /// `wamn-0h0g.12.140` removes it from role SQL: `wamn_app` is a stable
+    /// passwordless NOLOGIN ACL role. The argument and URL output remain until
+    /// `wamn-0h0g.12.185` retires that legacy surface.
     ///
     /// **Deliberately has no `default_value`** — the same shape
     /// `--dispatch-reader-password` takes in `provision-project-env`
@@ -171,11 +175,16 @@ async fn do_provision(
 ) -> anyhow::Result<()> {
     let db = database_name(project);
 
-    // 1. The shared, least-privilege app role (idempotent; pre-created in prod).
+    // 1. The shared passwordless NOLOGIN app ACL role (idempotent; pre-created
+    //    in production). `app_password` is a legacy URL input and the builder
+    //    deliberately does not emit it.
     client
         .batch_execute(&sql::ensure_app_role_sql(app_password))
         .await
         .context("ensure wamn_app role")?;
+    // Session drain is a cluster-wide cutover finalizer, not a per-database
+    // provisioning side effect. The operator applies the emitted role.sql only
+    // after every replacement carrier has been verified.
     client
         .batch_execute(sql::ensure_db_owner_role_sql())
         .await
@@ -263,12 +272,11 @@ mod tests {
         TestCli::from_arg_matches(&matches).map(|cli| cli.args)
     }
 
-    /// No `default_value` on `--app-password` (wamn-0h0g.12.129). A default
-    /// minted the shared `wamn_app` `LOGIN` role — the role guest-authored SQL
-    /// executes as — with a publicly known password; a 2026-08-19 verifier read
-    /// measured it live on every cluster the role existed on, because nothing
-    /// ever overrode it. This test exists so the argument cannot quietly
-    /// re-acquire one.
+    /// No `default_value` on `--app-password` (wamn-0h0g.12.129).
+    ///
+    /// The argument remains for the legacy URL output until
+    /// `wamn-0h0g.12.185`, but it cannot quietly reacquire the default whose
+    /// verifier a 2026-08-19 read measured on every old shared LOGIN.
     #[test]
     fn the_app_password_has_no_default() {
         let error = parse_without_app_password_env(["test", "--project", "billing"])

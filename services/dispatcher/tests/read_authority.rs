@@ -30,7 +30,7 @@
 //!    be a privilege refusal and *not* a row-level-security refusal. Both raise
 //!    SQLSTATE 42501, so a naive probe passes for the wrong reason.
 //! 4. **the denials are not vacuous** — each refused statement is replayed as
-//!    `wamn_app` (the role the dispatcher used to authenticate as) inside a
+//!    a login generation inheriting the matching stable ACL role inside a
 //!    rolled-back transaction, and must SUCCEED there.
 
 use std::io::Write as _;
@@ -49,6 +49,7 @@ const TENANT: &str = "t-a";
 const OTHER_TENANT: &str = "t-b";
 const SCHEMA: &str = "wamn_run";
 const READER_PASSWORD: &str = "dispatch-reader-probe";
+const APP_PASSWORD: &str = "app-generation-probe";
 /// The project-environment triple the probe's database and its dispatch-reader
 /// generation both derive from. Naming it once is what keeps the login the gate
 /// dials and the database it dials into the SAME scope.
@@ -214,8 +215,18 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     // grantee's own database is not exempt. Reverse these two statements and both
     // the preamble and the teardown break.
     let generation = reader_generation(&database);
+    let app_generation = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("App takes a tenant scope");
     let teardown = format!(
-        "{drop_db};\nDROP ROLE IF EXISTS \"{generation}\";\n\
+        "{drop_db};\nDROP ROLE IF EXISTS \"{app_generation}\";\n\
+         DROP ROLE IF EXISTS \"{generation}\";\n\
          DROP ROLE IF EXISTS \"{DISPATCH_READER_ROLE}\";\n",
         drop_db = sql::drop_database_named_sql(&database),
     );
@@ -572,7 +583,8 @@ END $$;
     // Each case carries BOTH forms of the same statement: the plpgsql form the
     // denial probe runs inside its `DO` block (reads use `PERFORM`, whose result
     // has somewhere to go), and the plain-SQL form the non-vacuity arm replays as
-    // `wamn_app`. `None` means no replay is possible — see the ledger case.
+    // a login generation of the role that owns the grant. `None` means no replay
+    // is possible — see the ledger case.
     let insert_queue =
         format!("INSERT INTO run_queue (tenant_id, run_id) VALUES ('{TENANT}','run-a2')");
     let update_queue =
@@ -620,7 +632,17 @@ END $$;
             "2100-01-01T00:00:00Z",
         ),
     );
-    let app_url = role_url(&url, APP_ROLE, APP_ROLE, &database);
+    run_ok(
+        &project_url,
+        &sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &app_generation,
+            APP_PASSWORD,
+            "2100-01-01T00:00:00Z",
+        ),
+    );
+    let app_url = role_url(&url, &app_generation, APP_PASSWORD, &database);
     let admitter_url = role_url(&url, &admitter_generation, READER_PASSWORD, &database);
     for (label, plpgsql, replay) in [
         (

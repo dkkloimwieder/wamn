@@ -286,11 +286,13 @@ with no skip line and a `wamn-db-acme--receiving--dev--k3m9x2p7` database plus
 three minted generation logins left on the server.
 
 Two things are arranged so they cannot go unarmed.
-`deploy/gates/m1-gate-job.yaml` sets `WAMN_PG_URL`, `WAMN_PG_ADMIN_URL`,
+`deploy/gates/m1-gate-job.yaml` sets `WAMN_PG_ADMIN_URL`,
 `WAMN_SYSTEM_ADMIN_URL`, and `WAMN_EVT_NATS_URL` for its own Pod, pointing at a
-self-contained sidecar in that Pod. The benches take their substrate as
-arguments (`--admin-database-url`, `--nats-url`) rather than from the
-environment, so a missing one is a parse error.
+self-contained sidecar in that Pod. M1 derives and prepares its job-scoped App
+generation after provisioning, then constructs its credentialed loopback URL
+in-process. The benches take their substrate as arguments
+(`--admin-database-url`, `--nats-url`) rather than from the environment, so a
+missing one is a parse error.
 
 **Every `wamn-ctl` live gate shares one variable and one lock.**
 `services/ctl/tests/support/mod.rs` builds the name as

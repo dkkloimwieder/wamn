@@ -3,8 +3,8 @@
 //! The sibling `wiring_storage.rs` pins what the DDL *says*. These prove what it
 //! *does*, which no pure test can reach: that the pointer flip and the rollback
 //! are one statement, that the doorbell rings on commit and only on commit, that
-//! a disabled or tombstoned pointer resolves to nothing, that the app role can
-//! serve the read without any grant beyond `SELECT`, and that a document
+//! a disabled or tombstoned pointer resolves to nothing, that an App generation
+//! can serve the read through the stable role's `SELECT`, and that a document
 //! declaring an entry and terminals reaches a CONVERGED database and comes back
 //! out of `graph_json` with the same derived identity.
 //!
@@ -31,7 +31,14 @@ use wamn_catalog::{
     WiringTerminal, flip_activation, previous_confirmed_definition, record_activation_event,
     resolve_active_wiring,
 };
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+};
 use wamn_event_wire::Op;
+
+const TENANT: &str = "t1";
+const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
+const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
 /// Every gate here rewrites the ONE `catalog` schema of the one database
 /// `WAMN_CATALOG_PG_URL` names, so they take turns. Without this the default
@@ -74,6 +81,25 @@ fn success(url: &str, script: &str) -> String {
         "psql failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     stdout
+}
+
+fn current_database(url: &str) -> String {
+    let database = success(url, "SELECT current_database();\n");
+    let database = database.trim();
+    assert!(!database.is_empty(), "current_database() returned no name");
+    database.to_owned()
+}
+
+fn app_generation(database: &str) -> String {
+    workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("App accepts tenant scope")
 }
 
 fn refusal(url: &str, script: &str) -> String {
@@ -123,26 +149,28 @@ fn rung(notice: &WiringActivationNotice) -> (String, bool) {
     (notice.confirmed_definition_hash.clone(), notice.enabled)
 }
 
-fn preamble() -> String {
+fn preamble(database: &str, app_generation: &str) -> String {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let catalog = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
         .expect("read catalog DDL");
+    let prepare_app = sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        database,
+        app_generation,
+        APP_GENERATION_PASSWORD,
+        APP_GENERATION_VALID_UNTIL,
+    );
     format!(
-        "DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-             CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
-           END IF; \
+        "{prepare_app}\n\
+         DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
              CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
            END IF; \
          END $$;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
          {catalog}\n\
-         DO $$ BEGIN \
-           EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_app', current_database()); \
-         END $$;\n\
          GRANT USAGE ON SCHEMA catalog TO wamn_app;\n\
-         SET app.tenant = 't1';\n\
+         SET app.tenant = '{TENANT}';\n\
          INSERT INTO catalog.catalogs \
                 (tenant_id, catalog_id, version, environment, schema_version, state) \
          VALUES ('t1','shop',1,'prod','1','applied'), ('t1','shop',2,'prod','1','draft');\n\
@@ -199,10 +227,12 @@ fn wiring_activation_live() {
     let _database = exclusive();
     let url = std::env::var("WAMN_CATALOG_PG_URL")
         .expect("set WAMN_CATALOG_PG_URL to the throwaway superuser database");
+    let database = current_database(&url);
+    let app_generation = app_generation(&database);
 
     // One psql session throughout: it LISTENs before the first flip, so every
     // doorbell the server delivers lands in this stdout in commit order.
-    let mut script = preamble();
+    let mut script = preamble(&database, &app_generation);
     script.push_str(&format!("LISTEN {WIRING_ACTIVATION_CHANNEL};\n"));
     script.push_str(&prepared());
 
@@ -245,13 +275,15 @@ fn wiring_activation_live() {
     script.push_str(&read("tombstoned"));
     script.push_str("DELETE FROM catalog.wiring_tombstones;\n");
 
-    // The serving role holds SELECT and nothing else: it must resolve the wiring
-    // and must not be able to move the pointer.
-    script.push_str(
-        "BEGIN;\nSET LOCAL ROLE wamn_app;\nSET LOCAL app.tenant = 't1';\n\
+    // The serving generation inherits SELECT and nothing else from the stable
+    // ACL role. Its `current_user` supplies the tenant authority; `app.tenant`
+    // remains only the resolve builder's matching data-value input.
+    script.push_str(&format!(
+        "BEGIN;\nSET LOCAL ROLE {app_generation};\nSET LOCAL app.tenant = '{TENANT}';\n\
+         SELECT 'as_app_user=' || current_user;\n\
          CREATE TEMP TABLE as_app AS EXECUTE resolve('shop','prod','orders-create');\n\
-         SELECT 'as_app=' || coalesce((SELECT version::text FROM as_app), 'dark');\nCOMMIT;\n",
-    );
+         SELECT 'as_app=' || coalesce((SELECT version::text FROM as_app), 'dark');\nCOMMIT;\n"
+    ));
 
     let stdout = success(&url, &script);
     let reported = |label: &str| {
@@ -291,7 +323,12 @@ fn wiring_activation_live() {
     assert_eq!(
         reported("as_app"),
         "1",
-        "the app role serves the read with only its SELECT grant"
+        "the App generation serves the read through the stable role's SELECT grant"
+    );
+    assert_eq!(
+        reported("as_app_user"),
+        app_generation,
+        "the tenant authority must be the prepared App generation"
     );
 
     // The doorbell rings on the INSERT and on every UPDATE, carries the flip's
@@ -338,8 +375,10 @@ fn wiring_activation_live() {
 
     let denied = refusal(
         &url,
-        "BEGIN;\nSET LOCAL ROLE wamn_app;\nSET LOCAL app.tenant = 't1';\n\
-         UPDATE catalog.wiring_activation SET enabled = false;\nCOMMIT;\n",
+        &format!(
+            "BEGIN;\nSET LOCAL ROLE {app_generation};\nSET LOCAL app.tenant = '{TENANT}';\n\
+             UPDATE catalog.wiring_activation SET enabled = false;\nCOMMIT;\n"
+        ),
     );
     assert!(
         denied.contains("permission denied"),
@@ -366,6 +405,8 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
     let _database = exclusive();
     let url = std::env::var("WAMN_CATALOG_PG_URL")
         .expect("set WAMN_CATALOG_PG_URL to the throwaway superuser database");
+    let database = current_database(&url);
+    let app_generation = app_generation(&database);
 
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let schema = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
@@ -441,7 +482,7 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
         )
     };
 
-    let mut script = preamble();
+    let mut script = preamble(&database, &app_generation);
     script.push_str(
         "DROP TABLE catalog.wiring_activation_events, catalog.wiring_activation, \
                     catalog.wiring_tombstones, catalog.wirings CASCADE;\n\

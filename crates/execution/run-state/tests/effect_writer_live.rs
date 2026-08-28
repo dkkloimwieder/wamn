@@ -6,6 +6,9 @@ use std::time::SystemTime;
 
 use tokio_postgres::{Client, NoTls};
 use url::Url;
+use wamn_control_provision::{
+    WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql, workload_generation_role,
+};
 use wamn_run_state::{
     BeginEffectAttempt, CredentialGeneration, EffectAttemptId, EffectWriterCredentialScope,
     EffectWriterCredentialValidity, EffectWriterErrorKind, EffectWriterScope, RecordEffectOutcome,
@@ -14,6 +17,8 @@ use wamn_run_state::{
 
 const EMPTY_HASH: &str = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 const WRITER_PASSWORD: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const APP_GENERATION_PASSWORD: &str = "effect-writer-live-app-0123456789abcdef0123456789abcdef";
+const APP_GENERATION_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
@@ -77,7 +82,7 @@ async fn native_effect_writer_live() {
         .expect("read database identity")
         .get(0);
     let credential_scope = EffectWriterCredentialScope {
-        tenant: "t1".to_string(),
+        tenant: "tenant-live-a".to_string(),
         org: "writer-live-org".to_string(),
         project: "writer-live-project".to_string(),
         environment: "writer-live-env".to_string(),
@@ -88,16 +93,27 @@ async fn native_effect_writer_live() {
         &credential_scope.database,
         CredentialGeneration::A,
     );
+    let app_generation_role = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: "tenant-live-a",
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("derive ordinary App generation");
     let role_identifier = quote_identifier(&generation_role);
+    let app_role_identifier = quote_identifier(&app_generation_role);
     let role_literal = quote_literal(&generation_role);
     let password_literal = quote_literal(WRITER_PASSWORD);
     let database_identifier = quote_identifier(&database);
     admin
+        .batch_execute(&provision_sql::ensure_app_acl_role_sql())
+        .await
+        .expect("converge stable App ACL role");
+    admin
         .batch_execute(&format!(
             "DO $roles$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-                 CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOBYPASSRLS; \
-               END IF; \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN \
                  CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
                    NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
@@ -125,6 +141,16 @@ async fn native_effect_writer_live() {
         .await
         .expect("prepare private writer authority");
     admin
+        .batch_execute(&provision_sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &app_generation_role,
+            APP_GENERATION_PASSWORD,
+            APP_GENERATION_EXPIRES_AT,
+        ))
+        .await
+        .expect("prepare ordinary App generation");
+    admin
         .batch_execute(include_str!("../../../../deploy/sql/catalog-schema.sql"))
         .await
         .expect("apply catalog schema");
@@ -144,6 +170,9 @@ async fn native_effect_writer_live() {
              INSERT INTO catalog.releases \
                (tenant_id,catalog_id,catalog_version) \
              VALUES ('tenant-live-a','writer-catalog',1); \
+             INSERT INTO wamn_run.environment_policies \
+               (tenant_id,expected_environment,durability_class) \
+             VALUES ('tenant-live-a','test','standard'); \
              INSERT INTO wamn_run.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
                 environment,wiring_id,wiring_version,status) \
@@ -327,11 +356,34 @@ async fn native_effect_writer_live() {
     assert_eq!(tenant_counts.get::<_, i64>(0), 1);
     assert_eq!(tenant_counts.get::<_, i64>(1), 0);
 
-    admin
-        .batch_execute("BEGIN; SET LOCAL ROLE wamn_app; SET LOCAL app.tenant='tenant-live-a'")
+    let mut app_url = Url::parse(&admin_url).expect("parse admin URL for ordinary App generation");
+    app_url
+        .set_username(&app_generation_role)
+        .expect("set ordinary App-generation username");
+    app_url
+        .set_password(Some(APP_GENERATION_PASSWORD))
+        .expect("set ordinary App-generation password");
+    app_url.set_query(None);
+    app_url.set_fragment(None);
+    let (app, app_task) = connect(app_url.as_str()).await;
+    app.batch_execute("SET app.tenant='tenant-live-a'")
         .await
-        .expect("enter ordinary application authority");
-    let ordinary_insert = admin
+        .expect("set ordinary App tenant row input");
+    let app_identity = app
+        .query_one(
+            "SELECT current_user::text, \
+                    wamn_authority.current_tenant_key() = \
+                        wamn_authority.tenant_key('tenant-live-a'), \
+                    has_table_privilege( \
+                        current_user, 'wamn_run.effect_attempt_outcomes', 'INSERT')",
+            &[],
+        )
+        .await
+        .expect("inspect ordinary App-generation ledger ACL");
+    assert_eq!(app_identity.get::<_, String>(0), app_generation_role);
+    assert!(app_identity.get::<_, bool>(1));
+    assert!(!app_identity.get::<_, bool>(2));
+    let ordinary_insert = app
         .execute(
             "INSERT INTO wamn_run.effect_attempt_outcomes \
                (tenant_id,attempt_id,dispatched_at,outcome_status) \
@@ -348,10 +400,20 @@ async fn native_effect_writer_live() {
             .code(),
         "42501"
     );
+    drop(app);
+    let _ = app_task.await;
     admin
-        .batch_execute("ROLLBACK")
+        .batch_execute(&provision_sql::retire_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &app_generation_role,
+        ))
         .await
-        .expect("leave ordinary application authority");
+        .expect("retire ordinary App generation");
+    admin
+        .batch_execute(&format!("DROP ROLE {app_role_identifier}"))
+        .await
+        .expect("drop ordinary App generation");
     drop(writer);
     admin
         .batch_execute(&format!(

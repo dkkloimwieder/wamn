@@ -40,18 +40,29 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, bail};
+use anyhow::{Context as _, bail, ensure};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
+    workload_generation_role,
+};
 use wamn_gate_harness::{check, emit_csv, percentile};
 use wamn_schema_compiler::Migration;
 
 const SCHEMA: &str = "wamn_walbench";
 const TENANT: &str = "walbench-tenant";
+const APP_GENERATION_PASSWORD: &str = "walbench-app-generation-0123456789abcdef0123456789abcdef";
+const APP_GENERATION_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 /// The retained receiving catalog. `include_str!` bakes it into the binary at
 /// compile time, so no runtime file dependency remains.
 const CATALOG_JSON: &str =
     include_str!("../../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json");
+
+struct PreparedAppGeneration {
+    database: String,
+    role: String,
+}
 
 /// Reference (master) data seeded once for the mixed leg — the FK parents
 /// every receiving event references.
@@ -69,13 +80,9 @@ pub enum Mode {
 
 #[derive(Debug, Args)]
 pub struct WalBenchArgs {
-    /// App (writer) Postgres URL — the NOSUPERUSER wamn_app role that writes
-    /// under the production RLS floor. Overrides WAMN_PG_URL / DATABASE_URL.
-    #[arg(long)]
-    pub database_url: Option<String>,
-
-    /// Superuser URL: provisions/drops the ephemeral schema, VACUUM/CHECKPOINT,
-    /// reads WAL LSNs + the pre-CDC provenance, and TRUNCATEs between rates.
+    /// Superuser URL: prepares the scoped App-generation credential,
+    /// provisions/drops the ephemeral schema, VACUUM/CHECKPOINT, reads WAL
+    /// LSNs + the pre-CDC provenance, and TRUNCATEs between rates.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: Option<String>,
 
@@ -151,12 +158,46 @@ fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
 /// Drop-and-recreate the ephemeral schema and apply the REAL 3.2 floor for the
 /// poc-receiving catalog (under `search_path` so the unqualified generated DDL
 /// lands here). No publication, no slot, no trigger — this IS the pre-CDC env.
-async fn provision(admin_url: &str) -> anyhow::Result<()> {
+async fn provision(admin_url: &str) -> anyhow::Result<PreparedAppGeneration> {
     let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
         .await
         .context("admin connect for ephemeral schema")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
+        let database: String = client
+            .query_one("SELECT current_database()::text", &[])
+            .await
+            .context("read walbench database identity")?
+            .get(0);
+        let app_role = workload_generation_role(
+            WorkloadRoleFamily::App,
+            WorkloadRoleScope::Tenant {
+                tenant: TENANT,
+                database: &database,
+            },
+            CredentialGeneration::A,
+        )
+        .context("derive walbench App generation")?;
+        client
+            .batch_execute(&provision_sql::prepare_workload_generation_sql(
+                WorkloadRoleFamily::App,
+                &database,
+                &app_role,
+                APP_GENERATION_PASSWORD,
+                APP_GENERATION_EXPIRES_AT,
+            ))
+            .await
+            .context("prepare walbench App generation")?;
+        client
+            .batch_execute(provision_sql::ensure_db_owner_role_sql())
+            .await
+            .context("converge database-owner title role")?;
+        client
+            .batch_execute(
+                &wamn_control_provision::tenant_key::authority_derivations_sql(&database),
+            )
+            .await
+            .context("install production tenant-key derivations")?;
         client
             .batch_execute(&format!(
                 "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; CREATE SCHEMA {SCHEMA} AUTHORIZATION postgres; GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_app;"
@@ -171,7 +212,10 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .batch_execute(&format!("SET search_path TO {SCHEMA}; {floor}"))
             .await
             .context("apply the 3.2 floor")?;
-        anyhow::Ok(())
+        anyhow::Ok(PreparedAppGeneration {
+            database,
+            role: app_role,
+        })
     }
     .await;
     drop(client);
@@ -179,16 +223,38 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
     result
 }
 
-async fn teardown(admin_url: &str) -> anyhow::Result<()> {
+async fn teardown(admin_url: &str, app_generation: &PreparedAppGeneration) -> anyhow::Result<()> {
     let (client, conn) = tokio_postgres::connect(admin_url, NoTls).await?;
     let conn_task = tokio::spawn(conn);
-    let r = client
-        .batch_execute(&format!("DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;"))
-        .await
-        .map_err(|e| anyhow::anyhow!("drop ephemeral schema: {e}"));
+    let result = async {
+        client
+            .batch_execute(&format!("DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;"))
+            .await
+            .context("drop ephemeral schema")?;
+        client
+            .batch_execute(&provision_sql::retire_workload_generation_sql(
+                WorkloadRoleFamily::App,
+                &app_generation.database,
+                &app_generation.role,
+            ))
+            .await
+            .context("retire walbench App generation")?;
+        client
+            .batch_execute(&provision_sql::terminate_workload_generation_sessions_sql(
+                &app_generation.role,
+            ))
+            .await
+            .context("terminate walbench App-generation sessions")?;
+        client
+            .batch_execute(&format!("DROP ROLE IF EXISTS \"{}\"", app_generation.role))
+            .await
+            .context("drop walbench App generation")?;
+        anyhow::Ok(())
+    }
+    .await;
     drop(client);
     let _ = conn_task.await;
-    r.map(|_| ())
+    result
 }
 
 /// A long-lived admin connection (VACUUM/CHECKPOINT, WAL LSNs, TRUNCATE,
@@ -206,12 +272,24 @@ async fn connect_admin(admin_url: &str) -> anyhow::Result<(Client, tokio::task::
     Ok((client, handle))
 }
 
-/// A wamn_app writer connection pinned to the schema + tenant claim (the RLS
-/// floor the production write path runs under).
-async fn connect_app(app_url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<()>)> {
-    let (client, conn) = tokio_postgres::connect(app_url, NoTls)
+/// A scoped App-generation writer pinned to the schema. `app.tenant` remains a
+/// row-value input for the production statements below; authorization derives
+/// independently from the authenticated `current_user` generation.
+async fn connect_app(
+    admin_url: &str,
+    app_generation: &PreparedAppGeneration,
+) -> anyhow::Result<(Client, tokio::task::JoinHandle<()>)> {
+    let mut config: tokio_postgres::Config = admin_url
+        .parse()
+        .context("parse walbench admin database URL")?;
+    config
+        .user(&app_generation.role)
+        .password(APP_GENERATION_PASSWORD)
+        .dbname(&app_generation.database);
+    let (client, conn) = config
+        .connect(NoTls)
         .await
-        .context("app (wamn_app) connect")?;
+        .context("connect walbench App generation")?;
     let handle = tokio::spawn(async move {
         let _ = conn.await;
     });
@@ -220,7 +298,19 @@ async fn connect_app(app_url: &str) -> anyhow::Result<(Client, tokio::task::Join
             "SET search_path TO {SCHEMA}; SET app.tenant TO '{TENANT}';"
         ))
         .await
-        .context("set search_path + tenant claim")?;
+        .context("set search_path + tenant row input")?;
+    let identity = client
+        .query_one(
+            "SELECT current_user::text, \
+                    wamn_authority.current_tenant_key() = wamn_authority.tenant_key($1)",
+            &[&TENANT],
+        )
+        .await
+        .context("verify walbench App-generation scope")?;
+    ensure!(
+        identity.get::<_, String>(0) == app_generation.role && identity.get::<_, bool>(1),
+        "walbench writer is not the derived App generation for {TENANT}"
+    );
     Ok((client, handle))
 }
 
@@ -289,12 +379,6 @@ async fn toast_size(admin: &Client, table: &str) -> anyhow::Result<i64> {
 pub async fn run(args: WalBenchArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
-    let app_url = args
-        .database_url
-        .clone()
-        .or_else(|| std::env::var("WAMN_PG_URL").ok())
-        .or_else(|| std::env::var("DATABASE_URL").ok())
-        .context("no app database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")?;
     let admin_url = args
         .admin_database_url
         .clone()
@@ -304,7 +388,7 @@ pub async fn run(args: WalBenchArgs) -> anyhow::Result<()> {
     println!(
         "# wamn-gates EVT-C-WAL-0 walbench (schema {SCHEMA}, tenant {TENANT}) — pre-CDC baseline WAL volume"
     );
-    provision(&admin_url)
+    let app_generation = provision(&admin_url)
         .await
         .context("provision ephemeral schema")?;
 
@@ -317,16 +401,16 @@ pub async fn run(args: WalBenchArgs) -> anyhow::Result<()> {
         }
         let run_all = args.mode == Mode::All;
         if run_all || args.mode == Mode::Perop {
-            pass &= perop_phase(&app_url, &admin_url, &args).await?;
+            pass &= perop_phase(&admin_url, &app_generation, &args).await?;
         }
         if run_all || args.mode == Mode::Mixed {
-            pass &= mixed_phase(&app_url, &admin_url, &args, &rates).await?;
+            pass &= mixed_phase(&admin_url, &app_generation, &args, &rates).await?;
         }
         anyhow::Ok(())
     }
     .await;
 
-    let _ = teardown(&admin_url).await;
+    let _ = teardown(&admin_url, &app_generation).await;
     outcome?;
 
     println!("\nwalbench complete — overall PASS: {pass}");
@@ -441,7 +525,11 @@ fn push_row(csv: &mut String, shape: &str, op: &str, n: usize, s: &OpStats) {
     ));
 }
 
-async fn perop_phase(app_url: &str, admin_url: &str, args: &WalBenchArgs) -> anyhow::Result<bool> {
+async fn perop_phase(
+    admin_url: &str,
+    app_generation: &PreparedAppGeneration,
+    args: &WalBenchArgs,
+) -> anyhow::Result<bool> {
     let n = args.iters;
     let w = args.wide_bytes;
     println!(
@@ -449,7 +537,7 @@ async fn perop_phase(app_url: &str, admin_url: &str, args: &WalBenchArgs) -> any
          narrow (suppliers) + wide/TOASTy (users, {w}B display_name), default replica identity"
     );
     let (admin, _ah) = connect_admin(admin_url).await?;
-    let (app, _h) = connect_app(app_url).await?;
+    let (app, _h) = connect_app(admin_url, app_generation).await?;
 
     // narrow: suppliers — a small row, no FK, no large columns.
     let s_ins = app
@@ -798,8 +886,8 @@ async fn receiving_event(
 }
 
 async fn mixed_phase(
-    app_url: &str,
     admin_url: &str,
+    app_generation: &PreparedAppGeneration,
     args: &WalBenchArgs,
     rates: &[f64],
 ) -> anyhow::Result<bool> {
@@ -809,7 +897,7 @@ async fn mixed_phase(
         args.mixed_lines
     );
     let (admin, _ah) = connect_admin(admin_url).await?;
-    let (app, _h) = connect_app(app_url).await?;
+    let (app, _h) = connect_app(admin_url, app_generation).await?;
     let reference = seed_reference(&app).await?;
     let stmts = EventStmts::prepare(&app).await?;
 
