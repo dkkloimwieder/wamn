@@ -2362,6 +2362,17 @@ fn verify_management_admitter_acl_role_inventory(
             "environment_policies".to_string(),
             "SELECT".to_string(),
         ),
+        // `wamn-0h0g.22.28`'s grant, asserted rather than ignored. `runs`
+        // carries `runs_tkey`, so both the INSERT above and any later UPDATE
+        // evaluate that expression index and need EXECUTE on the derivation;
+        // schema USAGE alone raises 42501. Omitting the row let the grant land
+        // unrepresented through wave 65.
+        (
+            "routine".to_string(),
+            "wamn_authority".to_string(),
+            "tenant_key".to_string(),
+            "EXECUTE".to_string(),
+        ),
     ]);
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
         expected.insert((
@@ -4561,6 +4572,7 @@ mod tests {
             role_acl("schema", "catalog", "catalog", "USAGE"),
             role_acl("schema", "wamn_run", "wamn_run", "USAGE"),
             role_acl("relation", "wamn_run", "environment_policies", "SELECT"),
+            role_acl("routine", "wamn_authority", "tenant_key", "EXECUTE"),
         ];
         for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
             exact.push(role_acl("relation", "catalog", relation, "SELECT"));

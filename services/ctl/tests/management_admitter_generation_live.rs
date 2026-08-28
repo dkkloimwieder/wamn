@@ -19,8 +19,9 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 
+use wamn_control_provision::tenant_key::authority_derivations_bootstrap_sql;
 use wamn_control_provision::{
-    CredentialGeneration, MANAGEMENT_ADMITTER_ROLE, WorkloadRoleFamily,
+    CredentialGeneration, MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE, WorkloadRoleFamily,
     management_admitter_generation_role, management_admitter_secret_name,
     parse_management_admission_url, project_env_database_name,
     render_management_admitter_secret_manifest, sql,
@@ -308,6 +309,11 @@ fn expected_stable_acl() -> BTreeSet<String> {
         "schema:catalog:catalog:USAGE".to_string(),
         format!("schema:{RUN_SCHEMA}:{RUN_SCHEMA}:USAGE"),
         format!("relation:{RUN_SCHEMA}:environment_policies:SELECT"),
+        // `runs` carries `runs_tkey`, so the INSERT grants above are dead
+        // without this EXECUTE. Spelled as a literal, not read back from the
+        // builder that emits the grant: a row derived from the same constant
+        // that produced it would assert nothing about what the server did.
+        "routine:wamn_authority:tenant_key:EXECUTE".to_string(),
     ]);
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
         expected.insert(format!("relation:catalog:{relation}:SELECT"));
@@ -455,6 +461,15 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         .batch_execute(&run_plane_fixture())
         .await
         .expect("create management-admission fixtures");
+    // The prepare batch grants EXECUTE on `wamn_authority.tenant_key`, so the
+    // schema has to exist before it runs. Applied from the BUILDER rather than
+    // a hand-written twin: `deploy_sql_authority` pins every production DDL
+    // file to this exact function's output byte for byte, so a fixture that
+    // calls it cannot drift away from what a real database is installed with.
+    target
+        .batch_execute(&authority_derivations_bootstrap_sql())
+        .await
+        .expect("install the authority derivations");
 
     let secret_a = secret_path(CredentialGeneration::A);
     let secret_b = secret_path(CredentialGeneration::B);
@@ -483,7 +498,10 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         false,
         false,
         false,
-        &[],
+        // The management admitter is platform grain, so its stable ACL role
+        // carries the one parent edge `expected_acl_parents` allows — ctl's own
+        // prepare-time verifier already requires it.
+        &[PLATFORM_GROUP_ROLE],
         &[&role_a],
         &[],
     )
@@ -574,7 +592,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         false,
         false,
         false,
-        &[],
+        &[PLATFORM_GROUP_ROLE],
         &[&role_a, &role_b],
         &[],
     )
@@ -623,7 +641,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         false,
         false,
         false,
-        &[],
+        &[PLATFORM_GROUP_ROLE],
         &[&role_b],
         &[],
     )
@@ -676,7 +694,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         false,
         false,
         false,
-        &[],
+        &[PLATFORM_GROUP_ROLE],
         &[],
         &[],
     )
