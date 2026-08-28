@@ -16,9 +16,12 @@
 # for the executor's project silently repoint every host in the group. This
 # clause named `wamn-runner-db` and `deploy/platform/runner.yaml` until
 # wamn-0h0g.10.5's BoM pass; `ea71c1c4` deleted both, and the executor inherited
-# the role. It also inherited no `.example` carrier — `wamn-executor-db` is the
-# one Secret this tier mounts that no file here declares (wamn-0h0g.10.5
-# reported it; the demo value's `?sslmode=disable` went with the deleted file).
+# the role. It inherited no `.example` carrier either, and for a while
+# `wamn-executor-db` was the one Secret this tier mounted that no file here
+# declared (wamn-0h0g.10.5 reported it). `wamn-0h0g.10.14` closed that:
+# `executor-db.example.yaml` declares it and its executor-platform sibling. The
+# deleted file's `?sslmode=disable` did NOT come back — no carrier in this tier
+# spells an sslmode, this one included.
 #
 # ORDER: apply this BEFORE the host release. A secretKeyRef the kubelet cannot
 # resolve leaves the host Pods in CreateContainerConfigError, never Running.

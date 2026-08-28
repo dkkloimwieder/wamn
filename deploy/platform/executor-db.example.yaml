@@ -1,0 +1,110 @@
+# EXAMPLE per-project-env DB Secrets for the COMPONENT+WIRING ROUTER EXECUTOR
+# (deploy/platform/executor.yaml, which references both as `secretKeyRef`).
+# DELIBERATELY a separate manifest — the dispatcher-projects/host-db/
+# run-retention-db precedent: these are per-project-env config, so re-applying
+# the executor Deployment never clobbers customized credentials back to these
+# demo values.
+#
+# THE OMISSION THIS FILE CLOSES (wamn-0h0g.10.10, wamn-0h0g.10.14).
+# `ea71c1c4` deleted `runner-db.example.yaml` when the executor inherited the
+# runner's Deployment role, and no carrier came with it — `wamn-executor-db` was
+# the one Secret this tier mounted that no file here declared. The spelling was
+# an owner call rather than an oversight, and wamn-0h0g.10.14 made it: an
+# executor-platform carrier spells a scoped GENERATION, like the other three.
+# The demo value's `?sslmode=disable` did NOT come back; see SSLMODE below.
+#
+# TWO SECRETS, BECAUSE THE EXECUTOR HAS TWO DATABASE IDENTITIES
+# (wamn-0h0g.22.31). Until that cutover one url served every authority class in
+# the process. It no longer does, and the split is the security property:
+#
+#   * `wamn-executor-db` is the GUEST-SQL credential. Component `wamn:postgres`
+#     calls run as it, inside the tenant's own RLS floor.
+#   * `wamn-executor-platform-db` is the EXECUTOR-PLATFORM credential. The queue
+#     claim, lease renewal, reap, caller release and plan supply run as it.
+#
+# THEY ARE NOT INTERCHANGEABLE, AND POINTING ONE AT THE OTHER DOES NOT DEGRADE
+# GRACEFULLY. `pool::credential_exactness_hook` asserts
+# `pg_has_role(current_user, 'wamn_executor_platform', MEMBER)` on every physical
+# platform connection: a guest login fails it and the platform pool then refuses
+# EVERY connection. In the other direction the executor-platform generation
+# holds no INSERT anywhere and no `catalog` write at all, so guest SQL fails on
+# privileges. Each url belongs to exactly one of the two keys below.
+#
+# SSLMODE IS ABSENT, AND THAT IS THE CONVENTION, NOT AN OMISSION. None of
+# `host-db.example.yaml`, `run-retention-db.example.yaml` or
+# `dispatcher-projects.example.yaml` spells an `sslmode` parameter; the deleted
+# `runner-db.example.yaml`'s `?sslmode=disable` was a demo value, and a carrier
+# that ships `disable` as its example documents the weakest setting as the
+# default. Leaving it unspelled means libpq's own default applies and an
+# operator who needs `require`/`verify-full` adds it here, in one place, without
+# first having to notice and delete a shipped downgrade.
+#
+# THE SECRET NAMES ARE THE MOUNT'S, NOT THE EMIT'S — the shape all three
+# siblings already have. `wamn-ctl provision-project-env` writes
+# `wamn-executor-platform-<org>--<project>--<env>` and `wamn-db-<org>--<project>--<env>`;
+# those are SOURCES you copy the `url` value out of, exactly as
+# `dispatcher-projects.example.yaml` says of its own emit ("Copy that value into
+# the entry below"). The workload mounts a stable operator-owned name so that
+# rotating a generation, or moving the executor to another project-env, is an
+# edit to a value rather than an edit to the Deployment.
+#
+# WHERE THE URLS COME FROM, and how they rotate:
+#
+#   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
+#     --system-database-url <t1-superuser-url> \
+#     --target-admin-database-url <project-env-superuser-url> \
+#     --prepare-executor-platform-generation a \
+#     --emit-executor-platform-secret ./executor-platform-secret.json \
+#     --emit-secret ./executor-guest-secret.json
+#
+# ROTATION is the ordinary A/B lifecycle and needs no downtime: prepare
+# generation `b`, update the Secret below, roll the Deployment, then
+# `--retire-executor-platform-generation a`. Never `ALTER ROLE` a password in
+# place — the generation IS the rotation unit.
+#
+# THE LOGIN NAME IS DERIVED, NOT CHOSEN. `wamn_exec_platform_<40-hex>_<a|b>`
+# carries the 160-bit digest of (org, project, environment, database); the
+# prefix is the frozen short form of `wamn_executor_platform`, which would
+# otherwise overrun PostgreSQL's 63-byte identifier limit with the digest and
+# generation suffix attached. The demo value below is the REAL derived name for
+# the project-environment demo/demo/dev in the fixture pod's `wamn` database —
+# the same triple `dispatcher-projects.example.yaml` uses — so it matches
+# `WAMN_PROJECT: demo` in the executor Deployment. Substitute the password the
+# prepare minted.
+#
+# ORDERING OBLIGATION: both generations and the stable roles' grants must exist
+# BEFORE a pod carrying these URLs starts. A `secretKeyRef` the kubelet cannot
+# resolve leaves the executor Pod in CreateContainerConfigError, never Running,
+# and a resolvable Secret naming an unprepared role fails the initial dial.
+#
+#   kubectl -n wamn-system apply -f deploy/platform/executor-db.example.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-executor-db
+  namespace: wamn-system
+  labels: { app: wamn-executor, project-env: demo--demo--dev }
+type: Opaque
+stringData:
+  # The project-environment GUEST-SQL url. `--emit-secret` writes it as
+  # `wamn-db-<org>--<project>--<env>`; copy that Secret's `url` here.
+  url: "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-executor-platform-db
+  namespace: wamn-system
+  labels: { app: wamn-executor, project-env: demo--demo--dev }
+type: Opaque
+stringData:
+  # The project-environment EXECUTOR-PLATFORM generation. LOGIN, NOSUPERUSER,
+  # NOBYPASSRLS, INHERIT, exactly one membership (`wamn_executor_platform`) and
+  # exactly one database CONNECT. Its whole reach is
+  # `sql::grant_executor_platform_surface_sql`: table-grain SELECT on eleven
+  # `catalog` relations and no write there at all; SELECT on `runs` with a
+  # FOURTEEN-COLUMN UPDATE; SELECT and DELETE on `run_queue` with a FOUR-COLUMN
+  # UPDATE; SELECT on `effect_attempts`; and EXECUTE on its own authority guard
+  # plus `wamn_authority.tenant_key(text)`. It cannot admit a run, cannot move a
+  # FIFO position, and cannot rewrite an admission pin.
+  url: "postgres://wamn_exec_platform_c5a4920299d7dace5244a9b19c86731be3593b93_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn"

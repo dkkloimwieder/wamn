@@ -47,7 +47,7 @@ type BillOfMaterialsRow = (
 /// separately: every object is `wamn-system` except the per-environment
 /// certificate template, which carries a substitution placeholder.
 #[rustfmt::skip]
-const BILL_OF_MATERIALS: [BillOfMaterialsRow; 17] = [
+const BILL_OF_MATERIALS: [BillOfMaterialsRow; 18] = [
     // The dispatcher's projects Secret carries its database principal INSIDE
     // the file — the tier's only credential with no separate DB-URL Secret.
     ("dispatcher-projects.example.yaml",
@@ -61,6 +61,14 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 17] = [
     // by deploy/gates/m1-gate-job.yaml. Retained deliberately, not stranded.
     ("event-reader-rbac.yaml",
         &[("ServiceAccount", "event-reader")],
+        &[]),
+    // TWO Secrets in ONE carrier, because the executor is TWO principals
+    // (wamn-0h0g.22.31): the guest-SQL url component calls run as, and the
+    // executor-platform generation the queue claim dials with. Shipping them in
+    // separate files would let an operator apply one and leave the other, which
+    // is the failure the pair exists to prevent.
+    ("executor-db.example.yaml",
+        &[("Secret", "wamn-executor-db"), ("Secret", "wamn-executor-platform-db")],
         &[]),
     ("executor.yaml",
         &[("Deployment", "executor"), ("PodDisruptionBudget", "executor")],
@@ -168,7 +176,14 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// names — cert-manager writes those bytes, so `wamn-registry-tls`,
 /// `wasmcloud-runtime-tls` and `wasmcloud-data-tls` are declared here, not
 /// prerequisites of it.
-const EXTERNAL_PREREQUISITES: [(&str, &str); 3] = [
+/// THE ONE HOLE IS CLOSED (`wamn-0h0g.10.14`). `wamn-executor-db` sat here from
+/// `wamn-0h0g.10.5` — mounted by `executor.yaml`, declared by nothing, because
+/// `ea71c1c4` deleted `runner-db.example.yaml` and no carrier came with it.
+/// `deploy/platform/executor-db.example.yaml` now declares it, alongside the
+/// `wamn-executor-platform-db` the `wamn-0h0g.22.31` cutover added, so both are
+/// DECLARED rows in the table above rather than prerequisites of it. Every
+/// database credential in this tier ships a carrier again.
+const EXTERNAL_PREREQUISITES: [(&str, &str); 2] = [
     // READ by registry.yaml's namespaced CA Issuer (`spec.ca.secretName`) and
     // minted by the runtime-operator Helm release, not by anything here. The
     // chart hard-codes a 365-day CA and nothing renews it (wamn-ob2f).
@@ -181,16 +196,6 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 3] = [
     (
         "pg-init",
         "kubectl create configmap pg-init --from-file=deploy/sql/postgres-init.sql",
-    ),
-    // THE ONE HOLE, REPORTED NOT PAPERED OVER (wamn-0h0g.10.5). Every other
-    // database credential in this tier has an `.example` carrier; the
-    // executor's does not, because `ea71c1c4` deleted `runner-db.example.yaml`
-    // when the executor inherited the runner's Deployment role. It is minted by
-    // `wamn-ctl provision-project-env`, which is why the tier still converges —
-    // but the tier no longer shows an operator its shape.
-    (
-        "wamn-executor-db",
-        "wamn-ctl provision-project-env — NO .example carrier in this tier",
     ),
 ];
 
