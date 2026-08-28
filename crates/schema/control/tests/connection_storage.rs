@@ -1,9 +1,9 @@
 use wamn_schema_control::connections::{
     ArtifactConnectionRequirement, ComponentConnectionRequirement, ConnectionGenerationDefinition,
-    ConnectionInstanceStatus, GenerationRetentionKind, insert_component_connection_binding_sql,
+    ConnectionInstanceStatus, insert_component_connection_binding_sql,
     insert_component_connection_requirement_sql, insert_connection_binding_sql,
     insert_connection_generation_sql, insert_connection_instance_sql,
-    insert_connection_requirement_sql, insert_generation_retention_sql,
+    insert_connection_requirement_sql,
 };
 use wamn_schema_model::ConnectionTypeDescriptor;
 
@@ -109,13 +109,12 @@ fn generation_definition_hash_covers_every_non_secret_field() {
 }
 
 #[test]
-fn schema_pins_stable_keys_tenant_isolation_immutability_and_retention() {
+fn schema_pins_stable_keys_tenant_isolation_and_immutability() {
     for table in [
         "connection_requirements",
         "connection_instances",
         "connection_generations",
         "connection_bindings",
-        "connection_generation_retention",
     ] {
         assert!(CATALOG_SCHEMA.contains(&format!("CREATE TABLE catalog.{table}")));
         assert!(CATALOG_SCHEMA.contains(&format!(
@@ -136,13 +135,11 @@ fn schema_pins_stable_keys_tenant_isolation_immutability_and_retention() {
         "connection_requirements_immutable",
         "connection_generations_update_immutable",
         "connection_bindings_immutable",
-        "reject_referenced_connection_generation_delete",
         "connection_instance_controlled_update",
         "credential_set_handle",
         "definition_hash",
         "binding_status IN ('active', 'disabled')",
         "validation_status IN ('valid', 'invalid')",
-        "retained_until",
     ] {
         assert!(
             CATALOG_SCHEMA.contains(required),
@@ -152,6 +149,29 @@ fn schema_pins_stable_keys_tenant_isolation_immutability_and_retention() {
     assert!(!CATALOG_SCHEMA.contains("CREATE FUNCTION catalog.require_connection_artifact"));
     assert!(!CATALOG_SCHEMA.contains("CREATE TRIGGER connection_requirements_require_artifact"));
     assert!(!CATALOG_SCHEMA.contains("credential_secret"));
+    for retired_definition in [
+        "CREATE TABLE catalog.connection_generation_retention",
+        "CREATE FUNCTION catalog.guard_connection_retention_update",
+        "CREATE FUNCTION catalog.reject_referenced_connection_generation_delete",
+        "CREATE TRIGGER connection_generation_retention_controlled_update",
+        "CREATE TRIGGER connection_generations_delete_retained",
+    ] {
+        assert!(
+            !CATALOG_SCHEMA.contains(retired_definition),
+            "retired generation-retention definition remains: {retired_definition}"
+        );
+    }
+    for retirement in [
+        "DROP TRIGGER IF EXISTS connection_generations_delete_retained",
+        "DROP FUNCTION IF EXISTS catalog.reject_referenced_connection_generation_delete()",
+        "DROP TABLE IF EXISTS catalog.connection_generation_retention RESTRICT",
+        "DROP FUNCTION IF EXISTS catalog.guard_connection_retention_update()",
+    ] {
+        assert!(
+            CATALOG_SCHEMA.contains(retirement),
+            "generation-retention cutover omitted: {retirement}"
+        );
+    }
 }
 
 #[test]
@@ -190,55 +210,6 @@ fn sql_builders_pin_values_and_keep_owners_separate() {
         insert_component_connection_requirement_sql().contains("component_digest, store_alias")
     );
     assert!(insert_component_connection_binding_sql().contains("component_digest, store_alias"));
-    assert!(insert_generation_retention_sql().contains("retained_until"));
     assert_eq!(ConnectionInstanceStatus::Enabled.as_sql(), "enabled");
     assert_eq!(ConnectionInstanceStatus::Disabled.as_sql(), "disabled");
-    assert_eq!(
-        GenerationRetentionKind::ActiveAttempt.as_sql(),
-        "active-attempt"
-    );
-    assert_eq!(
-        GenerationRetentionKind::DeployedRelease.as_sql(),
-        "deployed-release"
-    );
-}
-
-#[test]
-fn project_generation_retention_kinds_are_plane_local_and_exact() {
-    fn asserted_sql(kind: GenerationRetentionKind) -> &'static str {
-        match kind {
-            GenerationRetentionKind::ActiveAttempt => "active-attempt",
-            GenerationRetentionKind::DeployedRelease => "deployed-release",
-        }
-    }
-
-    for kind in [
-        GenerationRetentionKind::ActiveAttempt,
-        GenerationRetentionKind::DeployedRelease,
-    ] {
-        assert_eq!(kind.as_sql(), asserted_sql(kind));
-        assert_eq!(
-            serde_json::to_string(&kind).expect("serialize retention kind"),
-            format!("\"{}\"", asserted_sql(kind))
-        );
-    }
-
-    let retention_table = CATALOG_SCHEMA
-        .split_once("CREATE TABLE catalog.connection_generation_retention (")
-        .expect("connection generation retention table")
-        .1
-        .split_once("ALTER TABLE catalog.connection_generation_retention")
-        .expect("end of connection generation retention table")
-        .0;
-    assert!(
-        retention_table
-            .contains("CHECK (reference_kind IN ('active-attempt', 'deployed-release'))")
-    );
-    assert_eq!(retention_table.matches("REFERENCES catalog.").count(), 1);
-    assert!(retention_table.contains("REFERENCES catalog.connection_generations"));
-    assert!(!retention_table.contains("credential_set_handle"));
-
-    for retired_kind in ["replay-seed", "audit-seed", "release-evidence"] {
-        assert!(!retention_table.contains(retired_kind));
-    }
 }

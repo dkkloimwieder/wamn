@@ -89,5 +89,4 @@ fn existing_runs_gain_the_complete_candidate_grain_without_backfill() {
             .contains("AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL")
     );
     assert!(!action.sql.contains("UPDATE project_run.runs"));
-    assert!(!action.sql.contains("connection_generation_retention"));
 }

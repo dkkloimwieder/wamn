@@ -812,24 +812,6 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "catalog.connection_generation_retention",
-      "plane": "project",
-      "semantic_owner": "schema-control",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/catalog-schema.sql",
-      "writers": [
-        "schema-control"
-      ],
-      "readers": [
-        "schema-control",
-        "catalog-schema-installer"
-      ],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
       "id": "catalog.schema_migrations",
       "plane": "project",
       "semantic_owner": "schema-control",

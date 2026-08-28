@@ -10,9 +10,9 @@
 //! entity tables) when they are absent — used by the in-cluster catalog-publication
 //! gate to exercise real data (the demo-row seeding rides the gates-side
 //! `wamn-gates publish-catalog --seed` wrapper; the prod tool carries no fixture
-//! content). Everything is **additive**: the schema is created `IF NOT EXISTS`,
-//! the floor is applied only when missing, and no existing object is ever dropped
-//! or altered (the shared-cluster guardrail).
+//! content). Installation is convergent: fresh databases receive the whole schema;
+//! existing project databases receive missing live surfaces and explicitly delimited
+//! retirement slices.
 //!
 //! POC-F1 extended this into the one project-provisioning tool: `--runstate`
 //! applies the run-state storage (`deploy/sql/run-state.sql`: runs)
@@ -81,7 +81,7 @@ async fn refuse_control_plane_residency(client: &tokio_postgres::Client) -> anyh
     Ok(())
 }
 
-/// Install or additively upgrade the catalog persistence schema.
+/// Install or converge the catalog persistence schema.
 ///
 /// Refuses a control-plane database first — see [`refuse_control_plane_residency`].
 pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::Result<()> {
@@ -130,7 +130,18 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     to_regclass('catalog.connection_instances') IS NOT NULL, \
                     to_regclass('catalog.connection_generations') IS NOT NULL, \
                     to_regclass('catalog.connection_bindings') IS NOT NULL, \
-                    to_regclass('catalog.connection_generation_retention') IS NOT NULL, \
+                    (to_regclass('catalog.connection_generation_retention') IS NOT NULL \
+                     OR to_regprocedure('catalog.guard_connection_retention_update()') IS NOT NULL \
+                     OR to_regprocedure('catalog.reject_referenced_connection_generation_delete()') IS NOT NULL \
+                     OR EXISTS (SELECT 1 FROM pg_catalog.pg_trigger trig \
+                                JOIN pg_catalog.pg_class rel ON rel.oid = trig.tgrelid \
+                                JOIN pg_catalog.pg_namespace ns ON ns.oid = rel.relnamespace \
+                                WHERE ns.nspname = 'catalog' \
+                                  AND trig.tgname IN ( \
+                                      'connection_generation_retention_controlled_update', \
+                                      'connection_generations_delete_retained' \
+                                  ) \
+                                  AND NOT trig.tgisinternal)), \
                     to_regclass('catalog.wirings') IS NOT NULL, \
                     to_regclass('catalog.wiring_tombstones') IS NOT NULL, \
                     to_regclass('catalog.wiring_activation') IS NOT NULL, \
@@ -161,7 +172,6 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
             release_row.get::<_, bool>(5),
             release_row.get::<_, bool>(6),
             release_row.get::<_, bool>(7),
-            release_row.get::<_, bool>(8),
         ];
         if !connection_objects.iter().all(|present| *present) {
             anyhow::ensure!(
@@ -178,6 +188,18 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
                 .await
                 .context("install connection storage")?;
+        }
+        if release_row.get::<_, bool>(8) {
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN CONNECTION GENERATION RETENTION RETIREMENT")
+                .expect("connection generation retention retirement start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END CONNECTION GENERATION RETENTION RETIREMENT")
+                .expect("connection generation retention retirement end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("retire connection generation retention storage")?;
         }
         ensure_connection_component_grain(client).await?;
 

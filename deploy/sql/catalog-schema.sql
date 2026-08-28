@@ -537,88 +537,15 @@ GRANT SELECT ON catalog.connection_bindings TO wamn_app;
 CREATE TRIGGER connection_bindings_immutable
 BEFORE UPDATE OR DELETE ON catalog.connection_bindings
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
-
-CREATE TABLE catalog.connection_generation_retention (
-    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
-    environment     text NOT NULL CHECK (environment <> ''),
-    instance_id     text NOT NULL CHECK (instance_id <> ''),
-    generation      bigint NOT NULL CHECK (generation > 0),
-    reference_kind  text NOT NULL
-        CHECK (reference_kind IN ('active-attempt', 'deployed-release')),
-    reference_id    text NOT NULL CHECK (reference_id <> ''),
-    retained_until  timestamptz,
-    created_at      timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (
-        tenant_id, environment, instance_id, generation, reference_kind, reference_id
-    ),
-    FOREIGN KEY (tenant_id, environment, instance_id, generation)
-        REFERENCES catalog.connection_generations
-            (tenant_id, environment, instance_id, generation)
-);
-ALTER TABLE catalog.connection_generation_retention ENABLE ROW LEVEL SECURITY;
-ALTER TABLE catalog.connection_generation_retention FORCE ROW LEVEL SECURITY;
-CREATE POLICY connection_generation_retention_tenant
-    ON catalog.connection_generation_retention
-    TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY connection_generation_retention_platform ON catalog.connection_generation_retention
-    AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
-CREATE INDEX connection_generation_retention_tkey
-    ON catalog.connection_generation_retention ((wamn_authority.tenant_key(tenant_id)));
-GRANT SELECT ON catalog.connection_generation_retention TO wamn_app;
-
-CREATE FUNCTION catalog.guard_connection_retention_update()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF (NEW.tenant_id, NEW.environment, NEW.instance_id, NEW.generation,
-        NEW.reference_kind, NEW.reference_id, NEW.created_at)
-       IS DISTINCT FROM
-       (OLD.tenant_id, OLD.environment, OLD.instance_id, OLD.generation,
-        OLD.reference_kind, OLD.reference_id, OLD.created_at)
-       OR (OLD.retained_until IS NULL AND NEW.retained_until IS NOT NULL)
-       OR (OLD.retained_until IS NOT NULL
-           AND NEW.retained_until IS NOT NULL
-           AND NEW.retained_until < OLD.retained_until) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'connection-generation-retention-cannot-shorten';
-    END IF;
-    RETURN NEW;
-END
-$$;
-CREATE TRIGGER connection_generation_retention_controlled_update
-BEFORE UPDATE ON catalog.connection_generation_retention
-FOR EACH ROW EXECUTE FUNCTION catalog.guard_connection_retention_update();
-
-CREATE FUNCTION catalog.reject_referenced_connection_generation_delete()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM catalog.connection_generation_retention retention
-        WHERE retention.tenant_id = OLD.tenant_id
-          AND retention.environment = OLD.environment
-          AND retention.instance_id = OLD.instance_id
-          AND retention.generation = OLD.generation
-          AND (retention.retained_until IS NULL OR retention.retained_until > now())
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'connection-generation-retained';
-    END IF;
-    RETURN OLD;
-END
-$$;
-CREATE TRIGGER connection_generations_delete_retained
-BEFORE DELETE ON catalog.connection_generations
-FOR EACH ROW EXECUTE FUNCTION catalog.reject_referenced_connection_generation_delete();
 -- END CONNECTION STORAGE MIGRATION (wamn-ko5r.6)
+
+-- BEGIN CONNECTION GENERATION RETENTION RETIREMENT (wamn-0h0g.15.56)
+DROP TRIGGER IF EXISTS connection_generations_delete_retained
+    ON catalog.connection_generations;
+DROP FUNCTION IF EXISTS catalog.reject_referenced_connection_generation_delete();
+DROP TABLE IF EXISTS catalog.connection_generation_retention RESTRICT;
+DROP FUNCTION IF EXISTS catalog.guard_connection_retention_update();
+-- END CONNECTION GENERATION RETENTION RETIREMENT (wamn-0h0g.15.56)
 
 -- BEGIN CONNECTION COMPONENT GRAIN MIGRATION (wamn-0h0g.21.4)
 -- Existing artifact rows remain legacy facts. The migration adds nullable

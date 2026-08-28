@@ -48,11 +48,10 @@ const CONTROL_CATALOG_INVENTORY: [&str; 7] = [
 
 /// Project-only catalog storage the converge arm installs. None of it may reach
 /// the control plane.
-const PROJECT_ONLY: [&str; 6] = [
+const PROJECT_ONLY: [&str; 5] = [
     "catalog.connection_instances",
     "catalog.connection_generations",
     "catalog.connection_bindings",
-    "catalog.connection_generation_retention",
     "catalog.wirings",
     "catalog.release_components",
 ];
@@ -244,6 +243,7 @@ async fn ensure_catalog_storage_refuses_control_plane_residency_live() {
     assert!(
         fresh.contains(&"wirings".to_string())
             && fresh.contains(&"release_components".to_string())
+            && !fresh.contains(&"connection_generation_retention".to_string())
             && !fresh.contains(&"authoring_command_audit".to_string()),
         "the fresh install did not produce a project catalog: {fresh:?}"
     );

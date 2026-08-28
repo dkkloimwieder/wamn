@@ -203,23 +203,6 @@ pub enum ConnectionBindingValidation {
     Invalid,
 }
 
-/// What keeps an immutable generation definition available.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum GenerationRetentionKind {
-    ActiveAttempt,
-    DeployedRelease,
-}
-
-impl GenerationRetentionKind {
-    pub fn as_sql(self) -> &'static str {
-        match self {
-            Self::ActiveAttempt => "active-attempt",
-            Self::DeployedRelease => "deployed-release",
-        }
-    }
-}
-
 /// Insert one immutable legacy artifact requirement; identical retries converge.
 pub fn insert_connection_requirement_sql() -> &'static str {
     "INSERT INTO catalog.connection_requirements \
@@ -279,14 +262,6 @@ pub fn insert_component_connection_binding_sql() -> &'static str {
        (tenant_id, catalog_id, catalog_version, component_digest, store_alias, \
         environment, instance_id, binding_status, validation_status, validation_hash) \
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
-}
-
-/// Retain a generation for one active attempt or deployed release.
-pub fn insert_generation_retention_sql() -> &'static str {
-    "INSERT INTO catalog.connection_generation_retention \
-       (tenant_id, environment, instance_id, generation, reference_kind, \
-        reference_id, retained_until) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7)"
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {

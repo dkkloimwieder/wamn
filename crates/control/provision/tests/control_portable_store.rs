@@ -79,7 +79,6 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.connection_instances",
         "catalog.connection_generations",
         "catalog.connection_bindings",
-        "catalog.connection_generation_retention",
         "catalog.schema_migrations",
         "catalog.entities",
         "catalog.event_registrations",

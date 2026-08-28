@@ -5421,7 +5421,6 @@ COMMIT;
             "connection_instances",
             "connection_generations",
             "connection_bindings",
-            "connection_generation_retention",
         ] {
             assert!(catalog.contains(&connection_table.to_string()));
         }
@@ -5438,7 +5437,7 @@ COMMIT;
         }
         assert_eq!(
             catalog.len(),
-            24,
+            23,
             "catalog-schema.sql table count: {catalog:?}"
         );
     }

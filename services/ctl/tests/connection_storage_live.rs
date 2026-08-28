@@ -31,8 +31,35 @@ fn assert_check_refusal(error: &tokio_postgres::Error, constraint: &str) {
     assert_eq!(database.constraint(), Some(constraint));
 }
 
+async fn generation_retention_residue(client: &Client) -> [bool; 5] {
+    let row = client
+        .query_one(
+            "SELECT to_regclass('catalog.connection_generation_retention') IS NOT NULL, \
+                    to_regprocedure('catalog.guard_connection_retention_update()') IS NOT NULL, \
+                    to_regprocedure('catalog.reject_referenced_connection_generation_delete()') \
+                        IS NOT NULL, \
+                    EXISTS (SELECT 1 FROM pg_catalog.pg_trigger trig \
+                            JOIN pg_catalog.pg_class rel ON rel.oid = trig.tgrelid \
+                            JOIN pg_catalog.pg_namespace ns ON ns.oid = rel.relnamespace \
+                            WHERE ns.nspname = 'catalog' \
+                              AND trig.tgname = \
+                                  'connection_generation_retention_controlled_update' \
+                              AND NOT trig.tgisinternal), \
+                    EXISTS (SELECT 1 FROM pg_catalog.pg_trigger trig \
+                            JOIN pg_catalog.pg_class rel ON rel.oid = trig.tgrelid \
+                            JOIN pg_catalog.pg_namespace ns ON ns.oid = rel.relnamespace \
+                            WHERE ns.nspname = 'catalog' \
+                              AND trig.tgname = 'connection_generations_delete_retained' \
+                              AND NOT trig.tgisinternal)",
+            &[],
+        )
+        .await
+        .expect("probe generation-retention residue");
+    [row.get(0), row.get(1), row.get(2), row.get(3), row.get(4)]
+}
+
 #[tokio::test]
-async fn connection_storage_enforces_environment_and_immutability_boundaries_live() {
+async fn connection_storage_enforces_boundaries_and_retires_legacy_retention_live() {
     let Some(url) = std::env::var("WAMN_CONNECTION_STORAGE_PG_URL").ok() else {
         eprintln!(
             "WAMN_CONNECTION_STORAGE_PG_URL unset — skipping the connection-storage live gate"
@@ -58,6 +85,11 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
         .batch_execute(CATALOG_SCHEMA)
         .await
         .expect("install current catalog schema before legacy-shape simulation");
+    assert_eq!(
+        generation_retention_residue(&client).await,
+        [false; 5],
+        "a fresh project schema must not install retired generation retention"
+    );
     client
         .batch_execute(
             "DROP TRIGGER connection_bindings_require_requirement \
@@ -95,10 +127,52 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
                tenant_id, artifact_hash, requirement_name, requirement_json, requirement_hash \
              ) VALUES ( \
                'tenant-a', 'artifact-a', 'erp', '{}'::jsonb, 'requirement-a' \
+             ); \
+             INSERT INTO catalog.connection_instances ( \
+               tenant_id, environment, instance_id, requirement_type, contract \
+             ) VALUES ( \
+               'tenant-upgrade', 'prod', 'upgrade-instance', 'http', \
+               'wamn:connection/http@0.1.0' \
+             ); \
+             INSERT INTO catalog.connection_generations ( \
+               tenant_id, environment, instance_id, generation, definition_json, \
+               definition_hash, credential_set_handle \
+             ) VALUES ( \
+               'tenant-upgrade', 'prod', 'upgrade-instance', 1, '{}'::jsonb, \
+               'upgrade-definition', 'upgrade-credential' \
+             ); \
+             CREATE TABLE catalog.connection_generation_retention ( \
+               tenant_id text NOT NULL, environment text NOT NULL, instance_id text NOT NULL, \
+               generation bigint NOT NULL, reference_kind text NOT NULL, \
+               reference_id text NOT NULL, retained_until timestamptz, \
+               created_at timestamptz NOT NULL DEFAULT now(), \
+               PRIMARY KEY ( \
+                 tenant_id, environment, instance_id, generation, reference_kind, reference_id \
+               ), \
+               FOREIGN KEY (tenant_id, environment, instance_id, generation) \
+                 REFERENCES catalog.connection_generations \
+                   (tenant_id, environment, instance_id, generation) \
+             ); \
+             CREATE FUNCTION catalog.guard_connection_retention_update() \
+             RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$; \
+             CREATE TRIGGER connection_generation_retention_controlled_update \
+             BEFORE UPDATE ON catalog.connection_generation_retention \
+             FOR EACH ROW EXECUTE FUNCTION catalog.guard_connection_retention_update(); \
+             CREATE FUNCTION catalog.reject_referenced_connection_generation_delete() \
+             RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END $$; \
+             CREATE TRIGGER connection_generations_delete_retained \
+             BEFORE DELETE ON catalog.connection_generations \
+             FOR EACH ROW EXECUTE FUNCTION \
+               catalog.reject_referenced_connection_generation_delete(); \
+             INSERT INTO catalog.connection_generation_retention ( \
+               tenant_id, environment, instance_id, generation, reference_kind, reference_id \
+             ) VALUES ( \
+               'tenant-upgrade', 'prod', 'upgrade-instance', 1, \
+               'active-attempt', 'upgrade-attempt' \
              );",
         )
         .await
-        .expect("simulate the truthful legacy connection grain");
+        .expect("simulate the truthful legacy connection grain and retired retention surface");
     let component_columns_absent: bool = client
         .query_one(
             "SELECT NOT EXISTS ( \
@@ -113,12 +187,35 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
         .expect("probe simulated legacy schema")
         .get(0);
     assert!(component_columns_absent);
+    assert_eq!(
+        generation_retention_residue(&client).await,
+        [true; 5],
+        "the legacy fixture must reproduce the whole retired surface"
+    );
     ensure_catalog_storage(&client)
         .await
         .expect("migrate legacy rows through the production async installer");
+    assert_eq!(
+        generation_retention_residue(&client).await,
+        [false; 5],
+        "the production installer left legacy generation-retention residue"
+    );
+    let preserved_generation: bool = client
+        .query_one(
+            "SELECT EXISTS ( \
+               SELECT 1 FROM catalog.connection_generations \
+               WHERE tenant_id = 'tenant-upgrade' AND environment = 'prod' \
+                 AND instance_id = 'upgrade-instance' AND generation = 1 \
+             )",
+            &[],
+        )
+        .await
+        .expect("read the generation preserved across retention retirement")
+        .get(0);
+    assert!(preserved_generation);
     ensure_catalog_storage(&client)
         .await
-        .expect("component grain migration is idempotent");
+        .expect("connection migration and retention retirement are idempotent");
 
     let legacy_row = client
         .query_one(
@@ -174,12 +271,7 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
                ('tenant-a', 'release', 1, 'artifact-a', 'erp', \
                 'dev', 'erp-dev', 'valid', 'validation-dev'), \
                ('tenant-a', 'release', 2, 'artifact-a', 'erp', \
-                'prod', 'erp-prod', 'valid', 'validation-prod'); \
-             INSERT INTO catalog.connection_generation_retention ( \
-               tenant_id, environment, instance_id, generation, reference_kind, reference_id \
-             ) VALUES ( \
-               'tenant-a', 'dev', 'erp-dev', 1, 'active-attempt', 'attempt-a' \
-             );",
+                'prod', 'erp-prod', 'valid', 'validation-prod');",
         )
         .await
         .expect("seed portable requirement and distinct environment bindings");
@@ -321,17 +413,6 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
         )
         .await
         .expect("controlled lifecycle update advances the revision");
-
-    let retained_delete = client
-        .execute(
-            "DELETE FROM catalog.connection_generations \
-             WHERE tenant_id = 'tenant-a' AND environment = 'dev' \
-               AND instance_id = 'erp-dev' AND generation = 1",
-            &[],
-        )
-        .await
-        .expect_err("referenced generation deletion must fail");
-    assert!(database_message(&retained_delete).contains("connection-generation-retained"));
 
     client
         .batch_execute(
