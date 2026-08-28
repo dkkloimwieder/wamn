@@ -62,13 +62,19 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 18] = [
     ("event-reader-rbac.yaml",
         &[("ServiceAccount", "event-reader")],
         &[]),
-    // TWO Secrets in ONE carrier, because the executor is TWO principals
-    // (wamn-0h0g.22.31): the guest-SQL url component calls run as, and the
-    // executor-platform generation the queue claim dials with. Shipping them in
-    // separate files would let an operator apply one and leave the other, which
-    // is the failure the pair exists to prevent.
+    // THREE Secrets in ONE carrier, because the executor is THREE principals:
+    // the guest-SQL url component calls run as, the executor-platform
+    // generation the queue claim dials with (`wamn-0h0g.22.31`), and the
+    // http-admitter generation the trusted HTTP effect snapshot reads under
+    // (`wamn-0h0g.22.11`). Shipping them in separate files would let an
+    // operator apply one and leave the others, which is the failure the set
+    // exists to prevent.
     ("executor-db.example.yaml",
-        &[("Secret", "wamn-executor-db"), ("Secret", "wamn-executor-platform-db")],
+        &[
+            ("Secret", "wamn-executor-db"),
+            ("Secret", "wamn-executor-platform-db"),
+            ("Secret", "wamn-http-admitter-db"),
+        ],
         &[]),
     ("executor.yaml",
         &[("Deployment", "executor"), ("PodDisruptionBudget", "executor")],
@@ -180,9 +186,10 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// `wamn-0h0g.10.5` — mounted by `executor.yaml`, declared by nothing, because
 /// `ea71c1c4` deleted `runner-db.example.yaml` and no carrier came with it.
 /// `deploy/platform/executor-db.example.yaml` now declares it, alongside the
-/// `wamn-executor-platform-db` the `wamn-0h0g.22.31` cutover added, so both are
-/// DECLARED rows in the table above rather than prerequisites of it. Every
-/// database credential in this tier ships a carrier again.
+/// `wamn-executor-platform-db` the `wamn-0h0g.22.31` cutover added and the
+/// `wamn-http-admitter-db` `wamn-0h0g.22.11` added, so all three are DECLARED
+/// rows in the table above rather than prerequisites of it. Every database
+/// credential in this tier ships a carrier again.
 const EXTERNAL_PREREQUISITES: [(&str, &str); 2] = [
     // READ by registry.yaml's namespaced CA Issuer (`spec.ca.secretName`) and
     // minted by the runtime-operator Helm release, not by anything here. The
