@@ -32,8 +32,10 @@
 # `deploy/platform/waker.yaml` now render therefore cannot be rendered here:
 # the guest config shape has to gain a key first, which is a plugin change and
 # not a manifest one. Until then this file is compatible only through the
-# adapter — the residual wamn-0h0g.5.9 owns, and the one placement row
-# wamn-0h0g.10.5 could not discharge in the manifests alone.
+# adapter — the residual the open placement epic wamn-0h0g.5 owns, and the one
+# placement row wamn-0h0g.10.5 could not discharge in the manifests alone. The
+# retirement trigger is recorded at the plugin (wamn-0h0g.10.11): the first
+# component that must ring a target which is not its own tenant.
 #
 # ONE TENANT PER WORKLOAD (v1): registrations and claims are tenant-scoped, and
 # the doorbell is scoped to the target the adapter derives from that tenant, so
