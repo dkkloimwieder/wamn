@@ -2,8 +2,8 @@
 //!
 //! Set `WAMN_PROVISION_PG_URL` to a **superuser** URL of a throwaway Postgres
 //! (`CREATE DATABASE` / `CREATE ROLE` need it, exactly as the CNPG cluster
-//! superuser does in production) — the same variable the provision crate's live
-//! gates use, so one container serves them all. Skipped cleanly when unset.
+//! superuser does in production). Use a dedicated fresh PG18: this gate converges
+//! the cluster-wide PUBLIC `CONNECT` floor. Skipped cleanly when unset.
 //!
 //! This gate lives with the dispatcher, not with the provisioner, because what is
 //! under proof is a RELATIONSHIP between the two: the provisioner's real builders
@@ -339,6 +339,11 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         &sql::platform_group_membership_sql(WorkloadRoleFamily::DispatchReader),
     );
 
+    // Production generation preparation converges this cluster-wide prerequisite
+    // before it mints any workload credential. This test calls the pure SQL
+    // builder below directly, so it must apply the same prerequisite itself.
+    run_ok(&project_url, sql::revoke_public_connect_floor_sql());
+
     // THE CREDENTIAL IS A GENERATION, NOT THE STABLE ROLE (`wamn-0h0g.22.24`).
     // The stable role above is a NOLOGIN grant carrier with no CONNECT of its
     // own; this is the only thing in the cluster that can open a dispatcher
@@ -449,7 +454,7 @@ DO $$ DECLARE writes int; reads int; app_writes int; BEGIN
   ASSERT NOT has_database_privilege('{generation}', '{database}', 'CREATE');
   ASSERT NOT has_database_privilege('{generation}', '{database}', 'TEMPORARY');
   ASSERT (SELECT count(*) FROM pg_database d
-           WHERE d.datname <> '{database}' AND NOT d.datistemplate
+           WHERE d.datname <> '{database}' AND d.datallowconn
              AND has_database_privilege('{generation}', d.oid, 'CONNECT')) = 0,
     'the generation reaches a database other than the one it was minted for';
 
