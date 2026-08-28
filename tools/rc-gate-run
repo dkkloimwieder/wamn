@@ -71,7 +71,7 @@ if [[ -n $(git -C "$repo_root" status --porcelain --untracked-files=normal) ]]; 
   exit 2
 fi
 
-for required in awk date docker git grep helm install jq kind kubectl openssl sed sha256sum sort timeout uname; do
+for required in awk bash date docker git grep helm install jq kind kubectl openssl sed sha256sum sort tee timeout uname; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "required executable not found: $required" >&2
     exit 2
@@ -168,8 +168,9 @@ cleanup() {
         "$evidence_dir"/bootstrap-secrets.json "$evidence_dir"/cleanup.receipt \
         "$evidence_dir"/helm-releases.json "$evidence_dir"/host-deployment.json \
         "$evidence_dir"/host-pods.json "$evidence_dir"/m2.receipt \
-        "$evidence_dir"/socketguard-verdict.json \
-        "$evidence_dir"/traceproof-verdict.json "$evidence_dir"/m0-verdict.json \
+        "$evidence_dir"/socketguard.log "$evidence_dir"/socketguard-verdict.json \
+        "$evidence_dir"/traceproof.log "$evidence_dir"/traceproof-verdict.json \
+        "$evidence_dir"/m0-verdict.json "$evidence_dir"/m1.log \
         "$evidence_dir"/m1-sidecar-preflight.json \
         "$evidence_dir"/m1-verdict.json >"$evidence_dir/evidence.sha256"; then
       cleanup_failed=true
@@ -371,9 +372,11 @@ read -r sidecar_image_id sidecar_config_id < <(image_tuple "$sidecar_image")
 
 kubectl_path=$(command -v kubectl)
 kubectl_wrapper=$work_dir/kubectl-wamn-rc
-printf '#!/usr/bin/env bash\nexec %q --kubeconfig %q --context %q "$@"\n' \
+printf '#!/usr/bin/env bash\nset -euo pipefail\ncapture=${WAMN_RC_KUBECTL_LOG_RECORD:-}\nif [[ -n "$capture" ]]; then\n  for argument in "$@"; do\n    if [[ "$argument" == logs ]]; then\n      %q --kubeconfig %q --context %q "$@" | tee "$capture"\n      exit\n    fi\n  done\nfi\nexec %q --kubeconfig %q --context %q "$@"\n' \
+  "$kubectl_path" "$kubeconfig" "$context" \
   "$kubectl_path" "$kubeconfig" "$context" >"$kubectl_wrapper"
 chmod 0755 "$kubectl_wrapper"
+bash -n "$kubectl_wrapper"
 kube=("$kubectl_path" --kubeconfig "$kubeconfig" --context "$context")
 
 run "${kube[@]}" wait --for=condition=Ready nodes --all --timeout=180s
@@ -662,11 +665,13 @@ socketguard_spec=$(jq -cn --arg image "$gate_image" \
   '{name:"socketguard",container:"socketguard",expectation:"positive",exit_code:0,
     image:$image,log_contains:"socketguard complete — overall PASS: true"}')
 socketguard_verdict=$evidence_dir/socketguard-verdict.json
-record_command env KUBECTL="$kubectl_wrapper" \
+record_command env WAMN_RC_KUBECTL_LOG_RECORD="$evidence_dir/socketguard.log" \
+  KUBECTL="$kubectl_wrapper" \
   tools/kubernetes-gate-run --namespace "$namespace" --timeout-secs 180 \
   --manifest "$socketguard" --verdict-record "$socketguard_verdict" \
   --job "$socketguard_spec"
-KUBECTL="$kubectl_wrapper" "$repo_root/tools/kubernetes-gate-run" \
+WAMN_RC_KUBECTL_LOG_RECORD="$evidence_dir/socketguard.log" \
+  KUBECTL="$kubectl_wrapper" "$repo_root/tools/kubernetes-gate-run" \
   --namespace "$namespace" --timeout-secs 180 --manifest "$socketguard" \
   --verdict-record "$socketguard_verdict" --job "$socketguard_spec"
 jq -e '.verdict == "pass" and .failure_classes == []' \
@@ -676,11 +681,13 @@ traceproof_spec=$(jq -cn --arg image "$gate_image" \
   '{name:"traceproof",container:"traceproof",expectation:"positive",exit_code:0,
     image:$image,log_contains:"traceproof: overall PASS"}')
 traceproof_verdict=$evidence_dir/traceproof-verdict.json
-record_command env KUBECTL="$kubectl_wrapper" \
+record_command env WAMN_RC_KUBECTL_LOG_RECORD="$evidence_dir/traceproof.log" \
+  KUBECTL="$kubectl_wrapper" \
   tools/kubernetes-gate-run --namespace "$namespace" --timeout-secs 240 \
   --manifest "$traceproof" --verdict-record "$traceproof_verdict" \
   --job "$traceproof_spec"
-KUBECTL="$kubectl_wrapper" "$repo_root/tools/kubernetes-gate-run" \
+WAMN_RC_KUBECTL_LOG_RECORD="$evidence_dir/traceproof.log" \
+  KUBECTL="$kubectl_wrapper" "$repo_root/tools/kubernetes-gate-run" \
   --namespace "$namespace" --timeout-secs 240 --manifest "$traceproof" \
   --verdict-record "$traceproof_verdict" --job "$traceproof_spec"
 jq -e '.verdict == "pass" and .failure_classes == []' \
@@ -737,12 +744,14 @@ job_spec=$(jq -cn --arg image "$gate_image" --arg main "$main_image_id" \
     sidecar_config_id:$config_id,sidecar_upstream_index:$upstream_index,
     sidecar_upstream_child:$upstream_child,
     log_contains:"M1 PASS — checks 9 and 10 passed"}')
-record_command env KUBECTL="$kubectl_wrapper" DOCKER=docker \
+record_command env WAMN_RC_KUBECTL_LOG_RECORD="$evidence_dir/m1.log" \
+  KUBECTL="$kubectl_wrapper" DOCKER=docker \
   tools/kubernetes-gate-run --namespace "$namespace" --manifest "$m1_manifest" \
   --generated-name-prefix m1-gate- --require-final-cleanup \
   --sidecar-preflight-record "$evidence_dir/m1-sidecar-preflight.json" \
   --verdict-record "$evidence_dir/m1-verdict.json" --job "$job_spec"
-KUBECTL="$kubectl_wrapper" DOCKER=docker \
+WAMN_RC_KUBECTL_LOG_RECORD="$evidence_dir/m1.log" \
+  KUBECTL="$kubectl_wrapper" DOCKER=docker \
   "$repo_root/tools/kubernetes-gate-run" --namespace "$namespace" \
   --manifest "$m1_manifest" --generated-name-prefix m1-gate- \
   --require-final-cleanup \
