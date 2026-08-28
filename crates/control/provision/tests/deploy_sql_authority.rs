@@ -199,7 +199,7 @@ fn the_platform_grain_family_set_is_pinned_and_not_derived() {
 /// Every file that carries the bootstrap, with the number of governed policies
 /// it re-keyed and the number of retired predicates it deliberately keeps.
 const FILES: [(&str, &str, usize, usize); 4] = [
-    ("catalog-schema.sql", CATALOG_SCHEMA, 24, 0),
+    ("catalog-schema.sql", CATALOG_SCHEMA, 23, 0),
     ("app-schema.sql", APP_SCHEMA, 7, 0),
     // run-state.sql keeps `operator_run_actions`: one policy, two clauses.
     ("run-state.sql", RUN_STATE, 5, 2),
