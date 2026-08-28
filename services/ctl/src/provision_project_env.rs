@@ -2447,8 +2447,9 @@ fn acl_tuples(inventory: &[RoleAcl]) -> BTreeSet<(String, String, String, String
 /// derivation the `runs_tkey` expression index makes load bearing — and
 /// `sql::role_database_acl_inventory_sql` reports routine ACLs, so omitting
 /// them here would refuse a correctly converged role. (The management-admitter
-/// matrix above does omit them and its `wamn-0h0g.22.28` grant is therefore
-/// unrepresented; that is a defect in that matrix, not a convention.)
+/// matrix above carries its own `routine` row since `wamn-0h0g.22.38`; the
+/// omission this note used to record as a defect is fixed, and a routine row
+/// is the convention for both families rather than an exemption for one.)
 ///
 /// An empty inventory is acceptable only OUTSIDE the target database: the
 /// project-environment database must carry the grant set, and this role must
