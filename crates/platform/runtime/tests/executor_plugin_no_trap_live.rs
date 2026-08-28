@@ -112,6 +112,11 @@ const RET_OK_ERR: u32 = 768;
 /// (`row-limit-exceeded`), so its alignment is 8.
 const RET_ERR_ALIGN8: u32 = RET_OK_ERR + 8;
 
+/// Error-case discriminant for a returned `result<T, E>` whose maximum case
+/// alignment is 4. `connection-error` carries a string in its `transport` case,
+/// so its nested discriminant begins four bytes after the outer result tag.
+const RET_ERR_ALIGN4: u32 = RET_OK_ERR + 4;
+
 /// Stand a real component up against a real store carrying `plugins`, link the
 /// plugin capability under test, drive the guest's `drive` export, and return
 /// the guest call's outcome beside the verdict trail the guest recorded.
@@ -465,90 +470,93 @@ async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_no
 }
 
 // ---------------------------------------------------------------------------
-// 3. connection_http — wamn:runner/http-effect@0.1.0
+// 3. connection_http — wamn:connection/http@0.1.0
 // ---------------------------------------------------------------------------
 
-/// `ConnectionHttp` implements the TRUSTED `wamn:runner/http-effect` surface,
-/// not the portable `wamn:connection/http` one (its `HostPlugin::world` names
-/// `wamn:runner/http-effect@0.1.0`), and `send` is its only guest-visible
-/// function.
+/// `ConnectionHttp` implements the portable `wamn:connection/http` surface, and
+/// `send` is its only guest-visible function.
 ///
-/// `validate_claims` is the first statement in `ConnectionHttp::send` and
-/// refuses a context whose `version` is not `"0.1"`, so this guest passes an
-/// ALL-ZERO parameter block: every string lifts empty, `version != "0.1"`, and
-/// the call returns `invalid-context` without reaching the vault, the database
-/// or the wire. Zeros are also what makes the block layout-independent — the
-/// guest only has to get the size and the 8-alignment right, not the offsets.
+/// The host must bind an invocation to the pooled component before `send` can
+/// use any guest request. This guest has no binding, so an otherwise liftable
+/// all-zero request returns `attestation-invalid` before the vault, database or
+/// wire. Non-owning option payload slots are zero too.
 ///
-/// The two records flatten to 25 core values, past the 16-value limit, so the
-/// parameters are indirect too: the core signature is `(params ptr, retptr)`.
-fn http_effect_guest() -> String {
+/// `request` flattens to fourteen core values: four `(ptr, len)` pairs and two
+/// `(discriminant, ptr, len)` options. The result is indirect, adding `retptr`.
+fn connection_http_guest() -> String {
     format!(
         r#"
 (component
   ;; wamn-0h0g.15.53
-  (import "wamn:runner/http-effect@0.1.0" (instance $effect
-    (type $invocation-context' (record
-      (field "version" string)
-      (field "run-id" string)
-      (field "root-plan-hash" string)
-      (field "current-plan-hash" string)
-      (field "frame-id" u64)
-      (field "local-node-id" string)
-      (field "occurrence" u32)
-      (field "source-artifact-hash" string)
-      (field "requirement-name" string)))
-    (export "invocation-context" (type $invocation-context (eq $invocation-context')))
+  (import "wamn:connection/http@0.1.0" (instance $http
     (type $header' (record
       (field "name" string)
       (field "value" (list u8))))
     (export "header" (type $header (eq $header')))
-    (type $relative-request' (record
+    (type $request' (record
+      (field "requirement" string)
       (field "method" string)
       (field "path-and-query" string)
       (field "headers" (list $header))
-      (field "body" (option (list u8)))))
-    (export "relative-request" (type $relative-request (eq $relative-request')))
+      (field "body" (option (list u8)))
+      (field "idempotency-key" (option string))))
+    (export "request" (type $request (eq $request')))
     (type $response' (record
       (field "status" u16)
       (field "headers" (list $header))
       (field "body" (list u8))))
     (export "response" (type $response (eq $response')))
-    (type $effect-error' (variant
-      (case "invalid-context")
-      (case "undeclared-requirement")
-      (case "node-not-permitted")
+    (type $connection-error' (variant
       (case "unbound")
-      (case "inactive-generation")
       (case "incompatible")
       (case "authority-denied")
+      (case "attestation-invalid")
       (case "credential-unavailable")
       (case "timeout")
       (case "transport" string)))
-    (export "effect-error" (type $effect-error (eq $effect-error')))
+    (export "connection-error" (type $connection-error (eq $connection-error')))
     (export "send" (func
-      (param "context" $invocation-context)
-      (param "request" $relative-request)
-      (result (result $response (error $effect-error)))))))
+      (param "request" $request)
+      (result (result $response (error $connection-error)))))))
   (import "verdict" (func $verdict (param "code" u32)))
 {libc}
   (core func $send-lowered
-    (canon lower (func $effect "send")
+    (canon lower (func $http "send")
       (memory $libc "memory")
       (realloc (func $libc "realloc"))))
   (core func $verdict-lowered (canon lower (func $verdict)))
 
   (core module $main
     (import "libc" "memory" (memory 1))
-    (import "host" "send" (func $send (param i32 i32)))
+    (import "host" "send" (func $send
+      (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))
     (import "host" "verdict" (func $verdict (param i32)))
     (func (export "drive")
       i32.const {enter}
       call $verdict
-      i32.const 512
+      ;; requirement, method, path-and-query, headers
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      ;; body = none, idempotency-key = none
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      ;; indirect result
       i32.const 768
       call $send
       i32.const {ok_err}
+      i32.load8_u
+      call $verdict
+      i32.const {err_case}
       i32.load8_u
       call $verdict))
   (core instance $main (instantiate $main
@@ -559,9 +567,10 @@ fn http_effect_guest() -> String {
   (func (export "drive") (canon lift (core func $main "drive")))
 )
 "#,
-        libc = libc_module("unused"),
+        libc = libc_module(""),
         enter = MARK_ENTER,
         ok_err = RET_OK_ERR,
+        err_case = RET_ERR_ALIGN4,
     )
 }
 
@@ -585,22 +594,18 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
     );
 
     let (outcome, trail) = drive_guest(
-        &http_effect_guest(),
+        &connection_http_guest(),
         plugins,
         connection_http::add_to_linker,
     )
     .await;
 
     outcome.expect("the guest survived the effect refusal");
-    // Only the ok/err discriminant is asserted. `invalid-context` is case ZERO
-    // of `effect-error` and the return area is zero-initialized, so reading the
-    // inner byte would pass whether or not the host ever wrote it — a
-    // tautological assertion, which is worse than none. The refusal identity is
-    // covered by `refusal_precedence_is_explicit_and_typed` in the plugin;
-    // what this test adds is that it crosses the ABI as data.
+    // `1` is `err`; `3` is `attestation-invalid`. Both are non-zero, so the
+    // zero-initialized return area cannot make an uncalled host path pass.
     assert_eq!(
         trail,
-        vec![MARK_ENTER, 1],
-        "an invalid invocation context returns through the WIT error channel"
+        vec![MARK_ENTER, 1, 3],
+        "a missing host-bound invocation returns through the WIT error channel"
     );
 }
