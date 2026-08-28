@@ -22,8 +22,8 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use crate::release_fixture::{ReleaseFixture, load_release};
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
-    workload_generation_role,
+    APP_ROLE, CredentialGeneration, SystemReader, WorkloadRoleFamily, WorkloadRoleScope,
+    sql as provision_sql, system_reader_generation_role, workload_generation_role,
 };
 use wamn_control_registry::DurabilityClass;
 use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
@@ -51,7 +51,7 @@ const CDC_BACKEND_TERMINATION_TIMEOUT_MS: i64 = 15_000;
 // Long enough to expose fire-and-forget termination, while automatic resume
 // keeps even a failed cleanup probe independently bounded.
 const CDC_WITNESS_RESUME_DELAY_SECS: u64 = 1;
-const APP_GENERATION_EXPIRES_AT: &str = "2100-01-01T00:00:00Z";
+const M1_GENERATION_EXPIRES_AT: &str = "2100-01-01T00:00:00Z";
 
 #[derive(Args)]
 pub struct CausationE2eArgs {
@@ -101,6 +101,8 @@ struct GateResources {
     table: String,
     app_generation: String,
     app_password: String,
+    registry_reader_generation: String,
+    registry_reader_password: String,
     cdc_name: String,
     cdc_password: String,
     stream: String,
@@ -154,6 +156,10 @@ impl GateResources {
         let owner = format!("wamn-m1-job:{}/{}", args.job_name, args.job_uid);
         let tenant = format!("t-{suffix}");
         let project_database = format!("m1p_{suffix}");
+        let system_database = format!("m1y_{suffix}");
+        let org = format!("o-{}", &suffix[..10]);
+        let project = format!("p-{}", &suffix[10..20]);
+        let env = format!("e-{}", &suffix[20..]);
         let app_generation = workload_generation_role(
             WorkloadRoleFamily::App,
             WorkloadRoleScope::Tenant {
@@ -163,10 +169,18 @@ impl GateResources {
             CredentialGeneration::A,
         )
         .context("derive the Job-scoped M1 application generation")?;
+        let registry_reader_generation = system_reader_generation_role(
+            SystemReader::Registry,
+            &org,
+            &project,
+            &env,
+            &system_database,
+            CredentialGeneration::A,
+        );
         let catalog_id = format!("c-{suffix}");
         let registration_id = format!("r-{suffix}");
         let durable = format!("mat_{tenant}_{catalog_id}_{registration_id}");
-        let mut secret = [0u8; 48];
+        let mut secret = [0u8; 72];
         std::fs::File::open("/dev/urandom")
             .context("open operating-system random source")?
             .read_exact(&mut secret)
@@ -176,17 +190,19 @@ impl GateResources {
             job_uid: args.job_uid.clone(),
             gate_id: format!("wamn-m1-{suffix}"),
             project_database,
-            system_database: format!("m1y_{suffix}"),
+            system_database,
             schema: format!("m1s_{suffix}"),
             table: format!("receipts_{suffix}"),
             app_generation,
             app_password: hex::encode(&secret[..24]),
+            registry_reader_generation,
+            registry_reader_password: hex::encode(&secret[24..48]),
             cdc_name: format!("m1cdc_{suffix}"),
-            cdc_password: hex::encode(&secret[24..]),
+            cdc_password: hex::encode(&secret[48..]),
             stream: format!("M1_{suffix}"),
-            org: format!("o-{}", &suffix[..10]),
-            project: format!("p-{}", &suffix[10..20]),
-            env: format!("e-{}", &suffix[20..]),
+            org,
+            project,
+            env,
             tenant,
             catalog_id,
             flow_id: format!("f-{suffix}"),
@@ -239,6 +255,10 @@ impl GateResources {
             (&self.schema, "scratch schema"),
             (&self.table, "scratch table"),
             (&self.app_generation, "application generation"),
+            (
+                &self.registry_reader_generation,
+                "registry-reader generation",
+            ),
             (&self.cdc_name, "CDC role/publication/slot"),
         ] {
             pg_identifier(name, label)?;
@@ -291,6 +311,7 @@ impl GateResources {
                 "project_database": self.project_database,
                 "system_database": self.system_database,
                 "app_generation": self.app_generation,
+                "registry_reader_generation": self.registry_reader_generation,
                 "cdc_role": self.cdc_name,
                 "schema": self.schema,
                 "table": self.table,
@@ -364,6 +385,7 @@ struct SetupLedger {
     project_database: bool,
     system_database: bool,
     app_generation: bool,
+    registry_reader_generation: bool,
     cdc_role: bool,
     schema: bool,
     publication: bool,
@@ -593,7 +615,7 @@ async fn provision_databases(
             &resources.project_database,
             &resources.app_generation,
             &resources.app_password,
-            APP_GENERATION_EXPIRES_AT,
+            M1_GENERATION_EXPIRES_AT,
         ))
         .await
         .context("prepare the Job-scoped M1 application generation")?;
@@ -839,7 +861,7 @@ async fn require_app_generation(client: &Client, resources: &GateResources) -> a
             && row.get::<_, bool>("password_set")
             && row.get::<_, bool>("valid_until_finite")
             && row.get::<_, Option<String>>("valid_until").as_deref()
-                == Some(APP_GENERATION_EXPIRES_AT)
+                == Some(M1_GENERATION_EXPIRES_AT)
             && row.get::<_, Vec<String>>("memberships") == vec![APP_ROLE.to_string()]
             && row.get::<_, bool>("membership_options_exact")
             && row.get::<_, Vec<String>>("member_roles").is_empty()
@@ -852,10 +874,32 @@ async fn require_app_generation(client: &Client, resources: &GateResources) -> a
     Ok(())
 }
 
-async fn setup_registry(system: &mut Client, resources: &GateResources) -> anyhow::Result<()> {
+async fn setup_registry(
+    system: &mut Client,
+    resources: &GateResources,
+    state: &mut GateState,
+) -> anyhow::Result<()> {
     // The canonical owner lives only inside this Job's emptyDir-backed server.
     require_role(system, "wamn_system", true, true).await?;
     system.batch_execute(SYSTEM_SQL).await?;
+    system
+        .batch_execute(&provision_sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::RegistryReader,
+            &resources.system_database,
+            &resources.registry_reader_generation,
+            &resources.registry_reader_password,
+            M1_GENERATION_EXPIRES_AT,
+        ))
+        .await
+        .context("prepare the Job-scoped M1 registry-reader generation")?;
+    state.ledger.registry_reader_generation = true;
+    system
+        .batch_execute(&format!(
+            "COMMENT ON ROLE {} IS '{}'",
+            resources.registry_reader_generation, resources.owner
+        ))
+        .await
+        .context("mark the Job-scoped M1 registry-reader generation owner")?;
     let transaction = system.transaction().await?;
     transaction
         .execute(
@@ -1089,7 +1133,11 @@ fn reader_args(args: &CausationE2eArgs, resources: &GateResources) -> anyhow::Re
         org: resources.org.clone(),
         project: resources.project.clone(),
         env: resources.env.clone(),
-        system_database_url: args.system_database_url.clone(),
+        system_database_url: role_url(
+            &args.system_database_url,
+            &resources.registry_reader_generation,
+            &resources.registry_reader_password,
+        )?,
         cdc_url: role_url(
             &args.admin_database_url,
             &resources.cdc_name,
@@ -2548,37 +2596,193 @@ async fn cleanup(
     }
 
     match connect(&args.system_database_url).await {
-        Ok(system_admin) => match postgres_owner(
-            &system_admin,
-            "pg_database",
-            "pg_database",
-            &resources.system_database,
-        )
-        .await
-        {
-            Ok(None) => {}
-            Ok(Some(owner)) => match require_owner(
-                "database",
+        Ok(system_admin) => {
+            let database = postgres_owner(
+                &system_admin,
+                "pg_database",
+                "pg_database",
                 &resources.system_database,
-                owner.as_deref(),
-                resources,
-                state.ledger.system_database || durable_owner,
-            ) {
-                Ok(()) => {
-                    if let Err(error) = system_admin
-                        .batch_execute(&format!(
-                            "DROP DATABASE {} WITH (FORCE)",
-                            resources.system_database
-                        ))
-                        .await
-                    {
-                        errors.push(format!("drop exact system database: {error:#}"));
+            )
+            .await;
+            let generation = postgres_owner(
+                &system_admin,
+                "pg_roles",
+                "pg_authid",
+                &resources.registry_reader_generation,
+            )
+            .await;
+            let (database_owned, mut database_absent) = match database {
+                Ok(None) => (false, true),
+                Ok(Some(owner)) => match require_owner(
+                    "database",
+                    &resources.system_database,
+                    owner.as_deref(),
+                    resources,
+                    state.ledger.system_database || durable_owner,
+                ) {
+                    Ok(()) => (true, false),
+                    Err(error) => {
+                        errors.push(error.to_string());
+                        (false, false)
                     }
+                },
+                Err(error) => {
+                    errors.push(format!("inspect system database ownership: {error:#}"));
+                    (false, false)
                 }
-                Err(error) => errors.push(error.to_string()),
-            },
-            Err(error) => errors.push(format!("inspect system database ownership: {error:#}")),
-        },
+            };
+            let (generation_owned, mut generation_confined) = match generation {
+                Ok(None) => (false, true),
+                Ok(Some(owner)) => match require_owner(
+                    "role",
+                    &resources.registry_reader_generation,
+                    owner.as_deref(),
+                    resources,
+                    state.ledger.registry_reader_generation || durable_owner,
+                ) {
+                    Ok(()) => (true, false),
+                    Err(error) => {
+                        errors.push(error.to_string());
+                        (false, false)
+                    }
+                },
+                Err(error) => {
+                    errors.push(format!(
+                        "inspect registry-reader generation ownership: {error:#}"
+                    ));
+                    (false, false)
+                }
+            };
+            if generation_owned {
+                let retire = if database_owned {
+                    provision_sql::retire_workload_generation_sql(
+                        WorkloadRoleFamily::RegistryReader,
+                        &resources.system_database,
+                        &resources.registry_reader_generation,
+                    )
+                } else {
+                    format!(
+                        "{} ALTER ROLE {} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
+                        provision_sql::normalize_workload_generation_membership_sql(
+                            WorkloadRoleFamily::RegistryReader,
+                            &resources.registry_reader_generation,
+                            false,
+                        ),
+                        resources.registry_reader_generation,
+                    )
+                };
+                match system_admin.batch_execute(&retire).await {
+                    Ok(()) => {
+                        let confined_before_termination = match system_admin
+                            .query_one(
+                                "SELECT count(*) FILTER (WHERE datname IS DISTINCT FROM $2) \
+                                   FROM pg_stat_activity WHERE usename=$1",
+                                &[
+                                    &resources.registry_reader_generation,
+                                    &resources.system_database,
+                                ],
+                            )
+                            .await
+                        {
+                            Ok(row) if row.get::<_, i64>(0) == 0 => true,
+                            Ok(row) => {
+                                errors.push(format!(
+                                    "exact registry-reader generation had {} off-scratch session(s)",
+                                    row.get::<_, i64>(0)
+                                ));
+                                false
+                            }
+                            Err(error) => {
+                                errors.push(format!(
+                                    "inspect exact registry-reader confinement: {error:#}"
+                                ));
+                                false
+                            }
+                        };
+                        if let Err(error) = system_admin
+                            .batch_execute(
+                                &provision_sql::terminate_workload_generation_sessions_sql(
+                                    &resources.registry_reader_generation,
+                                ),
+                            )
+                            .await
+                        {
+                            errors.push(format!(
+                                "terminate exact registry-reader sessions: {error:#}"
+                            ));
+                        } else {
+                            match system_admin
+                                .query_one(
+                                    "SELECT count(*) FROM pg_stat_activity WHERE usename=$1",
+                                    &[&resources.registry_reader_generation],
+                                )
+                                .await
+                            {
+                                Ok(row) => {
+                                    let total: i64 = row.get(0);
+                                    if confined_before_termination && total == 0 {
+                                        generation_confined = true;
+                                    } else if total != 0 {
+                                        errors.push(format!(
+                                            "exact registry-reader sessions remained after termination: count={total}"
+                                        ));
+                                    }
+                                }
+                                Err(error) => errors.push(format!(
+                                    "inspect exact registry-reader sessions: {error:#}"
+                                )),
+                            }
+                        }
+                    }
+                    Err(error) => errors.push(format!(
+                        "retire exact registry-reader generation: {error:#}"
+                    )),
+                }
+            }
+            if database_owned && generation_confined {
+                if let Err(error) = system_admin
+                    .batch_execute(&format!(
+                        "DROP DATABASE {} WITH (FORCE)",
+                        resources.system_database
+                    ))
+                    .await
+                {
+                    errors.push(format!("drop exact system database: {error:#}"));
+                } else {
+                    database_absent = true;
+                }
+            }
+            if generation_owned && generation_confined && database_absent {
+                match system_admin
+                    .query_one(
+                        "SELECT count(*) FROM pg_stat_activity WHERE usename=$1",
+                        &[&resources.registry_reader_generation],
+                    )
+                    .await
+                {
+                    Ok(row) if row.get::<_, i64>(0) == 0 => {
+                        if let Err(error) = system_admin
+                            .batch_execute(&format!(
+                                "DROP OWNED BY {}; DROP ROLE {}",
+                                resources.registry_reader_generation,
+                                resources.registry_reader_generation,
+                            ))
+                            .await
+                        {
+                            errors
+                                .push(format!("drop exact registry-reader generation: {error:#}"));
+                        }
+                    }
+                    Ok(row) => errors.push(format!(
+                        "exact registry-reader sessions remained after database cleanup: count={}",
+                        row.get::<_, i64>(0)
+                    )),
+                    Err(error) => errors.push(format!(
+                        "verify registry-reader sessions after database cleanup: {error:#}"
+                    )),
+                }
+            }
+        }
         Err(error) => errors.push(format!("connect system admin for cleanup: {error:#}")),
     }
 
@@ -2751,6 +2955,50 @@ async fn verify_clean(
             }
             match project_admin
                 .query_one(
+                    "SELECT NOT EXISTS (SELECT FROM pg_roles WHERE rolname=$1)",
+                    &[&resources.registry_reader_generation],
+                )
+                .await
+            {
+                Ok(row) => record_absence(
+                    &mut errors,
+                    phase,
+                    "registry-reader-generation",
+                    &resources.registry_reader_generation,
+                    row.get::<_, bool>(0),
+                ),
+                Err(error) => record_unknown(
+                    &mut errors,
+                    phase,
+                    "registry-reader-generation",
+                    &resources.registry_reader_generation,
+                    &error.to_string(),
+                ),
+            }
+            match project_admin
+                .query_one(
+                    "SELECT count(*) FROM pg_stat_activity WHERE usename=$1",
+                    &[&resources.registry_reader_generation],
+                )
+                .await
+            {
+                Ok(row) => record_absence(
+                    &mut errors,
+                    phase,
+                    "registry-reader-generation-sessions",
+                    &resources.registry_reader_generation,
+                    row.get::<_, i64>(0) == 0,
+                ),
+                Err(error) => record_unknown(
+                    &mut errors,
+                    phase,
+                    "registry-reader-generation-sessions",
+                    &resources.registry_reader_generation,
+                    &error.to_string(),
+                ),
+            }
+            match project_admin
+                .query_one(
                     "SELECT count(*) FROM pg_stat_activity WHERE usename=$1",
                     &[&resources.cdc_name],
                 )
@@ -2800,6 +3048,14 @@ async fn verify_clean(
                 ("cdc-role-login", resources.cdc_name.as_str()),
                 ("cdc-role-sessions", resources.cdc_name.as_str()),
                 ("app-generation", resources.app_generation.as_str()),
+                (
+                    "registry-reader-generation",
+                    resources.registry_reader_generation.as_str(),
+                ),
+                (
+                    "registry-reader-generation-sessions",
+                    resources.registry_reader_generation.as_str(),
+                ),
                 ("schema", resources.schema.as_str()),
                 ("table", resources.table.as_str()),
                 ("publication", resources.cdc_name.as_str()),
@@ -2898,7 +3154,7 @@ async fn run_forward(
     state: &mut GateState,
 ) -> anyhow::Result<()> {
     let mut system = connect(&args.system_database_url).await?;
-    setup_registry(&mut system, resources).await?;
+    setup_registry(&mut system, resources, state).await?;
     setup_project(args, resources, state).await?;
     setup_stream(args, resources, state).await?;
     connect(&args.admin_database_url)
@@ -3123,7 +3379,20 @@ mod tests {
         assert!(sql.contains("\"depth\":1"));
         assert!(!sql.contains("wamn_run"));
         assert!(!sql.contains("publish"));
-        assert_eq!(reader_args(&args(), &resources).unwrap().stream_replicas, 1);
+        let scoped = disposable_args(&args(), &resources).unwrap();
+        let reader = reader_args(&scoped, &resources).unwrap();
+        assert_eq!(reader.stream_replicas, 1);
+        assert!(!reader.system_database_url.contains('?'));
+        let connection = wamn_control_provision::parse_system_reader_url(
+            SystemReader::Registry,
+            &reader.system_database_url,
+            &resources.org,
+            &resources.project,
+            &resources.env,
+        )
+        .unwrap();
+        assert_eq!(connection.database(), resources.system_database);
+        assert_eq!(connection.role(), resources.registry_reader_generation);
     }
 
     #[test]
@@ -3338,11 +3607,16 @@ mod tests {
         assert_eq!(first.schema, retry.schema);
         assert_eq!(first.table, retry.table);
         assert_eq!(first.app_generation, retry.app_generation);
+        assert_eq!(
+            first.registry_reader_generation,
+            retry.registry_reader_generation
+        );
         assert_eq!(first.cdc_name, retry.cdc_name);
         assert_eq!(first.stream, retry.stream);
         assert_eq!(first.durable, retry.durable);
         assert_eq!(first.report_dir, retry.report_dir);
         assert!(first.app_password != retry.app_password);
+        assert!(first.registry_reader_password != retry.registry_reader_password);
         assert!(first.cdc_password != retry.cdc_password);
         assert_ne!(first.owner, retry.owner);
 
@@ -3362,8 +3636,15 @@ mod tests {
         }
         assert!(first.app_generation.len() <= 63);
         assert!(first.app_generation.starts_with("wamn_app_"));
+        assert!(first.registry_reader_generation.len() <= 63);
+        assert!(
+            first
+                .registry_reader_generation
+                .starts_with("wamn_registry_reader_")
+        );
         let record = first.resource_record();
         assert!(record.get("app_password").is_none());
+        assert!(record.get("registry_reader_password").is_none());
         assert!(record.get("cdc_password").is_none());
         assert!(first.stream.len() <= 255);
         assert!(first.durable.len() <= 255);

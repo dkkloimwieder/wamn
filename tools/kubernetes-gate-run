@@ -139,7 +139,8 @@ cleanup_receipt_failures() {
     return
   fi
   if ! jq -e '
-      all([.project_database,.system_database,.app_generation,.cdc_role,.schema,.table,
+      all([.project_database,.system_database,.app_generation,.registry_reader_generation,
+           .cdc_role,.schema,.table,
            .publication,.slot,.stream,.durable,.report_dir,.org,.project,
            .environment,.tenant,.catalog,.flow,.registration,.entity,
            .root_run,.source_run][]; type == "string" and length > 0)
@@ -155,6 +156,8 @@ cleanup_receipt_failures() {
       [receipt("project-database"; .project_database),
        receipt("system-database"; .system_database),
        receipt("app-generation"; .app_generation),
+       receipt("registry-reader-generation"; .registry_reader_generation),
+       receipt("registry-reader-generation-sessions"; .registry_reader_generation),
        receipt("cdc-role"; .cdc_role),
        receipt("cdc-role-login"; .cdc_role),
        receipt("cdc-role-sessions"; .cdc_role),

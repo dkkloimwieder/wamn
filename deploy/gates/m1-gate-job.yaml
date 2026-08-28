@@ -14,12 +14,13 @@
 # binds that tag to an identical complete manifest/runtime/config tuple on all
 # three nodes before server dry-run.
 # Both scratch databases, every canonical fixture role, and the job-scoped App
-# generation live only in that server. The gate mints the generation credential
-# in-process, dials it through the production SCRAM rule, and does not place it
-# in the manifest or environment. The gate otherwise uses loopback URLs and no
-# PostgreSQL Secret, Service, DNS name, PVC, or cluster RBAC. The Pod reads its
-# generated Job name and Job UID from automatic Job labels. The full UID is the
-# one run suffix for both disposable databases, the App generation, CDC
+# and registry-reader generations live only in that server. The gate mints both
+# generation credentials in-process, dials them through the production SCRAM
+# rule, and places neither in the manifest or environment. It otherwise uses
+# loopback URLs and no PostgreSQL Secret, Service, DNS name, PVC, or cluster
+# RBAC. The Pod reads its generated Job name and Job UID from automatic Job
+# labels. The full UID is the one run suffix for both disposable databases,
+# both workload generations, CDC
 # role/publication/slot, scratch schema/table, JetStream stream and durable,
 # logical fixture identities, and report directory. Shared PostgreSQL is never
 # contacted.
