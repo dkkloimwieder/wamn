@@ -25,6 +25,7 @@ use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
     workload_generation_role,
 };
+use wamn_control_registry::DurabilityClass;
 use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
 use wamn_control_registry::sql as registry_sql;
 use wamn_event_wire::Op;
@@ -939,6 +940,15 @@ async fn setup_project(
     admin.batch_execute(CATALOG_SQL).await?;
     admin.batch_execute(RUN_STATE_SQL).await?;
     admin.batch_execute(RUN_QUEUE_SQL).await?;
+    wamn_ctl::reconcile_run_plane::converge_environment_policy(
+        &admin,
+        &wamn_schema_control::BareSchemaName::new("wamn_run")?,
+        &resources.tenant,
+        &resources.env,
+        DurabilityClass::Standard,
+        true,
+    )
+    .await?;
     admin
         .batch_execute(&provision_sql::ensure_schema_sql(&resources.schema))
         .await?;

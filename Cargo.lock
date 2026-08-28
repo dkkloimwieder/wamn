@@ -4445,6 +4445,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-ctl",
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-execution-contract",
