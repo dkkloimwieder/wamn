@@ -426,6 +426,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // `WamnPostgres::connection_effect_snapshot` read behind a component's
     // trusted HTTP effect, so a host without an admitter generation still serves
     // every route that raises no such effect.
+    //
+    // AND IT NEVER WILL HOLD ONE: ruled 2026-08-27 (wamn-0h0g.10.16), trusted
+    // HTTP effects run ONLY under the executor. Naming a callable-HTTP
+    // credential here would widen the credential surface to a second process
+    // class for a path whose design intent - hot routes reach no Postgres -
+    // says no. The unnamed class at host checkout is fail-closed and is the
+    // working end state, not an unfilled carrier. An inline route that needs a
+    // trusted database effect is a WIRING that belongs on the executor path.
     let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
