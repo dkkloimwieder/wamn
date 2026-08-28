@@ -878,6 +878,7 @@ async fn setup_registry(system: &mut Client, resources: &GateResources) -> anyho
                 &"",
                 &"",
                 &"off",
+                &"standard",
             ],
         )
         .await?;
