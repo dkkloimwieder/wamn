@@ -594,7 +594,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
 /// walks that by the PER-EDGE `inherit_option`. `ensure_workload_acl_role_sql`
 /// mints every stable ACL role `NOINHERIT`, and a role's `rolinherit` is the
 /// DEFAULT for memberships granted TO it — so a bare
-/// `GRANT wamn_platform TO wamn_effect_writer` lands `inherit_option = false`
+/// `GRANT wamn_platform TO wamn_run_retention` lands `inherit_option = false`
 /// and every platform read silently returns zero. Measured both ways on 18.6:
 /// bare grant 0 rows, `INHERIT TRUE` all rows. The edge option is asserted below
 /// from `pg_auth_members`, not assumed from the builder's text.
