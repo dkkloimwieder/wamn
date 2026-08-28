@@ -286,6 +286,23 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
     "connection_generations",
 ];
 
+/// Every `catalog.wirings` column written by management `Publish`.
+///
+/// The document supplies `wiring_id`, `version` and `graph_json`; the command
+/// supplies `catalog_id` and `gated_catalog_version`; the server fixes
+/// `tenant_id` from the admission surface and derives `wiring_hash` from the
+/// parsed document. `created_at` keeps its storage default, so granting it would
+/// be authority the production INSERT cannot exercise (`wamn-0h0g.7.7`).
+pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
+    "tenant_id",
+    "catalog_id",
+    "wiring_id",
+    "version",
+    "gated_catalog_version",
+    "graph_json",
+    "wiring_hash",
+];
+
 /// Catalog relations the executor-platform family reads (`wamn-0h0g.22.37`).
 ///
 /// The union over its four wiring-resolution statements in
@@ -667,7 +684,8 @@ fn grant_tenant_key_execute_sql(role: &str) -> String {
 /// This is the seventh [`WorkloadRoleFamily`]'s one family-specific privilege
 /// step. Its A/B identities and their prepare/retire lifecycle remain wholly in
 /// the generic workload machinery. The catalog relations are the surviving
-/// component/wiring facts read by management admission; the run-plane grants
+/// component/wiring facts read by management admission; `catalog.wirings` also
+/// carries the column-exact append performed by `Publish`. The run-plane grants
 /// are column-exact to the ordinary run-plus-queue statement. Environment
 /// policy access is read-only because the invoker trigger resolves the pinned
 /// durability class while inserting a run.
@@ -707,12 +725,14 @@ pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
             relation = quote_ident(relation),
         ));
     }
+    let wiring_insert = quoted_column_list(&MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS);
     let run_select = quoted_column_list(&MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS);
     let run_insert = quoted_column_list(&MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS);
     let queue_select = quoted_column_list(&MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS);
     let queue_insert = quoted_column_list(&MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS);
     sql.push_str(&format!(
-        " GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
+        " GRANT INSERT ({wiring_insert}) ON TABLE catalog.\"wirings\" TO {role}; \
+         GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
          GRANT SELECT ({run_select}) ON TABLE {schema}.\"runs\" TO {role}; \
          GRANT INSERT ({run_insert}) ON TABLE {schema}.\"runs\" TO {role}; \
          GRANT SELECT ({queue_select}), INSERT ({queue_insert}) \
@@ -1881,6 +1901,27 @@ mod tests {
                  \"wamn_management_admitter\""
             )));
         }
+        let wiring_insert = sql
+            .find(
+                "GRANT INSERT (\"tenant_id\", \"catalog_id\", \"wiring_id\", \"version\", \
+                 \"gated_catalog_version\", \"graph_json\", \"wiring_hash\") \
+                 ON TABLE catalog.\"wirings\" TO \"wamn_management_admitter\"",
+            )
+            .expect("column-exact Publish grant");
+        assert!(usage < wiring_insert);
+        assert_eq!(
+            MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS,
+            [
+                "tenant_id",
+                "catalog_id",
+                "wiring_id",
+                "version",
+                "gated_catalog_version",
+                "graph_json",
+                "wiring_hash",
+            ],
+            "the grant must remain the exact production Publish INSERT"
+        );
         assert!(sql.contains(
             "GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
              TO \"wamn_management_admitter\""
@@ -1910,6 +1951,7 @@ mod tests {
         for forbidden in [
             "GRANT SELECT ON ALL TABLES",
             "GRANT INSERT ON TABLE catalog",
+            "\"created_at\") ON TABLE catalog.\"wirings\"",
             "GRANT UPDATE",
             "GRANT DELETE",
             "GRANT TRUNCATE",

@@ -228,6 +228,7 @@ const MATRIX: [FamilyReach; 9] = [
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
+            "catalog.wirings|INSERT|column",
             "catalog.wirings|SELECT|table",
             "wamn_run.environment_policies|SELECT|table",
             "wamn_run.run_queue|INSERT|column",

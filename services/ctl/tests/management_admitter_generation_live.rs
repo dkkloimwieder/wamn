@@ -279,6 +279,8 @@ fn run_plane_fixture() -> String {
     let mut queue_columns: BTreeSet<&str> = BTreeSet::new();
     queue_columns.extend(sql::MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS);
     queue_columns.extend(sql::MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS);
+    let mut wiring_columns: BTreeSet<&str> = BTreeSet::from(["created_at"]);
+    wiring_columns.extend(sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS);
     let column_ddl = |columns: &BTreeSet<&str>| {
         columns
             .iter()
@@ -297,9 +299,16 @@ fn run_plane_fixture() -> String {
         queue = column_ddl(&queue_columns),
     );
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
-        ddl.push_str(&format!(
-            " CREATE TABLE catalog.\"{relation}\" (id bigint);"
-        ));
+        if relation == "wirings" {
+            ddl.push_str(&format!(
+                " CREATE TABLE catalog.\"{relation}\" ({columns});",
+                columns = column_ddl(&wiring_columns),
+            ));
+        } else {
+            ddl.push_str(&format!(
+                " CREATE TABLE catalog.\"{relation}\" (id bigint);"
+            ));
+        }
     }
     ddl
 }
@@ -317,6 +326,9 @@ fn expected_stable_acl() -> BTreeSet<String> {
     ]);
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
         expected.insert(format!("relation:catalog:{relation}:SELECT"));
+    }
+    for column in sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS {
+        expected.insert(format!("column:catalog:wirings.{column}:INSERT"));
     }
     for (relation, privilege, columns) in [
         (

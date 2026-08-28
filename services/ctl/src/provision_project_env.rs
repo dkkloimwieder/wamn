@@ -2424,6 +2424,14 @@ fn verify_management_admitter_acl_role_inventory(
             "SELECT".to_string(),
         ));
     }
+    for column in sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS {
+        expected.insert((
+            "column".to_string(),
+            "catalog".to_string(),
+            format!("wirings.{column}"),
+            "INSERT".to_string(),
+        ));
+    }
     for (relation, privilege, columns) in [
         (
             "runs",
@@ -4633,6 +4641,14 @@ mod tests {
         ];
         for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
             exact.push(role_acl("relation", "catalog", relation, "SELECT"));
+        }
+        for column in sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS {
+            exact.push(role_acl(
+                "column",
+                "catalog",
+                &format!("wirings.{column}"),
+                "INSERT",
+            ));
         }
         for (relation, privilege, columns) in [
             (

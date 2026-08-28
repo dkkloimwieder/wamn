@@ -1,4 +1,4 @@
-//! The gate verb, and the PROJECT-database reads it judges a candidate from.
+//! Gate and Publish access to the scoped PROJECT database.
 //!
 //! Residency (wamn-0h0g.8.5.4): everything here runs on the SECOND connection —
 //! a scoped `wamn_management_admitter` generation on this environment's PROJECT
@@ -14,12 +14,13 @@
 //! reader and keying all die does not survive. So the gate verb lives HERE now,
 //! on the one connection it still needs, and it opens no transaction at all.
 //!
-//! The surface is deliberately narrow — resolve one candidate, read the two
-//! postures that can refuse it — because that is the whole of what the admitter
-//! credential is granted (`MANAGEMENT_ADMITTER_*` in
-//! `crates/control/provision/src/sql.rs`). A column absent from those lists is
-//! DENIED, not merely unmentioned, so a wider read here would fail closed at
-//! runtime rather than compile-time.
+//! The surface is deliberately narrow: gate reads the two postures that can
+//! refuse a document, while Publish reads current component facts and appends
+//! exactly seven `catalog.wirings` columns after the control-store green-report
+//! guard. That is the whole of what the admitter credential is granted
+//! (`MANAGEMENT_ADMITTER_*` in `crates/control/provision/src/sql.rs`). A column
+//! absent from those lists is DENIED, not merely unmentioned, so a wider query
+//! fails closed at runtime rather than compile-time.
 //!
 //! # How this connection reaches a governed row at all (`wamn-0h0g.22.17`)
 //!
@@ -32,13 +33,19 @@
 //! `ERROR: permission denied for function current_tenant_key`. It now reaches
 //! them through the one permissive `TO wamn_platform` arm each governed relation
 //! carries, which admits every tenant in the database; the `tenant_id = $1`
-//! predicate each statement below spells is what narrows it back down.
+//! predicates on reads and the surface-owned `tenant_id` value on Publish are
+//! what narrow every operation back down.
 
 use anyhow::{Context as _, bail};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_authoring_model::GateRefusal;
+use wamn_catalog::{
+    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentParameter, AdmittedComponentPort,
+    ComponentCatalogScope, WiringDocument, validate_wiring_compatibility,
+};
 use wamn_control_provision::{
     MANAGEMENT_ADMITTER_ROLE, ManagementAdmissionConnection, parse_management_admission_url, sql,
 };
@@ -75,6 +82,33 @@ use wamn_runtime::plugins::wamn_postgres::{
 /// `wamn_authority`'s own function bodies close the same way.
 const ADMISSION_SCOPE_SQL: &str =
     "SELECT pg_catalog.set_config('search_path', 'pg_catalog', false)";
+
+/// Read the same complete admitted component facts the compatibility validator
+/// receives on the CLI authoring path.
+const SELECT_COMPONENT_FACTS_SQL: &str = "\
+SELECT component, interface_version, operation, component_digest, \
+       imports::text, imports_fingerprint, input_ports::text, \
+       output_ports::text, parameters::text, effects::text \
+  FROM catalog.component_library \
+ WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+ ORDER BY component COLLATE \"C\", interface_version COLLATE \"C\"";
+
+/// Append exactly the seven columns management `Publish` is granted.
+const INSERT_WIRING_SQL: &str = "\
+INSERT INTO catalog.wirings (\
+       tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
+       graph_json, wiring_hash\
+     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
+ON CONFLICT DO NOTHING";
+
+/// Distinguish an exact retry from a conflicting immutable definition.
+const EXACT_WIRING_SQL: &str = "\
+SELECT EXISTS (\
+    SELECT 1 FROM catalog.wirings \
+     WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4 \
+       AND gated_catalog_version = $5 AND graph_json = $6::text::jsonb \
+       AND wiring_hash = $7\
+    )";
 
 // THE CANDIDATE LOOKUP IS DELETED (wamn-0h0g.8.28), not moved.
 //
@@ -216,6 +250,54 @@ impl CandidateWiring {
     }
 }
 
+/// Project-side result of parsing and compatibility-checking one publication.
+#[derive(Debug)]
+pub(crate) enum PreparePublishResult {
+    Ready(PreparedWiringPublication),
+    InvalidDocument {
+        detail: String,
+    },
+    /// The parsed document does not match the current admitted component facts.
+    ExecutableDrift,
+}
+
+/// Publication facts derived by the server and opaque to the management route.
+///
+/// Keeping every stored value private makes the route's green-report lookup a
+/// guard over the SAME hash the append uses; no caller-supplied hash can enter
+/// the write after that check.
+#[derive(Debug)]
+pub(crate) struct PreparedWiringPublication {
+    tenant_id: Box<str>,
+    catalog_id: Box<str>,
+    gated_catalog_version: i32,
+    document: WiringDocument,
+    stored_version: i32,
+    graph_json: String,
+    wiring_hash: Box<str>,
+}
+
+impl PreparedWiringPublication {
+    pub(crate) fn wiring_id(&self) -> &str {
+        &self.document.wiring_id
+    }
+
+    pub(crate) fn version(&self) -> u32 {
+        self.document.version
+    }
+
+    pub(crate) fn wiring_hash(&self) -> &str {
+        &self.wiring_hash
+    }
+}
+
+/// Result of the immutable project-side append after the caller's green guard.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AppendPublishResult {
+    Published,
+    ExecutableDrift,
+}
+
 /// One running management surface's project-database admission connection.
 pub struct AdmissionSurface {
     client: Client,
@@ -305,6 +387,157 @@ impl AdmissionSurface {
         Ok(())
     }
 
+    /// Parse, validate and derive the immutable facts for management `Publish`.
+    ///
+    /// This phase deliberately does not write. Its opaque result exposes only
+    /// the derived identity the management verb needs to read the CONTROL
+    /// store's gate report. The caller may pass it to [`Self::append_publish`]
+    /// only after that exact report exists and is green.
+    pub(crate) async fn prepare_publish(
+        &self,
+        catalog_id: &str,
+        gated_catalog_version: i32,
+        submitted_document: &Value,
+    ) -> anyhow::Result<PreparePublishResult> {
+        let document = match WiringDocument::parse(submitted_document) {
+            Ok(document) => document,
+            Err(error) => {
+                return Ok(PreparePublishResult::InvalidDocument {
+                    detail: error.to_string(),
+                });
+            }
+        };
+        let stored_version = match i32::try_from(document.version) {
+            Ok(version) => version,
+            Err(error) => {
+                return Ok(PreparePublishResult::InvalidDocument {
+                    detail: format!(
+                        "wiring {:?} version {} exceeds the catalog storage width: {error}",
+                        document.wiring_id, document.version
+                    ),
+                });
+            }
+        };
+        let catalog_version = u32::try_from(gated_catalog_version)
+            .context("gated catalog version is outside the compatibility scope width")?;
+        let scope = ComponentCatalogScope {
+            tenant_id: self.tenant_id.to_string(),
+            catalog_id: catalog_id.to_owned(),
+            catalog_version,
+        };
+        let components = self.component_facts(&scope, gated_catalog_version).await?;
+        let wiring_hash = document.wiring_hash().as_str().to_owned();
+        if validate_wiring_compatibility(&document, &scope, &components).is_err() {
+            return Ok(PreparePublishResult::ExecutableDrift);
+        }
+        let graph_json = serde_json::to_string(&document)
+            .context("serialize the validated wiring document for storage")?;
+        Ok(PreparePublishResult::Ready(PreparedWiringPublication {
+            tenant_id: self.tenant_id.clone(),
+            catalog_id: catalog_id.into(),
+            gated_catalog_version,
+            document,
+            stored_version,
+            graph_json,
+            wiring_hash: wiring_hash.into(),
+        }))
+    }
+
+    /// Append one validated publication after the management verb's green-report
+    /// guard, converging an exact retry and refusing conflicting immutable facts.
+    pub(crate) async fn append_publish(
+        &self,
+        publication: &PreparedWiringPublication,
+    ) -> anyhow::Result<AppendPublishResult> {
+        if publication.tenant_id.as_ref() != self.tenant_id.as_ref() {
+            bail!("prepared publication belongs to another admission tenant");
+        }
+        let tenant_id = self.tenant_id.as_ref();
+        let catalog_id = publication.catalog_id.as_ref();
+        let wiring_id = publication.wiring_id();
+        let wiring_hash = publication.wiring_hash();
+        let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
+            &tenant_id,
+            &catalog_id,
+            &wiring_id,
+            &publication.stored_version,
+            &publication.gated_catalog_version,
+            &publication.graph_json,
+            &wiring_hash,
+        ];
+        self.client
+            .execute(INSERT_WIRING_SQL, &parameters)
+            .await
+            .context("append the gated wiring definition")?;
+        let exact: bool = self
+            .client
+            .query_one(EXACT_WIRING_SQL, &parameters)
+            .await
+            .context("verify the stored wiring definition")?
+            .get(0);
+        Ok(if exact {
+            AppendPublishResult::Published
+        } else {
+            AppendPublishResult::ExecutableDrift
+        })
+    }
+
+    async fn component_facts(
+        &self,
+        scope: &ComponentCatalogScope,
+        catalog_version: i32,
+    ) -> anyhow::Result<Vec<AdmittedComponent>> {
+        let rows = self
+            .client
+            .query(
+                SELECT_COMPONENT_FACTS_SQL,
+                &[&scope.tenant_id, &scope.catalog_id, &catalog_version],
+            )
+            .await
+            .context("read the publication scope's admitted component facts")?;
+        rows.into_iter()
+            .map(|row| {
+                let component: String = row.get(0);
+                let decoded = AdmittedComponent {
+                    scope: scope.clone(),
+                    component: component.clone(),
+                    interface_version: row.get(1),
+                    operation: row.get(2),
+                    component_digest: row.get(3),
+                    imports: decode_component_json(row.get(4), &component, "imports")?,
+                    imports_fingerprint: row.get(5),
+                    input_ports: decode_component_json::<Vec<AdmittedComponentPort>>(
+                        row.get(6),
+                        &component,
+                        "input-ports",
+                    )?,
+                    output_ports: decode_component_json::<Vec<AdmittedComponentPort>>(
+                        row.get(7),
+                        &component,
+                        "output-ports",
+                    )?,
+                    parameters: decode_component_json::<Vec<AdmittedComponentParameter>>(
+                        row.get(8),
+                        &component,
+                        "parameters",
+                    )?,
+                    effects: decode_component_json::<Vec<AdmittedComponentEffect>>(
+                        row.get(9),
+                        &component,
+                        "effects",
+                    )?,
+                };
+                wamn_catalog::verify_stored_effect_projection(&decoded).with_context(|| {
+                    format!(
+                        "component {component:?} stores an effect projection its audited imports \
+                         do not derive"
+                    )
+                })?;
+                Ok(decoded)
+            })
+            .collect()
+    }
+
     /// Name the effectful components this candidate reaches, for one refusal.
     ///
     /// Empty means the candidate is gateable: every component it reaches carries
@@ -354,6 +587,15 @@ impl AdmissionSurface {
     }
 }
 
+fn decode_component_json<T: DeserializeOwned>(
+    stored: String,
+    component: &str,
+    field: &'static str,
+) -> anyhow::Result<T> {
+    serde_json::from_str(&stored)
+        .with_context(|| format!("component {component:?} stores unreadable {field}"))
+}
+
 /// Bind the parsed admission input to the exact facts the server must report.
 ///
 /// [`parse_management_admission_url`] proves everything a PURE function can:
@@ -383,33 +625,7 @@ fn admission_credential_probe(
         tenant_id,
         AmbientCredentialState::Absent,
     )?;
-    let mut acl = vec![AclExpectation::new(
-        AclTarget::Schema("catalog".into()),
-        "USAGE",
-        true,
-    )];
-    // Driven from the provisioner's OWN list rather than a second copy of it, so
-    // the readable surface this boundary asserts cannot drift from the one
-    // `grant_management_admitter_surface_sql` grants.
-    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
-        acl.push(AclExpectation::new(
-            AclTarget::Table(format!("catalog.{relation}").into()),
-            "SELECT",
-            true,
-        ));
-    }
-    // A gate JUDGES the document it reads and mutates nothing in the catalog
-    // (wamn-0h0g.8.5.5). The grant batch revokes every table privilege before
-    // granting, so these three are absent — asserted negatively here so a
-    // widened ACL fails the surface at startup instead of at the first write it
-    // makes possible.
-    for privilege in ["INSERT", "UPDATE", "DELETE"] {
-        acl.push(AclExpectation::new(
-            AclTarget::Table("catalog.wirings".into()),
-            privilege,
-            false,
-        ));
-    }
+    let acl = admission_acl_expectations();
     let expected = ExpectedCredentialIdentity::new(
         // Both users are the generation role: nothing issues `SET ROLE` between
         // connect and this probe, so a differing `current_user` means the session
@@ -426,6 +642,53 @@ fn admission_credential_probe(
         acl,
     );
     credential_exactness_probe(source, expected)
+}
+
+fn admission_acl_expectations() -> Vec<AclExpectation> {
+    let mut acl = vec![AclExpectation::new(
+        AclTarget::Schema("catalog".into()),
+        "USAGE",
+        true,
+    )];
+    // Driven from the provisioner's OWN list rather than a second copy of it, so
+    // the readable surface this boundary asserts cannot drift from the one
+    // `grant_management_admitter_surface_sql` grants.
+    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+        acl.push(AclExpectation::new(
+            AclTarget::Table(format!("catalog.{relation}").into()),
+            "SELECT",
+            true,
+        ));
+    }
+    // Publish appends exactly the seven values its project-side statement names.
+    // The table-wide negative stays alongside them: a column-exact grant must
+    // not silently widen into authority over future columns.
+    for column in sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS {
+        acl.push(AclExpectation::new(
+            AclTarget::Column {
+                relation: "catalog.wirings".into(),
+                column: column.into(),
+            },
+            "INSERT",
+            true,
+        ));
+    }
+    acl.push(AclExpectation::new(
+        AclTarget::Column {
+            relation: "catalog.wirings".into(),
+            column: "created_at".into(),
+        },
+        "INSERT",
+        false,
+    ));
+    for privilege in ["INSERT", "UPDATE", "DELETE"] {
+        acl.push(AclExpectation::new(
+            AclTarget::Table("catalog.wirings".into()),
+            privilege,
+            false,
+        ));
+    }
+    acl
 }
 
 /// One gate command's inputs, already reconciled with the fixed scope.
@@ -706,6 +969,76 @@ mod tests {
         assert_eq!(candidate(json!({"nodes": []})).nodes_object(), json!({}));
         let nodes = json!({"a": {"component": "c", "interface-version": "1", "operation": "op"}});
         assert_eq!(candidate(json!({"nodes": nodes})).nodes_object(), nodes);
+    }
+
+    /// The builder and the live credential probe agree on the exact seven-column
+    /// Publish append, while the probe still refuses table-wide INSERT and the
+    /// defaulted storage timestamp (`wamn-0h0g.7.7`).
+    #[test]
+    fn the_publish_surface_is_column_exact_at_the_runtime_boundary() {
+        const INSERT_COLUMNS: [&str; 7] = [
+            "tenant_id",
+            "catalog_id",
+            "wiring_id",
+            "version",
+            "gated_catalog_version",
+            "graph_json",
+            "wiring_hash",
+        ];
+        assert_eq!(
+            sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS,
+            INSERT_COLUMNS
+        );
+        let acl = admission_acl_expectations();
+        for column in INSERT_COLUMNS {
+            assert!(acl.contains(&AclExpectation::new(
+                AclTarget::Column {
+                    relation: "catalog.wirings".into(),
+                    column: column.into(),
+                },
+                "INSERT",
+                true,
+            )));
+        }
+        for forbidden in [
+            AclExpectation::new(
+                AclTarget::Column {
+                    relation: "catalog.wirings".into(),
+                    column: "created_at".into(),
+                },
+                "INSERT",
+                false,
+            ),
+            AclExpectation::new(AclTarget::Table("catalog.wirings".into()), "INSERT", false),
+        ] {
+            assert!(acl.contains(&forbidden));
+        }
+        assert_eq!(
+            acl.len(),
+            18,
+            "schema + six reads + seven inserts + omitted column + three table negatives"
+        );
+    }
+
+    /// These Rust-built statements are the artifact: pin the full write and the
+    /// exact retry check so the green-report hash cannot be replaced on append.
+    #[test]
+    fn publication_append_uses_only_the_server_derived_exact_identity() {
+        assert_eq!(
+            INSERT_WIRING_SQL,
+            "INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
+             gated_catalog_version, graph_json, wiring_hash) \
+             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
+             ON CONFLICT DO NOTHING"
+        );
+        assert_eq!(
+            EXACT_WIRING_SQL,
+            "SELECT EXISTS (SELECT 1 FROM catalog.wirings \
+             WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4 \
+             AND gated_catalog_version = $5 AND graph_json = $6::text::jsonb \
+             AND wiring_hash = $7)"
+        );
+        assert!(!INSERT_WIRING_SQL.contains("DO UPDATE"));
     }
 
     /// The expected identity is DERIVED from the parsed connection, never

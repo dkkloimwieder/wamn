@@ -7,15 +7,9 @@
 //! principals running the same command stay distinguishable in the append-only
 //! ledger.
 //!
-//! It also owns `wamn-ftfc.22`'s posture for the contract kinds this transport
-//! does not mount: an untrusted presenter naming one gets the same refusal
-//! document as any other, so the surface is no route-existence oracle, and an
-//! admitted author gets a bare `501` that audits nothing and mutates nothing.
-//! `gate` LEFT that set in wamn-0h0g.8.5.4 — it is mounted, so this gate
-//! now proves the judgment it reaches instead of the 501 it used to answer.
-//! wamn-0h0g.8.5.5 then collapsed `save-draft`, `validate`, `draft-run` and
-//! `read-draft` OUT OF THE CONTRACT, so `publish` is the whole unmounted
-//! inventory and there is no unmounted query at all.
+//! Both surviving commands are mounted. An untrusted presenter naming either
+//! receives the same refusal document, so the surface is no route-existence
+//! oracle; admitted authors exercise the gate-then-publish transition below.
 //!
 //! Proving that judgment takes a SECOND database. The project-environment
 //! database this gate creates alongside the control one is where the candidate
@@ -211,50 +205,6 @@ async fn send(
         status,
         body: body.to_owned(),
     }
-}
-
-/// `gate` was here until wamn-0h0g.8.5.4 mounted it. Its assertions moved
-/// to the composition block; what stays here is the property that outlives it —
-/// a kind with no route answers a bare `501`, and the answer carries no
-/// document.
-///
-/// wamn-0h0g.8.5.5 removed `validate` and `draft-run` from the CONTRACT, so they
-/// are no longer unmounted kinds — they are not kinds at all, and a document
-/// naming one is refused at decode rather than answered with a 501. `publish` is
-/// the whole remaining inventory.
-fn unmounted_commands() -> Vec<(&'static str, String)> {
-    let scope = serde_json::json!({"project-id": PROJECT, "environment": "dev"});
-    [(
-        "publish",
-        serde_json::json!({
-            "scope": scope,
-            "catalog-id": CANDIDATE_CATALOG,
-            "gated-catalog-version": CANDIDATE_CATALOG_VERSION,
-            "document": candidate_graph(CANDIDATE_WIRING, "entity", "create"),
-        }),
-    )]
-    .into_iter()
-    .map(|(kind, input)| {
-        let document = serde_json::json!({
-            "document": "request",
-            "body": {
-                "schema-version": "0.1",
-                "command-id": format!("unmounted-{kind}"),
-                "command": {"kind": kind, "input": input},
-            }
-        });
-        (kind, document.to_string())
-    })
-    .collect()
-}
-
-/// There is NO unmounted query (wamn-0h0g.8.5.5): `get-report` is the whole
-/// query inventory and it is mounted, and `read-draft` left the contract with
-/// the draft concept. Returned as an empty inventory rather than deleted so the
-/// bare-501 loop below still states, by running over nothing, that no query
-/// kind answers a 501.
-fn unmounted_queries() -> Vec<(&'static str, String)> {
-    Vec::new()
 }
 
 fn get_report_document(query_id: &str, project: &str, report_id: &str) -> String {
@@ -563,6 +513,37 @@ async fn stored_wiring_count(project: &Client) -> i64 {
         .get(0)
 }
 
+async fn stored_wiring(project: &Client) -> Option<(String, u32, String, serde_json::Value)> {
+    project
+        .query_opt(
+            "SELECT wiring_id, version, wiring_hash, graph_json \
+               FROM catalog.wirings WHERE tenant_id = $1 AND catalog_id = $2",
+            &[&TENANT, &CANDIDATE_CATALOG],
+        )
+        .await
+        .expect("read the published wiring")
+        .map(|row| {
+            let version: i32 = row.get(1);
+            (
+                row.get(0),
+                u32::try_from(version).expect("the stored wiring version is non-negative"),
+                row.get(2),
+                row.get(3),
+            )
+        })
+}
+
+async fn minted_release_snapshot_count(project: &Client) -> i64 {
+    project
+        .query_one(
+            "SELECT count(*) FROM catalog.release_manifest_v2_snapshots WHERE tenant_id = $1",
+            &[&TENANT],
+        )
+        .await
+        .expect("count minted release snapshots")
+        .get(0)
+}
+
 /// One `gate` request carrying one document, in one project.
 ///
 /// The command carries the DOCUMENT and its catalog placement (wamn-0h0g.8.28).
@@ -600,6 +581,35 @@ fn gate_document_for(command_id: &str, project: &str) -> String {
 /// One `gate` request document gating the pure candidate.
 fn gate_document(command_id: &str) -> String {
     gate_document_for(command_id, PROJECT)
+}
+
+/// One `publish` request carrying the same document and placement as `gate`.
+fn publish_document_in(command_id: &str, project: &str, document: &serde_json::Value) -> String {
+    serde_json::json!({
+        "document": "request",
+        "body": {
+            "schema-version": "0.1",
+            "command-id": command_id,
+            "command": {
+                "kind": "publish",
+                "input": {
+                    "scope": {"project-id": project, "environment": ENVIRONMENT},
+                    "catalog-id": CANDIDATE_CATALOG,
+                    "gated-catalog-version": CANDIDATE_CATALOG_VERSION,
+                    "document": document,
+                },
+            },
+        },
+    })
+    .to_string()
+}
+
+fn publish_document(command_id: &str) -> String {
+    publish_document_in(
+        command_id,
+        PROJECT,
+        &candidate_graph(CANDIDATE_WIRING, "entity", "create"),
+    )
 }
 
 /// Every test-case run present in the project plane.
@@ -930,18 +940,17 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         ("unroled", Some(roleless_token.token().to_owned())),
     ];
     for (name, token) in &refusals {
-        let response = post(
-            "/authoring",
-            token.as_deref(),
-            &[],
-            &gate_document_for("refused", PROJECT),
-        )
-        .await;
-        assert_eq!(response.status, 403, "{name} was not refused");
-        assert_eq!(
-            response.body, AUTHORIZATION_DENIED,
-            "{name} leaked a reason"
-        );
+        for document in [
+            gate_document_for("refused-gate", PROJECT),
+            publish_document("refused-publish"),
+        ] {
+            let response = post("/authoring", token.as_deref(), &[], &document).await;
+            assert_eq!(response.status, 403, "{name} was not refused");
+            assert_eq!(
+                response.body, AUTHORIZATION_DENIED,
+                "{name} leaked a route distinction"
+            );
+        }
     }
     // A valid token that names another project refuses the same way.
     let elsewhere = post(
@@ -954,22 +963,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(elsewhere.status, 403);
     assert_eq!(elsewhere.body, AUTHORIZATION_DENIED);
 
-    // ---- the unmounted kinds are an absent route, not a product refusal -----
-    // The operation-integration owner mounts the remaining four commands and
-    // `read-draft`. Each either has no backend or has one whose trusted inputs
-    // no in-process producer supplies. Two properties have to hold while that
-    // is true.
-    //
-    // First, route selection happens after authorization, so naming an
-    // unmounted kind is not a way to ask whether a route exists. Every
-    // untrusted presenter gets the one refusal document for every kind.
-    let unmounted = unmounted_commands();
-    let unmounted_queries = unmounted_queries();
-    let durable_before_unmounted = authoring_durable_counts(&admin).await;
-
     // `get-run` is no longer part of the Rust contract. Even an admitted author
     // receives the empty transport-level decode refusal, before route dispatch
-    // can answer `501` or write any durable authoring state.
+    // can write any durable authoring state.
+    let durable_before_retired = authoring_durable_counts(&admin).await;
     let retired = post(
         "/authoring",
         Some(alice.token()),
@@ -981,69 +978,12 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert!(retired.body.is_empty(), "decode refusal carried a document");
     assert_eq!(
         authoring_durable_counts(&admin).await,
-        durable_before_unmounted,
+        durable_before_retired,
         "retired get-run wrote durable authoring state"
     );
-
-    for (name, token) in &refusals {
-        for (kind, document) in unmounted.iter().chain(&unmounted_queries) {
-            let response = post("/authoring", token.as_deref(), &[], document).await;
-            assert_eq!(response.status, 403, "{name} probed {kind} for a route");
-            assert_eq!(
-                response.body, AUTHORIZATION_DENIED,
-                "{name} learned something about {kind}"
-            );
-        }
-    }
-    // Second, an admitted author gets a bare `501`: the absence of a route
-    // carries no document, so no client can read it as a typed product refusal
-    // and no client can read a fabricated result out of it.
-    for (kind, document) in &unmounted {
-        let response = post("/authoring", Some(alice.token()), &[], document).await;
-        assert_eq!(
-            response.status, 501,
-            "{kind} answered as though it were mounted: {}",
-            response.body
-        );
-        assert!(
-            response.body.is_empty(),
-            "{kind} answered 501 carrying a document: {}",
-            response.body
-        );
-    }
-    for (kind, document) in &unmounted_queries {
-        let response = post("/authoring", Some(alice.token()), &[], document).await;
-        assert_eq!(
-            response.status, 501,
-            "query {kind} answered as though it were mounted: {}",
-            response.body
-        );
-        assert!(
-            response.body.is_empty(),
-            "query {kind} answered 501 carrying a document: {}",
-            response.body
-        );
-    }
-    // The ledger retains authorized command attempts. An absent route is not
-    // one, so an unmounted kind leaves it untouched — and mutates nothing.
     assert!(
         ledger_rows(&admin).await.is_empty(),
-        "an unmounted kind was attributed on the command ledger"
-    );
-    assert_eq!(
-        authoring_durable_counts(&admin).await,
-        durable_before_unmounted,
-        "an unmounted command or query wrote durable authoring state"
-    );
-
-    // Nothing above reached a command: no ledger row. `gate` is no
-    // longer among the kinds above — wamn-0h0g.8.5.4 mounted it, and the
-    // assertions that replaced its bare 501 run at the end of this gate, where
-    // they cannot disturb the "nothing has reached a command yet" invariants
-    // this section and the query section below both depend on.
-    assert!(
-        ledger_rows(&admin).await.is_empty(),
-        "a refusal was audited"
+        "a pre-dispatch refusal was audited"
     );
 
     // ---- get-report reads only the scoped control report store ---------------
@@ -1227,16 +1167,40 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a pre-dispatch refusal was audited"
     );
 
+    // ---- publish is mounted, but its green guard precedes the append -------
+    // The document is valid and compatible with the applied catalog, so the
+    // missing report is the only refusing predicate. The server derives the
+    // report key from these bytes; the command carries no hash to forge.
+    let candidate_document = candidate_graph(CANDIDATE_WIRING, "entity", "create");
+    let candidate_hash = derived_hash(&candidate_document);
+    let ungated_publish = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &publish_document_in("publish-before-gate", PROJECT, &candidate_document),
+    )
+    .await;
+    assert_eq!(ungated_publish.status, 200, "{}", ungated_publish.body);
+    assert_eq!(
+        outcome(&ungated_publish.body)["value"],
+        serde_json::json!({
+            "command": "publish",
+            "reason": {"kind": "report-not-found", "report-id": candidate_hash},
+        })
+    );
+    assert_eq!(stored_wiring_count(&project).await, 0);
+    assert_eq!(
+        ledger_rows(&admin)
+            .await
+            .iter()
+            .map(|row| row.2.as_str())
+            .collect::<Vec<_>>(),
+        ["publish"]
+    );
+
     // ---- gate IS mounted, and judges a real candidate ----------------------
-    // wamn-0h0g.8.5.4. This is the assertion that replaced the bare 501: the
-    // very document that used to be in `unmounted` above now reaches the
-    // composition. `validate`, `draft-run`, `publish`, and `read-draft` kept
-    // the bare-501 property, asserted immediately above and unchanged.
-    //
-    // An untrusted presenter learns nothing from the mount either. A MOUNTED
-    // kind has to answer the same refusal document as an unmounted one, or the
-    // surface would become the route-existence oracle the 501 was shaped to
-    // avoid.
+    // An untrusted presenter learns nothing from the mount: both command kinds
+    // already returned the same frozen refusal above.
     let ledger_before_composition = ledger_rows(&admin).await.len();
     for (name, token) in &refusals {
         let response = post(
@@ -1246,10 +1210,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             &gate_document("probe-gate"),
         )
         .await;
-        assert_eq!(
-            response.status, 403,
-            "{name} probed gate for a route"
-        );
+        assert_eq!(response.status, 403, "{name} probed gate for a route");
         assert_eq!(
             response.body, AUTHORIZATION_DENIED,
             "{name} learned that gate is mounted"
@@ -1295,7 +1256,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // submitted bytes, not one the caller chose -- the command carries no hash
     // at all now. Report id and validated-draft id are the SAME string, which is
     // the whole of wamn-0h0g.8.5.6 visible on the wire.
-    let candidate_hash = derived_hash(&candidate_graph(CANDIDATE_WIRING, "entity", "create"));
     assert_eq!(
         outcome(&accepted.body),
         serde_json::json!({
@@ -1323,7 +1283,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     let alice_row = attributed
         .iter()
-        .find(|row| row.0 == "alice@example.com")
+        .find(|row| row.0 == "alice@example.com" && row.2 == "gate")
         .expect("the gate is attributed to the token principal");
     assert_eq!(alice_row.1, alice_principal.id().as_str());
     assert_eq!(alice_row.2, "gate");
@@ -1612,6 +1572,185 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a refused test-set command admitted a run"
     );
     assert_eq!(project_queue_count(&project).await, 0);
+
+    // A green report for the candidate cannot authorize different bytes, and a
+    // report under the exact second hash must itself be green. Seeding B red
+    // kills both an any-green lookup and an implementation that ignores passed.
+    let other_document = candidate_graph("orders-red-report", "entity", "create");
+    let other_hash = derived_hash(&other_document);
+    admin
+        .execute(
+            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+             VALUES ($1, $2, false, '{}'::jsonb)",
+            &[&TENANT, &other_hash],
+        )
+        .await
+        .expect("seed the exact red report counterfactual");
+    let wrong_hash_guard = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &publish_document_in("publish-other-hash", PROJECT, &other_document),
+    )
+    .await;
+    assert_eq!(
+        outcome(&wrong_hash_guard.body)["value"],
+        serde_json::json!({
+            "command": "publish",
+            "reason": {"kind": "report-not-successful"},
+        }),
+        "{}",
+        wrong_hash_guard.body
+    );
+    assert_eq!(stored_wiring_count(&project).await, 0);
+
+    // A green report is necessary but not sufficient: Publish re-validates the
+    // submitted document against the CURRENT component facts before it writes.
+    // The document is structurally valid but names no admitted operation, so
+    // removing that compatibility check would append it under this green hash.
+    let incompatible_document =
+        candidate_graph("orders-incompatible", "entity", "missing-operation");
+    let incompatible_hash = derived_hash(&incompatible_document);
+    admin
+        .execute(
+            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+             VALUES ($1, $2, true, '{}'::jsonb)",
+            &[&TENANT, &incompatible_hash],
+        )
+        .await
+        .expect("seed the incompatible document's green report counterfactual");
+    let incompatible = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &publish_document_in("publish-incompatible", PROJECT, &incompatible_document),
+    )
+    .await;
+    assert_eq!(
+        outcome(&incompatible.body)["value"],
+        serde_json::json!({
+            "command": "publish",
+            "reason": {"kind": "publish-executable-drift"},
+        }),
+        "{}",
+        incompatible.body
+    );
+    assert_eq!(stored_wiring_count(&project).await, 0);
+
+    // ---- Publish is act 1: exact wiring append, never release mint ----------
+    assert_eq!(minted_release_snapshot_count(&project).await, 0);
+    let published = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &publish_document_in("publish-gated", PROJECT, &candidate_document),
+    )
+    .await;
+    assert_eq!(published.status, 200, "{}", published.body);
+    assert_eq!(
+        outcome(&published.body),
+        serde_json::json!({
+            "status": "completed",
+            "value": {
+                "command": "publish",
+                "result": {
+                    "wiring-id": CANDIDATE_WIRING,
+                    "version": 1,
+                    "artifact-hash": candidate_hash,
+                },
+            },
+        })
+    );
+    let normalized_document = serde_json::to_value(
+        wamn_catalog::WiringDocument::parse(&candidate_document)
+            .expect("the published fixture is a wiring document"),
+    )
+    .expect("the parsed wiring serializes");
+    assert_eq!(
+        stored_wiring(&project).await,
+        Some((
+            CANDIDATE_WIRING.to_owned(),
+            1,
+            candidate_hash.clone(),
+            normalized_document,
+        ))
+    );
+    assert_eq!(
+        minted_release_snapshot_count(&project).await,
+        0,
+        "act-1 Publish minted an act-2 release snapshot"
+    );
+
+    // An exact retry replays its stored receipt and converges on the one row.
+    let publish_ledger_count = ledger_rows(&admin).await.len();
+    let replayed_publish = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &publish_document_in("publish-gated", PROJECT, &candidate_document),
+    )
+    .await;
+    assert_eq!(replayed_publish.body, published.body);
+    assert_eq!(stored_wiring_count(&project).await, 1);
+    assert_eq!(ledger_rows(&admin).await.len(), publish_ledger_count);
+
+    // A second compatible, green document reusing that command id is refused
+    // before its project append. This is the side-effecting retry invariant:
+    // the control lock chooses one payload, not merely one ledger answer after
+    // two project writes have escaped.
+    let divergent_document = candidate_graph("orders-create-copy", "entity", "create");
+    let divergent_gate = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &gate_document_in("gate-divergent-publish", PROJECT, &divergent_document),
+    )
+    .await;
+    assert_eq!(
+        outcome(&divergent_gate.body)["status"],
+        serde_json::json!("completed"),
+        "{}",
+        divergent_gate.body
+    );
+    let reused = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &publish_document_in("publish-gated", PROJECT, &divergent_document),
+    )
+    .await;
+    assert_eq!(
+        outcome(&reused.body)["value"],
+        serde_json::json!({
+            "command": "publish",
+            "reason": {"kind": "command-id-reuse"},
+        }),
+        "{}",
+        reused.body
+    );
+    assert_eq!(stored_wiring_count(&project).await, 1);
+    assert_eq!(minted_release_snapshot_count(&project).await, 0);
+
+    // Retry identity is a CONTROL-store fact and wins before project-side
+    // validation. Reusing the completed id with the incompatible document
+    // above must therefore remain command-id-reuse, not executable drift.
+    let reused_incompatible = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &publish_document_in("publish-gated", PROJECT, &incompatible_document),
+    )
+    .await;
+    assert_eq!(
+        outcome(&reused_incompatible.body)["value"],
+        serde_json::json!({
+            "command": "publish",
+            "reason": {"kind": "command-id-reuse"},
+        }),
+        "{}",
+        reused_incompatible.body
+    );
+    assert_eq!(stored_wiring_count(&project).await, 1);
 
     // ---- the ledger is append-only -----------------------------------------
     let rewrite = admin

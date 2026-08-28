@@ -982,7 +982,8 @@
       "writers": [
         "catalog-schema-installer",
         "ctl-author-wiring",
-        "ctl-promote"
+        "ctl-promote",
+        "scenario-worker"
       ],
       "readers": [
         "catalog-model",
