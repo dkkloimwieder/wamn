@@ -102,6 +102,14 @@ runtime:
       # deploy/infra/values-wamn.yaml, and the WorkloadDeployments'
       # `metadata.namespace` + `spec.template.spec.environment`.
       namespace: wamn-system
+      # -- Native warm-capacity floor (wamn-0h0g.10.8). At chart 2.8.0,
+      # `http.enabled: true` renders the host HTTP listener, Service port, and
+      # TCP readiness probe, so it marks this as a synchronous-serving group:
+      # keep the chart's native replica count at least 1. Three is the MVP's
+      # capacity choice, not an autoscaler. A future background-only group may
+      # pair `http.enabled: false` with zero replicas; no controller, idle-down,
+      # or cold-start path is implied here. Request admission remains the
+      # executor's existing `/readyz` contract in executor.yaml.
       replicas: 3
       service:
         type: ClusterIP

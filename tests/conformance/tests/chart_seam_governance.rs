@@ -244,6 +244,54 @@ fn host_and_executor_use_the_native_v2_8_memory_contract() {
 }
 
 #[test]
+fn synchronous_host_groups_keep_a_warm_replica() {
+    let root = repository_root();
+    let host_values = read_repository_file(&root, HOST_VALUES);
+    let host_groups = host_values
+        .split_once("\n  hostGroups:\n")
+        .map(|(_, groups)| groups)
+        .expect("host-tier values must carry runtime.hostGroups");
+    let profiles: Vec<_> = host_groups
+        .strip_prefix("    - name: ")
+        .expect("runtime.hostGroups must use named chart entries")
+        .split("\n    - name: ")
+        .collect();
+
+    assert!(
+        !profiles.is_empty(),
+        "{HOST_VALUES} must define at least one runtime.hostGroups[] entry"
+    );
+
+    let mut synchronous_groups = 0;
+    for profile in profiles {
+        let name = profile.lines().next().expect("host group must name itself");
+        let declared_replicas = mapping_values(profile, "replicas");
+        assert_eq!(
+            declared_replicas.len(),
+            1,
+            "host group {name:?} must carry exactly one explicit replicas value"
+        );
+        let replicas: u32 = declared_replicas[0]
+            .parse()
+            .unwrap_or_else(|error| panic!("host group {name:?} has invalid replicas: {error}"));
+
+        if profile.contains("\n      http:\n        enabled: true") {
+            synchronous_groups += 1;
+            assert!(
+                replicas >= 1,
+                "host group {:?} enables the chart's native HTTP listener, Service port, and readiness probe, so it serves synchronous work and must keep at least one warm replica",
+                name
+            );
+        }
+    }
+
+    assert!(
+        synchronous_groups >= 1,
+        "{HOST_VALUES} is the shipped synchronous profile and must keep an explicit http.enabled=true host group"
+    );
+}
+
+#[test]
 fn legacy_raw_socket_opt_in_is_absent_from_the_shipped_contract() {
     let root = repository_root();
     for path in [HOST_VALUES, EXECUTOR, SOCKPROBE] {
