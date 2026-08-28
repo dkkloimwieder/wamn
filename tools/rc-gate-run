@@ -1,0 +1,753 @@
+#!/usr/bin/env bash
+# Orchestrate the final RC on one disposable cluster without addressing kind-wamn.
+
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: rc-gate-run [--apply] --evidence-dir DIR
+
+Without --apply, print the immutable cluster/image/stage plan and exit.
+
+  --apply              Build and run the RC, then tear down exact owned resources
+  --evidence-dir DIR   New directory that retains commands and verdict records
+M0 runs only the existing socketguard and traceproof Jobs. The complete
+wamn-0h0g.15.153 product-flow/HTTP/cross-environment proof is deferred
+post-merge and is not claimed by this helper.
+
+The cluster name is fixed at wamn-rc. The fresh environment namespace is
+wamn-rc, while the operator singleton and its control NATS remain in
+wamn-system on that disposable cluster. No current-context command is used.
+EOF
+}
+
+apply=false
+evidence_dir=
+while (($#)); do
+  case "$1" in
+    --apply) apply=true; shift ;;
+    --evidence-dir) evidence_dir=${2-}; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd -- "$script_dir/.." && pwd)
+cd -- "$repo_root"
+head=$(git -C "$repo_root" rev-parse --verify HEAD)
+short_head=${head:0:12}
+
+cluster=wamn-rc
+context=kind-wamn-rc
+namespace=wamn-rc
+system_namespace=wamn-system
+chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
+chart_version=2.8.0
+run_id=$$
+host_tag=rc-${short_head}-${run_id}-debug
+gate_image=wamn-gates:${host_tag}
+host_image=wamn-host:${host_tag}
+sidecar_image=wamn-postgres:m1-pg18-${short_head}-${run_id}
+bootstrap_container=wamn-rc-bootstrap-pg18-${short_head}-${run_id}
+
+if [[ "$apply" != true ]]; then
+  printf 'RC dry-run (no mutation)\n'
+  printf '  source: %s\n' "$head"
+  printf '  cluster/context: %s / %s\n' "$cluster" "$context"
+  printf '  environment namespace: %s\n' "$namespace"
+  printf '  images: %s, %s, %s\n' "$gate_image" "$host_image" "$sidecar_image"
+  printf '  order: setup -> bootstrap -> M2 receipt -> socketguard -> traceproof -> M1 -> exact teardown\n'
+  printf '  deferred: wamn-0h0g.15.153 (post-merge; not claimed)\n'
+  exit 0
+fi
+
+if [[ -z "$evidence_dir" ]]; then
+  usage
+  exit 2
+fi
+if [[ -n $(git -C "$repo_root" status --porcelain --untracked-files=normal) ]]; then
+  echo "refusing to build a non-clean source tree; commit the final tip first" >&2
+  exit 2
+fi
+
+for required in awk date docker git grep helm install jq kind kubectl openssl sed sha256sum sort timeout uname; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "required executable not found: $required" >&2
+    exit 2
+  fi
+done
+if [[ $(uname -m) != x86_64 ]]; then
+  echo "the debug image assembly requires an x86_64 build host" >&2
+  exit 2
+fi
+
+if [[ -e "$evidence_dir" ]]; then
+  echo "--evidence-dir must not already exist: $evidence_dir" >&2
+  exit 2
+fi
+mkdir -m 0700 -- "$evidence_dir"
+evidence_dir=$(cd -- "$evidence_dir" && pwd)
+commands_record=$evidence_dir/commands.log
+: >"$commands_record"
+
+record_command() {
+  local argument
+  printf '%s ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$commands_record"
+  for argument in "$@"; do
+    printf '%q ' "$argument" >>"$commands_record"
+  done
+  printf '\n' >>"$commands_record"
+}
+
+run() {
+  record_command "$@"
+  "$@"
+}
+
+work_dir=$(mktemp -d)
+kubeconfig=$work_dir/kubeconfig
+cluster_owned=false
+bootstrap_container_owned=false
+artifact_container=wamn-rc-artifacts-${short_head}-${run_id}
+artifact_container_owned=false
+owned_images=()
+run_complete=false
+
+cleanup() {
+  local status=$? cleanup_failed=false image
+  trap - EXIT HUP INT TERM
+  set +e
+
+  if [[ "$cluster_owned" == true ]] &&
+     kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
+    record_command env KUBECONFIG="$kubeconfig" kind delete cluster --name "$cluster"
+    KUBECONFIG="$kubeconfig" kind delete cluster --name "$cluster" \
+      >/dev/null 2>&1 || cleanup_failed=true
+  fi
+  if [[ "$artifact_container_owned" == true ]] &&
+     docker container inspect "$artifact_container" >/dev/null 2>&1; then
+    record_command docker rm --force "$artifact_container"
+    docker rm --force "$artifact_container" >/dev/null 2>&1 || cleanup_failed=true
+  fi
+  if [[ "$bootstrap_container_owned" == true ]] &&
+     docker container inspect "$bootstrap_container" >/dev/null 2>&1; then
+    record_command docker rm --force "$bootstrap_container"
+    docker rm --force "$bootstrap_container" >/dev/null 2>&1 || cleanup_failed=true
+  fi
+  for image in "${owned_images[@]}"; do
+    if docker image inspect "$image" >/dev/null 2>&1; then
+      record_command docker image rm "$image"
+      docker image rm "$image" >/dev/null 2>&1 || cleanup_failed=true
+    fi
+  done
+
+  if kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
+    cleanup_failed=true
+  fi
+  for image in "$gate_image" "$host_image" "$sidecar_image"; do
+    if docker image inspect "$image" >/dev/null 2>&1; then
+      cleanup_failed=true
+    fi
+  done
+  if docker container inspect "$bootstrap_container" >/dev/null 2>&1; then
+    cleanup_failed=true
+  fi
+  if docker container inspect "$artifact_container" >/dev/null 2>&1; then
+    cleanup_failed=true
+  fi
+
+  if [[ "$cleanup_failed" == false && $status -eq 0 && "$run_complete" == true ]]; then
+    printf 'verdict=pass cluster=%s images=exact containers=%s,%s\n' \
+      "$cluster" "$bootstrap_container" "$artifact_container" \
+      >"$evidence_dir/cleanup.receipt"
+    if ! sha256sum "$commands_record" "$evidence_dir"/nodes.json \
+        "$evidence_dir"/bootstrap.log "$evidence_dir"/bootstrap-substrate.receipt \
+        "$evidence_dir"/bootstrap-database.receipt \
+        "$evidence_dir"/bootstrap-role.receipt \
+        "$evidence_dir"/bootstrap-secrets.json "$evidence_dir"/cleanup.receipt \
+        "$evidence_dir"/helm-releases.json "$evidence_dir"/host-deployment.json \
+        "$evidence_dir"/host-pods.json "$evidence_dir"/m2.receipt \
+        "$evidence_dir"/socketguard-verdict.json \
+        "$evidence_dir"/traceproof-verdict.json "$evidence_dir"/m0-verdict.json \
+        "$evidence_dir"/m1-sidecar-preflight.json \
+        "$evidence_dir"/m1-verdict.json >"$evidence_dir/evidence.sha256"; then
+      cleanup_failed=true
+    else
+      printf 'RC PASS source=%s namespace=%s order=bootstrap,M2,socketguard,traceproof,M1 deferred=wamn-0h0g.15.153\n' \
+        "$head" "$namespace" >"$evidence_dir/rc.receipt"
+    fi
+  fi
+  if [[ "$cleanup_failed" == true ]]; then
+    printf 'verdict=fail cluster=%s images=exact container=%s\n' \
+      "$cluster" "$bootstrap_container" >"$evidence_dir/cleanup.receipt"
+    printf 'RC FAIL source=%s reason=cleanup\n' "$head" >"$evidence_dir/rc.receipt"
+    rm -f -- "$evidence_dir/evidence.sha256"
+    [[ $status -ne 0 ]] || status=1
+  elif [[ $status -ne 0 || "$run_complete" != true ]]; then
+    printf 'verdict=pass cluster=%s images=exact containers=%s,%s\n' \
+      "$cluster" "$bootstrap_container" "$artifact_container" \
+      >"$evidence_dir/cleanup.receipt"
+    printf 'RC FAIL source=%s reason=stage\n' "$head" >"$evidence_dir/rc.receipt"
+    [[ $status -ne 0 ]] || status=1
+  fi
+  rm -rf -- "$work_dir"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
+if kind get clusters | grep -Fx -- "$cluster" >/dev/null; then
+  echo "refusing pre-existing kind cluster: $cluster" >&2
+  exit 2
+fi
+if docker container inspect "$bootstrap_container" >/dev/null 2>&1; then
+  echo "refusing pre-existing bootstrap container: $bootstrap_container" >&2
+  exit 2
+fi
+if docker container inspect "$artifact_container" >/dev/null 2>&1; then
+  echo "refusing pre-existing artifact container: $artifact_container" >&2
+  exit 2
+fi
+for image in "$gate_image" "$host_image" "$sidecar_image"; do
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    echo "refusing pre-existing image tag: $image" >&2
+    exit 2
+  fi
+done
+
+kind_config=$work_dir/kind-config.yaml
+awk '
+  /^    extraPortMappings:/ { skipping = 1; next }
+  skipping && /^      / { next }
+  { skipping = 0; print }
+' "$repo_root/deploy/infra/kind-config.yaml" >"$kind_config"
+if [[ $(grep -c '^  - role:' "$kind_config") -ne 3 ]] ||
+   grep -q 'extraPortMappings\|hostPort:' "$kind_config"; then
+  echo "rendered kind config did not retain exactly three nodes without host ports" >&2
+  exit 2
+fi
+
+debug_dockerfile=$work_dir/Dockerfile.debug
+cat >"$debug_dockerfile" <<EOF
+FROM rust:1.98-trixie AS native
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+      clang mold protobuf-compiler libprotobuf-dev git \\
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY Dockerfile ./Dockerfile
+COPY .cargo ./.cargo
+COPY crates ./crates
+COPY services ./services
+COPY test-support ./test-support
+COPY tests ./tests
+COPY deploy ./deploy
+COPY components ./components
+RUN --mount=type=cache,id=wamn-rc-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \\
+    --mount=type=cache,id=wamn-rc-cargo-git,target=/usr/local/cargo/git,sharing=locked \\
+    --mount=type=cache,id=wamn-rc-debug-target,target=/build/target,sharing=locked \\
+    RUSTC_WRAPPER= cargo build --locked \\
+      -p wamn-gates -p wamn-cdc-reader -p wamn-host -p wamn-ctl -p wamn-dispatcher \\
+ && RUSTC_WRAPPER= cargo build --locked -p wamn-ctl --features ops --bin wamn-ctl-ops \\
+ && install -D -m 0755 target/debug/wamn-host /native-output/wamn-host \\
+ && install -D -m 0755 target/debug/wamn-gates /native-output/wamn-gates \\
+ && install -D -m 0755 target/debug/wamn-ctl /native-output/wamn-ctl \\
+ && install -D -m 0755 target/debug/wamn-ctl-ops /native-output/wamn-ctl-ops \\
+ && install -D -m 0755 target/debug/wamn-cdc-reader /native-output/wamn-cdc-reader \\
+ && install -D -m 0755 target/debug/wamn-dispatcher /native-output/wamn-dispatcher
+
+FROM native AS components
+RUN rustup toolchain install 1.97.0 --profile minimal --target wasm32-wasip2
+RUN --mount=type=cache,id=wamn-rc-component-registry,target=/usr/local/cargo/registry,sharing=locked \\
+    --mount=type=cache,id=wamn-rc-component-git,target=/usr/local/cargo/git,sharing=locked \\
+    --mount=type=cache,id=wamn-rc-component-target,target=/build/components/target,sharing=locked \\
+    RUSTC_WRAPPER= cargo +1.97.0 build --locked --manifest-path components/Cargo.toml \\
+      --target wasm32-wasip2 -p http-route -p materializer -p busyloop \\
+      -p connection-http-standard -p sockprobe \\
+ && install -d /component-output \\
+ && install -m 0644 components/target/wasm32-wasip2/debug/busyloop.wasm /component-output/busyloop.wasm \\
+ && install -m 0644 components/target/wasm32-wasip2/debug/sockprobe.wasm /component-output/sockprobe.wasm \\
+ && install -m 0644 components/target/wasm32-wasip2/debug/http_route.wasm /component-output/http-route.wasm \\
+ && install -m 0644 components/target/wasm32-wasip2/debug/materializer.wasm /component-output/materializer.wasm \\
+ && install -m 0644 components/target/wasm32-wasip2/debug/connection_http_standard.wasm /component-output/connection-http-standard.wasm
+
+FROM debian:trixie-slim AS base
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \\
+ && rm -rf /var/lib/apt/lists/*
+LABEL wamn.dev/source-head="$head" wamn.dev/build-profile="debug"
+
+FROM base AS host
+COPY --from=native /native-output/wamn-host /usr/local/bin/wamn-host
+ENTRYPOINT ["/usr/local/bin/wamn-host"]
+
+FROM host AS gates
+COPY --from=native /native-output/wamn-gates /usr/local/bin/wamn-gates
+COPY --from=native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
+COPY --from=native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
+COPY --from=native /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
+COPY --from=native /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher
+COPY --from=components /component-output/busyloop.wasm /bench/busyloop.wasm
+COPY --from=components /component-output/sockprobe.wasm /bench/sockprobe.wasm
+COPY --from=components /component-output/http-route.wasm /bench/http-route.wasm
+COPY --from=components /component-output/materializer.wasm /bench/materializer.wasm
+COPY --from=components /component-output/connection-http-standard.wasm /bench/connection-http-standard.wasm
+ENTRYPOINT ["/usr/local/bin/wamn-gates"]
+EOF
+
+owned_images+=("$gate_image")
+run docker build --platform=linux/amd64 --provenance=false --target gates \
+  --file "$debug_dockerfile" --tag "$gate_image" "$repo_root"
+owned_images+=("$host_image")
+run docker build --platform=linux/amd64 --provenance=false --target host \
+  --file "$debug_dockerfile" --tag "$host_image" "$repo_root"
+owned_images+=("$sidecar_image")
+run docker build --platform=linux/amd64 --provenance=false \
+  --file "$repo_root/deploy/gates/m1-postgres.Dockerfile" \
+  --tag "$sidecar_image" "$repo_root/deploy/gates"
+for image in "$gate_image" "$host_image"; do
+  labels=$(docker image inspect --format \
+    '{{index .Config.Labels "wamn.dev/source-head"}}|{{index .Config.Labels "wamn.dev/build-profile"}}' \
+    "$image")
+  if [[ "$labels" != "$head|debug" ]]; then
+    echo "final-tip debug image labels are wrong: $image" >&2
+    exit 1
+  fi
+done
+
+artifact_container_owned=true
+run docker create --name "$artifact_container" "$gate_image"
+mkdir -- "$work_dir/gate-bin" "$work_dir/gate-bench"
+run docker cp "$artifact_container:/usr/local/bin/." "$work_dir/gate-bin"
+run docker cp "$artifact_container:/bench/." "$work_dir/gate-bench"
+for binary in wamn-gates wamn-ctl wamn-ctl-ops wamn-cdc-reader wamn-dispatcher; do
+  [[ -x "$work_dir/gate-bin/$binary" ]] || {
+    echo "debug gate image is missing executable $binary" >&2
+    exit 1
+  }
+done
+for asset in busyloop.wasm sockprobe.wasm http-route.wasm materializer.wasm \
+    connection-http-standard.wasm; do
+  [[ -s "$work_dir/gate-bench/$asset" ]] || {
+    echo "debug gate image is missing asset $asset" >&2
+    exit 1
+  }
+done
+ctl_bin=$work_dir/gate-bin/wamn-ctl
+run docker rm "$artifact_container"
+artifact_container_owned=false
+
+cluster_owned=true
+run kind create cluster --name "$cluster" --config "$kind_config" \
+  --kubeconfig "$kubeconfig"
+run kind load docker-image "$gate_image" --name "$cluster"
+run kind load docker-image "$host_image" --name "$cluster"
+run kind load docker-image "$sidecar_image" --name "$cluster"
+
+image_tuple() {
+  local image=$1 node inspect runtime_id config_id first=
+  while IFS= read -r node; do
+    inspect=$(docker exec "$node" crictl inspecti -o json "$image")
+    runtime_id=$(jq -er '
+      [.status.repoDigests[]? |
+       capture("@(?<digest>sha256:[0-9a-f]{64})$").digest] | unique |
+      if length == 1 then .[0] else error("runtime digest missing or ambiguous") end
+    ' <<<"$inspect")
+    config_id=$(jq -er '.status.id | select(test("^sha256:[0-9a-f]{64}$"))' \
+      <<<"$inspect")
+    if [[ -z "$first" ]]; then
+      first="$runtime_id $config_id"
+    elif [[ "$first" != "$runtime_id $config_id" ]]; then
+      echo "image tuple differs across kind nodes: $image" >&2
+      return 1
+    fi
+  done < <(kind get nodes --name "$cluster" | sort)
+  printf '%s\n' "$first"
+}
+
+read -r main_image_id _ < <(image_tuple "$gate_image")
+read -r host_image_id _ < <(image_tuple "$host_image")
+read -r sidecar_image_id sidecar_config_id < <(image_tuple "$sidecar_image")
+
+kubectl_path=$(command -v kubectl)
+kubectl_wrapper=$work_dir/kubectl-wamn-rc
+printf '#!/usr/bin/env bash\nexec %q --kubeconfig %q --context %q "$@"\n' \
+  "$kubectl_path" "$kubeconfig" "$context" >"$kubectl_wrapper"
+chmod 0755 "$kubectl_wrapper"
+kube=("$kubectl_path" --kubeconfig "$kubeconfig" --context "$context")
+
+run "${kube[@]}" wait --for=condition=Ready nodes --all --timeout=180s
+"${kube[@]}" get nodes -o json >"$evidence_dir/nodes.json"
+jq -e '
+  (.items | length == 3) and
+  ([.items[].metadata.name] | unique | length == 3) and
+  all(.items[];
+    .status.nodeInfo.architecture == "amd64" and
+    any(.status.conditions[]?; .type == "Ready" and .status == "True"))
+' >/dev/null "$evidence_dir/nodes.json"
+
+run "${kube[@]}" create namespace "$namespace"
+run "${kube[@]}" apply -f "$repo_root/deploy/infra/cert-manager.yaml"
+run "${kube[@]}" -n cert-manager wait --for=condition=Available \
+  deployment --all --timeout=180s
+
+operator_overlay=$work_dir/operator-values.yaml
+cat >"$operator_overlay" <<EOF
+operator:
+  watchNamespaces: [$namespace]
+  hostNamespaces: [$namespace]
+  allowSharedHosts: false
+EOF
+run helm upgrade --install --create-namespace --kubeconfig "$kubeconfig" \
+  --kube-context "$context" \
+  --namespace "$system_namespace" wamn "$chart" --version "$chart_version" \
+  -f "$repo_root/deploy/infra/values-wamn.yaml" -f "$operator_overlay" \
+  --wait --timeout 5m
+
+ca_source=$work_dir/wasmcloud-ca-source.json
+ca_copy=$work_dir/wasmcloud-ca-copy.json
+"${kube[@]}" -n "$system_namespace" get secret wasmcloud-ca -o json >"$ca_source"
+jq 'del(.metadata) | .metadata = {name:"wasmcloud-ca",namespace:"cert-manager"}' \
+  "$ca_source" >"$ca_copy"
+run "${kube[@]}" apply -f "$ca_copy"
+run "${kube[@]}" apply -f "$repo_root/deploy/infra/wasmcloud-ca-issuer.yaml"
+run "${kube[@]}" wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s
+
+environment_certs=$work_dir/host-environment-certs.yaml
+sed "s/__ENVIRONMENT_NAMESPACE__/$namespace/g" \
+  "$repo_root/deploy/platform/host-environment-certs.example.yaml" >"$environment_certs"
+run "${kube[@]}" apply -f "$environment_certs"
+run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
+  certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s
+
+host_db=$work_dir/host-db.yaml
+"${kube[@]}" -n "$namespace" create secret generic wamn-host-db \
+  --from-literal='url=postgres://postgres@127.0.0.1:1/postgres?sslmode=disable' \
+  --dry-run=client -o yaml >"$host_db"
+run "${kube[@]}" apply -f "$host_db"
+registry_pull=$work_dir/registry-pull.yaml
+"${kube[@]}" -n "$namespace" create secret docker-registry wamn-registry-pull \
+  --docker-server=registry.wamn-system.svc.cluster.local:5000 \
+  --docker-username=unused --docker-password=unused --dry-run=client -o yaml \
+  >"$registry_pull"
+run "${kube[@]}" apply -f "$registry_pull"
+
+host_values=$work_dir/host-values.yaml
+awk -v env_namespace="$namespace" -v tag="$host_tag" '
+  /^      extraArgs:$/ { skipping = 1; next }
+  skipping && /^        - / { next }
+  { skipping = 0 }
+  /^    tag: dev$/ { print "    tag: " tag; next }
+  /^      namespace: wamn-system$/ { print "      namespace: " env_namespace; next }
+  { print }
+' "$repo_root/deploy/platform/values-host-default.yaml" >"$host_values"
+if grep -q '^      extraArgs:' "$host_values" ||
+   ! grep -q "^    tag: ${host_tag}$" "$host_values" ||
+   ! grep -q "^      namespace: $namespace$" "$host_values"; then
+  echo "host values rendering failed" >&2
+  exit 2
+fi
+run helm upgrade --install --kubeconfig "$kubeconfig" --kube-context "$context" \
+  --namespace "$namespace" \
+  wamn-host "$chart" --version "$chart_version" -f "$host_values" \
+  --wait --timeout 5m
+run "${kube[@]}" -n "$namespace" rollout status \
+  deployment/hostgroup-default --timeout=180s
+
+helm list --kubeconfig "$kubeconfig" --kube-context "$context" \
+  --all-namespaces -o json \
+  >"$evidence_dir/helm-releases.json"
+jq -e --arg namespace "$namespace" '
+  ([.[] | select(.name == "wamn" and .namespace == "wamn-system" and
+                 .status == "deployed" and .chart == "runtime-operator-2.8.0" and
+                 .app_version == "2.8.0")] | length == 1) and
+  ([.[] | select(.name == "wamn-host" and .namespace == $namespace and
+                 .status == "deployed" and .chart == "runtime-operator-2.8.0" and
+                 .app_version == "2.8.0")] | length == 1)
+' >/dev/null "$evidence_dir/helm-releases.json"
+"${kube[@]}" -n "$namespace" get deployment hostgroup-default -o json \
+  >"$evidence_dir/host-deployment.json"
+jq -e --arg image "$host_image" '
+  .status.observedGeneration == .metadata.generation and
+  .spec.replicas == 3 and .status.updatedReplicas == 3 and
+  .status.readyReplicas == 3 and .status.availableReplicas == 3 and
+  any(.spec.template.spec.containers[]?; .image == $image)
+' >/dev/null "$evidence_dir/host-deployment.json"
+host_selector=$(jq -er '
+  .spec.selector.matchLabels | to_entries |
+  if length == 0 then error("empty host selector")
+  else map("\(.key)=\(.value)") | join(",") end
+' "$evidence_dir/host-deployment.json")
+"${kube[@]}" -n "$namespace" get pods -l "$host_selector" -o json \
+  >"$evidence_dir/host-pods.json"
+jq -e --arg image "$host_image" --arg image_id "$host_image_id" '
+  (.items | length == 3) and all(.items[];
+    ([.spec.containers[]? | select(.image == $image) | .name] |
+      if length == 1 then .[0] else null end) as $container |
+    ($container != null and
+     any(.status.containerStatuses[]?;
+       .name == $container and .ready == true and
+       ((.imageID // "") | endswith($image_id)))))
+' >/dev/null "$evidence_dir/host-pods.json"
+
+# M1 uses only the event-plane NATS documents; the later WAMN_TAP documents are
+# a separate feature and are deliberately excluded from this RC setup render.
+event_nats=$work_dir/event-nats.yaml
+awk '/^# WAMN_TAP / { exit } { print }' \
+  "$repo_root/deploy/infra/nats-jetstream.yaml" >"$event_nats"
+run "${kube[@]}" apply -f "$event_nats"
+run "${kube[@]}" -n "$system_namespace" rollout status \
+  statefulset/evt-nats --timeout=180s
+
+otel=$work_dir/otel-collector.yaml
+serve_echo=$work_dir/serve-echo.yaml
+socketguard=$work_dir/socketguard-job.yaml
+traceproof=$work_dir/traceproof-job.yaml
+sed "s/wamn-system/$namespace/g" "$repo_root/deploy/infra/otel-collector.yaml" >"$otel"
+sed -e "s/wamn-system/$namespace/g" -e "s/wamn-gates:dev/$gate_image/g" \
+  "$repo_root/deploy/gates/serve-echo.yaml" >"$serve_echo"
+sed -e "s/wamn-system/$namespace/g" -e "s/wamn-gates:dev/$gate_image/g" \
+  "$repo_root/deploy/gates/socketguard-job.yaml" >"$socketguard"
+sed -e "s/wamn-system/$namespace/g" -e "s/wamn-gates:dev/$gate_image/g" \
+  "$repo_root/deploy/gates/traceproof-job.yaml" >"$traceproof"
+run "${kube[@]}" apply -f "$otel"
+run "${kube[@]}" apply -f "$serve_echo"
+run "${kube[@]}" -n "$namespace" rollout status \
+  deployment/otel-collector --timeout=180s
+run "${kube[@]}" -n "$namespace" rollout status \
+  deployment/serve-echo --timeout=180s
+
+# Bootstrap uses its own fresh PostgreSQL 18 server. The wrapper deliberately
+# keeps role SQL private, so a transparent ctl shim captures that exact output
+# before wrapper cleanup. The emitted role, Database intent, privilege SQL, and
+# Secret are then converged against the same fresh off-cluster fixture.
+bootstrap_container_owned=true
+run docker run --detach --name "$bootstrap_container" \
+  --publish 127.0.0.1::5432 --env POSTGRES_HOST_AUTH_METHOD=trust "$sidecar_image"
+record_command timeout --foreground 120 docker logs --follow "$bootstrap_container"
+if ! awk '
+    /database system is ready to accept connections/ {
+      ready += 1
+      if (ready == 2) exit 0
+    }
+    END { exit ready >= 2 ? 0 : 1 }
+  ' < <(timeout --foreground 120 docker logs --follow "$bootstrap_container" 2>&1); then
+  echo "bootstrap PostgreSQL did not complete its init/restart cycle" >&2
+  exit 1
+fi
+run docker exec "$bootstrap_container" psql -v ON_ERROR_STOP=1 -U postgres \
+  -d postgres -c 'CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+run docker exec "$bootstrap_container" createdb -U postgres -O wamn_system wamn_system
+run docker cp "$repo_root/deploy/sql/system-schema.sql" \
+  "$bootstrap_container:/tmp/system-schema.sql"
+run docker exec "$bootstrap_container" psql -v ON_ERROR_STOP=1 -U postgres \
+  -d wamn_system -c 'SET ROLE wamn_system' -f /tmp/system-schema.sql
+bootstrap_port=$(docker inspect --format \
+  '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' \
+  "$bootstrap_container")
+if [[ ! "$bootstrap_port" =~ ^[1-9][0-9]*$ ]]; then
+  echo "bootstrap PostgreSQL did not receive a host port" >&2
+  exit 1
+fi
+system_url="postgres://postgres@127.0.0.1:${bootstrap_port}/wamn_system?sslmode=disable"
+run "$ctl_bin" provision-org --org rc --template trials \
+  --pool rc-pg --system-database-url "$system_url" \
+  --emit-clusters "$work_dir/bootstrap-clusters.json"
+printf 'verdict=pass substrate=postgresql-18 probe=host-mapped-provision-org port=%s\n' \
+  "$bootstrap_port" >"$evidence_dir/bootstrap-substrate.receipt"
+
+ctl_capture=$work_dir/wamn-ctl-capture
+cat >"$ctl_capture" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+role_sql=
+arguments=("$@")
+for ((index = 0; index < ${#arguments[@]}; index++)); do
+  case "${arguments[index]}" in
+    --emit-role-sql)
+      ((index + 1 < ${#arguments[@]})) || exit 2
+      role_sql=${arguments[index + 1]}
+      ;;
+    --emit-role-sql=*) role_sql=${arguments[index]#*=} ;;
+  esac
+done
+set +e
+"$WAMN_RC_REAL_CTL" "$@"
+status=$?
+set -e
+((status == 0)) || exit "$status"
+if [[ -n "$role_sql" ]]; then
+  [[ -f "$role_sql" ]] || exit 1
+  install -m 0600 -- "$role_sql" "$WAMN_RC_ROLE_SQL_CAPTURE"
+fi
+EOF
+chmod 0755 "$ctl_capture"
+role_sql=$work_dir/bootstrap-role.sql
+database_cr=$work_dir/bootstrap-database.json
+privilege_sql=$work_dir/bootstrap-privilege.sql
+database_secret=$work_dir/bootstrap-database-secret.json
+bootstrap_password=$(openssl rand -hex 24)
+record_command env WAMN_RC_REAL_CTL="$ctl_bin" \
+  WAMN_RC_ROLE_SQL_CAPTURE="$role_sql" WAMN_CTL_BIN="$ctl_capture" \
+  KUBECTL_BIN="$kubectl_wrapper" deploy/mvp/bootstrap.sh \
+  --org rc --project app --env dev --tenant 00000000-0000-0000-0000-000000000001 \
+  --namespace "$namespace" --system-database-url "$system_url" --cluster rc-pg \
+  --app-host rc-pg-rw --app-password '[REDACTED]' \
+  --emit-database '<transient>' --emit-privilege-sql '<transient>' \
+  --emit-secret '<transient>'
+WAMN_RC_REAL_CTL="$ctl_bin" WAMN_RC_ROLE_SQL_CAPTURE="$role_sql" \
+  WAMN_CTL_BIN="$ctl_capture" KUBECTL_BIN="$kubectl_wrapper" \
+  "$repo_root/deploy/mvp/bootstrap.sh" \
+  --org rc --project app --env dev --tenant 00000000-0000-0000-0000-000000000001 \
+  --namespace "$namespace" --system-database-url "$system_url" --cluster rc-pg \
+  --app-host rc-pg-rw --app-password "$bootstrap_password" \
+  --emit-database "$database_cr" \
+  --emit-privilege-sql "$privilege_sql" \
+  --emit-secret "$database_secret" \
+  >"$evidence_dir/bootstrap.log"
+bootstrap_password=
+for artifact in "$role_sql" "$database_cr" "$privilege_sql" "$database_secret"; do
+  [[ -s "$artifact" ]] || { echo "bootstrap did not emit $artifact" >&2; exit 1; }
+done
+database_name=$(jq -er '
+  select(.apiVersion == "postgresql.cnpg.io/v1" and .kind == "Database") |
+  select(.metadata.namespace == "wamn-system") |
+  select(.spec.cluster.name == "rc-pg" and .spec.owner == "wamn_db_owner") |
+  select(.spec.ensure == "present" and .spec.databaseReclaimPolicy == "retain") |
+  .spec.name | select(test("^wamn-db-rc--app--dev--[a-z0-9]{8}$"))
+' "$database_cr")
+run docker cp "$role_sql" "$bootstrap_container:/tmp/bootstrap-role.sql"
+run docker exec "$bootstrap_container" psql -v ON_ERROR_STOP=1 -U postgres \
+  -d postgres -f /tmp/bootstrap-role.sql
+run docker exec "$bootstrap_container" createdb -U postgres \
+  --owner=wamn_db_owner "$database_name"
+run docker cp "$privilege_sql" "$bootstrap_container:/tmp/bootstrap-privilege.sql"
+run docker exec "$bootstrap_container" psql -v ON_ERROR_STOP=1 -U postgres \
+  -d "$database_name" -f /tmp/bootstrap-privilege.sql
+run "${kube[@]}" apply -f "$database_secret"
+
+database_receipt=$evidence_dir/bootstrap-database.receipt
+docker exec "$bootstrap_container" psql -X -A -t -v ON_ERROR_STOP=1 -U postgres \
+  -d postgres -c "SELECT datname || '|' || pg_get_userbyid(datdba) FROM pg_database WHERE datname = '$database_name'" \
+  >"$database_receipt"
+[[ $(<"$database_receipt") == "$database_name|wamn_db_owner" ]]
+docker exec "$bootstrap_container" psql -X -A -t -v ON_ERROR_STOP=1 -U postgres \
+  -d "$database_name" -c 'SELECT current_database()' >>"$database_receipt"
+[[ $(tail -n 1 "$database_receipt") == "$database_name" ]]
+role_receipt=$evidence_dir/bootstrap-role.receipt
+docker exec "$bootstrap_container" psql -X -A -t -F '|' -v ON_ERROR_STOP=1 \
+  -U postgres -d postgres \
+  -c "SELECT rolname, rolcanlogin, rolinherit, rolpassword IS NULL FROM pg_authid WHERE rolname IN ('wamn_app','wamn_db_owner') ORDER BY rolname" \
+  >"$role_receipt"
+grep -Fx 'wamn_app|f|f|t' "$role_receipt" >/dev/null
+grep -Fx 'wamn_db_owner|f|f|t' "$role_receipt" >/dev/null
+
+database_secret_name=$(jq -er '
+  select(.kind == "Secret" and .metadata.namespace == "wamn-rc") |
+  .metadata.name | select(test("^wamn-db-rc--app--dev$"))
+' "$database_secret")
+"${kube[@]}" -n "$namespace" get secrets \
+  "$database_secret_name" wamn-pat-management-author-rc--app--dev \
+  wamn-pat-route-caller-rc--app--dev \
+  -o json | jq '{items:[.items[] | {name:.metadata.name,namespace:.metadata.namespace,
+    managed_by:.metadata.labels["app.kubernetes.io/managed-by"],
+    component:.metadata.labels["app.kubernetes.io/component"]}]}' \
+  >"$evidence_dir/bootstrap-secrets.json"
+
+printf '%s\n' \
+  'M2 NO-OP — da58814f deleted the wakeproof Job and integration harness; the production waker survives, and its retirement is owned by open wamn-0h0g.15.26.' \
+  >"$evidence_dir/m2.receipt"
+
+socketguard_spec=$(jq -cn --arg image "$gate_image" \
+  '{name:"socketguard",container:"socketguard",expectation:"positive",exit_code:0,
+    image:$image,log_contains:"socketguard complete — overall PASS: true"}')
+socketguard_verdict=$evidence_dir/socketguard-verdict.json
+record_command env KUBECTL="$kubectl_wrapper" \
+  tools/kubernetes-gate-run --namespace "$namespace" --timeout-secs 180 \
+  --manifest "$socketguard" --verdict-record "$socketguard_verdict" \
+  --job "$socketguard_spec"
+KUBECTL="$kubectl_wrapper" "$repo_root/tools/kubernetes-gate-run" \
+  --namespace "$namespace" --timeout-secs 180 --manifest "$socketguard" \
+  --verdict-record "$socketguard_verdict" --job "$socketguard_spec"
+jq -e '.verdict == "pass" and .failure_classes == []' \
+  >/dev/null "$socketguard_verdict"
+
+traceproof_spec=$(jq -cn --arg image "$gate_image" \
+  '{name:"traceproof",container:"traceproof",expectation:"positive",exit_code:0,
+    image:$image,log_contains:"traceproof: overall PASS"}')
+traceproof_verdict=$evidence_dir/traceproof-verdict.json
+record_command env KUBECTL="$kubectl_wrapper" \
+  tools/kubernetes-gate-run --namespace "$namespace" --timeout-secs 240 \
+  --manifest "$traceproof" --verdict-record "$traceproof_verdict" \
+  --job "$traceproof_spec"
+KUBECTL="$kubectl_wrapper" "$repo_root/tools/kubernetes-gate-run" \
+  --namespace "$namespace" --timeout-secs 240 --manifest "$traceproof" \
+  --verdict-record "$traceproof_verdict" --job "$traceproof_spec"
+jq -e '.verdict == "pass" and .failure_classes == []' \
+  >/dev/null "$traceproof_verdict"
+
+m0_verdict_tmp=$evidence_dir/m0-verdict.json.tmp
+jq -n --arg source "$head" --slurpfile socketguard "$socketguard_verdict" \
+  --slurpfile traceproof "$traceproof_verdict" '
+  {schema_version:"0.1",source:$source,
+   scope:{executed:["socketguard","traceproof"],
+          deferred:["wamn-0h0g.15.153"],
+          deferred_disposition:"post-merge; not claimed"},
+   verdict:(if $socketguard[0].verdict == "pass" and
+               $traceproof[0].verdict == "pass" then "pass" else "fail" end),
+   failure_classes:($socketguard[0].failure_classes +
+                    $traceproof[0].failure_classes),
+   jobs:($socketguard[0].jobs + $traceproof[0].jobs)}
+' >"$m0_verdict_tmp"
+mv -- "$m0_verdict_tmp" "$evidence_dir/m0-verdict.json"
+jq -e '.verdict == "pass" and .failure_classes == [] and
+       .scope.deferred == ["wamn-0h0g.15.153"]' \
+  >/dev/null "$evidence_dir/m0-verdict.json"
+
+event_reader=$work_dir/event-reader-rbac.yaml
+sed "s/wamn-system/$namespace/g" \
+  "$repo_root/deploy/platform/event-reader-rbac.yaml" >"$event_reader"
+run "${kube[@]}" apply -f "$event_reader"
+
+m1_manifest=$work_dir/m1-gate-job.yaml
+sed -e "s/wamn-gates:m1-01ca7afa-debug/$gate_image/g" \
+  -e "s/wamn-postgres:m1-pg18-720c455e/$sidecar_image/g" \
+  -e "s/sha256:POST_BUILD_MAIN_IMAGE_ID/$main_image_id/g" \
+  -e "s/^  namespace: wamn-system$/  namespace: $namespace/" \
+  "$repo_root/deploy/gates/m1-gate-job.yaml" >"$m1_manifest"
+if grep -q 'POST_BUILD_MAIN_IMAGE_ID\|m1-01ca7afa-debug\|m1-pg18-720c455e' \
+    "$m1_manifest"; then
+  echo "M1 manifest rendering left a stale image placeholder" >&2
+  exit 2
+fi
+
+upstream_index=$(sed -nE \
+  's/.*wamn.dev\/upstream-index="(sha256:[0-9a-f]{64})".*/\1/p' \
+  "$repo_root/deploy/gates/m1-postgres.Dockerfile")
+upstream_child=$(sed -nE \
+  's/.*wamn.dev\/upstream-child="(sha256:[0-9a-f]{64})".*/\1/p' \
+  "$repo_root/deploy/gates/m1-postgres.Dockerfile")
+job_spec=$(jq -cn --arg image "$gate_image" --arg main "$main_image_id" \
+  --arg sidecar "$sidecar_image" --arg sidecar_id "$sidecar_image_id" \
+  --arg config_id "$sidecar_config_id" --arg upstream_index "$upstream_index" \
+  --arg upstream_child "$upstream_child" \
+  '{name:"m1-gate-",container:"m1-gate",expectation:"positive",exit_code:0,
+    image:$image,claimed_image_id:$main,claim_log_prefix:"M1_MAIN_IMAGE_ID=",
+    sidecar:"m1-postgres",sidecar_image:$sidecar,sidecar_image_id:$sidecar_id,
+    sidecar_config_id:$config_id,sidecar_upstream_index:$upstream_index,
+    sidecar_upstream_child:$upstream_child,
+    log_contains:"M1 PASS — checks 9 and 10 passed"}')
+record_command env KUBECTL="$kubectl_wrapper" DOCKER=docker \
+  tools/kubernetes-gate-run --namespace "$namespace" --manifest "$m1_manifest" \
+  --generated-name-prefix m1-gate- --require-final-cleanup \
+  --sidecar-preflight-record "$evidence_dir/m1-sidecar-preflight.json" \
+  --verdict-record "$evidence_dir/m1-verdict.json" --job "$job_spec"
+KUBECTL="$kubectl_wrapper" DOCKER=docker \
+  "$repo_root/tools/kubernetes-gate-run" --namespace "$namespace" \
+  --manifest "$m1_manifest" --generated-name-prefix m1-gate- \
+  --require-final-cleanup \
+  --sidecar-preflight-record "$evidence_dir/m1-sidecar-preflight.json" \
+  --verdict-record "$evidence_dir/m1-verdict.json" --job "$job_spec"
+jq -e '.verdict == "pass" and .failure_classes == []' \
+  >/dev/null "$evidence_dir/m1-verdict.json"
+run_complete=true
