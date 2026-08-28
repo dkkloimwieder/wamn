@@ -5,7 +5,11 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use wamn_run_state::queue::grant_production_claim_sql;
+use wamn_run_state::queue::{
+    advance_claim_attempts_sql, clear_pre_effect_state_sql, grant_production_claim_sql,
+    renew_production_lease_sql, select_exhausted_production_sql,
+    terminalize_exhausted_production_sql,
+};
 use wamn_run_state::transitions::{release_caller_sql, terminalize_sql};
 
 fn psql(url: &str, script: &str) -> Output {
@@ -782,6 +786,266 @@ fn run_state_live() {
            END; \
          END $$; ROLLBACK;",
     );
+
+    // ---- RECLAIM AND REAP, DRIVEN UNDER THE CREDENTIAL (wamn-0h0g.22.42) ----
+    //
+    // `wamn-0h0g.22.31` closed with `renew_production_lease_sql`, the reclaim
+    // pair (`advance_claim_attempts_sql`, `clear_pre_effect_state_sql`) and the
+    // janitor pair (`select_exhausted_production_sql`,
+    // `terminalize_exhausted_production_sql`) asserted only by admission_live's
+    // schema-wide TOTALS. Their columns were in the granted set and NO
+    // STATEMENT EVER EXECUTED under the credential. The legs below drive each
+    // of them as the minted generation asserted at the top of this file, on
+    // exactly `grant_executor_platform_surface_sql` — so a missing column grant
+    // fails here with the statement NAMED, not as a silent zero-row read.
+    //
+    // THREE OF THE FIVE RUN THROUGH `EXECUTE ... USING` rather than this file's
+    // PREPARE / `CREATE TEMP TABLE AS EXECUTE` shape. That shape refuses them:
+    // `CREATE TABLE AS EXECUTE` accepts only a prepared SELECT/TABLE/VALUES
+    // ("prepared statement is not a SELECT", measured), and those three are
+    // top-level `UPDATE ... RETURNING`. The production string is still executed
+    // VERBATIM with bound parameters, which is what the host does with it.
+    //
+    // EVERY REFUSAL ARM IS PAIRED WITH THE SAME STATEMENT SUCCEEDING IN THE
+    // SAME SESSION. Under FORCE RLS a principal matching no policy reads zero
+    // rows in silence, so a lone zero proves nothing; a zero standing beside a
+    // one on the same statement and the same connection does. Every arm also
+    // asserts the stored row AFTER the statement, never the statement's own
+    // exit status.
+    //
+    // `t2` is a second tenant in the same database. `run_queue`'s only policy
+    // is `run_queue_tenant`, which carries NO `TO` clause and keys on
+    // `app.tenant` — so the queue fence applies to this family too, unlike
+    // `runs`, whose `runs_platform` arm is `USING (true)`.
+    success(
+        &url,
+        "INSERT INTO catalog.catalogs \
+           (tenant_id,catalog_id,version,environment,schema_version,state) \
+         VALUES ('t2','cat',1,'prod','0.1','draft'); \
+         INSERT INTO catalog.releases (tenant_id,catalog_id,catalog_version) \
+         VALUES ('t2','cat',1); \
+         INSERT INTO wamn_run.environment_policies \
+           (tenant_id,expected_environment,durability_class) \
+         VALUES ('t2','prod','standard'); \
+         INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            wiring_id,wiring_version,attachment_id,status,input_json) VALUES \
+           ('t1','renew-live','f',1,'cat',1,'prod','fixture-wiring',1,'http-renew', \
+            'running','{}'), \
+           ('t1','renew-expired','f',1,'cat',1,'prod','fixture-wiring',1,'http-renew-dead', \
+            'running','{}'), \
+           ('t2','renew-other-tenant','f',1,'cat',1,'prod','fixture-wiring',1,'http-renew-t2', \
+            'running','{}'); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           ('t1','renew-live','renew-worker',now()+interval '30 seconds',3), \
+           ('t1','renew-expired','renew-worker',now()-interval '30 seconds',3), \
+           ('t2','renew-other-tenant','renew-worker',now()+interval '30 seconds',3);",
+    );
+    let renew = renew_production_lease_sql();
+    let renew_script = format!(
+        "{} \
+         DO $probe$ \
+         DECLARE granted timestamptz; refused timestamptz; touched int; \
+                 live_before timestamptz; dead_before timestamptz; \
+         BEGIN \
+           SELECT q.lease_expires_at INTO live_before \
+             FROM run_queue AS q WHERE q.run_id='renew-live'; \
+           SELECT q.lease_expires_at INTO dead_before \
+             FROM run_queue AS q WHERE q.run_id='renew-expired'; \
+           EXECUTE $renew${}$renew$ INTO refused \
+             USING 'renew-live'::text,'other-worker'::text,3::bigint,600000::bigint; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 0 AND refused IS NULL, 'a foreign owner renewed a live lease'; \
+           EXECUTE $renew${}$renew$ INTO refused \
+             USING 'renew-live'::text,'renew-worker'::text,2::bigint,600000::bigint; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 0 AND refused IS NULL, 'a stale generation renewed a live lease'; \
+           EXECUTE $renew${}$renew$ INTO refused \
+             USING 'renew-expired'::text,'renew-worker'::text,3::bigint,600000::bigint; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 0 AND refused IS NULL, 'an already expired lease was extended'; \
+           EXECUTE $renew${}$renew$ INTO refused \
+             USING 'renew-other-tenant'::text,'renew-worker'::text,3::bigint,600000::bigint; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 0 AND refused IS NULL, 'the renew reached another tenant queue row'; \
+           ASSERT (SELECT q.lease_expires_at FROM run_queue AS q WHERE q.run_id='renew-live') \
+                  = live_before, 'a refused renew moved the live deadline'; \
+           ASSERT (SELECT q.lease_expires_at FROM run_queue AS q WHERE q.run_id='renew-expired') \
+                  = dead_before, 'a refused renew moved the expired deadline'; \
+           EXECUTE $renew${}$renew$ INTO granted \
+             USING 'renew-live'::text,'renew-worker'::text,3::bigint,600000::bigint; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 1, 'the exact owner and generation could not renew'; \
+           ASSERT granted \
+                  = (SELECT q.lease_expires_at FROM run_queue AS q WHERE q.run_id='renew-live'), \
+                  'the returned deadline is not the stored one'; \
+           ASSERT granted > live_before + interval '5 minutes', \
+                  'the renewed lease did not move out to the requested TTL'; \
+         END $probe$; COMMIT;",
+        executor_preamble(),
+        renew,
+        renew,
+        renew,
+        renew,
+        renew,
+    );
+    success(&url, &renew_script);
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT q.lease_expires_at FROM wamn_run.run_queue AS q \
+                    WHERE q.tenant_id='t2' AND q.run_id='renew-other-tenant') \
+                  < now() + interval '2 minutes', \
+                  'the executor extended another tenant lease'; \
+         END $$;",
+    );
+
+    // The pre-effect reclaim. `advance_claim_attempts_sql` is deliberately its
+    // own statement OUTSIDE the grant's abort scope (wamn-0h0g.15.69), and
+    // `clear_pre_effect_state_sql` reopens claimability by erasing exactly the
+    // dead attempt's projection — `state_json` and the release pair — and
+    // nothing else. `max_attempts` defaults to 20 here, so neither reclaim row
+    // is a janitor candidate and the reap leg below cannot select one.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            wiring_id,wiring_version,attachment_id,status,input_json,state_json, \
+            release_version,manifest_digest) VALUES \
+           ('t1','reclaim-dead','f',1,'cat',1,'prod','fixture-wiring',1,'http-reclaim', \
+            'running','{\"input\":7}','{\"cursor\":9}',4, \
+            'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'), \
+           ('t1','reclaim-fresh','f',1,'cat',1,'prod','fixture-wiring',1,'http-reclaim-new', \
+            'dispatched','{}',NULL,NULL,NULL), \
+           ('t2','reclaim-other-tenant','f',1,'cat',1,'prod','fixture-wiring',1, \
+            'http-reclaim-t2','running','{}','{\"cursor\":9}',4, \
+            'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation,attempts) VALUES \
+           ('t1','reclaim-dead','dead-worker',now()-interval '1 minute',5,1), \
+           ('t1','reclaim-fresh',NULL,NULL,0,0), \
+           ('t2','reclaim-other-tenant','dead-worker',now()-interval '1 minute',5,1);",
+    );
+    let advance = advance_claim_attempts_sql();
+    let clear = clear_pre_effect_state_sql();
+    let reclaim_script = format!(
+        "{} \
+         DO $probe$ DECLARE spent int; reopened text; touched int; BEGIN \
+           EXECUTE $advance${}$advance$ INTO spent USING 'reclaim-dead'::text; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 1 AND spent = 2, \
+                  'replacing a prior lease is crash evidence, got ' \
+                  || coalesce(spent::text, '<none>'); \
+           EXECUTE $advance${}$advance$ INTO spent USING 'reclaim-fresh'::text; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 1 AND spent = 0, 'a first claim spent crash budget'; \
+           EXECUTE $advance${}$advance$ INTO spent USING 'reclaim-other-tenant'::text; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 0, 'the advance reached another tenant queue row'; \
+           EXECUTE $clear${}$clear$ INTO reopened USING 'reclaim-dead'::text; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 1 AND reopened = 'reclaim-dead', 'the reclaim reopened no run'; \
+           EXECUTE $clear${}$clear$ INTO reopened USING 'reclaim-other-tenant'::text; \
+           GET DIAGNOSTICS touched = ROW_COUNT; \
+           ASSERT touched = 0, 'the reclaim reached another tenant run'; \
+           ASSERT (SELECT q.attempts FROM run_queue AS q WHERE q.run_id='reclaim-dead') = 2, \
+                  'the advanced crash evidence did not persist'; \
+           ASSERT (SELECT r.state_json FROM runs AS r WHERE r.run_id='reclaim-dead') IS NULL, \
+                  'the reclaim kept the dead attempt state'; \
+           ASSERT (SELECT r.release_version FROM runs AS r WHERE r.run_id='reclaim-dead') \
+                  IS NULL, 'the reclaim kept the dead attempt release version'; \
+           ASSERT (SELECT r.manifest_digest FROM runs AS r WHERE r.run_id='reclaim-dead') \
+                  IS NULL, 'the reclaim kept the dead attempt manifest digest'; \
+           ASSERT (SELECT r.input_json FROM runs AS r WHERE r.run_id='reclaim-dead') \
+                  = '{{\"input\":7}}'::jsonb, 'the reclaim erased more than the dead attempt'; \
+           ASSERT (SELECT r.status FROM runs AS r WHERE r.run_id='reclaim-dead') = 'running', \
+                  'the reclaim moved the run status'; \
+         END $probe$; COMMIT;",
+        executor_preamble(),
+        advance,
+        advance,
+        advance,
+        clear,
+        clear,
+    );
+    success(&url, &reclaim_script);
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT q.attempts FROM wamn_run.run_queue AS q \
+                    WHERE q.tenant_id='t2' AND q.run_id='reclaim-other-tenant') = 1, \
+                  'the executor spent another tenant crash budget'; \
+           ASSERT (SELECT r.state_json FROM wamn_run.runs AS r \
+                    WHERE r.tenant_id='t2' AND r.run_id='reclaim-other-tenant') \
+                  = '{\"cursor\":9}'::jsonb, \
+                  'the executor erased another tenant attempt state'; \
+           ASSERT (SELECT r.release_version FROM wamn_run.runs AS r \
+                    WHERE r.tenant_id='t2' AND r.run_id='reclaim-other-tenant') = 4, \
+                  'the executor erased another tenant release record'; \
+         END $$;",
+    );
+
+    // The janitor. `select_exhausted_production_sql` is a plain SELECT, so it
+    // keeps this file's PREPARE shape; the scope arm beside it is the control
+    // that reads zero legitimately while the same statement in the same
+    // transaction reads one.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            wiring_id,wiring_version,attachment_id,status,trigger_source,input_json) VALUES \
+           ('t1','reap-exhausted','f',1,'cat',1,'prod','fixture-wiring',1,'http-reap', \
+            'running','http','{}'); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
+            lease_generation,attempts,max_attempts) \
+         VALUES ('t1','reap-exhausted','2000-01-01',900,'dead-worker','2000-01-01',5,3,3);",
+    );
+    let select_exhausted = select_exhausted_production_sql();
+    let terminalize_exhausted = terminalize_exhausted_production_sql();
+    let reap_script = format!(
+        "{} PREPARE reap_select (bigint,text,text) AS {}; \
+         PREPARE reap_terminal (text,text,text) AS {}; \
+         CREATE TEMP TABLE reap_candidate AS EXECUTE reap_select(0,'cat','prod'); \
+         CREATE TEMP TABLE reap_other_scope AS EXECUTE reap_select(0,'cat','dev'); \
+         CREATE TEMP TABLE reaped AS EXECUTE reap_terminal('reap-exhausted', \
+           '{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}','sha256:reaped'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM reap_candidate) = 1, \
+                  'the janitor locked no crash-budget-exhausted candidate'; \
+           ASSERT (SELECT run_id FROM reap_candidate) = 'reap-exhausted', \
+                  'the janitor locked the wrong candidate'; \
+           ASSERT (SELECT status FROM reap_candidate) = 'running', \
+                  'the janitor projection lost the run status'; \
+           ASSERT (SELECT durability_class FROM reap_candidate) = 'standard', \
+                  'the janitor projection lost the durability class'; \
+           ASSERT (SELECT wiring_id FROM reap_candidate) = 'fixture-wiring', \
+                  'the janitor projection lost the frozen wiring identity'; \
+           ASSERT (SELECT count(*) FROM reap_other_scope) = 0, \
+                  'the janitor left its catalog and environment scope'; \
+           ASSERT (SELECT status FROM reaped) = 'infrastructure-failure', \
+                  'the reap returned no terminal status'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='reap-exhausted') \
+                  = 'infrastructure-failure', 'the reap did not persist terminal status'; \
+           ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='reap-exhausted'), \
+                  'the reap did not dequeue atomically'; \
+           ASSERT (SELECT caller_outcome_kind FROM runs WHERE run_id='reap-exhausted') \
+                  = 'failed', 'the reap left an attached caller unreleased'; \
+           ASSERT (SELECT caller_http_status FROM runs WHERE run_id='reap-exhausted') = 500, \
+                  'the reap stored the wrong caller status'; \
+           ASSERT (SELECT caller_outcome_hash FROM runs WHERE run_id='reap-exhausted') \
+                  = 'sha256:reaped', 'the reap stored the wrong caller body hash'; \
+           ASSERT (SELECT caller_released_at FROM runs WHERE run_id='reap-exhausted') \
+                  IS NOT NULL, 'the reap released no caller'; \
+           ASSERT (SELECT result_json FROM runs WHERE run_id='reap-exhausted') IS NULL, \
+                  'a flow-grain run stored a manufactured result'; \
+         END $$; COMMIT;",
+        executor_preamble(),
+        select_exhausted,
+        terminalize_exhausted,
+    );
+    success(&url, &reap_script);
 
     // Half a record never reaches the guard — its record arms do not fire while
     // both OLD values are NULL — so `runs_release_record_check` is the only thing
