@@ -18,8 +18,9 @@
 # authority class in the process. It no longer does, and the split is the
 # security property:
 #
-#   * `wamn-executor-db` is the GUEST-SQL credential. Component `wamn:postgres`
-#     calls run as it, inside the tenant's own RLS floor.
+#   * `wamn-executor-db` is the tenant-scoped APP GENERATION used for GUEST-SQL.
+#     Component `wamn:postgres` calls run as it, inside that tenant's RLS floor;
+#     the stable `wamn_app` role is a passwordless NOLOGIN grant carrier.
 #   * `wamn-executor-platform-db` is the EXECUTOR-PLATFORM credential. The queue
 #     claim, lease renewal, reap, caller release and plan supply run as it.
 #   * `wamn-http-admitter-db` is the CALLABLE-HTTP credential. Exactly one read
@@ -55,9 +56,9 @@
 #
 # THE SECRET NAMES ARE THE MOUNT'S, NOT THE EMIT'S — the shape all three
 # siblings already have. `wamn-ctl provision-project-env` writes
+# `wamn-guest-<org>--<project>--<env>`,
 # `wamn-executor-platform-<org>--<project>--<env>`,
-# `wamn-http-admitter-<org>--<project>--<env>` and
-# `wamn-db-<org>--<project>--<env>`;
+# and `wamn-http-admitter-<org>--<project>--<env>`;
 # those are SOURCES you copy the `url` value out of, exactly as
 # `dispatcher-projects.example.yaml` says of its own emit ("Copy that value into
 # the entry below"). The workload mounts a stable operator-owned name so that
@@ -67,14 +68,23 @@
 # WHERE THE URLS COME FROM, and how they rotate:
 #
 #   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
+#     --tenant <tenant> \
+#     --system-database-url <t1-superuser-url> \
+#     --target-admin-database-url <project-env-superuser-url> \
+#     --prepare-guest-generation a \
+#     --emit-guest-secret ./executor-guest-secret.json
+#
+# ONE ACTION PER INVOCATION: prepare the executor-platform generation in a
+# SECOND run of the same command —
+#
+#   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
 #     --system-database-url <t1-superuser-url> \
 #     --target-admin-database-url <project-env-superuser-url> \
 #     --prepare-executor-platform-generation a \
-#     --emit-executor-platform-secret ./executor-platform-secret.json \
-#     --emit-secret ./executor-guest-secret.json
+#     --emit-executor-platform-secret ./executor-platform-secret.json
 #
-# ONE ACTION PER INVOCATION: the workload-action group is `multiple(false)`, so
-# the admitter generation is a SECOND run of the same command —
+# The workload-action group is `multiple(false)`, so the optional admitter
+# generation is a THIRD run —
 #
 #   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
 #     --system-database-url <t1-superuser-url> \
@@ -82,28 +92,27 @@
 #     --prepare-http-admitter-generation a \
 #     --emit-http-admitter-secret ./http-admitter-secret.json
 #
-# ROTATION is the ordinary A/B lifecycle and needs no downtime: prepare
-# generation `b`, update the Secret below, roll the Deployment, then
-# `--retire-<family>-generation a`. Never `ALTER ROLE` a password in place — the
-# generation IS the rotation unit.
+# After the initial shared-login cutover, ROTATION is the ordinary A/B lifecycle
+# and needs no downtime: prepare generation `b`, update the Secret below, roll
+# the Deployment, then `--retire-<family>-generation a`. The initial cutover is
+# the maintenance-window transition in deploy/README.md. Never `ALTER ROLE` a
+# password in place — the generation IS the rotation unit.
 #
-# THE LOGIN NAMES ARE DERIVED, NOT CHOSEN. `wamn_exec_platform_<40-hex>_<a|b>`
-# and `wamn_http_admitter_<40-hex>_<a|b>` carry the 160-bit digest of
-# (org, project, environment, database). The executor-platform prefix is the
-# frozen short form of `wamn_executor_platform`, which would otherwise overrun
-# PostgreSQL's 63-byte identifier limit with the digest and generation suffix
-# attached; `wamn_http_admitter` fits and so keeps its stable ACL role name as
-# its prefix. The demo values below are the REAL derived names for the
-# project-environment demo/demo/dev in the fixture pod's `wamn` database — the
-# same triple `dispatcher-projects.example.yaml` uses — so they match
-# `WAMN_PROJECT: demo` in the executor Deployment. Substitute the passwords the
-# prepares minted.
+# THE LOGIN NAMES ARE DERIVED, NOT CHOSEN. `wamn_app_<40-hex>_<a|b>` carries the
+# 160-bit digest of (tenant, database); `wamn_exec_platform_<40-hex>_<a|b>` and
+# `wamn_http_admitter_<40-hex>_<a|b>` carry the digest of (org, project,
+# environment, database). The executor-platform prefix is shortened to stay
+# within PostgreSQL's 63-byte identifier limit. The demo values below are the
+# REAL derived names for tenant `demo-tenant`, project-environment demo/demo/dev
+# and the fixture pod's `wamn` database — the same identity
+# `dispatcher-projects.example.yaml` uses. Substitute the passwords the prepares
+# minted.
 #
 # ORDERING OBLIGATION: every generation mounted below and the stable roles'
-# grants must exist
-# BEFORE a pod carrying these URLs starts. A `secretKeyRef` the kubelet cannot
-# resolve leaves the executor Pod in CreateContainerConfigError, never Running,
-# and a resolvable Secret naming an unprepared role fails the initial dial.
+# grants must exist BEFORE a pod carrying these URLs starts. A `secretKeyRef` the
+# kubelet cannot resolve leaves the executor Pod in CreateContainerConfigError,
+# never Running, and a resolvable Secret naming an unprepared role fails the
+# initial dial.
 #
 #   kubectl -n wamn-system apply -f deploy/platform/executor-db.example.yaml
 apiVersion: v1
@@ -114,9 +123,9 @@ metadata:
   labels: { app: wamn-executor, project-env: demo--demo--dev }
 type: Opaque
 stringData:
-  # The project-environment GUEST-SQL url. `--emit-secret` writes it as
-  # `wamn-db-<org>--<project>--<env>`; copy that Secret's `url` here.
-  url: "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn"
+  # The tenant-scoped GUEST-SQL App generation. `--emit-guest-secret` writes it
+  # as `wamn-guest-<org>--<project>--<env>`; copy that Secret's `url` here.
+  url: "postgres://wamn_app_3b8aca90f34f304c6a228d363655a9820c43e4c6_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn"
 ---
 apiVersion: v1
 kind: Secret

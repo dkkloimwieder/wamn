@@ -72,6 +72,78 @@ and the push ATTEST against it, so a digest is RELEASED iff a deployment
 attestation references it (`wamn-0h0g.13.54`). `$CONTROL_URL` is the control
 database; `print-release-env` reads the project snapshot and takes neither.
 
+Shared App-login cutover (`wamn-0h0g.12.140`) is an operator-run transition,
+not a runtime compatibility subsystem. Repeat preparation and rollout steps 1-2
+for every affected tenant/database on a cluster. Run final posture/drain steps
+3-4 once for that cluster, only after every replacement carrier there is Ready.
+Schedule one maintenance window and inventory every consumer first: the first
+prepare disables new shared-login connections cluster-wide, so an omitted or
+unrolled consumer will lose reconnect capability even though its existing
+session remains alive until the final drain.
+
+1. Prepare the inactive App generation with the production action and keep the
+   emitted credential off stdout:
+
+   ```bash
+   wamn-ctl provision-project-env \
+     --org "$ORG" --project "$PROJECT" --env "$ENVIRONMENT" --tenant "$TENANT" \
+     --system-database-url "$SYSTEM_ADMIN_URL" \
+     --target-admin-database-url "$TARGET_ADMIN_URL" \
+     --prepare-guest-generation "$GENERATION" \
+     --emit-guest-secret "$GUEST_SECRET" \
+     --emit-role-sql "$ROLE_SQL"
+   ```
+
+   Emit `$ROLE_SQL` on the first prepare for the cluster and retain that exact
+   artifact for step 3; later prepares may omit `--emit-role-sql`. App prepare
+   is the only generation action allowed to render it, and the artifact contains
+   no credential.
+
+   This action commits `wamn_app` as `NOLOGIN PASSWORD NULL NOINHERIT` before it
+   authenticates the new generation and writes the Secret. Existing shared-login
+   sessions remain temporarily, but the old credential cannot open a new one from
+   this point onward. This is the cutover boundary, not a zero-downtime claim or a
+   staging mechanism.
+2. Copy the emitted `url` into the applicable stable, operator-owned carrier
+   (`wamn-executor-db` and/or `wamn-host-db`), apply the Secret, then use the
+   native rollout surfaces. Do not delete Pods by hand:
+
+   ```bash
+   kubectl -n wamn-system apply -f deploy/platform/executor-db.example.yaml
+   kubectl -n wamn-system rollout restart deployment/executor
+   kubectl -n wamn-system rollout status deployment/executor --timeout=300s
+   kubectl -n wamn-system apply -f deploy/platform/host-db.example.yaml
+   helm upgrade --install -n wamn-system wamn-host \
+     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
+     -f deploy/platform/values-host-default.yaml
+   kubectl -n wamn-system rollout restart deployment/hostgroup-default
+   kubectl -n wamn-system rollout status deployment/hostgroup-default --timeout=150s
+   ```
+
+   Replace every password placeholder locally before either apply. Executor
+   readiness opens its configured database connection. Host readiness does not:
+   before step 3, invoke an already-deployed guest operation that imports
+   `wamn:postgres`, make it execute `SELECT current_user`, and require the exact
+   prepared `wamn_app_<40-hex>_<a|b>` role. A rollout status alone is not that
+   proof. If no such production guest probe exists, stop; the host carrier has
+   not been validated and the shared sessions must not be drained.
+3. After every replacement on the cluster is Ready, apply the canonical emitted
+   `role.sql` once as that cluster's superuser with ordinary psql autocommit:
+
+   ```bash
+   psql "$TARGET_ADMIN_URL" -X -v ON_ERROR_STOP=1 -f "$ROLE_SQL"
+   ```
+
+   Do not wrap it in `BEGIN` or use `psql -1`: the NOLOGIN posture must commit
+   before its second statement performs the native bounded
+   `pg_terminate_backend(pid, 5000)` drain. Residue makes the artifact fail.
+4. Verify `pg_authid` reports `rolcanlogin = false`, `rolinherit = false`, and a
+   NULL verifier for `wamn_app`; verify `pg_stat_activity` reports zero sessions
+   authenticated as it; and verify a new connection with the retired credential
+   is refused. Record `pg_authid.xmin` for `wamn_app`, reapply the same `role.sql`,
+   and require the same `xmin` plus zero sessions before retiring any predecessor
+   App generation.
+
 Release rollout, and rollback by revert: **the controller question re-opens on a
 named trigger, and on nothing else.** Two fire it, and only two — a SECOND
 ENVIRONMENT, or the first convergence with no human present: the platform half

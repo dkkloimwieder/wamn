@@ -108,9 +108,9 @@ runtime:
       http:
         enabled: true
         port: 80
-      # The default project's Postgres URL: the wamn:postgres plugin's from_env()
-      # default pool connects as this non-superuser role for project-scoped
-      # component SQL.
+      # The default tenant's Postgres URL: the wamn:postgres plugin's from_env()
+      # default pool connects as its prepared App-generation LOGIN for guest SQL.
+      # The stable `wamn_app` role only carries inherited grants and is NOLOGIN.
       #
       # A Secret REFERENCE, never inline plaintext (R8b, wamn-sysdb.yaml:8-11 —
       # actual credential material lives in K8s Secrets). The chart passes each

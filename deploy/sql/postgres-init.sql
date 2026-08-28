@@ -27,18 +27,47 @@
 -- that do not both take the lock can each observe the role absent and both
 -- issue `CREATE ROLE`, and the loser gets `duplicate_object`.
 --
--- It deliberately does NOT re-stamp the password on an existing role, matching
--- `ensure_app_role_sql` and every sibling below: a harden pass must not
--- overwrite a credential an operator rotated out of band. Whether this role
--- should be a LOGIN at all is `wamn-0h0g.12.140`'s cutover, not this guard's.
+-- `wamn-0h0g.12.140`: this is a stable ACL and grant-owner role, never a
+-- credential. Guest sessions authenticate as scoped `wamn_app_<scope>_[ab]`
+-- generations that inherit it. Both a fresh install and a replay over the old
+-- shared LOGIN therefore converge to NOLOGIN, PASSWORD NULL and NOINHERIT.
 DO $app$ BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN
-    CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOBYPASSRLS;
+    CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOINHERIT NOREPLICATION NOBYPASSRLS;
+  ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = 'wamn_app'
+                AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole
+                     OR rolinherit OR rolreplication OR rolbypassrls
+                     OR rolpassword IS NOT NULL)) THEN
+    ALTER ROLE wamn_app NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
-EXCEPTION WHEN duplicate_object THEN NULL;
+EXCEPTION WHEN duplicate_object THEN
+  ALTER ROLE wamn_app NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB
+    NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 END $app$;
+
+-- psql commits the preceding DO statement before executing this one: NOLOGIN
+-- is visible cluster-wide before the scan, so a new shared-role session cannot
+-- race the drain. The native timeout bounds each wait; residue is a hard error.
+DO $app_drain$ DECLARE stale_pid integer; BEGIN
+  FOR stale_pid IN
+    SELECT pid FROM pg_catalog.pg_stat_activity
+    WHERE usename = 'wamn_app' AND pid <> pg_backend_pid()
+  LOOP
+    PERFORM pg_catalog.pg_terminate_backend(stale_pid, 5000);
+  END LOOP;
+  PERFORM pg_catalog.pg_stat_clear_snapshot();
+  IF EXISTS (
+    SELECT FROM pg_catalog.pg_stat_activity
+    WHERE usename = 'wamn_app' AND pid <> pg_backend_pid()
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'wamn-app-session-drain-incomplete';
+  END IF;
+END $app_drain$;
 
 -- The host-only scenario-author group role (11.2/12g). Roles are CLUSTER-global,
 -- so creating it here is what makes the canonical run-plane DDL

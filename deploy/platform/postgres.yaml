@@ -9,9 +9,10 @@
 #     --from-file=init.sql=deploy/sql/postgres-init.sql
 #   kubectl -n wamn-system apply -f deploy/platform/postgres.yaml
 #
-# wamn platform pods reach it at postgres.wamn-system.svc.cluster.local:5432; set
-# WAMN_PG_URL to postgres://wamn_app:wamn_app@postgres.wamn-system:5432/wamn
-# (the plugin connects as the non-superuser, non-BYPASSRLS app role).
+# wamn platform pods reach it at postgres.wamn-system.svc.cluster.local:5432.
+# Supply WAMN_PG_URL from a credential emitted by `--prepare-guest-generation`;
+# never point it at stable `wamn_app`, which the init SQL makes a passwordless
+# NOLOGIN ACL role.
 ---
 apiVersion: apps/v1
 kind: Deployment

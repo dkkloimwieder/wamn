@@ -22,38 +22,71 @@ use wamn_pg_core::quote_literal;
 // Quote a SQL string literal (single-quoted, embedded `'` doubled). Mirrors the
 // canonical `wamn_schema_compiler::sql::quote_literal`.
 
-/// Idempotently bootstrap the shared, cluster-global [`APP_ROLE`]. Runs in a
-/// `DO` block so re-running against a cluster that already has the role is a
-/// no-op. `NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS` — the role can only
-/// do DML under RLS on tables explicitly granted to it (the S2/2.2 model). In
-/// production the role is pre-created once; this makes the tool self-contained.
+/// Idempotently create or harden the shared, cluster-global [`APP_ROLE`] as a
+/// stable NOLOGIN ACL role.
 ///
-/// EXCEPTION-guarded under the shared `wamn_role_bootstrap` advisory lock
-/// (`wamn-0h0g.12.186`), the [`ensure_platform_group_role_sql`] shape. Bare
-/// `IF NOT EXISTS` is NOT idempotent under concurrency: roles are CLUSTER-global,
-/// so two provisioners racing on a cluster where the role is absent both take
-/// the `THEN` branch and the loser gets `duplicate_object`. The lock serializes
-/// appliers that take it; the handler covers the ones that do not.
-///
-/// It deliberately keeps NO harden arm and re-stamps NO password on an existing
-/// role: a replay must not overwrite a credential rotated out of band. Whether
-/// this role should be `LOGIN` at all is `wamn-0h0g.12.140`'s cutover — after
-/// it, every guest session is a per-tenant generation and
-/// [`ensure_workload_acl_role_sql`] is what this builder becomes.
-pub fn ensure_app_role_sql(password: &str) -> String {
+/// Guest sessions authenticate as scoped [`WorkloadRoleFamily::App`]
+/// generations and inherit this role's grants. The stable role therefore
+/// carries no verifier and cannot authenticate or inherit memberships itself.
+/// The shared bootstrap lock serializes cooperative appliers; the exception arm
+/// hardens the role created by a concurrent non-cooperative applier. Callers
+/// must commit this statement before applying
+/// [`drain_app_role_sessions_sql`]. That boundary prevents a new shared-role
+/// login from racing the drain while `NOLOGIN` is still uncommitted.
+pub fn ensure_app_acl_role_sql() -> String {
     format!(
         "DO $app_role$ BEGIN \
            PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
-             CREATE ROLE {role} LOGIN PASSWORD {pw} \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {role_lit}) THEN \
+             CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = {role_lit} \
+                         AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
+                              OR rolinherit OR rolreplication OR rolbypassrls \
+                              OR rolpassword IS NOT NULL)) THEN \
+             ALTER ROLE {role} NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
            END IF; \
-         EXCEPTION WHEN duplicate_object THEN NULL; \
+         EXCEPTION WHEN duplicate_object THEN \
+           ALTER ROLE {role} NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
          END $app_role$;",
         role = quote_ident(APP_ROLE),
         role_lit = quote_literal(APP_ROLE),
-        pw = quote_literal(password),
     )
+}
+
+/// Drain sessions authenticated as the retired shared [`APP_ROLE`].
+///
+/// Apply only after [`ensure_app_acl_role_sql`] has committed. PostgreSQL's
+/// native timeout bounds each termination wait; the final inventory turns a
+/// refused or timed-out termination into a hard failure instead of silently
+/// returning with an old credential session alive.
+pub fn drain_app_role_sessions_sql() -> String {
+    format!(
+        "DO $app_drain$ DECLARE stale_pid integer; BEGIN \
+           FOR stale_pid IN SELECT pid FROM pg_catalog.pg_stat_activity \
+             WHERE usename = {role_lit} AND pid <> pg_backend_pid() LOOP \
+             PERFORM pg_catalog.pg_terminate_backend(stale_pid, 5000); \
+           END LOOP; \
+           PERFORM pg_catalog.pg_stat_clear_snapshot(); \
+           IF EXISTS (SELECT FROM pg_catalog.pg_stat_activity \
+                      WHERE usename = {role_lit} AND pid <> pg_backend_pid()) THEN \
+             RAISE EXCEPTION USING ERRCODE = '55000', \
+               MESSAGE = 'wamn-app-session-drain-incomplete'; \
+           END IF; \
+         END $app_drain$;",
+        role_lit = quote_literal(APP_ROLE),
+    )
+}
+
+/// Legacy entry point for [`ensure_app_acl_role_sql`].
+///
+/// `password` remains only because the legacy `provision-project` command and
+/// URL surface still accepts it; removing that surface belongs to
+/// `wamn-0h0g.12.185`. It is deliberately not emitted into the SQL.
+pub fn ensure_app_role_sql(_password: &str) -> String {
+    ensure_app_acl_role_sql()
 }
 
 /// Idempotently create or harden the database-owner role [`DB_OWNER_ROLE`] as
@@ -495,10 +528,10 @@ pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
     format!(
         "DO $workload_acl$ DECLARE role_name text := {role_lit}; BEGIN \
            PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
+           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
              EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-           ELSIF EXISTS (SELECT FROM pg_roles WHERE rolname = role_name \
+           ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = role_name \
                          AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
                               OR rolinherit OR rolreplication OR rolbypassrls \
                               OR rolpassword IS NOT NULL)) THEN \
@@ -1621,27 +1654,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ensure_app_role_is_least_privilege_and_idempotent() {
-        let sql = ensure_app_role_sql("wamn_app");
-        assert!(sql.contains("IF NOT EXISTS"), "idempotent guard");
-        // `IF NOT EXISTS` alone is NOT idempotent under concurrency
-        // (`wamn-0h0g.12.186`): roles are cluster-global, so two provisioners
-        // that both find the role absent both issue CREATE and the loser gets
-        // `duplicate_object`. The lock serializes the ones that take it; the
-        // handler covers the ones that do not, and BOTH are required.
+    fn ensure_app_role_is_a_passwordless_nologin_acl_role() {
+        let sql = ensure_app_role_sql("must-not-reach-sql");
+        assert_eq!(
+            sql,
+            ensure_app_acl_role_sql(),
+            "the legacy entry point must converge through the generation family's ACL builder"
+        );
         assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
-        assert!(sql.contains("EXCEPTION WHEN duplicate_object THEN NULL"));
-        assert!(sql.contains("CREATE ROLE \"wamn_app\""));
-        assert!(sql.contains("PASSWORD 'wamn_app'"));
-        // No harden arm, and therefore no re-stamped password on a replay.
-        assert!(!sql.contains("ALTER ROLE"));
-        assert_eq!(sql.matches("PASSWORD").count(), 1);
-        // Least privilege — every restrictive attribute is present.
-        for attr in ["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOBYPASSRLS"] {
+        assert!(sql.contains("'wamn_app'"));
+        assert!(sql.contains("CREATE ROLE \"wamn_app\" NOLOGIN"));
+        assert!(sql.contains("ALTER ROLE \"wamn_app\" NOLOGIN PASSWORD NULL"));
+        assert!(sql.contains("rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole"));
+        assert!(sql.contains("OR rolpassword IS NOT NULL"));
+        assert!(sql.contains("FROM pg_catalog.pg_authid WHERE rolname = 'wamn_app'"));
+        assert!(sql.contains("EXCEPTION WHEN duplicate_object THEN"));
+        assert!(!sql.contains("pg_terminate_backend"));
+        assert!(
+            !sql.contains("must-not-reach-sql"),
+            "the retired shared password reached SQL"
+        );
+        assert_eq!(
+            ensure_app_role_sql("first"),
+            ensure_app_role_sql("second"),
+            "legacy password input must not affect emitted role SQL"
+        );
+        for attr in [
+            "NOSUPERUSER",
+            "NOCREATEDB",
+            "NOCREATEROLE",
+            "NOINHERIT",
+            "NOREPLICATION",
+            "NOBYPASSRLS",
+        ] {
             assert!(sql.contains(attr), "missing {attr}");
         }
-        // A password with a quote is escaped, not injected.
-        assert!(ensure_app_role_sql("a'b").contains("PASSWORD 'a''b'"));
+    }
+
+    #[test]
+    fn app_role_drain_is_native_bounded_and_residue_refusing() {
+        let sql = drain_app_role_sessions_sql();
+        assert!(sql.contains("pg_catalog.pg_terminate_backend(stale_pid, 5000)"));
+        assert!(sql.contains("pg_catalog.pg_stat_clear_snapshot()"));
+        assert!(sql.contains("usename = 'wamn_app' AND pid <> pg_backend_pid()"));
+        assert!(sql.contains("MESSAGE = 'wamn-app-session-drain-incomplete'"));
+        assert_eq!(sql.matches("pg_stat_activity").count(), 2);
     }
 
     #[test]
@@ -1739,6 +1796,7 @@ mod tests {
         // negation the retired builder spelled the other way round.
         assert!(sql.contains("rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole"));
         assert!(sql.contains("OR rolpassword IS NOT NULL"));
+        assert!(sql.contains("FROM pg_catalog.pg_authid WHERE rolname = role_name"));
         // This builder owns the role identity only — never a grant.
         for forbidden in ["ON SCHEMA", "ON TABLE", "CONNECT ON DATABASE"] {
             assert!(!sql.contains(forbidden), "role builder leaked a grant");

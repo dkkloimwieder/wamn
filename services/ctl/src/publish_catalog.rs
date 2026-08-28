@@ -57,12 +57,13 @@ pub const CATALOG_PLANE_RESIDENCY_REFUSAL: &str = "catalog-plane-residency-contr
 ///
 /// This sits AHEAD of `ensure_wamn_app_role` on purpose: that call is the first
 /// side effect of the wrong-plane path and it mutates CLUSTER-GLOBAL role state
-/// (it may `CREATE ROLE wamn_app` with a known password and always issues
-/// `REVOKE wamn_scenario_author FROM wamn_app`), which a refusal raised after it
-/// could not take back. `wamn-0h0g.12.183` deleted the `ensure_wamn_app_role`
-/// calls `promote` and `migrate-catalog` each made one line ahead of this verb,
-/// so every path now reaches the refusal before any role is minted. Removal was
-/// the fix rather than reordering, because this verb bootstraps the role itself.
+/// (it creates or hardens `wamn_app` as a passwordless NOLOGIN ACL role and
+/// always issues `REVOKE wamn_scenario_author FROM wamn_app`), which a refusal
+/// raised after it could not take back. `wamn-0h0g.12.183` deleted the
+/// `ensure_wamn_app_role` calls `promote` and `migrate-catalog` each made one
+/// line ahead of this verb, so every path now reaches the refusal before any
+/// role is minted. Removal was the fix rather than reordering, because this
+/// verb bootstraps the role itself.
 async fn refuse_control_plane_residency(client: &tokio_postgres::Client) -> anyhow::Result<()> {
     let control_store: bool = client
         .query_one(
@@ -450,8 +451,9 @@ async fn ensure_connection_component_grain(client: &tokio_postgres::Client) -> a
 /// wamn_scenario_author TO ...` in the tree is a test fixture staging drift for
 /// the reconciler to revoke. The three relations DO have production readers —
 /// `promote.rs`, `push_component.rs`, `wiring_resolution.rs` — but every one of
-/// them reads as a superuser/owner connection or as `wamn_app`, which keeps its
-/// SELECT here. No reader connects as the author, and none can.
+/// them reads through a superuser/owner connection or a scoped App generation,
+/// which inherits `wamn_app`'s SELECT here. No reader connects as the author,
+/// and none can.
 ///
 /// The membership census is empty in both directions. `wamn-0h0g.22.27`
 /// removed the stale `wamn_platform` edge from both role emitters, and
@@ -483,9 +485,10 @@ pub(crate) const AUTHOR_DORMANT_CATALOG_RELATIONS: [&str; 9] = [
 /// and it is re-run on every publish, which means an arm missing here silently
 /// restores whatever the old file granted. Two boundaries live in one batch: the
 /// authoring split between `wamn_app` and `wamn_scenario_author`, and the
-/// wamn-0h0g.12.20-.12.29 confinement that leaves the guest-reachable `wamn_app`
-/// LOGIN read-only on the schema-of-record relations no production writer
-/// reaches through it. Each half asserts its own effective ACL before returning.
+/// wamn-0h0g.12.20-.12.29 confinement that leaves stable NOLOGIN `wamn_app`
+/// read-only on the schema-of-record relations no production writer reaches
+/// through its scoped generations. Each half asserts its own effective ACL
+/// before returning.
 ///
 /// Held as a constant so the pinned-text proof below can read the batch this
 /// path actually sends, rather than a paraphrase of it.
@@ -742,21 +745,18 @@ pub(crate) async fn guard_registration_orphans(
 // through the same code path production provisioning uses.
 // ---------------------------------------------------------------------------
 
-/// Ensure the non-superuser runtime role exists (pre-created in production;
-/// bare gate/throwaway databases lack it). Shared with `reconcile-run-plane`,
-/// whose sections GRANT to it.
+/// Ensure the stable passwordless NOLOGIN app ACL role exists and is hardened.
+///
+/// Shared with `reconcile-run-plane`, whose sections GRANT to it. Guest
+/// sessions authenticate as scoped generations that inherit this role.
 pub(crate) async fn ensure_wamn_app_role(client: &tokio_postgres::Client) -> anyhow::Result<()> {
     client
-        .batch_execute(
-            "DO $$ BEGIN \
-               PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                 CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
-               END IF; \
-             END $$;",
-        )
+        .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
         .await
         .context("ensure wamn_app role")?;
+    // Publishing and run-plane reconciliation are per-database paths. The
+    // cluster-wide session drain belongs only to the operator-applied role.sql
+    // after every replacement carrier has been verified.
     client
         .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
         .await

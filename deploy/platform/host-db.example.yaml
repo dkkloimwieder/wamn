@@ -5,9 +5,9 @@
 # per-environment config, so `helm upgrade` of the host release never clobbers a
 # customized Secret back to this demo value.
 #
-# `url` is the default project's app (wamn_app, NOSUPERUSER) connection string.
-# The wamn:postgres plugin's from_env() default pool connects as this role for
-# project-scoped component SQL on every host in the group.
+# `url` is the default tenant's scoped App-generation connection string. The
+# wamn:postgres plugin's from_env() default pool connects as that LOGIN for
+# guest SQL; it inherits grants from the passwordless NOLOGIN `wamn_app` role.
 #
 # NOT the executor's `wamn-executor-db` on purpose, even though the demo values
 # point at the same fixture database: that Secret is per-PROJECT config owned by
@@ -23,6 +23,15 @@
 # deleted file's `?sslmode=disable` did NOT come back — no carrier in this tier
 # spells an sslmode, this one included.
 #
+# SOURCE: run `wamn-ctl provision-project-env` with the normal org/project/env
+# and admin arguments plus `--tenant <tenant>`,
+# `--prepare-guest-generation <a|b>`, and `--emit-guest-secret <path>`, then copy
+# the emitted `url` into this stable operator-owned Secret. The demo role below
+# is the exact generation for tenant `demo-tenant` in database `wamn`; substitute
+# its prepared password.
+# Rotation uses the other A/B generation, followed by the native Helm/Kubernetes
+# rollout in deploy/README.md; never restore LOGIN or a password on `wamn_app`.
+#
 # ORDER: apply this BEFORE the host release. A secretKeyRef the kubelet cannot
 # resolve leaves the host Pods in CreateContainerConfigError, never Running.
 #
@@ -34,4 +43,4 @@ metadata:
   namespace: wamn-system
 type: Opaque
 stringData:
-  url: "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn"
+  url: "postgres://wamn_app_3b8aca90f34f304c6a228d363655a9820c43e4c6_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn"

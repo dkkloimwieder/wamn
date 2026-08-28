@@ -134,9 +134,12 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub connection_limit: Option<i64>,
 
-    /// Password for the shared `wamn_app` role (embedded in the emitted URL + the
-    /// role SQL). Supply it with `--app-password` or the env var
-    /// `WAMN_APP_PASSWORD`.
+    /// Password carried by the legacy shared-app URL surface. Supply it with
+    /// `--app-password` or the env var `WAMN_APP_PASSWORD`.
+    ///
+    /// `wamn-0h0g.12.140` removes it from role SQL: `wamn_app` is now a stable
+    /// passwordless NOLOGIN ACL role. The argument remains until
+    /// `wamn-0h0g.12.185` retires the legacy command and URL surface itself.
     ///
     /// **Deliberately has no `default_value`.** A default here provisioned every
     /// project-env with a publicly known password on a `LOGIN` role that
@@ -446,9 +449,28 @@ impl ProvisionProjectEnvArgs {
 /// password is CREATED by its own prepare action rather than handed to
 /// provisioning on a flag.
 ///
-/// `pub` so the live gate applies the SAME text production uses instead of a
-/// hand-transcribed copy — the `reconcile_run_plane::reconcile` precedent.
+/// The app-password parameter remains for the legacy command/URL surface owned
+/// by `wamn-0h0g.12.185`, but [`sql::ensure_app_role_sql`] deliberately emits
+/// none of it. The app role is the same stable passwordless NOLOGIN carrier as
+/// every other generation family.
+///
+/// psql commits each complete statement in this standalone artifact. That
+/// makes the app-role hardening visible before the final bounded session drain.
+/// Rust callers needing the same ordering apply [`role_posture_sql`], await its
+/// commit, then apply [`sql::drain_app_role_sessions_sql`].
+///
+/// `pub` so the live gate applies the SAME fragments production uses instead of
+/// hand-transcribed copies — the `reconcile_run_plane::reconcile` precedent.
 pub fn role_sql(app_password: &str) -> String {
+    format!(
+        "{posture}\n{drain}\n",
+        posture = role_posture_sql(app_password),
+        drain = sql::drain_app_role_sessions_sql(),
+    )
+}
+
+/// Role creation and hardening half of [`role_sql`].
+pub fn role_posture_sql(app_password: &str) -> String {
     format!(
         "{app}\n{owner}\n{reader}\n",
         app = sql::ensure_app_role_sql(app_password),
@@ -616,7 +638,11 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
 
     // Render the artifacts the runbook applies.
     let db_cr = render_project_env_database(&triple, &instance, &cluster, args.connection_limit);
-    let role_sql = role_sql(app_password);
+    // Ordinary provisioning establishes cluster roles before it creates the
+    // database. The shared-login drain is an operator finalizer and is emitted
+    // only by a successful App-generation prepare after every carrier has a
+    // replacement credential.
+    let role_sql = role_posture_sql(app_password);
     let privilege_sql = privilege_sql(&db_name);
     let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace, &app_url);
 
@@ -1069,17 +1095,20 @@ async fn run_workload_action(
         generation,
     } = action;
     let label = family.label();
+    let emits_app_retirement_sql =
+        family == WorkloadRoleFamily::App && verb == WorkloadActionVerb::Prepare;
     anyhow::ensure!(
         args.cluster.is_none()
             && args.connection_limit.is_none()
             && args.app_host.is_none()
             && args.emit_database.is_none()
-            && args.emit_role_sql.is_none()
+            && (args.emit_role_sql.is_none() || emits_app_retirement_sql)
             && args.emit_privilege_sql.is_none()
             && args.emit_secret.is_none()
             && args.emit_management_author_pat_secret.is_none()
             && args.emit_route_caller_pat_secret.is_none(),
-        "{label} generation actions cannot render ordinary provisioning or PAT artifacts"
+        "{label} generation actions cannot render ordinary provisioning or PAT artifacts; only \
+         App prepare may emit the canonical shared-login retirement role SQL"
     );
     let identity = workload_action_identity(args, &label)?;
     let WorkloadActionIdentity {
@@ -1211,6 +1240,13 @@ async fn run_workload_action(
                 generation.as_str(),
                 secret_path.display()
             );
+            if family == WorkloadRoleFamily::App && args.emit_role_sql.is_some() {
+                emit_text(
+                    &args.emit_role_sql,
+                    "shared App-login retirement role SQL (apply once after every replacement carrier is verified)",
+                    &role_sql(""),
+                )?;
+            }
         }
         WorkloadActionVerb::Retire => {
             let (legacy_old_role, _) =
@@ -1422,6 +1458,12 @@ where
         .commit()
         .await
         .with_context(|| format!("commit {} generation prepare", lifecycle.label()))?;
+
+    // App prepare has now made the stable role NOLOGIN, so old credentials
+    // cannot reconnect. Do not drain its existing sessions here: they bridge
+    // the interval in which the authenticated generation Secret is published
+    // and workloads roll. The explicit retirement step owns the final bounded
+    // native drain after that cutover.
 
     let publish_result = async {
         let credential_config = workload_config(admin_config, &role, &password, database);
@@ -3858,15 +3900,17 @@ mod tests {
         );
     }
 
-    /// The role batch must actually CREATE the principal the reconcile step's
-    /// read-surface grants name. Before wamn-0h0g.12.122 the example manifest
-    /// named a role production provisioning never created; wamn-0h0g.22.24 keeps
-    /// it created, as a NOLOGIN carrier rather than a credential.
+    /// The role batch must create both stable principals as NOLOGIN carriers.
+    ///
+    /// Before wamn-0h0g.12.122 the example manifest named a dispatch role
+    /// production provisioning never created; wamn-0h0g.22.24 keeps it created
+    /// without a credential. `wamn-0h0g.12.140` gives `wamn_app` the same
+    /// posture while preserving the legacy password argument outside SQL.
     #[test]
-    fn the_role_batch_creates_the_dispatch_reader_from_the_shipped_builder() {
+    fn the_role_batch_creates_passwordless_nologin_acl_roles() {
         let batch = role_sql("app-secret");
         assert_eq!(
-            batch,
+            role_posture_sql("app-secret"),
             format!(
                 "{app}\n{owner}\n{reader}\n",
                 app = sql::ensure_app_role_sql("app-secret"),
@@ -3874,15 +3918,25 @@ mod tests {
                 reader = sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
             )
         );
-        assert!(batch.contains("'wamn_dispatch_reader'"));
-        // The one password in this batch reaches the one role that still takes
-        // one. A dispatch reader carrying ANY password is the retired shape.
-        assert!(
-            batch.contains("CREATE ROLE \"wamn_app\" LOGIN PASSWORD 'app-secret'"),
-            "app role lost its own password: {batch}"
+        assert_eq!(
+            batch,
+            format!(
+                "{posture}\n{drain}\n",
+                posture = role_posture_sql("app-secret"),
+                drain = sql::drain_app_role_sessions_sql(),
+            )
         );
-        assert_eq!(batch.matches("PASSWORD 'app-secret'").count(), 1);
-        assert!(!batch.contains("\"wamn_dispatch_reader\" LOGIN"));
+        for role in ["wamn_app", "wamn_dispatch_reader"] {
+            assert!(batch.contains(&format!("'{role}'")));
+        }
+        assert!(batch.contains("CREATE ROLE \"wamn_app\" NOLOGIN"));
+        assert!(batch.contains("ALTER ROLE \"wamn_app\" NOLOGIN PASSWORD NULL"));
+        assert!(batch.contains("CREATE ROLE %I NOLOGIN"));
+        assert!(batch.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL"));
+        assert!(
+            !batch.contains("app-secret"),
+            "the legacy app password reached role SQL: {batch}"
+        );
     }
 
     /// `wamn-0h0g.22.24` RETIRED `--dispatch-reader-password`, and this is the
@@ -3939,10 +3993,12 @@ mod tests {
         assert!(batch.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL"));
     }
 
-    /// The sibling guard for `--app-password` (wamn-0h0g.12.129). A default
-    /// here minted every project-env's `wamn_app` — the role guest-authored SQL
-    /// executes as — with a publicly known password, and a verifier read on
-    /// 2026-08-19 measured that live on every cluster the role existed on.
+    /// The sibling guard for `--app-password` (wamn-0h0g.12.129).
+    ///
+    /// The argument remains required for the legacy URL surface until
+    /// `wamn-0h0g.12.185`, but it must never regain a default or reach role SQL.
+    /// A 2026-08-19 verifier read measured the old default on every cluster the
+    /// shared LOGIN existed on.
     #[test]
     fn the_app_password_has_no_default() {
         let error = parse_without_password_envs([

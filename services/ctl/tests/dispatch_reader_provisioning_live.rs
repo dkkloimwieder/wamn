@@ -45,13 +45,14 @@ use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, DISPATCH_READER_ROLE, WorkloadRoleFamily,
     WorkloadRoleScope, sql, workload_generation_role,
 };
-use wamn_ctl::provision_project_env::{privilege_sql, role_sql};
+use wamn_ctl::provision_project_env::{privilege_sql, role_posture_sql, role_sql};
 
-/// `ensure_app_role_sql` sets the password at CREATION ONLY, and `wamn_app` is
-/// cluster-wide and shared with every other gate pointed at this container
-/// (`run_plane_live::reset` dials it as `wamn_app`/`wamn_app`). Using any other
-/// value here would silently break those gates on whichever ran second.
+/// The legacy app-password input remains until `wamn-0h0g.12.185`, but
+/// `ensure_app_role_sql` deliberately emits none of it. Keeping a conspicuous
+/// fixture value here proves the role batch cannot leak that input back into
+/// the retired shared LOGIN.
 const APP_PASSWORD: &str = "wamn_app";
+const RETIRED_APP_PASSWORD: &str = "retired-app-session-probe";
 const GENERATION_PASSWORD: &str = "reader-generation-probe";
 const DATABASE: &str = "wamn-db-probe--dispatch--dev";
 const ORDERING_DATABASE: &str = "wamn-db-probe--ordering--dev";
@@ -115,6 +116,13 @@ async fn run_alone(client: &Client, statement: &str) {
         .batch_execute(statement)
         .await
         .unwrap_or_else(|error| panic!("{statement}: {error}"));
+}
+
+/// Apply the emitted role artifact with the same commit boundary psql gives
+/// its complete statements: harden first, then drain after NOLOGIN is visible.
+async fn apply_role_artifact(client: &Client) {
+    run_alone(client, &role_posture_sql(APP_PASSWORD)).await;
+    run_alone(client, &sql::drain_app_role_sessions_sql()).await;
 }
 
 /// PostgreSQL roles are CLUSTER-wide, so a preamble that only drops databases is
@@ -212,6 +220,16 @@ async fn role_attributes(su: &Client, role: &str) -> Option<Vec<bool>> {
     .map(|row| row.get(0))
 }
 
+async fn role_xmin(su: &Client, role: &str) -> String {
+    su.query_one(
+        "SELECT xmin::text FROM pg_catalog.pg_authid WHERE rolname = $1",
+        &[&role],
+    )
+    .await
+    .expect("read role row version")
+    .get(0)
+}
+
 async fn can_connect(su: &Client, role: &str, database: &str) -> bool {
     su.query_one(
         "SELECT pg_catalog.has_database_privilege($1, $2, 'CONNECT')",
@@ -244,8 +262,68 @@ async fn provisioned_reader_is_idempotent_and_connection_free_leg(su: &Client, u
     drop_reader_role(su).await;
 
     // Step 1 of the runbook: the role batch, to the target cluster's superuser.
-    let roles = role_sql(APP_PASSWORD);
+    let roles = role_posture_sql(APP_PASSWORD);
+    let artifact = role_sql(APP_PASSWORD);
+    assert!(
+        !artifact.contains(&format!("PASSWORD '{APP_PASSWORD}'")),
+        "the legacy app-password input reached role SQL: {artifact}"
+    );
+    apply_role_artifact(su).await;
+    run_alone(
+        su,
+        &format!("ALTER ROLE \"{APP_ROLE}\" LOGIN PASSWORD '{RETIRED_APP_PASSWORD}' INHERIT"),
+    )
+    .await;
+    let retired_app = connect_to(url, "postgres", APP_ROLE, RETIRED_APP_PASSWORD).await;
+    let retired_pid: i32 = retired_app
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .expect("observe the retired shared-login session")
+        .get(0);
+    assert_eq!(
+        su.query_one(
+            "SELECT count(*) FROM pg_stat_activity WHERE pid = $1 AND usename = $2",
+            &[&retired_pid, &APP_ROLE],
+        )
+        .await
+        .expect("observe the active retired shared-login session")
+        .get::<_, i64>(0),
+        1,
+        "the session-drain proof did not establish an old shared session"
+    );
     run_alone(su, &roles).await;
+    run_alone(su, &sql::drain_app_role_sessions_sql()).await;
+    assert_eq!(
+        su.query_one(
+            "SELECT count(*) FROM pg_stat_activity WHERE usename = $1",
+            &[&APP_ROLE],
+        )
+        .await
+        .expect("read shared-login session residue after convergence")
+        .get::<_, i64>(0),
+        0,
+        "the bounded native drain left an authenticated wamn_app session"
+    );
+    assert!(
+        retired_app.simple_query("SELECT 1").await.is_err(),
+        "the retired shared-login client survived server-side termination"
+    );
+    assert!(
+        try_connect_to(url, "postgres", APP_ROLE, RETIRED_APP_PASSWORD)
+            .await
+            .is_err(),
+        "the retired shared credential opened a new session after NOLOGIN"
+    );
+    let app_hardened = role_attributes(su, APP_ROLE)
+        .await
+        .expect("the role batch created the app ACL role");
+    assert_eq!(
+        app_hardened,
+        vec![false, false, false, false, false, false, false, false],
+        "wamn_app is not the stable passwordless NOLOGIN NOINHERIT ACL role \
+         (order: login, super, createdb, createrole, inherit, replication, \
+         bypassrls, password set): {app_hardened:?}"
+    );
     let hardened = role_attributes(su, DISPATCH_READER_ROLE)
         .await
         .expect("the role batch created the dispatch reader");
@@ -256,9 +334,32 @@ async fn provisioned_reader_is_idempotent_and_connection_free_leg(su: &Client, u
          super, createdb, createrole, inherit, replication, bypassrls, password \
          set): {hardened:?}"
     );
+    let app_xmin = role_xmin(su, APP_ROLE).await;
 
-    // Replay leg: the create-or-harden block must converge, not error.
-    run_alone(su, &roles).await;
+    // Replay leg: the create-or-harden block must be an actual no-op. Comparing
+    // xmin catches an unnecessary ALTER that post-state equality would hide.
+    apply_role_artifact(su).await;
+    assert_eq!(
+        role_attributes(su, APP_ROLE).await.as_ref(),
+        Some(&app_hardened),
+        "replaying the role batch moved the app ACL role"
+    );
+    assert_eq!(
+        role_xmin(su, APP_ROLE).await,
+        app_xmin,
+        "the exact second convergence rewrote the stable app role"
+    );
+    assert_eq!(
+        su.query_one(
+            "SELECT count(*) FROM pg_stat_activity WHERE usename = $1",
+            &[&APP_ROLE],
+        )
+        .await
+        .expect("read shared-login session residue after exact replay")
+        .get::<_, i64>(0),
+        0,
+        "the exact second convergence left a retired shared-login session"
+    );
     assert_eq!(
         role_attributes(su, DISPATCH_READER_ROLE).await.as_ref(),
         Some(&hardened),
@@ -393,7 +494,7 @@ async fn owner_statement_asymmetry_leg(su: &Client) {
     )
     .await;
     drop_reader_role(su).await;
-    run_alone(su, &role_sql(APP_PASSWORD)).await;
+    apply_role_artifact(su).await;
     run_alone(
         su,
         &format!("CREATE DATABASE \"{ORDERING_DATABASE}\" OWNER \"{APP_ROLE}\""),
@@ -475,7 +576,7 @@ async fn cross_database_reach_is_closed_leg(su: &Client, url: &str) {
         .await;
     }
     drop_reader_role(su).await;
-    run_alone(su, &role_sql(APP_PASSWORD)).await;
+    apply_role_artifact(su).await;
 
     // TWO provisioned environments on one cluster, both through the shipped
     // batches — the exact topology the reach crossed.
