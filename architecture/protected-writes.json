@@ -1258,43 +1258,6 @@
     },
     {
       "scope": "production-project-database",
-      "relation": "catalog.connection_generation_retention",
-      "ops": false,
-      "installer": "schema-control",
-      "owner": "schema-control",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "no",
-      "guards": [
-        "constraint:connection_generation_retenti_tenant_id_environment_instan_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, environment, instance_id, generation) REFERENCES catalog.connection_generations(tenant_id, environment, instance_id, generation)",
-        "constraint:connection_generation_retention_environment_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (environment <> ''::text)",
-        "constraint:connection_generation_retention_generation_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (generation > 0)",
-        "constraint:connection_generation_retention_instance_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (instance_id <> ''::text)",
-        "constraint:connection_generation_retention_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, environment, instance_id, generation, reference_kind, reference_id)",
-        "constraint:connection_generation_retention_reference_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (reference_id <> ''::text)",
-        "constraint:connection_generation_retention_reference_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (reference_kind = ANY (ARRAY['active-attempt'::text, 'deployed-release'::text]))",
-        "constraint:connection_generation_retention_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "policy:connection_generation_retention_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
-        "policy:connection_generation_retention_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
-        "row-security:enabled=true;forced=true",
-        "trigger:connection_generation_retention_controlled_update;mode=origin;function=catalog.guard_connection_retention_update();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER connection_generation_retention_controlled_update BEFORE UPDATE ON catalog.connection_generation_retention FOR EACH ROW EXECUTE FUNCTION catalog.guard_connection_retention_update()"
-      ]
-    },
-    {
-      "scope": "production-project-database",
       "relation": "catalog.connection_generations",
       "ops": false,
       "installer": "schema-control",
@@ -1329,7 +1292,6 @@
         "policy:connection_generations_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
         "policy:connection_generations_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
         "row-security:enabled=true;forced=true",
-        "trigger:connection_generations_delete_retained;mode=origin;function=catalog.reject_referenced_connection_generation_delete();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER connection_generations_delete_retained BEFORE DELETE ON catalog.connection_generations FOR EACH ROW EXECUTE FUNCTION catalog.reject_referenced_connection_generation_delete()",
         "trigger:connection_generations_update_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER connection_generations_update_immutable BEFORE UPDATE ON catalog.connection_generations FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
       ]
     },
@@ -1928,6 +1890,19 @@
             "truncate",
             "update"
           ]
+        },
+        {
+          "role": "wamn_management_admitter",
+          "basis": "grant",
+          "operations": [
+            "insert(catalog_id)",
+            "insert(gated_catalog_version)",
+            "insert(graph_json)",
+            "insert(tenant_id)",
+            "insert(version)",
+            "insert(wiring_hash)",
+            "insert(wiring_id)"
+          ]
         }
       ],
       "author-reachable": "no",
@@ -1979,6 +1954,7 @@
         "constraint:effect_attempt_dispatches_tenant_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:effect_attempt_dispatches_tenant_id_attempt_id_dispatched_a_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, attempt_id, dispatched_at)",
         "constraint:effect_attempt_dispatches_time_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (attempt_started_at <= dispatched_at)",
+        "policy:effect_attempt_dispatches_effect_writer;command=all;permissive=true;roles=wamn_effect_writer;using=true;check=true",
         "policy:effect_attempt_dispatches_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
         "policy:effect_attempt_dispatches_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
         "row-security:enabled=true;forced=true",
@@ -2014,6 +1990,7 @@
         "constraint:effect_attempt_outcomes_status_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (outcome_status = ANY (ARRAY['success'::text, 'error'::text]))",
         "constraint:effect_attempt_outcomes_tenant_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:effect_attempt_outcomes_time_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (dispatched_at <= recorded_at)",
+        "policy:effect_attempt_outcomes_effect_writer;command=all;permissive=true;roles=wamn_effect_writer;using=true;check=true",
         "policy:effect_attempt_outcomes_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
         "policy:effect_attempt_outcomes_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
         "row-security:enabled=true;forced=true",
@@ -2063,6 +2040,7 @@
         "constraint:effect_attempts_seq_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (seq >= 0)",
         "constraint:effect_attempts_source_artifact_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (source_artifact_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:effect_attempts_tenant_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:effect_attempts_effect_writer;command=all;permissive=true;roles=wamn_effect_writer;using=true;check=true",
         "policy:effect_attempts_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
         "policy:effect_attempts_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
         "row-security:enabled=true;forced=true",
@@ -2270,6 +2248,7 @@
         "constraint:runs_status_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
         "constraint:runs_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:runs_wiring_identity_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (wiring_id IS NULL AND wiring_version IS NULL OR wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0)",
+        "policy:runs_effect_writer;command=all;permissive=true;roles=wamn_effect_writer;using=true;check=true",
         "policy:runs_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
         "policy:runs_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
         "row-security:enabled=true;forced=true",
