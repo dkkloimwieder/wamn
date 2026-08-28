@@ -201,23 +201,32 @@ impl WorkloadRoleFamily {
     ///   on any relation carrying the project-plane floor, so membership would
     ///   be authority without a reader.
     ///
-    /// Everything else — the eight families whose credentials reach a
-    /// project-environment or tenant database and are not the guest — is a
-    /// member. That includes the families with no grant set today
-    /// (`ServiceReader`, `ExecutorPlatform`, `HttpAdmitter`,
+    /// * [`Self::EffectWriter`] holds a STABLE ROLE UNDER A SHAPE GUARD that
+    ///   forbids it (`wamn-0h0g.22.32`). `RunPlaneActionKind::VerifyEffectWriterRole`
+    ///   raises 42501 `effect-writer-role-out-of-bounds` when `wamn_effect_writer`
+    ///   holds ANY row in `pg_auth_members` as a member, and a `wamn_platform`
+    ///   edge is exactly such a row. The membership and the guard cannot both
+    ///   hold, and the guard is the older, narrower contract. The writer reaches
+    ///   its four ledgers through PER-RELATION arms naming it directly in
+    ///   `deploy/sql/run-state.sql` instead — not through this group.
+    ///
+    /// Everything else — the seven families whose credentials reach a
+    /// project-environment or tenant database, are not the guest, and are not
+    /// under that guard — is a member. That includes the families with no grant
+    /// set today (`ServiceReader`, `ExecutorPlatform`, `HttpAdmitter`,
     /// `EventMaterializer`): an RLS arm with no table grant behind it admits
     /// nothing, and the alternative is that the day one of them ACQUIRES a
     /// grant it reads zero rows with no error and no failing test.
     ///
-    /// `EffectWriter` and `Retention` are `Tenant`-scoped and are members
-    /// anyway. Their login names carry a tenant DIGEST, but
-    /// `current_tenant_key` recovers a key only from the guest generation
-    /// pattern, and widening that regex is refused (`wamn-0h0g.22.17` owner
-    /// ruling). One shared arm therefore makes both cross-tenant on the
-    /// relations they hold grants on; the tenant predicate each keeps in its own
-    /// statements is what re-narrows them.
+    /// `Retention` is `Tenant`-scoped and is a member anyway. Its login names
+    /// carry a tenant DIGEST, but `current_tenant_key` recovers a key only from
+    /// the guest generation pattern, and widening that regex is refused
+    /// (`wamn-0h0g.22.17` owner ruling). The shared arm therefore makes it
+    /// cross-tenant on the relations it holds grants on; the tenant predicate it
+    /// keeps in its own statements is what re-narrows it.
     pub const fn is_platform_grain(self) -> bool {
-        !matches!(self, Self::App) && !matches!(self.scope_kind(), WorkloadRoleScopeKind::Control)
+        !matches!(self, Self::App | Self::EffectWriter)
+            && !matches!(self.scope_kind(), WorkloadRoleScopeKind::Control)
     }
 
     /// The family's operator-facing name, in the hyphenated convention.

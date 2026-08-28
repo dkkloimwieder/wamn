@@ -587,6 +587,37 @@ CREATE POLICY runs_platform ON wamn_run.runs
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
+-- THE EFFECT-WRITER ARM, AND WHY IT IS `USING (true)` (`wamn-0h0g.22.32`).
+--
+-- `wamn_effect_writer` is not a `wamn_platform` member and cannot become one:
+-- the stable role's own shape guard refuses ANY row in `pg_auth_members` for
+-- it, so the shared group edge and that guard cannot both hold. Without an arm
+-- of its own the writer matches no policy at all, and PostgreSQL DEFAULT-DENIES
+-- at zero rows, in silence, under FORCE RLS. This is that arm.
+--
+-- The arm is unqualified rather than tenant-scoped because ONE PROJECT-
+-- ENVIRONMENT DATABASE SERVES EXACTLY ONE TENANT. A row-level tenant predicate
+-- here would be a wall against a neighbour that structurally cannot exist in
+-- this plane; the walls that carry the isolation are the database boundary and
+-- the credential. What still bounds the writer is its TABLE GRANT, which on
+-- this relation is `SELECT (tenant_id, run_id, status)` and nothing else.
+--
+-- A tenant-scoped predicate is also not EXPRESSIBLE here, which is a separate
+-- fact from the one above. `wamn_authority.current_tenant_key()` recovers a key
+-- only from the `wamn_app_<40hex>_[ab]` guest generation pattern and derives
+-- NULL for every effect-writer login; widening that regex would not help,
+-- because the guest digest is taken over scope domain `wamn.app.scope.v0.1`
+-- while the effect-writer login digest is over `wamn.effect-writer.scope.v0.1`,
+-- so the two values can never compare equal. Re-deriving the writer over the
+-- guest domain is refused.
+--
+-- If a tier ever places two tenants in one database, this arm is where that is
+-- re-decided. The complexity defers to that tier and is deliberately not
+-- carried here.
+CREATE POLICY runs_effect_writer ON wamn_run.runs
+    AS PERMISSIVE FOR ALL TO wamn_effect_writer
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX runs_tkey
     ON wamn_run.runs ((wamn_authority.tenant_key(tenant_id)));
 
@@ -642,6 +673,25 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- cascade out of `runs`: every other foreign key in the run plane is
 -- `NO ACTION`, so the effect ledgers are not reachable from a run delete and
 -- retention is granted nothing on them.
+--
+-- THE ACCEPTED RESIDUAL (`wamn-0h0g.22.34`). Column scoping bounds WHAT a
+-- retention credential may read; it bounds nothing about WHOSE rows it may
+-- delete. A raw session holding a retention generation credential can DELETE
+-- another tenant's terminal runs, because the shared `USING (true)` floor arm
+-- matches every row and PostgreSQL privileges are relation- and column-shaped,
+-- never row-shaped. There is no grant that expresses "only this tenant's rows".
+--
+-- This is ACCEPTED, not overlooked, on the same silo reasoning the effect-writer
+-- arm above records: ONE PROJECT-ENVIRONMENT DATABASE SERVES EXACTLY ONE
+-- TENANT, so the "other tenant" the residual reaches does not exist in this
+-- plane. The walls are the database boundary and the credential.
+--
+-- `runs_terminal_delete_only` REMAINS THE GUARD and must not be weakened: it is
+-- what keeps the residual confined to terminal history rather than live runs,
+-- and it is caller-independent because it is an invoker-rights trigger rather
+-- than a grant. If a tier ever places two tenants in one database, the shape to
+-- reach for is a tenant arm on that trigger. It is deliberately NOT built here,
+-- because today it would guard against a neighbour that cannot exist.
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
     FROM PUBLIC, wamn_app, wamn_effect_writer, wamn_run_retention;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
@@ -747,6 +797,19 @@ CREATE POLICY effect_attempts_platform ON wamn_run.effect_attempts
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
+-- The effect-writer arm, on the same footing as `runs_effect_writer` above and
+-- for the same reason (`wamn-0h0g.22.32`): `wamn_effect_writer` cannot hold the
+-- `wamn_platform` membership its own shape guard forbids, so without an arm
+-- naming it this ledger default-denies to zero rows in silence. It is
+-- `USING (true)` rather than tenant-scoped because ONE PROJECT-ENVIRONMENT
+-- DATABASE SERVES EXACTLY ONE TENANT — the row-level tenant boundary it would
+-- express is a wall against a neighbour that cannot exist in this plane, and
+-- `current_tenant_key` derives NULL for an effect-writer login in any case. The
+-- writer's table grant below (`SELECT`, and no append) is what bounds it here.
+CREATE POLICY effect_attempts_effect_writer ON wamn_run.effect_attempts
+    AS PERMISSIVE FOR ALL TO wamn_effect_writer
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX effect_attempts_tkey
     ON wamn_run.effect_attempts ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts
@@ -804,6 +867,17 @@ CREATE POLICY effect_attempt_dispatches_platform ON wamn_run.effect_attempt_disp
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
+-- The effect-writer arm, for the reason `runs_effect_writer` carries in full
+-- (`wamn-0h0g.22.32`): the writer's stable role may hold no membership, so
+-- without an arm naming it this ledger default-denies to zero rows in silence.
+-- `USING (true)` rather than tenant-scoped because ONE PROJECT-ENVIRONMENT
+-- DATABASE SERVES EXACTLY ONE TENANT — the tenant boundary it would express is
+-- a wall against a neighbour that cannot exist in this plane. The writer's
+-- table grant below is what bounds it here.
+CREATE POLICY effect_attempt_dispatches_effect_writer ON wamn_run.effect_attempt_dispatches
+    AS PERMISSIVE FOR ALL TO wamn_effect_writer
+    USING (true)
+    WITH CHECK (true);
 CREATE INDEX effect_attempt_dispatches_tkey
     ON wamn_run.effect_attempt_dispatches ((wamn_authority.tenant_key(tenant_id)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_dispatches
@@ -848,6 +922,17 @@ CREATE POLICY effect_attempt_outcomes_tenant ON wamn_run.effect_attempt_outcomes
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
 CREATE POLICY effect_attempt_outcomes_platform ON wamn_run.effect_attempt_outcomes
     AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
+-- The effect-writer arm, for the reason `runs_effect_writer` carries in full
+-- (`wamn-0h0g.22.32`): the writer's stable role may hold no membership, so
+-- without an arm naming it this ledger default-denies to zero rows in silence.
+-- `USING (true)` rather than tenant-scoped because ONE PROJECT-ENVIRONMENT
+-- DATABASE SERVES EXACTLY ONE TENANT — the tenant boundary it would express is
+-- a wall against a neighbour that cannot exist in this plane. The writer's
+-- table grant below is what bounds it here.
+CREATE POLICY effect_attempt_outcomes_effect_writer ON wamn_run.effect_attempt_outcomes
+    AS PERMISSIVE FOR ALL TO wamn_effect_writer
     USING (true)
     WITH CHECK (true);
 CREATE INDEX effect_attempt_outcomes_tkey

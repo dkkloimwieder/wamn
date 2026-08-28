@@ -127,7 +127,17 @@ END $platform_group$;
 -- deleting it strands nothing — the silent-deny risk that made the timing hard
 -- is gone. Whether the author's two remaining catalog reads are load-bearing
 -- for authoring is `wamn-0h0g.22.25`'s question and is not decided here.
-GRANT wamn_platform TO wamn_effect_writer WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
+--
+-- `wamn_effect_writer` IS ALSO DELIBERATELY ABSENT (`wamn-0h0g.22.32`), and for
+-- a harder reason than the author's. Its stable role is under a shape guard —
+-- `RunPlaneActionKind::VerifyEffectWriterRole` — that refuses the role outright,
+-- with 42501 `effect-writer-role-out-of-bounds`, if it holds ANY row in
+-- `pg_auth_members` as a member. This grant WAS that row, so a fresh install
+-- built a cluster that `reconcile-run-plane` then refused. Measured before the
+-- removal: 8 of the 17 tests in `services/ctl/tests/run_plane_live.rs` failed on
+-- that exact code. The writer reaches its four run-plane ledgers through
+-- per-relation arms naming it directly in `deploy/sql/run-state.sql`, so
+-- deleting this line strands no read.
 GRANT wamn_platform TO wamn_run_retention WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 
 CREATE DATABASE wamn OWNER postgres;

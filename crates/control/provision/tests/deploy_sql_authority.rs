@@ -105,10 +105,23 @@ const HOST_INJECTED: [&str; 2] = ["wamn_run.operator_run_actions", "wamn_run.run
 /// consumer that does NOT delegate. Admitting or demoting a family now costs one
 /// deliberate edit here, which is the point.
 ///
+/// # The one deliberate move so far
+///
+/// `wamn-0h0g.22.32` DEMOTED `wamn_effect_writer` — 8 members down to 7 — and
+/// this edit is the deliberate cost that pin was built to charge. The reason is
+/// not preference: the writer's stable role is under
+/// `RunPlaneActionKind::VerifyEffectWriterRole`, which refuses the role with
+/// 42501 `effect-writer-role-out-of-bounds` when it holds ANY `pg_auth_members`
+/// row as a member. The membership and the guard cannot both hold. The writer
+/// keeps its reads through PER-RELATION arms naming it directly in
+/// `deploy/sql/run-state.sql`, so unlike the silent-lockout mutant described
+/// above, this demotion does NOT strand a reader — and the live gate that would
+/// have caught a stranding, `services/ctl/tests/run_plane_live.rs`, goes from
+/// 8 failures to 0 across the change.
+///
 /// Sorted, because both consumers compare against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
+const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
     "wamn_dispatch_reader",
-    "wamn_effect_writer",
     "wamn_event_materializer",
     "wamn_executor_platform",
     "wamn_http_admitter",
