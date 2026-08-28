@@ -1390,8 +1390,8 @@ async fn retired_effect_disposition_cutover_live() {
     retired_effect_disposition_cutover_leg(&su).await;
 }
 
-/// The reconciler plans NOTHING on the author's catalog surface that the FRESH
-/// INSTALL just produced (wamn-0h0g.22.20).
+/// The reconciler plans NOTHING on the author's project-plane surface that the
+/// FRESH INSTALL just produced (wamn-0h0g.22.20, wamn-0h0g.22.43).
 ///
 /// `AUTHORING_PRIVILEGE_SPECS` is the third emitter of the author's catalog
 /// grants and the only one that runs on every reconcile, so a revoke landed in
@@ -1440,26 +1440,60 @@ async fn authoring_privileges_at_record_plan_no_repair_live() {
          surface and would re-grant on every pass: {repairs:?}"
     );
 
-    // The reading has to be able to SEE a repair, or an empty plan for any
-    // reason at all reads as agreement. Re-open one dormant author read and
-    // require exactly that one relation back.
-    su.batch_execute("GRANT SELECT ON catalog.releases TO wamn_scenario_author")
-        .await
-        .expect("re-open one dormant author read");
+    // The reading has to be able to SEE every converge path, or an empty plan
+    // for any reason at all reads as agreement. Re-open one catalog read plus
+    // both retired run-plane reads and require all three repairs.
+    su.batch_execute(&format!(
+        "GRANT SELECT ON catalog.releases TO wamn_scenario_author; \
+         GRANT SELECT ON {SCHEMA}.environment_policies TO wamn_scenario_author; \
+         GRANT SELECT ON {SCHEMA}.runs TO wamn_scenario_author"
+    ))
+    .await
+    .expect("re-open the dormant author reads");
     let drifted = reconcile_run_plane::reconcile(&su, &schema, false)
         .await
         .expect("dry-run plans over the drifted surface");
-    let drifted_repairs: Vec<&str> = drifted
+    let mut drifted_repairs: Vec<&str> = drifted
         .actions
         .iter()
-        .filter(|action| action.kind == RunPlaneActionKind::RepairAuthoringPrivilege)
+        .filter(|action| {
+            matches!(
+                action.kind,
+                RunPlaneActionKind::RepairAuthoringPrivilege
+                    | RunPlaneActionKind::RepairRunCapturePrivilege
+            )
+        })
         .map(|action| action.target.as_str())
         .collect();
+    drifted_repairs.sort_unstable();
     assert_eq!(
         drifted_repairs,
-        vec!["catalog.releases"],
-        "one re-opened author read must plan exactly one repair"
+        vec![
+            "catalog.releases",
+            "rp_live.environment_policies",
+            "runs.capture_mode",
+        ],
+        "the three re-opened author reads must plan exactly three repairs"
     );
+
+    reconcile_run_plane::reconcile(&su, &schema, true)
+        .await
+        .expect("apply the three author-read repairs");
+    for relation in [
+        "catalog.releases",
+        "rp_live.environment_policies",
+        "rp_live.runs",
+    ] {
+        let retains_read: bool = su
+            .query_one(
+                "SELECT has_table_privilege('wamn_scenario_author', $1, 'SELECT')",
+                &[&relation],
+            )
+            .await
+            .expect("read the repaired author privilege")
+            .get(0);
+        assert!(!retains_read, "author SELECT survived on {relation}");
+    }
 }
 
 /// Persisted authored ordering bytes have no lossless global-FIFO backfill.

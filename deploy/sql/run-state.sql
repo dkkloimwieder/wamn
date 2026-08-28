@@ -396,7 +396,6 @@ CREATE INDEX environment_policies_tkey
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.environment_policies
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
-GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_scenario_author;
 
 -- ---------------------------------------------------------------------------
 -- runs: one row per flow execution. `input_json` is the admitted trigger
@@ -697,7 +696,6 @@ REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
 GRANT SELECT (tenant_id, status, created_at), DELETE
     ON wamn_run.runs TO wamn_run_retention;
-GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;
 -- The private effect writer may only recheck that the fenced run still has
 -- runnable state. Lease-generation authority remains outside this schema lane.
 GRANT SELECT (tenant_id, run_id, status)

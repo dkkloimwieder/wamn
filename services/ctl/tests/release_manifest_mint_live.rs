@@ -249,7 +249,7 @@ async fn provision_environment_policy(admin: &Client, expected_environment: Opti
             statements_of_record(
                 RUN_STATE_SCHEMA,
                 "CREATE TABLE wamn_run.environment_policies (",
-                "GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_scenario_author;",
+                "GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;",
             ),
         ))
         .await

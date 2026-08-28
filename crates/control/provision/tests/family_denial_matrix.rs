@@ -89,15 +89,15 @@ const PROBE_PASSWORD: &str = "w68-matrix-probe";
 /// ERROR, which is exactly what a silently locked-out family looks like.
 const OUTSIDER: &str = "wamn_matrix_outsider";
 
-/// The host-only group that is NOT a [`WorkloadRoleFamily`], and the subject of
-/// the ratified exception in [`PLATFORM_GROUP_RATIFIED_EXCEPTIONS`].
+/// The reserved host-only group that is NOT a [`WorkloadRoleFamily`] and has no
+/// platform-group exception.
 const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 
-/// A login inheriting [`SCENARIO_AUTHOR_ROLE`] exactly as a generation would.
+/// A test-only login inheriting [`SCENARIO_AUTHOR_ROLE`].
 ///
-/// The group itself is `NOLOGIN`, so what it can actually READ is observable
-/// only through a login that inherits it — and the whole point of the ruling
-/// below is a ROW COUNT, which no privilege probe can answer.
+/// Production deliberately mints no such credential. This probe exists only to
+/// carry the role's effective authority through a real connection and prove
+/// both residue reads receive SQLSTATE 42501.
 const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 
 // ---------------------------------------------------------------------------
@@ -558,10 +558,9 @@ fn build(admin: String) -> Fixture {
              GRANT SELECT ON wamn_run.effect_attempts TO {OUTSIDER};\n"
         ),
     );
-    // A login that INHERITS the scenario-author group, spelled with the same
-    // edge options the production membership builder spells. It adds no
+    // A test-only login that INHERITS the scenario-author group. It adds no
     // privilege of its own and does not make the group a member of anything, so
-    // the membership arm below is unaffected by its existence.
+    // every observed read comes from that reserved role alone.
     apply(
         &db_url,
         "mint the scenario-author probe login",
@@ -1436,44 +1435,13 @@ const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
     "wamn_service_reader",
 ];
 
-/// Members of [`PLATFORM_GROUP_ROLE`] that are NOT a [`WorkloadRoleFamily`] and
-/// so cannot come out of the derivation above.
-///
-/// # The exception the owner ratified, and why this list is EMPTY here
-///
-/// The owner ruling of 2026-08-27 on `wamn-0h0g.22.25` ratifies
-/// `wamn_scenario_author` as a deliberate member PAST the derivation. Its reason
-/// is the failure mode this whole gate is built around: a role holding `SELECT`
-/// on a governed relation while matching no policy reads ZERO ROWS WITH NO ERROR
-/// under FORCE RLS, so leaving it out converts a loud `permission denied for
-/// function current_tenant_key` into a silent lockout. A documented exception at
-/// the derivation site beats a silent zero-row trap.
-///
-/// MEASURED IN THIS TREE, on PostgreSQL 18.6 against the real artifacts: NO
-/// EMITTER GRANTS THAT EDGE. `deploy/sql/postgres-init.sql` grants
-/// `wamn_platform` to `wamn_run_retention` and to nobody else, and
-/// `wamn_schema_control::ensure_scenario_author_role_sql` — the role's other
-/// emitter — grants no membership at all. `wamn-0h0g.22.27` brought the two to
-/// ZERO deliberately. The list is therefore empty, and the consequence the
-/// ruling rests on is asserted instead by
-/// [`the_scenario_author_is_the_silently_locked_out_non_member`].
-///
-/// LANDING THE RATIFIED EDGE IS ONE LINE HERE, beside the emitter change that
-/// grants it. `wamn-0h0g.22.20` will shrink the exception's exposure and a later
-/// revoke is likewise one line: the derivation and the exception are separate on
-/// purpose, so neither move rewrites this arm.
-const PLATFORM_GROUP_RATIFIED_EXCEPTIONS: [&str; 0] = [];
-
 /// THE MEMBER SET OF `wamn_platform`, FROM `pg_auth_members`.
 ///
-/// A member appearing and a member vanishing must both fail, because both are
-/// silent: an extra member reads rows it was never meant to see, and a missing
-/// one reads zero rows with no error at all.
+/// It is exactly the seven derived workload families. `wamn_scenario_author`
+/// has no exception: it has no production credential or project-plane read.
 #[test]
-fn the_platform_group_members_are_the_derived_families_plus_the_ratified_exceptions() {
-    let Some(fixture) =
-        armed("the_platform_group_members_are_the_derived_families_plus_the_ratified_exceptions")
-    else {
+fn the_platform_group_members_are_exactly_the_derived_families() {
+    let Some(fixture) = armed("the_platform_group_members_are_exactly_the_derived_families") else {
         return;
     };
 
@@ -1497,7 +1465,6 @@ fn the_platform_group_members_are_the_derived_families_plus_the_ratified_excepti
 
     let mut expected: Vec<String> = PLATFORM_GRAIN_ACL_ROLES
         .iter()
-        .chain(PLATFORM_GROUP_RATIFIED_EXCEPTIONS.iter())
         .map(|role| (*role).to_owned())
         .collect();
     expected.sort();
@@ -1515,13 +1482,8 @@ fn the_platform_group_members_are_the_derived_families_plus_the_ratified_excepti
     );
     assert_eq!(
         observed, expected,
-        "the {PLATFORM_GROUP_ROLE} member set is not the derived families plus \
-         the ratified exceptions.\n\
-         IF THE EXTRA MEMBER IS {SCENARIO_AUTHOR_ROLE}, DO NOT REVOKE IT: it is \
-         the exception the owner RATIFIED on 2026-08-27 (wamn-0h0g.22.25), and \
-         the fix is to name it in PLATFORM_GROUP_RATIFIED_EXCEPTIONS.\n\
-         IF A MEMBER IS MISSING, that principal now reads ZERO ROWS from every \
-         governed relation it holds a grant on, with no error."
+        "the {PLATFORM_GROUP_ROLE} member set is not exactly the seven derived \
+         workload families; no host-only exception is admitted"
     );
 
     // Every edge's OPTIONS, not merely its existence. PostgreSQL 16+ takes a new
@@ -1548,35 +1510,42 @@ fn the_platform_group_members_are_the_derived_families_plus_the_ratified_excepti
     );
 }
 
-/// THE SILENT ZERO-ROW TRAP THE RATIFICATION IS ABOUT, MEASURED IN BOTH WORLDS.
-///
-/// `wamn_scenario_author` holds `SELECT` on governed relations. Whether a
-/// principal inheriting it READS those rows or reads ZERO of them is decided
-/// entirely by its [`PLATFORM_GROUP_ROLE`] membership, and the difference is
-/// invisible to every privilege probe: the grant is identical either way and
-/// neither outcome raises.
-///
-/// That is the evidence the owner's 2026-08-27 ruling on `wamn-0h0g.22.25`
-/// rests on — a documented exception at the derivation site beats a silent
-/// zero-row trap — and this arm asserts it FOREVER, in whichever world the tree
-/// is in. It reads [`PLATFORM_GROUP_RATIFIED_EXCEPTIONS`] and requires the row
-/// count the membership implies, so LANDING OR REVOKING THE RATIFIED EDGE IS
-/// ONE LINE IN THAT CONSTANT and never a rewrite of this arm. `wamn-0h0g.22.20`
-/// is expected to shrink the exposed relations; that shrink is a change this arm
-/// catches, because the relations are read back from the server rather than
-/// remembered.
+/// The reserved scenario-author role has neither a platform-policy edge nor a
+/// table read. The synthetic inheriting login proves this as a real SQL refusal,
+/// not merely as an ACL catalog observation.
 #[test]
-fn the_scenario_author_reads_exactly_what_its_platform_membership_allows() {
-    let Some(fixture) =
-        armed("the_scenario_author_reads_exactly_what_its_platform_membership_allows")
+fn the_scenario_author_has_no_platform_membership_or_project_reads() {
+    let Some(fixture) = armed("the_scenario_author_has_no_platform_membership_or_project_reads")
     else {
         return;
     };
-    let ratified = PLATFORM_GROUP_RATIFIED_EXCEPTIONS.contains(&SCENARIO_AUTHOR_ROLE);
 
-    // The governed relations it is granted on, from the server. Two facts in
-    // one: WHICH relations, and that the set is not empty — an empty set would
-    // make everything below vacuous.
+    assert_eq!(
+        query(
+            &fixture.db_url,
+            &format!(
+                "SELECT (NOT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
+                         AND NOT rolcreaterole AND NOT rolinherit \
+                         AND NOT rolreplication AND NOT rolbypassrls)::text \
+                   FROM pg_catalog.pg_roles \
+                  WHERE rolname = '{SCENARIO_AUTHOR_ROLE}'"
+            ),
+        ),
+        "true",
+        "{SCENARIO_AUTHOR_ROLE} is not the stable NOLOGIN role"
+    );
+    assert_eq!(
+        query(
+            &fixture.db_url,
+            &format!(
+                "SELECT pg_has_role('{SCENARIO_AUTHOR_ROLE}', \
+                   '{PLATFORM_GROUP_ROLE}', 'MEMBER')::text"
+            ),
+        ),
+        "false",
+        "{SCENARIO_AUTHOR_ROLE} acquired the forbidden ninth platform edge"
+    );
+
     let exposed = rows(
         &fixture.db_url,
         &format!(
@@ -1590,71 +1559,28 @@ fn the_scenario_author_reads_exactly_what_its_platform_membership_allows() {
              ) q ORDER BY row COLLATE \"C\"",
         ),
     );
-    assert_eq!(
-        exposed,
-        vec![
-            "wamn_run.environment_policies".to_owned(),
-            "wamn_run.runs".to_owned(),
-        ],
-        "the governed relations {SCENARIO_AUTHOR_ROLE} holds SELECT on moved. \
-         wamn-0h0g.22.20 is expected to SHRINK this set; growing it widens the \
-         exposure the 2026-08-27 ruling was about"
+    assert!(
+        exposed.is_empty(),
+        "{SCENARIO_AUTHOR_ROLE} retains governed project reads: {exposed:?}"
     );
 
-    // Membership and the constant must agree. This is the line that flips.
-    assert_eq!(
-        query(
-            &fixture.db_url,
-            &format!(
-                "SELECT pg_has_role('{SCENARIO_AUTHOR_PROBE}', \
-                   '{PLATFORM_GROUP_ROLE}', 'USAGE')::text"
-            ),
-        ),
-        ratified.to_string(),
-        "the server and PLATFORM_GROUP_RATIFIED_EXCEPTIONS disagree about \
-         whether {SCENARIO_AUTHOR_ROLE} is a ratified {PLATFORM_GROUP_ROLE} \
-         member (owner ruling 2026-08-27, wamn-0h0g.22.25). If the edge has \
-         LANDED, name the role in that constant — DO NOT REVOKE IT."
-    );
-
-    // The grant is NOT the variable: it is identical in both worlds, which is
-    // exactly why a privilege probe cannot tell them apart.
     let as_author = login_url(&fixture.admin, SCENARIO_AUTHOR_PROBE);
-    assert_eq!(
-        query(
-            &fixture.db_url,
-            &format!(
-                "SELECT has_table_privilege('{SCENARIO_AUTHOR_PROBE}', \
-                   'wamn_run.runs', 'SELECT')::text"
+    for relation in ["wamn_run.environment_policies", "wamn_run.runs"] {
+        assert_eq!(
+            query(
+                &fixture.db_url,
+                &format!(
+                    "SELECT has_table_privilege('{SCENARIO_AUTHOR_PROBE}', \
+                       '{relation}', 'SELECT')::text"
+                ),
             ),
-        ),
-        "true",
-        "the scenario-author probe does not even hold the grant, so this arm is \
-         measuring an ordinary denial rather than the silent trap"
-    );
-    assert_eq!(
-        sqlstate(&as_author, "SELECT count(*) FROM wamn_run.runs;\n"),
-        None,
-        "the read RAISED. Both worlds this arm covers are reads that SUCCEED; \
-         only the ROW COUNT separates them"
-    );
-    // The rows exist, so a zero below is a lockout and not an empty table.
-    assert_eq!(
-        query(&fixture.db_url, "SELECT count(*) FROM wamn_run.runs"),
-        "2",
-        "the fixture has no rows for the scenario author to see or miss"
-    );
-    assert_eq!(
-        query(&as_author, "SELECT count(*) FROM wamn_run.runs"),
-        if ratified { "2" } else { "0" },
-        "{SCENARIO_AUTHOR_ROLE} is {state} {PLATFORM_GROUP_ROLE} and read the \
-         wrong number of rows. A NON-MEMBER holding this grant reads ZERO ROWS \
-         WITH NO ERROR under FORCE RLS — the silent trap the 2026-08-27 ruling \
-         on wamn-0h0g.22.25 ratified the membership to close.",
-        state = if ratified {
-            "a ratified member of"
-        } else {
-            "NOT a member of"
-        },
-    );
+            "false",
+            "the synthetic author login inherits SELECT on {relation}"
+        );
+        assert_eq!(
+            sqlstate(&as_author, &format!("SELECT count(*) FROM {relation};\n")).as_deref(),
+            Some("42501"),
+            "the synthetic author login did not receive the server's permission denial on {relation}"
+        );
+    }
 }

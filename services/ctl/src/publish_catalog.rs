@@ -431,12 +431,10 @@ async fn ensure_connection_component_grain(client: &tokio_postgres::Client) -> a
 /// them reads as a superuser/owner connection or as `wamn_app`, which keeps its
 /// SELECT here. No reader connects as the author, and none can.
 ///
-/// One correction to the `.22.20` census, recorded rather than left to be
-/// re-derived: `pg_auth_members` is no longer empty in both directions.
-/// `deploy/sql/postgres-init.sql` grants `wamn_platform` TO this role
-/// (`wamn-0h0g.22.17`). That is an OUTBOUND edge to another NOLOGIN group and
-/// carries RLS policy membership only; it is not a path a session can arrive on,
-/// so the dormancy conclusion is unchanged.
+/// The membership census is empty in both directions. `wamn-0h0g.22.27`
+/// removed the stale `wamn_platform` edge from both role emitters, and
+/// `wamn-0h0g.22.43` removed the last two project-plane reads rather than
+/// creating an exception for a role with no credential or caller.
 ///
 /// The list is `pub(crate)` because the revoke has THREE emitters and landing a
 /// subset is strictly worse than landing nothing: this converge, the fresh

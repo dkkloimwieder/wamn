@@ -1451,13 +1451,15 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         schema: AuthoringTableSchema::RunPlane,
         table: "environment_policies",
         app: &["SELECT"],
-        author: &["SELECT"],
+        // wamn-0h0g.22.43 removes the last two dormant project-plane reads.
+        // Keeping this empty is the converge half of the static DDL revoke.
+        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::RunPlane,
         table: "runs",
         app: &["SELECT", "DELETE"],
-        author: &["SELECT"],
+        author: &[],
     },
 ];
 
@@ -1820,8 +1822,8 @@ pub const LEGACY_OUTBOX_TABLES: [&str; 2] = ["outbox", "evt_shadow"];
 /// so it landed in the apply-time schema).
 pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
 
-/// The non-login database authority held only by trusted scenario-host
-/// credentials. The guest-visible `wamn_app` role is never a member.
+/// Reserved non-login project-author identity. No production credential inherits
+/// it, and the guest-visible `wamn_app` role is never a member.
 pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 /// Stable NOLOGIN ACL role inherited only by scoped writer generations.
 pub const EFFECT_WRITER_ROLE: &str = "wamn_effect_writer";
@@ -2579,7 +2581,6 @@ fn repair_run_capture_privilege_sql(
          REVOKE ALL PRIVILEGES ON TABLE {qualified} \
            FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
          GRANT SELECT, DELETE ON TABLE {qualified} TO wamn_app; \
-         GRANT SELECT ON TABLE {qualified} TO {SCENARIO_AUTHOR_ROLE}; \
          DO $run_retention_acl$ BEGIN \
            IF EXISTS (SELECT FROM pg_catalog.pg_roles \
                        WHERE rolname = 'wamn_run_retention') THEN \
@@ -2620,14 +2621,15 @@ fn repair_run_capture_privilege_sql(
                        'INSERT','UPDATE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
                     WHERE pg_catalog.has_table_privilege( \
                       'wamn_app', '{qualified}', privilege)) \
-              OR NOT pg_catalog.has_table_privilege( \
-                   '{SCENARIO_AUTHOR_ROLE}', '{qualified}', 'SELECT') \
               OR EXISTS ( \
                    SELECT 1 \
                      FROM unnest(ARRAY[ \
-                       'INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                       'SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
                     WHERE pg_catalog.has_table_privilege( \
                       '{SCENARIO_AUTHOR_ROLE}', '{qualified}', privilege)) \
+              OR pg_catalog.has_any_column_privilege( \
+                   '{SCENARIO_AUTHOR_ROLE}', '{qualified}', \
+                   'SELECT,INSERT,UPDATE,REFERENCES') \
               OR EXISTS ( \
                    SELECT 1 \
                      FROM pg_catalog.pg_class relation \
@@ -2671,18 +2673,18 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
 
     observed(&obs.authoring_table_privileges, "PUBLIC") != BTreeSet::new()
         || observed(&obs.authoring_table_privileges, "wamn_app") != expected(&["SELECT", "DELETE"])
-        || observed(&obs.authoring_table_privileges, SCENARIO_AUTHOR_ROLE) != expected(&["SELECT"])
+        || observed(&obs.authoring_table_privileges, SCENARIO_AUTHOR_ROLE) != BTreeSet::new()
         || observed(&obs.authoring_effective_table_privileges, "wamn_app")
             != expected(&["SELECT", "DELETE"])
         || observed(
             &obs.authoring_effective_table_privileges,
             SCENARIO_AUTHOR_ROLE,
-        ) != expected(&["SELECT"])
+        ) != BTreeSet::new()
         || observed(&obs.authoring_effective_column_privileges, "wamn_app") != expected(&["SELECT"])
         || observed(
             &obs.authoring_effective_column_privileges,
             SCENARIO_AUTHOR_ROLE,
-        ) != expected(&["SELECT"])
+        ) != BTreeSet::new()
         || obs
             .authoring_table_owners
             .get(&(schema.as_str().to_string(), "runs".to_string()))
@@ -2949,9 +2951,9 @@ $retire_run_projection_authority$;"#,
         });
     }
 
-    // The standalone record files grant privileged authoring writes to this
-    // role, so it must exist (and remain non-login/non-bypass) before any
-    // missing schema/table section executes.
+    // The standalone record files grant schema visibility to this reserved
+    // role, so it must exist (and remain non-login/non-bypass) before a missing
+    // schema header executes. It intentionally owns no project-plane table read.
     if obs
         .scenario_author_role
         .is_none_or(|role| !role.is_host_only())
@@ -6408,7 +6410,11 @@ COMMIT;
                 .sql
                 .contains("CREATE POLICY environment_policies_platform")
         );
-        assert!(repair.sql.contains("FOR SELECT TO wamn_platform USING (true)"));
+        assert!(
+            repair
+                .sql
+                .contains("FOR SELECT TO wamn_platform USING (true)")
+        );
         assert!(!repair.sql.contains("WITH CHECK"));
     }
 
@@ -7569,6 +7575,69 @@ COMMIT;
             repair
                 .sql
                 .contains("run-capture-author-sql-write-authority")
+        );
+    }
+
+    #[test]
+    fn stale_scenario_author_reads_are_revoked_without_regrant() {
+        let mut obs = observation_at_record();
+        for table in ["environment_policies", "runs"] {
+            let key = (
+                "demo".to_string(),
+                table.to_string(),
+                SCENARIO_AUTHOR_ROLE.to_string(),
+            );
+            for map in [
+                &mut obs.authoring_table_privileges,
+                &mut obs.authoring_effective_table_privileges,
+                &mut obs.authoring_effective_column_privileges,
+            ] {
+                map.insert(key.clone(), BTreeSet::from(["SELECT".to_string()]));
+            }
+        }
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let environment = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
+                    && action.target == "demo.environment_policies"
+            })
+            .expect("the stale environment-policy read is repaired");
+        assert!(
+            environment.sql.contains(
+                "REVOKE ALL PRIVILEGES ON TABLE \"demo\".\"environment_policies\" FROM wamn_scenario_author"
+            ),
+            "{}",
+            environment.sql
+        );
+        assert!(
+            !environment.sql.contains(
+                "GRANT SELECT ON TABLE \"demo\".\"environment_policies\" TO wamn_scenario_author"
+            ),
+            "{}",
+            environment.sql
+        );
+
+        let runs = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::RepairRunCapturePrivilege)
+            .expect("the stale runs read is repaired");
+        assert!(
+            runs.sql.contains(
+                "REVOKE ALL PRIVILEGES ON TABLE \"demo\".runs FROM PUBLIC, wamn_app, wamn_scenario_author"
+            ),
+            "{}",
+            runs.sql
+        );
+        assert!(
+            !runs
+                .sql
+                .contains("GRANT SELECT ON TABLE \"demo\".runs TO wamn_scenario_author"),
+            "{}",
+            runs.sql
         );
     }
 
