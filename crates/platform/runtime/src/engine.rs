@@ -6,6 +6,7 @@ use std::time::Duration;
 
 pub use wash_runtime::engine::host_memory::HostMemoryBudgets;
 use wash_runtime::engine::{Engine, WasmProposal};
+use wash_runtime::host::egress_policy::EgressAddressPolicy;
 use wash_runtime::sockets::policy::{EgressMode, SocketPolicy};
 
 /// Platform heap ceiling (S1 acceptance: 256 MiB, enforced).
@@ -77,9 +78,26 @@ pub fn build_engine(proposals: &[WasmProposal]) -> anyhow::Result<Engine> {
 /// host-owned guests use the same declared-host policy as every other guest.
 /// Enforcing here therefore keeps the public policy authoritative without a
 /// fork-only raw-socket opt-in.
+///
+/// Enforce activates BOTH egress layers, and wamn narrows the second one
+/// (`wamn-d0w4`). Upstream's [`EgressAddressPolicy::default`] already denies
+/// loopback, link-local — the IPv4 metadata address with it — the IPv6
+/// metadata address, unspecified, multicast, and documentation ranges, but it
+/// PERMITS private ranges, because reaching a sibling service on a private
+/// address is the ordinary wasmCloud case. It is not the ordinary wamn case: a
+/// guest reaches Postgres through `wamn:postgres` and HTTP through
+/// `wamn:connection/http`, so a raw socket to the cluster service network is
+/// the Kubernetes API, not a sibling. Denying private ranges makes the address
+/// layer a default-deny FLOOR and leaves a guest's declared `allowed_hosts` an
+/// opt-in on top of it rather than the sole confinement. Both layers judge
+/// `to_canonical()`, so `::ffff:10.0.0.1` is refused as `10.0.0.1`.
 fn host_socket_policy() -> SocketPolicy {
     SocketPolicy {
         egress_mode: EgressMode::Enforce,
+        egress_addrs: EgressAddressPolicy {
+            deny_special: true,
+            allow_private: false,
+        },
         ..SocketPolicy::default()
     }
 }
@@ -163,12 +181,109 @@ fn validate_pooling_capacity_environment(
 mod tests {
     use std::net::SocketAddr;
 
+    use wash_runtime::host::allowed_hosts::AllowedHost;
     use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
     use wash_runtime::wasmtime::{Instance, Module, Store};
 
     use super::*;
 
     const PAGE: usize = 64 * 1024;
+
+    /// Every range the address floor denies, with the reason it is on the list.
+    ///
+    /// Dropping a range from [`host_socket_policy`] turns the matching row from
+    /// a `BlockedRange` refusal into an `Allow`, which is what makes this table
+    /// a pin rather than a comment.
+    ///
+    /// The Kubernetes rows use kind's documented defaults —
+    /// `serviceSubnet` 10.96.0.0/16 and `podSubnet` 10.244.0.0/16. ASSUMPTION:
+    /// `deploy/infra/kind-config.yaml` declares no `networking` block, so kind
+    /// supplies both; no manifest in `deploy/` names a subnet of its own. Each
+    /// sits inside 10/8, so the RFC1918 half of the floor is what covers them.
+    const FLOOR_DENIED: &[(&str, &str)] = &[
+        ("IPv4 link-local", "169.254.1.1:443"),
+        ("IPv4 cloud metadata", "169.254.169.254:80"),
+        ("IPv6 link-local", "[fe80::1]:443"),
+        ("IPv6 cloud metadata", "[fd00:ec2::254]:80"),
+        ("Kubernetes service network", "10.96.0.1:443"),
+        ("Kubernetes pod network", "10.244.0.5:8080"),
+        ("RFC1918 10/8", "10.0.0.5:443"),
+        ("RFC1918 172.16/12", "172.16.0.1:443"),
+        ("RFC1918 192.168/16", "192.168.1.1:443"),
+        ("carrier-grade NAT 100.64/10", "100.64.0.1:443"),
+        ("IPv6 unique-local fc00::/7", "[fd00::1]:443"),
+        // The mapped spellings. A floor an attacker steps over by writing the
+        // same address as `::ffff:…` is not a floor.
+        ("IPv4-mapped cloud metadata", "[::ffff:169.254.169.254]:80"),
+        ("IPv4-mapped service network", "[::ffff:10.96.0.1]:443"),
+        ("IPv4-mapped RFC1918", "[::ffff:192.168.1.1]:443"),
+    ];
+
+    fn socket_addr(text: &str) -> SocketAddr {
+        text.parse().expect("a test address parses")
+    }
+
+    fn allowed_host(text: &str) -> AllowedHost {
+        text.parse().expect("a test allowed-host entry parses")
+    }
+
+    /// The production policy as a guest that opted in to every host sees it.
+    fn opted_in(entries: &[&str]) -> SocketPolicy {
+        SocketPolicy {
+            allowed_hosts: entries.iter().copied().map(allowed_host).collect(),
+            ..host_socket_policy()
+        }
+    }
+
+    /// wamn-d0w4: the address layer is a default-deny FLOOR, not a permissive
+    /// pass-through.
+    ///
+    /// Driven through a `*` allowlist, so layer 1 permits every address here
+    /// and every refusal that remains is the floor's alone. Without that the
+    /// empty production allowlist would refuse all of these as `NotPermitted`
+    /// and the test would pass with no floor at all.
+    #[test]
+    fn the_address_floor_denies_link_local_metadata_cluster_and_private_ranges() {
+        let policy = opted_in(&["*"]);
+        for (label, text) in FLOOR_DENIED {
+            let addr = socket_addr(text);
+            match policy.decide(SocketAddrUse::TcpConnect, addr) {
+                AddrDecision::Deny(DenyReason::BlockedRange) => {}
+                AddrDecision::Deny(other) => panic!(
+                    "{label} ({text}) must be refused by the address floor, not as {other:?}"
+                ),
+                AddrDecision::Allow(_) => panic!(
+                    "{label} ({text}) is reachable: the address floor does not cover it, and a \
+                     guest's allowed_hosts is again the sole confinement"
+                ),
+            }
+        }
+    }
+
+    /// wamn-d0w4, the other half: the floor is a floor, not a replacement. A
+    /// declared `allowed_hosts` still decides what a guest reaches among the
+    /// addresses the floor permits, in both directions.
+    #[test]
+    fn a_declared_allowlist_still_gates_what_the_address_floor_permits() {
+        let policy = opted_in(&["93.184.216.34:443"]);
+
+        match policy.decide(SocketAddrUse::TcpConnect, socket_addr("93.184.216.34:443")) {
+            AddrDecision::Allow(_) => {}
+            AddrDecision::Deny(why) => panic!(
+                "a routable address the guest declared must stay reachable; refused as {why:?}"
+            ),
+        }
+
+        match policy.decide(SocketAddrUse::TcpConnect, socket_addr("1.1.1.1:443")) {
+            AddrDecision::Deny(DenyReason::NotPermitted) => {}
+            AddrDecision::Deny(other) => panic!(
+                "an undeclared routable address is refused by the allowlist layer, not {other:?}"
+            ),
+            AddrDecision::Allow(_) => {
+                panic!("the address floor must not widen what the allowlist granted")
+            }
+        }
+    }
 
     /// wamn-0h0g.15.142: the host-level egress mode ENFORCES rather than counts.
     ///
