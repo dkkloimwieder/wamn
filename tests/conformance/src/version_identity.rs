@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
+use wamn_run_state::admission::{RunStateSchema, management_admission_transaction};
+use wamn_run_state::invocation_context::INVOCATION_CONTEXT_VERSION;
 
 const MVP_CARGO_VERSION: &str = "0.1.0";
 const MVP_SCHEMA_VERSION: &str = "0.1";
@@ -115,11 +117,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     // CheckSpec below is the only governed `0.1` reconciliation identity left in
     // that file.
     GovernedLiteral {
-        path: "crates/execution/run-state/src/invocation_context.rs",
-        exact: r#"pub const INVOCATION_CONTEXT_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "deploy/sql/run-state.sql",
         exact: "admission_context_version text NOT NULL DEFAULT '0.1'",
         expected_count: 1,
@@ -134,37 +131,10 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         exact: r#"definition: "CHECK (admission_context_version = '0.1'::text)","#,
         expected_count: 1,
     },
-    // Three sites, and the count is per admission STATEMENT, not per producer:
-    // the callable statement, the management statement wamn-0h0g.8.20 added, and
-    // the pure test that pins the literal. A new admission producer that builds
-    // its own statement raises this; it must never LOWER it, and a new statement
-    // emitting anything but `0.1` is rejected by the database anyway --
-    // `runs_admission_context_version_check` is
-    // `CHECK (admission_context_version = '0.1'::text)`.
-    GovernedLiteral {
-        path: "crates/execution/run-state/src/admission.rs",
-        exact: "'version', '0.1'",
-        expected_count: 3,
-    },
     GovernedLiteral {
         path: "tests/conformance/src/schema_drift.rs",
         exact: "admission_context_version text NOT NULL DEFAULT '0.1'",
         expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/platform/runtime/wit/deps/wamn-runner/package.wit",
-        exact: "version: string,",
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/platform/runtime/src/plugins/connection_http.rs",
-        exact: r#"context.version != "0.1""#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/platform/runtime/src/plugins/connection_http.rs",
-        exact: r#"version: "0.1".to_string(),"#,
-        expected_count: 2,
     },
     GovernedLiteral {
         path: "crates/catalog/model/src/lib.rs",
@@ -401,6 +371,49 @@ fn governed_json_schema_violation(source: &str, identity: GovernedJsonSchema) ->
     })
 }
 
+fn admission_version_violations(admission: &str, version: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    let admitted_context = admission
+        .split_once("expected AS MATERIALIZED (")
+        .and_then(|(_, tail)| tail.split_once("keyed_run AS MATERIALIZED ("))
+        .map(|(section, _)| section);
+    let context_identity = format!("'version', '{version}'");
+    if !admitted_context.is_some_and(|section| section.contains(&context_identity)) {
+        violations.push(format!(
+            "management admission does not stamp invocation-context owner `{version}`"
+        ));
+    }
+
+    let created_run = admission
+        .split_once("created_run AS (")
+        .and_then(|(_, tail)| tail.split_once("created_queue AS ("))
+        .map(|(section, _)| section);
+    let persisted_identity = format!("'{version}', c.platform_revision");
+    if !created_run.is_some_and(|section| {
+        section.contains("admission_context_version") && section.contains(&persisted_identity)
+    }) {
+        violations.push(format!(
+            "management admission does not persist invocation-context owner `{version}`"
+        ));
+    }
+    violations
+}
+
+fn live_invocation_context_version_violations() -> Vec<String> {
+    let mut violations = Vec::new();
+    if INVOCATION_CONTEXT_VERSION != MVP_SCHEMA_VERSION {
+        violations.push(format!(
+            "invocation-context owner is {INVOCATION_CONTEXT_VERSION}, expected {MVP_SCHEMA_VERSION}"
+        ));
+    }
+    let admission = management_admission_transaction(&RunStateSchema::default());
+    violations.extend(admission_version_violations(
+        admission.admit(),
+        INVOCATION_CONTEXT_VERSION,
+    ));
+    violations
+}
+
 fn governed_literal_violations(repository: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     for identity in GOVERNED_LITERALS {
@@ -477,7 +490,8 @@ fn wamn_wit_packages_stay_at_mvp_version() {
 
 #[test]
 fn governed_wire_schema_and_artifact_versions_stay_at_mvp_identity() {
-    let violations = governed_literal_violations(&repository_root());
+    let mut violations = governed_literal_violations(&repository_root());
+    violations.extend(live_invocation_context_version_violations());
     assert!(
         violations.is_empty(),
         "governed first-party version drift:\n{}",
@@ -535,6 +549,17 @@ fn representative_version_mutants_are_rejected() {
     };
     assert!(
         governed_json_schema_violation(r#"{"schema_version":1}"#, governance_identity).is_some()
+    );
+
+    let admission = management_admission_transaction(&RunStateSchema::default());
+    let drifted_admission = admission
+        .admit()
+        .replace("'version', '0.1'", "'version', '0.2'")
+        .replace("'0.1', c.platform_revision", "'0.2', c.platform_revision");
+    assert_eq!(
+        admission_version_violations(&drifted_admission, INVOCATION_CONTEXT_VERSION).len(),
+        2,
+        "both live admission uses must reject drift from the version owner"
     );
 }
 
