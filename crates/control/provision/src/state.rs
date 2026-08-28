@@ -1,4 +1,4 @@
-//! SQL for operations-owned copy, dump, and migration-confirmation state.
+//! SQL for operations-owned copy and dump state.
 
 /// Stable, connection-free execution role for operations-state DML.
 pub const OPS_ROLE: &str = "wamn_ops";
@@ -22,9 +22,6 @@ pub fn ensure_ops_role_sql() -> &'static str {
        END IF; \
      END $ops_role$;"
 }
-
-/// The schema-minted kind for a destructive-migration backup attestation.
-pub const MIGRATION_CONFIRMATION_KIND: &str = "backup-checkpoint-attested";
 
 /// Create one copy saga idempotently.
 pub fn create_saga_sql() -> &'static str {
@@ -86,20 +83,4 @@ pub fn select_dumps_sql() -> &'static str {
      FROM provisioning.dumps \
      WHERE org = $1 AND project = $2 AND env = $3 \
      ORDER BY taken_at DESC, object_key DESC"
-}
-
-/// Append a backup-checkpoint attestation for one migration identity.
-pub fn record_migration_confirmation_sql() -> &'static str {
-    "INSERT INTO provisioning.migration_confirmations \
-       (org, project, env, tenant_id, catalog_id, from_version, to_version) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7) \
-     ON CONFLICT (org, project, env, tenant_id, catalog_id, to_version) DO NOTHING"
-}
-
-/// Read the attestation for one migration identity.
-pub fn select_migration_confirmation_sql() -> &'static str {
-    "SELECT from_version, kind, confirmed_at, confirmed_by \
-     FROM provisioning.migration_confirmations \
-     WHERE org = $1 AND project = $2 AND env = $3 \
-       AND tenant_id = $4 AND catalog_id = $5 AND to_version = $6"
 }

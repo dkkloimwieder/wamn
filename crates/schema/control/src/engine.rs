@@ -11,9 +11,9 @@ use crate::model::{
 };
 use crate::sql;
 
-/// The shared guard + compile step behind the additive and operations planners:
-/// run the forward-only / catalog-id / stale-base guards, compile the wamn-schema-compiler
-/// plan, and collect advisory warnings.
+/// The guard + compile step behind the additive planner: run the forward-only /
+/// catalog-id / stale-base guards, compile the wamn-schema-compiler plan, and
+/// collect advisory warnings.
 struct Compiled {
     plan: MigrationPlan,
     destructive: bool,
@@ -139,18 +139,6 @@ pub fn plan_migration(req: &MigrationRequest) -> Result<ApplyPlan, MigrationErro
         .plan
         .sql()
         .expect("the additive boundary rejected destructive operations above");
-    Ok(build_apply_plan(req, c, ddl_sql))
-}
-
-/// Plan an operations target reconciliation after the caller has verified a
-/// durable backup attestation for the locked `(from_version, to_version)`
-/// window. Kept crate-private behind `ops`; default callers cannot select it.
-#[cfg(feature = "ops")]
-pub(crate) fn plan_target_reconciliation(
-    req: &MigrationRequest,
-) -> Result<ApplyPlan, MigrationError> {
-    let c = compile(req)?;
-    let ddl_sql = c.plan.ops_sql();
     Ok(build_apply_plan(req, c, ddl_sql))
 }
 

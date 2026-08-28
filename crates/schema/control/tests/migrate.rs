@@ -2,21 +2,18 @@
 //!
 //! Three layers (the wamn-schema-compiler / wamn-project-state precedent):
 //! - **unit** — the guards (forward-only, catalog-id, stale-base), the
-//!   additive-only public boundary, the operations-only reconciliation boundary,
-//!   and a metadata-only version bump;
+//!   additive-only public boundary, and a metadata-only version bump;
 //! - a **drift guard** tying `deploy/sql/catalog-schema.sql` to the engine (the new
 //!   `document` column, the `schema_migrations` table + columns, and the
 //!   environment / lifecycle-state literals the SQL builders use);
 //! - a **live-apply gate** proving the DB-enforced behavior end-to-end — a first
 //!   materialization, a forward migration (document round-trip, single-applied
-//!   advance, history), and an operations-only destructive migration — over a real
-//!   Postgres (`WAMN_MIGRATE_PG_URL`, a superuser URL; skipped when unset).
+//!   advance, history), and destructive refusal — over a real Postgres
+//!   (`WAMN_MIGRATE_PG_URL`, a superuser URL; skipped when unset).
 
 use std::path::Path;
 use std::sync::Mutex;
 
-#[cfg(feature = "ops")]
-use wamn_schema_control::ops::plan_target_reconciliation;
 use wamn_schema_control::{
     Env, MigrationError, MigrationRequest, SqlStatement, Value, plan_migration,
 };
@@ -202,23 +199,6 @@ fn destructive_migration_is_not_a_public_capability() {
         }
         other => panic!("expected Destructive, got {other:?}"),
     }
-}
-
-#[cfg(feature = "ops")]
-#[test]
-fn operations_target_reconciliation_can_plan_a_destructive_diff() {
-    let v2 = widget_catalog(2, true);
-    let v3 = widget_catalog(3, false);
-    let plan = plan_target_reconciliation(&req(Some(&v2), &v3, None)).unwrap();
-    assert!(plan.destructive);
-    assert!(has_stmt_with(&plan.statements, "DROP COLUMN"));
-    let history = plan
-        .statements
-        .iter()
-        .find(|s| s.sql.contains("catalog.schema_migrations"))
-        .unwrap();
-    assert!(history.params.contains(&Value::Bool(true))); // destructive flag
-    assert_eq!(history.params.len(), 8);
 }
 
 #[test]
@@ -418,10 +398,10 @@ fn catalog_schema_from_zero_is_complete_and_transactional_on_postgres() {
 }
 
 #[test]
-fn migration_engine_applies_forward_and_limits_destructive_to_ops_on_postgres() {
+fn migration_engine_applies_forward_and_refuses_destructive_on_postgres() {
     let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
         eprintln!(
-            "skipping migration_engine_applies_forward_and_limits_destructive_to_ops_on_postgres \
+            "skipping migration_engine_applies_forward_and_refuses_destructive_on_postgres \
              (set WAMN_MIGRATE_PG_URL to run)"
         );
         return;
@@ -442,11 +422,6 @@ fn migration_engine_applies_forward_and_limits_destructive_to_ops_on_postgres() 
         plan_migration(&req(Some(&v2), &v3, None)),
         Err(MigrationError::Destructive(_))
     ));
-    #[cfg(feature = "ops")]
-    let plan_c = plan_target_reconciliation(&req(Some(&v2), &v3, None)).unwrap();
-    #[cfg(feature = "ops")]
-    assert!(plan_c.destructive);
-
     let mut script = String::new();
     // Provision wamn_app (as in production) and a fresh catalog + data schema.
     script.push_str(
@@ -488,20 +463,6 @@ fn migration_engine_applies_forward_and_limits_destructive_to_ops_on_postgres() 
          END $$;\n",
     );
 
-    // Scenario C — operations-only destructive migration (drops the note column).
-    #[cfg(feature = "ops")]
-    {
-        script.push_str(&apply_block(&plan_c));
-        script.push_str(
-        "DO $$ BEGIN\n\
-           ASSERT (SELECT version FROM catalog.catalogs WHERE state='applied')=3, 'C: v3 applied';\n\
-           ASSERT (SELECT state FROM catalog.catalogs WHERE version=2)='superseded', 'C: v2 superseded';\n\
-           ASSERT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='wamn_migrate_data' AND table_name='widget' AND column_name='note'), 'C: note dropped';\n\
-           ASSERT (SELECT count(*) FROM catalog.schema_migrations WHERE to_version=3 AND destructive=true)=1, 'C: destructive journal';\n\
-         END $$;\n",
-    );
-    }
-
     run_psql(&url, &script);
 
     // The stored document round-trips through Catalog::from_json — the diff source
@@ -512,7 +473,7 @@ fn migration_engine_applies_forward_and_limits_destructive_to_ops_on_postgres() 
     );
     let readback = Catalog::from_json(doc.trim()).expect("stored document parses as a Catalog");
     assert_eq!(readback.catalog_id, "widgets");
-    assert_eq!(readback.version, if cfg!(feature = "ops") { 3 } else { 2 });
+    assert_eq!(readback.version, 2);
 
     // Teardown (leave nothing behind).
     run_psql(

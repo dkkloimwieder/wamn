@@ -161,8 +161,7 @@ fn system_schema_sql_mirrors_the_model() {
     assert!(
         !sql.contains("'copy'")
             && !sql.contains("provisioning.dumps")
-            && !sql.contains("provisioning.copy_sagas")
-            && !sql.contains("provisioning.migration_confirmations"),
+            && !sql.contains("provisioning.copy_sagas"),
         "operations-only state must not leak into the core schema"
     );
 }

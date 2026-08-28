@@ -22,9 +22,8 @@
 //!   (demote the prior applied, promote the target, storing its `document`), and
 //!   an immutable row in `catalog.schema_migrations`.
 //!
-//! Destructive target reconciliation and read-only impact compilation are
-//! available only through the `ops` feature. Their authorization evidence lives
-//! in operations state, outside this pure planner.
+//! Read-only destructive-impact compilation is available only through the
+//! `ops` feature. No destructive apply planner is exposed.
 //!
 //! ## Scope (v1)
 //!

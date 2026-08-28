@@ -302,10 +302,6 @@ fn protected_relation_table_matches_declared_ownership() {
         BTreeSet::from([
             ("production-control-database-ops", "provisioning.copy_sagas"),
             ("production-control-database-ops", "provisioning.dumps"),
-            (
-                "production-control-database-ops",
-                "provisioning.migration_confirmations",
-            ),
         ])
     );
     assert_eq!(actual_relations, declared.into_keys().collect());
