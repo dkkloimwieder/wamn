@@ -13,22 +13,36 @@
 # executor-platform carrier spells a scoped GENERATION, like the other three.
 # The demo value's `?sslmode=disable` did NOT come back; see SSLMODE below.
 #
-# TWO SECRETS, BECAUSE THE EXECUTOR HAS TWO DATABASE IDENTITIES
-# (wamn-0h0g.22.31). Until that cutover one url served every authority class in
-# the process. It no longer does, and the split is the security property:
+# THREE SECRETS, BECAUSE THE EXECUTOR HAS THREE DATABASE IDENTITIES
+# (wamn-0h0g.22.31, wamn-0h0g.22.11). Until those cutovers one url served every
+# authority class in the process. It no longer does, and the split is the
+# security property:
 #
 #   * `wamn-executor-db` is the GUEST-SQL credential. Component `wamn:postgres`
 #     calls run as it, inside the tenant's own RLS floor.
 #   * `wamn-executor-platform-db` is the EXECUTOR-PLATFORM credential. The queue
 #     claim, lease renewal, reap, caller release and plan supply run as it.
+#   * `wamn-http-admitter-db` is the CALLABLE-HTTP credential. Exactly one read
+#     runs as it: the authority snapshot behind a component's trusted HTTP
+#     effect (`WamnPostgres::connection_effect_snapshot`).
 #
-# THEY ARE NOT INTERCHANGEABLE, AND POINTING ONE AT THE OTHER DOES NOT DEGRADE
+# THEY ARE NOT INTERCHANGEABLE, AND POINTING ONE AT ANOTHER DOES NOT DEGRADE
 # GRACEFULLY. `pool::credential_exactness_hook` asserts
-# `pg_has_role(current_user, 'wamn_executor_platform', MEMBER)` on every physical
-# platform connection: a guest login fails it and the platform pool then refuses
-# EVERY connection. In the other direction the executor-platform generation
-# holds no INSERT anywhere and no `catalog` write at all, so guest SQL fails on
-# privileges. Each url belongs to exactly one of the two keys below.
+# `pg_has_role(current_user, <the class's own stable role>, MEMBER)` on every
+# physical platform connection: a guest login fails it and the platform pool then
+# refuses EVERY connection. In the other direction the executor-platform
+# generation holds no INSERT anywhere and no `catalog` write at all, so guest SQL
+# fails on privileges; the admitter generation holds no write of ANY grain and no
+# run-plane privilege whatsoever. Each url belongs to exactly one of the three
+# keys below.
+#
+# THE ADMITTER SECRET IS OPTIONAL, THE OTHER TWO ARE NOT. `wamn-executor` refuses
+# at startup without the first two; its callable-HTTP class carries no path the
+# process needs in order to run, so an executor without an admitter generation
+# UNNAMES the class and still serves every route that raises no trusted HTTP
+# effect. Dropping the third Secret and the `WAMN_HTTP_ADMITTER_PG_URL` mount
+# TOGETHER is a supported deployment. Pointing that mount at either url above is
+# not: it would put a login of another authority back in the class map.
 #
 # SSLMODE IS ABSENT, AND THAT IS THE CONVENTION, NOT AN OMISSION. None of
 # `host-db.example.yaml`, `run-retention-db.example.yaml` or
@@ -41,7 +55,9 @@
 #
 # THE SECRET NAMES ARE THE MOUNT'S, NOT THE EMIT'S — the shape all three
 # siblings already have. `wamn-ctl provision-project-env` writes
-# `wamn-executor-platform-<org>--<project>--<env>` and `wamn-db-<org>--<project>--<env>`;
+# `wamn-executor-platform-<org>--<project>--<env>`,
+# `wamn-http-admitter-<org>--<project>--<env>` and
+# `wamn-db-<org>--<project>--<env>`;
 # those are SOURCES you copy the `url` value out of, exactly as
 # `dispatcher-projects.example.yaml` says of its own emit ("Copy that value into
 # the entry below"). The workload mounts a stable operator-owned name so that
@@ -57,22 +73,34 @@
 #     --emit-executor-platform-secret ./executor-platform-secret.json \
 #     --emit-secret ./executor-guest-secret.json
 #
+# ONE ACTION PER INVOCATION: the workload-action group is `multiple(false)`, so
+# the admitter generation is a SECOND run of the same command —
+#
+#   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
+#     --system-database-url <t1-superuser-url> \
+#     --target-admin-database-url <project-env-superuser-url> \
+#     --prepare-http-admitter-generation a \
+#     --emit-http-admitter-secret ./http-admitter-secret.json
+#
 # ROTATION is the ordinary A/B lifecycle and needs no downtime: prepare
 # generation `b`, update the Secret below, roll the Deployment, then
-# `--retire-executor-platform-generation a`. Never `ALTER ROLE` a password in
-# place — the generation IS the rotation unit.
+# `--retire-<family>-generation a`. Never `ALTER ROLE` a password in place — the
+# generation IS the rotation unit.
 #
-# THE LOGIN NAME IS DERIVED, NOT CHOSEN. `wamn_exec_platform_<40-hex>_<a|b>`
-# carries the 160-bit digest of (org, project, environment, database); the
-# prefix is the frozen short form of `wamn_executor_platform`, which would
-# otherwise overrun PostgreSQL's 63-byte identifier limit with the digest and
-# generation suffix attached. The demo value below is the REAL derived name for
-# the project-environment demo/demo/dev in the fixture pod's `wamn` database —
-# the same triple `dispatcher-projects.example.yaml` uses — so it matches
-# `WAMN_PROJECT: demo` in the executor Deployment. Substitute the password the
-# prepare minted.
+# THE LOGIN NAMES ARE DERIVED, NOT CHOSEN. `wamn_exec_platform_<40-hex>_<a|b>`
+# and `wamn_http_admitter_<40-hex>_<a|b>` carry the 160-bit digest of
+# (org, project, environment, database). The executor-platform prefix is the
+# frozen short form of `wamn_executor_platform`, which would otherwise overrun
+# PostgreSQL's 63-byte identifier limit with the digest and generation suffix
+# attached; `wamn_http_admitter` fits and so keeps its stable ACL role name as
+# its prefix. The demo values below are the REAL derived names for the
+# project-environment demo/demo/dev in the fixture pod's `wamn` database — the
+# same triple `dispatcher-projects.example.yaml` uses — so they match
+# `WAMN_PROJECT: demo` in the executor Deployment. Substitute the passwords the
+# prepares minted.
 #
-# ORDERING OBLIGATION: both generations and the stable roles' grants must exist
+# ORDERING OBLIGATION: every generation mounted below and the stable roles'
+# grants must exist
 # BEFORE a pod carrying these URLs starts. A `secretKeyRef` the kubelet cannot
 # resolve leaves the executor Pod in CreateContainerConfigError, never Running,
 # and a resolvable Secret naming an unprepared role fails the initial dial.
@@ -108,3 +136,22 @@ stringData:
   # plus `wamn_authority.tenant_key(text)`. It cannot admit a run, cannot move a
   # FIFO position, and cannot rewrite an admission pin.
   url: "postgres://wamn_exec_platform_c5a4920299d7dace5244a9b19c86731be3593b93_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-http-admitter-db
+  namespace: wamn-system
+  labels: { app: wamn-executor, project-env: demo--demo--dev }
+type: Opaque
+stringData:
+  # The project-environment CALLABLE-HTTP ADMITTER generation. LOGIN,
+  # NOSUPERUSER, NOBYPASSRLS, INHERIT, exactly one membership
+  # (`wamn_http_admitter`) and exactly one database CONNECT. Its whole reach is
+  # `sql::grant_http_admitter_surface_sql`: `USAGE` on `catalog` plus table-grain
+  # SELECT on six `catalog` relations, and NOTHING else — no write of any grain
+  # anywhere, no `wamn_run` privilege at all (that schema is a REVOKE scope for
+  # this family and never a grant scope), and no function EXECUTE, because its
+  # one statement calls only built-ins. It cannot admit, claim, lease or
+  # terminalize a run.
+  url: "postgres://wamn_http_admitter_9ede7beb534d36b094f06e32adfc82d550e24ea1_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn"

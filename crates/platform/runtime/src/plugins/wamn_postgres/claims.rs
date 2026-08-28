@@ -3115,6 +3115,100 @@ mod tests {
         );
     }
 
+    /// A provider that RECORDS which authority class each resolution was asked
+    /// for, and names no credential for any of them.
+    ///
+    /// `Ok(None)` is what keeps the proof hermetic: `ensure_pool` refuses on the
+    /// spot, so the class under test is observed with no pool built and no socket
+    /// opened.
+    #[derive(Default)]
+    struct RecordingProvider {
+        asked: std::sync::Mutex<Vec<AuthorityClass>>,
+    }
+
+    impl CredentialProvider for RecordingProvider {
+        fn resolve(
+            &self,
+            _project: &str,
+            class: AuthorityClass,
+            _tenant: Option<&str>,
+        ) -> anyhow::Result<Option<ResolvedCredential>> {
+            self.asked
+                .lock()
+                .expect("recording provider lock poisoned")
+                .push(class);
+            Ok(None)
+        }
+    }
+
+    /// THE TRUSTED HTTP EFFECT CHECKS OUT UNDER `CallableHttp` AND NOTHING ELSE
+    /// (`wamn-0h0g.22.11`).
+    ///
+    /// THE COVERAGE THIS CLOSES. Until this test the callable-HTTP checkout class
+    /// had NO coverage at all: a mutant making this method check out
+    /// `AuthorityClass::ExecutorPlatform` instead was INERT — nothing in the
+    /// crate distinguished it. The three offline `connection_effect_snapshot`
+    /// tests refuse before a pool is reached, and `checkout_platform` maps every
+    /// failure to the one `PgError::ConnectionUnavailable`, so no error message
+    /// can name the class either. The provider is the seam where the class IS
+    /// observable: it is the exact argument `ensure_pool` forwards, so recording
+    /// it pins the production routing rather than restating it.
+    ///
+    /// Sequence equality, not containment. `checkout_platform` refuses
+    /// `AuthorityClass::GuestSql` BEFORE consulting the provider, so a mutant
+    /// naming the guest records nothing at all; asserting the whole sequence
+    /// kills that arm too, along with any second checkout under another class.
+    #[tokio::test]
+    async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
+        const COMPONENT: &str = "warm-instance-0";
+        let provider = Arc::new(RecordingProvider::default());
+        let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
+        pg.bind_session_claims(
+            COMPONENT,
+            &SessionClaims {
+                tenant: "tenant-a".to_string(),
+                ..SessionClaims::default()
+            },
+        )
+        .expect("the acquiring tenant binds");
+
+        let lookup = ConnectionEffectLookup {
+            catalog_id: "catalog",
+            catalog_version: 1,
+            environment: "dev",
+            wiring_id: "wiring",
+            wiring_version: 1,
+            node_id: "node",
+            component_digest: "digest",
+            store_alias: "manager",
+            candidate_binding: None,
+        };
+
+        let refused = pg
+            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup)
+            .await
+            .expect_err("a provider that names no credential resolves nothing");
+        assert!(
+            !refused
+                .to_string()
+                .contains("disagrees with the tenant bound"),
+            "the bound tenant must reach the checkout, or the class below is \
+             never asked for: {refused}"
+        );
+
+        let asked = provider
+            .asked
+            .lock()
+            .expect("recording provider lock poisoned")
+            .clone();
+        assert_eq!(
+            asked,
+            vec![AuthorityClass::CallableHttp],
+            "the callable-HTTP authority snapshot must check out as the \
+             callable-HTTP family and no other"
+        );
+    }
+
     /// The tenant floor over rows belonging to TWO tenants, keyed on
     /// `current_user` — the shape `wamn-0h0g.22.6` put in production.
     ///

@@ -110,6 +110,29 @@ pub struct ExecutorArgs {
     #[arg(long, env = "WAMN_EXECUTOR_PLATFORM_PG_URL")]
     pub executor_platform_database_url: Option<String>,
 
+    /// The provisioned callable-HTTP admitter generation this executor claims
+    /// with (`wamn-0h0g.22.11`).
+    ///
+    /// OPTIONAL, unlike [`Self::executor_platform_database_url`], and the
+    /// asymmetry is deliberate. The executor-platform credential carries the
+    /// queue claim, so a process without one cannot do its work at all and
+    /// refuses at startup. `AuthorityClass::CallableHttp` carries ONE read —
+    /// `WamnPostgres::connection_effect_snapshot`, the authority snapshot behind
+    /// a component's trusted HTTP effect — so an executor without one still
+    /// serves every route that raises no such effect. It therefore UNNAMES the
+    /// class and starts, exactly as `wamn-host` does for both.
+    ///
+    /// Absent is NOT the guest url. `pool::credential_exactness_hook` asserts
+    /// `pg_has_role(current_user, 'wamn_http_admitter', MEMBER)` on every
+    /// physical connection this class opens, which a guest generation fails, so
+    /// keeping the shared entry would trade a missing-credential refusal for a
+    /// membership refusal against a login of another authority.
+    ///
+    /// `wamn-ctl provision-project-env --prepare-http-admitter-generation`
+    /// mints it; `deploy/platform/executor-db.example.yaml` is the carrier.
+    #[arg(long, env = "WAMN_HTTP_ADMITTER_PG_URL")]
+    pub http_admitter_database_url: Option<String>,
+
     /// Stable, replica-unique owner prefix for node acquisition claims.
     #[arg(long, env = "WAMN_RUNNER")]
     pub runner: Option<String>,
@@ -285,18 +308,32 @@ fn resolve_owner(arg: Option<String>) -> String {
 /// call away and `the_executor_routes_each_url_to_its_own_class` kills that
 /// mutant.
 ///
-/// `every_class` first, then one `with_class`, is deliberate and is NOT a
-/// fallback: the classes still awaiting their own cutover are WRITTEN DOWN
-/// against the guest url, so `resolve` selects rather than defaults, and the one
-/// class that has been cut over overwrites its own entry.
+/// `every_class` first, then one `with_class` per cut-over family, is deliberate
+/// and is NOT a fallback: the classes still awaiting their own cutover are
+/// WRITTEN DOWN against the guest url, so `resolve` selects rather than
+/// defaults, and a class that has been cut over overwrites its own entry.
+///
+/// `wamn-0h0g.22.11` cut `AuthorityClass::CallableHttp` over the same way, and
+/// its ABSENT arm is the load-bearing half. Once that family authenticates as
+/// its own provisioned generation, the shared guest entry stops being a
+/// placeholder for it and becomes A LOGIN OF ANOTHER AUTHORITY that would still
+/// satisfy the map, so an executor given no admitter generation ERASES the entry
+/// rather than keeping it: checkout then refuses for the missing credential,
+/// which is the real fault, instead of for a `wamn_http_admitter` membership the
+/// guest login can never hold.
 fn executor_credentials(
     database_url: String,
     executor_platform_database_url: String,
+    http_admitter_database_url: Option<String>,
 ) -> ClassCredentials {
-    ClassCredentials::every_class(database_url).with_class(
+    let credentials = ClassCredentials::every_class(database_url).with_class(
         AuthorityClass::ExecutorPlatform,
         executor_platform_database_url,
-    )
+    );
+    match http_admitter_database_url {
+        Some(url) => credentials.with_class(AuthorityClass::CallableHttp, url),
+        None => credentials.without_class(AuthorityClass::CallableHttp),
+    }
 }
 
 pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
@@ -325,6 +362,14 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         "no executor-platform database url: pass --executor-platform-database-url \
              or set WAMN_EXECUTOR_PLATFORM_PG_URL",
     )?;
+    // The callable-HTTP admitter generation, read the same way and from its own
+    // declared source (`wamn-0h0g.22.11`) — but NOT refused when absent. An
+    // empty value is an absent one: a `secretKeyRef` that resolved to nothing
+    // must unname the class, not name an unparseable credential for it.
+    let http_admitter_database_url = args
+        .http_admitter_database_url
+        .clone()
+        .filter(|url| !url.is_empty());
     let owner = resolve_owner(args.runner.clone());
     let release = load_release(
         &args.release_artifact_base,
@@ -348,6 +393,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     postgres_config.credentials = Some(executor_credentials(
         database_url,
         executor_platform_database_url,
+        http_admitter_database_url,
     ));
     let postgres = Arc::new(WamnPostgres::new(postgres_config)?);
     postgres.register_pool_metrics();
@@ -793,12 +839,13 @@ mod tests {
     /// `run` no longer consults the environment at all for the credential, so
     /// what clap declares here IS the whole source set.
     ///
-    /// TWO ENTRIES, ONE PER AUTHORITY CLASS, NOT TWO SOURCES FOR ONE CREDENTIAL.
-    /// `wamn-0h0g.22.31` cut the executor-platform class onto its own
-    /// provisioned generation, and a second class is a second credential — the
-    /// property this pins is that NEITHER class has a source behind it, which
-    /// the exact set equality below still states. A THIRD entry, or either of
-    /// these two gaining an alternate env, fails here.
+    /// THREE ENTRIES, ONE PER CUT-OVER AUTHORITY CLASS, NOT THREE SOURCES FOR
+    /// ONE CREDENTIAL. `wamn-0h0g.22.31` cut the executor-platform class onto
+    /// its own provisioned generation and `wamn-0h0g.22.11` the callable-HTTP
+    /// admitter; each class is its own credential — the property this pins is
+    /// that NONE of them has a source behind it, which the exact set equality
+    /// below still states. A FOURTH entry, or any of these three gaining an
+    /// alternate env, fails here.
     ///
     /// THE LIMIT, RECORDED AND ACCEPTED (`wamn-0h0g.22.35`): THE DECLARATION IS
     /// PINNED AND THE CHAIN IS NOT. A reintroduced ambient source that goes
@@ -832,9 +879,13 @@ mod tests {
             .collect();
         assert_eq!(
             database_envs,
-            ["WAMN_PG_URL", "WAMN_EXECUTOR_PLATFORM_PG_URL"],
+            [
+                "WAMN_PG_URL",
+                "WAMN_EXECUTOR_PLATFORM_PG_URL",
+                "WAMN_HTTP_ADMITTER_PG_URL",
+            ],
             "each executor credential must have exactly one declared source, and \
-             the executor declares exactly two credentials"
+             the executor declares exactly three credentials"
         );
 
         for (id, expected) in [
@@ -843,6 +894,7 @@ mod tests {
                 "executor_platform_database_url",
                 "WAMN_EXECUTOR_PLATFORM_PG_URL",
             ),
+            ("http_admitter_database_url", "WAMN_HTTP_ADMITTER_PG_URL"),
         ] {
             let argument = command
                 .get_arguments()
@@ -857,27 +909,34 @@ mod tests {
         }
     }
 
-    /// THE GUEST URL IS NOT THE EXECUTOR-PLATFORM CREDENTIAL (`wamn-0h0g.22.31`).
+    /// THE GUEST URL IS NOT THE EXECUTOR-PLATFORM CREDENTIAL (`wamn-0h0g.22.31`)
+    /// AND IT IS NOT THE CALLABLE-HTTP ONE EITHER (`wamn-0h0g.22.11`).
     ///
     /// Driven through [`executor_credentials`], the same call `run` makes, so the
     /// ROUTING is what is pinned rather than a re-statement of it. Every class is
-    /// checked, not just the two that matter: naming the wrong class in the
-    /// production call moves BOTH the class that gained the platform url and the
+    /// checked, not just the ones that matter: naming the wrong class in the
+    /// production call moves BOTH the class that gained a cut-over url and the
     /// one that lost it, and a two-class assertion could miss the second half.
     ///
-    /// The mutants this kills: `with_class(GuestSql, platform)`, dropping the
-    /// `with_class` entirely, and passing `database_url` to it twice — each
-    /// leaves some class holding a url that is not its own.
+    /// The mutants this kills: `with_class(GuestSql, platform)`,
+    /// `with_class(GuestSql, admitter)`, swapping the two cut-over urls, dropping
+    /// either `with_class` entirely, and passing `database_url` to one of them —
+    /// each leaves some class holding a url that is not its own.
     #[test]
     fn the_executor_routes_each_url_to_its_own_class() {
         const GUEST: &str = "postgres://guest@h/db";
         const PLATFORM: &str = "postgres://platform@h/db";
-        let credentials = executor_credentials(GUEST.to_owned(), PLATFORM.to_owned());
+        const ADMITTER: &str = "postgres://admitter@h/db";
+        let credentials = executor_credentials(
+            GUEST.to_owned(),
+            PLATFORM.to_owned(),
+            Some(ADMITTER.to_owned()),
+        );
         for class in AuthorityClass::ALL {
-            let expected = if class == AuthorityClass::ExecutorPlatform {
-                PLATFORM
-            } else {
-                GUEST
+            let expected = match class {
+                AuthorityClass::ExecutorPlatform => PLATFORM,
+                AuthorityClass::CallableHttp => ADMITTER,
+                _ => GUEST,
             };
             assert_eq!(
                 credentials.url(class),
@@ -885,10 +944,50 @@ mod tests {
                 "{class:?} must authenticate with its own credential"
             );
         }
-        assert_ne!(
+        for class in [
+            AuthorityClass::ExecutorPlatform,
+            AuthorityClass::CallableHttp,
+        ] {
+            assert_ne!(
+                credentials.url(class),
+                credentials.url(AuthorityClass::GuestSql),
+                "{class:?} must not authenticate with the guest url"
+            );
+        }
+    }
+
+    /// AN EXECUTOR GIVEN NO ADMITTER GENERATION UNNAMES THE CLASS
+    /// (`wamn-0h0g.22.11`).
+    ///
+    /// The load-bearing half of the cutover. Keeping `every_class`'s shared
+    /// entry would leave callable-HTTP checkout authenticating as the GUEST — a
+    /// login of another authority that still satisfies the map — so the absent
+    /// arm must ERASE the entry. The mutant this kills is the one that quietly
+    /// falls back: returning the `every_class` credentials unchanged, or
+    /// `with_class(CallableHttp, database_url)`.
+    ///
+    /// The executor-platform entry is asserted alongside it because `None` must
+    /// unname exactly ONE class, not collapse the whole map.
+    #[test]
+    fn an_executor_with_no_admitter_generation_refuses_rather_than_borrows() {
+        const GUEST: &str = "postgres://guest@h/db";
+        const PLATFORM: &str = "postgres://platform@h/db";
+        let credentials = executor_credentials(GUEST.to_owned(), PLATFORM.to_owned(), None);
+        assert_eq!(
+            credentials.url(AuthorityClass::CallableHttp),
+            None,
+            "an unprovisioned callable-HTTP family must have NO credential rather \
+             than the guest's"
+        );
+        assert_eq!(
             credentials.url(AuthorityClass::ExecutorPlatform),
+            Some(PLATFORM),
+            "unnaming callable-HTTP must not disturb another class"
+        );
+        assert_eq!(
             credentials.url(AuthorityClass::GuestSql),
-            "the platform pool must not authenticate with the guest url"
+            Some(GUEST),
+            "unnaming callable-HTTP must not disturb another class"
         );
     }
 

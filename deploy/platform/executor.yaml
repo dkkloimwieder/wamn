@@ -97,25 +97,31 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            # TWO DATABASE CREDENTIALS, ONE PER AUTHORITY CLASS
-            # (wamn-0h0g.22.31). Until that cutover one url was written down for
-            # every class in the process; the executor-platform family now
-            # authenticates as its own provisioned generation and this url no
-            # longer serves it. Both are REQUIRED by the parser, so a value that
-            # fails to arrive refuses at startup rather than at the first claim.
+            # THREE DATABASE CREDENTIALS, ONE PER AUTHORITY CLASS
+            # (wamn-0h0g.22.31, wamn-0h0g.22.11). Until those cutovers one url
+            # was written down for every class in the process; the
+            # executor-platform and callable-HTTP admitter families now
+            # authenticate as their own provisioned generations and this url no
+            # longer serves them. The first two are REQUIRED by the parser, so a
+            # value that fails to arrive refuses at startup rather than at the
+            # first claim; the third is OPTIONAL and its absence UNNAMES the
+            # class (see WAMN_HTTP_ADMITTER_PG_URL below).
             #
             # THE CARRIER EXISTS NOW: deploy/platform/executor-db.example.yaml
-            # (wamn-0h0g.10.10, wamn-0h0g.10.14). It declares both Secrets below,
-            # spells the platform half as a SCOPED GENERATION like the other
-            # three carriers, and records why neither url can stand in for the
-            # other. `wamn-ctl provision-project-env` supplies the values:
+            # (wamn-0h0g.10.10, wamn-0h0g.10.14). It declares all three Secrets
+            # below, spells the two cut-over halves as SCOPED GENERATIONS like
+            # the other carriers, and records why no url can stand in for
+            # another. `wamn-ctl provision-project-env` supplies the values:
             # `--emit-secret` writes the guest url as
-            # `wamn-db-<org>--<project>--<env>`, and
+            # `wamn-db-<org>--<project>--<env>`,
             # `--prepare-executor-platform-generation` /
             # `--emit-executor-platform-secret` write the platform url as
-            # `wamn-executor-platform-<org>--<project>--<env>`. Copying those
-            # values under the stable names this mount asks for is the same hand
-            # step every sibling carrier documents.
+            # `wamn-executor-platform-<org>--<project>--<env>`, and
+            # `--prepare-http-admitter-generation` /
+            # `--emit-http-admitter-secret` write the admitter url as
+            # `wamn-http-admitter-<org>--<project>--<env>`. Copying those values
+            # under the stable names this mount asks for is the same hand step
+            # every sibling carrier documents.
             - name: WAMN_PG_URL
               valueFrom:
                 secretKeyRef:
@@ -131,6 +137,24 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: wamn-executor-platform-db
+                  key: url
+            # The one authority-snapshot read behind a component's TRUSTED HTTP
+            # EFFECT dials with THIS one (wamn-0h0g.22.11).
+            # `pool::credential_exactness_hook` asserts
+            # `pg_has_role(current_user, 'wamn_http_admitter', MEMBER)` on every
+            # physical connection it opens, so neither url above can serve here.
+            #
+            # OPTIONAL, unlike the two above, and the asymmetry is deliberate:
+            # this class carries no path the process needs in order to run, so an
+            # executor without an admitter generation UNNAMES the class and still
+            # serves every route that raises no trusted HTTP effect. Removing
+            # this entry is therefore a supported deployment, and it is NOT the
+            # same as pointing it at the guest url — that would put a login of
+            # another authority back in the map.
+            - name: WAMN_HTTP_ADMITTER_PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-http-admitter-db
                   key: url
             - { name: WAMN_PROJECT, value: demo }
             - { name: WAMN_SCHEMA, value: wamn_runner_demo }

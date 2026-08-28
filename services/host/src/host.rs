@@ -300,6 +300,39 @@ fn host_memory(args: &HostArgs) -> anyhow::Result<HostMemoryBudgets> {
     .map_err(anyhow::Error::msg)
 }
 
+/// Route each sourced url onto the AUTHORITY CLASS it belongs to
+/// (`wamn-0h0g.22.16`, `wamn-0h0g.22.31`, `wamn-0h0g.22.11`).
+///
+/// A FUNCTION RATHER THAN A CLOSURE IN `run` BECAUSE THE ROUTING IS THE SECURITY
+/// PROPERTY AND `run` IS UNREACHABLE FROM A TEST — the `executor_credentials`
+/// precedent. Inline, a mutant that names the wrong class, or that keeps the
+/// shared `every_class` entry on the absent arm, leaves a platform pool on the
+/// guest login and SURVIVES every test in this crate, because nothing can
+/// observe the composition without standing up a NATS cluster, a release and a
+/// database.
+///
+/// Each cut-over family carries `Option<String>` rather than a required url:
+/// unlike the executor, a host serves with no run-plane work and no trusted HTTP
+/// effect at all, so an absent generation UNNAMES its class and startup
+/// continues. Unnaming is not the same as leaving the shared entry in place —
+/// see [`ClassCredentials::without_class`].
+fn host_credentials(
+    database_url: String,
+    executor_platform_url: Option<String>,
+    http_admitter_url: Option<String>,
+) -> ClassCredentials {
+    let credentials = match executor_platform_url {
+        Some(platform) => ClassCredentials::every_class(database_url)
+            .with_class(AuthorityClass::ExecutorPlatform, platform),
+        None => ClassCredentials::every_class(database_url)
+            .without_class(AuthorityClass::ExecutorPlatform),
+    };
+    match http_admitter_url {
+        Some(admitter) => credentials.with_class(AuthorityClass::CallableHttp, admitter),
+        None => credentials.without_class(AuthorityClass::CallableHttp),
+    }
+}
+
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
@@ -387,19 +420,24 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // which is the real fault, instead of for a membership the guest login can
     // never hold. The host is NOT refused at startup for this — unlike the
     // executor it can serve with no run-plane work at all.
+    //
+    // wamn-0h0g.22.11 CUT THE CALLABLE-HTTP CLASS OVER on the same terms, and
+    // the host takes the unnaming arm for it too: that class carries the single
+    // `WamnPostgres::connection_effect_snapshot` read behind a component's
+    // trusted HTTP effect, so a host without an admitter generation still serves
+    // every route that raises no such effect.
     let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
+    let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
+        .ok()
+        .filter(|url| !url.is_empty());
     let postgres = Arc::new(
-        WamnPostgres::from_env(std::env::var("WAMN_PG_URL").ok().map(|url| {
-            let credentials = ClassCredentials::every_class(url);
-            match executor_platform_url {
-                Some(platform) => {
-                    credentials.with_class(AuthorityClass::ExecutorPlatform, platform)
-                }
-                None => credentials.without_class(AuthorityClass::ExecutorPlatform),
-            }
-        }))
+        WamnPostgres::from_env(
+            std::env::var("WAMN_PG_URL")
+                .ok()
+                .map(|url| host_credentials(url, executor_platform_url, http_admitter_url)),
+        )
         .context("wamn:postgres plugin init")?,
     );
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
@@ -597,6 +635,85 @@ mod tests {
     struct TestCli {
         #[command(flatten)]
         args: HostArgs,
+    }
+
+    const GUEST: &str = "postgres://guest@h/db";
+    const PLATFORM: &str = "postgres://platform@h/db";
+    const ADMITTER: &str = "postgres://admitter@h/db";
+
+    /// THE GUEST URL IS NOT A CUT-OVER FAMILY'S CREDENTIAL (`wamn-0h0g.22.31`,
+    /// `wamn-0h0g.22.11`).
+    ///
+    /// Driven through [`host_credentials`], the same call `run` makes, so the
+    /// ROUTING is what is pinned rather than a re-statement of it. Every class is
+    /// checked, not just the ones that matter: naming the wrong class moves BOTH
+    /// the class that gained a cut-over url and the one that lost it, and a
+    /// two-class assertion could miss the second half.
+    #[test]
+    fn the_host_routes_each_url_to_its_own_class() {
+        let credentials = host_credentials(
+            GUEST.to_owned(),
+            Some(PLATFORM.to_owned()),
+            Some(ADMITTER.to_owned()),
+        );
+        for class in AuthorityClass::ALL {
+            let expected = match class {
+                AuthorityClass::ExecutorPlatform => PLATFORM,
+                AuthorityClass::CallableHttp => ADMITTER,
+                _ => GUEST,
+            };
+            assert_eq!(
+                credentials.url(class),
+                Some(expected),
+                "{class:?} must authenticate with its own credential"
+            );
+        }
+    }
+
+    /// A HOST GIVEN NO GENERATION FOR A CUT-OVER FAMILY UNNAMES THAT CLASS
+    /// (`wamn-0h0g.22.31`, `wamn-0h0g.22.11`).
+    ///
+    /// The load-bearing half. Keeping `every_class`'s shared entry would leave
+    /// the family authenticating as the GUEST — a login of another authority
+    /// that still satisfies the map — so the absent arm must ERASE the entry and
+    /// let checkout refuse for the missing credential. Each arm is exercised on
+    /// its own so a mutant that unnames both, or the wrong one, fails here.
+    #[test]
+    fn a_host_with_no_generation_for_a_family_refuses_rather_than_borrows() {
+        let no_admitter = host_credentials(GUEST.to_owned(), Some(PLATFORM.to_owned()), None);
+        assert_eq!(
+            no_admitter.url(AuthorityClass::CallableHttp),
+            None,
+            "an unprovisioned callable-HTTP family must have NO credential rather \
+             than the guest's"
+        );
+        assert_eq!(
+            no_admitter.url(AuthorityClass::ExecutorPlatform),
+            Some(PLATFORM),
+            "unnaming callable-HTTP must not disturb another class"
+        );
+
+        let no_platform = host_credentials(GUEST.to_owned(), None, Some(ADMITTER.to_owned()));
+        assert_eq!(
+            no_platform.url(AuthorityClass::ExecutorPlatform),
+            None,
+            "an unprovisioned executor-platform family must have NO credential \
+             rather than the guest's"
+        );
+        assert_eq!(
+            no_platform.url(AuthorityClass::CallableHttp),
+            Some(ADMITTER),
+            "unnaming executor-platform must not disturb another class"
+        );
+
+        let neither = host_credentials(GUEST.to_owned(), None, None);
+        assert_eq!(neither.url(AuthorityClass::ExecutorPlatform), None);
+        assert_eq!(neither.url(AuthorityClass::CallableHttp), None);
+        assert_eq!(
+            neither.url(AuthorityClass::GuestSql),
+            Some(GUEST),
+            "the guest class keeps its own credential either way"
+        );
     }
 
     /// The R2 posture's first half: a host given no release pair was never given
