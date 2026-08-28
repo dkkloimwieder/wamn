@@ -714,4 +714,96 @@ fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
     }
     probes.push_str("END $probe$;\n");
     run_admin(&admin, "the effective-privilege probes", &probes);
+
+    // --- THE POST-STATE, IN THE GENERATION'S OWN SESSION --------------------
+    //
+    // Every probe above is a privilege-catalog question, and the catalog is
+    // BLIND TO RLS: `has_table_privilege` answers TRUE for a role whose every
+    // SELECT returns zero rows because no policy matched it. All six relations
+    // carry FORCE RLS with a restrictive tenant floor keyed on the GUEST login
+    // pattern, so a non-guest family reads through the permissive
+    // `TO wamn_platform` arm or it reads nothing at all — and reading nothing
+    // RAISES NOTHING. This arm is therefore the only thing here that separates
+    // an ISOLATED credential from a SILENTLY BLIND one (`wamn-0h0g.22.11`).
+    //
+    // Unlike the executor arm above, this one does NOT re-apply
+    // `platform_group_membership_sql`. The edge is converged by
+    // `prepare_workload_generation_sql` itself, through
+    // `normalize_workload_generation_membership_sql`, so re-applying it here
+    // would MASK the day that stops being true — which is precisely the
+    // regression the counts below exist to catch.
+    let digest = format!("sha256:{}", "a".repeat(64));
+    run_admin(
+        &admin,
+        "seed one readable fact in each of the six relations",
+        &format!(
+            // `connection_instances.active_generation` and
+            // `connection_generations` reference each other, and the instance's
+            // BEFORE UPDATE guard rejects any revision that is not a controlled
+            // bump — so the cycle is closed with the DEFERRABLE arm inside one
+            // transaction rather than with an UPDATE the schema forbids.
+            "BEGIN;\nSET CONSTRAINTS ALL DEFERRED;\n\
+             INSERT INTO catalog.catalogs \
+               (tenant_id, catalog_id, version, environment, schema_version, state) \
+             VALUES ('tenant-a', 'orders', 1, 'prod', '0.1', 'applied');\n\
+             INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) \
+             VALUES ('tenant-a', 'orders', 1);\n\
+             INSERT INTO catalog.component_library \
+               (tenant_id, catalog_id, catalog_version, component, interface_version, \
+                operation, component_digest, imports, imports_fingerprint, effects, \
+                input_ports, output_ports, parameters, admitted_at) \
+             VALUES ('tenant-a', 'orders', 1, 'http-request', '0.1.0', 'run', '{digest}', \
+                     '[]', '{digest}', '[]', '[]', '[]', '[]', now());\n\
+             INSERT INTO catalog.wirings \
+               (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
+                graph_json, wiring_hash, created_at) \
+             VALUES ('tenant-a', 'orders', 'hot-route', 1, 1, '{{}}', '{digest}', now());\n\
+             INSERT INTO catalog.connection_instances \
+               (tenant_id, environment, instance_id, requirement_type, contract, \
+                lifecycle_status, active_generation, revision, created_at, updated_at) \
+             VALUES ('tenant-a', 'prod', 'upstream', 'http', \
+                     'wamn:connection/http@0.1.0', 'enabled', 1, 0, now(), now());\n\
+             INSERT INTO catalog.connection_generations \
+               (tenant_id, environment, instance_id, generation, definition_json, \
+                definition_hash, credential_set_handle, created_at) \
+             VALUES ('tenant-a', 'prod', 'upstream', 1, '{{}}', '{digest}', \
+                     'upstream-v1', now());\n\
+             INSERT INTO catalog.connection_requirements \
+               (tenant_id, component_digest, store_alias, requirement_json, \
+                requirement_hash, created_at) \
+             VALUES ('tenant-a', '{digest}', 'upstream', '{{}}', '{digest}', now());\n\
+             INSERT INTO catalog.connection_bindings \
+               (tenant_id, catalog_id, catalog_version, component_digest, store_alias, \
+                environment, instance_id, binding_status, validation_status, \
+                validation_hash, created_at) \
+             VALUES ('tenant-a', 'orders', 1, '{digest}', 'upstream', 'prod', 'upstream', \
+                     'active', 'valid', '{digest}', now());\n\
+             COMMIT;\n"
+        ),
+    );
+
+    let as_login = role_url(&admin, &login, GENERATION_PW);
+    assert_eq!(
+        query(
+            &as_login,
+            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"
+        ),
+        "f",
+        "the reading session is superuser or bypasses RLS, which satisfies every \
+         count below while proving nothing"
+    );
+    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+        assert_eq!(
+            query(
+                &as_login,
+                &format!("SELECT count(*) FROM catalog.{relation}")
+            ),
+            "1",
+            "the callable-HTTP generation read the WRONG NUMBER of rows from \
+             catalog.{relation}. Zero is the failure this arm exists to catch: the \
+             row is seeded and the SELECT is granted, so zero means the tenant floor \
+             admitted nothing and the credential is isolated into blindness rather \
+             than into authority"
+        );
+    }
 }
