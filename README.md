@@ -38,7 +38,6 @@ crates/                 shared Rust workspace packages
     runtime             shared engine, plugins, WIT, and metrics
     pg-core             wamn-pg-core: guest-safe PostgreSQL primitives
   data/
-    entity-access       wamn-entity-access: transport-neutral entity planner
     api                 wamn-api: HTTP/event-registration adapter
   schema/
     model               wamn-schema-model: metadata model + JSON Schema
@@ -62,11 +61,13 @@ crates/                 shared Rust workspace packages
   scenarios/
     model               wamn-scenario-model: test-set/assertion vocabulary
 
-components/             wasm32-wasip2 guests
+components/             wasm32-wasip2 guests and guest libraries
+  data/                 wamn-postgres-sqlx: capability-shaped SQLx transport
+                        and explicit transaction runner
   ingress/              product ingress components (flow-http)
   execution/            product execution components (materializer)
   fixtures/             non-product proof fixtures (busyloop,
-                        connection-http-standard, sockprobe)
+                        connection-http-standard, sockprobe, sqlx-command)
   no-std/               SECOND cargo workspace: the no_std palette guests
                         (http-request, transform), isolated from serde_json/std
 
@@ -135,7 +136,7 @@ cargo test                       # a specific crate: cargo test -p wamn-router
 
 # lint + format
 # --workspace is required: without it Cargo selects default-members only, which
-# is 17 of the 35 workspace crates. --keep-going is required because Cargo stops
+# is 16 of the 34 workspace crates. --keep-going is required because Cargo stops
 # scheduling new units at the first error, hiding every later package's lints.
 cargo clippy --workspace --all-targets --keep-going && cargo fmt --all --check
 ```

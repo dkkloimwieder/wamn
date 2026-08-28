@@ -1922,10 +1922,7 @@ fn generated_tenant_family_is_covered() {
         .collect();
     assert_eq!(
         dynamic_paths,
-        BTreeSet::from([
-            "crates/data/entity-access/src/planner.rs",
-            "crates/schema/compiler/src/seed/emit.rs"
-        ])
+        BTreeSet::from(["crates/schema/compiler/src/seed/emit.rs"])
     );
     validate_dynamic_writers(&repository, &manifest).expect("dynamic writer markers are live");
 }

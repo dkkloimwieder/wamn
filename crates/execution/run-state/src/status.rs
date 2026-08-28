@@ -3,7 +3,7 @@
 //! `as_sql`/`from_sql` (the SQL literals are exactly the serde kebab-case names,
 //! tied to `deploy/sql/run-state.sql` by a drift-guard test). A `From<…>` conversion
 //! adapts `wamn_execution_contract::node_contract::NodeError` into its persisted
-//! form, the way `wamn_pg_core::SqlValue` mirrors the WIT.
+//! form.
 
 use serde::{Deserialize, Serialize};
 use wamn_execution_contract::node_contract::NodeError;

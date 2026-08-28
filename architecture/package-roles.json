@@ -103,15 +103,6 @@
     },
     {
       "workspace": "root",
-      "name": "wamn-entity-access",
-      "manifest_path": "crates/data/entity-access/Cargo.toml",
-      "role": "core",
-      "target_class": "shared",
-      "bounded_context": "data",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
       "name": "wamn-event-reg",
       "manifest_path": "crates/events/registration/Cargo.toml",
       "role": "contract",
@@ -404,6 +395,15 @@
     },
     {
       "workspace": "components",
+      "name": "wamn-postgres-sqlx",
+      "manifest_path": "components/data/postgres-sqlx/Cargo.toml",
+      "role": "adapter",
+      "target_class": "guest",
+      "bounded_context": "data",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
       "name": "busyloop",
       "manifest_path": "components/fixtures/busyloop/Cargo.toml",
       "role": "test",
@@ -424,6 +424,15 @@
       "workspace": "components",
       "name": "sockprobe",
       "manifest_path": "components/fixtures/sockprobe/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "sqlx-command",
+      "manifest_path": "components/fixtures/sqlx-command/Cargo.toml",
       "role": "test",
       "target_class": "guest",
       "bounded_context": "proof",

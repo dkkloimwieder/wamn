@@ -52,10 +52,6 @@
       "path": "crates/identity/platform",
       "role": "persistence"
     },
-    "entity-access": {
-      "path": "crates/data/entity-access",
-      "role": "persistence"
-    },
     "event-registration-model": {
       "path": "crates/events/registration",
       "role": "semantic"
@@ -275,17 +271,6 @@
       }
     ],
     "dynamic_writers": [
-      {
-        "path": "crates/data/entity-access/src/planner.rs",
-        "principal": "entity-access",
-        "family": "generated-tenant-entities",
-        "marker": "INSERT INTO {}",
-        "operations": [
-          "insert",
-          "update",
-          "delete"
-        ]
-      },
       {
         "path": "crates/schema/compiler/src/seed/emit.rs",
         "principal": "schema-compiler",
@@ -1411,11 +1396,9 @@
       ],
       "schema_source": "crates/schema/compiler/src/emit.rs",
       "writers": [
-        "entity-access",
         "schema-compiler"
       ],
       "readers": [
-        "entity-access",
         "cdc-reader"
       ],
       "compatibility_horizon": "one-catalog-version-and-migration-transaction",

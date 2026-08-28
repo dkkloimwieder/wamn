@@ -526,6 +526,29 @@ back as the empty string once it has been set and the `SET LOCAL` scope ended,
 and NULL only if it was never set in the session at all. NULL is therefore the
 sharper claim — the guest transaction never touched it.
 
+### `[SQLX-TRANSACTION]` — the SQLx guest transport and transaction runner
+
+`crates/platform/runtime/tests/sqlx_transaction_live.rs` (`wamn-0h0g.22.2a`).
+The ignored gate requires a freshly initialized PostgreSQL 18 cluster and the
+separately built `wasi:cli` fixture. It creates and removes its schema plus both
+cluster-wide roles. It never uses kind.
+
+```bash
+docker run -d --name wamn-sqlx-pg -e POSTGRES_PASSWORD=probe \
+  -p 127.0.0.1:5437:5432 postgres:18
+until docker exec wamn-sqlx-pg psql -U postgres -tAc 'select 1' >/dev/null 2>&1; do :; done
+cargo build --manifest-path components/Cargo.toml -p sqlx-command --target wasm32-wasip2
+WAMN_SQLX_TRANSACTION_PG_URL=postgres://postgres:probe@localhost:5437/postgres \
+WAMN_SQLX_TRANSACTION_COMPONENT="$PWD/components/target/wasm32-wasip2/debug/sqlx-command.wasm" \
+  cargo test -p wamn-runtime --test sqlx_transaction_live -- --include-ignored
+docker rm -f wamn-sqlx-pg      # BY EXPLICIT NAME. Never prune.
+```
+
+The command commits one row through `query_as`, rolls back a callback error,
+and observes the typed permission denial for a row owned by the wrong
+`current_user`. The host additionally requires the exact committed database
+state and exported `wamn.postgres` `txn.query`/`txn.execute` spans.
+
 ### `[TENANT-FLOOR]` — the swept hand-written tenant floor
 
 `crates/control/provision/tests/deploy_sql_authority.rs` (`wamn-0h0g.22.6.3`).
@@ -686,6 +709,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `crates/catalog/model/tests/wiring_activation_live.rs` | `WAMN_CATALOG_PG_URL` | `cargo test -p wamn-catalog --test wiring_activation_live -- --ignored` |
 | `crates/platform/runtime/tests/wiring_doorbell_live.rs` | `WAMN_CATALOG_PG_URL` | `cargo test -p wamn-runtime --test wiring_doorbell_live -- --ignored` |
 | `crates/platform/runtime/tests/executor_platform_surface_live.rs` | `WAMN_EXEC_PLATFORM_PG_URL` | `cargo test -p wamn-runtime --test executor_platform_surface_live -- --include-ignored` |
+| `crates/platform/runtime/tests/sqlx_transaction_live.rs` | `WAMN_SQLX_TRANSACTION_PG_URL` **and** `WAMN_SQLX_TRANSACTION_COMPONENT` | `cargo test -p wamn-runtime --test sqlx_transaction_live -- --include-ignored` |
 | `services/ctl/tests/effect_writer_generation_live.rs` | `WAMN_EFFECT_WRITER_PG18_URL` | `cargo test -p wamn-ctl --test effect_writer_generation_live -- --ignored --nocapture` |
 | `services/ctl/tests/guest_generation_live.rs` | `WAMN_GUEST_GENERATION_PG18_URL` | `cargo test -p wamn-ctl --features ops --test guest_generation_live -- --ignored --nocapture` |
 | `services/ctl/tests/management_admitter_generation_live.rs` | `WAMN_MANAGEMENT_ADMITTER_PG18_URL` | `cargo test -p wamn-ctl --test management_admitter_generation_live -- --ignored --nocapture` |

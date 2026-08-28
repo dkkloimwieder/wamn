@@ -1,0 +1,14 @@
+[package]
+name = "sqlx-command"
+version.workspace = true
+edition.workspace = true
+description = "Real-transport SQLx transaction acceptance fixture"
+license = "Apache-2.0"
+
+[dependencies]
+futures-executor = "0.3"
+sqlx = { version = "=0.9.0", default-features = false }
+wamn-postgres-sqlx = { workspace = true }
+
+[lints]
+workspace = true

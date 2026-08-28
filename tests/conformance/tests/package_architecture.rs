@@ -9,10 +9,10 @@ const ROOT_WORKSPACE: &str = "root";
 /// additive-only inside one invocation, so the `no_std` palette guests are
 /// isolated from the members that reach `serde_json/std` (wamn-0h0g.11.56).
 const COMPONENT_WORKSPACES: [(&str, &str, usize); 2] = [
-    ("components", "components/Cargo.toml", 5),
+    ("components", "components/Cargo.toml", 7),
     ("components-no-std", "components/no-std/Cargo.toml", 2),
 ];
-const ROOT_MEMBER_COUNT: usize = 35;
+const ROOT_MEMBER_COUNT: usize = 34;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -795,9 +795,7 @@ fn real_workspaces_satisfy_package_architecture() {
         "resolved root and component workspace architecture",
         validate_graph(&packages, &manifest.graph_delta, &edges),
     );
-    // The one accepted edge was wamn-standard-nodes -> wamn-entity-access.
-    // That crate was deleted (wamn-0h0g.26.4), so the exception list is empty
-    // and every edge now has to pass the ordinary rules above.
+    // Every edge has to pass the ordinary rules above.
     assert!(
         manifest.graph_delta.accepted_edges.is_empty(),
         "an accepted graph edge reappeared without a guard naming it"

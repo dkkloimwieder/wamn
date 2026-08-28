@@ -4234,15 +4234,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-entity-access"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-pg-core",
- "wamn-schema-model",
-]
-
-[[package]]
 name = "wamn-event-reg"
 version = "0.1.0"
 dependencies = [
@@ -4373,9 +4364,6 @@ dependencies = [
 [[package]]
 name = "wamn-pg-core"
 version = "0.1.0"
-dependencies = [
- "serde_json",
-]
 
 [[package]]
 name = "wamn-platform-identity"

@@ -140,10 +140,6 @@ mod tests {
         );
     }
 }
-mod value;
-
-pub use value::SqlValue;
-
 use std::fmt;
 
 /// Schema hosting the per-database authority derivations (`wamn-0h0g.22.6`).
@@ -241,35 +237,5 @@ impl QualifiedName {
 
     pub fn quoted(&self) -> String {
         format!("{}.{}", self.schema.quoted(), self.name.quoted())
-    }
-}
-
-/// A parameterized statement and the columns projected by its result.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Statement {
-    sql: String,
-    params: Vec<SqlValue>,
-    columns: Vec<String>,
-}
-
-impl Statement {
-    pub fn new(sql: impl Into<String>, params: Vec<SqlValue>, columns: Vec<String>) -> Self {
-        Self {
-            sql: sql.into(),
-            params,
-            columns,
-        }
-    }
-
-    pub fn sql(&self) -> &str {
-        &self.sql
-    }
-
-    pub fn params(&self) -> &[SqlValue] {
-        &self.params
-    }
-
-    pub fn columns(&self) -> &[String] {
-        &self.columns
     }
 }

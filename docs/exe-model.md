@@ -81,10 +81,16 @@ admission freezes it in `runs.durability_class`, and claims read only that carri
 
 ## Data, identity and generated APIs
 
-- `wamn:postgres` remains the credential-hiding database boundary. sqlx uses a
-  custom runtime-checked `Database` over that transport; upstream `query_as!`
-  supports only built-in drivers, so MVP makes no offline-cache or compile-time
-  query-shape claim and does not widen WIT to imitate Postgres internals.
+- `wamn:postgres` remains the unchanged credential-hiding WIT boundary: guests
+  receive no socket or credential, and `WamnPostgres` is not aliased to a built-in
+  sqlx driver. The complete application SQL corpus—generated CRUD, lock and
+  mutation SQL plus authored named query and projection SQL—has a native
+  `sqlx::Postgres` verifier sibling on the exact effective schema, while Wasm
+  executes byte-identical SQL through runtime-checked `WamnPostgres`;
+  tenant/developer and workflow-editor arbitrary SQL remains runtime-checked.
+  See the [sqlx data-access specification](sqlx-data-access-spec.md),
+  [base-application POC](poc/wamn_base_application_poc_revised.md), and
+  [receiving scenario](poc/wamn_receiving_layered_application_poc_scenario.md).
 - Runtime database identities are per project-environment and tenant. PostgreSQL
   `current_user`, backed by opaque bounded role names, is the RLS input; caller-
   settable tenant GUCs retire. `wamn_app` becomes a NOLOGIN ACL role inherited by
@@ -93,9 +99,12 @@ admission freezes it in `runs.durability_class`, and claims read only that carri
   The closed classes are guest SQL, executor platform, callable HTTP and event
   materializer. HTTP and event admission are DB-enforced per-kind operations;
   producer kind is never trusted as a parameter.
-- Generated APIs emit ordinary gated artifacts. `generate crud` produces wirings,
-  route attachments and cases around one generic `entity` component. Nothing
-  generated is gate-exempt or reflection-served.
+- Generated APIs emit package-owned typed accessors and registered operations as
+  ordinary gated artifacts, not one universal generic `entity` component.
+  External consumers use generated registered operations after trusted
+  `CallerIdentity` permission checks; the host independently selects the
+  PostgreSQL identity enforced by privileges and RLS. Nothing generated is
+  gate-exempt or reflection-served.
 - Existing compiled RLS policies use role/user claims that the production claim
   path does not inject. That correctness defect must close before generated APIs
   or raw developer SQL become reachable.
@@ -146,7 +155,7 @@ retirement beads remove the package and its marker together.
 | publish gate |
 | provisioning · publish · additive schema · tenant isolation (T1 minting) |
 | management auth |
-| catalog-derived PostgreSQL entity access (`entity-access/src/planner.rs`) |
+| runtime-checked sqlx over the credential-hiding `wamn:postgres` transport |
 | egress confinement (import allowlist, mutation-proofed) |
 | M0 node set |
 | proof floor |

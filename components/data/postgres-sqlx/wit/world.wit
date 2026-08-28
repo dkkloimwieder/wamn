@@ -1,0 +1,6 @@
+package wamn:postgres-sqlx@0.1.0;
+
+world postgres-sqlx {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/client@0.1.0;
+}

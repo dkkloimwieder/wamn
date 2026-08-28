@@ -8,8 +8,8 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL: &str = "tools/repo-lint";
-const ROOT_MEMBER_COUNT: usize = 35;
-const COMPONENT_MEMBER_COUNT: usize = 5;
+const ROOT_MEMBER_COUNT: usize = 34;
+const COMPONENT_MEMBER_COUNT: usize = 7;
 const NO_STD_MEMBER_COUNT: usize = 2;
 const LEG_LABELS: [&str; 10] = [
     "connection HTTP per-invocation client",

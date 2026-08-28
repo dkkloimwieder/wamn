@@ -181,8 +181,8 @@ fn profile_contract_matches_locked_metadata() {
         component_members.extend(members);
     }
 
-    assert_eq!(root_members.len(), 35);
-    assert_eq!(component_members.len(), 7);
+    assert_eq!(root_members.len(), 34);
+    assert_eq!(component_members.len(), 9);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -229,11 +229,11 @@ fn profile_contract_matches_locked_metadata() {
     );
 
     let profile_counts = [
-        ("m1", 21),
-        ("m2", 23),
-        ("deploy", 29),
-        ("full", 35),
-        ("ops", 35),
+        ("m1", 20),
+        ("m2", 22),
+        ("deploy", 28),
+        ("full", 34),
+        ("ops", 34),
     ];
     let mut profiles = BTreeMap::new();
     for (profile, expected_count) in profile_counts {
@@ -310,12 +310,14 @@ fn profile_contract_matches_locked_metadata() {
             "http-request",
             "materializer",
             "sockprobe",
+            "sqlx-command",
             "transform",
+            "wamn-postgres-sqlx",
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
     assert_eq!(component_m1.len(), 4);
-    assert_eq!(component_proof.len(), 7);
+    assert_eq!(component_proof.len(), 9);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(
@@ -323,7 +325,13 @@ fn profile_contract_matches_locked_metadata() {
             .difference(&set(&component_m1))
             .cloned()
             .collect::<BTreeSet<_>>(),
-        ["busyloop", "connection-http-standard", "sockprobe"]
+        [
+            "busyloop",
+            "connection-http-standard",
+            "sockprobe",
+            "sqlx-command",
+            "wamn-postgres-sqlx",
+        ]
             .into_iter()
             .map(str::to_string)
             .collect()

@@ -1451,8 +1451,9 @@ FOR EACH ROW EXECUTE FUNCTION catalog.guard_release_component_insert();
 -- wants (`entity_id`), WHICH ops, and an optional condition filter. The
 -- materializer (crates/... l5i9.17) is the
 -- consumer — a durable consumer per registration, condition evaluated there
--- (hot-editable). Managed through the minimal CRUD surface in crates/data/entity-access
--- (`registration` module); the editor panel lands later (EVT-TRIGGER-UX).
+-- (hot-editable). Its mutation surface is specified as package-owned generated
+-- registered operations in docs/sqlx-data-access-spec.md; no generic entity
+-- runtime survives as a placeholder. The editor panel lands later (EVT-TRIGGER-UX).
 --
 -- `entity_id` is the stable catalog ENTITY ID, not a table name, so a table
 -- rename never orphans a registration (EVT-OIDMAP, wamn-l5i9.11); it matches the
