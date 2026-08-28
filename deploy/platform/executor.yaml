@@ -4,9 +4,11 @@
 # It does not accept execution plans.
 #
 # Prerequisites are deliberately separate lifecycle objects:
-#   - `wamn-executor-db`: one project-environment database URL under key `url`.
-#     THE ONE PREREQUISITE THIS TIER SHIPS NO `.example` CARRIER FOR; the
-#     omission and what supplies it instead are recorded at the mount below;
+#   - `wamn-executor-db` and `wamn-executor-platform-db`: the project
+#     environment's GUEST-SQL url and its EXECUTOR-PLATFORM generation, each one
+#     database URL under key `url`, from
+#     deploy/platform/executor-db.example.yaml. Two objects because they are two
+#     principals: see the mounts below;
 #   - `wamn-registry-pull`: the pull-only Docker config from
 #     deploy/platform/registry-credentials.example.yaml;
 #   - the release-manifest artifact named by the digest selected below.
@@ -95,32 +97,40 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            # NO `.example` CARRIER FOR THIS SECRET — RECORDED, NOT PAPERED
-            # OVER (wamn-0h0g.10.10). Every other database credential this tier
-            # mounts ships one (host-db, run-retention-db and
-            # dispatcher-projects `.example.yaml`); `ea71c1c4` deleted
-            # `runner-db.example.yaml` when the executor inherited the runner's
-            # Deployment role, and the carrier did not come with it.
+            # TWO DATABASE CREDENTIALS, ONE PER AUTHORITY CLASS
+            # (wamn-0h0g.22.31). Until that cutover one url was written down for
+            # every class in the process; the executor-platform family now
+            # authenticates as its own provisioned generation and this url no
+            # longer serves it. Both are REQUIRED by the parser, so a value that
+            # fails to arrive refuses at startup rather than at the first claim.
             #
-            # WHAT SUPPLIES IT TODAY: `wamn-ctl provision-project-env`. Its
-            # `--emit-secret PATH` writes the project-environment app URL under
-            # the single `url` key read below — but into a Secret named
-            # `wamn-db-<org>--<project>--<env>`, so applying those bytes under
-            # the name this mount asks for is a hand step.
-            #
-            # THE CARRIER IS UNWRITTEN BECAUSE ITS SPELLING IS AN OWNER CALL,
-            # not because nobody reached it. Since the connection-generation
-            # cutover the other three carriers each name a SCOPED generation,
-            # and this family has one: `--prepare-executor-platform-generation`
-            # / `--emit-executor-platform-secret`, minting
-            # `wamn-executor-platform-<org>--<project>--<env>`. Which of the two
-            # this mount should spell, and with which sslmode, is the decision
-            # wamn-0h0g.10.10 holds. Naming the wrong default in an example is
-            # worse than shipping none.
+            # THE CARRIER EXISTS NOW: deploy/platform/executor-db.example.yaml
+            # (wamn-0h0g.10.10, wamn-0h0g.10.14). It declares both Secrets below,
+            # spells the platform half as a SCOPED GENERATION like the other
+            # three carriers, and records why neither url can stand in for the
+            # other. `wamn-ctl provision-project-env` supplies the values:
+            # `--emit-secret` writes the guest url as
+            # `wamn-db-<org>--<project>--<env>`, and
+            # `--prepare-executor-platform-generation` /
+            # `--emit-executor-platform-secret` write the platform url as
+            # `wamn-executor-platform-<org>--<project>--<env>`. Copying those
+            # values under the stable names this mount asks for is the same hand
+            # step every sibling carrier documents.
             - name: WAMN_PG_URL
               valueFrom:
                 secretKeyRef:
                   name: wamn-executor-db
+                  key: url
+            # The queue claim, lease renewal, reap, caller release and plan
+            # supply dial with THIS one. `pool::credential_exactness_hook`
+            # asserts `pg_has_role(current_user, 'wamn_executor_platform',
+            # MEMBER)` on every physical connection it opens, so the guest url
+            # above cannot serve here: it does not fail over, it refuses every
+            # connection the platform pool ever makes.
+            - name: WAMN_EXECUTOR_PLATFORM_PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-executor-platform-db
                   key: url
             - { name: WAMN_PROJECT, value: demo }
             - { name: WAMN_SCHEMA, value: wamn_runner_demo }

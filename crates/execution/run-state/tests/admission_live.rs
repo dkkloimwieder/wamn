@@ -288,19 +288,50 @@ fn surviving_authority_matrix_live() {
     let wiring_hash = format!("sha256:{}", "c".repeat(64));
     let race_wiring_hash = format!("sha256:{}", "d".repeat(64));
 
-    // The executor keeps test-only union grants so its wrong-class management
-    // attempt reaches the current_user guard. Management uses only the exact
-    // production surface above. The two candidate rows share one component
-    // with two requirements so array ordering is observable.
+    // THE EXECUTOR'S TEST-ONLY UNION GRANT IS GONE (`wamn-0h0g.22.31`). Both
+    // families now stand on the production builder and nothing else:
+    // `grant_executor_platform_surface_sql` is the whole authority this suite
+    // drives the claim under, so a leg that passes here passes on what
+    // provisioning actually emits. The union it replaces was
+    // `SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA catalog, wamn_run`
+    // — every catalog write and every `runs`/`run_queue` column, none of which
+    // the family holds any more.
+    //
+    // The wrong-class management attempt below still reaches the `current_user`
+    // guard on this narrow surface, and that is MEASURED, not assumed:
+    // `lock_management_producer_sql` names NO relation at all — only the
+    // authority function and `pg_catalog` — so it has no table ACL to fail
+    // ahead of the guard. Only schema `USAGE` is load bearing there, for
+    // resolving `wamn_run.` and `catalog.` while the sibling admit statement is
+    // PREPAREd, and the builder grants exactly that.
+    //
+    // `wamn_control_author` keeps a bare schema `USAGE`: it is not an executor
+    // grant, it is what lets the denied-role loop at the end of this test reach
+    // `wamn_run.require_executor_platform_authority()` and fail on the guard's
+    // literal rather than on schema resolution.
+    //
+    // THE THREE DELIBERATE OVER-GRANTS AHEAD OF THE REPLAY ARE THE MANAGEMENT
+    // ARM'S DEVICE, applied to this family: the surface `executor_provision`
+    // already installed is REPLAYED here over a widened ACL, and the denial
+    // matrix below asserts the replay NARROWED. Without them the totals would
+    // only show that the builder grants what it grants; with them they show that
+    // its blanket `REVOKE` withdraws a table privilege, a `runs` column and a
+    // `run_queue` column that no longer belong to the family. One is a catalog
+    // WRITE, one an admission pin, one the FIFO position — the three grains the
+    // surface's own documentation says it must never hold.
+    //
+    // The two candidate rows share one component with two requirements so array
+    // ordering is observable.
+    let executor_surface = sql::grant_executor_platform_surface_sql("wamn_run");
     success(
         &url,
         &format!(
-            "GRANT USAGE ON SCHEMA wamn_run, catalog \
+            "GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA catalog \
                TO wamn_executor_platform; \
+             GRANT UPDATE (input_json) ON wamn_run.runs TO wamn_executor_platform; \
+             GRANT UPDATE (available_at) ON wamn_run.run_queue TO wamn_executor_platform; \
+             {executor_surface} \
              GRANT USAGE ON SCHEMA wamn_run TO wamn_control_author; \
-             GRANT SELECT, INSERT, UPDATE, DELETE \
-               ON ALL TABLES IN SCHEMA catalog, wamn_run \
-               TO wamn_executor_platform; \
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
              VALUES ('t1','cat',1,'dev','0.1','applied'); \
@@ -359,6 +390,85 @@ fn surviving_authority_matrix_live() {
                      'dispatched','automation','{{}}'); \
              INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('t1','run-1');"
         ),
+    );
+
+    // THE EXECUTOR-PLATFORM DENIAL MATRIX, STATED AS TOTALS (`wamn-0h0g.22.31`).
+    //
+    // Each leg aggregates every privilege the family actually holds across a
+    // whole schema and compares it to a LITERAL. A total is what makes one
+    // assertion refuse in BOTH directions: a grant the builder stops emitting
+    // drops out of the aggregate, and a grant it starts emitting appears in it.
+    // A per-item `has_*_privilege` list could only ever catch one direction.
+    //
+    // THE LITERALS ARE WRITTEN OUT RATHER THAN DERIVED FROM
+    // `EXECUTOR_PLATFORM_*` ON PURPOSE. Deriving them would make the constants
+    // agree with themselves: a column added to the constant would widen the
+    // grant and the expectation in the same edit, and no leg here could tell.
+    // Written out, the constant and the claim about it are two documents, and
+    // the surface cannot be widened without moving a named assertion.
+    success(
+        &url,
+        "DO $$ DECLARE actual text; BEGIN \
+           SELECT string_agg(c.relname || ':' || p, ',' ORDER BY c.relname || ':' || p) \
+             INTO actual \
+             FROM pg_catalog.pg_class AS c \
+             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+             CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE', \
+                                     'TRUNCATE','REFERENCES','TRIGGER']) AS p \
+            WHERE n.nspname = 'wamn_run' AND c.relkind IN ('r','p','v','m') \
+              AND pg_catalog.has_table_privilege('wamn_executor_platform', c.oid, p); \
+           ASSERT actual = 'effect_attempts:SELECT,run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
+                  'run-plane TABLE grain drifted: ' || coalesce(actual, '<none>'); \
+           SELECT string_agg(c.relname || ':' || p, ',' ORDER BY c.relname || ':' || p) \
+             INTO actual \
+             FROM pg_catalog.pg_class AS c \
+             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+             CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE', \
+                                     'TRUNCATE','REFERENCES','TRIGGER']) AS p \
+            WHERE n.nspname = 'catalog' AND c.relkind IN ('r','p','v','m') \
+              AND pg_catalog.has_table_privilege('wamn_executor_platform', c.oid, p); \
+           ASSERT actual = \
+             'catalog_heads:SELECT,component_library:SELECT,connection_bindings:SELECT,\
+connection_generations:SELECT,connection_instances:SELECT,connection_requirements:SELECT,\
+release_components:SELECT,release_manifest_v2_snapshots:SELECT,wiring_activation:SELECT,\
+wiring_tombstones:SELECT,wirings:SELECT', \
+                  'catalog TABLE grain drifted: ' || coalesce(actual, '<none>'); \
+           SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
+             FROM pg_catalog.pg_attribute AS a \
+            WHERE a.attrelid = 'wamn_run.runs'::regclass AND a.attnum > 0 \
+              AND NOT a.attisdropped \
+              AND pg_catalog.has_column_privilege( \
+                    'wamn_executor_platform', a.attrelid, a.attnum, 'UPDATE'); \
+           ASSERT actual = \
+             'caller_http_status,caller_outcome_hash,caller_outcome_json,caller_outcome_kind,\
+caller_release_node_id,caller_released_at,fail_kind,manifest_digest,release_version,\
+result_json,state_json,status,terminal_reason,updated_at', \
+                  'runs UPDATE columns drifted: ' || coalesce(actual, '<none>'); \
+           SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
+             FROM pg_catalog.pg_attribute AS a \
+            WHERE a.attrelid = 'wamn_run.run_queue'::regclass AND a.attnum > 0 \
+              AND NOT a.attisdropped \
+              AND pg_catalog.has_column_privilege( \
+                    'wamn_executor_platform', a.attrelid, a.attnum, 'UPDATE'); \
+           ASSERT actual = 'attempts,lease_expires_at,lease_generation,lease_owner', \
+                  'run_queue UPDATE columns drifted: ' || coalesce(actual, '<none>'); \
+           ASSERT pg_catalog.has_schema_privilege( \
+                    'wamn_executor_platform', 'wamn_run', 'USAGE'); \
+           ASSERT pg_catalog.has_schema_privilege( \
+                    'wamn_executor_platform', 'catalog', 'USAGE'); \
+           ASSERT NOT pg_catalog.has_schema_privilege( \
+                    'wamn_executor_platform', 'wamn_run', 'CREATE'); \
+           ASSERT NOT pg_catalog.has_schema_privilege( \
+                    'wamn_executor_platform', 'catalog', 'CREATE'); \
+           ASSERT pg_catalog.has_function_privilege('wamn_executor_platform', \
+                    'wamn_run.require_executor_platform_authority()', 'EXECUTE'); \
+           ASSERT pg_catalog.has_function_privilege('wamn_executor_platform', \
+                    'wamn_authority.tenant_key(text)', 'EXECUTE'); \
+           ASSERT NOT pg_catalog.has_schema_privilege( \
+                    'wamn_executor_platform', 'wamn_authority', 'USAGE'); \
+           ASSERT NOT pg_catalog.has_function_privilege('wamn_executor_platform', \
+                    'wamn_authority.current_tenant_key()', 'EXECUTE'); \
+         END $$;",
     );
 
     let claim = select_production_claim_sql();

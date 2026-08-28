@@ -31,9 +31,10 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
-    ClassCredentials, ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
-    ProductionReapResult, ProductionRouterAction, ReleaseIdentity, SessionClaims, WamnPostgres,
-    WamnPostgresConfig, production_router_action, production_router_result_action,
+    AuthorityClass, ClassCredentials, ProductionClaimResult, ProductionCompletionResult,
+    ProductionLeaseRenewal, ProductionReapResult, ProductionRouterAction, ReleaseIdentity,
+    SessionClaims, WamnPostgres, WamnPostgresConfig, production_router_action,
+    production_router_result_action,
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
@@ -78,7 +79,7 @@ fn queue_delivery_span(
 
 #[derive(Debug, Args)]
 pub struct ExecutorArgs {
-    /// The one database URL this executor authenticates with.
+    /// The guest-SQL database URL this executor authenticates with.
     ///
     /// `WAMN_PG_URL` is the DECLARED TRANSPORT, not a fallback: `deploy/platform`
     /// injects it via `secretKeyRef`, and naming it on the argument makes clap
@@ -87,8 +88,27 @@ pub struct ExecutorArgs {
     /// source plus any ambient source is the conflict
     /// `credential_exactness::AmbientCredentialState` already declares, and the
     /// executor was its own second source.
+    ///
+    /// ONE SOURCE PER AUTHORITY, not one source per process (`wamn-0h0g.22.31`).
+    /// This url no longer serves the executor-platform class; that class has its
+    /// own declared source below, and nothing reads this one on its behalf.
     #[arg(long, env = "WAMN_PG_URL")]
     pub database_url: Option<String>,
+
+    /// The provisioned executor-platform generation this executor claims with.
+    ///
+    /// REQUIRED, and deliberately not defaulted to [`Self::database_url`]
+    /// (`wamn-0h0g.22.31`). `pool::credential_exactness_hook` asserts
+    /// `pg_has_role(current_user, 'wamn_executor_platform', MEMBER)` on every
+    /// physical platform connection, which a guest generation fails — so a
+    /// fallback to the guest url does not degrade to a working claim path, it
+    /// produces a pool that refuses every connection with a membership error
+    /// instead of a missing-credential one. Refusing here names the real fault.
+    ///
+    /// `wamn-ctl provision-project-env --prepare-executor-platform-generation`
+    /// mints it; `deploy/platform/executor-db.example.yaml` is the carrier.
+    #[arg(long, env = "WAMN_EXECUTOR_PLATFORM_PG_URL")]
+    pub executor_platform_database_url: Option<String>,
 
     /// Stable, replica-unique owner prefix for node acquisition claims.
     #[arg(long, env = "WAMN_RUNNER")]
@@ -253,6 +273,32 @@ fn resolve_owner(arg: Option<String>) -> String {
         .unwrap_or_else(|| "wamn-executor".to_owned())
 }
 
+/// Route each sourced url onto the AUTHORITY CLASS it belongs to
+/// (`wamn-0h0g.22.16`, `wamn-0h0g.22.31`).
+///
+/// A FUNCTION RATHER THAN THREE LINES IN `run` BECAUSE THE ROUTING IS THE
+/// SECURITY PROPERTY AND `run` IS UNREACHABLE FROM A TEST. Inline, a mutant that
+/// names the wrong class — `with_class(GuestSql, …)`, or no `with_class` at all
+/// — leaves the platform pool on the guest login and SURVIVES every test in this
+/// crate, because nothing can observe the composition without standing up a
+/// registry, a release and a database. Extracted, the exact mapping is one pure
+/// call away and `the_executor_routes_each_url_to_its_own_class` kills that
+/// mutant.
+///
+/// `every_class` first, then one `with_class`, is deliberate and is NOT a
+/// fallback: the classes still awaiting their own cutover are WRITTEN DOWN
+/// against the guest url, so `resolve` selects rather than defaults, and the one
+/// class that has been cut over overwrites its own entry.
+fn executor_credentials(
+    database_url: String,
+    executor_platform_database_url: String,
+) -> ClassCredentials {
+    ClassCredentials::every_class(database_url).with_class(
+        AuthorityClass::ExecutorPlatform,
+        executor_platform_database_url,
+    )
+}
+
 pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
@@ -272,6 +318,13 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         .database_url
         .clone()
         .context("no database url: pass --database-url or set WAMN_PG_URL")?;
+    // ONE SOURCE PER AUTHORITY (`wamn-0h0g.22.31`). Read beside the guest url
+    // and refused the same way, so the executor-platform class can never be
+    // satisfied by the guest credential sitting next to it.
+    let executor_platform_database_url = args.executor_platform_database_url.clone().context(
+        "no executor-platform database url: pass --executor-platform-database-url \
+             or set WAMN_EXECUTOR_PLATFORM_PG_URL",
+    )?;
     let owner = resolve_owner(args.runner.clone());
     let release = load_release(
         &args.release_artifact_base,
@@ -292,11 +345,10 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         .filter(|ttl| *ttl > 0)
         .context("--lease-ttl-ms must be a positive signed 64-bit integer")?;
     let mut postgres_config = WamnPostgresConfig::from_env();
-    // wamn-0h0g.22.16: the executor names WHICH AUTHORITY the credential it
-    // sourced above belongs to. No family is cut over yet, so the one login is
-    // written down for every class rather than left to serve them all
-    // implicitly; a family cutover replaces exactly its own entry here.
-    postgres_config.credentials = Some(ClassCredentials::every_class(database_url));
+    postgres_config.credentials = Some(executor_credentials(
+        database_url,
+        executor_platform_database_url,
+    ));
     let postgres = Arc::new(WamnPostgres::new(postgres_config)?);
     postgres.register_pool_metrics();
     postgres.bind_session_claims(
@@ -733,13 +785,20 @@ mod tests {
         assert!(help.contains("readiness-bind"));
     }
 
-    /// THE CREDENTIAL HAS EXACTLY ONE SOURCE (`wamn-0h0g.22.9`).
+    /// EACH CREDENTIAL HAS EXACTLY ONE SOURCE (`wamn-0h0g.22.9`,
+    /// `wamn-0h0g.22.31`).
     ///
     /// Asserted on the clap DECLARATION rather than by mutating the process
     /// environment, which is global and racy across a test binary's threads.
     /// `run` no longer consults the environment at all for the credential, so
-    /// what clap declares here IS the whole source set: one argument, one env
-    /// var.
+    /// what clap declares here IS the whole source set.
+    ///
+    /// TWO ENTRIES, ONE PER AUTHORITY CLASS, NOT TWO SOURCES FOR ONE CREDENTIAL.
+    /// `wamn-0h0g.22.31` cut the executor-platform class onto its own
+    /// provisioned generation, and a second class is a second credential — the
+    /// property this pins is that NEITHER class has a source behind it, which
+    /// the exact set equality below still states. A THIRD entry, or either of
+    /// these two gaining an alternate env, fails here.
     ///
     /// THE LIMIT, RECORDED AND ACCEPTED (`wamn-0h0g.22.35`): THE DECLARATION IS
     /// PINNED AND THE CHAIN IS NOT. A reintroduced ambient source that goes
@@ -773,19 +832,63 @@ mod tests {
             .collect();
         assert_eq!(
             database_envs,
-            ["WAMN_PG_URL"],
-            "the executor credential must have exactly one declared source"
+            ["WAMN_PG_URL", "WAMN_EXECUTOR_PLATFORM_PG_URL"],
+            "each executor credential must have exactly one declared source, and \
+             the executor declares exactly two credentials"
         );
 
-        let database_url = command
-            .get_arguments()
-            .find(|arg| arg.get_id() == "database_url")
-            .expect("the executor declares a database-url argument");
-        assert_eq!(
-            database_url.get_env().map(|env| env.to_string_lossy()),
-            Some("WAMN_PG_URL".into()),
-            "WAMN_PG_URL is the argument's declared transport, not a fallback \
-             read behind it"
+        for (id, expected) in [
+            ("database_url", "WAMN_PG_URL"),
+            (
+                "executor_platform_database_url",
+                "WAMN_EXECUTOR_PLATFORM_PG_URL",
+            ),
+        ] {
+            let argument = command
+                .get_arguments()
+                .find(|arg| arg.get_id() == id)
+                .unwrap_or_else(|| panic!("the executor declares a {id} argument"));
+            assert_eq!(
+                argument.get_env().map(|env| env.to_string_lossy()),
+                Some(expected.into()),
+                "{expected} is {id}'s declared transport, not a fallback read \
+                 behind it"
+            );
+        }
+    }
+
+    /// THE GUEST URL IS NOT THE EXECUTOR-PLATFORM CREDENTIAL (`wamn-0h0g.22.31`).
+    ///
+    /// Driven through [`executor_credentials`], the same call `run` makes, so the
+    /// ROUTING is what is pinned rather than a re-statement of it. Every class is
+    /// checked, not just the two that matter: naming the wrong class in the
+    /// production call moves BOTH the class that gained the platform url and the
+    /// one that lost it, and a two-class assertion could miss the second half.
+    ///
+    /// The mutants this kills: `with_class(GuestSql, platform)`, dropping the
+    /// `with_class` entirely, and passing `database_url` to it twice — each
+    /// leaves some class holding a url that is not its own.
+    #[test]
+    fn the_executor_routes_each_url_to_its_own_class() {
+        const GUEST: &str = "postgres://guest@h/db";
+        const PLATFORM: &str = "postgres://platform@h/db";
+        let credentials = executor_credentials(GUEST.to_owned(), PLATFORM.to_owned());
+        for class in AuthorityClass::ALL {
+            let expected = if class == AuthorityClass::ExecutorPlatform {
+                PLATFORM
+            } else {
+                GUEST
+            };
+            assert_eq!(
+                credentials.url(class),
+                Some(expected),
+                "{class:?} must authenticate with its own credential"
+            );
+        }
+        assert_ne!(
+            credentials.url(AuthorityClass::ExecutorPlatform),
+            credentials.url(AuthorityClass::GuestSql),
+            "the platform pool must not authenticate with the guest url"
         );
     }
 

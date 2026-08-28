@@ -89,6 +89,12 @@ pub use production_claim::{
     production_router_result_action,
 };
 pub use resources::{PgCursor, PgTransaction};
+/// Re-exported because [`ClassCredentials::with_class`] and
+/// [`ClassCredentials::without_class`] TAKE one: a composer outside this
+/// workspace crate cannot name a family's credential without the class, and
+/// `wamn-0h0g.22.14` ruled the class un-parseable, so it must arrive as a value
+/// from here rather than be reconstructed from a string.
+pub use wamn_run_state::AuthorityClass;
 
 #[cfg(not(feature = "wasm_component_model_implements"))]
 mod bindings {

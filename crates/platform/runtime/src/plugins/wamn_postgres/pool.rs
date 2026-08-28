@@ -218,6 +218,21 @@ impl ClassCredentials {
         self
     }
 
+    /// UNNAME one class, so `resolve` REFUSES for it (`wamn-0h0g.22.31`).
+    ///
+    /// The other half of a family cutover, and it is not the same as leaving
+    /// [`Self::every_class`]'s entry in place. Once a family authenticates as
+    /// itself, that shared entry stops being a placeholder for it and becomes A
+    /// LOGIN OF ANOTHER AUTHORITY that would still satisfy the map. A composer
+    /// that cannot name this family's own credential must therefore ERASE the
+    /// entry rather than keep the shared one, so an unprovisioned family is
+    /// refused at checkout instead of quietly connecting as the guest.
+    #[must_use]
+    pub fn without_class(mut self, class: AuthorityClass) -> Self {
+        self.urls.remove(&class);
+        self
+    }
+
     /// The url this class authenticates with, or `None` when it has none.
     pub fn url(&self, class: AuthorityClass) -> Option<&str> {
         self.urls.get(&class).map(String::as_str)
@@ -681,6 +696,21 @@ fn standard_conforming_strings_ok(setting: &str) -> bool {
 /// `AmbientCredentialState::Absent` is asserted, not assumed: split B removed
 /// the ambient `WAMN_PG_URL` read, so the url reaching here is the one named
 /// explicit source. If a second source is ever reintroduced, this refuses.
+/// The membership every physical connection of one class must satisfy.
+///
+/// A FUNCTION RATHER THAN THREE ARGUMENTS INLINE, because this expression IS the
+/// per-family arm of the probe and it was UNTESTABLE inline
+/// (`wamn-0h0g.22.31`). [`credential_exactness_hook`] returns a `Hook`, which
+/// hides everything it was built from, so a mutant replacing `class.acl_role()`
+/// with any fixed role — making every class probe for the guest's ACL role, and
+/// so admitting the guest login onto the executor's platform pool — SURVIVED the
+/// whole suite. `every_authority_probes_for_its_own_acl_role` asserted only that
+/// each class produced a probe and that the four role names differ; it never
+/// looked at what the probe expects. Extracted, the expectation is comparable.
+fn expected_class_membership(class: AuthorityClass) -> MembershipExpectation {
+    MembershipExpectation::new(class.acl_role(), MembershipMode::Member, true)
+}
+
 pub(super) fn credential_exactness_hook(
     database_url: &str,
     class: AuthorityClass,
@@ -705,11 +735,7 @@ pub(super) fn credential_exactness_hook(
         generation_role,
         database,
         project,
-        vec![MembershipExpectation::new(
-            class.acl_role(),
-            MembershipMode::Member,
-            true,
-        )],
+        vec![expected_class_membership(class)],
         // ACL expectations are the per-family denial matrix and need a live
         // server to be meaningful; membership is the arm that is checkable on
         // every connection.
@@ -1124,6 +1150,18 @@ mod tests {
     /// than a generic connection test.
     #[test]
     fn every_authority_probes_for_its_own_acl_role() {
+        // THE ROLE NAMES ARE SPELLED OUT, NOT DERIVED (`wamn-0h0g.22.31`). This
+        // arm previously asserted only that a probe was produced and that the
+        // four `acl_role()` values differ — a claim about the enum, not about
+        // the probe — so a hook that expected one fixed role for every class
+        // passed it. The literals below are the second document the expectation
+        // is checked against, and they are what makes the arm per-family.
+        let expected: [(AuthorityClass, &str); 4] = [
+            (AuthorityClass::GuestSql, "wamn_app"),
+            (AuthorityClass::ExecutorPlatform, "wamn_executor_platform"),
+            (AuthorityClass::CallableHttp, "wamn_http_admitter"),
+            (AuthorityClass::EventMaterializer, "wamn_event_materializer"),
+        ];
         let mut roles = Vec::new();
         for class in AuthorityClass::ALL {
             assert!(
@@ -1134,6 +1172,15 @@ mod tests {
                 )
                 .is_ok(),
                 "{class} must produce a probe"
+            );
+            let (_, role) = expected
+                .iter()
+                .find(|(named, _)| *named == class)
+                .unwrap_or_else(|| panic!("{class} is unlisted; a new class needs a row here"));
+            assert_eq!(
+                expected_class_membership(class),
+                MembershipExpectation::new(*role, MembershipMode::Member, true),
+                "{class} must probe for {role} as an inherited member",
             );
             assert!(
                 !roles.contains(&class.acl_role()),

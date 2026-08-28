@@ -40,7 +40,7 @@ fn app_preamble() -> &'static str {
      SET LOCAL app.tenant = 't1';"
 }
 
-/// The principal the fenced transitions actually run as.
+/// The generation login the fenced transitions actually run as.
 ///
 /// `FENCED_PREFIX` and `grant_production_claim_sql` both open with
 /// `require_executor_platform_authority()`, which raises `42501` unless
@@ -52,9 +52,21 @@ fn app_preamble() -> &'static str {
 /// unaffected by the swap: every fenced statement carries its own
 /// `current_setting('app.tenant')` predicate, so `SET LOCAL app.tenant` is
 /// still what fences these legs.
-fn executor_preamble() -> &'static str {
-    "BEGIN; SET LOCAL ROLE wamn_executor_platform; SET LOCAL search_path TO wamn_run; \
-     SET LOCAL app.tenant = 't1';"
+///
+/// A MINTED GENERATION, NOT THE BARE ACL ROLE (`wamn-0h0g.22.31`). The stable
+/// role is `NOLOGIN` and nothing in production ever authenticates as it — the
+/// executor's platform pool dials a generation that INHERITS it, and
+/// `pool::credential_exactness_hook` asserts exactly that membership on every
+/// physical connection. Driving these legs as the stable role would prove a
+/// principal that cannot exist at runtime, and would take its privileges
+/// directly rather than through the inheritance edge that is the real path.
+const EXECUTOR_LOGIN: &str = "wamn_transitions_executor_login";
+
+fn executor_preamble() -> String {
+    format!(
+        "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL search_path TO wamn_run; \
+         SET LOCAL app.tenant = 't1';"
+    )
 }
 
 #[test]
@@ -85,7 +97,16 @@ fn run_state_live() {
     // closure KIND-BLIND — it filters on `dependency.path` alone and never on kind — so
     // a DEV-dependency counts exactly like a real one, and adding the builder here reds
     // `workspace_tier_membership_matches_live_classification` with "selected package
-    // wamn-control-provision missing from cargo metadata". Teaching that closure to skip
+    // wamn-control-provision missing from cargo metadata".
+    //
+    // THAT LAST CLAUSE IS REFUTED AS OF `wamn-0h0g.22.31`, and the writer-role divergence
+    // survives it anyway. `wamn-control-provision` is ALREADY a dev-dependency of this
+    // crate — `tests/admission_live.rs` has imported it since `wamn-0h0g.22.9` — and this
+    // file now imports it too, for the executor generation below;
+    // `workspace_tier_membership_matches_live_classification` was measured GREEN with both.
+    // So the barrier to minting the two writer roles from their builder is not the
+    // dependency edge. Whether to mint them is still `wamn-0h0g.20.15`'s call, untouched
+    // here. Teaching that closure to skip
     // dev-dependencies was rejected: it weakens a conformance guard to make one test
     // prettier.
     //
@@ -107,16 +128,39 @@ fn run_state_live() {
     // cross-workspace home crate for one reader was rejected as infrastructure built for
     // a single caller; a second reader is when that crate earns its existence.
     //
-    // THE EXECUTOR'S RUN-PLANE GRANTS AT THE END OF THIS SCRIPT ARE TEST-ONLY, and that
-    // is a measured statement, not a shortcut. deploy/sql/run-state.sql withdrew
-    // `wamn_app`'s write surface at `5a8645d3` and deferred the replacement to "their
-    // owning cutovers"; that cutover is unbuilt — no builder in
-    // crates/control/provision/src/sql.rs grants `wamn_executor_platform` anything on
-    // `wamn_run`, so there is no production grant for this gate to drive. The union
-    // grant below is the same test-only device `tests/admission_live.rs` uses for the
-    // same role and the same reason. WHEN THE EXECUTOR CUTOVER LANDS, THIS BLOCK IS
-    // REPLACED BY THAT BUILDER. What is NOT test-only is the membership: `runs_platform`
-    // is the only policy an executor session matches, and it is `TO wamn_platform`.
+    // THE EXECUTOR'S RUN-PLANE GRANTS ARE THE PRODUCTION BUILDER'S NOW (`wamn-0h0g.22.31`).
+    // The union grant this block carried was test-only because the cutover was unbuilt:
+    // deploy/sql/run-state.sql withdrew `wamn_app`'s write surface at `5a8645d3` and
+    // deferred the replacement to "their owning cutovers". `wamn-0h0g.22.37` built it, so
+    // the standing instruction here — WHEN THE EXECUTOR CUTOVER LANDS, THIS BLOCK IS
+    // REPLACED BY THAT BUILDER — is discharged: every fenced transition below now runs on
+    // exactly `sql::grant_executor_platform_surface_sql`, and a leg that reaches its
+    // semantics reaches them on what provisioning emits. What is NOT builder-owned is the
+    // membership: `runs_platform` is the only policy an executor session matches, and it
+    // is `TO wamn_platform`.
+    //
+    // `wamn_authority.current_tenant_key()` WENT WITH THE UNION AND IS NOT RESTORED. The
+    // surface grants `tenant_key(text)` — load bearing, because `runs_tkey` is an
+    // expression index over it and every status write maintains that index — and withholds
+    // `current_tenant_key()`, because the floor policy that calls it is narrowed
+    // `TO wamn_app` and this family only ever matches the permissive `TO wamn_platform`
+    // arm. If a leg below ever needs it, that is a real widening to argue, not a fixture
+    // gap to patch.
+    //
+    // THE GENERATION IS DROPPED BEFORE IT IS MINTED, inside an existence check.
+    // Roles are CLUSTER-wide, so a login left behind by an earlier run of this suite
+    // satisfies every `IF NOT EXISTS` in the builder and would let a MUTATED builder pass
+    // on the previous run's role. `DROP OWNED BY` first, because a role holding any grant
+    // cannot be dropped.
+    let executor_generation = wamn_control_provision::sql::prepare_workload_generation_sql(
+        wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,
+        &success(&url, "SELECT current_database();")
+            .trim()
+            .to_string(),
+        EXECUTOR_LOGIN,
+        "transitions-proof-password",
+        "2099-01-01T00:00:00Z",
+    );
     success(
         &url,
         &format!(
@@ -144,6 +188,10 @@ fn run_state_live() {
                  CREATE ROLE wamn_executor_platform NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
                END IF; \
+               IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{EXECUTOR_LOGIN}') THEN \
+                 EXECUTE format('DROP OWNED BY %I', '{EXECUTOR_LOGIN}'); \
+                 EXECUTE format('DROP ROLE %I', '{EXECUTOR_LOGIN}'); \
+               END IF; \
              END $$; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
@@ -156,11 +204,7 @@ fn run_state_live() {
              VALUES ('t1','cat',1); \
              GRANT wamn_platform TO wamn_executor_platform \
                WITH INHERIT TRUE, SET FALSE, ADMIN FALSE; \
-             GRANT USAGE ON SCHEMA wamn_run, catalog TO wamn_executor_platform; \
-             GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA wamn_run, catalog \
-               TO wamn_executor_platform; \
-             GRANT EXECUTE ON FUNCTION wamn_authority.tenant_key(text), \
-               wamn_authority.current_tenant_key() TO wamn_executor_platform;"
+             {executor_generation}"
         ),
     );
 
@@ -190,6 +234,41 @@ fn run_state_live() {
                    NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS); \
                    conforming roles were: ' || coalesce(mirrored, '<none>'); \
          END $$;",
+    );
+
+    // THE PRINCIPAL EVERY LEG BELOW RUNS AS, ASSERTED BEFORE ANY OF THEM RUN
+    // (`wamn-0h0g.22.31`). A superuser or a `BYPASSRLS` login would satisfy every
+    // transition below while proving nothing about the tenant floor, and would do it
+    // SILENTLY — there is no leg here whose failure would name it. The membership edge is
+    // asserted with the same force: these legs must reach their privileges by INHERITING
+    // the stable role, which is what the runtime's connection probe checks, not by holding
+    // them directly.
+    success(
+        &url,
+        &format!(
+            "DO $$ BEGIN \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_authid \
+                  WHERE rolname = '{EXECUTOR_LOGIN}' \
+                    AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
+                    AND NOT rolcreaterole AND rolinherit AND NOT rolreplication \
+                    AND NOT rolbypassrls AND rolpassword IS NOT NULL \
+                    AND rolvaliduntil IS NOT NULL), \
+                 'the transitions principal must be a minted, non-bypassing generation'; \
+               ASSERT EXISTS ( \
+                 SELECT FROM pg_catalog.pg_auth_members AS membership \
+                 JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
+                 JOIN pg_catalog.pg_roles AS child ON child.oid = membership.member \
+                  WHERE parent.rolname = 'wamn_executor_platform' \
+                    AND child.rolname = '{EXECUTOR_LOGIN}' \
+                    AND NOT membership.admin_option \
+                    AND membership.inherit_option \
+                    AND NOT membership.set_option), \
+                 'the generation must INHERIT the stable role, not hold its grants'; \
+               ASSERT pg_catalog.pg_has_role('{EXECUTOR_LOGIN}', 'wamn_platform', 'USAGE'); \
+               ASSERT NOT pg_catalog.pg_has_role('{EXECUTOR_LOGIN}', 'wamn_app', 'USAGE'); \
+             END $$;"
+        ),
     );
 
     let release = release_caller_sql();
@@ -362,12 +441,14 @@ fn run_state_live() {
     let winner = thread::spawn(move || {
         success(
             &race_url,
-            "BEGIN; SET LOCAL ROLE wamn_executor_platform; SET LOCAL search_path TO wamn_run; \
-             SET LOCAL app.tenant='t1'; \
-             UPDATE run_queue SET lease_owner='winner', lease_generation=lease_generation+1, \
-                    lease_expires_at=now()+interval '1 minute' \
-              WHERE run_id='race-1'; \
-             SELECT pg_sleep(1); COMMIT;",
+            &format!(
+                "{} \
+                 UPDATE run_queue SET lease_owner='winner', lease_generation=lease_generation+1, \
+                        lease_expires_at=now()+interval '1 minute' \
+                  WHERE run_id='race-1'; \
+                 SELECT pg_sleep(1); COMMIT;",
+                executor_preamble(),
+            ),
         )
     });
     thread::sleep(Duration::from_millis(200));

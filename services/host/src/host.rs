@@ -26,6 +26,7 @@ use wamn_runtime::component_artifact_source::{
 };
 use wamn_runtime::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
+use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{
     ClassCredentials, FlowHttpRouting, WamnJetstream, WamnLogging, WamnPostgres,
 };
@@ -372,15 +373,33 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // host-db.example.yaml), so the environment is the transport; reading it at
     // composition is what makes it the explicit source instead of a fallback.
     // wamn-0h0g.22.16: the host also names WHICH AUTHORITY the credential
-    // belongs to. No family is cut over yet, so this one injected login is
-    // written down for every class rather than left to serve them all
-    // implicitly; a family cutover replaces exactly its own entry here.
+    // belongs to.
+    //
+    // wamn-0h0g.22.31 CUT THE EXECUTOR-PLATFORM CLASS OVER, and the ABSENT arm
+    // is the load-bearing half. Once that family authenticates as its own
+    // provisioned generation, the shared `WAMN_PG_URL` login stops being a
+    // placeholder for it and becomes a GUEST credential that would still satisfy
+    // the map — and `pool::credential_exactness_hook` refuses it on every
+    // physical connection anyway, for failing
+    // `pg_has_role(current_user, 'wamn_executor_platform', MEMBER)`. So a host
+    // given no executor-platform generation UNNAMES the class rather than
+    // keeping the guest entry: checkout then refuses for a missing credential,
+    // which is the real fault, instead of for a membership the guest login can
+    // never hold. The host is NOT refused at startup for this — unlike the
+    // executor it can serve with no run-plane work at all.
+    let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
+        .ok()
+        .filter(|url| !url.is_empty());
     let postgres = Arc::new(
-        WamnPostgres::from_env(
-            std::env::var("WAMN_PG_URL")
-                .ok()
-                .map(ClassCredentials::every_class),
-        )
+        WamnPostgres::from_env(std::env::var("WAMN_PG_URL").ok().map(|url| {
+            let credentials = ClassCredentials::every_class(url);
+            match executor_platform_url {
+                Some(platform) => {
+                    credentials.with_class(AuthorityClass::ExecutorPlatform, platform)
+                }
+                None => credentials.without_class(AuthorityClass::ExecutorPlatform),
+            }
+        }))
         .context("wamn:postgres plugin init")?,
     );
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
