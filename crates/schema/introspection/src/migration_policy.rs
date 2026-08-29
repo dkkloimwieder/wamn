@@ -117,6 +117,7 @@ pub fn validate_migration_file(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Token<'a> {
     Word(&'a str),
+    QuotedIdentifier(&'a str),
     Opaque,
     Symbol(u8),
 }
@@ -441,14 +442,13 @@ fn validate_segment_constraint_names(
     path: &Path,
     statement_index: usize,
 ) -> Result<(), MigrationPolicyError> {
-    if let Some(name) = overlength_constraint_name(segment) {
+    if let Some((name, byte_len)) = overlength_constraint_name(segment) {
         return refuse_statement(
             MigrationPolicyErrorKind::ConstraintNameTooLong,
             path,
             statement_index,
             format!(
-                "table {table_name:?} constraint {name:?} is {} bytes; names must be shorter than 64 bytes",
-                name.len()
+                "table {table_name:?} constraint {name:?} is {byte_len} bytes; names must be shorter than 64 bytes"
             ),
         );
     }
@@ -479,23 +479,43 @@ fn validate_segment_constraint_names(
     Ok(())
 }
 
-fn overlength_constraint_name<'a>(tokens: &'a [Token<'a>]) -> Option<&'a str> {
+fn overlength_constraint_name<'a>(tokens: &'a [Token<'a>]) -> Option<(&'a str, usize)> {
     let mut depth = 0_usize;
     for index in 0..tokens.len() {
         match tokens[index] {
             Token::Symbol(b'(') => depth += 1,
             Token::Symbol(b')') => depth = depth.saturating_sub(1),
             Token::Word(actual) if depth == 0 && actual.eq_ignore_ascii_case("constraint") => {
-                if let Some(Token::Word(name)) = tokens.get(index + 1)
-                    && name.len() >= 64
-                {
-                    return Some(name);
+                let (name, byte_len) = match tokens.get(index + 1) {
+                    Some(Token::Word(name)) => (*name, name.len()),
+                    Some(Token::QuotedIdentifier(name)) => {
+                        (*name, quoted_identifier_byte_len(name))
+                    }
+                    _ => continue,
+                };
+                if byte_len >= 64 {
+                    return Some((name, byte_len));
                 }
             }
             _ => {}
         }
     }
     None
+}
+
+fn quoted_identifier_byte_len(name: &str) -> usize {
+    let bytes = name.as_bytes();
+    let mut cursor = 0_usize;
+    let mut byte_len = 0_usize;
+    while cursor < bytes.len() {
+        cursor += if bytes[cursor] == b'"' && bytes.get(cursor + 1) == Some(&b'"') {
+            2
+        } else {
+            1
+        };
+        byte_len += 1;
+    }
+    byte_len
 }
 
 fn top_level_words_at(tokens: &[Token<'_>], expected: &[&str]) -> Option<usize> {
@@ -574,10 +594,11 @@ fn lex_statements<'a>(
                 tokens.push(Token::Opaque);
             }
             b'"' => {
+                let start = cursor + 1;
                 cursor = scan_double_quote(bytes, cursor).ok_or_else(|| {
                     lexical_error(path, statements.len() + 1, "unterminated quoted identifier")
                 })?;
-                tokens.push(Token::Opaque);
+                tokens.push(Token::QuotedIdentifier(&sql[start..cursor - 1]));
             }
             b'$' if dollar_delimiter_end(bytes, cursor).is_some() => {
                 cursor = scan_dollar_quote(sql, cursor).ok_or_else(|| {

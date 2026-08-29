@@ -225,6 +225,27 @@ fn refuses_constraint_names_at_postgresqls_truncation_boundary() {
 }
 
 #[test]
+fn quoted_constraint_names_remain_fail_loud_at_the_truncation_boundary() {
+    let under_limit = "a".repeat(63);
+    let error = refusal(&format!(
+        "CREATE TABLE receiving.quoted_name (id uuid CONSTRAINT \"{under_limit}\" PRIMARY KEY);"
+    ));
+    assert_eq!(error.kind(), MigrationPolicyErrorKind::UnnamedConstraint);
+
+    let at_limit = "a".repeat(64);
+    let error = refusal(&format!(
+        "CREATE TABLE receiving.quoted_name (id uuid CONSTRAINT \"{at_limit}\" PRIMARY KEY);"
+    ));
+    assert_eq!(
+        error.kind(),
+        MigrationPolicyErrorKind::ConstraintNameTooLong
+    );
+    let display = error.to_string();
+    assert!(display.contains(&at_limit), "{display}");
+    assert!(display.contains("64 bytes"), "{display}");
+}
+
+#[test]
 fn refuses_every_documented_ruled_object_class() {
     for sql in [
         "CREATE EXTENSION pgcrypto;",
