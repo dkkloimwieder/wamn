@@ -37,6 +37,18 @@ operation has one of two forms:
 The closed generated CRUD action set is `get`, `query`, `create`, `update`, and
 `delete`. Custom actions use singular `verb_noun` names.
 
+## Pagination order
+
+Keyset pagination uses `id` as the total-order tie-breaker, and `id` inherits
+the declared primary sort direction; descending reverses the compound order.
+Cursor keys preserve canonical PostgreSQL lexical values: `timestamptz` is UTC
+RFC3339 with exactly six fractional digits, always, and `numeric` preserves scale.
+
+## PostgreSQL schema selection
+
+Migrations author schema selection and require qualified DDL; SQL corpora inherit
+the host-selected `search_path` and refuse qualified references.
+
 ## PostgreSQL constraint and index names
 
 Constraint and ordinary-index names normally use:

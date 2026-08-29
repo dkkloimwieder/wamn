@@ -119,8 +119,8 @@ cargo test --workspace --no-fail-fast > sweep.txt 2>&1
   analyse the file.
 - `--workspace` is required. Cargo otherwise selects default members only.
   Measured at `1bffa614` from `cargo metadata --no-deps`: **17 default members
-  of 35 workspace members.** `architecture/workspace-tiers.json`'s `full_ci`
-  tier agrees on the 35.
+  of 35 workspace members.** The current `architecture/workspace-tiers.json`
+  `full_ci` tier carries all 36 members.
 
 **Measured state at `1bffa614`, by the owner, not re-run here: 168 binaries,
 1448 passed, 21 failed, 34 ignored, no compile errors. All 21 failures are
@@ -144,6 +144,12 @@ re-measures artifacts other lanes are still moving.
 
 Verify the package name before trusting `-p`: it is **`wamn-proof-conformance`**.
 A nonexistent name *errors* and greps as zero failures.
+
+Generated package contracts and projections have a package-local gate:
+
+```bash
+cargo test -p wamn-schema-generator --all-targets --no-fail-fast
+```
 
 The `deploy/platform` bill of materials (`wamn-0h0g.10.5`) is a static
 structural proof of the same kind, but it lives in `wamn-proof-system` — it

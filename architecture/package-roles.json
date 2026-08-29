@@ -342,6 +342,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-schema-generator",
+      "manifest_path": "crates/schema/generator/Cargo.toml",
+      "role": "core",
+      "target_class": "shared",
+      "bounded_context": "schema",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-schema-introspection",
       "manifest_path": "crates/schema/introspection/Cargo.toml",
       "role": "core",
