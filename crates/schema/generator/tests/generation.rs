@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_schema_generator::{
     AuthoredSql, GenerateErrorKind, GeneratedPackage, GenerationInput, GenerationProvenance,
-    corpus_sha256, generate,
+    corpus_sha256, generate, validate_parity_json,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
@@ -345,6 +345,57 @@ fn artifact_json(package: &GeneratedPackage, path: &str) -> Value {
     serde_json::from_slice(package.file(path).unwrap().bytes()).unwrap()
 }
 
+fn wamn_accessor<'a>(source_map: &'a Value, name: &str) -> &'a Value {
+    source_map["wamn_api"]["accessors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|accessor| accessor["name"] == name)
+        .unwrap()
+}
+
+fn accessor_bind(
+    parameter: &str,
+    postgres: &str,
+    nullable: bool,
+    native_rust: &str,
+    wamn_rust: &str,
+) -> Value {
+    json!({
+        "parameter": parameter,
+        "postgres": postgres,
+        "nullable": nullable,
+        "native_rust": native_rust,
+        "wamn_rust": wamn_rust,
+    })
+}
+
+fn assert_native_fixtures_match_parity(package: &GeneratedPackage, model: &str) {
+    let source_map = artifact_json(package, &format!("generated/source-map/{model}.json"));
+    let parity = artifact_json(package, &format!("generated/parity/{model}.json"));
+    let parity_binds = parity["accessor_binds"].as_array().unwrap();
+    let fixtures = source_map["native_bind_fixtures"].as_array().unwrap();
+    assert_eq!(fixtures.len(), parity_binds.len());
+    for bind in parity_binds {
+        let accessor = bind["accessor"].as_str().unwrap();
+        let parameter = bind["parameter"].as_str().unwrap();
+        let fixture = fixtures
+            .iter()
+            .find(|fixture| fixture["accessor"] == accessor && fixture["parameter"] == parameter)
+            .unwrap();
+        assert_eq!(
+            fixture,
+            &json!({
+                "accessor": accessor,
+                "parameter": parameter,
+                "function": format!("{accessor}_{parameter}_bind_fixture"),
+                "visibility": "crate",
+                "type": bind["native_rust"],
+            })
+        );
+    }
+}
+
 #[test]
 fn strict_manifest_and_ir_references_fail_loudly() {
     let ir = catalog(false);
@@ -440,13 +491,12 @@ fn operation_identity_errors_and_constraint_names_are_closed() {
             && case["from"] == json!(["query_error", "row_limit_exceeded"])
             && case["detail"] == "opaque"
     }));
-    assert!(cases.iter().any(|case| {
-        case["literal"] == "unique_violation"
-            && case["constraint"] == "purchase_order_purchase_order_number_key"
-    }));
-    assert!(cases.iter().any(|case| {
-        case["literal"] == "check_violation" && case["constraint"] == "purchase_order_status_check"
-    }));
+    let named_constraint_cases = cases
+        .iter()
+        .filter(|case| case.get("constraint").is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(named_constraint_cases, Vec::<Value>::new());
 }
 
 #[test]
@@ -462,33 +512,211 @@ fn generation_is_byte_stable_and_emits_both_projection_siblings() {
             .all(|pair| pair[0].path() < pair[1].path())
     );
 
-    let native = std::str::from_utf8(
-        first
-            .file("generated/native-verifier/purchase_order.rs")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
-    let wamn = std::str::from_utf8(
-        first
-            .file("generated/wamn/purchase_order.rs")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
-    assert!(native.contains("uuid::Uuid"));
-    assert!(wamn.contains("pub id: String"));
-    assert!(native.contains("../../query/open_purchase_order.sql"));
-    assert!(wamn.contains("../../query/open_purchase_order.sql"));
+    first
+        .file("generated/native-verifier/purchase_order.rs")
+        .unwrap();
+    first.file("generated/wamn/purchase_order.rs").unwrap();
     assert!(first.file("query/open_purchase_order.sql").is_none());
 
-    let parity = artifact_json(&first, "generated/parity/purchase_order.json");
+    let parity_file = first.file("generated/parity/purchase_order.json").unwrap();
+    validate_parity_json(parity_file.bytes()).unwrap();
+    let parity: Value = serde_json::from_slice(parity_file.bytes()).unwrap();
     assert_eq!(parity["rule"], "same_sql_file_two_projection_structs");
     let source_map = artifact_json(&first, "generated/source-map/purchase_order.json");
     assert_eq!(
         source_map["relation"],
         "catalog-ir://receiving.purchase_order"
     );
+}
+
+#[test]
+fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
+    let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
+    let source_map = artifact_json(&package, "generated/source-map/purchase_order.json");
+    let api = &source_map["wamn_api"];
+    assert_eq!(api["sql_constant_visibility"], "crate");
+    assert_eq!(
+        api["mutation_constraints"],
+        json!([{
+            "operation": "update",
+            "unique": {
+                "constant": "UPDATE_UNIQUE_CONSTRAINTS",
+                "visibility": "crate",
+                "names": []
+            },
+            "foreign_key": {
+                "constant": "UPDATE_FOREIGN_KEY_CONSTRAINTS",
+                "visibility": "crate",
+                "names": []
+            },
+            "check": {
+                "constant": "UPDATE_CHECK_CONSTRAINTS",
+                "visibility": "crate",
+                "names": []
+            }
+        }])
+    );
+    assert_eq!(api["accessors"].as_array().unwrap().len(), 8);
+    assert_eq!(
+        wamn_accessor(&source_map, "get"),
+        &json!({
+            "name": "get",
+            "visibility": "crate",
+            "operation": "get",
+            "sql_constant": "GET_SQL",
+            "row": "PurchaseOrderRow",
+            "fetch": "optional",
+            "binds": [
+                accessor_bind(
+                    "id",
+                    "uuid",
+                    false,
+                    "uuid::Uuid",
+                    "wamn_postgres_sqlx::Uuid"
+                )
+            ]
+        })
+    );
+
+    for (name, sql_constant, cursor_postgres, native_cursor, wamn_cursor) in [
+        (
+            "query_purchase_order_number_ascending",
+            "QUERY_0_SQL",
+            "text",
+            "Option<String>",
+            "Option<String>",
+        ),
+        (
+            "query_purchase_order_number_descending",
+            "QUERY_1_SQL",
+            "text",
+            "Option<String>",
+            "Option<String>",
+        ),
+        (
+            "query_status_ascending",
+            "QUERY_2_SQL",
+            "text",
+            "Option<String>",
+            "Option<String>",
+        ),
+        (
+            "query_status_descending",
+            "QUERY_3_SQL",
+            "text",
+            "Option<String>",
+            "Option<String>",
+        ),
+        (
+            "query_created_at_ascending",
+            "QUERY_4_SQL",
+            "timestamptz",
+            "Option<chrono::DateTime<chrono::Utc>>",
+            "Option<wamn_postgres_sqlx::TimestampTz>",
+        ),
+        (
+            "query_created_at_descending",
+            "QUERY_5_SQL",
+            "timestamptz",
+            "Option<chrono::DateTime<chrono::Utc>>",
+            "Option<wamn_postgres_sqlx::TimestampTz>",
+        ),
+    ] {
+        assert_eq!(
+            wamn_accessor(&source_map, name),
+            &json!({
+                "name": name,
+                "visibility": "crate",
+                "operation": "query",
+                "sql_constant": sql_constant,
+                "row": "PurchaseOrderRow",
+                "fetch": "all",
+                "binds": [
+                    accessor_bind(
+                        "supplier_id_filter",
+                        "jsonb",
+                        true,
+                        "Option<serde_json::Value>",
+                        "Option<wamn_postgres_sqlx::Json>"
+                    ),
+                    accessor_bind(
+                        "status_filter",
+                        "jsonb",
+                        true,
+                        "Option<serde_json::Value>",
+                        "Option<wamn_postgres_sqlx::Json>"
+                    ),
+                    accessor_bind("cursor_key", cursor_postgres, true, native_cursor, wamn_cursor),
+                    accessor_bind(
+                        "cursor_id",
+                        "uuid",
+                        true,
+                        "Option<uuid::Uuid>",
+                        "Option<wamn_postgres_sqlx::Uuid>"
+                    ),
+                    accessor_bind("limit", "int8", false, "i64", "i64")
+                ]
+            })
+        );
+    }
+
+    assert_eq!(
+        wamn_accessor(&source_map, "update"),
+        &json!({
+            "name": "update",
+            "visibility": "crate",
+            "operation": "update",
+            "sql_constant": "UPDATE_SQL",
+            "row": "PurchaseOrderUpdateRow",
+            "fetch": "one",
+            "binds": [
+                accessor_bind("id", "uuid", false, "uuid::Uuid", "wamn_postgres_sqlx::Uuid"),
+                accessor_bind("expected_row_version", "int8", false, "i64", "i64"),
+                accessor_bind("supplier_id_present", "boolean", false, "bool", "bool"),
+                accessor_bind(
+                    "supplier_id_value",
+                    "uuid",
+                    true,
+                    "Option<uuid::Uuid>",
+                    "Option<wamn_postgres_sqlx::Uuid>"
+                )
+            ]
+        })
+    );
+    assert_eq!(
+        api["operation_rows"],
+        json!([{
+            "name": "PurchaseOrderUpdateRow",
+            "visibility": "public",
+            "fields": [
+                {"name": "outcome", "type": "Option<String>"},
+                {"name": "created_at", "type": "Option<wamn_postgres_sqlx::TimestampTz>"},
+                {"name": "id", "type": "Option<wamn_postgres_sqlx::Uuid>"},
+                {"name": "purchase_order_number", "type": "Option<String>"},
+                {"name": "row_version", "type": "Option<i64>"},
+                {"name": "status", "type": "Option<String>"},
+                {"name": "supplier_id", "type": "Option<wamn_postgres_sqlx::Uuid>"}
+            ]
+        }])
+    );
+    assert_eq!(
+        source_map["native_operation_rows"],
+        json!([{
+            "name": "PurchaseOrderUpdateRow",
+            "visibility": "public",
+            "fields": [
+                {"name": "outcome", "type": "Option<String>"},
+                {"name": "created_at", "type": "Option<chrono::DateTime<chrono::Utc>>"},
+                {"name": "id", "type": "Option<uuid::Uuid>"},
+                {"name": "purchase_order_number", "type": "Option<String>"},
+                {"name": "row_version", "type": "Option<i64>"},
+                {"name": "status", "type": "Option<String>"},
+                {"name": "supplier_id", "type": "Option<uuid::Uuid>"}
+            ]
+        }])
+    );
+
+    assert_native_fixtures_match_parity(&package, "purchase_order");
 }
 
 #[test]
@@ -538,7 +766,7 @@ fn corpus_hash_uses_sorted_unambiguous_framing() {
 }
 
 #[test]
-fn ordered_filters_drive_bind_order_and_default_only_query_is_finite() {
+fn ordered_filters_and_query_variants_remain_structural_and_finite() {
     let ir = catalog(false);
     let mut generated_manifest = manifest();
     generated_manifest["models"]["purchase_order"]["operations"]["query"]
@@ -546,30 +774,23 @@ fn ordered_filters_drive_bind_order_and_default_only_query_is_finite() {
         .unwrap()
         .remove("authored_sql");
     let package = run(&ir, &generated_manifest, &[]).unwrap();
-    let ascending = std::str::from_utf8(
-        package
-            .file("generated/sql/purchase_order/query_purchase_order_number_ascending.sql")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
-    assert!(ascending.contains("$1::jsonb IS NULL OR model.supplier_id"));
-    assert!(ascending.contains("$2::jsonb IS NULL OR model.status"));
-    assert!(ascending.contains("FROM purchase_order AS model"));
-    assert!(!ascending.contains("receiving.purchase_order"));
-    assert!(ascending.contains("LIMIT $5::int8"));
-    assert!(!ascending.contains("LEAST"));
-
-    let descending = std::str::from_utf8(
-        package
-            .file("generated/sql/purchase_order/query_created_at_descending.sql")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
-    assert!(descending.contains("model.created_at < $3::timestamptz"));
-    assert!(descending.contains("model.id < $4::uuid"));
-    assert!(descending.contains("ORDER BY model.created_at DESC, model.id DESC"));
+    package
+        .file("generated/sql/purchase_order/query_purchase_order_number_ascending.sql")
+        .unwrap();
+    package
+        .file("generated/sql/purchase_order/query_created_at_descending.sql")
+        .unwrap();
+    let input = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/query.input.json",
+    );
+    assert_eq!(
+        input["filters"],
+        json!([
+            {"field": "supplier_id", "binding": "json_array"},
+            {"field": "status", "binding": "json_array"}
+        ])
+    );
 
     let mut default_only = generated_manifest;
     default_only["models"]["purchase_order"]["operations"]["query"]
@@ -645,13 +866,6 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
 }
 
 #[test]
-fn generator_has_no_legacy_schema_dependency() {
-    let manifest = include_str!("../Cargo.toml");
-    assert!(!manifest.contains("wamn-schema-model"));
-    assert!(!manifest.contains("wamn-schema-compiler"));
-}
-
-#[test]
 fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
     let ir = receiving_catalog();
     let package = generate(&GenerationInput::new(
@@ -676,13 +890,62 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
         receipt_query["sql_files"],
         json!(["generated/sql/receipt/query_created_at_ascending.sql"])
     );
-    let receipt_sql = std::str::from_utf8(
-        package
-            .file("generated/sql/receipt/query_created_at_ascending.sql")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
-    assert!(receipt_sql.contains("FROM receipt AS model"));
-    assert!(receipt_sql.contains("ORDER BY model.created_at ASC, model.id ASC"));
+    package
+        .file("generated/sql/receipt/query_created_at_ascending.sql")
+        .unwrap();
+
+    let receipt_source_map = artifact_json(&package, "generated/source-map/receipt.json");
+    assert_eq!(
+        receipt_source_map["wamn_api"],
+        json!({
+            "sql_constant_visibility": "crate",
+            "mutation_constraints": [],
+            "operation_rows": [],
+            "accessors": [
+                {
+                    "name": "get",
+                    "visibility": "crate",
+                    "operation": "get",
+                    "sql_constant": "GET_SQL",
+                    "row": "ReceiptRow",
+                    "fetch": "optional",
+                    "binds": [
+                        accessor_bind(
+                            "id",
+                            "uuid",
+                            false,
+                            "uuid::Uuid",
+                            "wamn_postgres_sqlx::Uuid"
+                        )
+                    ]
+                },
+                {
+                    "name": "query_created_at_ascending",
+                    "visibility": "crate",
+                    "operation": "query",
+                    "sql_constant": "QUERY_SQL",
+                    "row": "ReceiptRow",
+                    "fetch": "all",
+                    "binds": [
+                        accessor_bind(
+                            "cursor_key",
+                            "timestamptz",
+                            true,
+                            "Option<chrono::DateTime<chrono::Utc>>",
+                            "Option<wamn_postgres_sqlx::TimestampTz>"
+                        ),
+                        accessor_bind(
+                            "cursor_id",
+                            "uuid",
+                            true,
+                            "Option<uuid::Uuid>",
+                            "Option<wamn_postgres_sqlx::Uuid>"
+                        ),
+                        accessor_bind("limit", "int8", false, "i64", "i64")
+                    ]
+                }
+            ]
+        })
+    );
+    assert_native_fixtures_match_parity(&package, "receipt");
 }

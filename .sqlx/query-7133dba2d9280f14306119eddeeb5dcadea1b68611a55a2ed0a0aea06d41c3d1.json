@@ -1,0 +1,110 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH target AS MATERIALIZED (\n    SELECT id, row_version\n    FROM purchase_order\n    WHERE id = $1::uuid\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE purchase_order AS model\n    SET\n        supplier_id = CASE WHEN $3::boolean THEN $4::uuid ELSE model.supplier_id END,\n        row_version = model.row_version + 1\n    FROM target\n    WHERE model.id = target.id\n      AND target.row_version = $2::int8\n    RETURNING model.*\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'\n        ELSE 'updated'\n    END AS outcome,\n    updated.created_at,\n    updated.id,\n    updated.purchase_order_number,\n    updated.row_version,\n    updated.status,\n    updated.supplier_id,\n    updated.updated_at\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "purchase_order_number",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "purchase_order_number"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "row_version"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "supplier_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "supplier_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Bool",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "7133dba2d9280f14306119eddeeb5dcadea1b68611a55a2ed0a0aea06d41c3d1"
+}

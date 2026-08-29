@@ -1,0 +1,1 @@
+{"cases":[{"literal":"invalid_input"},{"from":"permission_denied","literal":"permission_denied"},{"automatic":false,"from":["serialization_failure","connection_unavailable"],"literal":"retry"},{"from":"statement_timeout","literal":"timeout"},{"detail":"opaque","from":["query_error","row_limit_exceeded"],"literal":"internal_error"},{"literal":"not_found"}],"closed":true}

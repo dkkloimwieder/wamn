@@ -1,0 +1,1 @@
+{"automatic_retry":false,"grant":"wamn_receiving@1.0.0::purchase_order.get","operation":"wamn_receiving@1.0.0::purchase_order.get","permission_token":"purchase_order.get","result":"one","sql_files":["generated/sql/purchase_order/get.sql"],"transaction":"implicit"}

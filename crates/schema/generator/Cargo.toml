@@ -14,5 +14,10 @@ serde_json.workspace = true
 sha2.workspace = true
 wamn-schema-introspection.workspace = true
 
+[dev-dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+tokio-postgres.workspace = true
+
 [lints]
 workspace = true

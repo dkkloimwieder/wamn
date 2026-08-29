@@ -16,7 +16,7 @@
       {
         "workspace": "components",
         "manifest": "components/Cargo.toml",
-        "package_count": 7
+        "package_count": 8
       },
       {
         "workspace": "components-no-std",
@@ -140,10 +140,11 @@
         "sockprobe",
         "sqlx-command",
         "transform",
-        "wamn-postgres-sqlx"
+        "wamn-postgres-sqlx",
+        "wamn-receiving-data-access"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all nine component packages through explicit selectors for wasm32-wasip2 across both component workspaces, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all ten component packages through explicit selectors for wasm32-wasip2 across both component workspaces, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -237,7 +238,7 @@
       "proof_inventory_tier": "full_ci",
       "expected_package_counts": {
         "m1": 4,
-        "proof": 9
+        "proof": 10
       }
     }
   },
@@ -259,7 +260,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "the 7 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
+      "selected_packages": "the 8 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     },
     {

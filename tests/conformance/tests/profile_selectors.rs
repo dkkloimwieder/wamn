@@ -182,7 +182,7 @@ fn profile_contract_matches_locked_metadata() {
     }
 
     assert_eq!(root_members.len(), 36);
-    assert_eq!(component_members.len(), 9);
+    assert_eq!(component_members.len(), 10);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -315,11 +315,12 @@ fn profile_contract_matches_locked_metadata() {
             "sqlx-command",
             "transform",
             "wamn-postgres-sqlx",
+            "wamn-receiving-data-access",
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
     assert_eq!(component_m1.len(), 4);
-    assert_eq!(component_proof.len(), 9);
+    assert_eq!(component_proof.len(), 10);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(
@@ -333,10 +334,11 @@ fn profile_contract_matches_locked_metadata() {
             "sockprobe",
             "sqlx-command",
             "wamn-postgres-sqlx",
+            "wamn-receiving-data-access",
         ]
-            .into_iter()
-            .map(str::to_string)
-            .collect()
+        .into_iter()
+        .map(str::to_string)
+        .collect()
     );
 }
 
@@ -609,7 +611,7 @@ fn unknown_selector_modes_refuse_before_cargo() {
 ///     `contains` kills and a quoted shape would not;
 ///   * an exclusion list of ordinary-English names is a HAND-WRITTEN needle set,
 ///     which is precisely what deriving the set exists to avoid, and it would
-///     blind the guard on two of the seven component packages.
+///     blind the guard on two of the eight component packages.
 ///
 /// Nothing else kills the mutant this exists for. A tool that hardcodes a
 /// package list EQUAL to the canonical one passes every behavioural proof in

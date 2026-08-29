@@ -422,6 +422,15 @@
     },
     {
       "workspace": "components",
+      "name": "wamn-receiving-data-access",
+      "manifest_path": "components/data/receiving-data/Cargo.toml",
+      "role": "adapter",
+      "target_class": "guest",
+      "bounded_context": "data",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
       "name": "busyloop",
       "manifest_path": "components/fixtures/busyloop/Cargo.toml",
       "role": "test",

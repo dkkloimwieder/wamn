@@ -30,6 +30,9 @@ wasmtime-wasi = { workspace = true }
 wasm-encoder = { workspace = true }
 
 [dev-dependencies]
+chrono = { workspace = true, features = ["std"] }
+sqlx = { version = "=0.9.0", default-features = false, features = ["chrono", "json", "macros", "postgres", "runtime-tokio", "uuid"] }
+uuid = "1"
 wamn-execution-host = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wat = "=1.252.0"

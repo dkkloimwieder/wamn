@@ -64,8 +64,8 @@ crates/                 shared Rust workspace packages
     model               wamn-scenario-model: test-set/assertion vocabulary
 
 components/             wasm32-wasip2 guests and guest libraries
-  data/                 wamn-postgres-sqlx: capability-shaped SQLx transport
-                        and explicit transaction runner
+  data/                 capability-shaped SQLx transport/transaction runner;
+                        generated Receiving data-access kernel
   ingress/              product ingress components (flow-http)
   execution/            product execution components (materializer)
   fixtures/             non-product proof fixtures (busyloop,

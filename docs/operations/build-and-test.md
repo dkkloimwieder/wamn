@@ -151,6 +151,28 @@ Generated package contracts and projections have a package-local gate:
 cargo test -p wamn-schema-generator --all-targets --no-fail-fast
 ```
 
+The Receiving SQLx siblings use one disposable PostgreSQL 18 database whose
+trusted connection context sets `search_path = receiving, public`:
+
+```bash
+# Materialize only once; subsequent runs are read-only checks.
+WAMN_SCHEMA_INTROSPECTION_PG_URL="$DATABASE_URL" \
+  cargo run -p wamn-schema-generator --example materialize_receiving -- \
+  check SOURCE_COMMIT
+
+# Normal builds consume the committed .sqlx evidence without a database.
+SQLX_OFFLINE=true cargo test -p wamn-proof-conformance \
+  --test receiving_sqlx_verifier --locked --offline
+cargo test --manifest-path components/Cargo.toml \
+  -p wamn-receiving-data-access --all-targets --locked --offline
+cargo check --manifest-path components/Cargo.toml \
+  -p wamn-receiving-data-access --target wasm32-wasip2 --locked --offline
+
+# On the disposable database, verify that committed SQLx evidence is current.
+cargo sqlx prepare --check --workspace -D "$DATABASE_URL" -- \
+  --package wamn-proof-conformance --test receiving_sqlx_verifier
+```
+
 The `deploy/platform` bill of materials (`wamn-0h0g.10.5`) is a static
 structural proof of the same kind, but it lives in `wamn-proof-system` — it
 belongs beside the conformance guards and was kept out of that package only so

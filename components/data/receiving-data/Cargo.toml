@@ -1,0 +1,19 @@
+[package]
+name = "wamn-receiving-data-access"
+version.workspace = true
+edition.workspace = true
+description = "Typed Receiving data-access kernel over wamn:postgres"
+license = "Apache-2.0"
+
+[dependencies]
+base64.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sqlx = { version = "=0.9.0", default-features = false, features = ["derive"] }
+sqlx-core.workspace = true
+uuid = "1"
+wamn-postgres-sqlx.workspace = true
+
+[lints]
+workspace = true

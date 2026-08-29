@@ -52,6 +52,10 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("http-route", "components/ingress/http-route/src/lib.rs"),
     ("materializer", "components/execution/materializer/src/main.rs"),
     ("wamn-postgres-sqlx", "components/data/postgres-sqlx/src/lib.rs"),
+    (
+        "wamn-receiving-data-access",
+        "components/data/receiving-data/src/lib.rs",
+    ),
     ("busyloop", "components/fixtures/busyloop/src/main.rs"),
     ("connection-http-standard", "components/fixtures/connection-http-standard/src/lib.rs"),
     ("sockprobe", "components/fixtures/sockprobe/src/main.rs"),

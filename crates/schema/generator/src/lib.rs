@@ -19,6 +19,7 @@ mod cursor;
 mod error;
 mod generate;
 mod manifest;
+mod parity;
 mod sql;
 mod sql_lex;
 
@@ -38,4 +39,5 @@ pub use manifest::{
     PolicyContractRequirement, PolicyContractState, ResultClass, SortDeclaration, SortKey,
     TieBreakerDeclaration,
 };
+pub use parity::{ParityError, ParityErrorKind, validate_parity_json};
 pub use wamn_schema_introspection::ir::CatalogIr;
