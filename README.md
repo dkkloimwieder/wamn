@@ -43,6 +43,7 @@ crates/                 shared Rust workspace packages
     model               wamn-schema-model: metadata model + JSON Schema
     compiler            wamn-schema-compiler: DDL, RLS, and seed compilation
     control             wamn-schema-control: lifecycle, migration, and impact
+    introspection       wamn-schema-introspection: migration policy + catalog IR
   execution/
     contract            wamn-execution-contract: node contract, ports, cases
     host                shared native host for execution components
@@ -136,7 +137,7 @@ cargo test                       # a specific crate: cargo test -p wamn-router
 
 # lint + format
 # --workspace is required: without it Cargo selects default-members only, which
-# is 16 of the 34 workspace crates. --keep-going is required because Cargo stops
+# is 16 of the 35 workspace crates. --keep-going is required because Cargo stops
 # scheduling new units at the first error, hiding every later package's lints.
 cargo clippy --workspace --all-targets --keep-going && cargo fmt --all --check
 ```

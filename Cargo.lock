@@ -4623,6 +4623,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-schema-introspection"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "wamn-schema-model"
 version = "0.1.0"
 dependencies = [

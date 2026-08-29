@@ -1,0 +1,13 @@
+[package]
+name = "wamn-schema-introspection"
+description = "PostgreSQL catalog introspection and normalized migration-derived schema IR."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,3 +1,4 @@
+//! Superseded by migration-to-IR; deletes with slice iii; no new call sites.
 //! Canonical wamn metadata catalog schema (3.1).
 //!
 //! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).

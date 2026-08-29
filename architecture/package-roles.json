@@ -342,6 +342,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-schema-introspection",
+      "manifest_path": "crates/schema/introspection/Cargo.toml",
+      "role": "core",
+      "target_class": "native",
+      "bounded_context": "schema",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-schema-model",
       "manifest_path": "crates/schema/model/Cargo.toml",
       "role": "contract",

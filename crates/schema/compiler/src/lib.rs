@@ -1,3 +1,4 @@
+//! Superseded by migration-to-IR; deletes with slice iii; no new call sites.
 //! wamn DDL compiler (3.2).
 //!
 //! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).

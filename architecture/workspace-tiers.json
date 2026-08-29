@@ -3,14 +3,14 @@
   "selection": {
     "mechanism": "root-default-members-plus-named-explicit-selectors",
     "default_members_selected": true,
-    "reason": "Bare root Cargo commands select the exact 16-package MVP developer floor. Named selectors retain the 28-package production loop and explicit 34-package full-CI coverage; --workspace remains required for the exhaustive root pass.",
+    "reason": "Bare root Cargo commands select the exact 16-package MVP developer floor. Named selectors retain the 29-package production loop and explicit 35-package full-CI coverage; --workspace remains required for the exhaustive root pass.",
     "package_classification_source": "architecture/package-roles.json",
     "membership_evidence": "cargo metadata --locked --offline --format-version 1"
   },
   "source_inventory": {
     "root_workspace": {
       "manifest": "Cargo.toml",
-      "package_count": 34
+      "package_count": 35
     },
     "component_workspaces": [
       {
@@ -56,6 +56,7 @@
         "wamn-scheduler",
         "wamn-schema-compiler",
         "wamn-schema-control",
+        "wamn-schema-introspection",
         "wamn-schema-model",
         "wamn-waker"
       ],
@@ -123,6 +124,7 @@
         "wamn-scheduler",
         "wamn-schema-compiler",
         "wamn-schema-control",
+        "wamn-schema-introspection",
         "wamn-schema-model",
         "wamn-test-infrastructure",
         "wamn-waker"
@@ -139,7 +141,7 @@
         "wamn-postgres-sqlx"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test all 34 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all nine component packages through explicit selectors for wasm32-wasip2 across both component workspaces, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 35 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all nine component packages through explicit selectors for wasm32-wasip2 across both component workspaces, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -221,9 +223,9 @@
       "expected_package_counts": {
         "m1": 20,
         "m2": 22,
-        "deploy": 28,
-        "full": 34,
-        "ops": 34
+        "deploy": 29,
+        "full": 35,
+        "ops": 35
       }
     },
     "components": {
@@ -244,7 +246,7 @@
         "cargo test"
       ],
       "selected_packages": "exactly 16 root default members",
-      "qualification": "cargo test selects each default member's default test targets; use --workspace --all-targets --no-fail-fast for all 34 root members and full-CI target coverage"
+      "qualification": "cargo test selects each default member's default test targets; use --workspace --all-targets --no-fail-fast for all 35 root members and full-CI target coverage"
     },
     {
       "working_directory": "components",
