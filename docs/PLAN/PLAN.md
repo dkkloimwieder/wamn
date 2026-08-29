@@ -6,9 +6,9 @@ work order and unresolved exploration or decisions.
 
 ## Finish condition
 
-Resolve the complete `wamn-0h0g` program, then run one final RC on that tip.
-Do not merge to `mvp` while any required scope-reduction outcome, retirement,
-authority cutover, proof or generated-registry update remains open.
+The completed `wamn-0h0g` program and final RC are the pivot's exit gate.
+Promote that RC-validated tip directly to `main`; retain the displaced
+pre-pivot tip at `archive/mvp` rather than merging histories.
 
 ## Work order
 

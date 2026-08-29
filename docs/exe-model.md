@@ -138,8 +138,9 @@ pooler trigger, not an alternative identity model.
 - A live gate that did not execute is not green. Environment-gated proofs expose
   skips, independently report every leg and use disposable state where roles or
   cluster-wide authority are involved.
-- No merge to `mvp` occurs until the entire `wamn-0h0g` scope-reduction program is
-  resolved and the final RC is green on the resulting tip.
+- Promotion to `main` follows only after the entire `wamn-0h0g` scope-reduction
+  program is resolved and the final RC is green on the resulting tip; the
+  displaced pre-pivot tip remains archived at `archive/mvp`.
 
 ### Retained roots
 
