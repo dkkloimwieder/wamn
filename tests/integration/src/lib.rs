@@ -14,6 +14,8 @@ mod hot_route_trace;
 pub mod m1;
 pub mod provisionbench;
 pub mod readerbench;
+#[cfg(test)]
+mod receiving_data_access;
 mod release_fixture;
 mod router_tap_live;
 pub mod retention;

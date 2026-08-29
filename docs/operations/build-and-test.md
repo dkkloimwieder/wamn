@@ -151,14 +151,61 @@ Generated package contracts and projections have a package-local gate:
 cargo test -p wamn-schema-generator --all-targets --no-fail-fast
 ```
 
-The Receiving SQLx siblings use one disposable PostgreSQL 18 database whose
-trusted connection context sets `search_path = receiving, public`:
+The Receiving SQLx siblings use one fresh disposable PostgreSQL 18 database.
+The live gate refuses a pre-existing `receiving` schema, applies the exact
+package migration, reads `wamn.json` structurally, and exercises the shipped
+update SQL. Native verification selects the schema through trusted connection
+context rather than changing the corpus bytes:
 
 ```bash
-# Materialize only once; subsequent runs are read-only checks.
-WAMN_SCHEMA_INTROSPECTION_PG_URL="$DATABASE_URL" \
-  cargo run -p wamn-schema-generator --example materialize_receiving -- \
-  check SOURCE_COMMIT
+set -euo pipefail
+RECEIVING_PG_CONTAINER=wamn-receiving-pg18
+RECEIVING_PG_PORT=54329
+if docker container inspect "$RECEIVING_PG_CONTAINER" >/dev/null 2>&1; then
+  echo "$RECEIVING_PG_CONTAINER already exists" >&2
+  exit 1
+fi
+if ss -ltnH | awk '{print $4}' | grep -Eq ":${RECEIVING_PG_PORT}$"; then
+  echo "port $RECEIVING_PG_PORT is already in use" >&2
+  exit 1
+fi
+receiving_gate_cleanup() {
+  docker rm -f "$RECEIVING_PG_CONTAINER" >/dev/null 2>&1 || true
+}
+trap receiving_gate_cleanup EXIT
+
+docker run -d --name "$RECEIVING_PG_CONTAINER" \
+  -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=wamn_receiving \
+  -p "127.0.0.1:${RECEIVING_PG_PORT}:5432" postgres:18
+RECEIVING_PG_READY=0
+for RECEIVING_PG_ATTEMPT in {1..60}; do
+  if docker exec "$RECEIVING_PG_CONTAINER" \
+      psql -h 127.0.0.1 -U postgres -d wamn_receiving \
+      -tAc 'SELECT 1' >/dev/null 2>&1; then
+    RECEIVING_PG_READY=1
+    break
+  fi
+  sleep 1
+done
+test "$RECEIVING_PG_READY" -eq 1
+
+RECEIVING_DATABASE_URL="postgresql://postgres:probe@127.0.0.1:${RECEIVING_PG_PORT}/wamn_receiving"
+RECEIVING_SQLX_DATABASE_URL="${RECEIVING_DATABASE_URL}?options=-csearch_path%3Dreceiving%2Cpublic"
+RECEIVING_SOURCE_COMMIT="$(jq -er .provenance.source_commit \
+  packages/receiving/generated/package-weld.json)"
+
+WAMN_RECEIVING_PG_URL="$RECEIVING_DATABASE_URL" cargo test \
+  -p wamn-proof-integration \
+  receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18 \
+  --locked --offline -- --ignored --exact
+
+# Two independent derivations must each equal the exact shipped path/byte set.
+WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
+  cargo run -p wamn-schema-generator --example materialize_receiving \
+  --locked --offline -- check "$RECEIVING_SOURCE_COMMIT"
+WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
+  cargo run -p wamn-schema-generator --example materialize_receiving \
+  --locked --offline -- check "$RECEIVING_SOURCE_COMMIT"
 
 # Normal builds consume the committed .sqlx evidence without a database.
 SQLX_OFFLINE=true cargo test -p wamn-proof-conformance \
@@ -168,9 +215,66 @@ cargo test --manifest-path components/Cargo.toml \
 cargo check --manifest-path components/Cargo.toml \
   -p wamn-receiving-data-access --target wasm32-wasip2 --locked --offline
 
-# On the disposable database, verify that committed SQLx evidence is current.
-cargo sqlx prepare --check --workspace -D "$DATABASE_URL" -- \
+# On the disposable database, compile the native sibling and verify metadata.
+env -u SQLX_OFFLINE DATABASE_URL="$RECEIVING_SQLX_DATABASE_URL" cargo test \
+  -p wamn-proof-conformance --test receiving_sqlx_verifier \
+  --no-run --locked --offline
+cargo sqlx prepare --check --workspace -D "$RECEIVING_SQLX_DATABASE_URL" -- \
   --package wamn-proof-conformance --test receiving_sqlx_verifier
+```
+
+Run the two temporary, hash-guarded mutants in the same shell before cleanup.
+These commands inject the mutations; compiler and typed-validator outcomes
+provide the proof. No test inspects source text for an implementation substring.
+
+```bash
+RECEIVING_SQL_FILE=packages/receiving/query/open_purchase_order.sql
+RECEIVING_SQL_BASELINE_SHA="$(sha256sum "$RECEIVING_SQL_FILE" | cut -d ' ' -f 1)"
+(
+  RECEIVING_SQL_BACKUP="$(mktemp)"
+  cp "$RECEIVING_SQL_FILE" "$RECEIVING_SQL_BACKUP"
+  trap 'cp "$RECEIVING_SQL_BACKUP" "$RECEIVING_SQL_FILE"; rm -f "$RECEIVING_SQL_BACKUP"' EXIT
+  perl -0pi -e \
+    's/\Q    purchase_order.updated_at\E/    purchase_order.missing_receiving_column AS updated_at/' \
+    "$RECEIVING_SQL_FILE"
+  if env -u SQLX_OFFLINE DATABASE_URL="$RECEIVING_SQLX_DATABASE_URL" cargo test \
+      -p wamn-proof-conformance --test receiving_sqlx_verifier \
+      --no-run --locked --offline; then
+    echo "broken-column mutant unexpectedly compiled" >&2
+    exit 1
+  fi
+)
+test "$(sha256sum "$RECEIVING_SQL_FILE" | cut -d ' ' -f 1)" = \
+  "$RECEIVING_SQL_BASELINE_SHA"
+env -u SQLX_OFFLINE DATABASE_URL="$RECEIVING_SQLX_DATABASE_URL" cargo test \
+  -p wamn-proof-conformance --test receiving_sqlx_verifier \
+  --no-run --locked --offline
+
+RECEIVING_GENERATOR_FILE=crates/schema/generator/src/generate.rs
+RECEIVING_GENERATOR_BASELINE_SHA="$(sha256sum "$RECEIVING_GENERATOR_FILE" | cut -d ' ' -f 1)"
+(
+  RECEIVING_GENERATOR_BACKUP="$(mktemp)"
+  cp "$RECEIVING_GENERATOR_FILE" "$RECEIVING_GENERATOR_BACKUP"
+  trap 'cp "$RECEIVING_GENERATOR_BACKUP" "$RECEIVING_GENERATOR_FILE"; rm -f "$RECEIVING_GENERATOR_BACKUP"' EXIT
+  perl -0pi -e \
+    's/\Q(Projection::Wamn, ColumnType::Uuid) => "wamn_postgres_sqlx::Uuid",\E/(Projection::Wamn, ColumnType::Uuid) => "String",/' \
+    "$RECEIVING_GENERATOR_FILE"
+  if cargo test -p wamn-schema-generator --test generation \
+      generation_is_byte_stable_and_emits_both_projection_siblings \
+      --locked --offline -- --exact --nocapture; then
+    echo "Wamn UUID parity mutant unexpectedly passed" >&2
+    exit 1
+  fi
+)
+test "$(sha256sum "$RECEIVING_GENERATOR_FILE" | cut -d ' ' -f 1)" = \
+  "$RECEIVING_GENERATOR_BASELINE_SHA"
+cargo test -p wamn-schema-generator --test generation \
+  generation_is_byte_stable_and_emits_both_projection_siblings \
+  --locked --offline -- --exact
+cargo test -p wamn-schema-generator --test parity --locked --offline
+
+receiving_gate_cleanup
+trap - EXIT
 ```
 
 The `deploy/platform` bill of materials (`wamn-0h0g.10.5`) is a static
