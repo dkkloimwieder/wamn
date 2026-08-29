@@ -24,11 +24,11 @@ pub use component_library::{
     normalize_component_fact, schema_digests_match, verify_stored_effect_projection,
 };
 pub use serving_manifest::{
-    MAX_SERVING_MANIFEST_BYTES, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
-    RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
-    ServingComponent, ServingManifest, ServingRegistration, ServingRegistrationInput,
-    ServingRelease, ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
-    release_manifest_configmap_name,
+    MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX,
+    RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION,
+    ServingAttachment, ServingComponent, ServingManifest, ServingRegistration,
+    ServingRegistrationInput, ServingRelease, ServingWiring,
+    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, release_manifest_configmap_name,
 };
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,

@@ -23,7 +23,9 @@ use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use serde_json::Value;
-use wamn_catalog::{AttachmentKind, ServingAttachment, ServingManifest};
+use wamn_catalog::{
+    AttachmentKind, NO_AUTHENTICATION_MODE, ServingAttachment, ServingManifest,
+};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -236,9 +238,6 @@ const UNCONSTRAINED_INPUT_SCHEMA: &str = "true";
 /// `usize::try_from` and `usize` is 32 bits on wasm32: a wider value would fail
 /// that conversion and turn every `routes` call into a 503.
 const ADAPTER_GOVERNED_BYTES: u64 = u32::MAX as u64;
-
-/// The one auth-source document this host can honour with no secret store.
-const NO_AUTHENTICATION_MODE: &str = "none";
 
 /// 501, because the request is well formed and it is the *host* that lacks the
 /// mechanism — the caller can do nothing to satisfy a policy nothing implements.

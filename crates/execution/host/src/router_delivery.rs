@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
-use wamn_catalog::{AttachmentKind, ServingManifest};
+use wamn_catalog::{AttachmentKind, NO_AUTHENTICATION_MODE, ServingManifest};
 use wamn_event_wire::Causation;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 use wamn_runtime::plugins::wamn_jetstream::{
@@ -421,7 +421,7 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                             .auth_policy
                             .get("mode")
                             .and_then(serde_json::Value::as_str)
-                            == Some("none"),
+                            == Some(NO_AUTHENTICATION_MODE),
                     ),
                     resolution: if matches!(
                         attachment.kind,

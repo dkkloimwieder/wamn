@@ -23,6 +23,9 @@ use crate::{
 /// The only serving-manifest format admitted by this revision.
 pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 2;
 
+/// The attachment auth-policy mode that permits an unauthenticated caller.
+pub const NO_AUTHENTICATION_MODE: &str = "none";
+
 /// Stable refusal literal for a serving-manifest format this reader will not admit.
 pub const UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL: &str =
     "unsupported-serving-manifest-version";
