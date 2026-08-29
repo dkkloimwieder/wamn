@@ -195,8 +195,8 @@ fn route_definition(
 }
 
 struct WasiBody {
-    _body: Option<IncomingBody>,
     stream: Option<InputStream>,
+    _body: Option<IncomingBody>,
     failed: bool,
 }
 
@@ -204,8 +204,8 @@ impl WasiBody {
     fn new(body: Option<IncomingBody>) -> Self {
         let stream = body.as_ref().and_then(|body| body.stream().ok());
         Self {
-            _body: body,
             stream,
+            _body: body,
             failed: false,
         }
     }
