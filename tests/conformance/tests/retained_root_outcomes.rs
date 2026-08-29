@@ -41,6 +41,10 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-scheduler", "crates/execution/scheduler/src/lib.rs"),
     ("wamn-schema-compiler", "crates/schema/compiler/src/lib.rs"),
     ("wamn-schema-control", "crates/schema/control/src/lib.rs"),
+    (
+        "wamn-schema-introspection",
+        "crates/schema/introspection/src/lib.rs",
+    ),
     ("wamn-schema-model", "crates/schema/model/src/lib.rs"),
     ("wamn-test-infrastructure", "test-support/infrastructure/lib.rs"),
     ("wamn-waker", "services/waker/src/lib.rs"),

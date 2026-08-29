@@ -213,7 +213,8 @@
         "wamn-control-registry",
         "wamn-project-state",
         "wamn-schema-control",
-        "wamn-schema-compiler"
+        "wamn-schema-compiler",
+        "wamn-schema-introspection"
       ],
       "deploy_inventory_tier": "fast_developer_native",
       "full_inventory_tier": "full_ci",

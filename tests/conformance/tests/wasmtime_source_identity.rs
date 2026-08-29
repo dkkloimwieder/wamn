@@ -18,19 +18,37 @@ const WASMTIME_RESOLVED: &str = "47.0.4";
 const WASMTIME_REQUIREMENT: &str = "47.0.3";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 
-const DIRECT_CONSUMERS: [(&str, &[&str]); 4] = [
+const DIRECT_CONSUMERS: [(&str, &[(&str, &str)]); 4] = [
     // execution/host takes `wasmtime-wasi` ONLY. It carried `wasmtime-wasi-http`
     // once and this table was not repointed when the dependency was dropped, so
     // the guard demanded a dep the crate does not declare and no source under
     // it references. Re-adding the dependency to satisfy this row would declare
     // a dead dep to silence a false assertion (wamn-0h0g.15.191).
-    ("crates/execution/host/Cargo.toml", &["wasmtime-wasi"]),
-    ("tests/conformance/Cargo.toml", &["wasmtime-wasi"]),
+    (
+        "crates/execution/host/Cargo.toml",
+        &[("wasmtime-wasi", "dependencies")],
+    ),
+    (
+        "tests/conformance/Cargo.toml",
+        &[("wasmtime-wasi", "dependencies")],
+    ),
     (
         "crates/platform/runtime/Cargo.toml",
-        &["wasmtime-wasi", "wasmtime-wasi-http"],
+        &[
+            ("wasmtime-wasi", "dependencies"),
+            ("wasmtime-wasi-http", "dependencies"),
+        ],
     ),
-    ("tests/integration/Cargo.toml", &["wasmtime-wasi"]),
+    // The live router-tap proof instantiates the P2 HTTP host surface directly;
+    // unlike the deleted system traceproof dependency, this is a source-backed
+    // consumer (wamn-0h0g.24.5).
+    (
+        "tests/integration/Cargo.toml",
+        &[
+            ("wasmtime-wasi", "dependencies"),
+            ("wasmtime-wasi-http", "dev-dependencies"),
+        ],
+    ),
     // `tests/system/Cargo.toml` held a fifth row until `wamn-k9ea`. traceproof
     // reached `wasmtime-wasi-http` only to drive wash-runtime's P2/P3 `wasi:http`
     // host surfaces; re-aiming that gate at `wamn:connection/http` deleted the
@@ -123,7 +141,7 @@ fn expected_direct_dependencies() -> BTreeMap<String, BTreeSet<String>> {
                 .to_owned();
             let dependencies = dependencies
                 .iter()
-                .map(|dependency| (*dependency).to_owned())
+                .map(|(dependency, _)| (*dependency).to_owned())
                 .collect();
             (package, dependencies)
         })
@@ -277,12 +295,12 @@ fn direct_wasmtime_consumers_inherit_workspace_source_contract() {
     }
 
     for (manifest, dependencies) in DIRECT_CONSUMERS {
-        let declarations = dependency_declarations(&root.join(manifest), "dependencies");
-        for dependency in dependencies {
+        for (dependency, table) in dependencies {
+            let declarations = dependency_declarations(&root.join(manifest), table);
             assert_eq!(
                 declarations.get(*dependency).map(String::as_str),
                 Some("{workspace=true}"),
-                "{manifest} must inherit `{dependency}` from the workspace"
+                "{manifest} [{table}] must inherit `{dependency}` from the workspace"
             );
         }
     }
