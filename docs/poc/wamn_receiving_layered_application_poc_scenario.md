@@ -249,15 +249,20 @@ location
 ### Base application operation
 
 ```text
-purchase_order.query
 purchase_order.get
-receipt.query
+purchase_order.query
+purchase_order.update
 receipt.get
+receipt.query
 receiving.record_receipt
 receiving.import_purchase_order
 ```
 
 Each operation uses the array-shaped invocation contract.
+
+**Owner-ruling correction, 2026-08-29:** the base exposes one real
+`purchase_order.update` operation so optimistic-concurrency behavior is
+proved without expanding authority to `create` or `delete`.
 
 `wamn_receiving@1.0.0::receiving.record_receipt` owns the authoritative database transaction for each command item:
 
@@ -686,17 +691,9 @@ export interface WamnReceivingClient {
       input: readonly PurchaseOrderQueryInput[],
     ): Promise<readonly OperationItem<Page<PurchaseOrder>>[]>;
 
-    create(
-      input: readonly PurchaseOrderCreateInput[],
-    ): Promise<readonly OperationItem<PurchaseOrder>[]>;
-
     update(
       input: readonly PurchaseOrderUpdateInput[],
     ): Promise<readonly OperationItem<PurchaseOrder>[]>;
-
-    delete(
-      input: readonly PurchaseOrderDeleteInput[],
-    ): Promise<readonly OperationItem<DeleteResult>[]>;
   };
 
   readonly receiving: {
@@ -706,6 +703,10 @@ export interface WamnReceivingClient {
   };
 }
 ```
+
+**Owner-ruling correction, 2026-08-29:** generated base
+`purchase_order` operations are exactly `get`, `query`, and `update`; no
+base `create` or `delete` authority is registered.
 
 The shared array result preserves correlation. Each outer item succeeds or fails independently; no transaction spans multiple outer items:
 
@@ -761,21 +762,12 @@ export interface PurchaseOrderQueryInput {
     status?: readonly PurchaseOrder["status"][];
     supplier_id?: readonly Uuid[];
   };
-  sort?: readonly {
+  sort?: {
     field: "purchase_order_number" | "status" | "created_at";
     direction: "ascending" | "descending";
-  }[];
+  };
   cursor?: string;
   limit?: number;
-}
-
-export interface PurchaseOrderCreateInput {
-  request_id: string;
-  value: {
-    purchase_order_number: string;
-    supplier_id: Uuid;
-    status?: PurchaseOrder["status"] | null;
-  };
 }
 
 export interface PurchaseOrderUpdateInput {
@@ -783,13 +775,28 @@ export interface PurchaseOrderUpdateInput {
   id: Uuid;
   expected_row_version: Int64;
   change: {
-    supplier_id?: Uuid | null;
-    status?: PurchaseOrder["status"] | null;
+    supplier_id?: Uuid;
   };
 }
 ```
 
-Generated create input excludes server-owned data such as `id`, `row_version`, `created_at`, and `updated_at`. Generated update preserves the absent/null/value distinction and returns a typed `concurrency_conflict` when `expected_row_version` is stale.
+**Owner-ruling correction, 2026-08-29:** a query accepts at most one declared
+sort field and direction. Multi-column sorting is not assembled at runtime; a
+future finite expansion requires a named manifest demand.
+
+**Owner-ruling correction, 2026-08-29:** pagination is keyset-based, defaults
+to `created_at` ascending, and uses `id` as a stable tie-breaker inheriting the
+requested direction. An omitted limit means 100; valid limits are 1 through
+100, while zero or a negative limit returns `invalid_input` before SQL. The
+opaque v1 wire cursor is canonical compact JSON encoded as unpadded base64url;
+an unknown or undecodable cursor returns `invalid_input` rather than resetting
+pagination, and clients preserve the cursor verbatim.
+
+**Owner-ruling correction, 2026-08-29:** `supplier_id` is the sole writable
+base field. Omission means unchanged, explicit null is refused because the
+column is `NOT NULL`, and command-owned `status` is absent from the generated
+update input. A stale `expected_row_version` returns the typed
+`concurrency_conflict` refusal.
 
 A client package that extends the shared relation receives a narrower generated mutation type:
 
@@ -927,6 +934,7 @@ A client UI may call both WAMN application package surfaces:
 wamn_receiving
   purchase_order.get
   purchase_order.query
+  purchase_order.update
   receipt.get
   receipt.query
   receiving.record_receipt
@@ -939,6 +947,10 @@ client_acme_receiving
   quality.approve_inspection
   integration.sync_receipt
 ```
+
+**Owner-ruling correction, 2026-08-29:** the platform client surface includes
+the real, narrowly writable `purchase_order.update`; it does not imply base
+`create` or `delete` authority.
 
 A platform backend upgrade does not silently replace a client UI. A new effective-release TypeScript facade may be generated, while the immutable platform package, client overlay package, component artifacts, and existing UI artifact remain unchanged. If a consumed contract requires backend source changes, the client publishes a new overlay package version. If only the frontend changes, the client publishes a new UI artifact.
 

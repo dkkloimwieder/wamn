@@ -1,0 +1,196 @@
+{
+  "package": {
+    "id": "wamn_receiving",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "receiving_data_access",
+    "state": "unsatisfied"
+  },
+  "models": {
+    "purchase_order": {
+      "schema": "receiving",
+      "table": "purchase_order",
+      "owner": "wamn_receiving",
+      "server_owned_fields": [
+        "id",
+        "purchase_order_number",
+        "status",
+        "row_version",
+        "created_at",
+        "updated_at"
+      ],
+      "enum_fields": {
+        "status": [
+          "open",
+          "complete",
+          "cancelled"
+        ]
+      },
+      "operations": {
+        "get": {
+          "permission": "purchase_order.get",
+          "result": "one"
+        },
+        "query": {
+          "permission": "purchase_order.query",
+          "authored_sql": {
+            "default": "query/open_purchase_order.sql",
+            "variants": [
+              {
+                "field": "purchase_order_number",
+                "direction": "ascending",
+                "path": "query/open_purchase_order_by_purchase_order_number_ascending.sql"
+              },
+              {
+                "field": "purchase_order_number",
+                "direction": "descending",
+                "path": "query/open_purchase_order_by_purchase_order_number_descending.sql"
+              },
+              {
+                "field": "status",
+                "direction": "ascending",
+                "path": "query/open_purchase_order_by_status_ascending.sql"
+              },
+              {
+                "field": "status",
+                "direction": "descending",
+                "path": "query/open_purchase_order_by_status_descending.sql"
+              },
+              {
+                "field": "created_at",
+                "direction": "ascending",
+                "path": "query/open_purchase_order.sql"
+              },
+              {
+                "field": "created_at",
+                "direction": "descending",
+                "path": "query/open_purchase_order_by_created_at_descending.sql"
+              }
+            ]
+          },
+          "filters": [
+            {
+              "field": "supplier_id",
+              "binding": "json_array"
+            },
+            {
+              "field": "status",
+              "binding": "json_array"
+            }
+          ],
+          "sort": {
+            "fields": [
+              "purchase_order_number",
+              "status",
+              "created_at"
+            ],
+            "directions": [
+              "ascending",
+              "descending"
+            ],
+            "max_fields": 1
+          },
+          "pagination": {
+            "kind": "keyset",
+            "cursor": {
+              "version": 1,
+              "payload": "canonical_compact_json",
+              "encoding": "base64url_unpadded",
+              "opaque": true,
+              "invalid": "invalid_input"
+            },
+            "default_sort": {
+              "field": "created_at",
+              "direction": "ascending"
+            },
+            "tie_breaker": {
+              "field": "id"
+            }
+          },
+          "limit": {
+            "default": 100,
+            "minimum": 1,
+            "maximum": 100,
+            "invalid": "invalid_input"
+          },
+          "result": "page"
+        },
+        "update": {
+          "permission": "purchase_order.update",
+          "writable_fields": [
+            "supplier_id"
+          ],
+          "revision_field": "row_version",
+          "result": "one"
+        }
+      }
+    },
+    "receipt": {
+      "schema": "receiving",
+      "table": "receipt",
+      "owner": "wamn_receiving",
+      "server_owned_fields": [
+        "id",
+        "idempotency_key",
+        "purchase_order_id",
+        "receipt_reference",
+        "occurred_at",
+        "created_at"
+      ],
+      "enum_fields": {},
+      "operations": {
+        "get": {
+          "permission": "receipt.get",
+          "result": "one"
+        },
+        "query": {
+          "permission": "receipt.query",
+          "pagination": {
+            "kind": "keyset",
+            "cursor": {
+              "version": 1,
+              "payload": "canonical_compact_json",
+              "encoding": "base64url_unpadded",
+              "opaque": true,
+              "invalid": "invalid_input"
+            },
+            "default_sort": {
+              "field": "created_at",
+              "direction": "ascending"
+            },
+            "tie_breaker": {
+              "field": "id"
+            }
+          },
+          "limit": {
+            "default": 100,
+            "minimum": 1,
+            "maximum": 100,
+            "invalid": "invalid_input"
+          },
+          "result": "page"
+        }
+      }
+    }
+  },
+  "connections": {
+    "postgres": {
+      "interface": "wamn:postgres@0.1.0"
+    }
+  },
+  "components": {
+    "receiving_data": {
+      "operations": [
+        "purchase_order.get",
+        "purchase_order.query",
+        "purchase_order.update",
+        "receipt.get",
+        "receipt.query"
+      ],
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}
