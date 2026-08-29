@@ -230,7 +230,8 @@ spec:
 #     backstop, not the policy.
 #   * max_bytes 64MiB — inside the 256MB max_memory_store above, so a burst of
 #     previews cannot starve JetStream's memory spill lane.
-#   * duplicate_window 0 — previews are not deduped; they are not facts.
+#   * duplicate_window 120s — explicit rather than the ambient NATS default.
+#     Tap publishes carry no Nats-Msg-Id, so duplicate tracking stays inert.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -253,7 +254,7 @@ data:
       "max_msgs_per_subject": 16,
       "max_bytes": 67108864,
       "max_msg_size": 131072,
-      "duplicate_window": 0
+      "duplicate_window": 120000000000
     }
 ---
 # Install-once provisioning. Idempotent by construction: `stream info` decides

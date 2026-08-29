@@ -15,6 +15,7 @@ pub mod m1;
 pub mod provisionbench;
 pub mod readerbench;
 mod release_fixture;
+mod router_tap_live;
 pub mod retention;
 #[cfg(test)]
 mod rie2ebench;

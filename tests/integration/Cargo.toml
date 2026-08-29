@@ -45,7 +45,10 @@ wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+http-body-util = { workspace = true }
+hyper = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
+wasmtime-wasi-http = { workspace = true }
 
 [lints]
 workspace = true

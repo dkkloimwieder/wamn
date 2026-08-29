@@ -2318,6 +2318,58 @@ mod tests {
         }
     }
 
+    /// The live arm runs against the provisioned stream itself. If the tap
+    /// reservation is removed, this exact generic guest call receives a server
+    /// ack and changes `WAMN_TAP`'s message count; there is no mock publisher or
+    /// alternate authorization path in the proof.
+    #[tokio::test]
+    #[ignore = "requires a disposable NATS provisioned with checked-in WAMN_TAP"]
+    async fn live_generic_guest_cannot_write_the_provisioned_tap_stream() {
+        let url = std::env::var("WAMN_ROUTER_TAP_NATS_URL")
+            .expect("set WAMN_ROUTER_TAP_NATS_URL to the disposable provisioned NATS");
+        let context = async_nats::jetstream::new(
+            async_nats::connect(&url)
+                .await
+                .expect("connect to disposable NATS"),
+        );
+        let mut stream = context
+            .get_stream("WAMN_TAP")
+            .await
+            .expect("checked-in WAMN_TAP provisioning ran");
+        let before = stream
+            .info()
+            .await
+            .expect("read WAMN_TAP before")
+            .state
+            .messages;
+        let plugin = WamnJetstream::new(WamnJetstreamConfig {
+            nats_url: Some(url),
+        });
+        let error = publish_generic(
+            &plugin,
+            "generic-guest",
+            "tap.tenant-a.default.prod.orders.forged".to_owned(),
+            Vec::new(),
+            br#"{"forged":true}"#.to_vec(),
+        )
+        .await
+        .expect_err("a generic guest must not receive a WAMN_TAP server ack");
+        let JsError::PublishRejected(detail) = error else {
+            panic!("reserved tap publication must be rejected, got {error:?}");
+        };
+        assert!(detail.starts_with(RESERVED_ROUTER_TAP_SUBJECT), "{detail}");
+        assert_eq!(
+            stream
+                .info()
+                .await
+                .expect("read WAMN_TAP after")
+                .state
+                .messages,
+            before,
+            "the refused guest publication must not reach the provisioned stream"
+        );
+    }
+
     /// The host must never mint a subject its own gate would admit from a guest:
     /// a preview namespace a tenant can write is a forgeable provenance channel
     /// feeding an operator's live view, which is worse than having no tap.

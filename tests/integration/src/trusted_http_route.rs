@@ -36,7 +36,11 @@ use wamn_catalog::{
     AdmittedComponent, ComponentDeclaration, SERVING_MANIFEST_FORMAT_VERSION, WiringDocument,
     WiringNode, WiringTerminal, flip_activation,
 };
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+};
 use wamn_execution_host::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
+use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_runtime::component_artifact::{
     component_artifact_config_bytes, component_artifact_layout, component_artifact_reference,
@@ -65,11 +69,16 @@ pub const PROJECT: &str = "default";
 pub const COMPONENT: &str = "http-request";
 pub const INTERFACE_VERSION: &str = "0.1.0";
 pub const OPERATION: &str = "run";
+pub const ATTACHMENT_ID: &str = "orders-http";
+pub const ROUTE_AUTHORITY: &str = "tap.example.test";
+pub const ROUTE_PATH: &str = "/deliver";
 const INSTANCE_ID: &str = "upstream-instance";
 const CREDENTIAL_HANDLE: &str = "upstream-v1";
 const GENERATION: i64 = 1;
 const CONTRACT: &str = "wamn:connection/http@0.1.0";
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
+const GENERATION_PASSWORD: &str = "router-tap-live";
+const GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
 /// The throwaway resources this closure is built over.
 #[derive(Debug, Clone)]
@@ -91,6 +100,10 @@ pub struct RouteOptions {
 /// to address it.
 pub struct TrustedHttpRoute {
     pub driver: Arc<RouterDriver>,
+    /// The same welded release the driver authorizes. Callers that exercise a
+    /// release-owned ingress plugin must share this exact weld rather than mint
+    /// a second view of the closure.
+    pub(crate) release: Arc<ReleaseManifestWeld>,
     /// The digest OCI serves the guest under and every seeded row keys on.
     pub component_digest: String,
     /// The wiring document's own canonical hash — `catalog.wirings.wiring_hash`,
@@ -135,10 +148,6 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
 
     let document = wiring_document(&options.path_and_query);
     let wiring_hash = document.wiring_hash().as_str().to_owned();
-    seed_catalog(options, &admitted, &document, &wiring_hash)
-        .await
-        .context("seed the catalog closure")?;
-
     let release = Arc::new(
         ReleaseManifestWeld::load_canonical_bytes(
             &wamn_execution_contract::canonical_json_bytes(&release_manifest(
@@ -149,11 +158,14 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
         )
         .context("weld the fixture serving manifest")?,
     );
+    let postgres_credentials = seed_catalog(options, &admitted, &document, &wiring_hash, &release)
+        .await
+        .context("seed the catalog closure")?;
 
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             // wamn-0h0g.22.16: one url, named for every class explicitly.
-            credentials: Some(ClassCredentials::every_class(options.database_url.clone())),
+            credentials: Some(postgres_credentials),
             guest_pool_max_size: 4,
             platform_pool_max_size: 4,
             wait_timeout_ms: 5_000,
@@ -180,7 +192,7 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
             // The upstream is a loopback origin the test owns; the cluster
             // ceiling is Kubernetes' job, not this fixture's.
             Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
-            release,
+            Arc::clone(&release),
             source,
             RouterDriverConfig {
                 owner_prefix: "trusted-http-route".to_owned(),
@@ -194,6 +206,7 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
 
     Ok(TrustedHttpRoute {
         driver,
+        release,
         component_digest: admitted.component_digest.clone(),
         wiring_hash,
     })
@@ -256,6 +269,18 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
 /// `validate_wiring_closure` and again in `authorize_release_closure` — read
 /// this document.
 fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_json::Value {
+    let attachment_definition = serde_json::json!({
+        "id": ATTACHMENT_ID,
+        "kind": "http",
+        "source-id": "public",
+        "route": {
+            "host": ROUTE_AUTHORITY,
+            "path": ROUTE_PATH,
+            "method": "POST"
+        }
+    });
+    let attachment_definition_hash =
+        wamn_execution_contract::canonical_json_sha256(&attachment_definition);
     serde_json::json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {
@@ -274,7 +299,16 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
             "wiring-version": WIRING_VERSION,
             "graph-hash": wiring_hash,
         }],
-        "attachments": {},
+        "attachments": {
+            (ATTACHMENT_ID): {
+                "kind": "http",
+                "wiring-id": WIRING_ID,
+                "wiring-version": WIRING_VERSION,
+                "definition-hash": attachment_definition_hash,
+                "definition": attachment_definition,
+                "auth-policy": {"mode": "none"}
+            }
+        },
         "registrations": {},
     })
 }
@@ -335,12 +369,14 @@ async fn seed_catalog(
     component: &AdmittedComponent,
     document: &WiringDocument,
     wiring_hash: &str,
-) -> anyhow::Result<()> {
+    release: &ReleaseManifestWeld,
+) -> anyhow::Result<ClassCredentials> {
     let (client, connection) = tokio_postgres::connect(&options.database_url, NoTls)
         .await
         .context("connect the seeding session")?;
     let driver = tokio::spawn(connection);
-    let seeded = seed_with_client(&client, options, component, document, wiring_hash).await;
+    let seeded =
+        seed_with_client(&client, options, component, document, wiring_hash, release).await;
     drop(client);
     driver.abort();
     seeded
@@ -352,7 +388,8 @@ async fn seed_with_client(
     component: &AdmittedComponent,
     document: &WiringDocument,
     wiring_hash: &str,
-) -> anyhow::Result<()> {
+    release: &ReleaseManifestWeld,
+) -> anyhow::Result<ClassCredentials> {
     // `catalog-schema.sql` applies whole only on a fresh install, and its
     // migration blocks take an ACCESS EXCLUSIVE lock — so it must arrive as ONE
     // implicit transaction, which `batch_execute` gives it and psql without
@@ -360,22 +397,27 @@ async fn seed_with_client(
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let schema = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
         .context("read the catalog DDL")?;
+    let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
+        .context("read the run-state DDL")?;
+    let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
+        .context("read the run-queue DDL")?;
+    let role_bootstrap = format!(
+        "{} {} {}",
+        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+        wamn_schema_control::ensure_scenario_author_role_sql(),
+        wamn_control_provision::sql::ensure_effect_writer_acl_role_sql(),
+    );
     client
         .batch_execute(&format!(
-            "DO $roles$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                 CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB \
-                   NOBYPASSRLS; \
-               END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
-               END IF; \
-             END $roles$;\n\
+            "{role_bootstrap}\n\
              DROP SCHEMA IF EXISTS catalog CASCADE;\n\
-             {schema}"
+             DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
+             {schema}\n\
+             {run_state}\n\
+             {run_queue}"
         ))
         .await
-        .context("install the catalog DDL")?;
+        .context("install the catalog and run-plane DDL")?;
 
     let catalog_version = i32::try_from(CATALOG_VERSION).expect("fixture catalog version fits");
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
@@ -484,6 +526,41 @@ async fn seed_with_client(
         .await
         .context("seed the admitted component fact")?;
 
+    client
+        .execute(
+            "INSERT INTO catalog.release_components (\
+                 tenant_id, catalog_id, catalog_version, wiring_id, wiring_version, \
+                 component_digest\
+             ) VALUES ($1, $2, $3, $4, $5, $6)",
+            &[
+                &TENANT,
+                &CATALOG,
+                &catalog_version,
+                &WIRING_ID,
+                &wiring_version,
+                &component.component_digest,
+            ],
+        )
+        .await
+        .context("seed the released component membership")?;
+    let canonical_release = release.manifest().canonical_bytes();
+    let manifest_digest = release.release().manifest_digest.as_str();
+    client
+        .execute(
+            "INSERT INTO catalog.release_manifest_v2_snapshots (\
+                 tenant_id, catalog_id, catalog_version, manifest_digest, canonical_bytes\
+             ) VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &TENANT,
+                &CATALOG,
+                &catalog_version,
+                &manifest_digest,
+                &canonical_release,
+            ],
+        )
+        .await
+        .context("seed the exact serving-manifest snapshot")?;
+
     // The activation pointer, through the production statement itself — bound
     // directly, because the extended query protocol cannot pass parameters to a
     // server-side `EXECUTE`. Its tenant comes from the `app.tenant` claim, and
@@ -572,5 +649,67 @@ async fn seed_with_client(
         )
         .await
         .context("bind the requirement to the instance")?;
-    Ok(())
+
+    let config: tokio_postgres::Config = options
+        .database_url
+        .parse()
+        .context("parse the disposable admin URL")?;
+    let database = config
+        .get_dbname()
+        .context("the disposable admin URL names no database")?;
+    let scope = WorkloadRoleScope::ProjectEnvironment {
+        org: TENANT,
+        project: PROJECT,
+        environment: ENVIRONMENT,
+        database,
+    };
+    let executor_role = workload_generation_role(
+        WorkloadRoleFamily::ExecutorPlatform,
+        scope,
+        CredentialGeneration::A,
+    )
+    .context("derive the executor-platform generation")?;
+    let http_role = workload_generation_role(
+        WorkloadRoleFamily::HttpAdmitter,
+        scope,
+        CredentialGeneration::A,
+    )
+    .context("derive the callable-HTTP generation")?;
+    let executor_sql = wamn_control_provision::sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::ExecutorPlatform,
+        database,
+        &executor_role,
+        GENERATION_PASSWORD,
+        GENERATION_VALID_UNTIL,
+    );
+    let http_sql = wamn_control_provision::sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::HttpAdmitter,
+        database,
+        &http_role,
+        GENERATION_PASSWORD,
+        GENERATION_VALID_UNTIL,
+    );
+    client
+        .batch_execute(&format!("{executor_sql} {http_sql}"))
+        .await
+        .context("mint the production platform credential generations")?;
+
+    Ok(ClassCredentials::default()
+        .with_class(
+            AuthorityClass::ExecutorPlatform,
+            generation_url(&options.database_url, &executor_role)?,
+        )
+        .with_class(
+            AuthorityClass::CallableHttp,
+            generation_url(&options.database_url, &http_role)?,
+        ))
+}
+
+fn generation_url(admin_url: &str, role: &str) -> anyhow::Result<String> {
+    let mut url = reqwest::Url::parse(admin_url).context("parse the disposable admin URL")?;
+    url.set_username(role)
+        .map_err(|()| anyhow::anyhow!("set the production generation username"))?;
+    url.set_password(Some(GENERATION_PASSWORD))
+        .map_err(|()| anyhow::anyhow!("set the production generation password"))?;
+    Ok(url.to_string())
 }

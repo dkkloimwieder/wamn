@@ -4429,6 +4429,8 @@ dependencies = [
  "clap",
  "futures-util",
  "hex",
+ "http-body-util",
+ "hyper",
  "libc",
  "oci-client",
  "opentelemetry",
@@ -4459,6 +4461,7 @@ dependencies = [
  "wamn-test-infrastructure",
  "wash-runtime",
  "wasmtime-wasi",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]
