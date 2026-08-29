@@ -415,50 +415,6 @@
       ]
     },
     {
-      "scope": "production-control-database-ops",
-      "relation": "provisioning.migration_confirmations",
-      "ops": true,
-      "installer": "provision-store",
-      "owner": "provision-store",
-      "mechanisms": [
-        "direct-dml",
-        "foreign-key:delete:cascade;from=registry.project_envs;constraint=migration_confirmations_org_project_env_fkey"
-      ],
-      "roles": [
-        {
-          "role": "wamn_ops",
-          "basis": "grant",
-          "operations": [
-            "insert(catalog_id)",
-            "insert(env)",
-            "insert(from_version)",
-            "insert(org)",
-            "insert(project)",
-            "insert(tenant_id)",
-            "insert(to_version)"
-          ]
-        },
-        {
-          "role": "wamn_system",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "no",
-      "guards": [
-        "constraint:migration_confirmations_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (kind = 'backup-checkpoint-attested'::text)",
-        "constraint:migration_confirmations_org_project_env_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (org, project, env) REFERENCES registry.project_envs(org, project, env) ON DELETE CASCADE",
-        "constraint:migration_confirmations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (org, project, env, tenant_id, catalog_id, to_version)",
-        "constraint:migration_confirmations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "row-security:enabled=false;forced=false"
-      ]
-    },
-    {
       "scope": "production-control-database-portable-store",
       "relation": "catalog.authoring_command_audit",
       "ops": false,
