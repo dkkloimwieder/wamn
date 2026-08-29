@@ -240,9 +240,6 @@ const ADAPTER_GOVERNED_BYTES: u64 = u32::MAX as u64;
 /// The one auth-source document this host can honour with no secret store.
 const NO_AUTHENTICATION_MODE: &str = "none";
 
-/// The caller identity used by every unauthenticated route.
-const ANONYMOUS_PRINCIPAL: &str = "anonymous";
-
 /// 501, because the request is well formed and it is the *host* that lacks the
 /// mechanism — the caller can do nothing to satisfy a policy nothing implements.
 const UNSUPPORTED_POLICY_STATUS: u16 = 501;
@@ -449,16 +446,16 @@ fn input_mapping(value: &Value) -> Option<Mapping> {
 /// vocabulary in this system — the resolved auth-source document is validated as
 /// nothing more than "an object" — and no secret store this host could verify a
 /// credential against. So an explicit no-authentication policy yields the
-/// anonymous principal and every other document is a typed refusal. Fail-closed:
+/// no caller identity and every other document is a typed refusal. Fail-closed:
 /// no unrecognized policy can reach router delivery.
-fn authenticate_policy(policy: &str) -> Result<String, AuthRejection> {
+fn authenticate_policy(policy: &str) -> Result<Option<String>, AuthRejection> {
     let document = serde_json::from_str::<Value>(policy).ok();
     let mode = document
         .as_ref()
         .and_then(|document| document.get("mode"))
         .and_then(Value::as_str);
     if mode == Some(NO_AUTHENTICATION_MODE) {
-        return Ok(ANONYMOUS_PRINCIPAL.to_string());
+        return Ok(None);
     }
     Err(AuthRejection {
         status: UNSUPPORTED_POLICY_STATUS,
@@ -520,7 +517,7 @@ impl routing::Host for ActiveCtx<'_> {
         // adapter downgrade a protected route, so a real policy has to be
         // re-derived from the attachment instead.
         _headers: Vec<Header>,
-    ) -> wash_runtime::wasmtime::Result<Result<String, AuthRejection>> {
+    ) -> wash_runtime::wasmtime::Result<Result<Option<String>, AuthRejection>> {
         Ok(authenticate_policy(&policy))
     }
 
@@ -889,11 +886,11 @@ mod tests {
     }
 
     #[test]
-    fn only_the_no_authentication_policy_yields_a_principal() {
+    fn only_the_no_authentication_policy_yields_an_anonymous_absence() {
         assert_eq!(
             authenticate_policy(r#"{"mode":"none"}"#)
                 .expect("an explicit no-authentication policy authenticates"),
-            ANONYMOUS_PRINCIPAL
+            None
         );
 
         for unsupported in [

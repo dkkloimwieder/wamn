@@ -10,6 +10,8 @@ use http_route::{
     Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition, handle_request,
 };
 
+const AUTHENTICATED_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,
@@ -28,7 +30,7 @@ impl Drop for TestPermit {
 
 struct FakeBackend {
     routes: Vec<RouteDefinition>,
-    auth: Result<String, AuthRejection>,
+    auth: Result<Option<String>, AuthRejection>,
     delivery: Result<DeliveryOutcome, DeliveryError>,
     fault: Fault,
     auth_policies: Vec<String>,
@@ -43,7 +45,7 @@ impl FakeBackend {
     fn new(route: RouteDefinition) -> Self {
         Self {
             routes: vec![route],
-            auth: Ok("principal:alice".to_string()),
+            auth: Ok(Some(AUTHENTICATED_USER_ID.to_string())),
             delivery: Ok(DeliveryOutcome::Respond(r#"{"ok":true}"#.to_string())),
             fault: Fault::None,
             auth_policies: Vec::new(),
@@ -69,7 +71,11 @@ impl Backend for FakeBackend {
             .ok_or(ProviderError)
     }
 
-    fn authenticate(&mut self, policy: &str, _headers: &[Header]) -> Result<String, AuthRejection> {
+    fn authenticate(
+        &mut self,
+        policy: &str,
+        _headers: &[Header],
+    ) -> Result<Option<String>, AuthRejection> {
         self.auth_policies.push(policy.to_string());
         self.auth.clone()
     }
@@ -215,7 +221,11 @@ fn limits() -> AdapterLimits {
     }
 }
 
-fn request(backend: &mut FakeBackend, head: &RequestHead, bytes: &[u8]) -> http_route::HttpResponse {
+fn request(
+    backend: &mut FakeBackend,
+    head: &RequestHead,
+    bytes: &[u8],
+) -> http_route::HttpResponse {
     let mut body = Chunks::json(&[bytes]);
     handle_request(backend, &mut body, head, limits())
 }
@@ -253,7 +263,7 @@ fn partial_body_selected_policy_mapping_and_attachment_delivery() {
             .caller
             .as_ref()
             .and_then(|caller| caller.user_id.as_deref()),
-        Some("principal:alice")
+        Some(AUTHENTICATED_USER_ID)
     );
     assert_eq!(
         request
@@ -278,6 +288,40 @@ fn partial_body_selected_policy_mapping_and_attachment_delivery() {
             "store": "nyc"
         })
     );
+}
+
+#[test]
+fn explicit_anonymous_admission_delivers_without_a_caller_identity() {
+    let mut anonymous = route();
+    anonymous.auth_policy = r#"{"mode":"none"}"#.to_string();
+    let mut backend = FakeBackend::new(anonymous);
+    backend.auth = Ok(None);
+
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+
+    assert_eq!(output.status, 200);
+    assert_eq!(backend.auth_policies, [r#"{"mode":"none"}"#]);
+    assert_eq!(backend.deliveries.len(), 1);
+    assert_eq!(backend.deliveries[0].caller, None);
+}
+
+#[test]
+fn a_refused_anonymous_policy_never_reaches_delivery() {
+    let mut anonymous = route();
+    anonymous.auth_policy = r#"{"mode":"none"}"#.to_string();
+    let mut backend = FakeBackend::new(anonymous);
+    backend.auth = Err(AuthRejection {
+        status: 501,
+        code: "auth-policy-unsupported".to_string(),
+    });
+    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
+
+    let output = handle_request(&mut backend, &mut body, &head(), limits());
+
+    assert_eq!(output.status, 501);
+    assert_eq!(error_code(&output.body), "auth-policy-unsupported");
+    assert_eq!(body.reads, 0, "authorization precedes body reads");
+    assert!(backend.deliveries.is_empty());
 }
 
 #[test]

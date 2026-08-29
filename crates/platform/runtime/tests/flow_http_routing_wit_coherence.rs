@@ -159,7 +159,7 @@ fn the_three_bound_functions_and_the_refusal_shape_are_unchanged() {
             // `authenticate` takes the policy the SELECTED route supplied; a
             // signature that reached for the attachment itself would let the
             // guest choose its own policy.
-            "authenticate: func(policy: string, headers: list<header>) -> result<string, auth-rejection>;",
+            "authenticate: func(policy: string, headers: list<header>) -> result<option<string>, auth-rejection>;",
             // None is capacity exhaustion, while a provider refusal remains a
             // distinct error and cannot be misreported as 429.
             "try-acquire: func(attachment-id: string) -> result<option<route-permit>, string>;",

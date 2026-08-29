@@ -31,8 +31,8 @@ mod bindings {
 }
 
 use bindings::wamn::router_delivery::delivery::{
-    self, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryRequest, Emission,
-    FailureKind as WireFailureKind, ParentCausation, Source,
+    self, CallerContext, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryRequest,
+    Emission, FailureKind as WireFailureKind, ParentCausation, Source,
 };
 
 /// Host-plugin identity for the one guest-to-router bridge.
@@ -134,18 +134,7 @@ impl RouterDeliveryBridge {
         let target =
             resolve_target(self.release.manifest(), source).ok_or(DeliveryError::SourceNotFound)?;
 
-        if !target.caller_attached && caller.is_some() {
-            return Err(DeliveryError::InvalidRequest);
-        }
-        let (role, user_id) = match caller {
-            Some(caller)
-                if caller.role.as_deref() == Some("") || caller.user_id.as_deref() == Some("") =>
-            {
-                return Err(DeliveryError::InvalidRequest);
-            }
-            Some(caller) => (caller.role, caller.user_id),
-            None => (None, None),
-        };
+        let (role, user_id) = caller_claims(&target, caller)?;
         let (traceparent, tracestate) = match trace {
             Some(trace) if trace.traceparent.is_empty() => {
                 return Err(DeliveryError::InvalidRequest);
@@ -411,6 +400,9 @@ struct ResolvedTarget {
     wiring_id: String,
     wiring_version: u32,
     caller_attached: bool,
+    /// `Some` only for attachment ingress. A callerless attachment is legal
+    /// only when its welded auth policy explicitly names anonymous mode.
+    anonymous_caller_permitted: Option<bool>,
     resolution: WiringResolution,
 }
 
@@ -424,6 +416,13 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                     wiring_id: attachment.wiring_id.clone(),
                     wiring_version: attachment.wiring_version,
                     caller_attached: true,
+                    anonymous_caller_permitted: Some(
+                        attachment
+                            .auth_policy
+                            .get("mode")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("none"),
+                    ),
                     resolution: if matches!(
                         attachment.kind,
                         AttachmentKind::Http | AttachmentKind::Internal | AttachmentKind::Studio
@@ -442,9 +441,34 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                     wiring_id: registration.wiring_id.clone(),
                     wiring_version: registration.wiring_version,
                     caller_attached: false,
+                    anonymous_caller_permitted: None,
                     resolution: WiringResolution::Frozen,
                 })
         }
+    }
+}
+
+fn caller_claims(
+    target: &ResolvedTarget,
+    caller: Option<CallerContext>,
+) -> Result<(Option<String>, Option<String>), DeliveryError> {
+    if (!target.caller_attached && caller.is_some())
+        || (target.anonymous_caller_permitted == Some(false)
+            && caller
+                .as_ref()
+                .and_then(|caller| caller.user_id.as_deref())
+                .is_none())
+    {
+        return Err(DeliveryError::InvalidRequest);
+    }
+    match caller {
+        Some(caller)
+            if caller.role.as_deref() == Some("") || caller.user_id.as_deref() == Some("") =>
+        {
+            Err(DeliveryError::InvalidRequest)
+        }
+        Some(caller) => Ok((caller.role, caller.user_id)),
+        None => Ok((None, None)),
     }
 }
 
@@ -653,6 +677,7 @@ mod tests {
                 wiring_id: "orders".into(),
                 wiring_version: 1,
                 caller_attached: true,
+                anonymous_caller_permitted: Some(true),
                 resolution: WiringResolution::Preloaded,
             })
         );
@@ -662,6 +687,7 @@ mod tests {
                 wiring_id: "shipping".into(),
                 wiring_version: 2,
                 caller_attached: false,
+                anonymous_caller_permitted: None,
                 resolution: WiringResolution::Frozen,
             })
         );
@@ -669,6 +695,58 @@ mod tests {
             resolve_target(&manifest(), SourceRef::Attachment("shipping")),
             None,
             "a wiring id is not an attachment id and cannot bypass the projection"
+        );
+    }
+
+    #[test]
+    fn attachment_caller_identity_follows_the_welded_auth_policy() {
+        const USER_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+        let anonymous = resolve_target(&manifest(), SourceRef::Attachment("orders-http"))
+            .expect("the fixture names the anonymous attachment");
+        assert_eq!(caller_claims(&anonymous, None), Ok((None, None)));
+
+        let mut protected_manifest = manifest();
+        protected_manifest
+            .attachments
+            .get_mut("orders-http")
+            .expect("the fixture names the protected attachment")
+            .auth_policy = serde_json::json!({"mode": "bearer"});
+        let protected = resolve_target(&protected_manifest, SourceRef::Attachment("orders-http"))
+            .expect("the protected attachment still resolves");
+        assert!(matches!(
+            caller_claims(&protected, None),
+            Err(DeliveryError::InvalidRequest)
+        ));
+        assert!(matches!(
+            caller_claims(
+                &protected,
+                Some(CallerContext {
+                    role: None,
+                    user_id: None,
+                })
+            ),
+            Err(DeliveryError::InvalidRequest)
+        ));
+        let authenticated = CallerContext {
+            role: None,
+            user_id: Some(USER_ID.to_owned()),
+        };
+        assert_eq!(
+            caller_claims(&protected, Some(authenticated)),
+            Ok((None, Some(USER_ID.to_owned()))),
+            "an authenticated UUID remains unchanged"
+        );
+
+        let registration = resolve_target(
+            &protected_manifest,
+            SourceRef::Registration("orders-changed"),
+        )
+        .expect("the fixture names the callerless registration");
+        assert_eq!(
+            caller_claims(&registration, None),
+            Ok((None, None)),
+            "attachment auth policy does not apply to registrations"
         );
     }
 

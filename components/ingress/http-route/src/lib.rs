@@ -210,7 +210,11 @@ pub trait Backend {
         method: &str,
         authority: &str,
     ) -> Result<Vec<RouteDefinition>, ProviderError>;
-    fn authenticate(&mut self, policy: &str, headers: &[Header]) -> Result<String, AuthRejection>;
+    fn authenticate(
+        &mut self,
+        policy: &str,
+        headers: &[Header],
+    ) -> Result<Option<String>, AuthRejection>;
     fn try_acquire_route(
         &mut self,
         attachment_id: &str,
@@ -296,9 +300,9 @@ fn try_handle(
             attachment_id,
             delivery_id,
             payload,
-            caller: Some(CallerContext {
+            caller: principal.map(|user_id| CallerContext {
                 role: None,
-                user_id: Some(principal),
+                user_id: Some(user_id),
             }),
             trace,
         })

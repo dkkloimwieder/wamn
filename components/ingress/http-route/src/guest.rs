@@ -49,7 +49,11 @@ impl Backend for GuestBackend {
         routes.into_iter().map(route_definition).collect()
     }
 
-    fn authenticate(&mut self, policy: &str, headers: &[Header]) -> Result<String, AuthRejection> {
+    fn authenticate(
+        &mut self,
+        policy: &str,
+        headers: &[Header],
+    ) -> Result<Option<String>, AuthRejection> {
         let headers = headers
             .iter()
             .map(|header| wamn::flow_http_routing::routing::Header {
