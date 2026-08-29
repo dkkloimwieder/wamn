@@ -595,7 +595,9 @@ command dependencies inventoryable from approved package/module imports
 
 The POC does not require Rust call-graph analysis or a generated per-command unit-of-work trait.
 
-The transaction runner owns begin, commit, and rollback on error, drop, trap, or deadline. It may retry the complete transaction after serialization or deadlock failure only for a command/profile declared retry-safe.
+The transaction runner owns begin, commit, and rollback on error, drop, trap, or deadline. Serialization and deadlock failures surface as typed errors to the caller; the runner performs no automatic retry. Retry arrives only with a named policy demand and is owned by the caller.
+
+[Owner-ruling correction: `wamn-0h0g.22.2a`, 2026-08-28 — no automatic retry.]
 
 No HTTP, messaging, or other network effect occurs while database locks are held. Post-commit behavior uses the existing CDC/event and wiring path.
 
