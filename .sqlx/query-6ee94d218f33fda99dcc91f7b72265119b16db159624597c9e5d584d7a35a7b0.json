@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO receipt (\n    id,\n    idempotency_key,\n    purchase_order_id,\n    receipt_reference,\n    occurred_at\n)\nVALUES ($1, $2, $3, $4, $5)\nRETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "receipt",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6ee94d218f33fda99dcc91f7b72265119b16db159624597c9e5d584d7a35a7b0"
+}

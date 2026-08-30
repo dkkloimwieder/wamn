@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH input AS (\n    SELECT\n        purchase_order_line_id,\n        quantity::numeric AS quantity\n    FROM jsonb_to_recordset($2::jsonb) AS item (\n        purchase_order_line_id uuid,\n        quantity text,\n        location_id uuid\n    )\n)\nUPDATE purchase_order_line\nSET received_quantity = purchase_order_line.received_quantity + input.quantity\nFROM input\nWHERE purchase_order_line.id = input.purchase_order_line_id\n    AND purchase_order_line.purchase_order_id = $1\nRETURNING purchase_order_line.id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order_line",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1a3515d4c1b24fba54ef76a771a23d00d54c7d745fc868042095a50e5cdff716"
+}

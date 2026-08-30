@@ -6,6 +6,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, SecondsFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_introspection::ir::ColumnType;
 
 use crate::CursorDirection;
@@ -180,7 +181,7 @@ pub fn encode_cursor(cursor: &CursorV1) -> Result<String, CursorError> {
     validate_field(&cursor.field)?;
     validate_uuid(&cursor.id, "cursor id")?;
     validate_value(&cursor.key)?;
-    let bytes = serde_json::to_vec(&CursorWire {
+    let value = serde_json::to_value(CursorWire {
         v: VERSION,
         field: &cursor.field,
         direction: cursor.direction,
@@ -188,7 +189,7 @@ pub fn encode_cursor(cursor: &CursorV1) -> Result<String, CursorError> {
         id: &cursor.id,
     })
     .expect("cursor wire values always serialize");
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
+    Ok(URL_SAFE_NO_PAD.encode(canonical_json_bytes(&value)))
 }
 
 /// Decode and validate one cursor for an exact manifest field and direction.
@@ -229,14 +230,15 @@ pub fn decode_cursor(
 }
 
 fn canonical_bytes(cursor: &CursorV1) -> Vec<u8> {
-    serde_json::to_vec(&CursorWire {
+    let value = serde_json::to_value(CursorWire {
         v: VERSION,
         field: &cursor.field,
         direction: cursor.direction,
         key: cursor.key.as_json(),
         id: &cursor.id,
     })
-    .expect("cursor wire values always serialize")
+    .expect("cursor wire values always serialize");
+    canonical_json_bytes(&value)
 }
 
 fn value_from_json(expected: ColumnType, value: Value) -> Result<CursorValue, CursorError> {

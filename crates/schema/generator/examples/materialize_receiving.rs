@@ -112,7 +112,7 @@ fn arguments() -> Result<Arguments> {
 }
 
 fn load_authored_sql(package_root: &Path, manifest: &PackageManifest) -> Result<Vec<SourceFile>> {
-    let paths = manifest
+    let mut paths = manifest
         .models
         .values()
         .flat_map(|model| model.operations.values())
@@ -126,11 +126,18 @@ fn load_authored_sql(package_root: &Path, manifest: &PackageManifest) -> Result<
             )
         })
         .collect::<BTreeSet<_>>();
+    paths.extend(
+        manifest
+            .commands
+            .values()
+            .flat_map(|command| command.statements.values())
+            .map(|statement| statement.path.as_str()),
+    );
 
     paths
         .into_iter()
         .map(|path| {
-            validate_query_path(path)?;
+            validate_authored_path(path)?;
             let absolute = package_root.join(path);
             let bytes = fs::read(&absolute)
                 .with_context(|| format!("read authored query {}", absolute.display()))?;
@@ -142,15 +149,15 @@ fn load_authored_sql(package_root: &Path, manifest: &PackageManifest) -> Result<
         .collect()
 }
 
-fn validate_query_path(path: &str) -> Result<()> {
+fn validate_authored_path(path: &str) -> Result<()> {
     let path = Path::new(path);
     ensure!(
-        path.starts_with("query")
+        (path.starts_with("query") || path.starts_with("command"))
             && path.extension().is_some_and(|extension| extension == "sql")
             && path
                 .components()
                 .all(|component| matches!(component, Component::Normal(_))),
-        "authored SQL path must be a safe package-relative query/*.sql path: {}",
+        "authored SQL path must be a safe package-relative query/*.sql or command/*.sql path: {}",
         path.display()
     );
     Ok(())

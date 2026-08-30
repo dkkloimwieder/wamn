@@ -11,8 +11,204 @@ pub struct PackageManifest {
     pub package: PackageIdentity,
     pub required_platform_policy_contract: PolicyContractRequirement,
     pub models: BTreeMap<String, ModelDeclaration>,
+    #[serde(default)]
+    pub commands: BTreeMap<String, CommandDeclaration>,
     pub connections: BTreeMap<String, ConnectionDeclaration>,
     pub components: BTreeMap<String, ComponentDeclaration>,
+}
+
+/// One explicit package command backed only by declared static SQL accessors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandDeclaration {
+    pub permission: String,
+    pub connection: String,
+    pub transaction: CommandTransaction,
+    pub automatic_retry: bool,
+    pub input: CommandInputDeclaration,
+    pub result: CommandResultDeclaration,
+    pub canonicalization: CommandCanonicalization,
+    pub errors: Vec<CommandErrorLiteral>,
+    #[serde(default)]
+    pub constraint_errors: BTreeMap<String, CommandErrorLiteral>,
+    pub relations: Vec<CommandRelationDeclaration>,
+    pub statements: BTreeMap<String, CommandStatementDeclaration>,
+}
+
+/// Transaction boundary admitted for custom commands in the POC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandTransaction {
+    ExplicitPerInput,
+}
+
+/// Closed array-envelope and leaf-field command input contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandInputDeclaration {
+    pub raw_body_maximum: u32,
+    pub envelope: CountLimitDeclaration,
+    pub item_semantics: ItemSemantics,
+    pub line: CountLimitDeclaration,
+    pub fields: Vec<ContractFieldDeclaration>,
+}
+
+/// Independent result semantics for each array-envelope item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemSemantics {
+    PerInput,
+}
+
+/// One explicit count bound whose refusal stays at the operation layer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CountLimitDeclaration {
+    pub minimum: u32,
+    pub maximum: u32,
+    pub invalid: InputRefusal,
+}
+
+/// One typed leaf in an input or result contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContractFieldDeclaration {
+    pub path: String,
+    #[serde(rename = "type")]
+    pub ty: wamn_schema_introspection::ir::ColumnType,
+    pub nullable: bool,
+    #[serde(default)]
+    pub values: Vec<String>,
+}
+
+/// Closed one-result command contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandResultDeclaration {
+    pub class: ResultClass,
+    pub fields: Vec<ContractFieldDeclaration>,
+}
+
+/// Byte-stable command identity rules consumed by the runtime implementation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandCanonicalization {
+    pub payload: CursorPayload,
+    pub excluded_fields: Vec<String>,
+    pub line_order: CommandLineOrder,
+    pub duplicate_line: InputRefusal,
+    pub uuid: UuidSpelling,
+    pub timestamptz: TimestamptzSpelling,
+    pub numeric: NumericSpelling,
+}
+
+/// Canonical semantic ordering for receipt facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandLineOrder {
+    PurchaseOrderLineIdAscending,
+}
+
+/// Frozen UUID spelling at durable JSON boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UuidSpelling {
+    LowercaseHyphenated,
+}
+
+/// Frozen timestamp spelling at durable JSON boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimestamptzSpelling {
+    UtcRfc3339SixFractionalDigits,
+}
+
+/// Frozen numeric identity rule; scale is semantic command input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NumericSpelling {
+    PostgresqlLexicalScalePreserved,
+}
+
+/// Closed operation error literals available to the Receiving command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandErrorLiteral {
+    InvalidInput,
+    PurchaseOrderNotFound,
+    PurchaseOrderNotOpen,
+    PurchaseOrderLineNotFound,
+    PurchaseOrderLineMismatch,
+    LocationNotFound,
+    QuantityExceedsRemaining,
+    ReceiptReferenceConflict,
+    IdempotencyConflict,
+    Retry,
+    Timeout,
+    PermissionDenied,
+    InternalError,
+}
+
+impl CommandErrorLiteral {
+    /// Frozen serialized operation literal.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidInput => "invalid_input",
+            Self::PurchaseOrderNotFound => "purchase_order_not_found",
+            Self::PurchaseOrderNotOpen => "purchase_order_not_open",
+            Self::PurchaseOrderLineNotFound => "purchase_order_line_not_found",
+            Self::PurchaseOrderLineMismatch => "purchase_order_line_mismatch",
+            Self::LocationNotFound => "location_not_found",
+            Self::QuantityExceedsRemaining => "quantity_exceeds_remaining",
+            Self::ReceiptReferenceConflict => "receipt_reference_conflict",
+            Self::IdempotencyConflict => "idempotency_conflict",
+            Self::Retry => "retry",
+            Self::Timeout => "timeout",
+            Self::PermissionDenied => "permission_denied",
+            Self::InternalError => "internal_error",
+        }
+    }
+}
+
+/// One migration-derived relation consumed by a custom command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandRelationDeclaration {
+    pub schema: String,
+    pub table: String,
+    pub fields: Vec<String>,
+    #[serde(default)]
+    pub constraints: Vec<String>,
+}
+
+/// One static SQL accessor signature shared by native and Wamn projections.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandStatementDeclaration {
+    pub path: String,
+    pub fetch: CommandFetch,
+    #[serde(default)]
+    pub parameters: Vec<CommandValueDeclaration>,
+    pub row: Vec<CommandValueDeclaration>,
+}
+
+/// One named SQL parameter or result member.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandValueDeclaration {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: wamn_schema_introspection::ir::ColumnType,
+    pub nullable: bool,
+}
+
+/// Static SQL result cardinality used by generated accessors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandFetch {
+    One,
+    OptionalOne,
+    BoundedList,
 }
 
 impl PackageManifest {

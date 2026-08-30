@@ -174,6 +174,461 @@
       }
     }
   },
+  "commands": {
+    "receiving.record_receipt": {
+      "permission": "receiving.record_receipt",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100,
+          "invalid": "invalid_input"
+        },
+        "item_semantics": "per_input",
+        "line": {
+          "minimum": 1,
+          "maximum": 100,
+          "invalid": "invalid_input"
+        },
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "value.idempotency_key",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "value.purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "value.receipt_reference",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "value.occurred_at",
+            "type": "timestamptz",
+            "nullable": false
+          },
+          {
+            "path": "value.line[].purchase_order_line_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "value.line[].quantity",
+            "type": "numeric",
+            "nullable": false
+          },
+          {
+            "path": "value.line[].location_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "receipt_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "open",
+              "complete"
+            ]
+          },
+          {
+            "path": "row_version",
+            "type": "int64",
+            "nullable": false
+          }
+        ]
+      },
+      "canonicalization": {
+        "payload": "canonical_compact_json",
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ],
+        "line_order": "purchase_order_line_id_ascending",
+        "duplicate_line": "invalid_input",
+        "uuid": "lowercase_hyphenated",
+        "timestamptz": "utc_rfc3339_six_fractional_digits",
+        "numeric": "postgresql_lexical_scale_preserved"
+      },
+      "errors": [
+        "invalid_input",
+        "purchase_order_not_found",
+        "purchase_order_not_open",
+        "purchase_order_line_not_found",
+        "purchase_order_line_mismatch",
+        "location_not_found",
+        "quantity_exceeds_remaining",
+        "receipt_reference_conflict",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "constraint_errors": {
+        "receipt_purchase_order_id_receipt_reference_key": "receipt_reference_conflict"
+      },
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "location",
+          "fields": [
+            "id"
+          ],
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "fields": [
+            "id",
+            "status",
+            "row_version",
+            "updated_at"
+          ],
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "purchase_order_line",
+          "fields": [
+            "id",
+            "purchase_order_id",
+            "ordered_quantity",
+            "received_quantity"
+          ],
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "record_receipt_command",
+          "fields": [
+            "idempotency_key",
+            "canonical_command",
+            "receipt_id",
+            "purchase_order_id",
+            "purchase_order_status",
+            "row_version"
+          ],
+          "constraints": [
+            "record_receipt_command_idempotency_key_pkey"
+          ]
+        },
+        {
+          "schema": "receiving",
+          "table": "receipt",
+          "fields": [
+            "id",
+            "idempotency_key",
+            "purchase_order_id",
+            "receipt_reference",
+            "occurred_at"
+          ],
+          "constraints": [
+            "receipt_purchase_order_id_receipt_reference_key"
+          ]
+        },
+        {
+          "schema": "receiving",
+          "table": "receipt_line",
+          "fields": [
+            "id",
+            "receipt_id",
+            "purchase_order_line_id",
+            "quantity",
+            "location_id"
+          ],
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "find_replay": {
+          "path": "command/record_receipt/find_replay.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_status",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "row_version",
+              "type": "int64",
+              "nullable": true
+            }
+          ]
+        },
+        "claim_command": {
+          "path": "command/record_receipt/claim_command.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "lock_purchase_order": {
+          "path": "command/record_receipt/lock_purchase_order.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            }
+          ]
+        },
+        "validate_receipt_line": {
+          "path": "command/record_receipt/validate_receipt_line.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "line",
+              "type": "json",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "outcome",
+              "type": "text",
+              "nullable": true
+            }
+          ]
+        },
+        "insert_receipt": {
+          "path": "command/record_receipt/insert_receipt.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "receipt_reference",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamptz",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "insert_receipt_line": {
+          "path": "command/record_receipt/insert_receipt_line.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "line",
+              "type": "json",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "update_purchase_order_line": {
+          "path": "command/record_receipt/update_purchase_order_line.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "line",
+              "type": "json",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "finish_purchase_order": {
+          "path": "command/record_receipt/finish_purchase_order.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int64",
+              "nullable": false
+            }
+          ]
+        },
+        "finalize_command": {
+          "path": "command/record_receipt/finalize_command.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int64",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "purchase_order_status",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "row_version",
+              "type": "int64",
+              "nullable": true
+            }
+          ]
+        }
+      }
+    }
+  },
   "connections": {
     "postgres": {
       "interface": "wamn:postgres@0.1.0"
@@ -186,7 +641,8 @@
         "purchase_order.query",
         "purchase_order.update",
         "receipt.get",
-        "receipt.query"
+        "receipt.query",
+        "receiving.record_receipt"
       ],
       "connections": [
         "postgres"

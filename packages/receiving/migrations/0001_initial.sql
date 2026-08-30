@@ -43,10 +43,37 @@ CREATE TABLE receiving.purchase_order_line (
         )
 );
 
+CREATE TABLE receiving.record_receipt_command (
+    idempotency_key text
+        CONSTRAINT record_receipt_command_idempotency_key_pkey PRIMARY KEY,
+    canonical_command bytea NOT NULL,
+    receipt_id uuid NOT NULL DEFAULT gen_random_uuid()
+        CONSTRAINT record_receipt_command_receipt_id_key UNIQUE,
+    purchase_order_id uuid NOT NULL,
+    purchase_order_status text,
+    row_version int8,
+    CONSTRAINT record_receipt_command_canonical_command_check
+        CHECK (octet_length(canonical_command) > 0),
+    CONSTRAINT record_receipt_command_purchase_order_status_check
+        CHECK (
+            purchase_order_status IS NULL
+            OR purchase_order_status IN ('open', 'complete')
+        ),
+    CONSTRAINT record_receipt_command_row_version_check
+        CHECK (row_version IS NULL OR row_version > 0),
+    CONSTRAINT record_receipt_command_purchase_order_status_row_version_check
+        CHECK (
+            (purchase_order_status IS NULL AND row_version IS NULL)
+            OR (purchase_order_status IS NOT NULL AND row_version IS NOT NULL)
+        )
+);
+
 CREATE TABLE receiving.receipt (
     id uuid CONSTRAINT receipt_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     idempotency_key text NOT NULL
-        CONSTRAINT receipt_idempotency_key_key UNIQUE,
+        CONSTRAINT receipt_idempotency_key_key UNIQUE
+        CONSTRAINT receipt_idempotency_key_fkey
+        REFERENCES receiving.record_receipt_command (idempotency_key),
     purchase_order_id uuid NOT NULL
         CONSTRAINT receipt_purchase_order_id_fkey
         REFERENCES receiving.purchase_order (id),

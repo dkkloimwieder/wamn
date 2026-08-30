@@ -6,6 +6,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
+use wamn_execution_contract::canonical_json_bytes;
 
 use crate::error::AccessError;
 
@@ -142,14 +143,15 @@ fn canonical_bytes<Key: CursorKey>(
     key: &Key,
     id: &str,
 ) -> Vec<u8> {
-    serde_json::to_vec(&CursorWire {
+    let value = serde_json::to_value(CursorWire {
         v: VERSION,
         field,
         direction,
         key: key.to_json(),
         id,
     })
-    .expect("cursor wire values always serialize")
+    .expect("cursor wire values always serialize");
+    canonical_json_bytes(&value)
 }
 
 fn canonical_timestamp(value: &DateTime<Utc>) -> String {
@@ -197,7 +199,7 @@ mod tests {
 
         assert_eq!(
             URL_SAFE_NO_PAD.decode(&encoded).unwrap(),
-            br#"{"v":1,"field":"created_at","direction":"ascending","key":"2026-08-29T12:34:56.000000Z","id":"01234567-89ab-cdef-0123-456789abcdef"}"#
+            br#"{"direction":"ascending","field":"created_at","id":"01234567-89ab-cdef-0123-456789abcdef","key":"2026-08-29T12:34:56.000000Z","v":1}"#
         );
         assert_eq!(
             decode_cursor::<DateTime<Utc>>(&encoded, "created_at", CursorDirection::Ascending,)

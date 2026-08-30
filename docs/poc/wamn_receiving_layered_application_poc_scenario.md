@@ -70,7 +70,6 @@ A custom action uses a singular `verb_noun` name:
 
 ```text
 receiving.record_receipt
-receiving.import_purchase_order
 quality.approve_inspection
 quality.load_purchase_order_detail
 ```
@@ -255,7 +254,6 @@ purchase_order.update
 receipt.get
 receipt.query
 receiving.record_receipt
-receiving.import_purchase_order
 ```
 
 Each operation uses the array-shaped invocation contract.
@@ -263,6 +261,10 @@ Each operation uses the array-shaped invocation contract.
 **Owner-ruling correction, 2026-08-29:** the base exposes one real
 `purchase_order.update` operation so optimistic-concurrency behavior is
 proved without expanding authority to `create` or `delete`.
+
+**Owner-ruling correction, 2026-08-29:** CSV purchase-order import is
+demand-gated and is not a base POC operation; Phase 1 implements only
+`receiving.record_receipt` as its custom command.
 
 `wamn_receiving@1.0.0::receiving.record_receipt` owns the authoritative database transaction for each command item:
 

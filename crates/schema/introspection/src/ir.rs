@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A normalized application catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -154,7 +154,7 @@ impl Column {
 }
 
 /// The non-null cases of frozen `wamn:postgres/types.sql-value`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ColumnType {
     Boolean,

@@ -4,13 +4,16 @@ use std::fmt::Write as _;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
+use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnType, Constraint, ConstraintKind, Table,
 };
 
 use crate::manifest::{
-    AuthoredSqlDeclaration, CrudAction, CursorDirection, ModelDeclaration, OperationDeclaration,
-    PackageManifest, PolicyContractRequirement, PolicyContractState, ResultClass, SortDeclaration,
+    AuthoredSqlDeclaration, CommandDeclaration, CommandErrorLiteral, CommandFetch,
+    CommandTransaction, CommandValueDeclaration, ContractFieldDeclaration, CrudAction,
+    CursorDirection, ModelDeclaration, OperationDeclaration, PackageManifest,
+    PolicyContractRequirement, PolicyContractState, ResultClass, SortDeclaration,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
@@ -19,6 +22,158 @@ use crate::{GenerateError, GenerateErrorKind};
 const POSTGRES_INTERFACE: &str = "wamn:postgres@0.1.0";
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
+const COMMAND_LIMIT: u32 = 100;
+const RECORD_RECEIPT: &str = "receiving.record_receipt";
+
+#[derive(Debug, Clone, Copy)]
+struct ExpectedCommandValue {
+    name: &'static str,
+    ty: ColumnType,
+    nullable: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExpectedCommandStatement {
+    name: &'static str,
+    fetch: CommandFetch,
+    parameters: &'static [ExpectedCommandValue],
+    row: &'static [ExpectedCommandValue],
+}
+
+const fn command_value(name: &'static str, ty: ColumnType, nullable: bool) -> ExpectedCommandValue {
+    ExpectedCommandValue { name, ty, nullable }
+}
+
+const RECORD_RECEIPT_STATEMENTS: &[ExpectedCommandStatement] = &[
+    ExpectedCommandStatement {
+        name: "claim_command",
+        fetch: CommandFetch::OptionalOne,
+        parameters: &[
+            command_value("idempotency_key", ColumnType::Text, false),
+            command_value("canonical_command", ColumnType::Bytes, false),
+            command_value("purchase_order_id", ColumnType::Uuid, false),
+        ],
+        row: &[command_value("receipt_id", ColumnType::Uuid, false)],
+    },
+    ExpectedCommandStatement {
+        name: "finalize_command",
+        fetch: CommandFetch::One,
+        parameters: &[
+            command_value("idempotency_key", ColumnType::Text, false),
+            command_value("canonical_command", ColumnType::Bytes, false),
+            command_value("receipt_id", ColumnType::Uuid, false),
+            command_value("purchase_order_status", ColumnType::Text, false),
+            command_value("row_version", ColumnType::Int64, false),
+        ],
+        row: &[
+            command_value("purchase_order_status", ColumnType::Text, true),
+            command_value("row_version", ColumnType::Int64, true),
+        ],
+    },
+    ExpectedCommandStatement {
+        name: "find_replay",
+        fetch: CommandFetch::OptionalOne,
+        parameters: &[command_value("idempotency_key", ColumnType::Text, false)],
+        row: &[
+            command_value("canonical_command", ColumnType::Bytes, false),
+            command_value("receipt_id", ColumnType::Uuid, false),
+            command_value("purchase_order_id", ColumnType::Uuid, false),
+            command_value("purchase_order_status", ColumnType::Text, true),
+            command_value("row_version", ColumnType::Int64, true),
+        ],
+    },
+    ExpectedCommandStatement {
+        name: "finish_purchase_order",
+        fetch: CommandFetch::One,
+        parameters: &[command_value("purchase_order_id", ColumnType::Uuid, false)],
+        row: &[
+            command_value("status", ColumnType::Text, false),
+            command_value("row_version", ColumnType::Int64, false),
+        ],
+    },
+    ExpectedCommandStatement {
+        name: "insert_receipt",
+        fetch: CommandFetch::One,
+        parameters: &[
+            command_value("receipt_id", ColumnType::Uuid, false),
+            command_value("idempotency_key", ColumnType::Text, false),
+            command_value("purchase_order_id", ColumnType::Uuid, false),
+            command_value("receipt_reference", ColumnType::Text, false),
+            command_value("occurred_at", ColumnType::Timestamptz, false),
+        ],
+        row: &[command_value("id", ColumnType::Uuid, false)],
+    },
+    ExpectedCommandStatement {
+        name: "insert_receipt_line",
+        fetch: CommandFetch::BoundedList,
+        parameters: &[
+            command_value("receipt_id", ColumnType::Uuid, false),
+            command_value("line", ColumnType::Json, false),
+        ],
+        row: &[command_value("id", ColumnType::Uuid, false)],
+    },
+    ExpectedCommandStatement {
+        name: "lock_purchase_order",
+        fetch: CommandFetch::OptionalOne,
+        parameters: &[command_value("purchase_order_id", ColumnType::Uuid, false)],
+        row: &[command_value("status", ColumnType::Text, false)],
+    },
+    ExpectedCommandStatement {
+        name: "update_purchase_order_line",
+        fetch: CommandFetch::BoundedList,
+        parameters: &[
+            command_value("purchase_order_id", ColumnType::Uuid, false),
+            command_value("line", ColumnType::Json, false),
+        ],
+        row: &[command_value("id", ColumnType::Uuid, false)],
+    },
+    ExpectedCommandStatement {
+        name: "validate_receipt_line",
+        fetch: CommandFetch::One,
+        parameters: &[
+            command_value("purchase_order_id", ColumnType::Uuid, false),
+            command_value("line", ColumnType::Json, false),
+        ],
+        row: &[command_value("outcome", ColumnType::Text, true)],
+    },
+];
+
+const RECORD_RECEIPT_LOCATION_FIELDS: &[ExpectedCommandValue] =
+    &[command_value("id", ColumnType::Uuid, false)];
+const RECORD_RECEIPT_PURCHASE_ORDER_FIELDS: &[ExpectedCommandValue] = &[
+    command_value("id", ColumnType::Uuid, false),
+    command_value("status", ColumnType::Text, false),
+    command_value("row_version", ColumnType::Int64, false),
+    command_value("updated_at", ColumnType::Timestamptz, false),
+];
+const RECORD_RECEIPT_PURCHASE_ORDER_LINE_FIELDS: &[ExpectedCommandValue] = &[
+    command_value("id", ColumnType::Uuid, false),
+    command_value("purchase_order_id", ColumnType::Uuid, false),
+    command_value("ordered_quantity", ColumnType::Numeric, false),
+    command_value("received_quantity", ColumnType::Numeric, false),
+];
+const RECORD_RECEIPT_LEDGER_FIELDS: &[ExpectedCommandValue] = &[
+    command_value("idempotency_key", ColumnType::Text, false),
+    command_value("canonical_command", ColumnType::Bytes, false),
+    command_value("receipt_id", ColumnType::Uuid, false),
+    command_value("purchase_order_id", ColumnType::Uuid, false),
+    command_value("purchase_order_status", ColumnType::Text, true),
+    command_value("row_version", ColumnType::Int64, true),
+];
+const RECORD_RECEIPT_RECEIPT_FIELDS: &[ExpectedCommandValue] = &[
+    command_value("id", ColumnType::Uuid, false),
+    command_value("idempotency_key", ColumnType::Text, false),
+    command_value("purchase_order_id", ColumnType::Uuid, false),
+    command_value("receipt_reference", ColumnType::Text, false),
+    command_value("occurred_at", ColumnType::Timestamptz, false),
+];
+const RECORD_RECEIPT_RECEIPT_LINE_FIELDS: &[ExpectedCommandValue] = &[
+    command_value("id", ColumnType::Uuid, false),
+    command_value("receipt_id", ColumnType::Uuid, false),
+    command_value("purchase_order_line_id", ColumnType::Uuid, false),
+    command_value("quantity", ColumnType::Numeric, false),
+    command_value("location_id", ColumnType::Uuid, false),
+];
 
 /// One package-owned authored SQL source supplied without filesystem access.
 #[derive(Debug, Clone, Copy)]
@@ -229,9 +384,15 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             table,
         )?;
     }
+    for (command_name, command) in &manifest.commands {
+        emit_command(&mut files, &manifest, command_name, command)?;
+    }
 
     let weld = PackageWeld {
-        verified_schema_state_id: sha256(&input.catalog.canonical_json_bytes()).into(),
+        verified_schema_state_id: sha256(&canonical_json_bytes(
+            &serde_json::to_value(input.catalog).expect("schema IR always serializes"),
+        ))
+        .into(),
         required_schema_contract: required_schema_contract(input.catalog, &manifest),
         required_platform_policy_contract: manifest.required_platform_policy_contract.clone(),
         application_sql_corpus_identity: corpus_sha256(
@@ -250,7 +411,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             PolicyContractState::Satisfied => PromotionState::Eligible,
         },
     };
-    insert_json(&mut files, "generated/package-weld.json", &weld)?;
+    insert_canonical_json(&mut files, "generated/package-weld.json", &weld)?;
 
     let files = files
         .into_iter()
@@ -325,6 +486,10 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
         for action in model.operations.keys() {
             operation_ids.insert(format!("{model_name}.{}", action.as_str()));
         }
+    }
+    for (command_name, command) in &manifest.commands {
+        validate_command(input.catalog, command_name, command, manifest)?;
+        operation_ids.insert(command_name.clone());
     }
     validate_connections(manifest)?;
     validate_components(manifest, &operation_ids)?;
@@ -632,6 +797,366 @@ fn validate_query(
     Ok(())
 }
 
+fn validate_command(
+    catalog: &CatalogIr,
+    command_name: &str,
+    command: &CommandDeclaration,
+    manifest: &PackageManifest,
+) -> Result<(), GenerateError> {
+    if command_name != RECORD_RECEIPT || command.permission != command_name {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "custom command `{command_name}` must be the package-local `{RECORD_RECEIPT}` operation"
+            ),
+        ));
+    }
+    validate_operation_identity(command_name)?;
+    if !manifest.connections.contains_key(&command.connection) {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{command_name} references unknown connection {}",
+                command.connection
+            ),
+        ));
+    }
+    if command.transaction != CommandTransaction::ExplicitPerInput || command.automatic_retry {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{command_name} requires one explicit transaction per input and no retry"),
+        ));
+    }
+    if command.input.raw_body_maximum != 1_048_576
+        || command.input.envelope.minimum != 1
+        || command.input.envelope.maximum != COMMAND_LIMIT
+        || command.input.line.minimum != 1
+        || command.input.line.maximum != COMMAND_LIMIT
+    {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{command_name} raw body must cap at 1 MiB and counts must accept exactly 1..=100"
+            ),
+        ));
+    }
+    require_contract_fields(
+        command_name,
+        &command.input.fields,
+        &[
+            ("request_id", ColumnType::Text, false, &[]),
+            ("value.idempotency_key", ColumnType::Text, false, &[]),
+            ("value.purchase_order_id", ColumnType::Uuid, false, &[]),
+            ("value.receipt_reference", ColumnType::Text, false, &[]),
+            ("value.occurred_at", ColumnType::Timestamptz, false, &[]),
+            (
+                "value.line[].purchase_order_line_id",
+                ColumnType::Uuid,
+                false,
+                &[],
+            ),
+            ("value.line[].quantity", ColumnType::Numeric, false, &[]),
+            ("value.line[].location_id", ColumnType::Uuid, false, &[]),
+        ],
+    )?;
+    if command.result.class != ResultClass::One {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{command_name} result must be one"),
+        ));
+    }
+    require_contract_fields(
+        command_name,
+        &command.result.fields,
+        &[
+            ("receipt_id", ColumnType::Uuid, false, &[]),
+            ("purchase_order_id", ColumnType::Uuid, false, &[]),
+            (
+                "purchase_order_status",
+                ColumnType::Text,
+                false,
+                &["open", "complete"],
+            ),
+            ("row_version", ColumnType::Int64, false, &[]),
+        ],
+    )?;
+    if command.canonicalization.excluded_fields
+        != ["request_id".to_owned(), "value.idempotency_key".to_owned()]
+    {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{command_name} canonical identity must exclude correlation and lookup keys"),
+        ));
+    }
+    let expected_errors = [
+        CommandErrorLiteral::InvalidInput,
+        CommandErrorLiteral::PurchaseOrderNotFound,
+        CommandErrorLiteral::PurchaseOrderNotOpen,
+        CommandErrorLiteral::PurchaseOrderLineNotFound,
+        CommandErrorLiteral::PurchaseOrderLineMismatch,
+        CommandErrorLiteral::LocationNotFound,
+        CommandErrorLiteral::QuantityExceedsRemaining,
+        CommandErrorLiteral::ReceiptReferenceConflict,
+        CommandErrorLiteral::IdempotencyConflict,
+        CommandErrorLiteral::Retry,
+        CommandErrorLiteral::Timeout,
+        CommandErrorLiteral::PermissionDenied,
+        CommandErrorLiteral::InternalError,
+    ];
+    if command.errors.as_slice() != expected_errors
+        || command.constraint_errors.len() != 1
+        || command
+            .constraint_errors
+            .get("receipt_purchase_order_id_receipt_reference_key")
+            != Some(&CommandErrorLiteral::ReceiptReferenceConflict)
+    {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{command_name} must declare the exact closed error and constraint mapping"),
+        ));
+    }
+    validate_command_relations(catalog, command_name, command)?;
+    validate_command_statements(command_name, command)
+}
+
+fn validate_operation_identity(value: &str) -> Result<(), GenerateError> {
+    let Some((module, operation)) = value.split_once('.') else {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidIdentity,
+            format!("operation `{value}` must have canonical module.operation form"),
+        ));
+    };
+    if operation.contains('.') {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidIdentity,
+            format!("operation `{value}` must contain exactly one module separator"),
+        ));
+    }
+    validate_identifier(module, "operation module")?;
+    validate_identifier(operation, "operation name")
+}
+
+fn require_contract_fields(
+    operation: &str,
+    actual: &[ContractFieldDeclaration],
+    expected: &[(&str, ColumnType, bool, &[&str])],
+) -> Result<(), GenerateError> {
+    let matches = actual.len() == expected.len()
+        && actual.iter().zip(expected).all(|(field, expected)| {
+            field.path == expected.0
+                && field.ty == expected.1
+                && field.nullable == expected.2
+                && field
+                    .values
+                    .iter()
+                    .map(String::as_str)
+                    .eq(expected.3.iter().copied())
+        });
+    if matches {
+        Ok(())
+    } else {
+        Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation} fields do not match the closed command contract"),
+        ))
+    }
+}
+
+fn validate_command_relations(
+    catalog: &CatalogIr,
+    operation: &str,
+    command: &CommandDeclaration,
+) -> Result<(), GenerateError> {
+    let expected_tables = [
+        "location",
+        "purchase_order",
+        "purchase_order_line",
+        "record_receipt_command",
+        "receipt",
+        "receipt_line",
+    ];
+    if !command
+        .relations
+        .iter()
+        .map(|relation| relation.schema.as_str())
+        .all(|schema| schema == "receiving")
+        || !command
+            .relations
+            .iter()
+            .map(|relation| relation.table.as_str())
+            .eq(expected_tables)
+    {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation} must declare its exact six-relation dependency set"),
+        ));
+    }
+    for relation in &command.relations {
+        validate_identifier(&relation.schema, "command relation schema")?;
+        validate_identifier(&relation.table, "command relation table")?;
+        let table = catalog
+            .tables()
+            .iter()
+            .find(|table| table.schema() == relation.schema && table.name() == relation.table)
+            .ok_or_else(|| {
+                GenerateError::for_object(
+                    GenerateErrorKind::UnknownRelation,
+                    format!("{operation} references an unknown relation"),
+                    format!("{}.{}", relation.schema, relation.table),
+                )
+            })?;
+        let expected_fields = record_receipt_relation_fields(&relation.table)
+            .expect("the exact table list has a field contract");
+        if !relation
+            .fields
+            .iter()
+            .map(String::as_str)
+            .eq(expected_fields.iter().map(|field| field.name))
+        {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidOperation,
+                format!("{operation} relation does not declare its exact consumed field set"),
+                format!("{}.{}", relation.schema, relation.table),
+            ));
+        }
+        for expected in expected_fields {
+            let actual = column(table, expected.name).ok_or_else(|| {
+                GenerateError::for_object(
+                    GenerateErrorKind::UnknownColumn,
+                    format!("{operation} requires consumed field {}", expected.name),
+                    format!("{}.{}.{}", relation.schema, relation.table, expected.name),
+                )
+            })?;
+            if actual.column_type() != expected.ty || actual.nullable() != expected.nullable {
+                return Err(GenerateError::for_object(
+                    GenerateErrorKind::InvalidOperation,
+                    format!(
+                        "{operation} consumed field {} has the wrong type or nullability",
+                        expected.name
+                    ),
+                    format!("{}.{}.{}", relation.schema, relation.table, expected.name),
+                ));
+            }
+        }
+        let expected_constraints = match relation.table.as_str() {
+            "record_receipt_command" => &["record_receipt_command_idempotency_key_pkey"][..],
+            "receipt" => &["receipt_purchase_order_id_receipt_reference_key"][..],
+            _ => &[],
+        };
+        if !relation
+            .constraints
+            .iter()
+            .map(String::as_str)
+            .eq(expected_constraints.iter().copied())
+        {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidOperation,
+                format!("{operation} relation does not declare its exact consumed constraints"),
+                format!("{}.{}", relation.schema, relation.table),
+            ));
+        }
+        for name in expected_constraints {
+            let constraint = table
+                .constraints()
+                .iter()
+                .find(|constraint| constraint.name() == *name)
+                .ok_or_else(|| {
+                    GenerateError::for_object(
+                        GenerateErrorKind::InvalidOperation,
+                        format!("{operation} requires named constraint {name}"),
+                        format!("{}.{}", relation.schema, relation.table),
+                    )
+                })?;
+            let definition_matches = match *name {
+                "record_receipt_command_idempotency_key_pkey" => matches!(
+                    constraint.kind(),
+                    ConstraintKind::PrimaryKey { columns }
+                        if columns.iter().map(AsRef::as_ref).eq(["idempotency_key"])
+                ),
+                "receipt_purchase_order_id_receipt_reference_key" => matches!(
+                    constraint.kind(),
+                    ConstraintKind::Unique { columns }
+                        if columns.iter().map(AsRef::as_ref).eq(["purchase_order_id", "receipt_reference"])
+                ),
+                _ => false,
+            };
+            if !definition_matches {
+                return Err(GenerateError::for_object(
+                    GenerateErrorKind::InvalidOperation,
+                    format!("{operation} named constraint {name} has the wrong definition"),
+                    format!("{}.{}", relation.schema, relation.table),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn record_receipt_relation_fields(table: &str) -> Option<&'static [ExpectedCommandValue]> {
+    match table {
+        "location" => Some(RECORD_RECEIPT_LOCATION_FIELDS),
+        "purchase_order" => Some(RECORD_RECEIPT_PURCHASE_ORDER_FIELDS),
+        "purchase_order_line" => Some(RECORD_RECEIPT_PURCHASE_ORDER_LINE_FIELDS),
+        "record_receipt_command" => Some(RECORD_RECEIPT_LEDGER_FIELDS),
+        "receipt" => Some(RECORD_RECEIPT_RECEIPT_FIELDS),
+        "receipt_line" => Some(RECORD_RECEIPT_RECEIPT_LINE_FIELDS),
+        _ => None,
+    }
+}
+
+fn validate_command_statements(
+    operation: &str,
+    command: &CommandDeclaration,
+) -> Result<(), GenerateError> {
+    if !command
+        .statements
+        .keys()
+        .map(String::as_str)
+        .eq(RECORD_RECEIPT_STATEMENTS
+            .iter()
+            .map(|statement| statement.name))
+    {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation} must declare the complete static command accessor set"),
+        ));
+    }
+    for expected in RECORD_RECEIPT_STATEMENTS {
+        let statement = command
+            .statements
+            .get(expected.name)
+            .expect("the exact key set contains every statement");
+        let expected_path = format!("command/record_receipt/{}.sql", expected.name);
+        if statement.path != expected_path
+            || statement.fetch != expected.fetch
+            || !command_values_match(&statement.parameters, expected.parameters)
+            || !command_values_match(&statement.row, expected.row)
+        {
+            return Err(GenerateError::for_path(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{operation}.{} does not match its exact path, fetch, parameter, and row signature",
+                    expected.name
+                ),
+                statement.path.as_str(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn command_values_match(
+    actual: &[CommandValueDeclaration],
+    expected: &[ExpectedCommandValue],
+) -> bool {
+    actual.len() == expected.len()
+        && actual.iter().zip(expected).all(|(actual, expected)| {
+            actual.name == expected.name
+                && actual.ty == expected.ty
+                && actual.nullable == expected.nullable
+        })
+}
+
 fn validate_sort_field(
     table: &Table,
     model_name: &str,
@@ -795,6 +1320,12 @@ fn validate_authored_sources(
         .models
         .values()
         .map(|model| model.schema.as_str())
+        .chain(manifest.commands.values().flat_map(|command| {
+            command
+                .relations
+                .iter()
+                .map(|relation| relation.schema.as_str())
+        }))
         .collect::<BTreeSet<_>>();
     for source in authored_sql {
         for schema in &schemas {
@@ -814,7 +1345,7 @@ fn validate_authored_sources(
 }
 
 fn authored_paths(manifest: &PackageManifest) -> BTreeSet<&str> {
-    manifest
+    let mut paths = manifest
         .models
         .values()
         .flat_map(|model| model.operations.values())
@@ -825,7 +1356,15 @@ fn authored_paths(manifest: &PackageManifest) -> BTreeSet<&str> {
                 .iter()
                 .map(|variant| variant.path.as_str())
         })
-        .collect()
+        .collect::<BTreeSet<_>>();
+    paths.extend(
+        manifest
+            .commands
+            .values()
+            .flat_map(|command| command.statements.values())
+            .map(|statement| statement.path.as_str()),
+    );
+    paths
 }
 
 fn authored_sql_map(
@@ -904,6 +1443,358 @@ fn emit_model(
     )
 }
 
+fn emit_command(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    manifest: &PackageManifest,
+    command_name: &str,
+    command: &CommandDeclaration,
+) -> Result<(), GenerateError> {
+    let module_name = command_name.replace('.', "_");
+    let native_rows = command_rows(command, Projection::Native);
+    let wamn_rows = command_rows(command, Projection::Wamn);
+    let accessors = command_accessors(command);
+    let bind_fixtures = command_native_bind_fixtures(&accessors);
+
+    emit_command_contracts(files, manifest, command_name, command)?;
+    emit_command_parity(files, &module_name, command, &accessors)?;
+    emit_command_projection(
+        files,
+        &module_name,
+        command,
+        &native_rows,
+        &bind_fixtures,
+        Projection::Native,
+    )?;
+    emit_command_projection(
+        files,
+        &module_name,
+        command,
+        &wamn_rows,
+        &[],
+        Projection::Wamn,
+    )?;
+    insert_json(
+        files,
+        &format!("generated/source-map/{module_name}.json"),
+        &json!({
+            "command": command_name,
+            "manifest": format!("wamn.json#/commands/{command_name}"),
+            "relations": command.relations,
+            "statements": command.statements,
+            "native_rows": native_rows,
+            "native_bind_fixtures": bind_fixtures,
+            "wamn_rows": wamn_rows,
+            "wamn_accessors": accessors,
+        }),
+    )
+}
+
+fn emit_command_contracts(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    manifest: &PackageManifest,
+    command_name: &str,
+    command: &CommandDeclaration,
+) -> Result<(), GenerateError> {
+    let (module, operation) = command_name
+        .split_once('.')
+        .expect("command validation requires module.operation");
+    let root = format!("generated/contracts/{module}/{operation}");
+    let operation_id = format!(
+        "{}@{}::{command_name}",
+        manifest.package.id, manifest.package.version
+    );
+    let sql_files = command
+        .statements
+        .values()
+        .map(|statement| statement.path.as_str())
+        .collect::<Vec<_>>();
+    insert_json(
+        files,
+        &format!("{root}.operation.json"),
+        &json!({
+            "operation": operation_id,
+            "permission_token": command.permission,
+            "grant": operation_id,
+            "connection": command.connection,
+            "result": command.result.class,
+            "sql_files": sql_files,
+            "transaction": command.transaction,
+            "automatic_retry": command.automatic_retry,
+        }),
+    )?;
+    insert_json(
+        files,
+        &format!("{root}.input.json"),
+        &json!({
+            "raw_body_bytes": {
+                "maximum": command.input.raw_body_maximum,
+                "owner": "ingress_pre_parse",
+                "refusal": "http_413",
+            },
+            "envelope": command.input.envelope,
+            "item_semantics": command.input.item_semantics,
+            "line": command.input.line,
+            "fields": command.input.fields,
+            "canonicalization": command.canonicalization,
+        }),
+    )?;
+    insert_json(files, &format!("{root}.result.json"), &command.result)?;
+    insert_json(
+        files,
+        &format!("{root}.errors.json"),
+        &command_error_contract(command),
+    )
+}
+
+fn command_error_contract(command: &CommandDeclaration) -> Value {
+    let cases = command
+        .errors
+        .iter()
+        .map(|literal| match literal {
+            CommandErrorLiteral::InvalidInput => json!({
+                "literal": literal.as_str(),
+                "from": [
+                    "malformed_input",
+                    "envelope_count",
+                    "line_count",
+                    "duplicate_line",
+                    "nonpositive_quantity",
+                ],
+            }),
+            CommandErrorLiteral::ReceiptReferenceConflict => json!({
+                "literal": literal.as_str(),
+                "from": "unique_violation",
+                "constraint": "receipt_purchase_order_id_receipt_reference_key",
+            }),
+            CommandErrorLiteral::Retry => json!({
+                "literal": literal.as_str(),
+                "from": ["serialization_failure", "connection_unavailable"],
+                "automatic": false,
+            }),
+            CommandErrorLiteral::Timeout => json!({
+                "literal": literal.as_str(),
+                "from": "statement_timeout",
+            }),
+            CommandErrorLiteral::PermissionDenied => json!({
+                "literal": literal.as_str(),
+                "from": "permission_denied",
+            }),
+            CommandErrorLiteral::InternalError => json!({
+                "literal": literal.as_str(),
+                "from": ["query_error", "row_limit_exceeded", "undeclared_constraint"],
+                "detail": "opaque",
+            }),
+            CommandErrorLiteral::IdempotencyConflict => json!({
+                "literal": literal.as_str(),
+                "from": "same_key_different_canonical_command",
+            }),
+            _ => json!({
+                "literal": literal.as_str(),
+                "from": "transaction_invariant",
+            }),
+        })
+        .collect::<Vec<_>>();
+    json!({"closed": true, "cases": cases})
+}
+
+fn command_rows(command: &CommandDeclaration, projection: Projection) -> Vec<RustRow> {
+    command
+        .statements
+        .iter()
+        .map(|(name, statement)| RustRow {
+            name: format!("{}Row", pascal_case(name)),
+            visibility: RustVisibility::Crate,
+            fields: statement
+                .row
+                .iter()
+                .map(|field| RustMember {
+                    name: rust_field(&field.name),
+                    rust_type: projected_rust_type(field.ty, projection, field.nullable),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn command_accessors(command: &CommandDeclaration) -> Vec<CommandAccessor> {
+    command
+        .statements
+        .iter()
+        .map(|(name, statement)| CommandAccessor {
+            name: name.clone(),
+            sql_constant: format!("{}_SQL", name.to_ascii_uppercase()),
+            row: format!("{}Row", pascal_case(name)),
+            fetch: statement.fetch,
+            binds: statement
+                .parameters
+                .iter()
+                .map(|parameter| accessor_bind(&parameter.name, parameter.ty, parameter.nullable))
+                .collect(),
+        })
+        .collect()
+}
+
+fn command_native_bind_fixtures(accessors: &[CommandAccessor]) -> Vec<NativeBindFixture> {
+    accessors
+        .iter()
+        .flat_map(|accessor| {
+            accessor.binds.iter().map(|bind| NativeBindFixture {
+                accessor: accessor.name.clone(),
+                parameter: bind.parameter.clone(),
+                function: format!("{}_{}_bind_fixture", accessor.name, bind.parameter),
+                visibility: RustVisibility::Crate,
+                rust_type: bind.native_rust.clone(),
+                value: native_inert_value(bind),
+            })
+        })
+        .collect()
+}
+
+fn emit_command_parity(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    module_name: &str,
+    command: &CommandDeclaration,
+    accessors: &[CommandAccessor],
+) -> Result<(), GenerateError> {
+    let fields = command
+        .statements
+        .iter()
+        .flat_map(|(statement, declaration)| {
+            declaration.row.iter().map(move |field| {
+                json!({
+                    "field": format!("{statement}.{}", field.name),
+                    "postgres": sql::postgres_type(field.ty),
+                    "wamn_sql_value": field.ty.as_str(),
+                    "native_rust": projected_rust_type(field.ty, Projection::Native, field.nullable),
+                    "wamn_rust": projected_rust_type(field.ty, Projection::Wamn, field.nullable),
+                    "nullable": field.nullable,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let accessor_binds = accessors
+        .iter()
+        .flat_map(|accessor| {
+            accessor.binds.iter().map(|bind| {
+                json!({
+                    "accessor": accessor.name,
+                    "parameter": bind.parameter,
+                    "postgres": bind.postgres,
+                    "nullable": bind.nullable,
+                    "native_rust": bind.native_rust,
+                    "wamn_rust": bind.wamn_rust,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    insert_json(
+        files,
+        &format!("generated/parity/{module_name}.json"),
+        &json!({
+            "model": module_name,
+            "rule": "same_sql_file_two_projection_structs",
+            "fields": fields,
+            "accessor_binds": accessor_binds,
+        }),
+    )
+}
+
+fn emit_command_projection(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    module_name: &str,
+    command: &CommandDeclaration,
+    rows: &[RustRow],
+    bind_fixtures: &[NativeBindFixture],
+    projection: Projection,
+) -> Result<(), GenerateError> {
+    let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
+    if matches!(projection, Projection::Wamn) {
+        source.push_str(
+            "use sqlx_core::query_as::query_as;\nuse sqlx_core::transaction::Transaction;\nuse wamn_postgres_sqlx::WamnPostgres;\n\n",
+        );
+    }
+    for row in rows {
+        emit_rust_row(&mut source, row);
+    }
+    for (name, statement) in &command.statements {
+        writeln!(
+            &mut source,
+            "pub(crate) const {}_SQL: &str = include_str!(\"../../{}\");",
+            name.to_ascii_uppercase(),
+            statement.path,
+        )
+        .expect("writing to a String cannot fail");
+    }
+    source.push('\n');
+    for fixture in bind_fixtures {
+        emit_native_bind_fixture(&mut source, fixture);
+    }
+    if !bind_fixtures.is_empty() {
+        source.push('\n');
+    }
+    if matches!(projection, Projection::Wamn) {
+        for accessor in command_accessors(command) {
+            emit_command_wamn_accessor(&mut source, &accessor);
+        }
+    }
+    while source.ends_with("\n\n") {
+        source.pop();
+    }
+    let directory = match projection {
+        Projection::Native => "native-verifier",
+        Projection::Wamn => "wamn",
+    };
+    insert_bytes(
+        files,
+        &format!("generated/{directory}/{module_name}.rs"),
+        source.into_bytes(),
+    )
+}
+
+fn emit_command_wamn_accessor(source: &mut String, accessor: &CommandAccessor) {
+    writeln!(source, "pub(crate) async fn {}(", accessor.name)
+        .expect("writing to a String cannot fail");
+    source.push_str("    transaction: &mut Transaction<'_, WamnPostgres>,\n");
+    for bind in &accessor.binds {
+        writeln!(source, "    {}: {},", bind.parameter, bind.wamn_rust)
+            .expect("writing to a String cannot fail");
+    }
+    writeln!(
+        source,
+        ") -> Result<{}, sqlx_core::error::Error> {{",
+        command_accessor_result_type(accessor),
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(
+        source,
+        "    query_as::<WamnPostgres, {}>({})",
+        accessor.row, accessor.sql_constant,
+    )
+    .expect("writing to a String cannot fail");
+    for bind in &accessor.binds {
+        writeln!(source, "        .bind({})", bind.parameter)
+            .expect("writing to a String cannot fail");
+    }
+    writeln!(
+        source,
+        "        .{}(&mut **transaction)\n        .await\n}}\n",
+        match accessor.fetch {
+            CommandFetch::OptionalOne => "fetch_optional",
+            CommandFetch::BoundedList => "fetch_all",
+            CommandFetch::One => "fetch_one",
+        },
+    )
+    .expect("writing to a String cannot fail");
+}
+
+fn command_accessor_result_type(accessor: &CommandAccessor) -> String {
+    match accessor.fetch {
+        CommandFetch::OptionalOne => format!("Option<{}>", accessor.row),
+        CommandFetch::BoundedList => format!("Vec<{}>", accessor.row),
+        CommandFetch::One => accessor.row.clone(),
+    }
+}
+
 fn emit_cursor_contract(files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), GenerateError> {
     insert_json(
         files,
@@ -911,7 +1802,7 @@ fn emit_cursor_contract(files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), Gen
         &json!({
             "version": CURSOR_VERSION,
             "payload": "canonical_compact_json",
-            "member_order": ["v", "field", "direction", "key", "id"],
+            "member_order": ["direction", "field", "id", "key", "v"],
             "key": "bare_value_typed_by_manifest_ir",
             "timestamptz": "utc_rfc3339_six_fractional_digits",
             "numeric": "postgresql_lexical_scale_preserved",
@@ -1347,6 +2238,15 @@ struct WamnAccessor {
     sql_constant: String,
     row: String,
     fetch: AccessorFetch,
+    binds: Vec<AccessorBind>,
+}
+
+#[derive(Debug, Serialize)]
+struct CommandAccessor {
+    name: String,
+    sql_constant: String,
+    row: String,
+    fetch: CommandFetch,
     binds: Vec<AccessorBind>,
 }
 
@@ -1877,35 +2777,67 @@ fn required_schema_contract(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
 ) -> RequiredSchemaContract {
-    let tables = manifest
-        .models
-        .values()
-        .map(|model| {
-            let table = relation(catalog, model).expect("validation resolved relation");
-            RequiredTable {
-                schema: model.schema.clone().into_boxed_str(),
-                table: model.table.clone().into_boxed_str(),
-                fields: table
-                    .columns()
-                    .iter()
-                    .map(|column| RequiredField {
-                        name: column.name().into(),
-                        ty: column.column_type().as_str().into(),
-                        nullable: column.nullable(),
-                    })
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-                constraints: table
-                    .constraints()
-                    .iter()
-                    .map(|constraint| RequiredConstraint {
-                        name: constraint.name().into(),
-                        definition: serde_json::to_value(constraint.kind())
-                            .expect("constraint IR always serializes"),
-                    })
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-            }
+    let mut consumed =
+        BTreeMap::<(String, String), (&Table, BTreeSet<String>, BTreeSet<String>)>::new();
+    for model in manifest.models.values() {
+        let table = relation(catalog, model).expect("validation resolved relation");
+        let entry = consumed
+            .entry((model.schema.clone(), model.table.clone()))
+            .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+        entry.1.extend(
+            table
+                .columns()
+                .iter()
+                .map(|column| column.name().to_owned()),
+        );
+        entry.2.extend(
+            table
+                .constraints()
+                .iter()
+                .map(|constraint| constraint.name().to_owned()),
+        );
+    }
+    for command in manifest.commands.values() {
+        for relation in &command.relations {
+            let table = catalog
+                .tables()
+                .iter()
+                .find(|table| table.schema() == relation.schema && table.name() == relation.table)
+                .expect("command validation resolved relation");
+            let entry = consumed
+                .entry((relation.schema.clone(), relation.table.clone()))
+                .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+            entry.1.extend(relation.fields.iter().cloned());
+            entry.2.extend(relation.constraints.iter().cloned());
+        }
+    }
+    let tables = consumed
+        .into_values()
+        .map(|(table, fields, constraints)| RequiredTable {
+            schema: table.schema().into(),
+            table: table.name().into(),
+            fields: table
+                .columns()
+                .iter()
+                .filter(|column| fields.contains(column.name()))
+                .map(|column| RequiredField {
+                    name: column.name().into(),
+                    ty: column.column_type().as_str().into(),
+                    nullable: column.nullable(),
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            constraints: table
+                .constraints()
+                .iter()
+                .filter(|constraint| constraints.contains(constraint.name()))
+                .map(|constraint| RequiredConstraint {
+                    name: constraint.name().into(),
+                    definition: serde_json::to_value(constraint.kind())
+                        .expect("constraint IR always serializes"),
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
         })
         .collect::<Vec<_>>()
         .into_boxed_slice();
@@ -1973,6 +2905,20 @@ fn insert_json(
         files,
         path,
         serde_json::to_vec(value).expect("generated JSON values always serialize"),
+    )
+}
+
+fn insert_canonical_json(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    path: &str,
+    value: &impl Serialize,
+) -> Result<(), GenerateError> {
+    insert_bytes(
+        files,
+        path,
+        canonical_json_bytes(
+            &serde_json::to_value(value).expect("generated JSON values always serialize"),
+        ),
     )
 }
 

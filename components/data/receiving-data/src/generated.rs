@@ -17,4 +17,12 @@ pub(crate) mod wamn {
             "/../../../packages/receiving/generated/wamn/receipt.rs"
         ));
     }
+
+    /// Generated `receiving.record_receipt` transaction accessors.
+    pub(crate) mod receiving_record_receipt {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs"
+        ));
+    }
 }

@@ -9,5 +9,6 @@ mod error;
 mod generated;
 pub mod purchase_order;
 pub mod receipt;
+pub mod record_receipt;
 
 pub use error::{AccessError, AccessErrorKind};

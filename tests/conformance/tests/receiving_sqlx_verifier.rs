@@ -18,6 +18,13 @@ mod native {
             "/../../packages/receiving/generated/native-verifier/receipt.rs"
         ));
     }
+
+    pub mod receiving_record_receipt {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packages/receiving/generated/native-verifier/receiving_record_receipt.rs"
+        ));
+    }
 }
 
 #[test]
@@ -100,5 +107,64 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
         native::receipt::query_created_at_ascending_cursor_key_bind_fixture(),
         native::receipt::query_created_at_ascending_cursor_id_bind_fixture(),
         native::receipt::query_created_at_ascending_limit_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_record_receipt::ClaimCommandRow,
+        "../../packages/receiving/command/record_receipt/claim_command.sql",
+        native::receiving_record_receipt::claim_command_idempotency_key_bind_fixture(),
+        native::receiving_record_receipt::claim_command_canonical_command_bind_fixture(),
+        native::receiving_record_receipt::claim_command_purchase_order_id_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_record_receipt::FinalizeCommandRow,
+        "../../packages/receiving/command/record_receipt/finalize_command.sql",
+        native::receiving_record_receipt::finalize_command_idempotency_key_bind_fixture(),
+        native::receiving_record_receipt::finalize_command_canonical_command_bind_fixture(),
+        native::receiving_record_receipt::finalize_command_receipt_id_bind_fixture(),
+        native::receiving_record_receipt::finalize_command_purchase_order_status_bind_fixture(),
+        native::receiving_record_receipt::finalize_command_row_version_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_record_receipt::FindReplayRow,
+        "../../packages/receiving/command/record_receipt/find_replay.sql",
+        native::receiving_record_receipt::find_replay_idempotency_key_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_record_receipt::FinishPurchaseOrderRow,
+        "../../packages/receiving/command/record_receipt/finish_purchase_order.sql",
+        native::receiving_record_receipt::finish_purchase_order_purchase_order_id_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_record_receipt::InsertReceiptRow,
+        "../../packages/receiving/command/record_receipt/insert_receipt.sql",
+        native::receiving_record_receipt::insert_receipt_receipt_id_bind_fixture(),
+        native::receiving_record_receipt::insert_receipt_idempotency_key_bind_fixture(),
+        native::receiving_record_receipt::insert_receipt_purchase_order_id_bind_fixture(),
+        native::receiving_record_receipt::insert_receipt_receipt_reference_bind_fixture(),
+        native::receiving_record_receipt::insert_receipt_occurred_at_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_record_receipt::InsertReceiptLineRow,
+        "../../packages/receiving/command/record_receipt/insert_receipt_line.sql",
+        native::receiving_record_receipt::insert_receipt_line_receipt_id_bind_fixture(),
+        native::receiving_record_receipt::insert_receipt_line_line_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_record_receipt::LockPurchaseOrderRow,
+        "../../packages/receiving/command/record_receipt/lock_purchase_order.sql",
+        native::receiving_record_receipt::lock_purchase_order_purchase_order_id_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_record_receipt::UpdatePurchaseOrderLineRow,
+        "../../packages/receiving/command/record_receipt/update_purchase_order_line.sql",
+        native::receiving_record_receipt::update_purchase_order_line_purchase_order_id_bind_fixture(
+        ),
+        native::receiving_record_receipt::update_purchase_order_line_line_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_record_receipt::ValidateReceiptLineRow,
+        "../../packages/receiving/command/record_receipt/validate_receipt_line.sql",
+        native::receiving_record_receipt::validate_receipt_line_purchase_order_id_bind_fixture(),
+        native::receiving_record_receipt::validate_receipt_line_line_bind_fixture()
     );
 }

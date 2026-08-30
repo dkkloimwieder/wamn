@@ -43,6 +43,18 @@ Keyset pagination uses `id` as the total-order tie-breaker, and `id` inherits
 the declared primary sort direction; descending reverses the compound order.
 Cursor keys preserve canonical PostgreSQL lexical values: `timestamptz` is UTC
 RFC3339 with exactly six fractional digits, always, and `numeric` preserves scale.
+Canonical means one spelling of what PostgreSQL holds, never a transformation
+of it. Durable command, cursor, and weld JSON use
+`wamn_execution_contract::canonical_json_bytes` as their single byte authority.
+
+## Command envelopes
+
+`receiving.record_receipt` accepts `1..=100` outer items and `1..=100` lines
+per item. Raising either bound requires a ruled demand naming its consumer.
+Receipt lines are canonicalized by `purchase_order_line_id`; duplicates refuse.
+Raw bodies above 1 MiB refuse at ingress with HTTP 413 before parsing, while
+parsed count breaches refuse inside the operation as `invalid_input` with the
+bound and observed count. Transport and operation refusals remain distinct.
 
 ## PostgreSQL schema selection
 
