@@ -1373,6 +1373,20 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
     )
     .unwrap();
 
+    let overlay = artifact_json(&package, "generated/platform-policy/data-access.json");
+    assert_eq!(overlay["role"], "wamn_app");
+    assert_eq!(overlay["contract"], "receiving_data_access");
+    let location = overlay["relations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|relation| relation["table"] == "location")
+        .unwrap();
+    assert_eq!(location["select_fields"], json!(["id"]));
+    assert_eq!(location["update_fields"], json!([]));
+    assert_eq!(location["lock"], true);
+    assert_eq!(location["lock_update_field"], "id");
+
     let receipt_source_map = artifact_json(&package, "generated/source-map/receipt.json");
     assert_eq!(
         receipt_source_map["wamn_api"],
@@ -1427,6 +1441,36 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
         })
     );
     assert_native_fixtures_match_parity(&package, "receipt");
+}
+
+#[test]
+fn command_privilege_declarations_match_sql_effects_and_row_locks() {
+    let catalog = receiving_catalog();
+    let mut wrong_verb = shipped_manifest();
+    wrong_verb["commands"]["receiving.record_receipt"]["relations"][0]["select_fields"] = json!([]);
+    wrong_verb["commands"]["receiving.record_receipt"]["relations"][0]["update_fields"] =
+        json!(["id"]);
+    let error = shipped_generation(&catalog, &wrong_verb).unwrap_err();
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert_eq!(error.object(), Some("receiving.location"));
+
+    let mut undeclared_lock = shipped_manifest();
+    undeclared_lock["commands"]["receiving.record_receipt"]["relations"][0]["lock"] = json!(false);
+    let error = shipped_generation(&catalog, &undeclared_lock).unwrap_err();
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert_eq!(error.object(), Some("receiving.location"));
+
+    let mut unused_lock = shipped_manifest();
+    let receipt = unused_lock["commands"]["receiving.record_receipt"]["relations"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|relation| relation["table"] == "receipt")
+        .unwrap();
+    receipt["lock"] = json!(true);
+    let error = shipped_generation(&catalog, &unused_lock).unwrap_err();
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert_eq!(error.object(), Some("receiving.receipt"));
 }
 
 #[test]

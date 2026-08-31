@@ -4719,6 +4719,7 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
+ "wamn-schema-generator",
  "wamn-schema-introspection",
 ]
 

@@ -53,6 +53,7 @@ wamn-execution-contract = { workspace = true }
 # implemented by the catalog model; the writer never re-derives that hash.
 wamn-catalog = { workspace = true }
 wamn-schema-control = { workspace = true }
+wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 # 2.3 provision-project: the pure CREATE DATABASE / role / GRANT CONNECT
 # builders + project-id naming + credential Secret rendering.

@@ -6,7 +6,8 @@ use clap::{Parser, Subcommand};
 use wamn_ctl::{
     apply_package, author_wiring, enable_cdc_project_env, print_release_env, promote, provision,
     provision_org, provision_project_env, publish_release, push_component, push_release_manifest,
-    reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
+    reconcile_package_data_access, reconcile_replica_identity, reconcile_run_plane,
+    terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -32,6 +33,8 @@ enum Command {
     EnableCdcProjectEnv(enable_cdc_project_env::EnableCdcProjectEnvArgs),
     /// Apply one exact package-owned migration stream to a project database.
     ApplyPackage(apply_package::ApplyPackageArgs),
+    /// Reconcile generated package data privileges after apply-package.
+    ReconcilePackageDataAccess(reconcile_package_data_access::ReconcilePackageDataAccessArgs),
     /// Validate/publish component bytes, then exact-project their facts to both planes
     PushComponent(push_component::PushComponentArgs),
     /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
@@ -76,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,
         Command::ApplyPackage(args) => apply_package::run(args).await,
+        Command::ReconcilePackageDataAccess(args) => reconcile_package_data_access::run(args).await,
         Command::PushComponent(args) => push_component::run(args).await,
         Command::AuthorWiring(args) => author_wiring::run(args).await,
         Command::PublishRelease(args) => publish_release::run(args).await,

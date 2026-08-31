@@ -235,7 +235,12 @@ impl AccessOperationErrorLiteral {
 pub struct CommandRelationDeclaration {
     pub schema: String,
     pub table: String,
-    pub fields: Vec<String>,
+    pub select_fields: Vec<String>,
+    pub insert_fields: Vec<String>,
+    pub update_fields: Vec<String>,
+    /// Whether verified SQL takes a row lock; generation owns any PostgreSQL
+    /// UPDATE carrier needed for the lock and does not treat it as DML intent.
+    pub lock: bool,
     #[serde(default)]
     pub constraints: Vec<String>,
 }

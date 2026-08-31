@@ -31,6 +31,7 @@ pub mod prune_run_history;
 pub mod publish_release;
 pub mod push_component;
 pub mod push_release_manifest;
+pub mod reconcile_package_data_access;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
 #[cfg(feature = "ops")]

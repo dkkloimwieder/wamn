@@ -15,6 +15,7 @@
 //! `components/data/postgres-sqlx/wit/deps/wamn-postgres/package.wit`.
 
 mod cursor;
+mod data_access;
 mod error;
 mod generate;
 mod manifest;
@@ -24,6 +25,10 @@ mod sql_lex;
 
 pub use cursor::{
     CursorError, CursorErrorKind, CursorV1, CursorValue, decode_cursor, encode_cursor,
+};
+pub use data_access::{
+    DATA_ACCESS_OVERLAY_PATH, DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelation,
+    DataAccessRelationInventory, data_access_schemas, derive_data_access_overlay_from_inventory,
 };
 pub use error::{GenerateError, GenerateErrorKind};
 pub use generate::{

@@ -392,6 +392,16 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
     for (command_name, command) in &manifest.commands {
         emit_command(&mut files, &manifest, command_name, command)?;
     }
+    let data_access = crate::data_access::derive_data_access_overlay(
+        input.catalog,
+        input.manifest_json,
+        &manifest,
+    )?;
+    insert_canonical_json(
+        &mut files,
+        crate::data_access::DATA_ACCESS_OVERLAY_PATH,
+        &data_access,
+    )?;
 
     let weld = PackageWeld {
         verified_schema_state_id: sha256(&canonical_json_bytes(
@@ -483,7 +493,13 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
         validate_model(input.catalog, model_name, model)?;
     }
     for (command_name, command) in &manifest.commands {
-        validate_command(input.catalog, command_name, command, manifest)?;
+        validate_command(
+            input.catalog,
+            input.authored_sql,
+            command_name,
+            command,
+            manifest,
+        )?;
     }
     validate_connections(manifest)?;
     validate_components(manifest)?;
@@ -821,6 +837,7 @@ fn validate_query(
 
 fn validate_command(
     catalog: &CatalogIr,
+    authored_sql: &[AuthoredSql<'_>],
     command_name: &str,
     command: &CommandDeclaration,
     manifest: &PackageManifest,
@@ -936,7 +953,7 @@ fn validate_command(
             format!("{command_name} must declare the exact closed error and constraint mapping"),
         ));
     }
-    validate_command_relations(catalog, command_name, command)?;
+    validate_command_relations(catalog, authored_sql, command_name, command)?;
     validate_command_statements(command_name, command)
 }
 
@@ -968,6 +985,7 @@ fn require_contract_fields(
 
 fn validate_command_relations(
     catalog: &CatalogIr,
+    authored_sql: &[AuthoredSql<'_>],
     operation: &str,
     command: &CommandDeclaration,
 ) -> Result<(), GenerateError> {
@@ -1011,12 +1029,25 @@ fn validate_command_relations(
             })?;
         let expected_fields = record_receipt_relation_fields(&relation.table)
             .expect("the exact table list has a field contract");
-        if !relation
-            .fields
+        for fields in [
+            &relation.select_fields,
+            &relation.insert_fields,
+            &relation.update_fields,
+        ] {
+            validate_command_relation_fields(operation, relation, table, fields)?;
+        }
+        let consumed = relation
+            .select_fields
             .iter()
+            .chain(&relation.insert_fields)
+            .chain(&relation.update_fields)
             .map(String::as_str)
-            .eq(expected_fields.iter().map(|field| field.name))
-        {
+            .collect::<BTreeSet<_>>();
+        let expected = expected_fields
+            .iter()
+            .map(|field| field.name)
+            .collect::<BTreeSet<_>>();
+        if consumed != expected {
             return Err(GenerateError::for_object(
                 GenerateErrorKind::InvalidOperation,
                 format!("{operation} relation does not declare its exact consumed field set"),
@@ -1092,6 +1123,116 @@ fn validate_command_relations(
                 ));
             }
         }
+    }
+    validate_command_relation_access(catalog, authored_sql, operation, command)
+}
+
+fn validate_command_relation_fields(
+    operation: &str,
+    relation: &crate::manifest::CommandRelationDeclaration,
+    table: &Table,
+    fields: &[String],
+) -> Result<(), GenerateError> {
+    let declared = fields.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    if declared.len() != fields.len() {
+        return Err(GenerateError::for_object(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{operation} {}.{} privilege fields must be unique",
+                relation.schema, relation.table
+            ),
+            format!("{}.{}", relation.schema, relation.table),
+        ));
+    }
+    if let Some(field) = fields
+        .iter()
+        .find(|field| !table.columns().iter().any(|column| column.name() == *field))
+    {
+        return Err(GenerateError::for_object(
+            GenerateErrorKind::UnknownColumn,
+            format!("{operation} privilege declaration names an unknown column"),
+            format!("{}.{}.{}", relation.schema, relation.table, field),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_command_relation_access(
+    catalog: &CatalogIr,
+    authored_sql: &[AuthoredSql<'_>],
+    operation: &str,
+    command: &CommandDeclaration,
+) -> Result<(), GenerateError> {
+    let schemas = command
+        .relations
+        .iter()
+        .map(|relation| relation.schema.as_str())
+        .collect::<BTreeSet<_>>();
+    let relation_fields = catalog
+        .tables()
+        .iter()
+        .filter(|table| schemas.contains(table.schema()))
+        .map(|table| {
+            (
+                table.name().to_owned(),
+                table
+                    .columns()
+                    .iter()
+                    .map(|column| column.name().to_owned())
+                    .collect::<BTreeSet<_>>(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut actual = BTreeMap::<String, crate::sql_lex::RelationAccess>::new();
+    for statement in command.statements.values() {
+        let source = authored_sql
+            .iter()
+            .find(|source| source.path == statement.path)
+            .expect("authored-source validation supplied every command statement");
+        let statement_access = crate::sql_lex::relation_access(source.bytes, &relation_fields)
+            .map_err(|detail| {
+                GenerateError::for_path(
+                    GenerateErrorKind::InvalidOperation,
+                    format!(
+                        "{} cannot derive exact relation access: {detail}",
+                        statement.path
+                    ),
+                    statement.path.as_str(),
+                )
+            })?;
+        for (table, observed) in statement_access {
+            let aggregate = actual.entry(table).or_default();
+            aggregate.select_fields.extend(observed.select_fields);
+            aggregate.insert_fields.extend(observed.insert_fields);
+            aggregate.update_fields.extend(observed.update_fields);
+            aggregate.lock |= observed.lock;
+        }
+    }
+    for relation in &command.relations {
+        let observed = actual.remove(&relation.table).unwrap_or_default();
+        let declared = crate::sql_lex::RelationAccess {
+            select_fields: relation.select_fields.iter().cloned().collect(),
+            insert_fields: relation.insert_fields.iter().cloned().collect(),
+            update_fields: relation.update_fields.iter().cloned().collect(),
+            lock: relation.lock,
+        };
+        if observed != declared {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{operation} {}.{} privilege declaration does not match verified SQL reads, writes, and row locks",
+                    relation.schema, relation.table
+                ),
+                format!("{}.{}", relation.schema, relation.table),
+            ));
+        }
+    }
+    if let Some(table) = actual.keys().next() {
+        return Err(GenerateError::for_object(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation} SQL reaches undeclared relation {table}"),
+            table.clone(),
+        ));
     }
     Ok(())
 }
@@ -2874,7 +3015,14 @@ fn required_schema_contract(
             let entry = consumed
                 .entry((relation.schema.clone(), relation.table.clone()))
                 .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
-            entry.1.extend(relation.fields.iter().cloned());
+            entry.1.extend(
+                relation
+                    .select_fields
+                    .iter()
+                    .chain(&relation.insert_fields)
+                    .chain(&relation.update_fields)
+                    .cloned(),
+            );
             entry.2.extend(relation.constraints.iter().cloned());
         }
     }
