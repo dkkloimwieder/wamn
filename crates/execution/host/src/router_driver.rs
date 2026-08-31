@@ -13,8 +13,8 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, AttachmentKind, DefinitionHash, ServingComponent,
-    ServingManifest, ServingWiring,
+    AdmittedComponent, ArtifactHash, AttachmentKind, DefinitionHash, PackageCoordinate,
+    ServingComponent, ServingManifest, ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_router::{
@@ -28,6 +28,7 @@ use wamn_runtime::engine::MAX_HOST_CALL_DURATION;
 use wamn_runtime::plugins::connection_http::{
     self, CONNECTION_HTTP_ID, ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
 };
+use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -166,6 +167,50 @@ impl fmt::Display for PreloadedWiringMissing {
 
 impl std::error::Error for PreloadedWiringMissing {}
 
+/// Exact operation authority missing from the originating caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PermissionDenied {
+    operation: Box<str>,
+}
+
+impl PermissionDenied {
+    pub(crate) fn new(operation: impl Into<Box<str>>) -> Self {
+        Self {
+            operation: operation.into(),
+        }
+    }
+
+    pub(crate) fn operation(&self) -> &str {
+        &self.operation
+    }
+}
+
+impl fmt::Display for PermissionDenied {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "permission denied for operation {}",
+            self.operation
+        )
+    }
+}
+
+impl std::error::Error for PermissionDenied {}
+
+pub(crate) fn authorize_registered_operation(
+    caller: Option<&AuthenticatedCaller>,
+    operation: Option<&str>,
+) -> Result<(), PermissionDenied> {
+    let Some(operation) = operation else {
+        return Ok(());
+    };
+    if caller.is_some_and(|caller| caller.permits(operation)) {
+        Ok(())
+    } else {
+        Err(PermissionDenied::new(operation))
+    }
+}
+
 /// Stable host classification for a candidate fact that cannot be retried
 /// into correctness. Availability failures deliberately use their original
 /// error types and remain queue-retryable.
@@ -212,7 +257,7 @@ impl std::error::Error for CandidateExecutionRefusal {}
 #[derive(Debug, Clone)]
 pub struct RouterDriverRequest {
     pub tenant_id: String,
-    pub catalog_id: String,
+    pub package_id: String,
     pub environment: String,
     pub wiring_id: String,
     pub wiring_version: u32,
@@ -220,8 +265,7 @@ pub struct RouterDriverRequest {
     pub payload: serde_json::Value,
     pub caller_attached: bool,
     pub resolution: WiringResolution,
-    pub role: Option<String>,
-    pub user_id: Option<String>,
+    pub caller: Option<AuthenticatedCaller>,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
 }
@@ -365,8 +409,12 @@ fn component_invocation_span(
         wamn.wiring_version = wiring_version,
         wamn.component_digest = %component_digest,
         wamn.node_id = %call.node,
+        wamn.caller_principal_id = tracing::field::Empty,
         wamn.input_port = tracing::field::Empty,
     );
+    if let Some(caller) = request.caller.as_ref() {
+        span.record("wamn.caller_principal_id", caller.principal_id());
+    }
     if let Some(input_port) = call.input_port.as_deref() {
         span.record("wamn.input_port", input_port);
     }
@@ -383,9 +431,9 @@ fn component_invocation_span(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateWiringTarget {
     pub tenant_id: String,
-    pub catalog_id: String,
+    pub package_id: String,
+    pub effective_release_id: u32,
     pub environment: String,
-    pub catalog_version: u32,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub wiring_hash: String,
@@ -425,14 +473,14 @@ pub(crate) struct PreparedReleaseReadiness {
 
 #[derive(Debug, PartialEq, Eq)]
 struct CatalogFacts {
-    catalog_version: u32,
+    effective_release_id: u32,
     components: Arc<[AdmittedComponent]>,
 }
 
 impl CatalogFacts {
     fn from_resolved(resolved: &ResolvedActiveWiring) -> Self {
         Self {
-            catalog_version: resolved.catalog_version,
+            effective_release_id: resolved.effective_release_id,
             components: Arc::clone(&resolved.components),
         }
     }
@@ -556,10 +604,10 @@ impl RouterDriver {
             "release-wiring-preload-exceeds-cache-capacity"
         );
         let mut components = BTreeMap::<String, AdmittedComponent>::new();
-        for (wiring_id, wiring_version) in &targets {
+        for (package_id, wiring_id, wiring_version) in &targets {
             let request = RouterDriverRequest {
                 tenant_id: manifest.release.tenant_id.clone(),
-                catalog_id: manifest.release.catalog_id.clone(),
+                package_id: package_id.clone(),
                 environment: manifest.release.environment.clone(),
                 wiring_id: wiring_id.clone(),
                 wiring_version: *wiring_version,
@@ -567,8 +615,7 @@ impl RouterDriver {
                 payload: serde_json::Value::Null,
                 caller_attached: false,
                 resolution: WiringResolution::Frozen,
-                role: None,
-                user_id: None,
+                caller: None,
                 traceparent: None,
                 tracestate: None,
             };
@@ -595,9 +642,8 @@ impl RouterDriver {
             .release_component_bindings_ready(
                 &self.config.project,
                 &manifest.release.tenant_id,
-                &manifest.release.catalog_id,
+                manifest.release.effective_release_id.get(),
                 &manifest.release.environment,
-                manifest.release.catalog_version,
                 &component_digests,
             )
             .await
@@ -672,7 +718,7 @@ impl RouterDriver {
         let target = &request.target;
         let driver_request = RouterDriverRequest {
             tenant_id: target.tenant_id.clone(),
-            catalog_id: target.catalog_id.clone(),
+            package_id: target.package_id.clone(),
             environment: target.environment.clone(),
             wiring_id: target.wiring_id.clone(),
             wiring_version: target.wiring_version,
@@ -683,8 +729,7 @@ impl RouterDriver {
             // two facts separate when persisting the outcome.
             caller_attached: true,
             resolution: WiringResolution::Frozen,
-            role: None,
-            user_id: None,
+            caller: None,
             traceparent: request.traceparent,
             tracestate: request.tracestate,
         };
@@ -737,16 +782,19 @@ impl RouterDriver {
                     tokio::time::sleep(Duration::from_millis(remaining)).await;
                 }
                 Step::Invoke(call) => {
-                    let component_digest = &active
+                    let component = active
                         .facts
                         .component(&call.component)
-                        .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?
-                        .component_digest;
+                        .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
+                    authorize_registered_operation(
+                        request.caller.as_ref(),
+                        component.registered_operation.as_deref(),
+                    )?;
                     let span = component_invocation_span(
                         &request,
                         &self.config.project,
                         active.version,
-                        component_digest,
+                        &component.component_digest,
                         &call,
                         remote_parent.as_ref(),
                     );
@@ -775,9 +823,9 @@ impl RouterDriver {
             .resolve_candidate_wiring(
                 &self.config.project,
                 &target.tenant_id,
-                &target.catalog_id,
+                &target.package_id,
                 &target.environment,
-                target.catalog_version,
+                target.effective_release_id,
                 &target.wiring_id,
                 target.wiring_version,
                 &target.wiring_hash,
@@ -818,7 +866,7 @@ impl RouterDriver {
         let facts = CatalogFacts::from_resolved(&resolved);
         if let Some(active) = self.cache.get_version(
             &target.tenant_id,
-            &target.catalog_id,
+            &target.package_id,
             &target.environment,
             &target.wiring_id,
             target.wiring_version,
@@ -834,7 +882,7 @@ impl RouterDriver {
         }
         match self.cache.insert_version(
             &target.tenant_id,
-            &target.catalog_id,
+            &target.package_id,
             &target.environment,
             &target.wiring_id,
             resolved.version,
@@ -870,7 +918,7 @@ impl RouterDriver {
         self.cache
             .get_version(
                 &request.tenant_id,
-                &request.catalog_id,
+                &request.package_id,
                 &request.environment,
                 &request.wiring_id,
                 request.wiring_version,
@@ -885,7 +933,7 @@ impl RouterDriver {
         loop {
             let token = match self.cache.get(
                 &request.tenant_id,
-                &request.catalog_id,
+                &request.package_id,
                 &request.environment,
                 &request.wiring_id,
             ) {
@@ -895,7 +943,7 @@ impl RouterDriver {
                 Lookup::Hit(_) => {
                     self.cache.invalidate(
                         &request.tenant_id,
-                        &request.catalog_id,
+                        &request.package_id,
                         &request.environment,
                         &request.wiring_id,
                     );
@@ -908,7 +956,7 @@ impl RouterDriver {
                 .resolve_active_wiring(
                     &self.config.project,
                     &request.tenant_id,
-                    &request.catalog_id,
+                    &request.package_id,
                     &request.environment,
                     &request.wiring_id,
                     request.wiring_version,
@@ -918,7 +966,7 @@ impl RouterDriver {
             let facts = CatalogFacts::from_resolved(&resolved);
             match self.cache.insert(
                 &request.tenant_id,
-                &request.catalog_id,
+                &request.package_id,
                 &request.environment,
                 &request.wiring_id,
                 resolved.version,
@@ -942,7 +990,7 @@ impl RouterDriver {
     ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
         if let Some(active) = self.cache.get_version(
             &request.tenant_id,
-            &request.catalog_id,
+            &request.package_id,
             &request.environment,
             &request.wiring_id,
             request.wiring_version,
@@ -955,9 +1003,9 @@ impl RouterDriver {
             .resolve_release_wiring(
                 &self.config.project,
                 &request.tenant_id,
-                &request.catalog_id,
+                &request.package_id,
                 &request.environment,
-                release.release.catalog_version,
+                release.release.effective_release_id.get(),
                 self.release.release().manifest_digest.as_str(),
                 &request.wiring_id,
                 request.wiring_version,
@@ -967,7 +1015,7 @@ impl RouterDriver {
         let facts = CatalogFacts::from_resolved(&resolved);
         match self.cache.insert_version(
             &request.tenant_id,
-            &request.catalog_id,
+            &request.package_id,
             &request.environment,
             &request.wiring_id,
             resolved.version,
@@ -988,7 +1036,10 @@ impl RouterDriver {
         anyhow::ensure!(request.wiring_version > 0, "wiring-version-zero");
         anyhow::ensure!(
             release.tenant_id == request.tenant_id
-                && release.catalog_id == request.catalog_id
+                && release
+                    .packages
+                    .iter()
+                    .any(|package| package.package_id() == request.package_id)
                 && release.environment == request.environment,
             "router-request-release-scope-mismatch"
         );
@@ -1000,14 +1051,17 @@ impl RouterDriver {
         target: &CandidateWiringTarget,
     ) -> Result<(), CandidateExecutionRefusal> {
         let release = &self.release.manifest().release;
-        if target.catalog_version == 0 || target.wiring_version == 0 {
+        if target.effective_release_id == 0 || target.wiring_version == 0 {
             return Err(CandidateExecutionRefusal::new(
                 CandidateExecutionRefusalKind::Identity,
                 "candidate-wiring-coordinate-incomplete",
             ));
         }
         if release.tenant_id != target.tenant_id
-            || release.catalog_id != target.catalog_id
+            || !release
+                .packages
+                .iter()
+                .any(|package| package.package_id() == target.package_id)
             || release.environment != target.environment
         {
             return Err(CandidateExecutionRefusal::new(
@@ -1031,11 +1085,10 @@ impl RouterDriver {
     ) -> Result<(), CandidateExecutionRefusal> {
         if active.version != target.wiring_version
             || active.graph_hash.as_ref() != target.wiring_hash
-            || active.facts.catalog_version != target.catalog_version
+            || active.facts.effective_release_id != target.effective_release_id
             || active.facts.components.iter().any(|component| {
                 component.scope.tenant_id != target.tenant_id
-                    || component.scope.catalog_id != target.catalog_id
-                    || component.scope.catalog_version != target.catalog_version
+                    || component.scope.package_id != target.package_id
             })
         {
             return Err(CandidateExecutionRefusal::new(
@@ -1077,6 +1130,7 @@ impl RouterDriver {
         active: &ActiveWiring<CatalogFacts>,
     ) -> anyhow::Result<()> {
         let expected = ServingWiring {
+            package_id: request.package_id.clone(),
             wiring_id: request.wiring_id.clone(),
             wiring_version: request.wiring_version,
             graph_hash: DefinitionHash::parse(active.graph_hash.as_ref())
@@ -1087,25 +1141,32 @@ impl RouterDriver {
             "wiring-not-in-carried-release"
         );
         anyhow::ensure!(
-            active.facts.catalog_version == self.release.manifest().release.catalog_version,
-            "wiring-catalog-version-not-carried"
+            active.facts.effective_release_id
+                == self.release.manifest().release.effective_release_id.get(),
+            "wiring-effective-release-not-carried"
         );
         Ok(())
     }
 
     fn validate_release_component(&self, component: &AdmittedComponent) -> anyhow::Result<()> {
         let manifest = self.release.manifest();
+        let package = PackageCoordinate::new(
+            component.scope.package_id.clone(),
+            component.scope.package_version.clone(),
+        )
+        .context("component fact carries a non-canonical package coordinate")?;
         anyhow::ensure!(
             component.scope.tenant_id == manifest.release.tenant_id
-                && component.scope.catalog_id == manifest.release.catalog_id
-                && component.scope.catalog_version == manifest.release.catalog_version,
+                && manifest.release.packages.contains(&package),
             "release-component-scope-mismatch"
         );
         let expected = ServingComponent {
+            package_id: component.scope.package_id.clone(),
             component: component.component.clone(),
             interface_version: component.interface_version.clone(),
             digest: ArtifactHash::parse(component.component_digest.clone())
                 .context("component fact carries a non-canonical artifact hash")?,
+            registered_operation: component.registered_operation.clone(),
         };
         anyhow::ensure!(
             manifest.components.contains(&expected),
@@ -1126,24 +1187,16 @@ impl RouterDriver {
             .component(&call.component)
             .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
         if matches!(closure, ExecutionClosure::Released) {
-            let release_component = ServingComponent {
-                component: component.component.clone(),
-                interface_version: component.interface_version.clone(),
-                digest: ArtifactHash::parse(component.component_digest.clone())
-                    .context("component fact carries a non-canonical artifact hash")?,
-            };
-            anyhow::ensure!(
-                self.release
-                    .manifest()
-                    .components
-                    .contains(&release_component),
-                "component-not-in-carried-release"
-            );
+            self.validate_release_component(component)?;
         }
-        let release = matches!(closure, ExecutionClosure::Released).then(|| ReleaseIdentity {
-            release_version: self.release.release().release_version,
-            manifest_digest: self.release.release().manifest_digest.clone(),
-        });
+        let release = if matches!(closure, ExecutionClosure::Released) {
+            Some(ReleaseIdentity {
+                effective_release_id: self.release.release().effective_release_id,
+                manifest_digest: self.release.release().manifest_digest.clone(),
+            })
+        } else {
+            None
+        };
         let connection_closure = match closure {
             ExecutionClosure::Released => ConnectionExecutionClosure::Released,
             ExecutionClosure::Candidate {
@@ -1151,8 +1204,7 @@ impl RouterDriver {
                 binding_world,
                 ..
             } => ConnectionExecutionClosure::Candidate {
-                catalog_id: target.catalog_id.clone(),
-                catalog_version: target.catalog_version,
+                effective_release_id: target.effective_release_id,
                 environment: target.environment.clone(),
                 wiring_hash: target.wiring_hash.clone(),
                 component: component.component.clone(),
@@ -1166,11 +1218,12 @@ impl RouterDriver {
                 project: Some(self.config.project.clone()),
                 schema: self.config.schema.clone(),
                 runner: Some(self.config.owner_prefix.clone()),
-                role: request.role.clone(),
-                user_id: request.user_id.clone(),
+                role: None,
+                user_id: None,
                 release,
             },
             invocation: ConnectionInvocation {
+                package_id: component.scope.package_id.clone(),
                 wiring_id: request.wiring_id.clone(),
                 wiring_version: active.version,
                 node_id: call.node.clone(),
@@ -1234,12 +1287,18 @@ impl RouterDriver {
     }
 }
 
-fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, u32)> {
+fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, String, u32)> {
     manifest
         .attachments
         .values()
         .filter(|attachment| synchronous_request_kind(attachment.kind))
-        .map(|attachment| (attachment.wiring_id.clone(), attachment.wiring_version))
+        .map(|attachment| {
+            (
+                attachment.package_id.clone(),
+                attachment.wiring_id.clone(),
+                attachment.wiring_version,
+            )
+        })
         .collect()
 }
 
@@ -1508,8 +1567,8 @@ mod tests {
     };
     use tracing_subscriber::layer::SubscriberExt as _;
     use wamn_catalog::{
-        SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingRegistration,
-        ServingRegistrationInput, ServingRelease,
+        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
+        ServingRegistration, ServingRegistrationInput, ServingRelease,
     };
 
     use super::*;
@@ -1553,7 +1612,7 @@ mod tests {
     fn driver_request(traceparent: Option<&str>) -> RouterDriverRequest {
         RouterDriverRequest {
             tenant_id: "tenant-a".to_owned(),
-            catalog_id: "orders".to_owned(),
+            package_id: "orders".to_owned(),
             environment: "prod".to_owned(),
             wiring_id: "route-order".to_owned(),
             wiring_version: 7,
@@ -1561,8 +1620,7 @@ mod tests {
             payload: serde_json::json!({"id": 9}),
             caller_attached: true,
             resolution: WiringResolution::Preloaded,
-            role: None,
-            user_id: None,
+            caller: None,
             traceparent: traceparent.map(str::to_owned),
             tracestate: traceparent.map(|_| "vendor=value".to_owned()),
         }
@@ -1600,6 +1658,7 @@ mod tests {
     fn attachment(kind: AttachmentKind, wiring_id: &str) -> ServingAttachment {
         ServingAttachment {
             kind,
+            package_id: "orders".to_owned(),
             wiring_id: wiring_id.to_owned(),
             wiring_version: 3,
             definition_hash: DefinitionHash::parse(
@@ -1608,6 +1667,7 @@ mod tests {
             .expect("fixture definition hash is canonical"),
             definition: serde_json::json!({}),
             auth_policy: serde_json::json!({}),
+            registered_operation: None,
         }
     }
 
@@ -1632,6 +1692,16 @@ mod tests {
         assert_eq!(refusal.kind(), CandidateExecutionRefusalKind::Binding);
         assert_eq!(refusal.refusal(), "candidate-binding-world-drift");
         assert_eq!(refusal.to_string(), "candidate-binding-world-drift");
+    }
+
+    #[test]
+    fn every_registered_invocation_requires_the_exact_operation_grant() {
+        let operation = "orders@7.0.0::purchase_order.get";
+
+        assert!(authorize_registered_operation(None, None).is_ok());
+        let denial = authorize_registered_operation(None, Some(operation))
+            .expect_err("a registered invocation without an originating caller is denied");
+        assert_eq!(denial.operation(), operation);
     }
 
     #[test]
@@ -1682,6 +1752,7 @@ mod tests {
             attribute(component, "wamn.input_port").as_deref(),
             Some("request")
         );
+        assert_eq!(attribute(component, "wamn.caller_principal_id"), None);
     }
 
     #[test]
@@ -1849,9 +1920,11 @@ mod tests {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
                 tenant_id: "tenant-a".to_owned(),
-                catalog_id: "orders".to_owned(),
-                catalog_version: 7,
+                effective_release_id: EffectiveReleaseId::new(7)
+                    .expect("fixture effective release is non-zero"),
                 environment: "prod".to_owned(),
+                packages: BTreeSet::from([PackageCoordinate::new("orders", "7.0.0")
+                    .expect("fixture package coordinate is canonical")]),
             },
             components: BTreeSet::new(),
             wirings: BTreeSet::new(),
@@ -1876,6 +1949,7 @@ mod tests {
             registrations: BTreeMap::from([(
                 "events".to_owned(),
                 ServingRegistration {
+                    package_id: "orders".to_owned(),
                     wiring_id: "stream-wiring".to_owned(),
                     wiring_version: 4,
                     entity: "order".to_owned(),
@@ -1888,8 +1962,8 @@ mod tests {
         assert_eq!(
             synchronous_wiring_targets(&manifest),
             BTreeSet::from([
-                ("request-wiring".to_owned(), 3),
-                ("studio-wiring".to_owned(), 3),
+                ("orders".to_owned(), "request-wiring".to_owned(), 3),
+                ("orders".to_owned(), "studio-wiring".to_owned(), 3),
             ])
         );
     }

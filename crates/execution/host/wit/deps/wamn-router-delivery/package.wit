@@ -2,16 +2,12 @@ package wamn:router-delivery@0.1.0;
 
 /// Host-owned delivery into the one production router driver.
 interface delivery {
+  use wamn:flow-http-routing/routing@0.1.0.{authenticated-caller};
+
   /// The trusted release projection the host must resolve by identifier.
   variant source {
     attachment(string),
     registration(string),
-  }
-
-  /// Caller context produced by a platform ingress adapter.
-  record caller-context {
-    role: option<string>,
-    user-id: option<string>,
   }
 
   /// W3C trace context propagated into component invocations.
@@ -33,7 +29,7 @@ interface delivery {
     source: source,
     delivery-id: string,
     payload: string,
-    caller: option<caller-context>,
+    caller: option<authenticated-caller>,
     trace: option<trace-context>,
     parent-causation: option<parent-causation>,
   }
@@ -75,13 +71,19 @@ interface delivery {
     cancelled,
   }
 
+  /// One exact registered operation the originating caller lacks.
+  record permission-denial {
+    operation: string,
+  }
+
   /// Failures owned by the bridge rather than by the routed wiring.
-  enum delivery-error {
+  variant delivery-error {
     source-not-found,
     invalid-request,
     invalid-payload,
     wiring-not-preloaded,
     execution-failed,
+    permission-denied(permission-denial),
   }
 
   deliver: func(request: delivery-request) -> result<delivery-outcome, delivery-error>;

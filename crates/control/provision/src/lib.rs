@@ -61,6 +61,7 @@ pub mod dump;
 mod error;
 pub mod management_admitter;
 mod name;
+pub mod operation_grants;
 pub mod org;
 #[cfg(feature = "ops")]
 pub mod restore;

@@ -4,7 +4,7 @@
 //! `set_config()`-bound claim injection (`begin_with_claims`). This is the exact
 //! surface the injection review (R2/R16/R16b/cjv.2/l5i9.12.2) reasons about.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -28,6 +28,12 @@ use super::pool::{
 use super::resources::{run_execute, run_query};
 use super::types::map_pg_error;
 use super::{DEFAULT_PROJECT, PgError, RowSet, SqlValue};
+
+const OPERATION_PERMISSIONS_SQL: &str = "SELECT permission \
+    FROM app_system.permissions \
+    WHERE tenant_id = $1 AND role_name = $2 \
+    ORDER BY permission";
+const OPERATION_PERMISSION_TIMEOUT_SQL: &str = "SELECT set_config('statement_timeout', $1, true)";
 
 pub struct WamnPostgres {
     /// Resolves a project id → its database connection + policy.
@@ -87,7 +93,7 @@ pub struct WamnPostgres {
     pub(super) destroyed: Arc<AtomicU64>,
 }
 
-/// The release a pod carries — the `(release version, manifest digest)` pair
+/// The release a pod carries — the `(effective release id, manifest digest)` pair
 /// derived from the verified content of its mounted serving manifest
 /// ([`ReleaseManifestWeld`](crate::release_manifest::ReleaseManifestWeld)).
 ///
@@ -97,8 +103,8 @@ pub struct WamnPostgres {
 /// guest-supplied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseIdentity {
-    /// The release (catalog) version — `runs.release_version`.
-    pub release_version: i32,
+    /// The environment-local effective release identity.
+    pub effective_release_id: i32,
     /// The serving manifest's digest — `runs.manifest_digest`. The
     /// `sha256:<64 lowercase hex>` shape the run plane's
     /// `runs_release_record_check` admits is carried by the type, so there is no
@@ -133,15 +139,15 @@ pub struct SessionClaims {
     pub role: Option<String>,
     /// `app.user_id` — the caller's `users.id` for compiled ownership RLS.
     pub user_id: Option<String>,
-    /// The `(release version, manifest digest)` the claiming pod carries.
+    /// The `(effective release id, manifest digest)` the claiming pod carries.
     pub release: Option<ReleaseIdentity>,
 }
 
 /// Host-only identity used to load one HTTP effect authorization snapshot.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionEffectLookup<'a> {
-    pub catalog_id: &'a str,
-    pub catalog_version: i32,
+    pub package_id: &'a str,
+    pub effective_release_id: i32,
     pub environment: &'a str,
     pub wiring_id: &'a str,
     pub wiring_version: i32,
@@ -239,6 +245,7 @@ pub struct ConnectionEffectSnapshot {
     pub wiring_hash: String,
     pub component: Option<String>,
     pub interface_version: Option<String>,
+    pub registered_operation: Option<String>,
     pub requirement_json: Option<serde_json::Value>,
     pub requirement_hash: Option<String>,
     pub node_permitted: bool,
@@ -265,18 +272,27 @@ pub struct ConnectionEffectSnapshot {
 /// checked separately by `ConnectionHttp`, because its canonical bytes are not
 /// a database relation and must not be projected back into Postgres.
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
-WITH selected_wiring AS MATERIALIZED ( \
-    SELECT wiring.wiring_hash, wiring.graph_json \
+WITH member AS MATERIALIZED ( \
+    SELECT tenant_id, package_id, package_version \
+      FROM catalog.effective_release_packages \
+     WHERE tenant_id = $1 \
+       AND effective_release_id = $3 \
+       AND package_id = $2 \
+), selected_wiring AS MATERIALIZED ( \
+    SELECT wiring.wiring_hash, wiring.graph_json, \
+           member.tenant_id, member.package_id, member.package_version \
       FROM catalog.wirings AS wiring \
-     WHERE wiring.tenant_id = $1 \
-       AND wiring.catalog_id = $2 \
-       AND wiring.gated_catalog_version = $3 \
-       AND wiring.wiring_id = $5 \
+      JOIN member \
+        ON member.tenant_id = wiring.tenant_id \
+       AND member.package_id = wiring.package_id \
+       AND member.package_version = wiring.package_version \
+     WHERE wiring.wiring_id = $5 \
        AND wiring.version = $6 \
        AND wiring.graph_json ->> 'wiring-id' = $5 \
        AND wiring.graph_json ->> 'version' = $6::text \
 ) \
 SELECT wiring.wiring_hash, component.component, component.interface_version, \
+       component.registered_operation, \
        requirement.requirement_json::text, requirement.requirement_hash, \
        COALESCE( \
            node.value IS NOT NULL \
@@ -293,25 +309,20 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
        generation.credential_set_handle \
   FROM selected_wiring AS wiring \
   LEFT JOIN catalog.component_library AS component \
-    ON component.tenant_id = $1 \
-   AND component.catalog_id = $2 \
-   AND component.catalog_version = $3 \
+    ON component.tenant_id = wiring.tenant_id \
+   AND component.package_id = wiring.package_id \
+   AND component.package_version = wiring.package_version \
    AND component.component_digest = $8 \
   LEFT JOIN LATERAL ( \
       SELECT wiring.graph_json #> ARRAY['nodes', $7] AS value \
   ) AS node ON true \
   LEFT JOIN catalog.connection_requirements AS requirement \
     ON requirement.tenant_id = $1 \
-   AND requirement.artifact_hash IS NULL \
-   AND requirement.requirement_name IS NULL \
    AND requirement.component_digest = $8 \
    AND requirement.store_alias = $9 \
   LEFT JOIN catalog.connection_bindings AS binding \
     ON binding.tenant_id = $1 \
-   AND binding.catalog_id = $2 \
-   AND binding.catalog_version = $3 \
-   AND binding.artifact_hash IS NULL \
-   AND binding.requirement_name IS NULL \
+   AND binding.effective_release_id = $3 \
    AND binding.component_digest = $8 \
    AND binding.store_alias = $9 \
    AND binding.environment = $4 \
@@ -353,10 +364,13 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
 /// This is still a defense-in-depth **blocklist**:
 /// [`statement_mutates_session`] matches only a leading `set`/`reset` keyword
 /// or the literal `set_config`, so a `DO` block whose `EXECUTE` string carries
-/// `SET app.role` passes it untouched. That escape is dormant only because no
-/// PRODUCTION policy reads `app.role` or `app.user_id` today; it arms the day
-/// an applier for compiled RLS ships. `wamn-0h0g.22.23` (OPEN) owns the matcher
-/// defect and carries that trigger — do not close this comment against it.
+/// `SET app.role` passes it untouched. The guard therefore applies to reachable
+/// guest APIs bearing RLS policies that read `app.role` or `app.user_id`; none
+/// exists in the Receiving slice. Its host-only operation-permission read binds
+/// predicates directly and installs neither claim, so it does not arm this
+/// escape. `wamn-0h0g.22.23` (OPEN) owns the matcher defect and carries the
+/// trigger for the first such reachable API — do not close this comment against
+/// it.
 pub(super) fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
     if statement_mutates_session(sql) {
         tracing::warn!(
@@ -1030,8 +1044,7 @@ impl WamnPostgres {
     /// claim recording nothing.
     ///
     /// The digest arrives as [`ManifestDigest`], so its shape is already proven;
-    /// only the version still needs a check, and typing that value is owed by
-    /// whoever gives the catalog version one type.
+    /// only the integer carrier still needs a positive-range check.
     ///
     /// # Why effect authority needs no equality check against this record
     ///
@@ -1048,12 +1061,12 @@ impl WamnPostgres {
     pub fn set_release_identity(
         &self,
         component_id: &str,
-        release_version: i32,
+        effective_release_id: i32,
         manifest_digest: ManifestDigest,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            release_version > 0,
-            "invalid release version {release_version}: a positive catalog version is required"
+            effective_release_id > 0,
+            "invalid effective release identity {effective_release_id}: a positive value is required"
         );
         self.release_identities
             .write()
@@ -1061,7 +1074,7 @@ impl WamnPostgres {
             .insert(
                 component_id.to_string(),
                 ReleaseIdentity {
-                    release_version,
+                    effective_release_id,
                     manifest_digest,
                 },
             );
@@ -1174,7 +1187,7 @@ impl WamnPostgres {
         match claims.release.as_ref() {
             Some(release) => self.set_release_identity(
                 component_id,
-                release.release_version,
+                release.effective_release_id,
                 release.manifest_digest.clone(),
             )?,
             None => drop(
@@ -1531,8 +1544,8 @@ impl WamnPostgres {
             let candidate_generation = lookup.candidate_binding.map(|binding| binding.generation);
             let params: [&(dyn ToSql + Sync); 11] = [
                 &tenant,
-                &lookup.catalog_id,
-                &lookup.catalog_version,
+                &lookup.package_id,
+                &lookup.effective_release_id,
                 &lookup.environment,
                 &lookup.wiring_id,
                 &lookup.wiring_version,
@@ -1562,22 +1575,23 @@ impl WamnPostgres {
                 wiring_hash: row.try_get(0)?,
                 component: row.try_get(1)?,
                 interface_version: row.try_get(2)?,
-                requirement_json: json(3)?,
-                requirement_hash: row.try_get(4)?,
-                node_permitted: row.try_get::<_, Option<bool>>(5)?.unwrap_or(false),
-                binding_active: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
-                binding_valid: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
-                instance_id: row.try_get(8)?,
-                validation_hash: row.try_get(9)?,
-                requirement_type: row.try_get(10)?,
-                contract: row.try_get(11)?,
-                instance_enabled: row.try_get::<_, Option<bool>>(12)?.unwrap_or(false),
-                active_generation: row.try_get(13)?,
-                instance_revision: row.try_get(14)?,
-                generation: row.try_get(15)?,
-                definition: json(16)?,
-                definition_hash: row.try_get(17)?,
-                credential_handle: row.try_get(18)?,
+                registered_operation: row.try_get(3)?,
+                requirement_json: json(4)?,
+                requirement_hash: row.try_get(5)?,
+                node_permitted: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
+                binding_active: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
+                binding_valid: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
+                instance_id: row.try_get(9)?,
+                validation_hash: row.try_get(10)?,
+                requirement_type: row.try_get(11)?,
+                contract: row.try_get(12)?,
+                instance_enabled: row.try_get::<_, Option<bool>>(13)?.unwrap_or(false),
+                active_generation: row.try_get(14)?,
+                instance_revision: row.try_get(15)?,
+                generation: row.try_get(16)?,
+                definition: json(17)?,
+                definition_hash: row.try_get(18)?,
+                credential_handle: row.try_get(19)?,
             };
             Ok(Some(snapshot))
         }
@@ -1593,6 +1607,78 @@ impl WamnPostgres {
             Err(error) => {
                 if conn.batch_execute("ROLLBACK").await.is_err() {
                     self.destroy(conn);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Load the exact registered-operation tokens granted to one application role.
+    ///
+    /// This is host-only authorization work. It reuses the callable-HTTP
+    /// platform pool, selects the tenant and role through bound predicates, and
+    /// installs no `app.role` or `app.user_id` session claim. The returned set is
+    /// attached to the originating caller once and compared at every registered
+    /// invocation, including nested router steps.
+    pub async fn operation_permissions(
+        &self,
+        project: &str,
+        tenant: &str,
+        role: &str,
+    ) -> anyhow::Result<BTreeSet<String>> {
+        anyhow::ensure!(
+            valid_project(project),
+            "invalid operation-permission project"
+        );
+        anyhow::ensure!(valid_tenant(tenant), "invalid operation-permission tenant");
+        anyhow::ensure!(!role.is_empty(), "operation-permission role is empty");
+        let (connection, policy) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = connection.batch_execute("BEGIN").await {
+            self.destroy(connection);
+            return Err(error).context("begin registered-operation permission read");
+        }
+        let timeout = policy.statement_timeout_ms.to_string();
+        let timeout_statement = match connection
+            .prepare_cached(OPERATION_PERMISSION_TIMEOUT_SQL)
+            .await
+        {
+            Ok(statement) => statement,
+            Err(error) => {
+                self.destroy(connection);
+                return Err(error).context("prepare registered-operation permission timeout");
+            }
+        };
+        if let Err(error) = connection.execute(&timeout_statement, &[&timeout]).await {
+            self.destroy(connection);
+            return Err(error).context("set registered-operation permission timeout");
+        }
+        let result: anyhow::Result<BTreeSet<String>> = async {
+            let rows = connection
+                .query(OPERATION_PERMISSIONS_SQL, &[&tenant, &role])
+                .await
+                .context("read registered-operation permissions")?;
+            rows.into_iter()
+                .map(|row| {
+                    row.try_get::<_, String>(0)
+                        .context("decode registered-operation permission")
+                })
+                .collect()
+        }
+        .await;
+        match result {
+            Ok(permissions) => {
+                if let Err(error) = connection.batch_execute("COMMIT").await {
+                    self.destroy(connection);
+                    return Err(error).context("commit registered-operation permission read");
+                }
+                Ok(permissions)
+            }
+            Err(error) => {
+                if connection.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(connection);
                 }
                 Err(error)
             }
@@ -1968,8 +2054,11 @@ mod tests {
     /// caller names no tenant at all.
     #[test]
     fn a_guest_credential_resolves_for_its_own_tenant_and_no_other() {
-        let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url("acme", "host-default"))))
-            .expect("compose with a credential");
+        let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
+            "acme",
+            "host-default",
+        ))))
+        .expect("compose with a credential");
         assert!(
             host.provider
                 .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("acme"))
@@ -2000,8 +2089,11 @@ mod tests {
 
     #[test]
     fn the_composed_credential_becomes_the_default_project() {
-        let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url("acme", "host-default"))))
-            .expect("compose with a credential");
+        let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
+            "acme",
+            "host-default",
+        ))))
+        .expect("compose with a credential");
         assert!(
             composed
                 .provider
@@ -2249,18 +2341,21 @@ mod tests {
     #[test]
     fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
         for required in [
+            "FROM catalog.effective_release_packages",
+            "effective_release_id = $3",
+            "package_id = $2",
             "FROM catalog.wirings AS wiring",
-            "wiring.gated_catalog_version = $3",
+            "member.package_version = wiring.package_version",
             "wiring.wiring_id = $5",
             "wiring.version = $6",
             "wiring.graph_json ->> 'wiring-id' = $5",
+            "component.package_id = wiring.package_id",
+            "component.package_version = wiring.package_version",
             "component.component_digest = $8",
             "wiring.graph_json #> ARRAY['nodes', $7]",
-            "requirement.artifact_hash IS NULL",
-            "requirement.requirement_name IS NULL",
             "requirement.component_digest = $8",
             "requirement.store_alias = $9",
-            "binding.catalog_version = $3",
+            "binding.effective_release_id = $3",
             "binding.environment = $4",
         ] {
             assert!(
@@ -2283,6 +2378,10 @@ mod tests {
             "flow_id",
             "artifact_hash =",
             "requirement_name =",
+            "catalog_id",
+            "catalog_version",
+            "gated_catalog_version",
+            "catalog_heads",
         ] {
             assert!(!sql.contains(retired), "effect authority retains {retired}");
         }
@@ -2643,7 +2742,9 @@ mod tests {
             return;
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(live_guest_url(&admin_url, LIVE_TENANT).await)),
+            credentials: Some(ClassCredentials::every_class(
+                live_guest_url(&admin_url, LIVE_TENANT).await,
+            )),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -2816,7 +2917,9 @@ mod tests {
             .expect("seed the per-user RLS fixture as the superuser owner");
 
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(database_url_for_role(&admin_url, &probe, &probe))),
+            credentials: Some(ClassCredentials::every_class(database_url_for_role(
+                &admin_url, &probe, &probe,
+            ))),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -2908,7 +3011,9 @@ mod tests {
             .expect("seed the per-user RLS fixture as the superuser owner");
 
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(database_url_for_role(&admin_url, &probe, &probe))),
+            credentials: Some(ClassCredentials::every_class(database_url_for_role(
+                &admin_url, &probe, &probe,
+            ))),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -3022,8 +3127,8 @@ mod tests {
         .expect("the acquiring tenant binds");
 
         let lookup = ConnectionEffectLookup {
-            catalog_id: "catalog",
-            catalog_version: 1,
+            package_id: "package",
+            effective_release_id: 1,
             environment: "dev",
             wiring_id: "wiring",
             wiring_version: 1,
@@ -3091,8 +3196,8 @@ mod tests {
         );
 
         let lookup = ConnectionEffectLookup {
-            catalog_id: "catalog",
-            catalog_version: 1,
+            package_id: "package",
+            effective_release_id: 1,
             environment: "dev",
             wiring_id: "wiring",
             wiring_version: 1,
@@ -3173,8 +3278,8 @@ mod tests {
         .expect("the acquiring tenant binds");
 
         let lookup = ConnectionEffectLookup {
-            catalog_id: "catalog",
-            catalog_version: 1,
+            package_id: "package",
+            effective_release_id: 1,
             environment: "dev",
             wiring_id: "wiring",
             wiring_version: 1,
@@ -3207,6 +3312,23 @@ mod tests {
             "the callable-HTTP authority snapshot must check out as the \
              callable-HTTP family and no other"
         );
+    }
+
+    #[tokio::test]
+    async fn operation_permissions_reuse_only_the_callable_http_authority() {
+        let provider = Arc::new(RecordingProvider::default());
+        let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
+
+        pg.operation_permissions(DEFAULT_PROJECT, "tenant-a", "route-caller")
+            .await
+            .expect_err("a provider that names no credential resolves nothing");
+
+        let asked = provider
+            .asked
+            .lock()
+            .expect("recording provider lock poisoned")
+            .clone();
+        assert_eq!(asked, vec![AuthorityClass::CallableHttp]);
     }
 
     /// The tenant floor over rows belonging to TWO tenants, keyed on
@@ -3379,7 +3501,9 @@ mod tests {
             return;
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(live_guest_url(&admin_url, LIVE_TENANT).await)),
+            credentials: Some(ClassCredentials::every_class(
+                live_guest_url(&admin_url, LIVE_TENANT).await,
+            )),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,

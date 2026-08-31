@@ -38,6 +38,7 @@ struct GuestBackend;
 
 impl Backend for GuestBackend {
     type RoutePermit = wamn::flow_http_routing::routing::RoutePermit;
+    type AuthenticatedCaller = wamn::flow_http_routing::routing::AuthenticatedCaller;
 
     fn routes(
         &mut self,
@@ -51,9 +52,9 @@ impl Backend for GuestBackend {
 
     fn authenticate(
         &mut self,
-        policy: &str,
+        attachment_id: &str,
         headers: &[Header],
-    ) -> Result<Option<String>, AuthRejection> {
+    ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection> {
         let headers = headers
             .iter()
             .map(|header| wamn::flow_http_routing::routing::Header {
@@ -61,12 +62,12 @@ impl Backend for GuestBackend {
                 value: header.value.clone(),
             })
             .collect::<Vec<_>>();
-        wamn::flow_http_routing::routing::authenticate(policy, &headers).map_err(|rejection| {
-            AuthRejection {
+        wamn::flow_http_routing::routing::authenticate(attachment_id, &headers).map_err(
+            |rejection| AuthRejection {
                 status: rejection.status,
                 code: rejection.code,
-            }
-        })
+            },
+        )
     }
 
     fn try_acquire_route(
@@ -81,17 +82,17 @@ impl Backend for GuestBackend {
         hex(&wasi::random::random::get_random_bytes(RANDOM_BYTES))
     }
 
-    fn deliver(&mut self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError> {
+    fn deliver(
+        &mut self,
+        request: DeliveryRequest<Self::AuthenticatedCaller>,
+    ) -> Result<DeliveryOutcome, DeliveryError> {
         use wamn::router_delivery::delivery;
 
         let request = delivery::DeliveryRequest {
             source: delivery::Source::Attachment(request.attachment_id),
             delivery_id: request.delivery_id,
             payload: request.payload,
-            caller: request.caller.map(|caller| delivery::CallerContext {
-                role: caller.role,
-                user_id: caller.user_id,
-            }),
+            caller: request.caller,
             trace: request.trace.map(|trace| delivery::TraceContext {
                 traceparent: trace.traceparent,
                 tracestate: trace.tracestate,
@@ -156,6 +157,9 @@ fn convert_delivery_error(error: wamn::router_delivery::delivery::DeliveryError)
         WireError::InvalidPayload => DeliveryError::InvalidPayload,
         WireError::WiringNotPreloaded => DeliveryError::WiringNotPreloaded,
         WireError::ExecutionFailed => DeliveryError::ExecutionFailed,
+        WireError::PermissionDenied(denial) => DeliveryError::PermissionDenied {
+            operation: denial.operation,
+        },
     }
 }
 
@@ -172,7 +176,6 @@ fn route_definition(
         host: route.host,
         path: route.path,
         method: route.method,
-        auth_policy: route.auth_policy,
         mappings: route
             .mappings
             .into_iter()

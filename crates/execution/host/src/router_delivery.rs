@@ -10,6 +10,7 @@ use opentelemetry::metrics::{Counter, Meter};
 use wamn_catalog::{AttachmentKind, NO_AUTHENTICATION_MODE, ServingManifest};
 use wamn_event_wire::Causation;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
+use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::wamn_jetstream::{
     DerivedPublishRequest, RouterTapPhase, RouterTapPreview, WamnJetstream,
 };
@@ -19,6 +20,7 @@ use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+use crate::router_driver::{PermissionDenied, authorize_registered_operation};
 use crate::{PreloadedWiringMissing, RouterDriver, RouterDriverRequest, WiringResolution};
 
 mod bindings {
@@ -26,13 +28,16 @@ mod bindings {
         path: "wit",
         world: "router-delivery-plugin",
         imports: { default: async | trappable | tracing },
+        with: {
+            "wamn:flow-http-routing/routing.authenticated-caller": super::AuthenticatedCaller,
+        },
         wasmtime_crate: wash_runtime::wasmtime,
     });
 }
 
 use bindings::wamn::router_delivery::delivery::{
-    self, CallerContext, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryRequest,
-    Emission, FailureKind as WireFailureKind, ParentCausation, Source,
+    self, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryRequest, Emission,
+    FailureKind as WireFailureKind, ParentCausation, PermissionDenial, Source,
 };
 
 /// Host-plugin identity for the one guest-to-router bridge.
@@ -55,11 +60,12 @@ const WIRING_ID: &str = "wamn.wiring.id";
 const WIRING_VERSION: &str = "wamn.wiring.version";
 const DELIVERY_ERROR: &str = "wamn.delivery.error";
 
-// The two driver refusals a live view can show. Shared with `DeliveryClass`
+// The bounded driver refusals a live view can show. Shared with `DeliveryClass`
 // rather than respelled, so a dashboard and a run screen never disagree about
 // what happened to the same delivery — pinned by
 // `a_refusal_reads_the_same_to_a_dashboard_and_to_a_live_view`.
 const WIRING_NOT_PRELOADED: &str = "wiring-not-preloaded";
+const PERMISSION_DENIED: &str = "permission-denied";
 const EXECUTION_FAILED: &str = "execution-failed";
 
 /// The one bridge shared by attachment and registration ingress.
@@ -107,12 +113,16 @@ impl RouterDeliveryBridge {
         }
     }
 
-    async fn deliver(&self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError> {
+    async fn deliver(
+        &self,
+        request: DeliveryRequest,
+        caller: Option<AuthenticatedCaller>,
+    ) -> Result<DeliveryOutcome, DeliveryError> {
         let DeliveryRequest {
             source,
             delivery_id,
             payload,
-            caller,
+            caller: _,
             trace,
             parent_causation,
         } = request;
@@ -134,7 +144,9 @@ impl RouterDeliveryBridge {
         let target =
             resolve_target(self.release.manifest(), source).ok_or(DeliveryError::SourceNotFound)?;
 
-        let (role, user_id) = caller_claims(&target, caller)?;
+        validate_caller(source, &target, caller.as_ref())?;
+        authorize_registered_operation(caller.as_ref(), target.registered_operation.as_deref())
+            .map_err(lower_permission_denied)?;
         let (traceparent, tracestate) = match trace {
             Some(trace) if trace.traceparent.is_empty() => {
                 return Err(DeliveryError::InvalidRequest);
@@ -157,7 +169,7 @@ impl RouterDeliveryBridge {
         let release = &self.release.manifest().release;
         let request = RouterDriverRequest {
             tenant_id: release.tenant_id.clone(),
-            catalog_id: release.catalog_id.clone(),
+            package_id: target.package_id.clone(),
             environment: release.environment.clone(),
             // Cloned, not moved: the settled preview after the driver call still
             // has to name the delivery it settles, and `request` is gone by then.
@@ -167,8 +179,7 @@ impl RouterDeliveryBridge {
             payload,
             caller_attached: target.caller_attached,
             resolution: target.resolution,
-            role,
-            user_id,
+            caller,
             traceparent,
             tracestate,
         };
@@ -206,6 +217,23 @@ impl RouterDeliveryBridge {
                 )
                 .await;
                 Err(DeliveryError::WiringNotPreloaded)
+            }
+            Err(error) if error.downcast_ref::<PermissionDenied>().is_some() => {
+                let denial = error
+                    .downcast_ref::<PermissionDenied>()
+                    .expect("the guarded branch carries a permission denial")
+                    .clone();
+                self.record(&attributes, DeliveryClass::PermissionDenied);
+                self.tap(
+                    source,
+                    &delivery_id,
+                    &target.wiring_id,
+                    target.wiring_version,
+                    RouterTapPhase::Settled(PERMISSION_DENIED),
+                    &serde_json::Value::Null,
+                )
+                .await;
+                Err(lower_permission_denied(denial))
             }
             Err(error) => {
                 self.record(&attributes, DeliveryClass::ExecutionFailed);
@@ -365,10 +393,15 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<RouterDe
 impl delivery::Host for ActiveCtx<'_> {
     async fn deliver(
         &mut self,
-        request: DeliveryRequest,
+        mut request: DeliveryRequest,
     ) -> wash_runtime::wasmtime::Result<Result<DeliveryOutcome, DeliveryError>> {
         let plugin = plugin_of(self)?;
-        Ok(plugin.deliver(request).await)
+        let caller = request
+            .caller
+            .take()
+            .map(|caller| self.table.delete(caller))
+            .transpose()?;
+        Ok(plugin.deliver(request, caller).await)
     }
 }
 
@@ -397,12 +430,14 @@ impl<'a> SourceRef<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedTarget {
+    package_id: String,
     wiring_id: String,
     wiring_version: u32,
     caller_attached: bool,
     /// `Some` only for attachment ingress. A callerless attachment is legal
     /// only when its welded auth policy explicitly names anonymous mode.
     anonymous_caller_permitted: Option<bool>,
+    registered_operation: Option<String>,
     resolution: WiringResolution,
 }
 
@@ -413,6 +448,7 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                 .attachments
                 .get(id)
                 .map(|attachment| ResolvedTarget {
+                    package_id: attachment.package_id.clone(),
                     wiring_id: attachment.wiring_id.clone(),
                     wiring_version: attachment.wiring_version,
                     caller_attached: true,
@@ -423,6 +459,7 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                             .and_then(serde_json::Value::as_str)
                             == Some(NO_AUTHENTICATION_MODE),
                     ),
+                    registered_operation: attachment.registered_operation.clone(),
                     resolution: if matches!(
                         attachment.kind,
                         AttachmentKind::Http | AttachmentKind::Internal | AttachmentKind::Studio
@@ -438,47 +475,64 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                 .registrations
                 .get(id)
                 .map(|registration| ResolvedTarget {
+                    package_id: registration.package_id.clone(),
                     wiring_id: registration.wiring_id.clone(),
                     wiring_version: registration.wiring_version,
                     caller_attached: false,
                     anonymous_caller_permitted: None,
+                    registered_operation: None,
                     resolution: WiringResolution::Frozen,
                 })
         }
     }
 }
 
-fn caller_claims(
+fn validate_caller(
+    source: SourceRef<'_>,
     target: &ResolvedTarget,
-    caller: Option<CallerContext>,
-) -> Result<(Option<String>, Option<String>), DeliveryError> {
-    if (!target.caller_attached && caller.is_some())
-        || (target.anonymous_caller_permitted == Some(false)
-            && caller
-                .as_ref()
-                .and_then(|caller| caller.user_id.as_deref())
-                .is_none())
-    {
-        return Err(DeliveryError::InvalidRequest);
-    }
-    match caller {
-        Some(caller)
-            if caller.role.as_deref() == Some("") || caller.user_id.as_deref() == Some("") =>
-        {
-            Err(DeliveryError::InvalidRequest)
-        }
-        Some(caller) => Ok((caller.role, caller.user_id)),
-        None => Ok((None, None)),
+    caller: Option<&AuthenticatedCaller>,
+) -> Result<(), DeliveryError> {
+    if caller_matches_source(
+        source,
+        target.anonymous_caller_permitted,
+        caller.map(AuthenticatedCaller::attachment_id),
+    ) {
+        Ok(())
+    } else {
+        Err(DeliveryError::InvalidRequest)
     }
 }
 
-/// How the router driver answered one delivery. The three variants are the
-/// three arms of the driver match in [`RouterDeliveryBridge::deliver`]; the
+fn caller_matches_source(
+    source: SourceRef<'_>,
+    anonymous_caller_permitted: Option<bool>,
+    caller_attachment_id: Option<&str>,
+) -> bool {
+    match (source, anonymous_caller_permitted, caller_attachment_id) {
+        (SourceRef::Registration(_), None, None) | (SourceRef::Attachment(_), Some(true), None) => {
+            true
+        }
+        (SourceRef::Attachment(attachment_id), Some(false), Some(caller_attachment_id)) => {
+            caller_attachment_id == attachment_id
+        }
+        _ => false,
+    }
+}
+
+fn lower_permission_denied(denial: PermissionDenied) -> DeliveryError {
+    DeliveryError::PermissionDenied(PermissionDenial {
+        operation: denial.operation().to_owned(),
+    })
+}
+
+/// How the router driver answered one delivery. The variants are the arms of
+/// the driver match in [`RouterDeliveryBridge::deliver`]; the
 /// bridge classifies nothing else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeliveryClass {
     Delivered,
     WiringNotPreloaded,
+    PermissionDenied,
     ExecutionFailed,
 }
 
@@ -488,6 +542,7 @@ impl DeliveryClass {
         match self {
             DeliveryClass::Delivered => None,
             DeliveryClass::WiringNotPreloaded => Some(WIRING_NOT_PRELOADED),
+            DeliveryClass::PermissionDenied => Some(PERMISSION_DENIED),
             DeliveryClass::ExecutionFailed => Some(EXECUTION_FAILED),
         }
     }
@@ -661,11 +716,11 @@ mod tests {
 
     use super::*;
 
-    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1"}],"format-version":2,"registrations":{"orders-changed":{"entity":"orders","ops":["insert","update"],"wiring-id":"shipping","wiring-version":2}},"release":{"catalog-id":"manifest-mint-catalog","catalog-version":3,"environment":"prod","tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","wiring-id":"shipping","wiring-version":2}]}"#;
+    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","package-id":"manifest_mint"}],"format-version":3,"registrations":{"orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"3.0.0"}],"tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
 
     fn manifest() -> ServingManifest {
         ServingManifest::from_canonical_bytes(MANIFEST)
-            .expect("format-2 fixture is canonical")
+            .expect("format-3 fixture is canonical")
             .0
     }
 
@@ -674,20 +729,24 @@ mod tests {
         assert_eq!(
             resolve_target(&manifest(), SourceRef::Attachment("orders-http")),
             Some(ResolvedTarget {
+                package_id: "manifest_mint".into(),
                 wiring_id: "orders".into(),
                 wiring_version: 1,
                 caller_attached: true,
                 anonymous_caller_permitted: Some(true),
+                registered_operation: None,
                 resolution: WiringResolution::Preloaded,
             })
         );
         assert_eq!(
             resolve_target(&manifest(), SourceRef::Registration("orders-changed")),
             Some(ResolvedTarget {
+                package_id: "manifest_mint".into(),
                 wiring_id: "shipping".into(),
                 wiring_version: 2,
                 caller_attached: false,
                 anonymous_caller_permitted: None,
+                registered_operation: None,
                 resolution: WiringResolution::Frozen,
             })
         );
@@ -699,55 +758,76 @@ mod tests {
     }
 
     #[test]
-    fn attachment_caller_identity_follows_the_welded_auth_policy() {
-        const USER_ID: &str = "11111111-1111-4111-8111-111111111111";
-
+    fn caller_handle_must_match_the_welded_attachment_identity() {
         let anonymous = resolve_target(&manifest(), SourceRef::Attachment("orders-http"))
             .expect("the fixture names the anonymous attachment");
-        assert_eq!(caller_claims(&anonymous, None), Ok((None, None)));
+        assert!(caller_matches_source(
+            SourceRef::Attachment("orders-http"),
+            anonymous.anonymous_caller_permitted,
+            None,
+        ));
 
         let mut protected_manifest = manifest();
         protected_manifest
             .attachments
             .get_mut("orders-http")
             .expect("the fixture names the protected attachment")
-            .auth_policy = serde_json::json!({"mode": "bearer"});
+            .auth_policy = serde_json::json!({"mode": "pat"});
         let protected = resolve_target(&protected_manifest, SourceRef::Attachment("orders-http"))
             .expect("the protected attachment still resolves");
-        assert!(matches!(
-            caller_claims(&protected, None),
-            Err(DeliveryError::InvalidRequest)
+        assert!(!caller_matches_source(
+            SourceRef::Attachment("orders-http"),
+            protected.anonymous_caller_permitted,
+            None,
         ));
-        assert!(matches!(
-            caller_claims(
-                &protected,
-                Some(CallerContext {
-                    role: None,
-                    user_id: None,
-                })
-            ),
-            Err(DeliveryError::InvalidRequest)
+        assert!(!caller_matches_source(
+            SourceRef::Attachment("orders-http"),
+            protected.anonymous_caller_permitted,
+            Some("other-http"),
         ));
-        let authenticated = CallerContext {
-            role: None,
-            user_id: Some(USER_ID.to_owned()),
-        };
-        assert_eq!(
-            caller_claims(&protected, Some(authenticated)),
-            Ok((None, Some(USER_ID.to_owned()))),
-            "an authenticated UUID remains unchanged"
-        );
+        assert!(caller_matches_source(
+            SourceRef::Attachment("orders-http"),
+            protected.anonymous_caller_permitted,
+            Some("orders-http"),
+        ));
 
         let registration = resolve_target(
             &protected_manifest,
             SourceRef::Registration("orders-changed"),
         )
         .expect("the fixture names the callerless registration");
-        assert_eq!(
-            caller_claims(&registration, None),
-            Ok((None, None)),
-            "attachment auth policy does not apply to registrations"
-        );
+        assert!(caller_matches_source(
+            SourceRef::Registration("orders-changed"),
+            registration.anonymous_caller_permitted,
+            None,
+        ));
+        assert!(!caller_matches_source(
+            SourceRef::Registration("orders-changed"),
+            registration.anonymous_caller_permitted,
+            Some("orders-http"),
+        ));
+    }
+
+    #[test]
+    fn permission_denial_lowers_the_exact_registered_operation() {
+        let operation = "manifest_mint@3.0.0::order.get";
+        let mut registered = manifest();
+        registered
+            .attachments
+            .get_mut("orders-http")
+            .expect("the fixture attachment exists")
+            .registered_operation = Some(operation.to_owned());
+        let target = resolve_target(&registered, SourceRef::Attachment("orders-http"))
+            .expect("the registered attachment resolves from the weld");
+        let denial = authorize_registered_operation(None, target.registered_operation.as_deref())
+            .expect_err("a callerless registered invocation is denied");
+
+        assert_eq!(denial.operation(), operation);
+        assert!(matches!(
+            lower_permission_denied(denial),
+            DeliveryError::PermissionDenied(PermissionDenial { operation: denied })
+                if denied == operation
+        ));
     }
 
     #[test]
@@ -965,9 +1045,8 @@ mod tests {
         );
     }
 
-    /// Both driver refusals count as attempts and both raise the error series,
-    /// under labels that tell a missing preloaded wiring apart from any other
-    /// execution failure — the one distinction the error series exists for.
+    /// Every driver refusal counts as an attempt and raises the error series
+    /// under its bounded class; the exact operation is never a metric label.
     #[test]
     fn each_driver_refusal_counts_as_an_attempt_and_a_named_error() {
         let harness = MetricHarness::install();
@@ -976,6 +1055,7 @@ mod tests {
             delivery_attributes(SourceRef::Registration("orders-changed"), "shipping", 2);
 
         metrics.record(&attributes, DeliveryClass::WiringNotPreloaded);
+        metrics.record(&attributes, DeliveryClass::PermissionDenied);
         metrics.record(&attributes, DeliveryClass::ExecutionFailed);
 
         let base = [
@@ -993,10 +1073,15 @@ mod tests {
         assert_eq!(
             harness.series(),
             vec![
-                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 2,),
+                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 3,),
                 (
                     "wamn.router.delivery.errors".to_owned(),
                     with_error("execution-failed"),
+                    1,
+                ),
+                (
+                    "wamn.router.delivery.errors".to_owned(),
+                    with_error("permission-denied"),
                     1,
                 ),
                 (

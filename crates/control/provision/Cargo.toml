@@ -38,6 +38,10 @@ serde_json = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-run-state = { workspace = true, features = ["effect-writer-credential"] }
+# Operation-grant reconciliation consumes the same deny-unknown-fields package
+# manifest as generation. It derives grants from that public parsed shape; it
+# does not carry a second manifest grammar.
+wamn-schema-generator = { workspace = true }
 
 # wamn-0h0g.8.18 control_author: the scoped A/B generation role name is a
 # domain-separated digest of (org, project, environment, database), and the

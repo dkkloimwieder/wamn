@@ -10,6 +10,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use clap::Args;
 use opentelemetry::global;
+use tokio_postgres::NoTls;
 use wash_runtime::engine::WasmProposal;
 use wash_runtime::engine::host_memory::{HostMemoryBudgets, parse_bytes};
 use wash_runtime::host::HostConfig;
@@ -17,19 +18,22 @@ use wash_runtime::host::http::{DynamicRouter, Ingress};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
+use wamn_control_provision::{SystemReader, parse_system_reader_url};
 use wamn_execution_host::{
     ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
     WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
 };
+use wamn_platform_identity::route_caller_subject;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_runtime::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
+use wamn_runtime::plugins::flow_http_routing::{
+    FlowHttpRouting, RouteAuthentication, requires_pat_route_authentication,
+};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
-use wamn_runtime::plugins::{
-    ClassCredentials, FlowHttpRouting, WamnJetstream, WamnLogging, WamnPostgres,
-};
+use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
@@ -206,6 +210,13 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_PROJECT", default_value = "default")]
     pub project: String,
 
+    /// Organization owning this host's project.
+    ///
+    /// Required only when the welded release carries a PAT-protected HTTP
+    /// route; it scopes both the route-caller subject and identity-reader URL.
+    #[arg(long, env = "WAMN_ORG")]
+    pub org: Option<String>,
+
     /// Optional database search path installed at node checkout.
     #[arg(long, env = "WAMN_SCHEMA")]
     pub schema: Option<String>,
@@ -213,6 +224,41 @@ pub struct HostArgs {
     /// Production outbound ceiling for connection-backed HTTP effects.
     #[arg(long, env = "WAMN_ALLOWED_HOSTS", value_delimiter = ',')]
     pub allowed_hosts: Vec<String>,
+}
+
+struct SupervisedIdentityConnection {
+    task: tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,
+}
+
+impl SupervisedIdentityConnection {
+    fn new(task: tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>) -> Self {
+        Self { task }
+    }
+
+    async fn failure(&mut self) -> anyhow::Error {
+        match (&mut self.task).await {
+            Ok(Ok(())) => anyhow::anyhow!("system identity database connection ended"),
+            Ok(Err(error)) => {
+                anyhow::Error::new(error).context("system identity database connection failed")
+            }
+            Err(error) => {
+                anyhow::Error::new(error).context("system identity database connection task failed")
+            }
+        }
+    }
+
+    async fn shutdown(&mut self) {
+        if !self.task.is_finished() {
+            self.task.abort();
+            let _ = (&mut self.task).await;
+        }
+    }
+}
+
+impl Drop for SupervisedIdentityConnection {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 /// Pull and verify this process's release, or record that it carries none.
@@ -333,6 +379,13 @@ fn host_credentials(
     }
 }
 
+/// Name the callable-HTTP credential only when the welded release demands PAT
+/// authorization. Configuration is transport, not authority: a release-less or
+/// anonymous-only host must ignore an ambient URL rather than acquire its pool.
+fn demanded_http_admitter_url(pat_routes: bool, configured_url: Option<String>) -> Option<String> {
+    if pat_routes { configured_url } else { None }
+}
+
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
@@ -368,6 +421,56 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         &args.oci_ca_paths,
     )
     .await?;
+    let pat_routes = release
+        .as_ref()
+        .is_some_and(|weld| requires_pat_route_authentication(weld.manifest()));
+    let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
+        .ok()
+        .filter(|url| !url.is_empty());
+
+    // The release pull above is what makes the PAT requirement knowable. Once
+    // it is known, settle every scoped input before opening the identity, NATS,
+    // project-database, or ingress sockets. A release-less or anonymous-only
+    // host takes the absent arm and acquires no identity-reader connection.
+    let (route_auth_scope, identity_reader, mut identity_connection) = if pat_routes {
+        let weld = release
+            .as_ref()
+            .expect("a PAT route was found only inside a loaded release");
+        let org = args
+            .org
+            .as_deref()
+            .filter(|org| !org.is_empty())
+            .context("a PAT-protected route requires --org/WAMN_ORG")?;
+        let project = (!args.project.is_empty())
+            .then_some(args.project.as_str())
+            .context("a PAT-protected route requires a nonempty --project/WAMN_PROJECT")?;
+        let system_url = std::env::var("WAMN_SYSTEM_URL")
+            .ok()
+            .filter(|url| !url.is_empty())
+            .context("a PAT-protected route requires WAMN_SYSTEM_URL")?;
+        http_admitter_url
+            .as_deref()
+            .context("a PAT-protected route requires WAMN_HTTP_ADMITTER_PG_URL")?;
+        let subject = route_caller_subject(org, project, &weld.manifest().release.environment)
+            .context("derive the scoped route-caller subject")?;
+        parse_system_reader_url(
+            SystemReader::Identity,
+            &system_url,
+            org,
+            project,
+            &weld.manifest().release.environment,
+        )?;
+        let (client, connection) = tokio_postgres::connect(&system_url, NoTls)
+            .await
+            .context("connect the scoped system identity reader")?;
+        (
+            Some((org.to_owned(), subject)),
+            Some(Arc::new(client)),
+            Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
+        )
+    } else {
+        (None, None, None)
+    };
     let router_owner = args
         .runner
         .clone()
@@ -400,11 +503,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         &args.wasm_proposals,
         host_memory(&args)?,
     )?);
-    // wamn-0h0g.22.8.3: the host NAMES its own credential source here rather
+    // wamn-0h0g.22.8.3: the host NAMES its own credential sources here rather
     // than letting the config layer pick one up implicitly. deploy/platform
     // injects WAMN_PG_URL via secretKeyRef (values-host-default.yaml ->
     // host-db.example.yaml), so the environment is the transport; reading it at
     // composition is what makes it the explicit source instead of a fallback.
+    // A PAT-only host without guest SQL can instead name just CallableHttp below;
+    // no base URL is borrowed for that authority.
     // wamn-0h0g.22.16: the host also names WHICH AUTHORITY the credential
     // belongs to.
     //
@@ -421,32 +526,33 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // never hold. The host is NOT refused at startup for this — unlike the
     // executor it can serve with no run-plane work at all.
     //
-    // wamn-0h0g.22.11 CUT THE CALLABLE-HTTP CLASS OVER on the same terms, and
-    // the host takes the unnaming arm for it too: that class carries the single
-    // `WamnPostgres::connection_effect_snapshot` read behind a component's
-    // trusted HTTP effect, so a host without an admitter generation still serves
-    // every route that raises no such effect.
-    //
-    // AND IT NEVER WILL HOLD ONE: ruled 2026-08-27 (wamn-0h0g.10.16), trusted
-    // HTTP effects run ONLY under the executor. Naming a callable-HTTP
-    // credential here would widen the credential surface to a second process
-    // class for a path whose design intent - hot routes reach no Postgres -
-    // says no. The unnamed class at host checkout is fail-closed and is the
-    // working end state, not an unfilled carrier. An inline route that needs a
-    // trusted database effect is a WIRING that belongs on the executor path.
+    // wamn-0h0g.22.11 CUT THE CALLABLE-HTTP CLASS OVER on the same terms.
+    // Trusted component HTTP effects remain executor-only (wamn-0h0g.10.16),
+    // but wamn-10yt.3.2 reuses that exact pool family for the host-owned
+    // app_system.permissions read a PAT route requires. The manifest-derived
+    // gate above makes the generation mandatory for that demand only; an
+    // anonymous-only or release-less host retains the absent, fail-closed arm.
     let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
-    let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
+    let http_admitter_url = demanded_http_admitter_url(pat_routes, http_admitter_url);
+    let postgres_credentials = match std::env::var("WAMN_PG_URL")
         .ok()
-        .filter(|url| !url.is_empty());
+        .filter(|url| !url.is_empty())
+    {
+        Some(url) => Some(host_credentials(
+            url,
+            executor_platform_url,
+            http_admitter_url,
+        )),
+        None if pat_routes => Some(ClassCredentials::default().with_class(
+            AuthorityClass::CallableHttp,
+            http_admitter_url.expect("a PAT route required the callable-HTTP credential above"),
+        )),
+        None => None,
+    };
     let postgres = Arc::new(
-        WamnPostgres::from_env(
-            std::env::var("WAMN_PG_URL")
-                .ok()
-                .map(|url| host_credentials(url, executor_platform_url, http_admitter_url)),
-        )
-        .context("wamn:postgres plugin init")?,
+        WamnPostgres::from_env(postgres_credentials).context("wamn:postgres plugin init")?,
     );
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let router_driver = match release.as_ref() {
@@ -518,6 +624,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_doorbell(doorbell_client)
             .with_release(release.clone()),
     );
+    let flow_http =
+        FlowHttpRouting::from_env(release.clone()).context("wamn:flow-http-routing plugin init")?;
+    let flow_http = match (&route_auth_scope, &identity_reader) {
+        (Some((org, subject)), Some(identity_reader)) => {
+            flow_http.with_authentication(Arc::new(RouteAuthentication::new(
+                Arc::clone(identity_reader),
+                Arc::clone(&postgres),
+                org.clone(),
+                args.project.clone(),
+                subject.clone(),
+            )))
+        }
+        (None, None) => flow_http,
+        _ => unreachable!("route authentication inputs are constructed together"),
+    };
 
     let mut builder = ClusterHostBuilder::default()
         .with_engine((*engine).clone())
@@ -548,13 +669,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // identity is not in this release never reaches a component. The plugin
         // takes the loaded manifest — it does not load one.
         .with_plugin(Arc::clone(&jetstream))?
-        // wamn-0h0g.15.96: READER 3 of the weld, and the first host-side
-        // implementation of wamn:flow-http-routing. Routes come off the manifest's
-        // attachment projection, so the serving path reads no project database.
-        .with_plugin(Arc::new(
-            FlowHttpRouting::from_env(release.clone())
-                .context("wamn:flow-http-routing plugin init")?,
-        ))?;
+        // wamn-0h0g.15.96: READER 3 of the weld. Route projection stays wholly
+        // in-memory; a PAT-protected route additionally carries the scoped
+        // identity reader and preloads exact grants from the existing
+        // callable-HTTP project pool during authentication.
+        .with_plugin(Arc::new(flow_http))?;
 
     if let (Some(driver), Some(release)) = (&router_driver, &release) {
         builder = builder.with_plugin(Arc::new(
@@ -621,12 +740,30 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     // Kubernetes stops pods with SIGTERM; honor both it and Ctrl-C.
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {},
-        _ = sigterm.recv() => {},
-    }
+    let identity_failure = async {
+        let Some(connection) = identity_connection.as_mut() else {
+            return std::future::pending::<anyhow::Error>().await;
+        };
+        connection.failure().await
+    };
+    let identity_error = tokio::select! {
+        _ = tokio::signal::ctrl_c() => None,
+        _ = sigterm.recv() => None,
+        error = identity_failure => Some(error),
+    };
     tracing::info!("shutting down wamn-host");
-    cleanup.await
+    let cleanup_result = cleanup.await;
+    if let Some(mut connection) = identity_connection.take() {
+        connection.shutdown().await;
+    }
+    match (identity_error, cleanup_result) {
+        (Some(error), Err(cleanup_error)) => {
+            tracing::warn!(error = %cleanup_error, "cluster cleanup also failed");
+            Err(error)
+        }
+        (Some(error), Ok(())) => Err(error),
+        (None, result) => result,
+    }
 }
 
 #[cfg(test)]
@@ -721,6 +858,20 @@ mod tests {
             neither.url(AuthorityClass::GuestSql),
             Some(GUEST),
             "the guest class keeps its own credential either way"
+        );
+    }
+
+    #[test]
+    fn callable_http_configuration_is_not_authority_without_pat_demand() {
+        assert_eq!(
+            demanded_http_admitter_url(false, Some(ADMITTER.to_owned())),
+            None,
+            "an anonymous-only release must not name an ambient credential"
+        );
+        assert_eq!(
+            demanded_http_admitter_url(true, Some(ADMITTER.to_owned())).as_deref(),
+            Some(ADMITTER),
+            "a PAT-protected release keeps the credential it requires"
         );
     }
 
