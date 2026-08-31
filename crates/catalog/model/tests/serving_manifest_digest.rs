@@ -1,11 +1,12 @@
-//! Digest and closed-shape proofs for serving-manifest format 2.
+//! Digest and closed-shape proofs for serving-manifest format 3.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use wamn_catalog::{
-    ArtifactHash, AttachmentKind, DefinitionHash, ServingAttachment, ServingComponent,
-    ServingManifest, ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
+    ArtifactHash, AttachmentKind, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
+    ServingAttachment, ServingComponent, ServingManifest, ServingRegistration,
+    ServingRegistrationInput, ServingRelease, ServingWiring,
 };
 
 mod mint_vector {
@@ -29,23 +30,30 @@ fn definition_hash(value: &str) -> DefinitionHash {
 fn release() -> ServingRelease {
     ServingRelease {
         tenant_id: "manifest-mint-tenant".into(),
-        catalog_id: "manifest-mint-catalog".into(),
-        catalog_version: 3,
+        effective_release_id: EffectiveReleaseId::new(3).expect("non-zero release"),
         environment: "prod".into(),
+        packages: BTreeSet::from([
+            PackageCoordinate::new("wamn_receiving", "1.0.0").unwrap(),
+            PackageCoordinate::new("client_acme_receiving", "3.0.0").unwrap(),
+        ]),
     }
 }
 
 fn components() -> BTreeSet<ServingComponent> {
     BTreeSet::from([
         ServingComponent {
+            package_id: "wamn_receiving".into(),
             component: "transform".into(),
             interface_version: "0.1".into(),
             digest: artifact_hash(COMPONENT_B),
+            registered_operation: None,
         },
         ServingComponent {
+            package_id: "client_acme_receiving".into(),
             component: "http-request".into(),
             interface_version: "0.1".into(),
             digest: artifact_hash(COMPONENT_A),
+            registered_operation: Some("client_acme_receiving@3.0.0::purchase_order.get".into()),
         },
     ])
 }
@@ -53,11 +61,13 @@ fn components() -> BTreeSet<ServingComponent> {
 fn wirings() -> BTreeSet<ServingWiring> {
     BTreeSet::from([
         ServingWiring {
+            package_id: "wamn_receiving".into(),
             wiring_id: "shipping".into(),
             wiring_version: 2,
             graph_hash: definition_hash(GRAPH_B),
         },
         ServingWiring {
+            package_id: "client_acme_receiving".into(),
             wiring_id: "orders".into(),
             wiring_version: 1,
             graph_hash: definition_hash(GRAPH_A),
@@ -74,6 +84,7 @@ fn manifest() -> ServingManifest {
             "orders-http".into(),
             ServingAttachment {
                 kind: AttachmentKind::Http,
+                package_id: "client_acme_receiving".into(),
                 wiring_id: "orders".into(),
                 wiring_version: 1,
                 definition_hash: definition_hash(DEFINITION),
@@ -82,12 +93,16 @@ fn manifest() -> ServingManifest {
                     "kind": "http",
                     "run-deadline-ms": 30000
                 }),
-                auth_policy: json!({"mode": "none"}),
+                auth_policy: json!({"mode": "pat"}),
+                registered_operation: Some(
+                    "client_acme_receiving@3.0.0::purchase_order.get".into(),
+                ),
             },
         )]),
         BTreeMap::from([(
             "orders-changed".into(),
             ServingRegistration {
+                package_id: "wamn_receiving".into(),
                 wiring_id: "shipping".into(),
                 wiring_version: 2,
                 entity: "orders".into(),
@@ -96,7 +111,7 @@ fn manifest() -> ServingManifest {
             },
         )]),
     )
-    .expect("the format-two fixture is valid")
+    .expect("the format-three fixture is valid")
 }
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -111,13 +126,13 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_two_preimage_and_digest_are_pinned() {
+fn the_format_three_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), mint_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), mint_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(mint_vector::CANONICAL_BYTES)
-        .expect("the v2 vector is admitted by the reader");
+        .expect("the v3 vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), mint_vector::DIGEST);
 
@@ -191,11 +206,17 @@ fn every_manifest_field_is_pinned() {
     );
     assert_eq!(
         sorted_keys(&document["components"][0]),
-        ["component", "digest", "interface-version"]
+        [
+            "component",
+            "digest",
+            "interface-version",
+            "package-id",
+            "registered-operation"
+        ]
     );
     assert_eq!(
         sorted_keys(&document["wirings"][0]),
-        ["graph-hash", "wiring-id", "wiring-version"]
+        ["graph-hash", "package-id", "wiring-id", "wiring-version"]
     );
     assert_eq!(
         sorted_keys(&document["attachments"]["orders-http"]),
@@ -204,13 +225,22 @@ fn every_manifest_field_is_pinned() {
             "definition",
             "definition-hash",
             "kind",
+            "package-id",
+            "registered-operation",
             "wiring-id",
             "wiring-version"
         ]
     );
     assert_eq!(
         sorted_keys(&document["registrations"]["orders-changed"]),
-        ["entity", "input", "ops", "wiring-id", "wiring-version"]
+        [
+            "entity",
+            "input",
+            "ops",
+            "package-id",
+            "wiring-id",
+            "wiring-version"
+        ]
     );
 
     let text = String::from_utf8(manifest().canonical_bytes()).expect("manifest is UTF-8");
@@ -225,7 +255,7 @@ fn every_manifest_field_is_pinned() {
     ] {
         assert!(
             !text.contains(retired),
-            "retired key {retired} re-entered v2"
+            "retired key {retired} re-entered v3"
         );
     }
 }

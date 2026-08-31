@@ -32,8 +32,9 @@ use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnP
 use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
 
 const TENANT: &str = "t1";
-const CATALOG: &str = "shop";
+const PACKAGE: &str = "shop";
 const ENVIRONMENT: &str = "prod";
+const RELEASE: u32 = 1;
 const WIRING: &str = "orders-create";
 
 fn hash(letter: char) -> String {
@@ -84,18 +85,27 @@ fn install_schema(url: &str) {
              DROP SCHEMA IF EXISTS catalog CASCADE;\n\
              {catalog}\n\
              SET app.tenant = '{TENANT}';\n\
-             INSERT INTO catalog.catalogs \
-                    (tenant_id, catalog_id, version, environment, schema_version, state) \
-             VALUES ('{TENANT}','{CATALOG}',1,'{ENVIRONMENT}','1','applied');\n\
-             INSERT INTO catalog.catalog_heads \
-                    (tenant_id, catalog_id, environment, applied_catalog_version) \
-             VALUES ('{TENANT}','{CATALOG}','{ENVIRONMENT}',1);\n\
-             INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
-                    gated_catalog_version, graph_json, wiring_hash) \
-             VALUES ('{TENANT}','{CATALOG}','{WIRING}',1,1,'{{\"n\":1}}','{a}'), \
-                    ('{TENANT}','{CATALOG}','{WIRING}',2,1,'{{\"n\":2}}','{b}');\n",
+             INSERT INTO catalog.packages \
+                    (tenant_id, package_id, package_version, manifest_sha256) \
+             VALUES ('{TENANT}','{PACKAGE}','1.0.0','{c}');\n\
+             INSERT INTO catalog.effective_releases \
+                    (tenant_id, effective_release_id, environment, \
+                     verified_publisher_principal) \
+             VALUES ('{TENANT}',1,'{ENVIRONMENT}','test-publisher');\n\
+             INSERT INTO catalog.effective_release_packages \
+                    (tenant_id, effective_release_id, package_id, package_version) \
+             VALUES ('{TENANT}',1,'{PACKAGE}','1.0.0');\n\
+             INSERT INTO catalog.effective_release_heads \
+                    (tenant_id, environment, effective_release_id) \
+             VALUES ('{TENANT}','{ENVIRONMENT}',1);\n\
+             INSERT INTO catalog.wirings \
+                    (tenant_id, package_id, package_version, wiring_id, version, \
+                     graph_json, wiring_hash) \
+             VALUES ('{TENANT}','{PACKAGE}','1.0.0','{WIRING}',1,'{{\"n\":1}}','{a}'), \
+                    ('{TENANT}','{PACKAGE}','1.0.0','{WIRING}',2,'{{\"n\":2}}','{b}');\n",
             a = hash('a'),
             b = hash('b'),
+            c = hash('c'),
         ),
     );
 }
@@ -108,7 +118,7 @@ fn flip(url: &str, definition: &str, enabled: bool) {
             "SET app.tenant = '{TENANT}';\n\
              PREPARE flip (text,text,text,text,boolean) AS {statement};\n\
              BEGIN;\n\
-             EXECUTE flip('{CATALOG}','{ENVIRONMENT}','{WIRING}','{definition}',{enabled});\n\
+             EXECUTE flip('{PACKAGE}','{ENVIRONMENT}','{WIRING}','{definition}',{enabled});\n\
              COMMIT;\n",
             statement = flip_activation(),
         ),
@@ -126,7 +136,7 @@ async fn resolve(url: &str) -> Option<u32> {
         .await
         .expect("scope the reader to its tenant");
     let row = client
-        .query_opt(resolve_active_wiring(), &[&CATALOG, &ENVIRONMENT, &WIRING])
+        .query_opt(resolve_active_wiring(), &[&PACKAGE, &ENVIRONMENT, &WIRING])
         .await
         .expect("resolve the active wiring");
     driver.abort();
@@ -172,8 +182,9 @@ fn install(
         matches!(
             cache.insert(
                 TENANT,
-                CATALOG,
+                PACKAGE,
                 ENVIRONMENT,
+                RELEASE,
                 wiring_id,
                 version,
                 format!("sha256:{wiring_id}-v{version}"),
@@ -203,7 +214,7 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // gate knows the subscriber is on the wire before it flips anything, and it
     // is the reconnect obligation running on the very first connection.
     let sentinel = cache
-        .get(TENANT, CATALOG, ENVIRONMENT, "sentinel")
+        .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, "sentinel")
         .miss()
         .expect("a fresh cache holds nothing");
     install(&cache, "sentinel", 1, wiring("sentinel"), sentinel);
@@ -224,7 +235,7 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
         .expect("subscribe the doorbell through the platform pool");
     eventually("the doorbell established its LISTEN", || {
         cache
-            .get(TENANT, CATALOG, ENVIRONMENT, "sentinel")
+            .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, "sentinel")
             .hit()
             .is_none()
     })
@@ -234,7 +245,7 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     // to keep out of Postgres. The token is taken BEFORE the store read, which
     // is the only order that lets a flip during the read be detected.
     let token = cache
-        .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+        .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, WIRING)
         .miss()
         .expect("the first delivery misses");
     let version = resolve(&url).await.expect("v1 is active");
@@ -242,7 +253,7 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     install(&cache, WIRING, version, wiring("v1"), token);
     assert_eq!(
         cache
-            .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+            .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, WIRING)
             .hit()
             .expect("resident after the first resolution")
             .version,
@@ -254,21 +265,21 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     flip(&url, &hash('b'), true);
     eventually("the doorbell invalidated the flipped pointer", || {
         cache
-            .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+            .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, WIRING)
             .hit()
             .is_none()
     })
     .await;
 
     let token = cache
-        .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+        .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, WIRING)
         .miss()
         .expect("the flipped pointer was dropped");
     let version = resolve(&url).await.expect("v2 is active");
     assert_eq!(version, 2, "the store now serves the flipped version");
     install(&cache, WIRING, version, wiring("v2"), token);
     let served = cache
-        .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+        .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, WIRING)
         .hit()
         .expect("the re-read repopulated the pointer");
     assert_eq!(served.version, 2);
@@ -279,14 +290,14 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     flip(&url, &hash('a'), true);
     eventually("the doorbell invalidated the rolled-back pointer", || {
         cache
-            .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+            .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, WIRING)
             .hit()
             .is_none()
     })
     .await;
     assert_eq!(cache.len(), 3, "no graph was dropped by either flip");
     let token = cache
-        .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+        .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, WIRING)
         .miss()
         .expect("the rolled-back pointer was dropped");
     assert_eq!(resolve(&url).await.expect("v1 is active again"), 1);
@@ -297,7 +308,7 @@ async fn a_pointer_flip_makes_the_cache_serve_the_new_active_version() {
     flip(&url, &hash('a'), false);
     eventually("the doorbell invalidated the darkened pointer", || {
         cache
-            .get(TENANT, CATALOG, ENVIRONMENT, WIRING)
+            .get(TENANT, PACKAGE, ENVIRONMENT, RELEASE, WIRING)
             .hit()
             .is_none()
     })

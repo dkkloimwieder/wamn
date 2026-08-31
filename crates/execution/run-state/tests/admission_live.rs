@@ -284,9 +284,17 @@ fn surviving_authority_matrix_live() {
     );
 
     let component_digest = format!("sha256:{}", "a".repeat(64));
+    let projection_hash = format!("sha256:{}", "6".repeat(64));
     let imports_fingerprint = format!("sha256:{}", "b".repeat(64));
     let wiring_hash = format!("sha256:{}", "c".repeat(64));
     let race_wiring_hash = format!("sha256:{}", "d".repeat(64));
+    let requirement_z_hash = format!("sha256:{}", "e".repeat(64));
+    let requirement_a_hash = format!("sha256:{}", "f".repeat(64));
+    let definition_z_hash = format!("sha256:{}", "1".repeat(64));
+    let definition_a_hash = format!("sha256:{}", "2".repeat(64));
+    let definition_a2_hash = format!("sha256:{}", "3".repeat(64));
+    let validation_z_hash = format!("sha256:{}", "4".repeat(64));
+    let validation_a_hash = format!("sha256:{}", "5".repeat(64));
 
     // THE EXECUTOR'S TEST-ONLY UNION GRANT IS GONE (`wamn-0h0g.22.31`). Both
     // families now stand on the production builder and nothing else:
@@ -332,34 +340,40 @@ fn surviving_authority_matrix_live() {
              GRANT UPDATE (available_at) ON wamn_run.run_queue TO wamn_executor_platform; \
              {executor_surface} \
              GRANT USAGE ON SCHEMA wamn_run TO wamn_control_author; \
-             INSERT INTO catalog.catalogs \
-               (tenant_id,catalog_id,version,environment,schema_version,state) \
-             VALUES ('t1','cat',1,'dev','0.1','applied'); \
-             INSERT INTO catalog.releases \
-               (tenant_id,catalog_id,catalog_version) VALUES ('t1','cat',1); \
+             INSERT INTO catalog.packages \
+               (tenant_id,package_id,package_version,manifest_sha256) \
+             VALUES ('t1','cat','1.0.0','sha256:{manifest_hash}'); \
+             INSERT INTO catalog.effective_releases \
+               (tenant_id,effective_release_id,environment,verified_publisher_principal) \
+             VALUES ('t1',1,'dev','test-publisher'); \
+             INSERT INTO catalog.effective_release_packages \
+               (tenant_id,effective_release_id,package_id,package_version) \
+             VALUES ('t1',1,'cat','1.0.0'); \
              INSERT INTO catalog.component_library \
-               (tenant_id,catalog_id,catalog_version,component,interface_version,operation, \
-                component_digest,imports,imports_fingerprint,effects,input_ports,output_ports, \
-                parameters) \
-             VALUES ('t1','cat',1,'entity','0.1','create','{component_digest}', \
-                     '[]','{imports_fingerprint}','[]','[]','[]','[]'); \
+               (tenant_id,package_id,package_version,component,interface_version,operation, \
+                component_digest,projection_hash,imports,imports_fingerprint,effects,input_ports, \
+                output_ports,parameters) \
+             VALUES ('t1','cat','1.0.0','entity','0.1','create','{component_digest}', \
+                     '{projection_hash}','[]','{imports_fingerprint}','[]','[]','[]','[]'); \
              INSERT INTO catalog.wirings \
-               (tenant_id,catalog_id,wiring_id,version,gated_catalog_version, \
+               (tenant_id,package_id,package_version,wiring_id,version, \
                 graph_json,wiring_hash) VALUES \
-               ('t1','cat','candidate',1,1, \
+               ('t1','cat','1.0.0','candidate',1, \
                 '{{\"format-version\":\"0.1\",\"wiring-id\":\"candidate\",\"version\":1, \
                    \"entry\":\"node\",\"nodes\":{{\"node\":{{\"component\":\"entity\", \
                    \"interface-version\":\"0.1\",\"operation\":\"create\"}}}}}}', \
                 '{wiring_hash}'), \
-               ('t1','cat','race',1,1, \
+               ('t1','cat','1.0.0','race',1, \
                 '{{\"format-version\":\"0.1\",\"wiring-id\":\"race\",\"version\":1, \
                    \"entry\":\"node\",\"nodes\":{{\"node\":{{\"component\":\"entity\", \
                    \"interface-version\":\"0.1\",\"operation\":\"create\"}}}}}}', \
                 '{race_wiring_hash}'); \
              INSERT INTO catalog.connection_requirements \
                (tenant_id,component_digest,store_alias,requirement_json,requirement_hash) VALUES \
-               ('t1','{component_digest}','z-store','{{\"requirement-type\":\"http\"}}','req-z'), \
-               ('t1','{component_digest}','a-store','{{\"requirement-type\":\"http\"}}','req-a'); \
+               ('t1','{component_digest}','z-store','{{\"requirement-type\":\"http\"}}', \
+                '{requirement_z_hash}'), \
+               ('t1','{component_digest}','a-store','{{\"requirement-type\":\"http\"}}', \
+                '{requirement_a_hash}'); \
              INSERT INTO catalog.connection_instances \
                (tenant_id,environment,instance_id,requirement_type,contract) VALUES \
                ('t1','dev','instance-z','http','wamn:http/0.1'), \
@@ -368,27 +382,28 @@ fn surviving_authority_matrix_live() {
                (tenant_id,environment,instance_id,generation,definition_json, \
                 definition_hash,credential_set_handle) VALUES \
                ('t1','dev','instance-z',1,'{{\"base-url\":\"https://z.invalid\"}}', \
-                'definition-z-1','credential-z-1'), \
+                '{definition_z_hash}','credential-z-1'), \
                ('t1','dev','instance-a',1,'{{\"base-url\":\"https://a.invalid\"}}', \
-                'definition-a-1','credential-a-1'); \
+                '{definition_a_hash}','credential-a-1'); \
              UPDATE catalog.connection_instances \
                 SET active_generation=1,revision=1,updated_at=clock_timestamp()+interval '1 second'; \
              INSERT INTO catalog.connection_bindings \
-               (tenant_id,catalog_id,catalog_version,component_digest,store_alias, \
+               (tenant_id,effective_release_id,component_digest,store_alias, \
                 environment,instance_id,binding_status,validation_status,validation_hash) VALUES \
-               ('t1','cat',1,'{component_digest}','z-store','dev','instance-z', \
-                'active','valid','validation-z'), \
-               ('t1','cat',1,'{component_digest}','a-store','dev','instance-a', \
-                'active','valid','validation-a'); \
+               ('t1',1,'{component_digest}','z-store','dev','instance-z', \
+                'active','valid','{validation_z_hash}'), \
+               ('t1',1,'{component_digest}','a-store','dev','instance-a', \
+                'active','valid','{validation_a_hash}'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id,expected_environment,durability_class) \
              VALUES ('t1','dev','standard'); \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json) \
              VALUES ('t1','run-1','legacy-flow',1,'cat',1,'dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}'); \
-             INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('t1','run-1');"
+             INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('t1','run-1');",
+            manifest_hash = "a".repeat(64),
         ),
     );
 
@@ -428,9 +443,10 @@ fn surviving_authority_matrix_live() {
             WHERE n.nspname = 'catalog' AND c.relkind IN ('r','p','v','m') \
               AND pg_catalog.has_table_privilege('wamn_executor_platform', c.oid, p); \
            ASSERT actual = \
-             'catalog_heads:SELECT,component_library:SELECT,connection_bindings:SELECT,\
+             'component_library:SELECT,connection_bindings:SELECT,\
 connection_generations:SELECT,connection_instances:SELECT,connection_requirements:SELECT,\
-release_components:SELECT,release_manifest_v2_snapshots:SELECT,wiring_activation:SELECT,\
+effective_release_heads:SELECT,effective_release_packages:SELECT,release_components:SELECT,\
+release_manifest_v3_snapshots:SELECT,wiring_activation:SELECT,\
 wiring_tombstones:SELECT,wirings:SELECT', \
                   'catalog TABLE grain drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
@@ -441,7 +457,7 @@ wiring_tombstones:SELECT,wirings:SELECT', \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'UPDATE'); \
            ASSERT actual = \
              'caller_http_status,caller_outcome_hash,caller_outcome_json,caller_outcome_kind,\
-caller_release_node_id,caller_released_at,fail_kind,manifest_digest,release_version,\
+caller_release_node_id,caller_released_at,fail_kind,manifest_digest,\
 result_json,state_json,status,terminal_reason,updated_at', \
                   'runs UPDATE columns drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
@@ -539,15 +555,17 @@ result_json,state_json,status,terminal_reason,updated_at', \
     // trusted prior world refuses before a run or queue row is inserted.
     success(
         &url,
-        "INSERT INTO catalog.connection_generations \
+        &format!(
+            "INSERT INTO catalog.connection_generations \
            (tenant_id,environment,instance_id,generation,definition_json, \
             definition_hash,credential_set_handle) \
-         VALUES ('t1','dev','instance-a',2,'{\"base-url\":\"https://a2.invalid\"}', \
-                 'definition-a-2','credential-a-2'); \
+         VALUES ('t1','dev','instance-a',2,'{{\"base-url\":\"https://a2.invalid\"}}', \
+                 '{definition_a2_hash}','credential-a-2'); \
          UPDATE catalog.connection_instances \
             SET active_generation=2,revision=revision+1, \
                 updated_at=clock_timestamp()+interval '1 second' \
-          WHERE tenant_id='t1' AND environment='dev' AND instance_id='instance-a';",
+          WHERE tenant_id='t1' AND environment='dev' AND instance_id='instance-a';"
+        ),
     );
     let recovered = success(&url, &as_management(&ordinal_zero));
     assert!(recovered.contains(&format!("duplicate|case-run-0|{binding_world}")));
@@ -577,7 +595,7 @@ result_json,state_json,status,terminal_reason,updated_at', \
     assert_sqlstate(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,catalog_id,catalog_version,environment, \
+           (tenant_id,run_id,package_id,effective_release_id,environment, \
             wiring_id,wiring_version,status,trigger_source,input_json) \
          VALUES ('t1','half-run','cat',1,'dev','candidate',1, \
                  'dispatched','test-case','{}');",

@@ -4,19 +4,58 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use boon::{Compiler, Draft, Schemas};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+
+use crate::package::validate_canonical_operation;
+use crate::{CatalogIdentityError, PackageCoordinate, validate_text};
 
 const JSON_SCHEMA_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
 const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
 
-/// Catalog coordinate that owns an admitted component.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Package coordinate that owns an admitted component.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentCatalogScope {
+pub struct ComponentPackageScope {
     pub tenant_id: String,
-    pub catalog_id: String,
-    pub catalog_version: u32,
+    pub package_id: String,
+    pub package_version: String,
+}
+
+impl ComponentPackageScope {
+    pub fn new(
+        tenant_id: impl Into<String>,
+        package_id: impl Into<String>,
+        package_version: impl Into<String>,
+    ) -> Result<Self, CatalogIdentityError> {
+        let tenant_id = tenant_id.into();
+        let coordinate = PackageCoordinate::new(package_id, package_version)?;
+        validate_text(&tenant_id, "tenant-id")?;
+        Ok(Self {
+            tenant_id,
+            package_id: coordinate.package_id().to_owned(),
+            package_version: coordinate.package_version().to_owned(),
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for ComponentPackageScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "kebab-case", deny_unknown_fields)]
+        struct Wire {
+            tenant_id: String,
+            package_id: String,
+            package_version: String,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Self::new(wire.tenant_id, wire.package_id, wire.package_version)
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 /// One author-declared input or output port before admission.
@@ -75,10 +114,13 @@ pub struct ComponentConnection {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentDeclaration {
-    pub scope: ComponentCatalogScope,
+    pub scope: ComponentPackageScope,
     pub component: String,
     pub interface_version: String,
     pub operation: String,
+    /// Registered application operation, distinct from the guest/WIT export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<String>,
     pub input_ports: Vec<ComponentPortDeclaration>,
     pub output_ports: Vec<ComponentPortDeclaration>,
     pub parameters: Vec<ComponentParameterDeclaration>,
@@ -122,18 +164,20 @@ pub struct AdmittedComponentEffect {
     pub interfaces: Vec<String>,
 }
 
-/// Complete component-owned fact persisted in `catalog.component_library`.
+/// Complete package-owned fact persisted in `catalog.component_library`.
 ///
 /// Environment is deliberately absent: an environment selects a wiring, while
-/// component admission is owned by a catalog version. `admitted_at` is likewise
+/// component admission is owned by an exact package version. `admitted_at` is likewise
 /// a storage timestamp, not validator output, so admission stays clock-free.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponent {
-    pub scope: ComponentCatalogScope,
+    pub scope: ComponentPackageScope,
     pub component: String,
     pub interface_version: String,
     pub operation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<String>,
     pub component_digest: String,
     pub imports: Vec<String>,
     pub imports_fingerprint: String,
@@ -159,7 +203,6 @@ pub struct AdmittedComponentFacts {
 pub enum ComponentFactErrorKind {
     EmptyIdentity,
     NonCanonicalIdentity,
-    ZeroCatalogVersion,
     InvalidComponentDigest,
     DuplicateInputPort,
     DuplicateOutputPort,
@@ -214,17 +257,24 @@ pub fn normalize_component_fact(
     imports: impl IntoIterator<Item = String>,
     effects: Vec<AdmittedComponentEffect>,
 ) -> Result<AdmittedComponentFacts, ComponentFactError> {
-    validate_identity(&declaration.scope.tenant_id, "tenant-id")?;
-    validate_identity(&declaration.scope.catalog_id, "catalog-id")?;
-    if declaration.scope.catalog_version == 0 {
-        return Err(ComponentFactError::new(
-            ComponentFactErrorKind::ZeroCatalogVersion,
-            "catalog-version must be greater than zero",
-        ));
-    }
+    ComponentPackageScope::new(
+        &declaration.scope.tenant_id,
+        &declaration.scope.package_id,
+        &declaration.scope.package_version,
+    )
+    .map_err(|error| {
+        ComponentFactError::new(
+            ComponentFactErrorKind::NonCanonicalIdentity,
+            error.to_string(),
+        )
+    })?;
     validate_identity(&declaration.component, "component")?;
     validate_identity(&declaration.interface_version, "interface-version")?;
     validate_identity(&declaration.operation, "operation")?;
+    validate_registered_operation_scope(
+        &declaration.scope,
+        declaration.registered_operation.as_deref(),
+    )?;
     if !valid_digest(&component_digest) {
         return Err(ComponentFactError::new(
             ComponentFactErrorKind::InvalidComponentDigest,
@@ -259,6 +309,7 @@ pub fn normalize_component_fact(
             component: declaration.component,
             interface_version: declaration.interface_version,
             operation: declaration.operation,
+            registered_operation: declaration.registered_operation,
             component_digest,
             imports,
             imports_fingerprint,
@@ -292,7 +343,48 @@ pub fn schema_digests_match(left: &ComponentSchema, right: &ComponentSchema) -> 
 pub fn verify_stored_effect_projection(
     component: &AdmittedComponent,
 ) -> Result<(), ComponentFactError> {
+    ComponentPackageScope::new(
+        &component.scope.tenant_id,
+        &component.scope.package_id,
+        &component.scope.package_version,
+    )
+    .map_err(|error| {
+        ComponentFactError::new(
+            ComponentFactErrorKind::NonCanonicalIdentity,
+            error.to_string(),
+        )
+    })?;
+    validate_registered_operation_scope(
+        &component.scope,
+        component.registered_operation.as_deref(),
+    )?;
     normalize_effects(component.effects.clone(), &component.imports).map(|_| ())
+}
+
+fn validate_registered_operation_scope(
+    scope: &ComponentPackageScope,
+    operation: Option<&str>,
+) -> Result<(), ComponentFactError> {
+    let Some(operation) = operation else {
+        return Ok(());
+    };
+    validate_canonical_operation(operation).map_err(|error| {
+        ComponentFactError::new(
+            ComponentFactErrorKind::NonCanonicalIdentity,
+            error.to_string(),
+        )
+    })?;
+    let expected_prefix = format!("{}@{}::", scope.package_id, scope.package_version);
+    if !operation.starts_with(&expected_prefix) {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorKind::NonCanonicalIdentity,
+            format!(
+                "registered operation {operation:?} does not match component package {}@{}",
+                scope.package_id, scope.package_version
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Sort and deduplicate derived effects, pinning them to exactly the imports.
@@ -534,14 +626,15 @@ mod tests {
 
     fn declaration() -> ComponentDeclaration {
         ComponentDeclaration {
-            scope: ComponentCatalogScope {
+            scope: ComponentPackageScope {
                 tenant_id: "tenant-a".to_string(),
-                catalog_id: "orders".to_string(),
-                catalog_version: 7,
+                package_id: "orders".to_string(),
+                package_version: "1.2.0".to_string(),
             },
             component: "transform".to_string(),
             interface_version: "0.1.0".to_string(),
             operation: "map".to_string(),
+            registered_operation: None,
             input_ports: vec![ComponentPortDeclaration {
                 name: "input".to_string(),
                 schema: json!({
@@ -585,8 +678,9 @@ mod tests {
         .expect("component fact normalizes");
         let fact = facts.component;
 
-        assert_eq!(fact.scope.catalog_version, 7);
+        assert_eq!(fact.scope.package_version, "1.2.0");
         assert_eq!(fact.operation, "map");
+        assert_eq!(fact.registered_operation, None);
         assert_eq!(fact.input_ports[0].name, "input");
         assert_eq!(fact.output_ports[0].name, "main");
         assert!(fact.parameters[0].required);
@@ -595,6 +689,18 @@ mod tests {
         assert!(fact.imports_fingerprint.starts_with("sha256:"));
         assert_eq!(fact.effects, vec![postgres_effect()]);
         assert!(facts.connections.is_empty());
+    }
+
+    #[test]
+    fn persisted_component_scope_uses_the_package_coordinate_guard() {
+        assert!(
+            serde_json::from_value::<ComponentPackageScope>(json!({
+                "tenant-id": "tenant-a",
+                "package-id": "not-snake",
+                "package-version": "1.0.0"
+            }))
+            .is_err()
+        );
     }
 
     /// A component with no effect-bearing import records the POSITIVE fact that
@@ -614,19 +720,78 @@ mod tests {
         assert_eq!(facts.component.imports.len(), 1);
     }
 
+    #[test]
+    fn registered_operation_is_explicit_validated_and_distinct_from_guest_export() {
+        let mut declared = declaration();
+        declared.registered_operation = Some("orders@1.2.0::purchase_order.get".to_string());
+        let facts = normalize_component_fact(
+            declared,
+            format!("sha256:{}", "a".repeat(64)),
+            ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
+            Vec::new(),
+        )
+        .expect("canonical registered operation is admitted");
+        assert_eq!(facts.component.operation, "map");
+        assert_eq!(
+            facts.component.registered_operation.as_deref(),
+            Some("orders@1.2.0::purchase_order.get")
+        );
+
+        let mut malformed = declaration();
+        malformed.registered_operation = Some("purchase_order.get".to_string());
+        assert_eq!(
+            normalize_component_fact(
+                malformed,
+                format!("sha256:{}", "a".repeat(64)),
+                ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::NonCanonicalIdentity
+        );
+
+        for operation in [
+            "other@1.2.0::purchase_order.get",
+            "orders@2.0.0::purchase_order.get",
+        ] {
+            let mut mismatched = declaration();
+            mismatched.registered_operation = Some(operation.to_string());
+            assert_eq!(
+                normalize_component_fact(
+                    mismatched,
+                    format!("sha256:{}", "a".repeat(64)),
+                    ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
+                    Vec::new(),
+                )
+                .unwrap_err()
+                .kind(),
+                ComponentFactErrorKind::NonCanonicalIdentity
+            );
+        }
+
+        let mut stored = migration_defaulted_fact(&[]);
+        stored.registered_operation = Some("other@1.2.0::purchase_order.get".into());
+        assert_eq!(
+            verify_stored_effect_projection(&stored).unwrap_err().kind(),
+            ComponentFactErrorKind::NonCanonicalIdentity
+        );
+    }
+
     /// A stored row exactly as the wamn-0h0g.21.9 converge ALTER leaves one:
     /// the audited imports it was admitted with, and the `'[]'` the DEFAULT
     /// wrote over them.
     fn migration_defaulted_fact(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
-            scope: ComponentCatalogScope {
+            scope: ComponentPackageScope {
                 tenant_id: "tenant-a".to_string(),
-                catalog_id: "orders".to_string(),
-                catalog_version: 7,
+                package_id: "orders".to_string(),
+                package_version: "1.2.0".to_string(),
             },
             component: "transform".to_string(),
             interface_version: "0.1.0".to_string(),
             operation: "map".to_string(),
+            registered_operation: None,
             component_digest: format!("sha256:{}", "a".repeat(64)),
             imports: imports.iter().map(|name| (*name).to_string()).collect(),
             imports_fingerprint: format!("sha256:{}", "b".repeat(64)),

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use wamn_schema_model::ConnectionTypeDescriptor;
+use wamn_catalog::ConnectionTypeDescriptor;
 
 /// Controlled lifecycle states for an environment-owned connection instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,15 +20,6 @@ impl ConnectionInstanceStatus {
             Self::Disabled => "disabled",
         }
     }
-}
-
-/// A portable legacy flow-artifact-owned connection requirement.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ArtifactConnectionRequirement {
-    artifact_hash: String,
-    requirement_name: String,
-    requirement: ConnectionTypeDescriptor,
 }
 
 /// A portable component-owned connection requirement.
@@ -69,43 +60,6 @@ impl ComponentConnectionRequirement {
     /// Canonical environment-independent bytes persisted with the component.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("portable component connection requirement serializes")
-    }
-
-    /// SHA-256 of [`Self::canonical_bytes`].
-    pub fn requirement_hash(&self) -> String {
-        hex_sha256(&self.canonical_bytes())
-    }
-}
-
-impl ArtifactConnectionRequirement {
-    /// Construct an immutable portable requirement record.
-    pub fn new(
-        artifact_hash: impl Into<String>,
-        requirement_name: impl Into<String>,
-        requirement: ConnectionTypeDescriptor,
-    ) -> Self {
-        Self {
-            artifact_hash: artifact_hash.into(),
-            requirement_name: requirement_name.into(),
-            requirement,
-        }
-    }
-
-    pub fn artifact_hash(&self) -> &str {
-        &self.artifact_hash
-    }
-
-    pub fn requirement_name(&self) -> &str {
-        &self.requirement_name
-    }
-
-    pub fn requirement(&self) -> &ConnectionTypeDescriptor {
-        &self.requirement
-    }
-
-    /// Canonical environment-independent bytes persisted with the artifact.
-    pub fn canonical_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).expect("portable connection requirement serializes")
     }
 
     /// SHA-256 of [`Self::canonical_bytes`].
@@ -157,27 +111,11 @@ pub struct ConnectionGeneration {
     pub credential_set_handle: String,
 }
 
-/// An immutable legacy flow-release association to one stable instance.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConnectionBinding {
-    pub tenant_id: String,
-    pub catalog_id: String,
-    pub catalog_version: i32,
-    pub artifact_hash: String,
-    pub requirement_name: String,
-    pub environment: String,
-    pub instance_id: String,
-    pub status: ConnectionBindingStatus,
-    pub validation: ConnectionBindingValidation,
-    pub validation_hash: String,
-}
-
 /// An immutable component-release association to one stable instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentConnectionBinding {
     pub tenant_id: String,
-    pub catalog_id: String,
-    pub catalog_version: i32,
+    pub effective_release_id: i32,
     pub component_digest: String,
     pub store_alias: String,
     pub environment: String,
@@ -203,14 +141,6 @@ pub enum ConnectionBindingValidation {
     Invalid,
 }
 
-/// Insert one immutable legacy artifact requirement; identical retries converge.
-pub fn insert_connection_requirement_sql() -> &'static str {
-    "INSERT INTO catalog.connection_requirements \
-       (tenant_id, artifact_hash, requirement_name, requirement_json, requirement_hash) \
-     VALUES ($1, $2, $3, $4::text::jsonb, $5) \
-     ON CONFLICT DO NOTHING"
-}
-
 /// Insert one immutable component requirement; identical retries converge.
 pub fn insert_component_connection_requirement_sql() -> &'static str {
     "INSERT INTO catalog.connection_requirements \
@@ -228,7 +158,6 @@ pub fn exact_component_connection_requirement_sql() -> &'static str {
     "SELECT EXISTS (\
        SELECT 1 FROM catalog.connection_requirements \
         WHERE tenant_id = $1 AND component_digest = $2 AND store_alias = $3 \
-          AND artifact_hash IS NULL AND requirement_name IS NULL \
           AND requirement_json = $4::text::jsonb AND requirement_hash = $5\
      )"
 }
@@ -248,20 +177,12 @@ pub fn insert_connection_generation_sql() -> &'static str {
      VALUES ($1, $2, $3, $4, $5::text::jsonb, $6, $7)"
 }
 
-/// Insert one immutable legacy release binding to an environment instance.
-pub fn insert_connection_binding_sql() -> &'static str {
-    "INSERT INTO catalog.connection_bindings \
-       (tenant_id, catalog_id, catalog_version, artifact_hash, requirement_name, \
-        environment, instance_id, binding_status, validation_status, validation_hash) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
-}
-
 /// Insert one immutable component release binding to an environment instance.
 pub fn insert_component_connection_binding_sql() -> &'static str {
     "INSERT INTO catalog.connection_bindings \
-       (tenant_id, catalog_id, catalog_version, component_digest, store_alias, \
+       (tenant_id, effective_release_id, component_digest, store_alias, \
         environment, instance_id, binding_status, validation_status, validation_hash) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {

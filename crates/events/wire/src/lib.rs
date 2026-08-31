@@ -14,7 +14,8 @@
 //!
 //! Pure — no IO, no clock; every string this crate emits is pinned by a test.
 
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest as _, Sha256};
 
 /// The only derived-event record format admitted by this release line.
@@ -62,7 +63,8 @@ pub struct Causation {
 /// author's logical deduplication operand, and the causation the host derives
 /// from the delivery it is completing. Tenant, project, and environment are
 /// copied from bound host claims so no guest or wiring field can redirect the
-/// event.
+/// event; package identity comes from the welded release/run/wiring source the
+/// native host emitter resolved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DerivedEvent {
@@ -70,6 +72,8 @@ pub struct DerivedEvent {
     pub tenant: String,
     pub project: String,
     pub environment: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_id: Option<String>,
     pub entity: String,
     pub op: Op,
     pub payload: serde_json::Value,
@@ -87,6 +91,7 @@ impl DerivedEvent {
         tenant: impl Into<String>,
         project: impl Into<String>,
         environment: impl Into<String>,
+        package_id: impl Into<String>,
         entity: impl Into<String>,
         op: Op,
         payload: serde_json::Value,
@@ -98,6 +103,7 @@ impl DerivedEvent {
             tenant: tenant.into(),
             project: project.into(),
             environment: environment.into(),
+            package_id: Some(package_id.into()),
             entity: entity.into(),
             op,
             payload,
@@ -129,6 +135,15 @@ impl DerivedEvent {
                 )));
             }
         }
+        if event.package_id.as_deref().is_some_and(|package_id| {
+            package_id.is_empty()
+                || package_id.trim() != package_id
+                || package_id.as_bytes().contains(&0)
+        }) {
+            return Err(<serde_json::Error as serde::de::Error>::custom(
+                "derived-event package-id is empty or noncanonical",
+            ));
+        }
         if event.dedup_id.is_empty() {
             return Err(<serde_json::Error as serde::de::Error>::custom(
                 "derived-event dedup-id is empty",
@@ -138,10 +153,10 @@ impl DerivedEvent {
     }
 }
 
-/// One row event on the wire: `{op, old, new, entity?, table, lsn, txid,
-/// commit_ts, causation?}` (v3 §4). `entity` is the **stable catalog entity
-/// id** (wamn-l5i9.11) — the rename-proof key registrations bind to; it is
-/// ABSENT when the table is not catalog-mapped (hand-created, or a platform
+/// One row event on the wire: `{op, old, new, package_id?, entity?, table, lsn,
+/// txid, commit_ts, causation?}` (v3 §4). `package_id` and `entity` are the
+/// package owner and package-local model key from `wamn.json`; both are ABSENT
+/// when the table is not package-mapped (hand-created, or a platform
 /// table the schema-scoped publication auto-includes) — absence IS the
 /// unmapped marker, unambiguous even when an entity id equals a table name.
 /// `table` always carries the physical table name at decode time.
@@ -154,22 +169,104 @@ impl DerivedEvent {
 ///
 /// STATUS: FROZEN 0.1.0 (wamn-l5i9.30) — additive/clarifying only. The field
 /// set, spellings, and serde omission rules are pinned by the golden tests.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Envelope {
     pub op: Op,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub old: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_id: Option<String>,
     pub entity: Option<String>,
     pub table: String,
     pub lsn: u64,
     pub txid: u32,
     pub commit_ts: chrono::DateTime<chrono::Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub causation: Option<Causation>,
+}
+
+const ENVELOPE_IDENTITY_CLOSURE: &str =
+    "event envelope package_id and entity must be both present or both absent";
+
+impl Serialize for Envelope {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self.package_id.is_some() != self.entity.is_some() {
+            return Err(serde::ser::Error::custom(ENVELOPE_IDENTITY_CLOSURE));
+        }
+        let field_count = 5
+            + self.old.is_some() as usize
+            + self.new.is_some() as usize
+            + self.package_id.is_some() as usize
+            + self.entity.is_some() as usize
+            + self.causation.is_some() as usize;
+        let mut state = serializer.serialize_struct("Envelope", field_count)?;
+        state.serialize_field("op", &self.op)?;
+        if let Some(old) = &self.old {
+            state.serialize_field("old", old)?;
+        }
+        if let Some(new) = &self.new {
+            state.serialize_field("new", new)?;
+        }
+        if let Some(package_id) = &self.package_id {
+            state.serialize_field("package_id", package_id)?;
+        }
+        if let Some(entity) = &self.entity {
+            state.serialize_field("entity", entity)?;
+        }
+        state.serialize_field("table", &self.table)?;
+        state.serialize_field("lsn", &self.lsn)?;
+        state.serialize_field("txid", &self.txid)?;
+        state.serialize_field("commit_ts", &self.commit_ts)?;
+        if let Some(causation) = &self.causation {
+            state.serialize_field("causation", causation)?;
+        }
+        state.end()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnvelopeWire {
+    op: Op,
+    #[serde(default)]
+    old: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    new: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    package_id: Option<String>,
+    #[serde(default)]
+    entity: Option<String>,
+    table: String,
+    lsn: u64,
+    txid: u32,
+    commit_ts: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    causation: Option<Causation>,
+}
+
+impl<'de> Deserialize<'de> for Envelope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = EnvelopeWire::deserialize(deserializer)?;
+        if wire.package_id.is_some() != wire.entity.is_some() {
+            return Err(serde::de::Error::custom(ENVELOPE_IDENTITY_CLOSURE));
+        }
+        Ok(Self {
+            op: wire.op,
+            old: wire.old,
+            new: wire.new,
+            package_id: wire.package_id,
+            entity: wire.entity,
+            table: wire.table,
+            lsn: wire.lsn,
+            txid: wire.txid,
+            commit_ts: wire.commit_ts,
+            causation: wire.causation,
+        })
+    }
 }
 
 /// The single bounded stream that stores operator-visible registration poison.
@@ -245,8 +342,8 @@ pub fn msg_id(project: &str, env: &str, lsn: u64) -> String {
 ///
 /// The type discriminator keeps author ids that happen to be decimal apart
 /// from CDC LSN identities. The trusted scope prevents the same author id in a
-/// different tenant/project/environment and admitted terminal selector from
-/// colliding. Only a bounded digest reaches the NATS header; the logical
+/// different tenant/project/environment/package and admitted terminal selector
+/// from colliding. Only a bounded digest reaches the NATS header; the logical
 /// operand itself remains byte-for-byte author supplied in
 /// [`DerivedEvent::dedup_id`]. Length framing prevents concatenation ambiguity
 /// between scope fields.
@@ -254,13 +351,22 @@ pub fn derived_msg_id(
     tenant: &str,
     project: &str,
     env: &str,
+    package_id: &str,
     entity: &str,
     op: Op,
     dedup_id: &str,
 ) -> String {
     let mut digest = Sha256::new();
     digest.update(b"wamn.event.derived-msg-id.v0.1\0");
-    for field in [tenant, project, env, entity, op.as_str(), dedup_id] {
+    for field in [
+        tenant,
+        project,
+        env,
+        package_id,
+        entity,
+        op.as_str(),
+        dedup_id,
+    ] {
         digest.update(u64::try_from(field.len()).unwrap_or(u64::MAX).to_be_bytes());
         digest.update(field.as_bytes());
     }
@@ -302,14 +408,14 @@ pub fn stream_name(org: &str, env: &str) -> String {
 pub fn dead_letter_subject(
     tenant: &str,
     environment: &str,
-    catalog_id: &str,
+    package_id: &str,
     registration_id: &str,
 ) -> String {
     format!(
         "dlq.{}.{}.{}.{}",
         subject_token(tenant),
         subject_token(environment),
-        subject_token(catalog_id),
+        subject_token(package_id),
         subject_token(registration_id)
     )
 }
@@ -397,13 +503,14 @@ mod tests {
             "app",
             "dev",
             "orders",
+            "orders",
             Op::Insert,
             "orders:7:created",
         );
         assert!(id.starts_with("derived:"));
         assert_eq!(id.len(), "derived:".len() + 64);
         assert_eq!(
-            id, "derived:cf149c1c457f676c23a7f5283b38a002bcf41e2ad1fa4c5fb03f513b4d2f3c38",
+            id, "derived:3357ce56ef66f155bc2bb6a09d30fefe01c7a9c2a9d854839d82fc9200b127a3",
             "the domain, field order, selector scope, and length framing are wire identity"
         );
         assert!(!id.contains("orders:7:created"));
@@ -412,32 +519,69 @@ mod tests {
                 .all(|c| c == ':' || c.is_ascii_hexdigit() || c.is_ascii_lowercase())
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "42"),
+            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "42"),
             msg_id("app", "dev", 42),
             "a numeric author id cannot collide with a CDC LSN"
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
-            derived_msg_id("other", "app", "dev", "orders", Op::Insert, "same")
+            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id(
+                "other",
+                "app",
+                "dev",
+                "orders",
+                "orders",
+                Op::Insert,
+                "same"
+            )
         );
         assert_ne!(
-            derived_msg_id("a", "bc", "dev", "orders", Op::Insert, "same"),
-            derived_msg_id("ab", "c", "dev", "orders", Op::Insert, "same"),
+            derived_msg_id("a", "bc", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id("ab", "c", "dev", "orders", "orders", Op::Insert, "same"),
             "length framing keeps adjacent fields unambiguous"
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
-            derived_msg_id("acme", "app", "dev", "receipts", Op::Insert, "same"),
+            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                "orders",
+                "receipts",
+                Op::Insert,
+                "same"
+            ),
             "the admitted entity is part of stream-wide dedup scope"
         );
         assert_ne!(
-            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
-            derived_msg_id("acme", "app", "dev", "orders", Op::Update, "same"),
+            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Update, "same"),
             "the admitted operation is part of stream-wide dedup scope"
         );
+        assert_ne!(
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                "orders",
+                "receipt",
+                Op::Insert,
+                "same"
+            ),
+            derived_msg_id(
+                "acme",
+                "app",
+                "dev",
+                "overlay",
+                "receipt",
+                Op::Insert,
+                "same"
+            ),
+            "the package-local entity is disambiguated by its owning package"
+        );
         assert_eq!(
-            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
-            derived_msg_id("acme", "app", "dev", "orders", Op::Insert, "same"),
+            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
+            derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
             "an exact replay retains one stream-wide dedup identity"
         );
     }
@@ -512,8 +656,8 @@ mod tests {
     #[test]
     fn envelope_wire_shape_is_the_v3_draft() {
         // Freeze the DRAFT field set + spellings: this literal is the wire.
-        // A MAPPED event: `entity` = the stable catalog entity id, `table` =
-        // the physical name at decode time (they differ after a rename).
+        // A MAPPED event carries the package-local entity id and its owning
+        // package; `table` remains the physical name at decode time.
         let mut new = serde_json::Map::new();
         new.insert("id".into(), serde_json::Value::String("7".into()));
         new.insert("note".into(), serde_json::Value::Null);
@@ -521,6 +665,7 @@ mod tests {
             op: Op::Update,
             old: None,
             new: Some(new),
+            package_id: Some("orders".into()),
             entity: Some("sales_orders".into()),
             table: "orders2".into(),
             lsn: 42,
@@ -532,7 +677,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&env).unwrap(),
-            r#"{"op":"update","new":{"id":"7","note":null},"entity":"sales_orders","table":"orders2","lsn":42,"txid":731,"commit_ts":"2026-07-18T12:00:00Z"}"#
+            r#"{"op":"update","new":{"id":"7","note":null},"package_id":"orders","entity":"sales_orders","table":"orders2","lsn":42,"txid":731,"commit_ts":"2026-07-18T12:00:00Z"}"#
         );
         assert_eq!(env.entity_segment(), "sales_orders");
         // Round-trip; an unchanged-TOAST column stays ABSENT (not null).
@@ -551,6 +696,7 @@ mod tests {
             op: Op::Insert,
             old: None,
             new: Some(serde_json::Map::new()),
+            package_id: None,
             entity: None,
             table: "receipts".into(),
             lsn: 7,
@@ -566,7 +712,64 @@ mod tests {
         );
         assert_eq!(env.entity_segment(), "receipts");
         let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
+        assert!(back.package_id.is_none());
         assert!(back.entity.is_none());
+    }
+
+    #[test]
+    fn envelope_decode_refuses_half_a_package_entity_identity() {
+        let mapped = serde_json::json!({
+            "op": "insert",
+            "new": {"id": "7"},
+            "package_id": "orders",
+            "entity": "sales_orders",
+            "table": "orders",
+            "lsn": 7,
+            "txid": 3,
+            "commit_ts": "2026-07-18T12:00:00Z"
+        });
+        for missing in ["package_id", "entity"] {
+            let mut half = mapped.clone();
+            half.as_object_mut().unwrap().remove(missing);
+            let error = serde_json::from_value::<Envelope>(half)
+                .expect_err("a half package/entity identity must be refused");
+            assert!(
+                error.to_string().contains(ENVELOPE_IDENTITY_CLOSURE),
+                "the refusal must name the closed identity pair: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn envelope_encode_refuses_half_a_package_entity_identity() {
+        let complete = Envelope {
+            op: Op::Insert,
+            old: None,
+            new: Some(serde_json::Map::new()),
+            package_id: Some("orders".into()),
+            entity: Some("sales_orders".into()),
+            table: "orders".into(),
+            lsn: 7,
+            txid: 3,
+            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-18T12:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            causation: None,
+        };
+        for missing in ["package_id", "entity"] {
+            let mut half = complete.clone();
+            if missing == "package_id" {
+                half.package_id = None;
+            } else {
+                half.entity = None;
+            }
+            let error = serde_json::to_string(&half)
+                .expect_err("a half package/entity identity must not reach the wire");
+            assert!(
+                error.to_string().contains(ENVELOPE_IDENTITY_CLOSURE),
+                "the refusal must name the closed identity pair: {error}"
+            );
+        }
     }
 
     #[test]
@@ -591,6 +794,7 @@ mod tests {
             "app",
             "dev",
             "orders",
+            "orders",
             Op::Update,
             serde_json::json!(["arbitrary", {"nested": true}]),
             "orders:7:updated",
@@ -603,7 +807,7 @@ mod tests {
         let bytes = serde_json::to_vec(&event).unwrap();
         assert_eq!(
             String::from_utf8(bytes.clone()).unwrap(),
-            r#"{"format-version":"0.1","tenant":"acme","project":"app","environment":"dev","entity":"orders","op":"update","payload":["arbitrary",{"nested":true}],"dedup-id":"orders:7:updated","causation":{"run":"registration:delivery:9","root":"root:1","depth":3}}"#
+            r#"{"format-version":"0.1","tenant":"acme","project":"app","environment":"dev","package-id":"orders","entity":"orders","op":"update","payload":["arbitrary",{"nested":true}],"dedup-id":"orders:7:updated","causation":{"run":"registration:delivery:9","root":"root:1","depth":3}}"#
         );
         assert_eq!(DerivedEvent::from_slice(&bytes).unwrap(), event);
         assert!(
@@ -646,6 +850,7 @@ mod tests {
             op: Op::Update,
             old: Some(old),
             new: Some(new),
+            package_id: Some("orders".into()),
             entity: Some("sales_orders".into()),
             table: "orders".into(),
             lsn: 42,
@@ -661,7 +866,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&env).unwrap(),
-            r#"{"op":"update","old":{"status":"draft"},"new":{"status":"shipped"},"entity":"sales_orders","table":"orders","lsn":42,"txid":731,"commit_ts":"2026-07-18T12:00:00Z","causation":{"run":"f1:evt:00000000000000000009","root":"f1:evt:00000000000000000001","depth":3}}"#
+            r#"{"op":"update","old":{"status":"draft"},"new":{"status":"shipped"},"package_id":"orders","entity":"sales_orders","table":"orders","lsn":42,"txid":731,"commit_ts":"2026-07-18T12:00:00Z","causation":{"run":"f1:evt:00000000000000000009","root":"f1:evt:00000000000000000001","depth":3}}"#
         );
         let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
         assert_eq!(back, env);

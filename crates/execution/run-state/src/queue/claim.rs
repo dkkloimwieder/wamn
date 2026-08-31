@@ -27,7 +27,7 @@ pub enum ProductionClaimClass {
     /// A never-leased or intentionally released (queue-parked) queue row.
     /// Neither carries a release record for the claim to reset: a never-leased
     /// run was never claimed, and the park that released the lease cleared the
-    /// pair itself, because releasing a lease is what reopens claimability
+    /// manifest digest itself, because releasing a lease is what reopens claimability
     /// (wamn-0h0g.15.82).
     Ordinary,
     /// An expired lease with no immutable effect attempt.

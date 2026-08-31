@@ -212,8 +212,8 @@ WITH authority AS MATERIALIZED ( \
 ), \
 input AS ( \
     SELECT NULLIF(current_setting('app.tenant', true), '')::text AS tenant_id, \
-           $1::text AS producer, $2::text AS catalog_id, $3::text AS environment, \
-           $4::int AS expected_catalog_version, $5::text AS run_id, \
+           $1::text AS producer, $2::text AS package_id, $3::text AS environment, \
+           $4::int AS effective_release_id, $5::text AS run_id, \
            $6::text::jsonb AS input_json, $7::text::jsonb AS invocation_context, \
            $8::text AS platform_revision, $9::timestamptz AS run_deadline_at, \
            $10::text AS command_id, $11::text AS report_id, $12::int AS case_ordinal, \
@@ -245,12 +245,18 @@ keyed AS ( \
       FROM input AS i \
 ), \
 candidate AS MATERIALIZED ( \
-    SELECT wiring.version, wiring.wiring_hash, wiring.graph_json \
-      FROM catalog.wirings AS wiring CROSS JOIN keyed AS k \
-     WHERE wiring.tenant_id = k.tenant_id \
-       AND wiring.catalog_id = k.catalog_id \
-       AND wiring.gated_catalog_version = k.expected_catalog_version \
-       AND wiring.wiring_id = k.wiring_id \
+    SELECT wiring.version, wiring.wiring_hash, wiring.graph_json, \
+           member.package_version \
+      FROM keyed AS k \
+      JOIN catalog.effective_release_packages AS member \
+        ON member.tenant_id = k.tenant_id \
+       AND member.effective_release_id = k.effective_release_id \
+       AND member.package_id = k.package_id \
+      JOIN catalog.wirings AS wiring \
+        ON wiring.tenant_id = member.tenant_id \
+       AND wiring.package_id = member.package_id \
+       AND wiring.package_version = member.package_version \
+     WHERE wiring.wiring_id = k.wiring_id \
        AND wiring.version = k.wiring_version \
 ), \
 candidate_nodes AS MATERIALIZED ( \
@@ -263,8 +269,8 @@ candidate_nodes AS MATERIALIZED ( \
       ) AS node \
       LEFT JOIN catalog.component_library AS component \
         ON component.tenant_id = k.tenant_id \
-       AND component.catalog_id = k.catalog_id \
-       AND component.catalog_version = k.expected_catalog_version \
+       AND component.package_id = k.package_id \
+       AND component.package_version = candidate.package_version \
        AND component.component = node.value ->> 'component' \
        AND component.interface_version = node.value ->> 'interface-version' \
        AND component.operation = node.value ->> 'operation' \
@@ -281,8 +287,6 @@ requirements AS MATERIALIZED ( \
              WHERE component_admitted) AS selected \
       JOIN catalog.connection_requirements AS requirement \
         ON requirement.tenant_id = (SELECT tenant_id FROM keyed) \
-       AND requirement.artifact_hash IS NULL \
-       AND requirement.requirement_name IS NULL \
        AND requirement.component_digest = selected.component_digest \
 ), \
 resolved_requirements AS MATERIALIZED ( \
@@ -294,10 +298,7 @@ resolved_requirements AS MATERIALIZED ( \
       FROM requirements AS requirement CROSS JOIN keyed AS k \
       JOIN catalog.connection_bindings AS binding \
         ON binding.tenant_id = k.tenant_id \
-       AND binding.catalog_id = k.catalog_id \
-       AND binding.catalog_version = k.expected_catalog_version \
-       AND binding.artifact_hash IS NULL \
-       AND binding.requirement_name IS NULL \
+       AND binding.effective_release_id = k.effective_release_id \
        AND binding.component_digest = requirement.component_digest \
        AND binding.store_alias = requirement.store_alias \
        AND binding.environment = k.environment \
@@ -347,8 +348,8 @@ expected AS MATERIALIZED ( \
              'version', '0.1', \
              'principal', jsonb_build_object( \
                'tenant-id', k.tenant_id, 'environment', k.environment, \
-               'catalog-id', k.catalog_id, \
-               'catalog-version', k.expected_catalog_version, \
+               'package-id', k.package_id, \
+               'effective-release-id', k.effective_release_id, \
                'run-id', k.run_id, 'wiring-id', k.wiring_id, \
                'wiring-version', k.wiring_version, \
                'wiring-hash', k.wiring_hash), \
@@ -364,7 +365,7 @@ keyed_run AS MATERIALIZED ( \
 ), \
 existing_run AS MATERIALIZED ( \
     SELECT r.run_id, r.idempotency_key, r.trigger_source, r.capture_mode, \
-           r.catalog_id, r.catalog_version, r.environment, r.wiring_id, \
+           r.package_id, r.effective_release_id, r.environment, r.wiring_id, \
            r.wiring_version, r.wiring_hash, \
            r.binding_world_json, r.input_json, r.invocation_context, \
            r.platform_revision, r.run_deadline_at \
@@ -375,9 +376,9 @@ classified AS ( \
     SELECT CASE \
       WHEN e.producer IS NULL OR e.producer NOT IN ('draft-run', 'test-case') \
         THEN 'invalid-producer' \
-      WHEN e.tenant_id IS NULL OR e.catalog_id IS NULL OR e.catalog_id = '' \
+      WHEN e.tenant_id IS NULL OR e.package_id IS NULL OR e.package_id = '' \
         OR e.environment IS NULL OR e.environment = '' \
-        OR e.expected_catalog_version IS NULL OR e.expected_catalog_version <= 0 \
+        OR e.effective_release_id IS NULL OR e.effective_release_id <= 0 \
         OR e.run_id IS NULL OR e.run_id = '' OR e.input_json IS NULL \
         OR e.invocation_context IS NULL \
         OR jsonb_typeof(e.invocation_context) IS DISTINCT FROM 'object' \
@@ -407,8 +408,8 @@ classified AS ( \
        AND (xr.idempotency_key IS DISTINCT FROM e.producer_key \
          OR xr.trigger_source IS DISTINCT FROM e.trigger_source \
          OR xr.capture_mode IS DISTINCT FROM e.capture_mode \
-         OR xr.catalog_id IS DISTINCT FROM e.catalog_id \
-         OR xr.catalog_version IS DISTINCT FROM e.expected_catalog_version \
+         OR xr.package_id IS DISTINCT FROM e.package_id \
+         OR xr.effective_release_id IS DISTINCT FROM e.effective_release_id \
          OR xr.environment IS DISTINCT FROM e.environment \
          OR xr.wiring_id IS DISTINCT FROM e.wiring_id \
          OR xr.wiring_version IS DISTINCT FROM e.wiring_version \
@@ -442,11 +443,11 @@ classified AS ( \
 ), \
 created_run AS ( \
     INSERT INTO wamn_run.runs \
-      (tenant_id, run_id, catalog_id, catalog_version, environment, \
+      (tenant_id, run_id, package_id, effective_release_id, environment, \
        wiring_id, wiring_version, wiring_hash, binding_world_json, \
        status, trigger_source, capture_mode, input_json, invocation_context, \
        admission_context_version, platform_revision, idempotency_key, run_deadline_at) \
-    SELECT c.tenant_id, c.run_id, c.catalog_id, c.expected_catalog_version, \
+    SELECT c.tenant_id, c.run_id, c.package_id, c.effective_release_id, \
            c.environment, c.wiring_id, c.wiring_version, c.wiring_hash, \
            c.binding_world_json, \
            'dispatched', c.trigger_source, c.capture_mode, \
@@ -658,7 +659,7 @@ mod tests {
     fn binding_world_is_database_derived_complete_and_canonically_ordered() {
         let sql = management_admission_transaction(&RunStateSchema::default()).admit;
         for required in [
-            "FROM catalog.wirings AS wiring",
+            "JOIN catalog.wirings AS wiring",
             "JOIN catalog.connection_requirements AS requirement",
             "JOIN catalog.connection_bindings AS binding",
             "binding.binding_status = 'active'",

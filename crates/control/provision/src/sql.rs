@@ -15,13 +15,6 @@ use crate::workload_role::{
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
 
-// Quote a SQL identifier (double-quoted, embedded `"` doubled). Mirrors the
-// canonical `wamn_schema_compiler::sql::quote_ident` (inlined to keep this crate's
-// dependency closure to `serde_json`).
-
-// Quote a SQL string literal (single-quoted, embedded `'` doubled). Mirrors the
-// canonical `wamn_schema_compiler::sql::quote_literal`.
-
 /// Idempotently create or harden the shared, cluster-global [`APP_ROLE`] as a
 /// stable NOLOGIN ACL role.
 ///
@@ -268,16 +261,31 @@ pub fn grant_connect_sql(project: &str) -> String {
 /// bearing even when the ledger is empty.
 pub const DISPATCH_READER_RELATIONS: [&str; 2] = ["run_queue", "effect_attempts"];
 
-/// Catalog relations read by the surviving management-admission statement.
+/// Catalog relations read by the surviving management-admission surface.
 ///
-/// ALSO the callable-HTTP admitter's WHOLE surface (`wamn-0h0g.22.37`). That is
-/// a MEASURED coincidence, not a shared abstraction: the admitter's one
-/// production statement,
-/// `wamn_runtime::plugins::wamn_postgres::claims::CONNECTION_EFFECT_SNAPSHOT_SQL`,
-/// names these six and no others. It is reused rather than copied because a
-/// second array of the same six strings is a second thing to keep true, and the
-/// two families' builders stay separate — which is where they actually differ.
-pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
+/// Publish reads the immutable wiring and package-owned component facts. Gate
+/// resolves those component facts against the environment's exact effective
+/// release and its connection world. This is the complete union of those
+/// production reads.
+pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 8] = [
+    "wirings",
+    "component_library",
+    "effective_release_heads",
+    "effective_release_packages",
+    "connection_requirements",
+    "connection_bindings",
+    "connection_instances",
+    "connection_generations",
+];
+
+/// Catalog relations read by callable-HTTP connection authorization.
+///
+/// `CONNECTION_EFFECT_SNAPSHOT_SQL` resolves one exact package membership and
+/// joins the immutable wiring, component, requirement, binding, instance, and
+/// generation facts. Unlike management admission, it never consults the
+/// environment's mutable effective-release head.
+pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 7] = [
+    "effective_release_packages",
     "wirings",
     "component_library",
     "connection_requirements",
@@ -289,16 +297,16 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
 /// Every `catalog.wirings` column written by management `Publish`.
 ///
 /// The document supplies `wiring_id`, `version` and `graph_json`; the command
-/// supplies `catalog_id` and `gated_catalog_version`; the server fixes
-/// `tenant_id` from the admission surface and derives `wiring_hash` from the
-/// parsed document. `created_at` keeps its storage default, so granting it would
-/// be authority the production INSERT cannot exercise (`wamn-0h0g.7.7`).
+/// supplies `package_id` and `package_version`; the server fixes `tenant_id`
+/// from the admission surface and derives `wiring_hash` from the parsed
+/// document. `created_at` keeps its storage default, so granting it would be
+/// authority the production INSERT cannot exercise (`wamn-0h0g.7.7`).
 pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
     "tenant_id",
-    "catalog_id",
+    "package_id",
+    "package_version",
     "wiring_id",
     "version",
-    "gated_catalog_version",
     "graph_json",
     "wiring_hash",
 ];
@@ -307,29 +315,30 @@ pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
 ///
 /// The union over its four wiring-resolution statements in
 /// `wamn_runtime::plugins::wamn_postgres::wiring_resolution`: `ACTIVE_WIRING_SQL`
-/// (`wiring_activation`, `catalog_heads`, `wirings`, `wiring_tombstones`,
-/// `component_library`), `RELEASE_WIRING_SQL` (`release_manifest_v2_snapshots`,
-/// `wirings`, `release_components`, `component_library`), `CANDIDATE_WIRING_SQL`
-/// and `RELEASE_COMPONENT_BINDINGS_READY_SQL` (the connection quartet). It is a
-/// SUPERSET of [`MANAGEMENT_ADMITTER_CATALOG_RELATIONS`] and deliberately not
-/// derived from it: the two surfaces agree on six relations today by
-/// measurement, and deriving one from the other would make a change to either
-/// statement silently widen the other family.
+/// (`wiring_activation`, `effective_release_heads`,
+/// `effective_release_packages`, `wirings`, `wiring_tombstones`,
+/// `component_library`), `RELEASE_WIRING_SQL`
+/// (`release_manifest_v3_snapshots`, `effective_release_packages`, `wirings`,
+/// `release_components`, `component_library`), `CANDIDATE_WIRING_SQL` and
+/// `RELEASE_COMPONENT_BINDINGS_READY_SQL` (the connection quartet). It is not
+/// derived from either admitter set: a change to one production caller must not
+/// silently widen another family.
 ///
 /// TABLE grain, not column grain — the [`grant_system_reader_surface_sql`]
 /// determination: this family holds no write privilege anywhere in `catalog`,
 /// so a column list would withhold only labels and timestamps while making a
 /// statement that reads one more column fail in production instead of at review.
-pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 11] = [
+pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 12] = [
     "wirings",
     "component_library",
     "connection_requirements",
     "connection_bindings",
     "connection_instances",
     "connection_generations",
-    "catalog_heads",
+    "effective_release_heads",
+    "effective_release_packages",
     "release_components",
-    "release_manifest_v2_snapshots",
+    "release_manifest_v3_snapshots",
     "wiring_activation",
     "wiring_tombstones",
 ];
@@ -341,10 +350,8 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 11] = [
 /// [`crate::workload_role::WorkloadRoleFamily::ExecutorPlatform`] — the bead's
 /// premise said five, and the sixth is real:
 ///
-/// * `queue::sql::clear_pre_effect_state_sql` — `state_json`, `release_version`,
-///   `manifest_digest`
-/// * `queue::sql::grant_production_claim_sql` — `status`, `release_version`,
-///   `manifest_digest`
+/// * `queue::sql::clear_pre_effect_state_sql` — `state_json`, `manifest_digest`
+/// * `queue::sql::grant_production_claim_sql` — `status`, `manifest_digest`
 /// * `queue::sql::terminalize_effect_uncertain_claim_sql` — `status`,
 ///   `fail_kind`, the caller-outcome family, `updated_at`
 /// * `queue::sql::terminalize_exhausted_production_sql` — `status`,
@@ -360,13 +367,12 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 11] = [
 /// concession. Confining the WRITE is what a column list can still buy, and it
 /// buys a lot: this family matches the permissive `TO wamn_platform` floor arm,
 /// so a blanket `UPDATE` would let one claim rewrite any tenant's admission pins.
-pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 14] = [
+pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
     "status",
     "terminal_reason",
     "fail_kind",
     "result_json",
     "state_json",
-    "release_version",
     "manifest_digest",
     "caller_outcome_kind",
     "caller_outcome_json",
@@ -426,8 +432,8 @@ pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 22] = [
     "idempotency_key",
     "trigger_source",
     "capture_mode",
-    "catalog_id",
-    "catalog_version",
+    "package_id",
+    "effective_release_id",
     "environment",
     "wiring_id",
     "wiring_version",
@@ -447,8 +453,8 @@ pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 22] = [
 pub const MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS: [&str; 18] = [
     "tenant_id",
     "run_id",
-    "catalog_id",
-    "catalog_version",
+    "package_id",
+    "effective_release_id",
     "environment",
     "wiring_id",
     "wiring_version",
@@ -760,9 +766,9 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// `AuthorityClass::CallableHttp` is selected from exactly one place in
 /// production — `WamnPostgres::connection_effect_snapshot` — and that method
 /// issues exactly one statement, `CONNECTION_EFFECT_SNAPSHOT_SQL`. Its `FROM`
-/// and `LEFT JOIN` clauses name [`MANAGEMENT_ADMITTER_CATALOG_RELATIONS`] and
-/// nothing else, so `USAGE` on `catalog` plus six `SELECT`s is the family's
-/// TOTAL authority anywhere in the cluster.
+/// and `LEFT JOIN` clauses name [`HTTP_ADMITTER_CATALOG_RELATIONS`] and nothing
+/// else, so `USAGE` on `catalog` plus those seven `SELECT`s is the family's
+/// total authority anywhere in the cluster.
 ///
 /// # What it deliberately does NOT hold
 ///
@@ -792,7 +798,7 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
          GRANT USAGE ON SCHEMA catalog TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::HttpAdmitter),
     );
-    for relation in MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+    for relation in HTTP_ADMITTER_CATALOG_RELATIONS {
         sql.push_str(&format!(
             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
             relation = quote_ident(relation),
@@ -1614,11 +1620,11 @@ pub fn grant_replication_access_sql(database: &str, role: &str, schema: &str) ->
 }
 
 /// The decode-time entity map (wamn-l5i9.11, D19 v3 §4): `relation_oid` →
-/// stable catalog entity id. **OID-keyed** so a reader resolving events is
+/// stable package-local entity identity. **OID-keyed** so a reader resolving events is
 /// timeless under catch-up — pg_class OIDs survive `ALTER TABLE RENAME`, so a
 /// session decoding pre-rename backlog still resolves correctly, and a rename
-/// only updates the informational `table_name`. Maintained by
-/// `publish-catalog`/`migrate-catalog` in the same transaction as the DDL;
+/// only updates the informational `table_name`. Maintained by `apply-package`
+/// in the same transaction as the DDL;
 /// rows are upsert-only (a dropped entity's row keeps old-WAL decode
 /// resolvable). No RLS: it holds no tenant data, and the CDC role's decode
 /// stream sees every row of every table anyway.
@@ -1626,6 +1632,7 @@ pub fn ensure_entity_map_sql(schema: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {schema}.wamn_entities ( \
            relation_oid oid PRIMARY KEY, \
+           package_id text NOT NULL, \
            entity_id text NOT NULL, \
            table_name text NOT NULL)",
         schema = quote_ident(schema),
@@ -1634,17 +1641,22 @@ pub fn ensure_entity_map_sql(schema: &str) -> String {
 
 /// Upsert one entity's map row, resolving the table's CURRENT `pg_class` OID
 /// server-side — run in the SAME transaction as the DDL that created/renamed
-/// the table, so the row is atomic with the physical state. `$1` = entity id,
-/// `$2` = physical table name. A table that does not exist (a catalog entity
-/// whose floor was never applied) upserts nothing — the SELECT is empty.
+/// the table, so the row is atomic with the physical state. `$1` = package id,
+/// `$2` = entity id, `$3` = physical table name. A table that does not exist
+/// (a manifest model whose migration was never applied) upserts nothing — the
+/// SELECT is empty. An existing OID may update its informational table name
+/// only when its package/entity identity is unchanged; it is never rebound.
 pub fn upsert_entity_map_sql(schema: &str) -> String {
     format!(
-        "INSERT INTO {schema}.wamn_entities (relation_oid, entity_id, table_name) \
-         SELECT c.oid, $1, $2::text FROM pg_class c \
+        "INSERT INTO {schema}.wamn_entities AS mapped \
+               (relation_oid, package_id, entity_id, table_name) \
+         SELECT c.oid, $1, $2, $3::text FROM pg_class c \
          JOIN pg_namespace n ON n.oid = c.relnamespace \
-         WHERE n.nspname = {schema_lit} AND c.relname = $2::text AND c.relkind = 'r' \
+         WHERE n.nspname = {schema_lit} AND c.relname = $3::text AND c.relkind = 'r' \
          ON CONFLICT (relation_oid) DO UPDATE \
-           SET entity_id = EXCLUDED.entity_id, table_name = EXCLUDED.table_name",
+           SET table_name = EXCLUDED.table_name \
+         WHERE mapped.package_id = EXCLUDED.package_id \
+           AND mapped.entity_id = EXCLUDED.entity_id",
         schema = quote_ident(schema),
         schema_lit = quote_literal(schema),
     )
@@ -1903,8 +1915,8 @@ mod tests {
         }
         let wiring_insert = sql
             .find(
-                "GRANT INSERT (\"tenant_id\", \"catalog_id\", \"wiring_id\", \"version\", \
-                 \"gated_catalog_version\", \"graph_json\", \"wiring_hash\") \
+                "GRANT INSERT (\"tenant_id\", \"package_id\", \"package_version\", \
+                 \"wiring_id\", \"version\", \"graph_json\", \"wiring_hash\") \
                  ON TABLE catalog.\"wirings\" TO \"wamn_management_admitter\"",
             )
             .expect("column-exact Publish grant");
@@ -1913,10 +1925,10 @@ mod tests {
             MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS,
             [
                 "tenant_id",
-                "catalog_id",
+                "package_id",
+                "package_version",
                 "wiring_id",
                 "version",
-                "gated_catalog_version",
                 "graph_json",
                 "wiring_hash",
             ],
@@ -1942,7 +1954,10 @@ mod tests {
             "the observation leg must read runs.status and runs.result_json, and the \
              evaluation leg the caller-outcome family plus runs.fail_kind"
         );
-        assert!(sql.contains("GRANT INSERT (\"tenant_id\", \"run_id\", \"catalog_id\""));
+        assert!(sql.contains(
+            "GRANT INSERT (\"tenant_id\", \"run_id\", \"package_id\", \
+             \"effective_release_id\""
+        ));
         assert!(sql.contains(
             "GRANT SELECT (\"tenant_id\", \"run_id\"), INSERT (\"tenant_id\", \
              \"run_id\", \"available_at\", \"stream_seq\")"
@@ -2028,7 +2043,7 @@ mod tests {
     /// Rust builder, so byte-equality here is the only thing that catches the
     /// builder moving in a plain `cargo test`.
     #[test]
-    fn the_http_admitter_surface_is_six_catalog_selects_and_nothing_else() {
+    fn the_http_admitter_surface_is_seven_catalog_selects_and_nothing_else() {
         let sql = grant_http_admitter_surface_sql("wamn_run");
         assert_eq!(
             surface_grants(WorkloadRoleFamily::HttpAdmitter, &sql),
@@ -2039,6 +2054,8 @@ mod tests {
              REVOKE ALL PRIVILEGES ON SCHEMA catalog, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
              GRANT USAGE ON SCHEMA catalog TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"effective_release_packages\" \
+             TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"component_library\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
@@ -2046,7 +2063,7 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"connection_bindings\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_instances\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads six catalog relations and holds \
+            "the callable-HTTP admitter reads seven catalog relations and holds \
              nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
@@ -2082,15 +2099,18 @@ mod tests {
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_generations\" \
              TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"catalog_heads\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"effective_release_heads\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"effective_release_packages\" \
+             TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"release_components\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"release_manifest_v2_snapshots\" \
+             GRANT SELECT ON TABLE catalog.\"release_manifest_v3_snapshots\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"wiring_activation\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"wiring_tombstones\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_kind\", \"result_json\", \
-             \"state_json\", \"release_version\", \"manifest_digest\", \"caller_outcome_kind\", \
+             \"state_json\", \"manifest_digest\", \"caller_outcome_kind\", \
              \"caller_outcome_json\", \"caller_http_status\", \"caller_release_node_id\", \
              \"caller_outcome_hash\", \"caller_released_at\", \"updated_at\") \
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
@@ -2780,40 +2800,6 @@ mod tests {
         assert!(!sql.contains("postgres"));
     }
 
-    /// The entity-map drift guard (wamn-l5i9.11): the PINNED SQL is the
-    /// load-bearing contract — the reader's OID lookup, the same-transaction
-    /// upsert, and the OID-keyed rename-proofing all ride these exact strings.
-    #[test]
-    fn entity_map_is_oid_keyed_and_upserted_from_pg_class() {
-        assert_eq!(
-            ensure_entity_map_sql("app"),
-            "CREATE TABLE IF NOT EXISTS \"app\".wamn_entities ( \
-               relation_oid oid PRIMARY KEY, \
-               entity_id text NOT NULL, \
-               table_name text NOT NULL)"
-        );
-        let upsert = upsert_entity_map_sql("app");
-        // The OID is resolved server-side from pg_class IN the DDL transaction
-        // (ordinary tables only), keyed for conflict on relation_oid — a
-        // rename re-upserts the SAME row (new table_name, same entity/OID).
-        assert!(
-            upsert.contains(
-                "INSERT INTO \"app\".wamn_entities (relation_oid, entity_id, table_name)"
-            )
-        );
-        // `$2::text` in BOTH the projection and the WHERE — a bare `$2` would
-        // be deduced `name` at `c.relname = $2` and `text` at the column,
-        // which tokio_postgres rejects ("inconsistent types deduced").
-        assert!(upsert.contains("SELECT c.oid, $1, $2::text FROM pg_class c"));
-        assert!(
-            upsert.contains("WHERE n.nspname = 'app' AND c.relname = $2::text AND c.relkind = 'r'")
-        );
-        assert!(upsert.contains("ON CONFLICT (relation_oid) DO UPDATE"));
-        assert!(
-            upsert.contains("SET entity_id = EXCLUDED.entity_id, table_name = EXCLUDED.table_name")
-        );
-    }
-
     #[test]
     fn cdc_teardown_builders_are_guarded() {
         assert_eq!(
@@ -2831,48 +2817,5 @@ mod tests {
             database_exists_sql(),
             "SELECT EXISTS (SELECT FROM pg_database WHERE datname = $1)"
         );
-    }
-
-    /// The escapers are inlined to keep the prod dep closure at `serde_json`, but
-    /// they MUST stay byte-identical to the canonical `wamn_schema_compiler::sql::*` that back
-    /// the injection-safety argument (a slug cannot contain a `"`, so the derived
-    /// database/role DDL is safe). Assert over adversarial inputs plus an
-    /// exhaustive single-ASCII-char sweep so any future divergence in either copy
-    /// fails here. (`wamn-schema-compiler` is a dev-dependency, so this costs the prod build
-    /// nothing.)
-    #[test]
-    fn inlined_escapers_match_canonical_wamn_schema_compiler() {
-        let mut cases: Vec<String> = vec![
-            "".into(),
-            "a".into(),
-            "plain_ident".into(),
-            "a\"b".into(),
-            "\"\"".into(),
-            "a'b".into(),
-            "''".into(),
-            "a\"'b".into(),
-            "back\\slash".into(),
-            "tab\there".into(),
-            "new\nline".into(),
-            "nul\0byte".into(),
-            "münz".into(),
-            "wamn-db-acme--billing--dev".into(),
-            "'; DROP TABLE x; --".into(),
-        ];
-        for c in 0u8..=0x7f {
-            cases.push(format!("x{}y", c as char));
-        }
-        for s in &cases {
-            assert_eq!(
-                quote_ident(s),
-                wamn_pg_core::quote_ident(s),
-                "quote_ident drift on {s:?}"
-            );
-            assert_eq!(
-                quote_literal(s),
-                wamn_pg_core::quote_literal(s),
-                "quote_literal drift on {s:?}"
-            );
-        }
     }
 }

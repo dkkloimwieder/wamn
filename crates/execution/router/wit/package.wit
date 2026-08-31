@@ -34,9 +34,10 @@ package wamn:node@0.1.0;
 /// keyed by the node's component digest, call `run`, route the emission by port,
 /// and classify a `node-error` into retry, throttle, error edge, dead-letter, or
 /// non-failure cancellation.
-/// Catalog admission maps each logical operation in one scoped catalog version
-/// to one distinguishable digest before this boundary; the digest selects the
-/// component, while every component exports this same static `handler.run`.
+/// Effective-release admission maps each package-scoped logical operation in
+/// the exact release composition to one distinguishable digest before this
+/// boundary; the digest selects the component, while every component exports
+/// this same static `handler.run`.
 interface types {
   /// JSON-encoded string. A string, not a structured value, so every guest
   /// language reaches it through its own stock codec; the router never inspects

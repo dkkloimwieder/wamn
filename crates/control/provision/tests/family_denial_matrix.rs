@@ -109,15 +109,16 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// The denial matrix is a claim about THESE objects: the run plane plus the
 /// catalog relations the platform families read. A family reaching one it does
 /// not own is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 18] = [
-    "catalog.catalog_heads",
+const MATRIX_RELATIONS: [&str; 19] = [
     "catalog.component_library",
     "catalog.connection_bindings",
     "catalog.connection_generations",
     "catalog.connection_instances",
     "catalog.connection_requirements",
+    "catalog.effective_release_heads",
+    "catalog.effective_release_packages",
     "catalog.release_components",
-    "catalog.release_manifest_v2_snapshots",
+    "catalog.release_manifest_v3_snapshots",
     "catalog.wiring_activation",
     "catalog.wiring_tombstones",
     "catalog.wirings",
@@ -181,14 +182,15 @@ const MATRIX: [FamilyReach; 9] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[
-            "catalog.catalog_heads|SELECT|table",
             "catalog.component_library|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
+            "catalog.effective_release_heads|SELECT|table",
+            "catalog.effective_release_packages|SELECT|table",
             "catalog.release_components|SELECT|table",
-            "catalog.release_manifest_v2_snapshots|SELECT|table",
+            "catalog.release_manifest_v3_snapshots|SELECT|table",
             "catalog.wiring_activation|SELECT|table",
             "catalog.wiring_tombstones|SELECT|table",
             "catalog.wirings|SELECT|table",
@@ -228,6 +230,8 @@ const MATRIX: [FamilyReach; 9] = [
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
+            "catalog.effective_release_heads|SELECT|table",
+            "catalog.effective_release_packages|SELECT|table",
             "catalog.wirings|INSERT|column",
             "catalog.wirings|SELECT|table",
             "wamn_run.environment_policies|SELECT|table",
@@ -241,14 +245,15 @@ const MATRIX: [FamilyReach; 9] = [
     FamilyReach {
         family: WorkloadRoleFamily::ExecutorPlatform,
         relations: &[
-            "catalog.catalog_heads|SELECT|table",
             "catalog.component_library|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
+            "catalog.effective_release_heads|SELECT|table",
+            "catalog.effective_release_packages|SELECT|table",
             "catalog.release_components|SELECT|table",
-            "catalog.release_manifest_v2_snapshots|SELECT|table",
+            "catalog.release_manifest_v3_snapshots|SELECT|table",
             "catalog.wiring_activation|SELECT|table",
             "catalog.wiring_tombstones|SELECT|table",
             "catalog.wirings|SELECT|table",
@@ -272,6 +277,7 @@ const MATRIX: [FamilyReach; 9] = [
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
+            "catalog.effective_release_packages|SELECT|table",
             "catalog.wirings|SELECT|table",
         ],
         routines: &[],
@@ -491,17 +497,24 @@ fn reset(admin: &str) {
 const SEED: &str = "\
 DO $seed$ DECLARE t text; a uuid; BEGIN
 FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
-  INSERT INTO catalog.catalogs (tenant_id, catalog_id, version, environment, schema_version, state)
-    VALUES (t, 'cat', 1, 'dev', '0.1', 'applied');
-  INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) VALUES (t, 'cat', 1);
-  INSERT INTO catalog.catalog_heads (tenant_id, catalog_id, environment, applied_catalog_version)
-    VALUES (t, 'cat', 'dev', 1);
+  INSERT INTO catalog.packages
+    (tenant_id, package_id, package_version, manifest_sha256)
+    VALUES (t, 'receiving', '1.0.0', 'sha256:'||repeat('f',64));
+  INSERT INTO catalog.effective_releases
+    (tenant_id, effective_release_id, environment)
+    VALUES (t, 1, 'dev');
+  INSERT INTO catalog.effective_release_packages
+    (tenant_id, effective_release_id, package_id, package_version)
+    VALUES (t, 1, 'receiving', '1.0.0');
+  INSERT INTO catalog.effective_release_heads
+    (tenant_id, environment, effective_release_id)
+    VALUES (t, 'dev', 1);
   INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class)
     VALUES (t, 'dev', 'standard');
   INSERT INTO wamn_run.runs
-    (tenant_id, run_id, catalog_id, catalog_version, environment, status, trigger_source,
+    (tenant_id, run_id, package_id, effective_release_id, environment, status, trigger_source,
      wiring_id, wiring_version, wiring_hash, binding_world_json, input_json)
-    VALUES (t, 'r1', 'cat', 1, 'dev', 'dispatched', 'internal', 'w', 1,
+    VALUES (t, 'r1', 'receiving', 1, 'dev', 'dispatched', 'internal', 'w', 1,
             'sha256:'||repeat('c',64), '[]', '{\"a\":1}');
   a := gen_random_uuid();
   INSERT INTO wamn_run.effect_attempts

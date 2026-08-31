@@ -28,18 +28,16 @@ use wamn_runtime::plugins::wamn_postgres::{
 
 pub const TENANT: &str = "claim-live";
 pub const COMPONENT: &str = "claim-live-runner";
-pub const CATALOG_ID: &str = "cat-main";
+pub const PACKAGE_ID: &str = "cat_main";
 pub const ENVIRONMENT: &str = "test";
-/// A second pod, carrying a DIFFERENT release — the rollout case.
+/// A second pod carrying a different effective release — the mismatch case.
 pub const ROLLED_COMPONENT: &str = "claim-live-runner-next";
 pub const SCHEMA: &str = "wamn_claim_live";
-/// The release the claiming pod carries. Deliberately distinct from every
-/// admitted catalog version in this fixture, so a record copied from the run
-/// instead of the claiming pod would be visible.
-pub const POD_RELEASE_VERSION: i32 = 7;
+/// The exact effective release pinned on every ordinarily seeded run.
+pub const POD_EFFECTIVE_RELEASE_ID: i32 = 1;
 pub const POD_MANIFEST_DIGEST: &str =
     "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-pub const ROLLED_RELEASE_VERSION: i32 = 8;
+pub const ROLLED_EFFECTIVE_RELEASE_ID: i32 = 2;
 pub const ROLLED_MANIFEST_DIGEST: &str =
     "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 pub const WIRING_ID: &str = "claim-live-wiring";
@@ -100,7 +98,7 @@ pub fn run_state_stand_in_ddl() -> String {
     format!(
         "CREATE TABLE {SCHEMA}.runs ( \
            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-           flow_version int NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
+           flow_version int NOT NULL, package_id text NOT NULL, effective_release_id int NOT NULL, \
            environment text NOT NULL, \
            attachment_id text, registration_id text, \
            event_source_run_id text, event_root_run_id text, event_depth int, \
@@ -112,7 +110,7 @@ pub fn run_state_stand_in_ddl() -> String {
              CHECK (durability_class IN ('standard', 'durable')), \
            wiring_id text, wiring_version int, \
            wiring_hash text, binding_world_json jsonb, \
-           release_version int, manifest_digest text, \
+           manifest_digest text, \
            input_json jsonb NOT NULL DEFAULT '{{}}', result_json jsonb, state_json jsonb, \
            invocation_context jsonb NOT NULL DEFAULT '{{}}', \
            admission_context_version text, platform_revision text, idempotency_key text, \
@@ -124,10 +122,8 @@ pub fn run_state_stand_in_ddl() -> String {
            created_at timestamptz NOT NULL DEFAULT now(), \
            updated_at timestamptz NOT NULL DEFAULT now(), \
            CONSTRAINT runs_release_record_check CHECK ( \
-             (release_version IS NULL AND manifest_digest IS NULL) \
-             OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL \
-                 AND release_version > 0 \
-                 AND manifest_digest ~ '^sha256:[0-9a-f]{{64}}$')), \
+             manifest_digest IS NULL \
+             OR manifest_digest ~ '^sha256:[0-9a-f]{{64}}$'), \
            CONSTRAINT runs_wiring_identity_check CHECK ( \
              (wiring_id IS NULL AND wiring_version IS NULL) \
              OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL \
@@ -162,8 +158,8 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
              CREATE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable() \
                RETURNS trigger LANGUAGE plpgsql AS $guard$ \
                BEGIN \
-                 IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id \
-                    OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version \
+                 IF NEW.package_id IS DISTINCT FROM OLD.package_id \
+                    OR NEW.effective_release_id IS DISTINCT FROM OLD.effective_release_id \
                     OR NEW.environment IS DISTINCT FROM OLD.environment \
                     OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode \
                     OR NEW.durability_class IS DISTINCT FROM OLD.durability_class \
@@ -172,9 +168,8 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
                    RAISE EXCEPTION USING ERRCODE = '55000', \
                      MESSAGE = 'run-admission-pin-immutable'; \
                  END IF; \
-                 IF OLD.release_version IS NOT NULL \
-                    OR OLD.manifest_digest IS NOT NULL THEN \
-                   IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN \
+                 IF OLD.manifest_digest IS NOT NULL THEN \
+                   IF NEW.manifest_digest IS NULL THEN \
                      IF NEW.status NOT IN ('dispatched', 'running') \
                         OR EXISTS (SELECT 1 FROM {SCHEMA}.effect_attempts AS effect \
                                     WHERE effect.tenant_id = OLD.tenant_id \
@@ -183,8 +178,7 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
                        RAISE EXCEPTION USING ERRCODE = '55000', \
                          MESSAGE = 'run-release-record-immutable'; \
                      END IF; \
-                   ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version \
-                      OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN \
+                   ELSIF NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN \
                      RAISE EXCEPTION USING ERRCODE = '55000', \
                        MESSAGE = 'run-release-record-immutable'; \
                    END IF; \
@@ -192,9 +186,9 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
                  RETURN NEW; \
                END $guard$; \
              CREATE TRIGGER runs_admission_pins_immutable \
-               BEFORE UPDATE OF catalog_id, catalog_version, environment, \
+               BEFORE UPDATE OF package_id, effective_release_id, environment, \
                                 capture_mode, durability_class, wiring_id, wiring_version, \
-                                release_version, manifest_digest \
+                                manifest_digest \
                ON {SCHEMA}.runs FOR EACH ROW \
                EXECUTE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable(); \
              CREATE TABLE {SCHEMA}.run_queue ( \
@@ -206,9 +200,11 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
                PRIMARY KEY (tenant_id, run_id), \
                FOREIGN KEY (tenant_id, run_id) REFERENCES {SCHEMA}.runs); \
              CREATE TABLE catalog.connection_bindings ( \
-               tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
-               environment text NOT NULL, artifact_hash text NOT NULL, requirement_name text NOT NULL, \
-               binding_status text NOT NULL, validation_status text NOT NULL, instance_id text NOT NULL); \
+               tenant_id text NOT NULL, effective_release_id int NOT NULL, \
+               component_digest text NOT NULL, store_alias text NOT NULL, \
+               environment text NOT NULL, instance_id text NOT NULL, \
+               binding_status text NOT NULL, validation_status text NOT NULL, \
+               validation_hash text NOT NULL); \
              CREATE TABLE catalog.connection_instances ( \
                tenant_id text NOT NULL, environment text NOT NULL, instance_id text NOT NULL, \
                requirement_type text NOT NULL, contract text NOT NULL, lifecycle_status text NOT NULL, \
@@ -364,10 +360,10 @@ pub async fn wait_for_advisory_wait(
 pub async fn seed_run(
     client: &Client,
     run_id: &str,
-    catalog_id: &str,
+    package_id: &str,
     stream_seq: i64,
 ) -> anyhow::Result<()> {
-    seed_run_of_class(client, run_id, catalog_id, stream_seq, "standard").await
+    seed_run_of_class(client, run_id, package_id, stream_seq, "standard").await
 }
 
 /// Seed an admitted, queued run on the PREMIUM `durable` class.
@@ -380,16 +376,16 @@ pub async fn seed_run(
 pub async fn seed_durable_run(
     client: &Client,
     run_id: &str,
-    catalog_id: &str,
+    package_id: &str,
     stream_seq: i64,
 ) -> anyhow::Result<()> {
-    seed_run_of_class(client, run_id, catalog_id, stream_seq, "durable").await
+    seed_run_of_class(client, run_id, package_id, stream_seq, "durable").await
 }
 
 async fn seed_run_of_class(
     client: &Client,
     run_id: &str,
-    catalog_id: &str,
+    package_id: &str,
     stream_seq: i64,
     durability_class: &str,
 ) -> anyhow::Result<()> {
@@ -397,7 +393,7 @@ async fn seed_run_of_class(
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
+                   (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
                     environment,wiring_id,wiring_version,input_json,trigger_source, \
                     durability_class) \
                  VALUES ($1,$2,'root',1,'dispatched',$3,1,'test',$4,$5, \
@@ -406,7 +402,7 @@ async fn seed_run_of_class(
             &[
                 &TENANT,
                 &run_id,
-                &catalog_id,
+                &package_id,
                 &WIRING_ID,
                 &WIRING_VERSION,
                 &durability_class,
@@ -439,7 +435,7 @@ pub async fn seed_live_effect_run(
     run_id: &str,
     stream_seq: i64,
 ) -> anyhow::Result<()> {
-    seed_durable_run(client, run_id, "cat-main", stream_seq).await?;
+    seed_durable_run(client, run_id, PACKAGE_ID, stream_seq).await?;
     client
         .execute(
             &format!(
@@ -476,7 +472,7 @@ pub async fn seed_exhausted_run(
     run_id: &str,
     stream_seq: i64,
 ) -> anyhow::Result<()> {
-    seed_run(client, run_id, "cat-main", stream_seq).await?;
+    seed_run(client, run_id, PACKAGE_ID, stream_seq).await?;
     client
         .execute(
             &format!(
@@ -533,15 +529,15 @@ pub async fn queue_attempts(client: &Client, run_id: &str) -> anyhow::Result<i32
         .get(0))
 }
 
-/// The claim-time `(release version, manifest digest)` a run carries.
+/// The admission-pinned effective release and claim-time manifest digest a run carries.
 pub async fn release_record(
     client: &Client,
     run_id: &str,
-) -> anyhow::Result<(Option<i32>, Option<String>)> {
+) -> anyhow::Result<(i32, Option<String>)> {
     let row = client
         .query_one(
             &format!(
-                "SELECT release_version, manifest_digest \
+                "SELECT effective_release_id, manifest_digest \
                    FROM {SCHEMA}.runs WHERE tenant_id=$1 AND run_id=$2"
             ),
             &[&TENANT, &run_id],
@@ -668,7 +664,7 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     plugin.set_runner(COMPONENT, COMPONENT)?;
     plugin.set_release_identity(
         COMPONENT,
-        POD_RELEASE_VERSION,
+        POD_EFFECTIVE_RELEASE_ID,
         wamn_catalog::ManifestDigest::parse(POD_MANIFEST_DIGEST)?,
     )?;
     plugin.set_tenant(ROLLED_COMPONENT, TENANT)?;
@@ -676,7 +672,7 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     plugin.set_runner(ROLLED_COMPONENT, ROLLED_COMPONENT)?;
     plugin.set_release_identity(
         ROLLED_COMPONENT,
-        ROLLED_RELEASE_VERSION,
+        ROLLED_EFFECTIVE_RELEASE_ID,
         wamn_catalog::ManifestDigest::parse(ROLLED_MANIFEST_DIGEST)?,
     )?;
 

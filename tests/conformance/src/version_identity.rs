@@ -78,21 +78,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "crates/schema/compiler/src/rls/model.rs",
-        exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/schema/compiler/src/seed/model.rs",
-        exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/schema/model/src/types.rs",
-        exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "crates/identity/project-state/src/lib.rs",
         exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
         expected_count: 1,
@@ -209,16 +194,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "architecture/gate-registry.json",
         exact: "wamn-kubernetes-gate-verdict/v0.1",
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/integration/src/catalog_live.rs",
-        exact: "VALUES ($1, 'catalog', 1, 'dev', '0.1', 'applied',",
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/integration/src/catalog_live.rs",
-        exact: r#"{\"schema-version\":\"0.1\",\"catalog-id\":\"catalog\""#,
         expected_count: 1,
     },
 ];

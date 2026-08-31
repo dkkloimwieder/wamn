@@ -42,7 +42,7 @@ fn contract_declares_the_mvp_surface() {
         "nack: func(delay-ms: u64) -> result<_, js-error>;",
         "term: func() -> result<_, js-error>;",
         "dead-letter: func(reason: string) -> result<_, js-error>;",
-        "bind-registration: func(catalog-id: string, registration-id: string, config: consumer-config) -> result<durable-consumer, js-error>;",
+        "bind-registration: func(package-id: string, registration-id: string, config: consumer-config) -> result<durable-consumer, js-error>;",
         "stream-seq: u64,",
         "delivered: u64,",
         "publish: func(subject: string, headers: list<header>, body: list<u8>) -> result<publish-ack, js-error>;",

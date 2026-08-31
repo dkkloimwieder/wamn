@@ -280,7 +280,6 @@ fn expected_executor_inventory() -> Vec<String> {
         "caller_released_at",
         "fail_kind",
         "manifest_digest",
-        "release_version",
         "result_json",
         "state_json",
         "status",
@@ -298,14 +297,15 @@ fn expected_executor_inventory() -> Vec<String> {
         rows.push(format!("column|wamn_run|run_queue.{column}|UPDATE"));
     }
     for relation in [
-        "catalog_heads",
         "component_library",
         "connection_bindings",
         "connection_generations",
         "connection_instances",
         "connection_requirements",
+        "effective_release_heads",
+        "effective_release_packages",
         "release_components",
-        "release_manifest_v2_snapshots",
+        "release_manifest_v3_snapshots",
         "wiring_activation",
         "wiring_tombstones",
         "wirings",
@@ -432,8 +432,10 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     // The catalog relations it must NOT reach at all, and the run-plane
     // relations that belong to other families.
     for relation in [
-        "catalog.catalogs",
-        "catalog.releases",
+        "catalog.packages",
+        "catalog.package_migrations",
+        "catalog.effective_releases",
+        "catalog.event_registrations",
         "wamn_run.environment_policies",
         "wamn_run.operator_run_actions",
         "wamn_run.effect_attempt_dispatches",
@@ -479,8 +481,8 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "wiring_id",
         "wiring_version",
         "wiring_hash",
-        "catalog_id",
-        "catalog_version",
+        "package_id",
+        "effective_release_id",
         "environment",
         "tenant_id",
         "run_id",
@@ -527,21 +529,23 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         &admin,
         "seed one run the executor may claim",
         &format!(
-            "INSERT INTO catalog.catalogs \
-               (tenant_id, catalog_id, version, environment, schema_version, state) \
-             VALUES ('t1', 'cat', 1, 'dev', '0.1', 'applied');\n\
-             INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) \
-             VALUES ('t1', 'cat', 1);\n\
+            "INSERT INTO catalog.packages \
+               (tenant_id, package_id, package_version, manifest_sha256) \
+             VALUES ('t1', 'receiving', '1.0.0', 'sha256:{package_hash}');\n\
+             INSERT INTO catalog.effective_releases \
+               (tenant_id, effective_release_id, environment) \
+             VALUES ('t1', 1, 'dev');\n\
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              VALUES ('t1', 'dev', 'standard');\n\
              INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, catalog_id, catalog_version, environment, status, \
+               (tenant_id, run_id, package_id, effective_release_id, environment, status, \
                 trigger_source, wiring_id, wiring_version, wiring_hash, \
                 binding_world_json, input_json) \
-             VALUES ('t1', 'r1', 'cat', 1, 'dev', 'dispatched', 'internal', \
+             VALUES ('t1', 'r1', 'receiving', 1, 'dev', 'dispatched', 'internal', \
                      'w', 1, 'sha256:{hash}', '[]', '{{\"a\":1}}');\n",
             hash = "c".repeat(64),
+            package_hash = "d".repeat(64),
         ),
     );
     let as_login = role_url(&admin, &login, GENERATION_PW);
@@ -587,14 +591,14 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
 
 /// THE CALLABLE-HTTP ADMITTER SURFACE, AS THE SERVER SEES IT.
 ///
-/// One statement, six relations, and the run plane is the thing it must not
+/// One statement, seven relations, and the run plane is the thing it must not
 /// reach — asserted by EQUALITY over the whole inventory, so acquiring the
 /// executor's authority fails here rather than at the next incident.
 #[test]
-fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
+fn the_http_admitter_role_holds_exactly_seven_catalog_selects_and_no_run_plane() {
     let Ok(admin) = std::env::var("WAMN_FAMILY_SURFACE_PG_URL") else {
         eprintln!(
-            "skipping the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane \
+            "skipping the_http_admitter_role_holds_exactly_seven_catalog_selects_and_no_run_plane \
              (set WAMN_FAMILY_SURFACE_PG_URL to run)"
         );
         return;
@@ -620,17 +624,25 @@ fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
         ),
     );
 
-    let mut expected: Vec<String> = sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS
-        .iter()
-        .map(|relation| format!("relation|catalog|{relation}|SELECT"))
-        .collect();
+    let mut expected: Vec<String> = [
+        "component_library",
+        "connection_bindings",
+        "connection_generations",
+        "connection_instances",
+        "connection_requirements",
+        "effective_release_packages",
+        "wirings",
+    ]
+    .iter()
+    .map(|relation| format!("relation|catalog|{relation}|SELECT"))
+    .collect();
     expected.push("schema|catalog|catalog|USAGE".to_owned());
     expected.sort();
     assert_eq!(
         inventory(&admin, stable),
         expected,
         "the callable-HTTP admitter's aclexplode inventory is not exactly USAGE \
-         on catalog plus the six SELECTs its one statement reads"
+         on catalog plus the seven SELECTs its one statement reads"
     );
     // MEASURED, and the reason the probe block below cannot assert a NEGATIVE
     // for `require_executor_platform_authority`: `deploy/sql/run-state.sql`
@@ -686,7 +698,7 @@ fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
            ASSERT NOT has_function_privilege(r, 'wamn_authority.tenant_key(text)', 'EXECUTE'), \
              'a pure reader forms no index entry, so the tkey derivation is not its'; \n"
     );
-    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+    for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
         probes.push_str(&format!(
             "  ASSERT has_table_privilege(r, 'catalog.{relation}', 'SELECT'), \
                'cannot read catalog.{relation}, which its one statement joins'; \
@@ -701,9 +713,10 @@ fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
         "wamn_run.run_queue",
         "wamn_run.effect_attempts",
         "wamn_run.environment_policies",
-        "catalog.catalogs",
+        "catalog.packages",
+        "catalog.effective_release_heads",
         "catalog.wiring_activation",
-        "catalog.catalog_heads",
+        "catalog.release_manifest_v3_snapshots",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             probes.push_str(&format!(
@@ -719,7 +732,7 @@ fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
     //
     // Every probe above is a privilege-catalog question, and the catalog is
     // BLIND TO RLS: `has_table_privilege` answers TRUE for a role whose every
-    // SELECT returns zero rows because no policy matched it. All six relations
+    // SELECT returns zero rows because no policy matched it. All seven relations
     // carry FORCE RLS with a restrictive tenant floor keyed on the GUEST login
     // pattern, so a non-guest family reads through the permissive
     // `TO wamn_platform` arm or it reads nothing at all — and reading nothing
@@ -735,7 +748,7 @@ fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
     let digest = format!("sha256:{}", "a".repeat(64));
     run_admin(
         &admin,
-        "seed one readable fact in each of the six relations",
+        "seed one readable fact in each of the seven relations",
         &format!(
             // `connection_instances.active_generation` and
             // `connection_generations` reference each other, and the instance's
@@ -743,26 +756,32 @@ fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
             // bump — so the cycle is closed with the DEFERRABLE arm inside one
             // transaction rather than with an UPDATE the schema forbids.
             "BEGIN;\nSET CONSTRAINTS ALL DEFERRED;\n\
-             INSERT INTO catalog.catalogs \
-               (tenant_id, catalog_id, version, environment, schema_version, state) \
-             VALUES ('tenant-a', 'orders', 1, 'prod', '0.1', 'applied');\n\
-             INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) \
-             VALUES ('tenant-a', 'orders', 1);\n\
+             INSERT INTO catalog.packages \
+               (tenant_id, package_id, package_version, manifest_sha256) \
+             VALUES ('tenant-a', 'orders', '1.0.0', '{digest}');\n\
+             INSERT INTO catalog.effective_releases \
+               (tenant_id, effective_release_id, environment) \
+             VALUES ('tenant-a', 1, 'prod');\n\
+             INSERT INTO catalog.effective_release_packages \
+               (tenant_id, effective_release_id, package_id, package_version) \
+             VALUES ('tenant-a', 1, 'orders', '1.0.0');\n\
              INSERT INTO catalog.component_library \
-               (tenant_id, catalog_id, catalog_version, component, interface_version, \
-                operation, component_digest, imports, imports_fingerprint, effects, \
+               (tenant_id, package_id, package_version, component, interface_version, \
+                operation, component_digest, projection_hash, imports, imports_fingerprint, effects, \
                 input_ports, output_ports, parameters, admitted_at) \
-             VALUES ('tenant-a', 'orders', 1, 'http-request', '0.1.0', 'run', '{digest}', \
-                     '[]', '{digest}', '[]', '[]', '[]', '[]', now());\n\
+             VALUES ('tenant-a', 'orders', '1.0.0', 'http-request', '0.1.0', \
+                     'run', '{digest}', '{digest}', '[]', '{digest}', \
+                     '[]', '[]', '[]', '[]', now());\n\
              INSERT INTO catalog.wirings \
-               (tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
+               (tenant_id, package_id, package_version, wiring_id, version, \
                 graph_json, wiring_hash, created_at) \
-             VALUES ('tenant-a', 'orders', 'hot-route', 1, 1, '{{}}', '{digest}', now());\n\
+             VALUES ('tenant-a', 'orders', '1.0.0', 'hot-route', 1, \
+                     '{{}}', '{digest}', now());\n\
              INSERT INTO catalog.connection_instances \
                (tenant_id, environment, instance_id, requirement_type, contract, \
                 lifecycle_status, active_generation, revision, created_at, updated_at) \
              VALUES ('tenant-a', 'prod', 'upstream', 'http', \
-                     'wamn:connection/http@0.1.0', 'enabled', 1, 0, now(), now());\n\
+                     'wamn:connection/http@0.1.0', 'enabled', 1, 1, now(), now());\n\
              INSERT INTO catalog.connection_generations \
                (tenant_id, environment, instance_id, generation, definition_json, \
                 definition_hash, credential_set_handle, created_at) \
@@ -770,14 +789,14 @@ fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
                      'upstream-v1', now());\n\
              INSERT INTO catalog.connection_requirements \
                (tenant_id, component_digest, store_alias, requirement_json, \
-                requirement_hash, created_at) \
-             VALUES ('tenant-a', '{digest}', 'upstream', '{{}}', '{digest}', now());\n\
+                requirement_hash) \
+             VALUES ('tenant-a', '{digest}', 'upstream', '{{}}', '{digest}');\n\
              INSERT INTO catalog.connection_bindings \
-               (tenant_id, catalog_id, catalog_version, component_digest, store_alias, \
+               (tenant_id, effective_release_id, component_digest, store_alias, \
                 environment, instance_id, binding_status, validation_status, \
-                validation_hash, created_at) \
-             VALUES ('tenant-a', 'orders', 1, '{digest}', 'upstream', 'prod', 'upstream', \
-                     'active', 'valid', '{digest}', now());\n\
+                validation_hash) \
+             VALUES ('tenant-a', 1, '{digest}', 'upstream', 'prod', 'upstream', \
+                     'active', 'valid', '{digest}');\n\
              COMMIT;\n"
         ),
     );
@@ -792,7 +811,7 @@ fn the_http_admitter_role_holds_exactly_six_catalog_selects_and_no_run_plane() {
         "the reading session is superuser or bypasses RLS, which satisfies every \
          count below while proving nothing"
     );
-    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+    for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
         assert_eq!(
             query(
                 &as_login,

@@ -1,5 +1,5 @@
-//! Structural validation of an [`EventRegistration`] against the catalog it
-//! targets.
+//! Structural validation of an [`EventRegistration`] against its package model
+//! keys.
 //!
 //! Checks that a registration is well-formed and *consumable*: the schema
 //! version is compatible, it targets the catalog it was validated against, its
@@ -10,25 +10,36 @@
 //! (l5i9.17) owns evaluation against the runtime event context; this surface
 //! only guarantees a stored expression will parse.
 //!
-//! Reuses the catalog's [`Issue`] / [`Severity`] shape (3.1), like
-//! [`wamn_schema_compiler::rls::validate`].
-
-use wamn_schema_model::{Catalog, Issue, Severity};
+use std::collections::BTreeSet;
 
 use crate::model::{EventRegistration, SCHEMA_VERSION};
 
-fn error(code: &'static str, path: impl Into<String>, message: impl Into<String>) -> Issue {
-    Issue {
-        severity: Severity::Error,
+/// One authoring refusal found while validating a registration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistrationIssue {
+    pub code: &'static str,
+    pub path: String,
+    pub message: String,
+}
+
+fn error(
+    code: &'static str,
+    path: impl Into<String>,
+    message: impl Into<String>,
+) -> RegistrationIssue {
+    RegistrationIssue {
         code,
         path: path.into(),
         message: message.into(),
     }
 }
 
-/// Validate `reg` against `catalog`. Returns every [`Severity::Error`] found
-/// (empty `Ok(())` when the registration is well-formed and consumable).
-pub fn validate(reg: &EventRegistration, catalog: &Catalog) -> Result<(), Vec<Issue>> {
+/// Validate `reg` against an exact package id and its manifest model keys.
+pub fn validate(
+    reg: &EventRegistration,
+    package_id: &str,
+    model_keys: &BTreeSet<String>,
+) -> Result<(), Vec<RegistrationIssue>> {
     let mut issues = Vec::new();
 
     if !schema_version_compatible(&reg.schema_version) {
@@ -41,13 +52,13 @@ pub fn validate(reg: &EventRegistration, catalog: &Catalog) -> Result<(), Vec<Is
             ),
         ));
     }
-    if reg.catalog_id != catalog.catalog_id {
+    if reg.package_id != package_id {
         issues.push(error(
-            "catalog-id-mismatch",
-            "catalog-id",
+            "package-id-mismatch",
+            "package-id",
             format!(
-                "registration targets catalog {:?} but was validated against {:?}",
-                reg.catalog_id, catalog.catalog_id
+                "registration targets package {:?} but was validated against {:?}",
+                reg.package_id, package_id
             ),
         ));
     }
@@ -69,11 +80,11 @@ pub fn validate(reg: &EventRegistration, catalog: &Catalog) -> Result<(), Vec<Is
     // The entity must resolve BY ID — the rename-proof key. A registration that
     // names no catalog entity can never be materialized (nothing on the stream
     // carries that entity segment).
-    if !catalog.entities.iter().any(|e| e.id == reg.entity) {
+    if !model_keys.contains(&reg.entity) {
         issues.push(error(
             "unknown-entity",
             "entity",
-            format!("no entity {:?} in the catalog", reg.entity),
+            format!("no model key {:?} in the package manifest", reg.entity),
         ));
     }
 
@@ -106,7 +117,7 @@ pub fn validate(reg: &EventRegistration, catalog: &Catalog) -> Result<(), Vec<Is
 }
 
 /// Reject an empty expression and one that does not compile as JMESPath.
-fn check_expr(issues: &mut Vec<Issue>, path: &'static str, expr: Option<&str>) {
+fn check_expr(issues: &mut Vec<RegistrationIssue>, path: &'static str, expr: Option<&str>) {
     let Some(expr) = expr else { return };
     if expr.trim().is_empty() {
         issues.push(error(

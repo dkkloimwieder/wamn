@@ -1,232 +1,223 @@
-//! Promote one immutable serving release into a target environment.
+//! Promote one immutable format-3 release without applying package migrations.
 //!
-//! The source v2 manifest is the closed deployment input. Promotion verifies
-//! that snapshot, advances the target catalog only when it is behind, pulls and
-//! verifies missing component artifacts, copies portable component facts and
-//! requirements, and requires target-owned connection instances and generations.
-//! It then re-runs wiring compatibility against the target catalog, mints the
-//! target v2 snapshot through the ordinary release publisher, and atomically
-//! flips every target pointer with one append-only provenance row.
-//!
-//! No connection instance, generation, credential handle, legacy flow, plan, or
-//! execution bundle is read from the source environment.
+//! `apply-package` is the sole applier. Promotion proves every source package
+//! coordinate, raw manifest hash, and complete ordered migration ledger already
+//! exists byte-exactly in the target before copying portable facts.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use clap::Args;
-use serde::de::DeserializeOwned;
-use tokio_postgres::{Client, IsolationLevel, NoTls, Row, Transaction};
+use tokio_postgres::{Client, GenericClient, IsolationLevel, NoTls, Row, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentParameter, AdmittedComponentPort,
-    ComponentCatalogScope, ServingManifest, WiringDocument, flip_activation,
-    record_activation_event, validate_wiring_compatibility,
+    AdmittedComponent, ComponentPackageScope, PackageCoordinate, ServingManifest, WiringDocument,
+    validate_wiring_compatibility,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_schema_control::BareSchemaName;
 use wamn_schema_control::connections::ComponentConnectionRequirement;
-use wamn_schema_model::Catalog;
 
-use crate::migrate_catalog::{ApplyOutcome, apply_catalog_target};
-use crate::publish_release::{MintReleaseManifest, ReleaseWiringTarget, mint_release_manifest};
+use crate::publish_release::{
+    DeploymentCoordinate, MintReleaseManifest, ReleaseWiringTarget, mint_release_manifest,
+    project_release_identity, read_expected_environment, report_deployment_coordinate,
+    verify_provisioned_environment,
+};
 
 const COMPONENT_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
-
-const CLAIM_TENANT_LOCAL_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
-const CLAIM_TENANT_SESSION_SQL: &str = "SELECT set_config('app.tenant', $1, false)";
-
-const SELECT_SOURCE_RELEASE_SQL: &str = "\
-SELECT snapshot.manifest_digest, snapshot.canonical_bytes, catalog.document::text \
-  FROM catalog.release_manifest_v2_snapshots AS snapshot \
-  JOIN catalog.releases AS release \
-    ON release.tenant_id = snapshot.tenant_id \
-   AND release.catalog_id = snapshot.catalog_id \
-   AND release.catalog_version = snapshot.catalog_version \
-  JOIN catalog.catalogs AS catalog \
-    ON catalog.tenant_id = release.tenant_id \
-   AND catalog.catalog_id = release.catalog_id \
-   AND catalog.version = release.catalog_version \
- WHERE snapshot.tenant_id = $1 AND snapshot.catalog_id = $2 \
-   AND snapshot.catalog_version = $3 AND catalog.environment = $4";
-
-const SELECT_COMPONENTS_SQL: &str = "\
-SELECT component, interface_version, operation, component_digest, \
-       imports::text, imports_fingerprint, input_ports::text, \
-       output_ports::text, parameters::text, effects::text \
-  FROM catalog.component_library \
- WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
- ORDER BY component COLLATE \"C\", interface_version COLLATE \"C\"";
-
-const SELECT_COMPONENT_SQL: &str = "\
-SELECT component, interface_version, operation, component_digest, \
-       imports::text, imports_fingerprint, input_ports::text, \
-       output_ports::text, parameters::text, effects::text \
-  FROM catalog.component_library \
- WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
-   AND component = $4 AND interface_version = $5";
-
-const SELECT_SOURCE_WIRING_SQL: &str = "\
-SELECT gated_catalog_version, wiring_hash, graph_json::text \
-  FROM catalog.wirings \
- WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4";
-
-const INSERT_TARGET_WIRING_SQL: &str = "\
-INSERT INTO catalog.wirings (\
-       tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
-       graph_json, wiring_hash\
-     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
-ON CONFLICT DO NOTHING";
-
-const EXACT_TARGET_WIRING_SQL: &str = "\
-SELECT EXISTS (\
-    SELECT 1 FROM catalog.wirings \
-     WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4 \
-       AND gated_catalog_version = $5 AND graph_json = $6::text::jsonb \
-       AND wiring_hash = $7\
-    )";
-
-const SELECT_COMPONENT_REQUIREMENTS_SQL: &str = "\
+const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
+const SELECT_SOURCE_SNAPSHOT_SQL: &str = "\
+SELECT manifest_digest, canonical_bytes FROM catalog.release_manifest_v3_snapshots \
+ WHERE tenant_id = $1 AND effective_release_id = $2";
+const SELECT_RELEASE_PACKAGES_SQL: &str = "\
+SELECT package_id, package_version FROM catalog.effective_release_packages \
+ WHERE tenant_id = $1 AND effective_release_id = $2 ORDER BY package_id COLLATE \"C\"";
+const SELECT_PACKAGE_SQL: &str = "\
+SELECT manifest_sha256, predecessor_version FROM catalog.packages \
+ WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3";
+const SELECT_MIGRATIONS_SQL: &str = "\
+SELECT ordinal, relative_path, sha256 FROM catalog.package_migrations \
+ WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 ORDER BY ordinal";
+const SELECT_WIRINGS_SQL: &str = "\
+SELECT wiring_id, version, graph_json::text, wiring_hash FROM catalog.wirings \
+ WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+ ORDER BY wiring_id COLLATE \"C\", version";
+const INSERT_WIRING_SQL: &str = "\
+INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, version, graph_json, wiring_hash) \
+VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) ON CONFLICT DO NOTHING";
+const EXACT_WIRING_SQL: &str = "\
+SELECT EXISTS (SELECT 1 FROM catalog.wirings \
+ WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+   AND wiring_id = $4 AND version = $5 AND graph_json = $6::text::jsonb AND wiring_hash = $7)";
+const SELECT_REQUIREMENTS_SQL: &str = "\
 SELECT component_digest, store_alias, requirement_json::text, requirement_hash \
   FROM catalog.connection_requirements \
- WHERE tenant_id = $1 AND component_digest IS NOT NULL \
+ WHERE tenant_id = $1 AND component_digest = ANY($2) \
  ORDER BY component_digest COLLATE \"C\", store_alias COLLATE \"C\"";
+const SELECT_PROJECTION_HASHES_SQL: &str = "\
+SELECT component_digest, projection_hash FROM catalog.component_library \
+ WHERE tenant_id = $1 AND component_digest = ANY($2) \
+ ORDER BY component_digest COLLATE \"C\"";
+const INSERT_REQUIREMENT_SQL: &str = "\
+INSERT INTO catalog.connection_requirements \
+       (tenant_id, component_digest, store_alias, requirement_json, requirement_hash) \
+VALUES ($1, $2, $3, $4::text::jsonb, $5) ON CONFLICT DO NOTHING";
+const EXACT_REQUIREMENT_SQL: &str = "\
+SELECT EXISTS (SELECT 1 FROM catalog.connection_requirements \
+ WHERE tenant_id = $1 AND component_digest = $2 AND store_alias = $3 \
+   AND requirement_json = $4::text::jsonb AND requirement_hash = $5)";
+const UPSERT_HEAD_SQL: &str = "\
+INSERT INTO catalog.effective_release_heads (tenant_id, environment, effective_release_id) \
+VALUES ($1, $2, $3) ON CONFLICT (tenant_id, environment) DO UPDATE \
+SET effective_release_id = EXCLUDED.effective_release_id, updated_at = now()";
+const LOCK_ACTIVATION_SQL: &str = "\
+SELECT confirmed_definition_hash, enabled FROM catalog.wiring_activation \
+ WHERE tenant_id = $1 AND package_id = $2 AND environment = $3 AND wiring_id = $4 FOR UPDATE";
+const UPSERT_ACTIVATION_SQL: &str = "\
+INSERT INTO catalog.wiring_activation \
+       (tenant_id, package_id, environment, wiring_id, confirmed_definition_hash, enabled) \
+VALUES ($1, $2, $3, $4, $5, true) \
+ON CONFLICT (tenant_id, package_id, environment, wiring_id) DO UPDATE \
+SET confirmed_definition_hash = EXCLUDED.confirmed_definition_hash, enabled = true, changed_at = now()";
+const INSERT_ACTIVATION_EVENT_SQL: &str = "\
+INSERT INTO catalog.wiring_activation_events \
+       (tenant_id, package_id, environment, wiring_id, enabled, confirmed_definition_hash, \
+        source_environment, changed_by, reason) \
+VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8)";
 
-const TARGET_BINDING_READY_SQL: &str = "\
-SELECT EXISTS (\
-    SELECT 1 \
-      FROM catalog.connection_bindings AS binding \
-      JOIN catalog.connection_instances AS instance \
-        ON instance.tenant_id = binding.tenant_id \
-       AND instance.environment = binding.environment \
-       AND instance.instance_id = binding.instance_id \
-     WHERE binding.tenant_id = $1 AND binding.catalog_id = $2 \
-       AND binding.catalog_version = $3 AND binding.component_digest = $4 \
-       AND binding.store_alias = $5 AND binding.environment = $6 \
-       AND binding.artifact_hash IS NULL AND binding.requirement_name IS NULL \
-       AND binding.binding_status = 'active' \
-       AND binding.validation_status = 'valid' \
-       AND instance.lifecycle_status = 'enabled' \
-       AND instance.active_generation IS NOT NULL\
-    )";
+pub const PROMOTION_REFUSAL: &str = "promotion-refused";
 
-const SELECT_TARGET_HEAD_SQL: &str = "\
-SELECT applied_catalog_version \
-  FROM catalog.catalog_heads \
- WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromotionErrorKind {
+    PackageNotApplied,
+    PackageManifestMismatch,
+    PackageLedgerMismatch,
+}
 
-const SELECT_TARGET_CATALOG_SQL: &str = "\
-SELECT document::text \
-  FROM catalog.catalogs \
- WHERE tenant_id = $1 AND catalog_id = $2 AND version = $3 AND environment = $4";
+impl PromotionErrorKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::PackageNotApplied => "package-not-applied",
+            Self::PackageManifestMismatch => "package-manifest-mismatch",
+            Self::PackageLedgerMismatch => "package-ledger-mismatch",
+        }
+    }
+}
 
-const LOCK_TARGET_HEAD_SQL: &str = "\
-SELECT applied_catalog_version \
-  FROM catalog.catalog_heads \
- WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
- FOR UPDATE";
+#[derive(Debug)]
+pub struct PromotionError {
+    kind: PromotionErrorKind,
+    detail: String,
+}
 
-const SELECT_TARGET_POINTER_SQL: &str = "\
-SELECT confirmed_definition_hash, enabled \
-  FROM catalog.wiring_activation \
- WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 AND wiring_id = $4";
+impl PromotionError {
+    pub const fn kind(&self) -> PromotionErrorKind {
+        self.kind
+    }
 
-const SELECT_PROMOTION_EVENTS_SQL: &str = "\
-SELECT changed_by, reason \
-  FROM catalog.wiring_activation_events \
- WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 AND wiring_id = $4 \
-   AND enabled AND confirmed_definition_hash = $5 \
-   AND source_environment = $6 \
- ORDER BY event_seq";
+    fn new(kind: PromotionErrorKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+        }
+    }
+}
 
-/// Promote one source release into one target project-environment database.
+impl fmt::Display for PromotionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{PROMOTION_REFUSAL} ({}): {}",
+            self.kind.as_str(),
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for PromotionError {}
+
 #[derive(Debug, Args)]
 pub struct PromoteArgs {
-    /// Owner URL to the source project-environment database.
     #[arg(long)]
     pub source_database_url: String,
-
-    /// Owner URL to the target project-environment database.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub target_database_url: String,
-
-    /// Tenant claim carried by the source release and target catalog.
+    #[arg(long)]
+    pub control_database_url: String,
+    #[arg(long)]
+    pub org: String,
+    #[arg(long)]
+    pub project: String,
     #[arg(long)]
     pub tenant: String,
-
-    /// Catalog identity of the release.
     #[arg(long)]
-    pub catalog_id: String,
-
-    /// Exact source release catalog version.
+    pub source_effective_release_id: u32,
     #[arg(long)]
-    pub catalog_version: u32,
-
-    /// Environment recorded by the source serving manifest.
+    pub target_effective_release_id: u32,
     #[arg(long)]
     pub source_environment: String,
-
-    /// Target environment whose catalog head and wiring pointers move.
     #[arg(long)]
     pub target_environment: String,
-
-    /// Target data schema used by additive catalog migration.
-    #[arg(long, default_value = "public")]
-    pub schema: String,
-
-    /// The run-plane schema in the TARGET project database holding the
-    /// provisioned environment fact — the same `--schema` `reconcile-run-plane`
-    /// converged there (`wamn_run` in the schema of record).
-    ///
-    /// Bare identifier, and REQUIRED, exactly as on `publish-release`: a default
-    /// would let an invocation that omits the flag check the promoted release
-    /// against a relation the operator never named. Distinct from `--schema`
-    /// above, which is the target DATA schema.
-    ///
-    /// PRECONDITION: run `reconcile-run-plane` for this tenant and this schema in
-    /// the target database FIRST. Promoting before it has converged the tenant's
-    /// `environment_policies` row refuses on `environment-policy-not-converged`;
-    /// a row naming another environment refuses on
-    /// `environment-policy-environment-mismatch`.
     #[arg(long)]
     pub run_schema: String,
-
-    /// Explicit registry/repository base used by component publication.
     #[arg(long)]
     pub artifact_base: String,
-
-    /// Projected `.dockerconfigjson` file carrying the target pull credential.
     #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
     pub registry_auth_file: PathBuf,
-
-    /// Use plain HTTP for exactly the registry in artifact-base.
     #[arg(long, default_value_t = false)]
     pub insecure_registry: bool,
-
-    /// Authenticated principal recorded on every target activation event.
     #[arg(long)]
     pub principal: String,
-
-    /// Stable operator reason recorded on every target activation event.
     #[arg(long, default_value = "promote-release")]
     pub reason: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MigrationRecord {
+    ordinal: i32,
+    relative_path: String,
+    sha256: String,
+}
+
 #[derive(Clone, Debug)]
-struct SourceWiring {
-    target: ReleaseWiringTarget,
-    document: WiringDocument,
+struct PackageProof {
+    coordinate: PackageCoordinate,
+    manifest_sha256: String,
+    predecessor_version: Option<String>,
+    migrations: Vec<MigrationRecord>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PromotionAction {
+    CopyPortableFacts,
+}
+
+#[derive(Clone, Copy)]
+struct TargetPackageProof<'a> {
+    manifest_sha256: &'a str,
+    predecessor_version: Option<&'a str>,
+    migrations: &'a [MigrationRecord],
+}
+
+#[derive(Clone, Debug)]
+struct PortableWiring {
+    package_id: String,
+    package_version: String,
+    wiring_id: String,
+    version: i32,
     graph_json: String,
     wiring_hash: String,
 }
 
 #[derive(Clone, Debug)]
 struct PortableRequirement {
-    requirement: ComponentConnectionRequirement,
-    canonical_json: String,
+    component_digest: String,
+    store_alias: String,
+    requirement_json: String,
     requirement_hash: String,
 }
 
@@ -234,26 +225,27 @@ struct PortableRequirement {
 struct SourceRelease {
     manifest: ServingManifest,
     manifest_digest: String,
-    catalog: Catalog,
+    packages: Vec<PackageProof>,
     components: Vec<AdmittedComponent>,
-    wirings: Vec<SourceWiring>,
+    projection_hashes: BTreeMap<String, String>,
+    wirings: Vec<PortableWiring>,
     requirements: Vec<PortableRequirement>,
 }
 
-#[derive(Debug)]
-struct PromotionSummary {
-    target_manifest_digest: String,
-    pulled_components: usize,
-    activated_wirings: usize,
-}
-
-/// Run the convergent promotion pipeline.
 pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
     validate_args(&args)?;
-    let schema = BareSchemaName::new(args.schema.clone())
-        .with_context(|| format!("invalid target schema {:?}", args.schema))?;
     let run_schema = BareSchemaName::new(args.run_schema.clone())
         .with_context(|| format!("invalid --run-schema {:?}", args.run_schema))?;
+    let source_release_id = pg_release_id(args.source_effective_release_id, "source")?;
+    let target_release_id = pg_release_id(args.target_effective_release_id, "target")?;
+
+    let (mut source, source_connection) = tokio_postgres::connect(&args.source_database_url, NoTls)
+        .await
+        .context("connect to source project environment")?;
+    let source_task = tokio::spawn(source_connection);
+    let release = load_source_release(&mut source, &args, source_release_id).await;
+    let release = finish_connection(source, source_task, release).await?;
+
     let artifact_config = ComponentArtifactSourceConfig::new(
         &args.artifact_base,
         args.insecure_registry,
@@ -263,99 +255,85 @@ pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
     .with_registry_auth_file(&args.registry_auth_file)
     .context("load component registry pull credential")?;
     let artifact_source = ComponentArtifactSource::new(artifact_config);
-    let catalog_version = i32::try_from(args.catalog_version)
-        .context("source catalog version exceeds the PostgreSQL integer carrier")?;
 
-    let (mut source_client, source_connection) =
-        tokio_postgres::connect(&args.source_database_url, NoTls)
-            .await
-            .context("connect to source project environment")?;
-    let source_task = tokio::spawn(source_connection);
-    let source = match load_source_release(
-        &mut source_client,
-        &args.tenant,
-        &args.catalog_id,
-        catalog_version,
-        &args.source_environment,
-    )
-    .await
-    {
-        Ok(source) => source,
-        Err(error) => {
-            source_task.abort();
-            return Err(error);
-        }
-    };
-    drop(source_client);
-    source_task
+    let (mut target, target_connection) = tokio_postgres::connect(&args.target_database_url, NoTls)
         .await
-        .context("join source database connection")?
-        .context("drive source database connection")?;
-    // The released wiring ids must still be unique: promotion writes one target
-    // row per id, so two members sharing one id would silently promote whichever
-    // ran last. This used to ride the gate-report key-set check that supplied
-    // the per-wiring report ids; that argument is gone (wamn-0h0g.8.5.6) and the
-    // uniqueness rule it carried is not.
-    require_unique_wiring_ids(
-        source
-            .wirings
-            .iter()
-            .map(|wiring| wiring.target.wiring_id.as_str()),
-    )?;
-
-    let (mut target_client, target_connection) =
-        tokio_postgres::connect(&args.target_database_url, NoTls)
-            .await
-            .context("connect to target project environment")?;
+        .context("connect to target project environment")?;
     let target_task = tokio::spawn(target_connection);
     let promoted = promote_target(
-        &mut target_client,
+        &mut target,
         &artifact_source,
-        &source,
+        &release,
         &args,
-        &schema,
+        target_release_id,
         &run_schema,
     )
     .await;
-    let summary = match promoted {
-        Ok(summary) => summary,
-        Err(error) => {
-            target_task.abort();
-            return Err(error);
-        }
-    };
-    drop(target_client);
-    target_task
-        .await
-        .context("join target database connection")?
-        .context("drive target database connection")?;
+    let (target_digest, activated) = finish_connection(target, target_task, promoted).await?;
 
+    let target_release = wamn_catalog::ServingRelease {
+        tenant_id: args.tenant.clone(),
+        effective_release_id: wamn_catalog::EffectiveReleaseId::new(
+            args.target_effective_release_id,
+        )
+        .expect("validate_args rejected zero"),
+        environment: args.target_environment.clone(),
+        packages: release.manifest.release.packages.clone(),
+    };
+    let coordinate = DeploymentCoordinate::new(&args.org, &args.project, &target_release);
+    let digest = wamn_catalog::ManifestDigest::parse(target_digest.clone())
+        .expect("the release mint returned a canonical digest");
+    report_deployment_coordinate(&coordinate, &digest);
+    project_release_identity(&args.control_database_url, &coordinate).await?;
     println!(
-        "promoted {} from {} to {} as {} ({} component pull(s), {} pointer flip(s))",
-        source.manifest_digest,
+        "promoted {} from {}:{} to {}:{} as {} ({} component artifact(s) verified, {} pointer flip(s))",
+        release.manifest_digest,
         args.source_environment,
+        args.source_effective_release_id,
         args.target_environment,
-        summary.target_manifest_digest,
-        summary.pulled_components,
-        summary.activated_wirings,
+        args.target_effective_release_id,
+        target_digest,
+        release.components.len(),
+        activated,
     );
     Ok(())
+}
+
+async fn finish_connection<T>(
+    client: Client,
+    task: tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,
+    result: anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    drop(client);
+    match result {
+        Ok(value) => {
+            task.await
+                .context("join PostgreSQL connection")?
+                .context("drive PostgreSQL connection")?;
+            Ok(value)
+        }
+        Err(error) => {
+            task.abort();
+            Err(error)
+        }
+    }
 }
 
 fn validate_args(args: &PromoteArgs) -> anyhow::Result<()> {
     for (field, value) in [
         ("tenant", args.tenant.as_str()),
-        ("catalog-id", args.catalog_id.as_str()),
         ("source-environment", args.source_environment.as_str()),
         ("target-environment", args.target_environment.as_str()),
+        ("org", args.org.as_str()),
+        ("project", args.project.as_str()),
         ("principal", args.principal.as_str()),
         ("reason", args.reason.as_str()),
     ] {
         ensure!(!value.is_empty(), "promotion {field} must not be empty");
     }
     ensure!(
-        args.catalog_version > 0,
-        "catalog-version must be greater than zero"
+        args.source_effective_release_id > 0 && args.target_effective_release_id > 0,
+        "effective release ids must be greater than zero"
     );
     ensure!(
         args.source_environment != args.target_environment,
@@ -364,328 +342,291 @@ fn validate_args(args: &PromoteArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn require_unique_wiring_ids<'a>(
-    wiring_ids: impl IntoIterator<Item = &'a str>,
-) -> anyhow::Result<()> {
-    let mut observed = BTreeSet::new();
-    for wiring_id in wiring_ids {
-        ensure!(
-            observed.insert(wiring_id),
-            "source-release-duplicate-wiring-id: {wiring_id:?} names more than one version"
-        );
-    }
-    Ok(())
+fn pg_release_id(value: u32, side: &'static str) -> anyhow::Result<i32> {
+    i32::try_from(value)
+        .with_context(|| format!("{side} effective-release-id exceeds PostgreSQL integer"))
 }
 
 async fn load_source_release(
     client: &mut Client,
-    tenant: &str,
-    catalog_id: &str,
-    catalog_version: i32,
-    source_environment: &str,
+    args: &PromoteArgs,
+    release_id: i32,
 ) -> anyhow::Result<SourceRelease> {
-    let transaction = client
+    let tx = client
         .build_transaction()
         .isolation_level(IsolationLevel::RepeatableRead)
-        .read_only(true)
         .start()
         .await
         .context("begin source release snapshot")?;
-    transaction
-        .query_one(CLAIM_TENANT_LOCAL_SQL, &[&tenant])
+    tx.query_one(CLAIM_TENANT_SQL, &[&args.tenant])
         .await
         .context("claim source tenant")?;
-    let row = transaction
-        .query_opt(
-            SELECT_SOURCE_RELEASE_SQL,
-            &[&tenant, &catalog_id, &catalog_version, &source_environment],
-        )
+    let row = tx
+        .query_opt(SELECT_SOURCE_SNAPSHOT_SQL, &[&args.tenant, &release_id])
         .await
-        .context("read source v2 release snapshot")?
+        .context("read source format-3 release snapshot")?
         .with_context(|| {
             format!(
-                "source-v2-release-missing: catalog {catalog_id:?} version {catalog_version} in {source_environment:?}"
+                "source-release-missing: tenant {:?} effective release {}",
+                args.tenant, args.source_effective_release_id
             )
         })?;
     let stored_digest: String = row.get(0);
     let canonical_bytes: Vec<u8> = row.get(1);
-    let catalog_json: Option<String> = row.get(2);
-    let catalog_json = catalog_json.context("source release catalog has no stored document")?;
     let (manifest, derived_digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)
-        .context("verify source v2 serving manifest")?;
+        .context("source snapshot is not a canonical format-3 serving manifest")?;
     ensure!(
         stored_digest == derived_digest.as_str(),
-        "source serving-manifest digest does not name its canonical bytes"
+        "source snapshot digest mismatch"
     );
-    let expected_version = u32::try_from(catalog_version).expect("validated source width");
     ensure!(
-        manifest.release.tenant_id == tenant
-            && manifest.release.catalog_id == catalog_id
-            && manifest.release.catalog_version == expected_version
-            && manifest.release.environment == source_environment,
+        manifest.release.tenant_id == args.tenant
+            && manifest.release.effective_release_id.get() == args.source_effective_release_id
+            && manifest.release.environment == args.source_environment,
         "source serving-manifest coordinate mismatch"
     );
-    let catalog = Catalog::from_json(&catalog_json).context("parse source release catalog")?;
+    let release_packages = load_release_packages(&tx, &args.tenant, release_id).await?;
     ensure!(
-        catalog.catalog_id == catalog_id && catalog.version == expected_version,
-        "source catalog document coordinate mismatch"
+        release_packages == manifest.release.packages,
+        "source release membership differs from its frozen manifest"
     );
 
-    let all_components = load_components(
-        &transaction,
-        ComponentCatalogScope {
-            tenant_id: tenant.to_owned(),
-            catalog_id: catalog_id.to_owned(),
-            catalog_version: expected_version,
-        },
-    )
-    .await?;
-    let components = select_manifest_components(&manifest, all_components)?;
-    let wirings = load_source_wirings(
-        &transaction,
-        tenant,
-        catalog_id,
-        catalog_version,
-        &manifest,
-        &components,
-    )
-    .await?;
-    let requirements = load_source_requirements(&transaction, tenant, &manifest).await?;
-    transaction
-        .commit()
+    let mut packages = Vec::with_capacity(release_packages.len());
+    let mut components = Vec::new();
+    let mut wirings = Vec::new();
+    for coordinate in &release_packages {
+        packages.push(load_package_proof(&tx, &args.tenant, coordinate).await?);
+        let scope = ComponentPackageScope {
+            tenant_id: args.tenant.clone(),
+            package_id: coordinate.package_id().to_owned(),
+            package_version: coordinate.package_version().to_owned(),
+        };
+        let package_components = crate::publish_release::load_component_facts(&tx, &scope)
+            .await
+            .context("read source package component facts")?;
+        wirings.extend(load_wirings(&tx, &scope, &package_components).await?);
+        components.extend(package_components);
+    }
+    let requirements = load_requirements(&tx, &args.tenant, &components).await?;
+    let projection_hashes = load_projection_hashes(&tx, &args.tenant, &components).await?;
+    tx.commit()
         .await
         .context("finish source release snapshot")?;
     Ok(SourceRelease {
         manifest,
         manifest_digest: stored_digest,
-        catalog,
+        packages,
         components,
+        projection_hashes,
         wirings,
         requirements,
     })
 }
 
-async fn load_components(
-    transaction: &Transaction<'_>,
-    scope: ComponentCatalogScope,
-) -> anyhow::Result<Vec<AdmittedComponent>> {
-    transaction
-        .query(
-            SELECT_COMPONENTS_SQL,
+async fn load_projection_hashes(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    components: &[AdmittedComponent],
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let digests = components
+        .iter()
+        .map(|component| component.component_digest.clone())
+        .collect::<Vec<_>>();
+    if digests.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let hashes = tx
+        .query(SELECT_PROJECTION_HASHES_SQL, &[&tenant, &digests])
+        .await
+        .context("read source component projection hashes")?
+        .into_iter()
+        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+        .collect::<BTreeMap<_, _>>();
+    ensure!(
+        hashes.len() == components.len()
+            && components
+                .iter()
+                .all(|component| hashes.contains_key(&component.component_digest)),
+        "source component projection hash set is incomplete"
+    );
+    Ok(hashes)
+}
+
+async fn load_release_packages(
+    client: &impl GenericClient,
+    tenant: &str,
+    release_id: i32,
+) -> anyhow::Result<BTreeSet<PackageCoordinate>> {
+    client
+        .query(SELECT_RELEASE_PACKAGES_SQL, &[&tenant, &release_id])
+        .await
+        .context("read effective release package membership")?
+        .into_iter()
+        .map(|row| {
+            PackageCoordinate::new(row.get::<_, String>(0), row.get::<_, String>(1))
+                .context("stored package coordinate is invalid")
+        })
+        .collect()
+}
+
+async fn load_package_proof(
+    client: &impl GenericClient,
+    tenant: &str,
+    coordinate: &PackageCoordinate,
+) -> anyhow::Result<PackageProof> {
+    let row = client
+        .query_opt(
+            SELECT_PACKAGE_SQL,
             &[
-                &scope.tenant_id,
-                &scope.catalog_id,
-                &i32::try_from(scope.catalog_version).context("component catalog version")?,
+                &tenant,
+                &coordinate.package_id(),
+                &coordinate.package_version(),
             ],
         )
         .await
-        .context("read component-library facts")?
-        .into_iter()
-        .map(|row| decode_component(row, &scope))
-        .collect()
+        .context("read package manifest identity")?
+        .with_context(|| {
+            format!(
+                "source package {}@{} is missing",
+                coordinate.package_id(),
+                coordinate.package_version()
+            )
+        })?;
+    let migrations = load_migrations(client, tenant, coordinate).await?;
+    ensure!(
+        !migrations.is_empty(),
+        "source package {}@{} has no migration ordinal 1",
+        coordinate.package_id(),
+        coordinate.package_version()
+    );
+    for (index, migration) in migrations.iter().enumerate() {
+        ensure!(
+            migration.ordinal == i32::try_from(index + 1).expect("ledger length fits integer"),
+            "source package {}@{} has a migration gap at ordinal {}",
+            coordinate.package_id(),
+            coordinate.package_version(),
+            migration.ordinal
+        );
+    }
+    Ok(PackageProof {
+        coordinate: coordinate.clone(),
+        manifest_sha256: row.get(0),
+        predecessor_version: row.get(1),
+        migrations,
+    })
 }
 
-fn decode_component(row: Row, scope: &ComponentCatalogScope) -> anyhow::Result<AdmittedComponent> {
-    let component: String = row.get(0);
-    let decoded = AdmittedComponent {
-        scope: scope.clone(),
-        component: component.clone(),
-        interface_version: row.get(1),
-        operation: row.get(2),
-        component_digest: row.get(3),
-        imports: decode_json(row.get(4), &component, "imports")?,
-        imports_fingerprint: row.get(5),
-        input_ports: decode_json::<Vec<AdmittedComponentPort>>(
-            row.get(6),
-            &component,
-            "input-ports",
-        )?,
-        output_ports: decode_json::<Vec<AdmittedComponentPort>>(
-            row.get(7),
-            &component,
-            "output-ports",
-        )?,
-        parameters: decode_json::<Vec<AdmittedComponentParameter>>(
-            row.get(8),
-            &component,
-            "parameters",
-        )?,
-        effects: decode_json::<Vec<AdmittedComponentEffect>>(row.get(9), &component, "effects")?,
-    };
-    // wamn-0h0g.21.10: promotion copies this stored fact verbatim into the
-    // target catalog version, so an effect projection no validator derived
-    // would be laundered forward as a fresh admission. Refuse it here instead.
-    wamn_catalog::verify_stored_effect_projection(&decoded).with_context(|| {
-        format!(
-            "component {component:?} stores an effect projection its audited imports do not \
-             derive; re-admit it through the validator"
+async fn load_migrations(
+    client: &impl GenericClient,
+    tenant: &str,
+    coordinate: &PackageCoordinate,
+) -> anyhow::Result<Vec<MigrationRecord>> {
+    Ok(client
+        .query(
+            SELECT_MIGRATIONS_SQL,
+            &[
+                &tenant,
+                &coordinate.package_id(),
+                &coordinate.package_version(),
+            ],
         )
-    })?;
-    Ok(decoded)
-}
-
-fn decode_json<T: DeserializeOwned>(
-    stored: String,
-    component: &str,
-    field: &'static str,
-) -> anyhow::Result<T> {
-    serde_json::from_str(&stored)
-        .with_context(|| format!("component {component:?} stores unreadable {field}"))
-}
-
-fn select_manifest_components(
-    manifest: &ServingManifest,
-    facts: Vec<AdmittedComponent>,
-) -> anyhow::Result<Vec<AdmittedComponent>> {
-    let by_pair = facts
+        .await
+        .context("read complete ordered package migration ledger")?
         .into_iter()
-        .map(|fact| {
-            (
-                (fact.component.clone(), fact.interface_version.clone()),
-                fact,
-            )
+        .map(|row| MigrationRecord {
+            ordinal: row.get(0),
+            relative_path: row.get(1),
+            sha256: row.get(2),
         })
-        .collect::<BTreeMap<_, _>>();
-    manifest
-        .components
+        .collect())
+}
+
+async fn load_wirings(
+    tx: &Transaction<'_>,
+    scope: &ComponentPackageScope,
+    components: &[AdmittedComponent],
+) -> anyhow::Result<Vec<PortableWiring>> {
+    tx.query(
+        SELECT_WIRINGS_SQL,
+        &[&scope.tenant_id, &scope.package_id, &scope.package_version],
+    )
+    .await
+    .context("read source package wirings")?
+    .into_iter()
+    .map(|row| decode_wiring(row, scope, components))
+    .collect()
+}
+
+fn decode_wiring(
+    row: Row,
+    scope: &ComponentPackageScope,
+    components: &[AdmittedComponent],
+) -> anyhow::Result<PortableWiring> {
+    let wiring_id: String = row.get(0);
+    let version: i32 = row.get(1);
+    let graph_json: String = row.get(2);
+    let wiring_hash: String = row.get(3);
+    let value = serde_json::from_str(&graph_json)
+        .with_context(|| format!("source wiring {wiring_id:?} stores unreadable JSON"))?;
+    let document = WiringDocument::parse(&value)
+        .with_context(|| format!("source wiring {wiring_id:?} stores an invalid document"))?;
+    ensure!(
+        document.wiring_id == wiring_id
+            && i32::try_from(document.version).ok() == Some(version)
+            && document.wiring_hash().as_str() == wiring_hash,
+        "source wiring {wiring_id:?} row and document identities differ"
+    );
+    validate_wiring_compatibility(&document, scope, components)
+        .with_context(|| format!("source wiring {wiring_id:?} is incompatible"))?;
+    Ok(PortableWiring {
+        package_id: scope.package_id.clone(),
+        package_version: scope.package_version.clone(),
+        wiring_id,
+        version,
+        graph_json,
+        wiring_hash,
+    })
+}
+
+async fn load_requirements(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    components: &[AdmittedComponent],
+) -> anyhow::Result<Vec<PortableRequirement>> {
+    let digests = components
         .iter()
-        .map(|member| {
-            let fact = by_pair
-                .get(&(member.component.clone(), member.interface_version.clone()))
-                .with_context(|| {
-                    format!(
-                        "source component fact missing for {:?} interface {:?}",
-                        member.component, member.interface_version
-                    )
-                })?;
-            ensure!(
-                fact.component_digest == member.digest.as_str(),
-                "source component {:?} interface {:?} has digest {:?}, not released digest {:?}",
-                member.component,
-                member.interface_version,
-                fact.component_digest,
-                member.digest
-            );
-            Ok(fact.clone())
-        })
+        .map(|component| component.component_digest.clone())
+        .collect::<Vec<_>>();
+    if digests.is_empty() {
+        return Ok(Vec::new());
+    }
+    tx.query(SELECT_REQUIREMENTS_SQL, &[&tenant, &digests])
+        .await
+        .context("read portable component requirements")?
+        .into_iter()
+        .map(decode_requirement)
         .collect()
 }
 
-async fn load_source_wirings(
-    transaction: &Transaction<'_>,
-    tenant: &str,
-    catalog_id: &str,
-    catalog_version: i32,
-    manifest: &ServingManifest,
-    components: &[AdmittedComponent],
-) -> anyhow::Result<Vec<SourceWiring>> {
-    let scope = ComponentCatalogScope {
-        tenant_id: tenant.to_owned(),
-        catalog_id: catalog_id.to_owned(),
-        catalog_version: u32::try_from(catalog_version).expect("validated source width"),
-    };
-    let mut wirings = Vec::with_capacity(manifest.wirings.len());
-    for member in &manifest.wirings {
-        let version = i32::try_from(member.wiring_version)
-            .context("source wiring version exceeds the PostgreSQL integer carrier")?;
-        let row = transaction
-            .query_opt(
-                SELECT_SOURCE_WIRING_SQL,
-                &[&tenant, &catalog_id, &member.wiring_id, &version],
-            )
-            .await
-            .context("read source wiring")?
-            .with_context(|| {
-                format!(
-                    "source wiring {:?} version {} is missing",
-                    member.wiring_id, member.wiring_version
-                )
-            })?;
-        let gated_catalog_version: i32 = row.get(0);
-        let wiring_hash: String = row.get(1);
-        let graph_json: String = row.get(2);
-        ensure!(
-            gated_catalog_version == catalog_version && wiring_hash == member.graph_hash.as_str(),
-            "source wiring {:?} version {} does not match its released identity",
-            member.wiring_id,
-            member.wiring_version
-        );
-        let graph_value = serde_json::from_str(&graph_json).with_context(|| {
-            format!(
-                "source wiring {:?} stores unreadable JSON",
-                member.wiring_id
-            )
-        })?;
-        let document = WiringDocument::parse(&graph_value).with_context(|| {
-            format!(
-                "source wiring {:?} stores an invalid document",
-                member.wiring_id
-            )
-        })?;
-        ensure!(
-            document.wiring_id == member.wiring_id
-                && document.version == member.wiring_version
-                && document.wiring_hash().as_str() == wiring_hash,
-            "source wiring {:?} row and document identities differ",
-            member.wiring_id
-        );
-        validate_wiring_compatibility(&document, &scope, components)
-            .with_context(|| format!("source wiring {:?} no longer validates", member.wiring_id))?;
-        wirings.push(SourceWiring {
-            target: ReleaseWiringTarget {
-                wiring_id: member.wiring_id.clone(),
-                wiring_version: member.wiring_version,
-            },
-            document,
-            graph_json,
-            wiring_hash,
-        });
-    }
-    Ok(wirings)
-}
-
-async fn load_source_requirements(
-    transaction: &Transaction<'_>,
-    tenant: &str,
-    manifest: &ServingManifest,
-) -> anyhow::Result<Vec<PortableRequirement>> {
-    let released_digests = manifest
-        .components
-        .iter()
-        .map(|component| component.digest.as_str())
-        .collect::<BTreeSet<_>>();
-    let mut requirements = Vec::new();
-    for row in transaction
-        .query(SELECT_COMPONENT_REQUIREMENTS_SQL, &[&tenant])
-        .await
-        .context("read source component connection requirements")?
-    {
-        let component_digest: String = row.get(0);
-        if !released_digests.contains(component_digest.as_str()) {
-            continue;
-        }
-        let store_alias: String = row.get(1);
-        let canonical_json: String = row.get(2);
-        let requirement_hash: String = row.get(3);
-        let requirement: ComponentConnectionRequirement = serde_json::from_str(&canonical_json)
-            .with_context(|| {
-                format!(
-                    "source requirement for component {component_digest:?} alias {store_alias:?} is unreadable"
-                )
-            })?;
-        ensure!(
-            requirement.component_digest() == component_digest
-                && requirement.store_alias() == store_alias
-                && requirement.requirement_hash() == requirement_hash,
-            "source component requirement identity or hash mismatch"
-        );
-        requirements.push(PortableRequirement {
-            requirement,
-            canonical_json,
-            requirement_hash,
-        });
-    }
-    Ok(requirements)
+fn decode_requirement(row: Row) -> anyhow::Result<PortableRequirement> {
+    let component_digest: String = row.get(0);
+    let store_alias: String = row.get(1);
+    let requirement_json: String = row.get(2);
+    let requirement_hash: String = row.get(3);
+    let requirement: ComponentConnectionRequirement = serde_json::from_str(&requirement_json)
+        .context("source component requirement stores unreadable JSON")?;
+    ensure!(
+        requirement.component_digest() == component_digest
+            && requirement.store_alias() == store_alias
+            && requirement.requirement_hash() == requirement_hash,
+        "source component requirement identity or hash mismatch"
+    );
+    Ok(PortableRequirement {
+        component_digest,
+        store_alias,
+        requirement_json,
+        requirement_hash,
+    })
 }
 
 async fn promote_target(
@@ -693,493 +634,312 @@ async fn promote_target(
     artifact_source: &ComponentArtifactSource,
     source: &SourceRelease,
     args: &PromoteArgs,
-    schema: &BareSchemaName,
+    target_release_id: i32,
     run_schema: &BareSchemaName,
-) -> anyhow::Result<PromotionSummary> {
-    // wamn-0h0g.12.183: `ensure_catalog_storage` refuses a control-plane target
-    // BEFORE bootstrapping the role, and calls `ensure_wamn_app_role` itself.
-    // A second call here only ran that CLUSTER-GLOBAL mutation ahead of the
-    // refusal, which no later error can take back.
-    crate::publish_catalog::ensure_catalog_storage(client).await?;
-    client
-        .query_one(CLAIM_TENANT_SESSION_SQL, &[&args.tenant])
+) -> anyhow::Result<(String, usize)> {
+    let preflight = client
+        .transaction()
         .await
-        .context("claim target tenant")?;
-    let target_version = converge_target_catalog(client, source, args, schema).await?;
-    let target_catalog = load_target_catalog(client, args, target_version).await?;
-    require_target_registration_entities(source, &target_catalog)?;
-    let target_scope = ComponentCatalogScope {
-        tenant_id: args.tenant.clone(),
-        catalog_id: args.catalog_id.clone(),
-        catalog_version: u32::try_from(target_version).expect("positive target catalog version"),
-    };
-    let target_components = source
-        .components
-        .iter()
-        .cloned()
-        .map(|mut component| {
-            component.scope = target_scope.clone();
-            component
-        })
-        .collect::<Vec<_>>();
-
-    let mut pulled_components = 0;
-    for (source_component, target_component) in
-        source.components.iter().zip(target_components.iter())
-    {
-        match load_one_component(client, &target_scope, target_component).await? {
-            Some(existing) => ensure!(
-                existing == *target_component,
-                "target component-library fact conflicts for {:?} interface {:?}",
-                target_component.component,
-                target_component.interface_version
-            ),
-            None => {
-                artifact_source
-                    .pull_verified(source_component)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "pull target component {:?} interface {:?}",
-                            source_component.component, source_component.interface_version
-                        )
-                    })?;
-                pulled_components += 1;
-            }
-        }
+        .context("begin target package-parity preflight")?;
+    preflight
+        .query_one(CLAIM_TENANT_SQL, &[&args.tenant])
+        .await
+        .context("claim target preflight tenant")?;
+    verify_target_packages(&preflight, &args.tenant, &source.packages).await?;
+    preflight
+        .commit()
+        .await
+        .context("finish target package-parity preflight")?;
+    for component in &source.components {
+        artifact_source
+            .pull_verified(component)
+            .await
+            .with_context(|| format!("verify promoted component {:?}", component.component))?;
     }
 
-    let transaction = client
+    let tx = client
         .build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start()
         .await
         .context("begin target promotion")?;
-    transaction
-        .query_one(CLAIM_TENANT_LOCAL_SQL, &[&args.tenant])
+    tx.query_one(CLAIM_TENANT_SQL, &[&args.tenant])
         .await
         .context("claim target promotion tenant")?;
-    let locked_version: i32 = transaction
-        .query_opt(
-            LOCK_TARGET_HEAD_SQL,
-            &[&args.tenant, &args.catalog_id, &args.target_environment],
-        )
-        .await
-        .context("lock target catalog head")?
-        .context("target catalog head disappeared during promotion")?
-        .get(0);
-    ensure!(
-        locked_version == target_version,
-        "target-catalog-head-moved: planned {target_version}, observed {locked_version}"
-    );
-
-    for component in &target_components {
-        crate::push_component::append_or_verify_admitted_component(
-            &transaction,
-            component,
-            target_version,
-        )
-        .await?;
-    }
-    for requirement in &source.requirements {
-        persist_requirement(&transaction, &args.tenant, requirement).await?;
-        require_target_binding(
-            &transaction,
-            &args.tenant,
-            &args.catalog_id,
-            target_version,
-            &args.target_environment,
-            requirement,
-        )
-        .await?;
+    match verify_target_packages(&tx, &args.tenant, &source.packages).await? {
+        PromotionAction::CopyPortableFacts => {
+            copy_portable_facts(&tx, source, &args.tenant).await?
+        }
     }
 
-    let target_wirings = source
+    let packages = source.manifest.release.packages.clone();
+    let wirings = source
+        .manifest
         .wirings
         .iter()
-        .map(|wiring| wiring.target.clone())
+        .map(|wiring| {
+            let package = packages
+                .iter()
+                .find(|package| package.package_id() == wiring.package_id)
+                .expect("manifest validation proved package membership");
+            ReleaseWiringTarget {
+                package_id: wiring.package_id.clone(),
+                package_version: package.package_version().to_owned(),
+                wiring_id: wiring.wiring_id.clone(),
+                wiring_version: wiring.wiring_version,
+            }
+        })
         .collect::<BTreeSet<_>>();
-    for wiring in &source.wirings {
-        validate_wiring_compatibility(&wiring.document, &target_scope, &target_components)
-            .with_context(|| {
-                format!(
-                    "target wiring {:?} version {} is incompatible",
-                    wiring.target.wiring_id, wiring.target.wiring_version
-                )
-            })?;
-        persist_target_wiring(
-            &transaction,
-            &args.tenant,
-            &args.catalog_id,
-            target_version,
-            wiring,
-        )
-        .await?;
-    }
-
     let minted = mint_release_manifest(
-        &transaction,
+        &tx,
         &MintReleaseManifest {
             tenant_id: &args.tenant,
-            catalog_id: &args.catalog_id,
-            catalog_version: target_version,
-            wirings: &target_wirings,
+            effective_release_id: target_release_id,
+            environment: &args.target_environment,
+            verified_publisher_principal: &args.principal,
+            packages: &packages,
+            wirings: &wirings,
             attachments: &source.manifest.attachments,
             registrations: &source.manifest.registrations,
         },
     )
     .await
-    .context("mint target v2 release snapshot")?;
-
-    // wamn-0h0g.8.27, owner ruling 2026-08-27: COVER PROMOTE. `--target-environment`
-    // is an operator's word for where this release is going; the release the mint
-    // froze carries `catalog.catalogs.environment`, which no constraint ties to any
-    // provisioned identity. The same verify arm `publish-release` takes checks the
-    // carried label against the fact `reconcile-run-plane` projected into THIS
-    // target database, so a promotion into an environment nothing verified refuses
-    // instead of freezing a release there. Inside the promotion's own transaction:
-    // a refusal commits neither the snapshot nor the pointer flip below.
-    let expected_environment =
-        crate::publish_release::read_expected_environment(&transaction, run_schema, &args.tenant)
-            .await?;
-    crate::publish_release::verify_provisioned_environment(
-        expected_environment.as_deref(),
-        &minted.manifest.release,
-        run_schema,
-    )?;
-
-    let mut activated_wirings = 0;
-    for wiring in &source.wirings {
-        if activate_once(&transaction, args, wiring).await? {
-            activated_wirings += 1;
+    .context("mint target format-3 release snapshot")?;
+    let expected = read_expected_environment(&tx, run_schema, &args.tenant).await?;
+    verify_provisioned_environment(expected.as_deref(), &minted.manifest.release, run_schema)?;
+    tx.execute(
+        UPSERT_HEAD_SQL,
+        &[&args.tenant, &args.target_environment, &target_release_id],
+    )
+    .await
+    .context("advance target effective-release head")?;
+    let mut activated = 0;
+    for wiring in &minted.manifest.wirings {
+        if activate_once(
+            &tx,
+            args,
+            &wiring.package_id,
+            &wiring.wiring_id,
+            wiring.graph_hash.as_str(),
+        )
+        .await?
+        {
+            activated += 1;
         }
     }
-    transaction
-        .commit()
-        .await
-        .context("commit target promotion")?;
-    Ok(PromotionSummary {
-        target_manifest_digest: minted.digest.as_str().to_owned(),
-        pulled_components,
-        activated_wirings,
-    })
+    tx.commit().await.context("commit target promotion")?;
+    Ok((minted.digest.as_str().to_owned(), activated))
 }
 
-async fn converge_target_catalog(
-    client: &mut Client,
-    source: &SourceRelease,
-    args: &PromoteArgs,
-    schema: &BareSchemaName,
-) -> anyhow::Result<i32> {
-    let source_version = i32::try_from(source.manifest.release.catalog_version)
-        .context("source release version exceeds target storage width")?;
-    let mut target_version = read_target_head(client, args).await?;
-    if target_version.is_none_or(|version| version < source_version) {
-        crate::publish_catalog::guard_registration_orphans(client, &source.catalog).await?;
-        let expected_base = target_version
-            .map(u32::try_from)
-            .transpose()
-            .context("target catalog head is negative")?;
-        let outcome = apply_catalog_target(
-            client,
-            &args.tenant,
-            &args.target_environment,
-            schema,
-            &source.catalog,
-            expected_base,
-            true,
-        )
-        .await
-        .context("apply source catalog to target")?;
-        if matches!(outcome, ApplyOutcome::Applied(_)) {
-            crate::reconcile_replica_identity::reconcile_after_apply(
-                client,
-                &source.catalog,
-                schema.as_str(),
+async fn verify_target_packages(
+    client: &impl GenericClient,
+    tenant: &str,
+    expected: &[PackageProof],
+) -> anyhow::Result<PromotionAction> {
+    for package in expected {
+        let coordinate = &package.coordinate;
+        let row = client
+            .query_opt(
+                SELECT_PACKAGE_SQL,
+                &[
+                    &tenant,
+                    &coordinate.package_id(),
+                    &coordinate.package_version(),
+                ],
             )
-            .await?;
-        }
-        target_version = read_target_head(client, args).await?;
+            .await
+            .context("read target package identity")?;
+        let Some(row) = row else {
+            return compare_target_package(package, None).map_err(Into::into);
+        };
+        let target_manifest: String = row.get(0);
+        let target_predecessor: Option<String> = row.get(1);
+        let target_migrations = load_migrations(client, tenant, coordinate).await?;
+        compare_target_package(
+            package,
+            Some(TargetPackageProof {
+                manifest_sha256: &target_manifest,
+                predecessor_version: target_predecessor.as_deref(),
+                migrations: &target_migrations,
+            }),
+        )?;
     }
-    let target_version = target_version.context("target catalog has no applied head")?;
-    ensure!(
-        target_version >= source_version,
-        "target-catalog-behind: target {target_version}, source release {source_version}"
-    );
-    Ok(target_version)
+    Ok(PromotionAction::CopyPortableFacts)
 }
 
-async fn read_target_head(client: &Client, args: &PromoteArgs) -> anyhow::Result<Option<i32>> {
-    Ok(client
-        .query_opt(
-            SELECT_TARGET_HEAD_SQL,
-            &[&args.tenant, &args.catalog_id, &args.target_environment],
-        )
-        .await
-        .context("read target catalog head")?
-        .map(|row| row.get(0)))
+fn compare_target_package(
+    expected: &PackageProof,
+    target: Option<TargetPackageProof<'_>>,
+) -> Result<PromotionAction, PromotionError> {
+    let coordinate = &expected.coordinate;
+    let Some(target) = target else {
+        return Err(PromotionError::new(
+            PromotionErrorKind::PackageNotApplied,
+            format!(
+                "target lacks {}@{}; run wamn-ctl apply-package for this exact package directory against the target",
+                coordinate.package_id(),
+                coordinate.package_version()
+            ),
+        ));
+    };
+    if target.manifest_sha256 != expected.manifest_sha256 {
+        return Err(PromotionError::new(
+            PromotionErrorKind::PackageManifestMismatch,
+            format!(
+                "{}@{} source manifest {} differs from target {}",
+                coordinate.package_id(),
+                coordinate.package_version(),
+                expected.manifest_sha256,
+                target.manifest_sha256
+            ),
+        ));
+    }
+    if target.predecessor_version != expected.predecessor_version.as_deref() {
+        return Err(PromotionError::new(
+            PromotionErrorKind::PackageManifestMismatch,
+            format!(
+                "{}@{} source predecessor {:?} differs from target {:?}",
+                coordinate.package_id(),
+                coordinate.package_version(),
+                expected.predecessor_version,
+                target.predecessor_version
+            ),
+        ));
+    }
+    if target.migrations != expected.migrations {
+        return Err(PromotionError::new(
+            PromotionErrorKind::PackageLedgerMismatch,
+            format!(
+                "{}@{} has a different complete ordered migration ledger; promote never applies migrations",
+                coordinate.package_id(),
+                coordinate.package_version()
+            ),
+        ));
+    }
+    Ok(PromotionAction::CopyPortableFacts)
 }
 
-async fn load_target_catalog(
-    client: &Client,
-    args: &PromoteArgs,
-    target_version: i32,
-) -> anyhow::Result<Catalog> {
-    let row = client
-        .query_opt(
-            SELECT_TARGET_CATALOG_SQL,
-            &[
-                &args.tenant,
-                &args.catalog_id,
-                &target_version,
-                &args.target_environment,
-            ],
-        )
-        .await
-        .context("read target-current catalog document")?
-        .context("target-current catalog document is missing")?;
-    let document: Option<String> = row.get(0);
-    let document = document.context("target-current catalog has no stored document")?;
-    let catalog = Catalog::from_json(&document).context("parse target-current catalog document")?;
-    let expected_version = u32::try_from(target_version).context("target catalog version")?;
-    ensure!(
-        catalog.catalog_id == args.catalog_id && catalog.version == expected_version,
-        "target-current catalog document coordinate mismatch"
-    );
-    Ok(catalog)
-}
-
-fn require_target_registration_entities(
+async fn copy_portable_facts(
+    tx: &Transaction<'_>,
     source: &SourceRelease,
-    target_catalog: &Catalog,
+    tenant: &str,
 ) -> anyhow::Result<()> {
-    let target_entities = target_catalog
-        .entities
-        .iter()
-        .map(|entity| entity.id.as_str())
-        .collect::<BTreeSet<_>>();
-    for (registration_id, registration) in &source.manifest.registrations {
-        ensure!(
-            target_entities.contains(registration.entity.as_str()),
-            "target-registration-entity-missing: registration {registration_id:?} names entity {:?}",
-            registration.entity
-        );
+    for component in &source.components {
+        let projection_hash = source
+            .projection_hashes
+            .get(&component.component_digest)
+            .expect("source snapshot loaded one projection hash per component");
+        crate::push_component::append_or_verify_admitted_component(tx, component, projection_hash)
+            .await?;
+    }
+    for requirement in &source.requirements {
+        persist_requirement(tx, tenant, requirement).await?;
+    }
+    for wiring in &source.wirings {
+        persist_wiring(tx, tenant, wiring).await?;
     }
     Ok(())
-}
-
-async fn load_one_component(
-    client: &Client,
-    scope: &ComponentCatalogScope,
-    target: &AdmittedComponent,
-) -> anyhow::Result<Option<AdmittedComponent>> {
-    let version = i32::try_from(scope.catalog_version).context("target component version")?;
-    client
-        .query_opt(
-            SELECT_COMPONENT_SQL,
-            &[
-                &scope.tenant_id,
-                &scope.catalog_id,
-                &version,
-                &target.component,
-                &target.interface_version,
-            ],
-        )
-        .await
-        .context("read target component-library fact")?
-        .map(|row| decode_component(row, scope))
-        .transpose()
 }
 
 async fn persist_requirement(
-    transaction: &Transaction<'_>,
+    tx: &Transaction<'_>,
     tenant: &str,
     requirement: &PortableRequirement,
 ) -> anyhow::Result<()> {
-    let component_digest = requirement.requirement.component_digest();
-    let store_alias = requirement.requirement.store_alias();
     let params: [&(dyn tokio_postgres::types::ToSql + Sync); 5] = [
         &tenant,
-        &component_digest,
-        &store_alias,
-        &requirement.canonical_json,
+        &requirement.component_digest,
+        &requirement.store_alias,
+        &requirement.requirement_json,
         &requirement.requirement_hash,
     ];
-    transaction
-        .execute(
-            wamn_schema_control::connections::insert_component_connection_requirement_sql(),
-            &params,
-        )
+    tx.execute(INSERT_REQUIREMENT_SQL, &params)
         .await
         .context("append portable component requirement")?;
-    let exact: bool = transaction
-        .query_one(
-            wamn_schema_control::connections::exact_component_connection_requirement_sql(),
-            &params,
-        )
+    let exact: bool = tx
+        .query_one(EXACT_REQUIREMENT_SQL, &params)
         .await
         .context("verify portable component requirement")?
         .get(0);
-    ensure!(exact, "target-component-requirement-conflict");
+    ensure!(exact, "component-connection-requirement-conflict");
     Ok(())
 }
 
-async fn require_target_binding(
-    transaction: &Transaction<'_>,
+async fn persist_wiring(
+    tx: &Transaction<'_>,
     tenant: &str,
-    catalog_id: &str,
-    catalog_version: i32,
-    environment: &str,
-    requirement: &PortableRequirement,
+    wiring: &PortableWiring,
 ) -> anyhow::Result<()> {
-    let component_digest = requirement.requirement.component_digest();
-    let store_alias = requirement.requirement.store_alias();
-    let ready: bool = transaction
-        .query_one(
-            TARGET_BINDING_READY_SQL,
-            &[
-                &tenant,
-                &catalog_id,
-                &catalog_version,
-                &component_digest,
-                &store_alias,
-                &environment,
-            ],
-        )
-        .await
-        .context("verify target connection binding")?
-        .get(0);
-    ensure!(
-        ready,
-        "target-connection-binding-not-ready: component {component_digest:?} alias {store_alias:?}"
-    );
-    Ok(())
-}
-
-async fn persist_target_wiring(
-    transaction: &Transaction<'_>,
-    tenant: &str,
-    catalog_id: &str,
-    catalog_version: i32,
-    wiring: &SourceWiring,
-) -> anyhow::Result<()> {
-    let wiring_version = i32::try_from(wiring.target.wiring_version)
-        .context("target wiring version exceeds PostgreSQL width")?;
     let params: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
         &tenant,
-        &catalog_id,
-        &wiring.target.wiring_id,
-        &wiring_version,
-        &catalog_version,
+        &wiring.package_id,
+        &wiring.package_version,
+        &wiring.wiring_id,
+        &wiring.version,
         &wiring.graph_json,
         &wiring.wiring_hash,
     ];
-    transaction
-        .execute(INSERT_TARGET_WIRING_SQL, &params)
+    tx.execute(INSERT_WIRING_SQL, &params)
         .await
-        .context("append target gated wiring")?;
-    let exact: bool = transaction
-        .query_one(EXACT_TARGET_WIRING_SQL, &params)
+        .context("append promoted wiring fact")?;
+    let exact: bool = tx
+        .query_one(EXACT_WIRING_SQL, &params)
         .await
-        .context("verify target gated wiring")?
+        .context("verify promoted wiring fact")?
         .get(0);
-    ensure!(
-        exact,
-        "target-wiring-content-conflict: {:?} version {}",
-        wiring.target.wiring_id,
-        wiring.target.wiring_version
-    );
+    ensure!(exact, "promoted-wiring-conflict");
     Ok(())
 }
 
 async fn activate_once(
-    transaction: &Transaction<'_>,
+    tx: &Transaction<'_>,
     args: &PromoteArgs,
-    wiring: &SourceWiring,
+    package_id: &str,
+    wiring_id: &str,
+    graph_hash: &str,
 ) -> anyhow::Result<bool> {
-    let pointer = transaction
+    let current = tx
         .query_opt(
-            SELECT_TARGET_POINTER_SQL,
+            LOCK_ACTIVATION_SQL,
             &[
                 &args.tenant,
-                &args.catalog_id,
+                &package_id,
                 &args.target_environment,
-                &wiring.target.wiring_id,
+                &wiring_id,
             ],
         )
         .await
-        .context("read target wiring pointer")?;
-    let pointer_is_exact = pointer
-        .is_some_and(|row| row.get::<_, String>(0) == wiring.wiring_hash && row.get::<_, bool>(1));
-    let events = transaction
-        .query(
-            SELECT_PROMOTION_EVENTS_SQL,
-            &[
-                &args.tenant,
-                &args.catalog_id,
-                &args.target_environment,
-                &wiring.target.wiring_id,
-                &wiring.wiring_hash,
-                &args.source_environment,
-            ],
-        )
-        .await
-        .context("read target promotion provenance")?;
-    ensure!(
-        events.len() <= 1,
-        "promotion-provenance-conflict: duplicate events for wiring {:?}",
-        wiring.target.wiring_id
-    );
-    if let Some(event) = events.first() {
-        let changed_by: String = event.get(0);
-        let reason: String = event.get(1);
-        ensure!(
-            changed_by == args.principal && reason == args.reason,
-            "promotion-provenance-conflict: wiring {:?} was promoted with different caller facts",
-            wiring.target.wiring_id
-        );
-        ensure!(
-            pointer_is_exact,
-            "promotion-pointer-moved-after-completion: wiring {:?}",
-            wiring.target.wiring_id
-        );
+        .context("lock target wiring activation")?;
+    if current.is_some_and(|row| row.get::<_, String>(0) == graph_hash && row.get::<_, bool>(1)) {
         return Ok(false);
     }
-    ensure!(
-        !pointer_is_exact,
-        "promotion-provenance-missing: wiring {:?} already points at the promoted hash",
-        wiring.target.wiring_id
-    );
-
-    transaction
-        .execute(
-            flip_activation(),
-            &[
-                &args.catalog_id,
-                &args.target_environment,
-                &wiring.target.wiring_id,
-                &wiring.wiring_hash,
-                &true,
-            ],
-        )
-        .await
-        .context("flip target wiring pointer")?;
-    transaction
-        .query_one(
-            record_activation_event(),
-            &[
-                &args.catalog_id,
-                &args.target_environment,
-                &wiring.target.wiring_id,
-                &true,
-                &wiring.wiring_hash,
-                &args.source_environment,
-                &args.principal,
-                &args.reason,
-            ],
-        )
-        .await
-        .context("append target wiring activation provenance")?;
+    tx.execute(
+        UPSERT_ACTIVATION_SQL,
+        &[
+            &args.tenant,
+            &package_id,
+            &args.target_environment,
+            &wiring_id,
+            &graph_hash,
+        ],
+    )
+    .await
+    .context("activate promoted wiring")?;
+    tx.execute(
+        INSERT_ACTIVATION_EVENT_SQL,
+        &[
+            &args.tenant,
+            &package_id,
+            &args.target_environment,
+            &wiring_id,
+            &graph_hash,
+            &args.source_environment,
+            &args.principal,
+            &args.reason,
+        ],
+    )
+    .await
+    .context("record promoted wiring activation")?;
     Ok(true)
 }
 
@@ -1187,129 +947,104 @@ async fn activate_once(
 mod tests {
     use super::*;
 
-    /// wamn-0h0g.8.27, owner ruling 2026-08-27: COVER PROMOTE. The run-plane
-    /// schema this verb verifies its target environment in is REQUIRED and is
-    /// NOT `--schema`.
-    ///
-    /// `--schema` is the target DATA schema and carries a default, so a surface
-    /// that reused it would silently check the promoted release against whatever
-    /// relation that default named — the trusted-carry the verify arm exists to
-    /// stop. The two must therefore be separate flags, and the run-plane one must
-    /// have no default at all.
-    #[test]
-    fn the_run_plane_schema_is_required_and_separate_from_the_data_schema() {
-        use clap::Parser as _;
-
-        #[derive(clap::Parser)]
-        struct PromoteProbe {
-            #[command(flatten)]
-            args: PromoteArgs,
+    fn migration(ordinal: i32, name: &str, digest_byte: char) -> MigrationRecord {
+        MigrationRecord {
+            ordinal,
+            relative_path: format!("migrations/{ordinal:04}_{name}.sql"),
+            sha256: format!("sha256:{}", digest_byte.to_string().repeat(64)),
         }
+    }
 
-        const PLACEMENT: [&str; 18] = [
-            "promote",
-            "--source-database-url",
-            "postgres://source.invalid/env",
-            "--target-database-url",
-            "postgres://target.invalid/env",
-            "--tenant",
-            "tenant-a",
-            "--catalog-id",
-            "orders",
-            "--catalog-version",
-            "3",
-            "--source-environment",
-            "prod",
-            "--target-environment",
-            "canary",
-            "--artifact-base",
-            "registry.example/wamn/components",
-            "--principal",
-        ];
+    fn package() -> PackageProof {
+        PackageProof {
+            coordinate: PackageCoordinate::new("wamn_receiving", "1.1.0")
+                .expect("fixture coordinate is valid"),
+            manifest_sha256: format!("sha256:{}", "a".repeat(64)),
+            predecessor_version: Some("1.0.0".to_owned()),
+            migrations: vec![migration(1, "initial", 'b'), migration(2, "upgrade", 'c')],
+        }
+    }
 
-        let mut without = PLACEMENT.to_vec();
-        without.extend_from_slice(&["operator", "--registry-auth-file", "auth.json"]);
-        assert!(
-            PromoteProbe::try_parse_from(without.clone()).is_err(),
-            "promoted a release with no run-plane schema to verify its environment in"
-        );
+    fn target(package: &PackageProof) -> TargetPackageProof<'_> {
+        TargetPackageProof {
+            manifest_sha256: &package.manifest_sha256,
+            predecessor_version: package.predecessor_version.as_deref(),
+            migrations: &package.migrations,
+        }
+    }
 
-        let mut with = without;
-        with.extend_from_slice(&["--run-schema", "wamn_run"]);
-        let parsed = PromoteProbe::try_parse_from(with)
-            .expect("the complete promotion surface parses")
-            .args;
-        assert_eq!(parsed.run_schema, "wamn_run");
+    #[test]
+    fn absent_target_package_refuses_with_apply_package_remedy() {
+        let package = package();
+        let error = compare_target_package(&package, None)
+            .expect_err("promotion cannot create an absent package");
+        assert_eq!(error.kind(), PromotionErrorKind::PackageNotApplied);
+        let rendered = error.to_string();
+        assert!(rendered.contains("wamn_receiving@1.1.0"));
+        assert!(rendered.contains("run wamn-ctl apply-package"));
+    }
+
+    #[test]
+    fn manifest_and_predecessor_identity_must_both_match() {
+        let package = package();
+        let wrong_manifest = format!("sha256:{}", "f".repeat(64));
+        let manifest_error = compare_target_package(
+            &package,
+            Some(TargetPackageProof {
+                manifest_sha256: &wrong_manifest,
+                ..target(&package)
+            }),
+        )
+        .expect_err("a different raw manifest identity must refuse");
         assert_eq!(
-            parsed.schema, "public",
-            "the DATA schema default must not stand in for the run-plane schema"
+            manifest_error.kind(),
+            PromotionErrorKind::PackageManifestMismatch
         );
-        assert_ne!(parsed.run_schema, parsed.schema);
-    }
 
-    /// One target row per released wiring id, and no second identity supplied
-    /// alongside the document (wamn-0h0g.8.5.6).
-    #[test]
-    fn released_wiring_ids_are_unique_and_no_report_is_supplied() {
-        assert!(require_unique_wiring_ids(["orders", "orders"]).is_err());
-        assert!(require_unique_wiring_ids(["orders", "shipments"]).is_ok());
-        for statement in [INSERT_TARGET_WIRING_SQL, EXACT_TARGET_WIRING_SQL] {
-            assert!(
-                !statement.contains("gate_report_id"),
-                "promotion regrew the collapsed second identifier"
-            );
-        }
-    }
-
-    #[test]
-    fn promotion_writes_are_append_or_verify_and_activation_uses_the_one_builder() {
-        for insert in [
-            wamn_schema_control::connections::insert_component_connection_requirement_sql(),
-            INSERT_TARGET_WIRING_SQL,
-        ] {
-            assert!(insert.contains("ON CONFLICT DO NOTHING"));
-            assert!(!insert.contains("DO UPDATE"));
-        }
-        assert!(
-            wamn_schema_control::connections::exact_component_connection_requirement_sql()
-                .contains("requirement_hash = $5")
+        let predecessor_error = compare_target_package(
+            &package,
+            Some(TargetPackageProof {
+                predecessor_version: Some("0.9.0"),
+                ..target(&package)
+            }),
+        )
+        .expect_err("a different predecessor identity must refuse");
+        assert_eq!(
+            predecessor_error.kind(),
+            PromotionErrorKind::PackageManifestMismatch
         );
-        assert!(EXACT_TARGET_WIRING_SQL.contains("wiring_hash = $7"));
-        assert!(flip_activation().contains("INTO catalog.wiring_activation"));
-        assert!(record_activation_event().contains("INTO catalog.wiring_activation_events"));
     }
 
     #[test]
-    fn source_queries_cannot_copy_environment_owned_connection_state() {
-        let source_queries = [
-            SELECT_SOURCE_RELEASE_SQL,
-            SELECT_COMPONENTS_SQL,
-            SELECT_SOURCE_WIRING_SQL,
-            SELECT_COMPONENT_REQUIREMENTS_SQL,
-        ]
-        .join("\n");
-        for forbidden in [
-            "connection_instances",
-            "connection_generations",
-            "credential_set_handle",
-            "release_flows",
-            "execution_bundles",
-            "flow_artifacts",
-        ] {
-            assert!(
-                !source_queries.contains(forbidden),
-                "source promotion query copies retired or environment-owned fact {forbidden}"
-            );
+    fn missing_extra_and_divergent_ordered_ledgers_refuse() {
+        let package = package();
+        let mut missing = package.migrations.clone();
+        missing.pop();
+        let mut extra = package.migrations.clone();
+        extra.push(migration(3, "extra", 'd'));
+        let mut divergent = package.migrations.clone();
+        divergent[1].sha256 = format!("sha256:{}", "e".repeat(64));
+
+        for migrations in [&missing, &extra, &divergent] {
+            let error = compare_target_package(
+                &package,
+                Some(TargetPackageProof {
+                    migrations,
+                    ..target(&package)
+                }),
+            )
+            .expect_err("the complete target ledger must be byte-exact");
+            assert_eq!(error.kind(), PromotionErrorKind::PackageLedgerMismatch);
         }
-        assert!(TARGET_BINDING_READY_SQL.contains("validation_status = 'valid'"));
-        assert!(TARGET_BINDING_READY_SQL.contains("active_generation IS NOT NULL"));
     }
 
     #[test]
-    fn target_head_is_locked_before_snapshot_and_pointer_writes() {
-        assert!(LOCK_TARGET_HEAD_SQL.contains("FOR UPDATE"));
-        assert!(SELECT_SOURCE_RELEASE_SQL.contains("release_manifest_v2_snapshots"));
-        assert!(SELECT_SOURCE_RELEASE_SQL.contains("catalog.environment = $4"));
-        assert!(SELECT_PROMOTION_EVENTS_SQL.contains("source_environment = $6"));
+    fn exact_target_proof_unlocks_only_portable_fact_copy() {
+        let package = package();
+        assert_eq!(
+            compare_target_package(&package, Some(target(&package)))
+                .expect("an exact target package is promotable"),
+            PromotionAction::CopyPortableFacts
+        );
     }
 }

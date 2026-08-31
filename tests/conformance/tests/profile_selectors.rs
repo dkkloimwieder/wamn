@@ -181,7 +181,7 @@ fn profile_contract_matches_locked_metadata() {
         component_members.extend(members);
     }
 
-    assert_eq!(root_members.len(), 36);
+    assert_eq!(root_members.len(), 34);
     assert_eq!(component_members.len(), 10);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
@@ -210,7 +210,6 @@ fn profile_contract_matches_locked_metadata() {
             "wamn-control-registry",
             "wamn-project-state",
             "wamn-schema-control",
-            "wamn-schema-compiler",
             "wamn-schema-generator",
             "wamn-schema-introspection",
         ],
@@ -231,11 +230,11 @@ fn profile_contract_matches_locked_metadata() {
     );
 
     let profile_counts = [
-        ("m1", 20),
-        ("m2", 22),
-        ("deploy", 30),
-        ("full", 36),
-        ("ops", 36),
+        ("m1", 19),
+        ("m2", 21),
+        ("deploy", 28),
+        ("full", 34),
+        ("ops", 34),
     ];
     let mut profiles = BTreeMap::new();
     for (profile, expected_count) in profile_counts {

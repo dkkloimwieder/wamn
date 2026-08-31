@@ -60,8 +60,8 @@ pub struct EnableCdcProjectEnvArgs {
     #[arg(long)]
     pub env: String,
 
-    /// The app DATA schema the publication covers — the `--schema`
-    /// catalog-publish/migrate-catalog use (NOT the `app_system` auth schema).
+    /// The application DATA schema the publication covers (not the
+    /// `app_system` auth schema).
     #[arg(long, default_value = "public")]
     pub schema: String,
 
@@ -140,7 +140,7 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
     // `wamn_cdc_…` object name's 63-byte bound) before any effect.
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
-    if !crate::migrate_catalog::is_bare_ident(&args.schema) {
+    if !crate::ident::is_bare_ident(&args.schema) {
         anyhow::bail!(
             "--schema must be a bare lowercase identifier, got {:?}",
             args.schema
@@ -229,11 +229,10 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
 
 /// The CDC SQL the runbook applies connected to the PROJECT-ENV database, in
 /// dependency order: the eager schema guard (F2 — `FOR TABLES IN SCHEMA`
-/// auto-includes tables created later, so the publication may precede
-/// catalog-publish), the publication, the failover slot (WAL pinned from here),
+/// auto-includes tables created later, so the publication may precede package
+/// apply), the publication, the failover slot (WAL pinned from here),
 /// the decode-time entity map (wamn-l5i9.11 — created BEFORE the grants so the
-/// role's `SELECT ON ALL TABLES` covers it; an env CDC-enabled after its
-/// catalog was published backfills the map with one `publish-catalog` re-run),
+/// role's exact SELECT grant covers it; package apply owns its rows),
 /// then the replication role's grants (the role SQL must have been applied to
 /// the cluster first). Every statement is idempotent — re-applying is a no-op.
 fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
@@ -398,7 +397,7 @@ mod tests {
         assert!(validate_project_env_cdc("acme", "billing", "prod").is_ok());
         // The publication schema must be a bare identifier (defense-in-depth on
         // top of the builders' quoting).
-        assert!(crate::migrate_catalog::is_bare_ident("app_data"));
-        assert!(!crate::migrate_catalog::is_bare_ident("app;DROP"));
+        assert!(crate::ident::is_bare_ident("app_data"));
+        assert!(!crate::ident::is_bare_ident("app;DROP"));
     }
 }

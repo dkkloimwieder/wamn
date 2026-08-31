@@ -11,8 +11,7 @@
 //! - a **live-apply gate** (invariants 2/3 + placement/env FK integrity + the
 //!   template stamp insert-if-absent semantics + the saga exactly-once/resume
 //!   checkpoint), gated on `WAMN_REGISTRY_PG_URL` (a superuser URL — the harness
-//!   provisions the `wamn_system` owner role) and skipped cleanly when unset
-//!   (mirrors wamn-schema-compiler / wamn-run-state).
+//!   provisions the `wamn_system` owner role) and skipped cleanly when unset.
 
 use std::path::Path;
 

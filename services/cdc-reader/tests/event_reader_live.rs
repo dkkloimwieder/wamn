@@ -34,8 +34,8 @@ use tokio_postgres::NoTls;
 
 use wamn_cdc_reader::{EventReaderArgs, run_with_token};
 use wamn_control_provision::{
-    CredentialGeneration, SystemReader, WorkloadRoleFamily, cdc_object_name,
-    event_stream_name, sql, system_reader_generation_role,
+    CredentialGeneration, SystemReader, WorkloadRoleFamily, cdc_object_name, event_stream_name,
+    sql, system_reader_generation_role,
 };
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
@@ -376,7 +376,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .expect("apply deploy/sql/system-schema.sql");
     sys.batch_execute(CATALOG_SCHEMA)
         .await
-        .expect("apply deploy/sql/catalog-schema.sql (the migrate-catalog metadata store)");
+        .expect("apply deploy/sql/catalog-schema.sql (the package/effective-release store)");
     // The registration read's own credential, minted through the REAL builders
     // now that `registry.event_readers` exists (`wamn-0h0g.12.116`). The grant
     // batch also runs inside `prepare_workload_generation_sql`; applying it
@@ -615,7 +615,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     for (subj, id, e) in &delivered {
         assert_eq!(subj, &subject(ORG, PROJECT, ENV, e.entity_segment(), e.op));
         assert_eq!(id, &msg_id(PROJECT, ENV, e.lsn));
-        // receipts is hand-created (no catalog entity): the FD unmapped
+        // receipts is hand-created (no package entity mapping): the FD unmapped
         // marker — `entity` ABSENT, `table` carries the physical name, the
         // subject falls back to the table segment.
         assert!(e.entity.is_none(), "unmapped table publishes entity-ABSENT");

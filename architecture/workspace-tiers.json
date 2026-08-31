@@ -3,14 +3,14 @@
   "selection": {
     "mechanism": "root-default-members-plus-named-explicit-selectors",
     "default_members_selected": true,
-    "reason": "Bare root Cargo commands select the exact 16-package MVP developer floor. Named selectors retain the 30-package production loop and explicit 36-package full-CI coverage; --workspace remains required for the exhaustive root pass.",
+    "reason": "Bare root Cargo commands select the exact 15-package developer floor. Named selectors retain the 28-package production loop and explicit 34-package full-CI coverage; --workspace remains required for the exhaustive root pass.",
     "package_classification_source": "architecture/package-roles.json",
     "membership_evidence": "cargo metadata --locked --offline --format-version 1"
   },
   "source_inventory": {
     "root_workspace": {
       "manifest": "Cargo.toml",
-      "package_count": 36
+      "package_count": 34
     },
     "component_workspaces": [
       {
@@ -54,11 +54,9 @@
         "wamn-scenario-model",
         "wamn-scenario-worker",
         "wamn-scheduler",
-        "wamn-schema-compiler",
         "wamn-schema-control",
         "wamn-schema-generator",
         "wamn-schema-introspection",
-        "wamn-schema-model",
         "wamn-waker"
       ],
       "component_packages": [],
@@ -85,8 +83,7 @@
         "wamn-execution-contract",
         "wamn-project-state",
         "wamn-proof-conformance",
-        "wamn-scenario-model",
-        "wamn-schema-model"
+        "wamn-scenario-model"
       ],
       "component_packages": [],
       "non_cargo_inputs": [],
@@ -123,11 +120,9 @@
         "wamn-scenario-model",
         "wamn-scenario-worker",
         "wamn-scheduler",
-        "wamn-schema-compiler",
         "wamn-schema-control",
         "wamn-schema-generator",
         "wamn-schema-introspection",
-        "wamn-schema-model",
         "wamn-test-infrastructure",
         "wamn-waker"
       ],
@@ -144,7 +139,7 @@
         "wamn-receiving-data-access"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all ten component packages through explicit selectors for wasm32-wasip2 across both component workspaces, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 34 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all ten component packages through explicit selectors for wasm32-wasip2 across both component workspaces, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -171,7 +166,8 @@
         "sockprobe",
         "sqlx-command",
         "transform",
-        "wamn-postgres-sqlx"
+        "wamn-postgres-sqlx",
+        "wamn-receiving-data-access"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Build deployable native and proof owners plus every guest dependency and proof input, then execute the owning deploy/gates Jobs from docs/operations/build-and-test.md. Local Cargo success never substitutes for a named in-cluster gate of record."
@@ -216,7 +212,6 @@
         "wamn-control-registry",
         "wamn-project-state",
         "wamn-schema-control",
-        "wamn-schema-compiler",
         "wamn-schema-generator",
         "wamn-schema-introspection"
       ],
@@ -226,11 +221,11 @@
         "wamn-ctl/ops"
       ],
       "expected_package_counts": {
-        "m1": 20,
-        "m2": 22,
-        "deploy": 30,
-        "full": 36,
-        "ops": 36
+        "m1": 19,
+        "m2": 21,
+        "deploy": 28,
+        "full": 34,
+        "ops": 34
       }
     },
     "components": {
@@ -250,8 +245,8 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "exactly 16 root default members",
-      "qualification": "cargo test selects each default member's default test targets; use --workspace --all-targets --no-fail-fast for all 36 root members and full-CI target coverage"
+      "selected_packages": "exactly 15 root default members",
+      "qualification": "cargo test selects each default member's default test targets; use --workspace --all-targets --no-fail-fast for all 34 root members and full-CI target coverage"
     },
     {
       "working_directory": "components",

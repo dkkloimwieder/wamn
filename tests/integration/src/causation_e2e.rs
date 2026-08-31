@@ -110,7 +110,7 @@ struct GateResources {
     project: String,
     env: String,
     tenant: String,
-    catalog_id: String,
+    package_id: String,
     flow_id: String,
     registration_id: String,
     entity_id: String,
@@ -177,9 +177,9 @@ impl GateResources {
             &system_database,
             CredentialGeneration::A,
         );
-        let catalog_id = format!("c-{suffix}");
+        let package_id = format!("p_{suffix}");
         let registration_id = format!("r-{suffix}");
-        let durable = format!("mat_{tenant}_{catalog_id}_{registration_id}");
+        let durable = format!("mat_{tenant}_{package_id}_{registration_id}");
         let mut secret = [0u8; 72];
         std::fs::File::open("/dev/urandom")
             .context("open operating-system random source")?
@@ -204,7 +204,7 @@ impl GateResources {
             project,
             env,
             tenant,
-            catalog_id,
+            package_id,
             flow_id: format!("f-{suffix}"),
             registration_id,
             entity_id: format!("x-{suffix}"),
@@ -283,7 +283,7 @@ impl GateResources {
         for (value, label) in [
             (&self.gate_id, "gate id"),
             (&self.tenant, "tenant"),
-            (&self.catalog_id, "catalog"),
+            (&self.package_id, "package"),
             (&self.flow_id, "flow"),
             (&self.registration_id, "registration"),
             (&self.entity_id, "entity"),
@@ -324,7 +324,7 @@ impl GateResources {
                 "project": self.project,
                 "environment": self.env,
                 "tenant": self.tenant,
-                "catalog": self.catalog_id,
+                "package": self.package_id,
                 "flow": self.flow_id,
                 "registration": self.registration_id,
                 "entity": self.entity_id,
@@ -485,9 +485,9 @@ fn registration_json(resources: &GateResources) -> String {
     wamn_event_reg::EventRegistration {
         schema_version: wamn_event_reg::SCHEMA_VERSION.into(),
         registration_id: resources.registration_id.clone(),
-        catalog_id: resources.catalog_id.clone(),
+        package_id: resources.package_id.clone(),
         flow_id: resources.flow_id.clone(),
-        entity: wamn_schema_model::EntityId::from(resources.entity_id.as_str()),
+        entity: resources.entity_id.clone(),
         ops: vec![Op::Insert, Op::Delete],
         input: wamn_event_reg::RegistrationInput::default(),
         condition: None,
@@ -1015,11 +1015,12 @@ async fn setup_project(
                WITH CHECK (tenant_id=NULLIF(current_setting('app.tenant',true),'')); \
              GRANT SELECT,INSERT,UPDATE,DELETE ON {schema}.{table} TO wamn_app; \
              CREATE TABLE {schema}.wamn_entities (relation_oid oid PRIMARY KEY, \
-               entity_id text NOT NULL, table_name text NOT NULL); \
+               package_id text NOT NULL, entity_id text NOT NULL, table_name text NOT NULL); \
              INSERT INTO {schema}.wamn_entities VALUES \
-               ('{schema}.{table}'::regclass::oid,'{entity_id}','{table}');",
+               ('{schema}.{table}'::regclass::oid,'{package_id}','{entity_id}','{table}');",
             schema = resources.schema,
             table = resources.table,
+            package_id = resources.package_id,
             entity_id = resources.entity_id,
         ))
         .await?;
@@ -1063,34 +1064,12 @@ async fn setup_project(
     let transaction = admin.transaction().await?;
     transaction
         .execute(
-            "INSERT INTO catalog.catalogs \
-           (tenant_id,catalog_id,version,environment,schema_version,state) \
-         VALUES ($1,$2,1,$3,'0.1','applied')",
-            &[&resources.tenant, &resources.catalog_id, &resources.env],
-        )
-        .await?;
-    transaction
-        .execute(
-            "INSERT INTO catalog.releases \
-           (tenant_id,catalog_id,catalog_version) VALUES ($1,$2,1)",
-            &[&resources.tenant, &resources.catalog_id],
-        )
-        .await?;
-    transaction
-        .execute(
-            "INSERT INTO catalog.catalog_heads \
-           (tenant_id,catalog_id,environment,applied_catalog_version) VALUES ($1,$2,$3,1)",
-            &[&resources.tenant, &resources.catalog_id, &resources.env],
-        )
-        .await?;
-    transaction
-        .execute(
             "INSERT INTO catalog.event_registrations \
-           (tenant_id,catalog_id,registration_id,flow_id,entity_id,registration) \
+           (tenant_id,package_id,registration_id,flow_id,entity_id,registration) \
          VALUES ($1,$2,$3,$4,$5,$6::text::jsonb)",
             &[
                 &resources.tenant,
-                &resources.catalog_id,
+                &resources.package_id,
                 &resources.registration_id,
                 &resources.flow_id,
                 &resources.entity_id,
@@ -1101,7 +1080,7 @@ async fn setup_project(
     transaction
         .execute(
             "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
             status,trigger_source,event_source_run_id,event_root_run_id,event_depth) \
          VALUES \
            ($1,$2,$3,1,$4,1,$5,'completed','event',$2,$2,0), \
@@ -1110,7 +1089,7 @@ async fn setup_project(
                 &resources.tenant,
                 &resources.root_run_id,
                 &resources.flow_id,
-                &resources.catalog_id,
+                &resources.package_id,
                 &resources.env,
                 &resources.source_run_id,
             ],
@@ -1566,7 +1545,7 @@ async fn build_materializer(
     // no CDC event would ever be decided.
     let release = load_release(ReleaseFixture {
         tenant: resources.tenant.as_str(),
-        catalog: resources.catalog_id.as_str(),
+        package: resources.package_id.as_str(),
         environment: resources.env.as_str(),
         registration: resources.registration_id.as_str(),
         wiring: "causation-event-handler",
@@ -3025,7 +3004,7 @@ async fn verify_clean(
                 ("publication", resources.cdc_name.as_str()),
                 ("slot", resources.cdc_name.as_str()),
                 ("tenant", resources.tenant.as_str()),
-                ("catalog", resources.catalog_id.as_str()),
+                ("package", resources.package_id.as_str()),
                 ("flow", resources.flow_id.as_str()),
                 ("registration", resources.registration_id.as_str()),
                 ("entity", resources.entity_id.as_str()),
@@ -3061,7 +3040,7 @@ async fn verify_clean(
                 ("publication", resources.cdc_name.as_str()),
                 ("slot", resources.cdc_name.as_str()),
                 ("tenant", resources.tenant.as_str()),
-                ("catalog", resources.catalog_id.as_str()),
+                ("package", resources.package_id.as_str()),
                 ("flow", resources.flow_id.as_str()),
                 ("registration", resources.registration_id.as_str()),
                 ("entity", resources.entity_id.as_str()),
@@ -3319,7 +3298,6 @@ mod tests {
     /// Spelled with an escaped newline, so the literal cannot match the
     /// two-line attribute it names and the split can never find itself. Same
     /// marker `tests/conformance/src/runtime_inventory.rs` slices files at.
-
     fn args() -> CausationE2eArgs {
         CausationE2eArgs {
             component: "/bench/materializer.wasm".into(),
@@ -3345,7 +3323,7 @@ mod tests {
         let registration: serde_json::Value =
             serde_json::from_str(&registration_json(&resources)).unwrap();
         assert_eq!(registration["registration-id"], resources.registration_id);
-        assert_eq!(registration["catalog-id"], resources.catalog_id);
+        assert_eq!(registration["package-id"], resources.package_id);
         assert_eq!(registration["flow-id"], resources.flow_id);
         assert_eq!(registration["entity"], resources.entity_id);
         assert_eq!(registration["ops"], serde_json::json!(["insert", "delete"]));

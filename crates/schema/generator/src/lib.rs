@@ -6,9 +6,8 @@
 //! environment access.
 //!
 //! Generated identifiers follow
-//! `docs/architecture/application-naming.md`. The legacy schema model and DDL
-//! compiler are deliberately outside this crate: migration introspection is the
-//! only structural input.
+//! `docs/architecture/application-naming.md`. Migration introspection owns
+//! schema-to-IR normalization; that IR is generation's only structural input.
 //!
 //! Migrations author PostgreSQL schema selection. Generated and authored query
 //! corpus files therefore use unqualified relations and inherit the host-owned

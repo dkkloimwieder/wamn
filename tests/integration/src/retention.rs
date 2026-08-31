@@ -43,12 +43,13 @@ use wamn_control_provision::{
 use crate::ctl_process;
 
 const SCHEMA: &str = "wamn_retention";
-const CATALOG_SCHEMA: &str = "wamn_retention_catalog";
+const RELEASE_SCHEMA: &str = "wamn_retention_release";
 const TENANT: &str = "retention-t";
 /// A SECOND tenant with history of its own. Without it the cross-tenant arm
 /// could not distinguish a refusal from a match of nothing.
 const OTHER_TENANT: &str = "retention-other";
-const CATALOG_ID: &str = "retention-fixture";
+const PACKAGE_ID: &str = "retention_fixture";
+const EFFECTIVE_RELEASE_ID: i32 = 1;
 const RETENTION_DAYS: &str = "30";
 const GENERATION_PASSWORD: &str = "retention-gate-generation";
 
@@ -70,7 +71,7 @@ pub struct RetentionArgs {
 // ---------------------------------------------------------------------------
 // Ephemeral schemas: the REAL run-state.sql + run-queue.sql, schema-rewritten
 // (no stand-in DDL, so the `runs` shape and its ACL can never drift from the
-// schema of record). Only the `catalog.releases` foreign key reaches outside the
+// schema of record). Only the `catalog.effective_releases` foreign key reaches outside the
 // run plane, so that is the only fixture relation this gate stands up.
 // ---------------------------------------------------------------------------
 
@@ -93,7 +94,10 @@ fn rewrite_schema(ddl: &str) -> String {
         &format!("SCHEMA IF NOT EXISTS {SCHEMA}"),
     )
     .replace("SCHEMA wamn_run", &format!("SCHEMA {SCHEMA}"))
-    .replace("catalog.releases", &format!("{CATALOG_SCHEMA}.releases"))
+    .replace(
+        "catalog.effective_releases",
+        &format!("{RELEASE_SCHEMA}.effective_releases"),
+    )
 }
 
 fn run_state_ddl() -> String {
@@ -150,14 +154,15 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
         admin_url,
         &format!(
             "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
-             DROP SCHEMA IF EXISTS {CATALOG_SCHEMA} CASCADE; \
-             CREATE SCHEMA {CATALOG_SCHEMA}; \
-             CREATE TABLE {CATALOG_SCHEMA}.releases ( \
-               tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
-               PRIMARY KEY (tenant_id, catalog_id, catalog_version) \
+             DROP SCHEMA IF EXISTS {RELEASE_SCHEMA} CASCADE; \
+             CREATE SCHEMA {RELEASE_SCHEMA}; \
+             CREATE TABLE {RELEASE_SCHEMA}.effective_releases ( \
+               tenant_id text NOT NULL, effective_release_id int NOT NULL, \
+               PRIMARY KEY (tenant_id, effective_release_id) \
              ); \
-             INSERT INTO {CATALOG_SCHEMA}.releases \
-             VALUES ('{TENANT}','{CATALOG_ID}',1), ('{OTHER_TENANT}','{CATALOG_ID}',1);"
+             INSERT INTO {RELEASE_SCHEMA}.effective_releases \
+             VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID}), \
+                    ('{OTHER_TENANT}',{EFFECTIVE_RELEASE_ID});"
         ),
     )
     .await?;
@@ -180,7 +185,7 @@ async fn teardown(admin_url: &str, generation_role: &str) -> anyhow::Result<()> 
         admin_url,
         &format!(
             "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
-             DROP SCHEMA IF EXISTS {CATALOG_SCHEMA} CASCADE;"
+             DROP SCHEMA IF EXISTS {RELEASE_SCHEMA} CASCADE;"
         ),
     )
     .await?;
@@ -279,9 +284,9 @@ async fn seed_run(
             .execute(
                 &format!(
                     "INSERT INTO {SCHEMA}.runs ( \
-                       tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
+                       tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, \
                        environment, status, input_json, created_at \
-                     ) VALUES ($1, $2, 'f', 1, '{CATALOG_ID}', 1, 'test', $3, \
+                     ) VALUES ($1, $2, 'f', 1, '{PACKAGE_ID}', {EFFECTIVE_RELEASE_ID}, 'test', $3, \
                                jsonb_build_object('payload', $1::text), \
                                now() - ($4::bigint * interval '1 day'))"
                 ),

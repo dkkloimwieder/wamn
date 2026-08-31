@@ -3,7 +3,7 @@
 //! The operator path that shipped with `wamn-cdky` is manual: read the digest
 //! off `publish-release` stdout and hand-edit the template. This verb removes
 //! the transcription step and nothing else. It reads the frozen
-//! `catalog.release_manifest_v2_snapshots` row, re-derives release identity
+//! `catalog.release_manifest_v3_snapshots` row, re-derives release identity
 //! from those exact bytes, and prints. It writes no manifest and mutates
 //! nothing; a pod reading its own digest out of PostgreSQL is explicitly
 //! refused (`wamn-duyl`) because it would roll a release without a rollout.
@@ -49,13 +49,9 @@ pub struct PrintReleaseEnvArgs {
     #[arg(long)]
     pub tenant: String,
 
-    /// Catalog identity of the minted release snapshot.
+    /// Integer identity of the minted effective release snapshot.
     #[arg(long)]
-    pub catalog_id: String,
-
-    /// Exact catalog version of the minted release snapshot.
-    #[arg(long)]
-    pub catalog_version: u32,
+    pub effective_release_id: u32,
 
     /// The `<registry>/<repository>` the release manifest was pushed to.
     #[arg(long)]
@@ -64,13 +60,13 @@ pub struct PrintReleaseEnvArgs {
 
 /// Print the release lines for one minted release.
 pub async fn run(args: PrintReleaseEnvArgs) -> anyhow::Result<()> {
-    let catalog_version = i32::try_from(args.catalog_version)
-        .context("catalog-version exceeds the PostgreSQL integer carrier")?;
+    let effective_release_id = i32::try_from(args.effective_release_id)
+        .context("effective-release-id exceeds the PostgreSQL integer carrier")?;
     let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
         .await
         .context("connect to the release snapshot database")?;
     let connection_task = tokio::spawn(connection);
-    let read = select_snapshot(&mut client, &args.tenant, &args.catalog_id, catalog_version).await;
+    let read = select_snapshot(&mut client, &args.tenant, effective_release_id).await;
     let canonical_bytes = match read {
         Ok(canonical_bytes) => {
             drop(client);
@@ -88,7 +84,7 @@ pub async fn run(args: PrintReleaseEnvArgs) -> anyhow::Result<()> {
     // The digest is re-derived from the bytes rather than read from a second
     // column, exactly as the publisher does: one carrier of release identity.
     let (_, manifest_digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)
-        .context("the frozen release snapshot is not a canonical v2 manifest")?;
+        .context("the frozen release snapshot is not a canonical format-3 manifest")?;
     print!("{}", release_lines(&args.artifact_base, &manifest_digest));
     Ok(())
 }
@@ -111,7 +107,6 @@ mod tests {
 
     use super::*;
 
-
     /// Host command for the flattened argument surface under test.
     #[derive(Debug, clap::Parser)]
     struct PrintProbe {
@@ -119,14 +114,12 @@ mod tests {
         args: PrintReleaseEnvArgs,
     }
 
-    const COORDINATE: [&str; 10] = [
+    const COORDINATE: [&str; 8] = [
         "--database-url",
         "postgres://release.invalid/env",
         "--tenant",
         "tenant-a",
-        "--catalog-id",
-        "orders",
-        "--catalog-version",
+        "--effective-release-id",
         "3",
         "--artifact-base",
         "registry.example/wamn/releases",
@@ -136,10 +129,6 @@ mod tests {
         ManifestDigest::parse(format!("sha256:{}", "7".repeat(64)))
             .expect("the fixture digest is canonical")
     }
-
-        // wamn-hopk R5: the two binaries' own spellings were asserted by reading
-        // executor/src/lib.rs and host/src/host.rs as text. Deleted.
-
     #[test]
     fn one_release_prints_both_carriers_and_nothing_else() {
         let printed = release_lines("registry.example/wamn/releases", &digest());
@@ -164,14 +153,13 @@ mod tests {
             PrintProbe::try_parse_from(std::iter::once("print-release-env").chain(COORDINATE))
                 .expect("the complete coordinate parses")
                 .args;
-        assert_eq!(complete.catalog_version, 3);
+        assert_eq!(complete.effective_release_id, 3);
         assert_eq!(complete.artifact_base, "registry.example/wamn/releases");
 
         for omitted in [
             "--database-url",
             "--tenant",
-            "--catalog-id",
-            "--catalog-version",
+            "--effective-release-id",
             "--artifact-base",
         ] {
             let mut argv = vec!["print-release-env"];

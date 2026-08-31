@@ -6,7 +6,7 @@ use std::fmt;
 use boon::{Compiler, Draft, Schemas};
 
 use crate::{
-    AdmittedComponent, AdmittedComponentPort, ComponentCatalogScope, ComponentSchema,
+    AdmittedComponent, AdmittedComponentPort, ComponentPackageScope, ComponentSchema,
     WiringDocument, WiringNode, schema_digests_match,
 };
 
@@ -59,7 +59,7 @@ impl fmt::Display for WiringCompatibilityError {
 
 impl std::error::Error for WiringCompatibilityError {}
 
-/// Validate one wiring exclusively against facts from its gated catalog scope.
+/// Validate one wiring exclusively against facts from its exact package scope.
 ///
 /// This is a publish/gate function, not a delivery-time fallback. Every normal
 /// edge resolves the exact authored source and target ports and requires equal
@@ -68,7 +68,7 @@ impl std::error::Error for WiringCompatibilityError {}
 /// or cross-version lookup exists.
 pub fn validate_wiring_compatibility(
     wiring: &WiringDocument,
-    scope: &ComponentCatalogScope,
+    scope: &ComponentPackageScope,
     components: &[AdmittedComponent],
 ) -> Result<(), WiringCompatibilityError> {
     if let Some(component) = components
@@ -78,14 +78,14 @@ pub fn validate_wiring_compatibility(
         return Err(WiringCompatibilityError::new(
             WiringCompatibilityErrorKind::FactScopeMismatch,
             format!(
-                "component {:?} fact scope ({:?}, {:?}, {}) differs from wiring gate scope ({:?}, {:?}, {})",
+                "component {:?} fact scope ({:?}, {:?}, {:?}) differs from wiring gate scope ({:?}, {:?}, {:?})",
                 component.component,
                 component.scope.tenant_id,
-                component.scope.catalog_id,
-                component.scope.catalog_version,
+                component.scope.package_id,
+                component.scope.package_version,
                 scope.tenant_id,
-                scope.catalog_id,
-                scope.catalog_version,
+                scope.package_id,
+                scope.package_version,
             ),
         ));
     }
@@ -327,6 +327,7 @@ mod tests {
             component: name.to_string(),
             interface_version: "0.1.0".to_string(),
             operation: operation.to_string(),
+            registered_operation: None,
             component_digest: format!("sha256:{}", "a".repeat(64)),
             imports: Vec::new(),
             imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
@@ -343,11 +344,11 @@ mod tests {
         }
     }
 
-    fn scope() -> ComponentCatalogScope {
-        ComponentCatalogScope {
+    fn scope() -> ComponentPackageScope {
+        ComponentPackageScope {
             tenant_id: "t1".to_string(),
-            catalog_id: "cat".to_string(),
-            catalog_version: 7,
+            package_id: "app".to_string(),
+            package_version: "1.0.0".to_string(),
         }
     }
 
@@ -448,7 +449,7 @@ mod tests {
     #[test]
     fn stale_scope_and_invalid_parameter_refuse_before_publish() {
         let mut stale = components();
-        stale[0].scope.catalog_version = 8;
+        stale[0].scope.package_version = "2.0.0".to_string();
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &scope(), &stale)
                 .unwrap_err()

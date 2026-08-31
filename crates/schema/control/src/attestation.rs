@@ -1,8 +1,8 @@
 //! The control-plane deployment-attestation write (wamn-0h0g.8.21).
 //!
-//! `catalog.register_deployment_attestation` records that one release coordinate
+//! `catalog.register_deployment_attestation` records that one effective release
 //! really reached one `(org, project, environment)` placement. It is CONTROL-plane
-//! only (`deploy/sql/control-portable-store.sql`); the `catalog.releases` its
+//! only (`deploy/sql/control-portable-store.sql`); the `catalog.effective_releases` its
 //! foreign key targets is the control copy, not the project one.
 //!
 //! The routine's own DDL already names the single refusal this write can raise,
@@ -28,11 +28,12 @@ use crate::sql;
 /// synonym for it.
 pub const CONTENT_CONFLICT: &str = "deployment-attestation-content-conflict";
 
-/// The refusal `catalog.project_release_identity` raises when a release
-/// coordinate is re-projected carrying different catalog facts.
+/// The refusal `catalog.project_effective_release_identity` raises when a
+/// release identity is re-projected carrying different facts.
 ///
 /// One condition, one literal: this is that routine's own `MESSAGE`.
-pub const PROJECTION_CONTENT_CONFLICT: &str = "release-identity-projection-content-conflict";
+pub const PROJECTION_CONTENT_CONFLICT: &str =
+    "effective-release-identity-projection-content-conflict";
 
 /// The `ERRCODE` the routine raises [`CONTENT_CONFLICT`] under (`unique_violation`).
 const UNIQUE_VIOLATION: &str = "23505";
@@ -44,45 +45,33 @@ const UNIQUE_VIOLATION: &str = "23505";
 /// builders in [`crate::sql`] because the projection exists only to make
 /// [`register_attestation`] below satisfiable: the two are one cross-plane write
 /// path, and the coordinate they must agree on is this module's subject.
-pub fn project_release_identity_sql() -> &'static str {
-    "SELECT catalog.project_release_identity($1, $2, $3, $4, $5)"
+pub fn project_effective_release_identity_sql() -> &'static str {
+    "SELECT catalog.project_effective_release_identity($1, $2, $3)"
 }
 
-/// One release identity as the CONTROL plane records it.
-///
-/// The first three parts are the attestation's own foreign key. `environment` and
-/// `schema_version` are the catalog header facts the release was minted under:
-/// they are carried rather than defaulted, so a coordinate re-projected under a
-/// different environment or catalog-model version refuses instead of silently
-/// standing.
+/// One effective release identity as the CONTROL plane records it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ReleaseIdentity<'a> {
+pub struct EffectiveReleaseIdentity<'a> {
     pub tenant_id: &'a str,
-    pub catalog_id: &'a str,
-    pub catalog_version: i32,
+    pub effective_release_id: i32,
     pub environment: &'a str,
-    /// `catalog.catalogs.schema_version` — the catalog-MODEL format version,
-    /// distinct from the catalog version above.
-    pub schema_version: &'a str,
 }
 
 /// Bind one release-identity projection for the driver to execute.
 ///
 /// The parameter order is the routine's argument order; a part bound at the wrong
 /// position would anchor the attestation's key to a coordinate nothing minted.
-pub fn project_release_identity(identity: &ReleaseIdentity<'_>) -> SqlStatement {
+pub fn project_effective_release_identity(identity: &EffectiveReleaseIdentity<'_>) -> SqlStatement {
     SqlStatement {
         summary: format!(
-            "project release identity {}/{}@{}",
-            identity.tenant_id, identity.catalog_id, identity.catalog_version
+            "project effective release identity {}/{}",
+            identity.tenant_id, identity.effective_release_id
         ),
-        sql: project_release_identity_sql().to_owned(),
+        sql: project_effective_release_identity_sql().to_owned(),
         params: vec![
             Value::Text(identity.tenant_id.to_owned()),
-            Value::Text(identity.catalog_id.to_owned()),
-            Value::Int(identity.catalog_version),
+            Value::Int(identity.effective_release_id),
             Value::Text(identity.environment.to_owned()),
-            Value::Text(identity.schema_version.to_owned()),
         ],
     }
 }
@@ -90,7 +79,7 @@ pub fn project_release_identity(identity: &ReleaseIdentity<'_>) -> SqlStatement 
 /// Translate the driver's failure on a projection into [`AttestationError`],
 /// exactly once, here — the sibling of [`translate_failure`] below.
 pub fn translate_projection_failure(
-    identity: &ReleaseIdentity<'_>,
+    identity: &EffectiveReleaseIdentity<'_>,
     sqlstate: Option<&str>,
     reported: &str,
 ) -> AttestationError {
@@ -106,35 +95,34 @@ pub fn translate_projection_failure(
     AttestationError {
         kind,
         coordinate: format!(
-            "{}/{}@{} in {:?}",
-            identity.tenant_id, identity.catalog_id, identity.catalog_version, identity.environment
+            "{}/{} in {:?}",
+            identity.tenant_id, identity.effective_release_id, identity.environment
         ),
         driver: reported.to_owned(),
     }
 }
 
-/// One deployment attestation: the six-part coordinate it is keyed by, and the
+/// One deployment attestation: the five-part coordinate it is keyed by, and the
 /// content it attests.
 ///
-/// The coordinate is exactly `(tenant_id, catalog_id, catalog_version, org_id,
+/// The coordinate is exactly `(tenant_id, effective_release_id, org_id,
 /// project_id, environment)` — the relation's `deployment_attestations_coordinate`
-/// UNIQUE constraint. `deployed_manifest_hash` and `attested_at` are the attested
-/// content, not part of the key.
+/// UNIQUE constraint. `deployed_manifest_hash` is the conflict-bearing content;
+/// the server preserves the first writer's `attested_at` on an exact retry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attestation<'a> {
     pub tenant_id: &'a str,
-    pub catalog_id: &'a str,
-    pub catalog_version: i32,
+    pub effective_release_id: i32,
     pub org_id: &'a str,
     pub project_id: &'a str,
     pub environment: &'a str,
     /// `sha256:<64 hex>` — the relation's `CHECK` is the only place that shape
     /// is enforced.
     pub deployed_manifest_hash: &'a str,
-    /// The attestation instant, as a literal PostgreSQL parses to `timestamptz`
-    /// (RFC 3339). Bound as text and cast by the statement, because the engine's
-    /// [`Value`] carries no timestamp variant; an unparseable instant is refused
-    /// by the server, not here.
+    /// A proposed attestation instant, as a literal PostgreSQL parses to
+    /// `timestamptz` (RFC 3339). The server keeps this only when this invocation
+    /// wins the insert; exact retries retain the recorded winner. Bound as text
+    /// because the engine's [`Value`] carries no timestamp variant.
     pub attested_at: &'a str,
 }
 
@@ -152,8 +140,7 @@ pub fn register_attestation(attestation: &Attestation<'_>) -> SqlStatement {
         sql: sql::register_deployment_attestation_sql().to_owned(),
         params: vec![
             Value::Text(attestation.tenant_id.to_owned()),
-            Value::Text(attestation.catalog_id.to_owned()),
-            Value::Int(attestation.catalog_version),
+            Value::Int(attestation.effective_release_id),
             Value::Text(attestation.org_id.to_owned()),
             Value::Text(attestation.project_id.to_owned()),
             Value::Text(attestation.environment.to_owned()),
@@ -196,8 +183,8 @@ pub enum AttestationErrorKind {
     /// bytes actually deployed, never to re-publish over the recorded fact.
     ContentConflict,
     /// The release coordinate is already projected onto the control plane with
-    /// DIFFERENT catalog facts. The remedy is to find out which environment or
-    /// catalog-model version actually minted it, never to overwrite the record.
+    /// DIFFERENT release facts. The remedy is to find out which environment
+    /// actually minted it, never to overwrite the record.
     IdentityProjectionConflict,
     /// Any other failure the driver reported.
     Storage,
@@ -227,7 +214,7 @@ impl AttestationError {
         self.kind
     }
 
-    /// The six-part coordinate the write was refused at.
+    /// The five-part coordinate the write was refused at.
     pub fn coordinate(&self) -> &str {
         &self.coordinate
     }
@@ -252,13 +239,12 @@ impl fmt::Display for AttestationError {
 
 impl std::error::Error for AttestationError {}
 
-/// The six-part coordinate, rendered as a refusal's context.
+/// The five-part coordinate, rendered as a refusal's context.
 fn coordinate(attestation: &Attestation<'_>) -> String {
     format!(
-        "{}/{}@{} -> {}/{}/{}",
+        "{}/{} -> {}/{}/{}",
         attestation.tenant_id,
-        attestation.catalog_id,
-        attestation.catalog_version,
+        attestation.effective_release_id,
         attestation.org_id,
         attestation.project_id,
         attestation.environment,
@@ -273,8 +259,7 @@ mod tests {
     fn attestation() -> Attestation<'static> {
         Attestation {
             tenant_id: "tenant-a",
-            catalog_id: "orders",
-            catalog_version: 7,
+            effective_release_id: 7,
             org_id: "acme",
             project_id: "billing",
             environment: "prod",
@@ -291,7 +276,6 @@ mod tests {
             statement.params,
             vec![
                 Value::Text("tenant-a".to_owned()),
-                Value::Text("orders".to_owned()),
                 Value::Int(7),
                 Value::Text("acme".to_owned()),
                 Value::Text("billing".to_owned()),
@@ -313,7 +297,7 @@ mod tests {
             "db error: ERROR: deployment-attestation-content-conflict",
         );
         assert_eq!(error.kind(), AttestationErrorKind::ContentConflict);
-        assert_eq!(error.coordinate(), "tenant-a/orders@7 -> acme/billing/prod");
+        assert_eq!(error.coordinate(), "tenant-a/7 -> acme/billing/prod");
         // The DDL's literal, surfaced verbatim and first — no Rust synonym.
         assert!(
             error
@@ -342,7 +326,7 @@ mod tests {
         let error = translate_failure(
             &attestation(),
             Some("23505"),
-            "db error: ERROR: duplicate key value violates unique constraint \"catalogs_pkey\"",
+            "db error: ERROR: duplicate key value violates unique constraint \"packages_pkey\"",
         );
         assert_eq!(error.kind(), AttestationErrorKind::Storage);
     }
@@ -354,13 +338,11 @@ mod tests {
     }
 
     /// Every part distinct, so a swapped pair cannot hide behind an equal value.
-    fn identity() -> ReleaseIdentity<'static> {
-        ReleaseIdentity {
+    fn identity() -> EffectiveReleaseIdentity<'static> {
+        EffectiveReleaseIdentity {
             tenant_id: "tenant-a",
-            catalog_id: "orders",
-            catalog_version: 7,
+            effective_release_id: 7,
             environment: "prod",
-            schema_version: "1.4.0",
         }
     }
 
@@ -369,19 +351,17 @@ mod tests {
     /// see. Pinned here, where the string is built.
     #[test]
     fn the_projection_binding_places_every_part_at_its_own_position() {
-        let statement = project_release_identity(&identity());
+        let statement = project_effective_release_identity(&identity());
         assert_eq!(
             statement.sql,
-            "SELECT catalog.project_release_identity($1, $2, $3, $4, $5)"
+            "SELECT catalog.project_effective_release_identity($1, $2, $3)"
         );
         assert_eq!(
             statement.params,
             vec![
                 Value::Text("tenant-a".to_owned()),
-                Value::Text("orders".to_owned()),
                 Value::Int(7),
                 Value::Text("prod".to_owned()),
-                Value::Text("1.4.0".to_owned()),
             ]
         );
     }
@@ -391,17 +371,17 @@ mod tests {
         let error = translate_projection_failure(
             &identity(),
             Some("23505"),
-            "db error: ERROR: release-identity-projection-content-conflict",
+            "db error: ERROR: effective-release-identity-projection-content-conflict",
         );
         assert_eq!(
             error.kind(),
             AttestationErrorKind::IdentityProjectionConflict
         );
-        assert_eq!(error.coordinate(), "tenant-a/orders@7 in \"prod\"");
+        assert_eq!(error.coordinate(), "tenant-a/7 in \"prod\"");
         assert!(
             error
                 .to_string()
-                .starts_with("release-identity-projection-content-conflict: ")
+                .starts_with("effective-release-identity-projection-content-conflict: ")
         );
     }
 

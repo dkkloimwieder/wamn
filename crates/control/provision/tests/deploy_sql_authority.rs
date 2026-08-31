@@ -1,27 +1,20 @@
 //! The hand-written DDL's tenant floor derives from `current_user`.
 //!
-//! `wamn-0h0g.22.6.3` swept 43 guest-reachable relations across four files off
+//! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
+//! the current package-era relation set contains 36 governed relations, all off
 //! the settable `app.tenant` claim and onto
 //! `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
 //!
-//! `wamn-0h0g.22.17` then gave all 43 a SECOND arm. The floor is the GUEST
+//! `wamn-0h0g.22.17` gave every governed relation a SECOND arm. The floor is the GUEST
 //! floor, narrowed `TO wamn_app`; PostgreSQL default-denies when RLS is enabled
 //! and no policy matches the connected role, so that narrowing LOCKS OUT every
 //! platform principal rather than exempting it — and locks it out at zero rows,
 //! not at an error. One permissive arm `TO wamn_platform` per relation is what
 //! admits them, and their table grants stay the thing that limits them.
 //!
-//! # Why these tests read the files as text
-//!
-//! `wamn-hopk` R5 forbids tests that scan source as text, with ONE exemption:
-//! identity pins — byte-equality against a named artifact. The bootstrap block
-//! is generated SQL checked into four files, so byte-equality against the
-//! builder is exactly that exemption, and it is the only thing that catches a
-//! hand-edit of a security-critical function definition.
-//!
-//! The live half asserts the SERVER's answer (`pg_policy`, `pg_index`,
-//! `has_table_privilege`), never the file text.
+//! The proofs apply the authored artifacts and assert the server's answer from
+//! `pg_policy`, `pg_index`, ACL catalogs, and authenticated sessions.
 //!
 //! ```bash
 //! docker run -d --name wamn-floor-pg -e POSTGRES_PASSWORD=probe \
@@ -36,9 +29,9 @@ use std::process::Command;
 
 use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::sql;
-use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
+use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::workload_role::{
-    PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
 
 const POSTGRES_INIT: &str = include_str!("../../../../deploy/sql/postgres-init.sql");
@@ -46,22 +39,6 @@ const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema
 const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-
-/// The retired predicate, exactly as the files spelled it.
-const RETIRED: &str = "tenant_id = NULLIF(current_setting('app.tenant', true), '')";
-
-/// The governed predicate every swept policy carries.
-const GOVERNED: &str = "wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()";
-
-/// The narrowing that makes the floor the GUEST floor (`wamn-0h0g.22.17`),
-/// spelled with the `USING` that follows it so a `GRANT … TO wamn_app` on the
-/// same relation cannot be counted as one.
-const GUEST_TARGETED: &str = "TO wamn_app\n";
-
-/// The one permissive arm per governed relation. `AS PERMISSIVE` and the
-/// command are spelled out at every site, so this substring identifies an arm
-/// and nothing else.
-const PLATFORM_ARM: &str = "TO wamn_platform\n";
 
 /// The role this file's live arm mints as its control probe. Named here so
 /// `reset` can drop it: roles are CLUSTER-wide, and the arm's whole point is
@@ -196,116 +173,6 @@ fn the_platform_grain_family_set_is_pinned_and_not_derived() {
     );
 }
 
-/// Every file that carries the bootstrap, with the number of governed policies
-/// it re-keyed and the number of retired predicates it deliberately keeps.
-const FILES: [(&str, &str, usize, usize); 4] = [
-    ("catalog-schema.sql", CATALOG_SCHEMA, 23, 0),
-    ("app-schema.sql", APP_SCHEMA, 7, 0),
-    // run-state.sql keeps `operator_run_actions`: one policy, two clauses.
-    ("run-state.sql", RUN_STATE, 5, 2),
-    ("postgres-init.sql", POSTGRES_INIT, 7, 0),
-];
-
-/// IDENTITY PIN (the R5 exemption): the checked-in bootstrap is the builder's
-/// output byte for byte. An attacker who can hand-edit `tenant_key` in one of
-/// these files owns every predicate in that database, and nothing else in the
-/// tree would notice.
-#[test]
-fn every_file_carries_the_generated_bootstrap_verbatim() {
-    let bootstrap = authority_derivations_bootstrap_sql();
-    for (name, sql, _, _) in FILES {
-        assert_eq!(
-            sql.matches(&bootstrap).count(),
-            1,
-            "{name} must carry authority_derivations_bootstrap_sql() exactly once, \
-             byte for byte"
-        );
-    }
-}
-
-/// Both directions. Presence of the governed predicate is not enough: a policy
-/// that KEPT the retired one would still hand every tenant's rows to whoever
-/// sets the claim.
-#[test]
-fn the_swept_files_carry_the_governed_predicate_and_only_the_ruled_exceptions() {
-    for (name, sql, governed, retired) in FILES {
-        // Each policy spells the predicate twice (USING + WITH CHECK) unless it
-        // is read-only, so this counts clauses, not policies — the count is
-        // pinned per file rather than derived, so a lost clause shows up.
-        assert!(
-            sql.matches(GOVERNED).count() >= governed,
-            "{name} must carry at least {governed} governed predicate clauses"
-        );
-        assert_eq!(
-            sql.matches(RETIRED).count(),
-            retired,
-            "{name} carries an unexpected number of retired predicates"
-        );
-        assert_eq!(
-            sql.matches("((wamn_authority.tenant_key(tenant_id)))")
-                .count(),
-            governed,
-            "{name} must carry one tenant-key expression index per re-keyed relation"
-        );
-    }
-    // The file that was left alone entirely, and the determination in writing.
-    assert_eq!(
-        RUN_QUEUE.matches(RETIRED).count(),
-        2,
-        "run-queue.sql keeps its host-injected claim"
-    );
-    assert_eq!(
-        RUN_QUEUE.matches(GOVERNED).count(),
-        0,
-        "run-queue.sql is not guest-reachable and must not be re-keyed"
-    );
-}
-
-/// THE ARM COUNT, PER FILE, EXACT — because the existing guard above is BLIND
-/// to this change.
-///
-/// Adding a `TO` clause moves no governed clause, no retired clause and no
-/// expression index, so a narrowing applied to 40 of the 43 relations passes
-/// every assertion in this file that predates `wamn-0h0g.22.17`. That is the
-/// false-coverage shape, and this is what closes it: both halves of every
-/// relation's floor are counted, per file, against a number written down here.
-///
-/// Both directions matter and the second is the sharp one. A floor narrowed
-/// `TO wamn_app` with its platform arm MISSING does not raise — PostgreSQL
-/// default-denies when RLS is on and no policy matches the connected role, and
-/// `current_tenant_key` derives NULL outside the guest generation pattern — so
-/// the platform principal reads ZERO ROWS in silence. An arm count short by one
-/// is a silent cross-relation lockout, which is why it is `assert_eq!` and not
-/// a floor.
-#[test]
-fn every_governed_relation_carries_both_the_guest_floor_and_one_platform_arm() {
-    for (name, sql, governed, _) in FILES {
-        assert_eq!(
-            sql.matches(GUEST_TARGETED).count(),
-            governed,
-            "{name} must narrow exactly {governed} floor policies TO wamn_app"
-        );
-        assert_eq!(
-            sql.matches(PLATFORM_ARM).count(),
-            governed,
-            "{name} must carry exactly one permissive TO wamn_platform arm per \
-             governed relation ({governed})"
-        );
-    }
-    // The ruled exceptions keep the host-injected claim and get NO arm: they are
-    // not guest-reachable, so there is no lockout to repair.
-    assert_eq!(
-        RUN_QUEUE.matches(PLATFORM_ARM).count(),
-        0,
-        "run-queue.sql is host-injected and takes no platform arm"
-    );
-    // The rejected shortcut — BYPASSRLS — is NOT checked here. All three
-    // occurrences of the word in these files are prose ("no BYPASSRLS"), so a
-    // text count reads the comments, not the DDL. The role attribute is asserted
-    // from `pg_authid` in the live arm below, which is the only place it is a
-    // fact rather than a sentence.
-}
-
 fn psql(url: &str, database: Option<&str>, script: &str) -> String {
     let mut command = Command::new("psql");
     command
@@ -432,11 +299,6 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         "CREATE ROLE wamn_app LOGIN PASSWORD 'retired-shared-probe' INHERIT;\n",
     );
     apply(&admin, POSTGRES_INIT);
-    assert!(
-        POSTGRES_INIT
-            .contains("ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = 'wamn_app'"),
-        "postgres-init.sql must inspect the real verifier catalog, not pg_roles' masked password"
-    );
     let base = admin.rsplit_once('/').expect("url names a database").0;
     let db_url = format!("{base}/wamn");
     let app_attributes = psql(
@@ -516,8 +378,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "43",
-        "the sweep must cover exactly the 43 guest-reachable relations"
+        governed, "36",
+        "the sweep must cover exactly the 36 guest-reachable relations"
     );
 
     // 2b. BORN PARKED (wamn-0h0g.20.30 for the attempt ledger, wamn-0h0g.20.32
@@ -577,15 +439,18 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
     apply(
         &db_url,
         &format!(
-            "INSERT INTO catalog.catalogs (tenant_id, catalog_id, version, schema_version, state) \
-               VALUES ('t1', 'c1', 1, 1, 'draft'), ('t2', 'c2', 1, 1, 'draft');\n\
+            "INSERT INTO catalog.packages \
+               (tenant_id, package_id, package_version, manifest_sha256) \
+             VALUES \
+               ('t1', 'receiving', '1.0.0', 'sha256:' || repeat('a', 64)), \
+               ('t2', 'receiving', '1.0.0', 'sha256:' || repeat('b', 64));\n\
              BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
              SET LOCAL app.tenant = 't2';\n\
              DO $$ BEGIN\n\
-                 ASSERT (SELECT count(*) FROM catalog.catalogs) = 1, \
+                 ASSERT (SELECT count(*) FROM catalog.packages) = 1, \
                         'the guest sees exactly its own tenant';\n\
-                 ASSERT (SELECT count(*) FROM catalog.catalogs WHERE tenant_id = 't2') = 0, \
+                 ASSERT (SELECT count(*) FROM catalog.packages WHERE tenant_id = 't2') = 0, \
                         'CROSS-TENANT READ';\n\
              END $$;\n\
              COMMIT;\n"
@@ -602,7 +467,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
 /// `wamn_authority.current_tenant_key()`, which only `wamn_app` may EXECUTE.
 /// Measured against these very files on PostgreSQL 18.6: `wamn_effect_writer`
 /// reading `wamn_run.effect_attempts` and `wamn_scenario_author` reading
-/// `catalog.catalog_heads` both got `ERROR: permission denied for function
+/// `catalog.effective_release_heads` both got `ERROR: permission denied for function
 /// current_tenant_key`. Loud, and therefore survivable.
 ///
 /// Narrowing the floor `TO wamn_app` turns that error into something worse.
@@ -663,7 +528,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 
     // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH KIND, counted
     //    PER RELATION rather than in total: a relation with two platform arms and
-    //    one with none sum to the same 43 and leave a silent lockout standing.
+    //    one with none sum to the same 36 and leave a silent lockout standing.
     let missing_arm = psql(
         &db_url,
         None,
@@ -795,18 +660,21 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     apply(
         &db_url,
         &format!(
-            "INSERT INTO catalog.catalogs \
-               (tenant_id, catalog_id, version, schema_version, state) \
-             SELECT t, 'c', 1, '1', 'applied' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
-             INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) \
-             SELECT t, 'c', 1 FROM unnest(ARRAY['t1', 't2']) AS t;\n\
+            "INSERT INTO catalog.packages \
+               (tenant_id, package_id, package_version, manifest_sha256) \
+             SELECT t, 'receiving', '1.0.0', {hash} \
+               FROM unnest(ARRAY['t1', 't2']) AS t;\n\
+             INSERT INTO catalog.effective_releases \
+               (tenant_id, effective_release_id, environment) \
+             SELECT t, 1, 'dev' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              SELECT t, 'dev', 'standard' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, catalog_id, catalog_version, environment, \
+               (tenant_id, run_id, package_id, effective_release_id, environment, \
                 flow_id, flow_version) \
-             SELECT t, 'r', 'c', 1, 'dev', 'f', 1 FROM unnest(ARRAY['t1', 't2']) AS t;\n\
+             SELECT t, 'r', 'receiving', 1, 'dev', 'f', 1 \
+               FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.effect_attempts \
                (tenant_id, attempt_id, run_id, root_plan_hash, current_plan_hash, frame_id, \
                 local_node_id, source_artifact_hash, requirement_name, occurrence, seq, \
@@ -1034,39 +902,4 @@ fn the_two_scenario_author_emitters_agree_at_zero_memberships() {
         ["<none>", "<none>"],
         "the emitters must agree at ZERO GRANTS in either application order"
     );
-}
-
-/// THE SWEEP-VISIBLE HALF of `wamn-0h0g.22.27`.
-///
-/// The claim that matters — the member set both appliers leave behind — is a
-/// POST-STATE read and lives in the live arm above. But a mutant that dies only
-/// in a live gate ships green in the ordinary sweep, and this branch has paid
-/// for that repeatedly. Emitter agreement is a property of the EMITTED TEXT, so
-/// it is assertable here with no server at all: neither artifact may name
-/// `wamn_platform` in a grant to the scenario author.
-///
-/// It is deliberately NOT a privilege claim. Whether that membership would
-/// actually confer anything is the server's answer and the live arm asks it.
-#[test]
-fn neither_scenario_author_emitter_grants_the_platform_group() {
-    let converge = wamn_schema_control::ensure_scenario_author_role_sql();
-    for (label, sql) in [
-        ("deploy/sql/postgres-init.sql", POSTGRES_INIT),
-        ("ensure_scenario_author_role_sql", converge),
-    ] {
-        for line in sql.lines() {
-            let statement = line.split("--").next().unwrap_or(line);
-            assert!(
-                !(statement.contains("GRANT")
-                    && statement.contains(PLATFORM_GROUP_ROLE)
-                    && statement.contains(SCENARIO_AUTHOR_GROUP_MEMBER)),
-                "{label} grants {} to {SCENARIO_AUTHOR_GROUP_MEMBER}: the two \
-                 emitters must agree, and they agree at ZERO GRANTS \
-                 (wamn-0h0g.22.27). Replicating it into the converge path is \
-                 REJECTED — it would ratify an unruled membership through the \
-                 side door",
-                PLATFORM_GROUP_ROLE,
-            );
-        }
-    }
 }

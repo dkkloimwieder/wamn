@@ -32,14 +32,6 @@
       "path": "crates/control/provision",
       "role": "persistence"
     },
-    "schema-model": {
-      "path": "crates/schema/model",
-      "role": "semantic"
-    },
-    "schema-compiler": {
-      "path": "crates/schema/compiler",
-      "role": "migration"
-    },
     "schema-control": {
       "path": "crates/schema/control",
       "role": "migration"
@@ -77,8 +69,8 @@
       "role": "effect",
       "note": "carries all relations verbatim; authors none"
     },
-    "ctl-publish": {
-      "path": "services/ctl/src/publish_catalog.rs",
+    "ctl-apply-package": {
+      "path": "services/ctl/src/apply_package.rs",
       "role": "effect"
     },
     "ctl-publish-release": {
@@ -95,10 +87,6 @@
     },
     "ctl-push": {
       "path": "services/ctl/src/push_component.rs",
-      "role": "effect"
-    },
-    "ctl-migrate": {
-      "path": "services/ctl/src/migrate_catalog.rs",
       "role": "effect"
     },
     "ctl-env-policies": {
@@ -186,12 +174,6 @@
       "kind": "inline-family",
       "scope": "production-project-database",
       "marker": "CREATE TABLE IF NOT EXISTS {schema}.wamn_entities"
-    },
-    {
-      "path": "crates/schema/compiler/src/emit.rs",
-      "kind": "generated-family",
-      "scope": "production-project-database",
-      "marker": "CREATE TABLE {}"
     }
   ],
   "excluded_sources": [
@@ -242,6 +224,11 @@
         "kind": "exact-file",
         "value": "deploy/sql/postgres-init.sql",
         "source_class": "gate-fixture-stand-in"
+      },
+      {
+        "kind": "exact-file",
+        "value": "crates/schema/generator/src/sql.rs",
+        "source_class": "package-corpus-generator"
       }
     ],
     "unqualified_contexts": [
@@ -258,10 +245,6 @@
         "default_schema": "wamn_run"
       },
       {
-        "path_prefix": "services/ctl/src/publish_catalog.rs",
-        "default_schema": "wamn_run"
-      },
-      {
         "path_prefix": "services/ctl/src/copy_project_env.rs",
         "default_schema": "wamn_run"
       },
@@ -270,17 +253,7 @@
         "default_schema": "wamn_run"
       }
     ],
-    "dynamic_writers": [
-      {
-        "path": "crates/schema/compiler/src/seed/emit.rs",
-        "principal": "schema-compiler",
-        "family": "generated-tenant-entities",
-        "marker": "INSERT INTO {tbl}",
-        "operations": [
-          "insert"
-        ]
-      }
-    ],
+    "dynamic_writers": [],
     "ignored_literals": [
       {
         "path": "services/cdc-reader/src/lib.rs",
@@ -516,18 +489,18 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "catalog.catalogs",
+      "id": "catalog.packages",
       "plane": "control",
-      "semantic_owner": "schema-model",
+      "semantic_owner": "catalog-model",
       "migration_owners": ["control-portable-store-installer"],
       "schema_source": "deploy/sql/control-portable-store.sql",
-      "writers": ["control-portable-store-installer", "ctl-publish-release"],
-      "readers": ["control-portable-store-installer"],
+      "writers": ["control-portable-store-installer", "ctl-publish-release", "ctl-push"],
+      "readers": ["control-portable-store-installer", "ctl-push"],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:control-portable-live"
     },
     {
-      "id": "catalog.releases",
+      "id": "catalog.effective_releases",
       "plane": "control",
       "semantic_owner": "catalog-model",
       "migration_owners": ["control-portable-store-installer"],
@@ -538,7 +511,7 @@
       "drift_gate": "SR13:control-portable-live"
     },
     {
-      "id": "catalog.catalog_heads",
+      "id": "catalog.effective_release_heads",
       "plane": "control",
       "semantic_owner": "schema-control",
       "migration_owners": ["control-portable-store-installer"],
@@ -546,6 +519,28 @@
       "writers": ["control-portable-store-installer"],
       "readers": [],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.package_migrations",
+      "plane": "control",
+      "semantic_owner": "schema-control",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": ["control-portable-store-installer", "ctl-promote"],
+      "compatibility_horizon": "immutable-package-history",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.effective_release_packages",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer", "ctl-publish-release"],
+      "readers": ["control-portable-store-installer", "ctl-publish-release"],
+      "compatibility_horizon": "effective-release-history",
       "drift_gate": "SR13:control-portable-live"
     },
     {
@@ -570,8 +565,8 @@
       "semantic_owner": "schema-control",
       "migration_owners": ["control-portable-store-installer"],
       "schema_source": "deploy/sql/control-portable-store.sql",
-      "writers": ["control-portable-store-installer"],
-      "readers": [],
+      "writers": ["control-portable-store-installer", "ctl-push"],
+      "readers": ["ctl-push", "scenario-worker"],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
       "drift_gate": "SR13:control-portable-live"
     },
@@ -620,22 +615,22 @@
       "drift_gate": "SR13:control-portable-live"
     },
     {
-      "id": "catalog.catalogs",
+      "id": "catalog.packages",
       "plane": "project",
-      "semantic_owner": "schema-model",
+      "semantic_owner": "catalog-model",
       "migration_owners": [
         "schema-control"
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
         "schema-control",
-        "ctl-publish",
-        "ctl-migrate"
+        "ctl-apply-package"
       ],
       "readers": [
         "schema-control",
         "ctl-copy",
         "catalog-schema-installer",
+        "ctl-push",
         "ctl-promote",
         "ctl-publish-release"
       ],
@@ -643,7 +638,7 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "catalog.releases",
+      "id": "catalog.effective_releases",
       "plane": "project",
       "semantic_owner": "catalog-model",
       "migration_owners": [
@@ -653,23 +648,23 @@
       "writers": [
         "catalog-schema-installer",
         "schema-control",
-        "ctl-publish",
+        "ctl-publish-release",
+        "ctl-promote",
         "ctl-copy"
       ],
       "readers": [
-        "ctl-publish",
+        "ctl-publish-release",
         "ctl-copy",
         "schema-control",
         "catalog-schema-installer",
-        "ctl-migrate",
         "ctl-promote",
-        "ctl-publish-release"
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:catalog-live"
+      "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "catalog.catalog_heads",
+      "id": "catalog.effective_release_heads",
       "plane": "project",
       "semantic_owner": "schema-control",
       "migration_owners": [
@@ -678,7 +673,7 @@
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
         "schema-control",
-        "ctl-publish",
+        "ctl-promote",
         "ctl-copy"
       ],
       "readers": [
@@ -690,7 +685,7 @@
         "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:catalog-live"
+      "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
       "id": "catalog.connection_requirements",
@@ -701,7 +696,9 @@
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
-        "schema-control"
+        "schema-control",
+        "ctl-push",
+        "ctl-promote"
       ],
       "readers": [
         "schema-control",
@@ -780,7 +777,7 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "catalog.schema_migrations",
+      "id": "catalog.package_migrations",
       "plane": "project",
       "semantic_owner": "schema-control",
       "migration_owners": [
@@ -788,131 +785,34 @@
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
-        "schema-control"
+        "schema-control",
+        "ctl-apply-package"
       ],
       "readers": [
-        "schema-control"
+        "schema-control",
+        "ctl-promote"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "catalog.entities",
+      "id": "catalog.effective_release_packages",
       "plane": "project",
-      "semantic_owner": "schema-model",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/catalog-schema.sql",
-      "writers": [
-        "schema-control"
-      ],
-      "readers": [
-        "schema-control"
-      ],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "catalog.fields",
-      "plane": "project",
-      "semantic_owner": "schema-model",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/catalog-schema.sql",
-      "writers": [
-        "schema-control"
-      ],
-      "readers": [
-        "schema-control"
-      ],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "catalog.relations",
-      "plane": "project",
-      "semantic_owner": "schema-model",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/catalog-schema.sql",
-      "writers": [
-        "schema-control"
-      ],
-      "readers": [
-        "schema-control"
-      ],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "catalog.indexes",
-      "plane": "project",
-      "semantic_owner": "schema-model",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/catalog-schema.sql",
-      "writers": [
-        "schema-control"
-      ],
-      "readers": [
-        "schema-control"
-      ],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "catalog.constraints",
-      "plane": "project",
-      "semantic_owner": "schema-model",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/catalog-schema.sql",
-      "writers": [
-        "schema-control"
-      ],
-      "readers": [
-        "schema-control"
-      ],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "catalog.rls_policies",
-      "plane": "project",
-      "semantic_owner": "schema-compiler",
+      "semantic_owner": "catalog-model",
       "migration_owners": [
         "schema-control"
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
         "schema-control",
-        "ctl-copy"
+        "ctl-publish-release",
+        "ctl-promote"
       ],
       "readers": [
         "schema-control",
-        "ctl-copy"
-      ],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "catalog.seed_datasets",
-      "plane": "project",
-      "semantic_owner": "schema-compiler",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/catalog-schema.sql",
-      "writers": [
-        "schema-control"
-      ],
-      "readers": [
-        "schema-control"
+        "ctl-publish-release",
+        "ctl-promote",
+        "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -926,7 +826,9 @@
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
-        "catalog-schema-installer"
+        "catalog-schema-installer",
+        "ctl-push",
+        "ctl-promote"
       ],
       "readers": [
         "catalog-model",
@@ -995,7 +897,8 @@
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
         "catalog-schema-installer",
-        "catalog-model"
+        "catalog-model",
+        "ctl-promote"
       ],
       "readers": [
         "catalog-model",
@@ -1015,7 +918,8 @@
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
         "catalog-schema-installer",
-        "catalog-model"
+        "catalog-model",
+        "ctl-promote"
       ],
       "readers": [
         "catalog-model",
@@ -1040,10 +944,10 @@
         "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:catalog-live"
+      "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "catalog.release_manifest_v2_snapshots",
+      "id": "catalog.release_manifest_v3_snapshots",
       "plane": "project",
       "semantic_owner": "catalog-model",
       "migration_owners": [
@@ -1060,7 +964,7 @@
         "platform-runtime"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:catalog-live"
+      "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
       "id": "catalog.event_registrations",
@@ -1160,8 +1064,7 @@
       ],
       "schema_source": "deploy/sql/app-schema.sql",
       "writers": [
-        "project-state",
-        "ctl-publish"
+        "project-state"
       ],
       "readers": [
         "project-state"
@@ -1359,33 +1262,13 @@
       ],
       "schema_source": "crates/control/provision/src/sql.rs",
       "writers": [
-        "provision-store",
-        "ctl-publish",
-        "ctl-migrate"
+        "provision-store"
       ],
       "readers": [
         "cdc-reader"
       ],
       "compatibility_horizon": "catalog-migration-and-retained-wal-horizon",
       "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "generated-tenant-entities",
-      "plane": "project",
-      "pattern": "<app_schema>.<catalog_entity_name>",
-      "semantic_owner": "schema-model",
-      "migration_owners": [
-        "schema-compiler"
-      ],
-      "schema_source": "crates/schema/compiler/src/emit.rs",
-      "writers": [
-        "schema-compiler"
-      ],
-      "readers": [
-        "cdc-reader"
-      ],
-      "compatibility_horizon": "one-catalog-version-and-migration-transaction",
-      "drift_gate": "SR13:generate-from-catalog-and-live-apply"
     }
   ]
 }

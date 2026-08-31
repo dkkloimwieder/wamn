@@ -27,12 +27,14 @@ use crate::{RunStatus, sql as run_sql};
 /// lease evidence, the status it validates, the authoritative input it hands
 /// the router, the durability class it gates the rest of the turn on, and the
 /// immutable wiring pair admission froze, plus the existing trigger-source
-/// classification that tells the router whether a caller is waiting. The
-/// release identity a claim records is NOT read here — it comes from the
-/// claiming pod, and the lease grant writes it.
-/// `$1` and `$2` are the host-carried catalog and environment scope; an
-/// executor never leases another scope's FIFO row merely because the tenant
-/// shares a project database.
+/// classification that tells the router whether a caller is waiting, and the
+/// selected row's package id. The effective release identity is already
+/// admission-pinned; the verified manifest digest the claim records comes from
+/// the claiming pod.
+/// `$1` is the exact package-id set in the mounted release and `$2` is the
+/// environment scope. One set-valued predicate preserves the tenant's single
+/// global FIFO; an executor never leases a package outside its release merely
+/// because the tenant shares a project database.
 pub fn select_production_claim_sql() -> String {
     format!(
         "WITH authority AS MATERIALIZED ( \
@@ -47,7 +49,7 @@ pub fn select_production_claim_sql() -> String {
                 AND selected_run.run_id = q.run_id \
               WHERE (SELECT allowed FROM authority) \
                 AND q.tenant_id = current_setting('app.tenant', true) \
-                AND selected_run.catalog_id = $1 \
+                AND selected_run.package_id = ANY($1::text[]) \
                 AND selected_run.environment = $2 \
                 AND q.available_at <= now() \
                 AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
@@ -75,8 +77,8 @@ pub fn select_production_claim_sql() -> String {
                 ) AS router_caller_attached, \
                 COALESCE(r.trigger_source IN ('http','internal','studio'), false) \
                     AS durable_caller_attached, \
-                r.flow_id, r.flow_version, r.catalog_version, \
-                r.wiring_hash, r.binding_world_json::text \
+                r.flow_id, r.flow_version, r.effective_release_id, \
+                r.wiring_hash, r.binding_world_json::text, r.package_id \
            FROM candidate \
            JOIN runs AS r \
              ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",
@@ -126,21 +128,21 @@ pub fn serialize_effect_intent_sql() -> String {
 
 /// Replace the abandoned attempt's run-level state. `$1` is the selected run id.
 ///
-/// `state_json` and the claim-time release record are the only run columns
+/// `state_json` and the claim-time manifest record are the only run columns
 /// changed; immutable ledgers and the already-materialized resolution map are
-/// preserved. The `(release_version, manifest_digest)` pair is projection of
-/// the DEAD attempt, so it joins that replacement set (wamn-0h0g.15.55): this
-/// clears it in the same transaction that re-opens the run, and the grant below
-/// records the reclaiming pod's own identity fresh. Only pre-effect reclaims
-/// reach this statement, so no effect was ever attributed to the pair being
-/// cleared, and the database guard permits the erasure for exactly that reason.
+/// preserved. The manifest digest is projection of the DEAD attempt, so it
+/// joins that replacement set (wamn-0h0g.15.55): this clears it in the same
+/// transaction that re-opens the run, and the grant below records the
+/// reclaiming pod's own manifest fresh. The immutable effective release id is
+/// admission identity and is never cleared. Only pre-effect reclaims reach this
+/// statement, so no effect was ever attributed to the digest being cleared.
 ///
 pub fn clear_pre_effect_state_sql() -> String {
     "WITH authority AS MATERIALIZED ( \
          SELECT require_executor_platform_authority() AS allowed \
      ) \
      UPDATE runs \
-        SET state_json = NULL, release_version = NULL, manifest_digest = NULL \
+        SET state_json = NULL, manifest_digest = NULL \
       WHERE (SELECT allowed FROM authority) \
         AND tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
       RETURNING run_id"
@@ -174,23 +176,19 @@ pub fn advance_claim_attempts_sql() -> String {
         .to_string()
 }
 
-/// Grant a lease and record the claiming pod's release identity on the run.
+/// Grant a lease, verify the claiming release, and record its manifest digest.
 ///
 /// Params: run id, host-injected lease owner, TTL milliseconds, the pod's
-/// release version, the pod's manifest digest. The crash-evidence attempt count
+/// effective release id, the pod's manifest digest. The crash-evidence attempt count
 /// is NOT advanced here — [`advance_claim_attempts_sql`] owns it, outside this
 /// statement's abort scope.
 ///
-/// Runs are never version-pinned: the pair is minted HERE, on the write that
-/// already marks the run running, never at admission and never as a second
-/// statement. It is write-once PER CLAIM ATTEMPT —
-/// `wamn_run.guard_run_admission_pins_immutable` permits a write over NULL and
-/// refuses any differing one — so a re-claim carrying the same release is an
-/// accepted no-op, and a re-claim carrying a DIFFERENT release only succeeds
-/// because the arm that reopened this run's claimability already cleared the
-/// abandoned attempt's pair through [`clear_pre_effect_state_sql`] in this same
-/// transaction on an expired pre-effect reclaim. A pod with no injected release
-/// identity binds NULL for both and records nothing.
+/// The effective release id was pinned at admission. The claim verifies the
+/// pod carries that same release and records only its verified manifest digest
+/// on the write that already marks the run running. The digest is write-once
+/// per claim attempt; a pre-effect reclaim clears only the abandoned digest via
+/// [`clear_pre_effect_state_sql`]. A pod with no injected release identity binds
+/// NULL for both and records no digest.
 /// The status predicate widened from `dispatched` to the two runnable states the
 /// composer already validates, because a re-claim of a `running` row must reach
 /// the record too; `dispatched` still becomes `running` and `running` stays put.
@@ -213,15 +211,16 @@ pub fn grant_production_claim_sql() -> String {
          marked AS ( \
              UPDATE runs AS r \
                 SET status = '{running}', \
-                    release_version = $4, \
                     manifest_digest = $5 \
                FROM leased \
               WHERE r.tenant_id = leased.tenant_id AND r.run_id = leased.run_id \
                 AND r.status IN ('{dispatched}', '{running}') \
+                AND (($4::int IS NULL AND $5::text IS NULL) \
+                     OR (r.effective_release_id = $4 AND $5 IS NOT NULL)) \
               RETURNING r.run_id \
          ) \
          SELECT leased.lease_generation \
-           FROM leased LEFT JOIN marked ON marked.run_id = leased.run_id",
+           FROM leased JOIN marked ON marked.run_id = leased.run_id",
         running = RunStatus::Running.as_sql(),
         dispatched = RunStatus::Dispatched.as_sql(),
     )
@@ -302,9 +301,9 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
 
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
-/// `$1` is the grace period in milliseconds; `$2` and `$3` are the trusted
-/// catalog and environment scope. Effect evidence is deliberately
-/// not read in this statement: the host performs the same fresh-snapshot
+/// `$1` is the grace period in milliseconds; `$2` is the exact package-id set
+/// in the mounted release and `$3` is the environment scope. Effect evidence is
+/// deliberately not read in this statement: the host performs the same fresh-snapshot
 /// classification used by the ordinary production claimant after these locks
 /// are held, so a concurrent committed effect attempt cannot be missed. The
 /// durability class rides the projection for the same reason the claim's does —
@@ -325,7 +324,7 @@ pub fn select_exhausted_production_sql() -> String {
             AND selected_run.run_id = q.run_id \
           WHERE authority.allowed \
             AND q.tenant_id = current_setting('app.tenant', true) \
-            AND selected_run.catalog_id = $2 \
+            AND selected_run.package_id = ANY($2::text[]) \
             AND selected_run.environment = $3 \
                 AND q.lease_expires_at IS NOT NULL \
                 AND q.lease_expires_at \
@@ -478,5 +477,18 @@ mod tests {
     #[test]
     fn dispatcher_wake_scan_is_not_an_executor_operation() {
         assert!(!parked_due_sql(1).contains("require_executor_platform_authority"));
+    }
+
+    #[test]
+    fn production_turns_filter_one_global_fifo_by_the_release_package_set() {
+        let claim = select_production_claim_sql();
+        assert!(claim.contains("selected_run.package_id = ANY($1::text[])"));
+        assert!(claim.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
+        assert_eq!(claim.matches("LIMIT 1").count(), 1);
+
+        let reap = select_exhausted_production_sql();
+        assert!(reap.contains("selected_run.package_id = ANY($2::text[])"));
+        assert!(reap.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
+        assert_eq!(reap.matches("LIMIT 1").count(), 1);
     }
 }

@@ -66,20 +66,26 @@
 //! and this one needs no gate run to make.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{DefinitionHash, WiringDocument, WiringNode, WiringTerminal};
+use wamn_catalog::{
+    AdmittedComponent, ComponentPackageScope, DefinitionHash, WiringDocument, WiringNode,
+    WiringTerminal,
+};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
+use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::author_wiring::{AuthorWiringErrorKind, AuthorWiringRequest, author_wiring};
-use wamn_ctl::publish_catalog::ensure_catalog_storage;
+use wamn_ctl::push_component::admitted_projection_hash;
 
 const TENANT: &str = "gate-report-tenant";
-const CATALOG: &str = "gate-report-catalog";
-const CATALOG_VERSION: i32 = 3;
-const ENVIRONMENT: &str = "prod";
+const PACKAGE: &str = "wamn_receiving";
+const PACKAGE_VERSION: &str = "1.0.0";
 const COMPONENT: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
+const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 
 async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -99,9 +105,9 @@ fn wiring(id: &str, version: u32) -> WiringDocument {
         BTreeMap::from([(
             "node".to_string(),
             WiringNode {
-                component: "http-request".to_string(),
+                component: "receiving_data".to_string(),
                 interface_version: "0.1".to_string(),
-                operation: "call".to_string(),
+                operation: "run".to_string(),
                 params: BTreeMap::new(),
                 terminal: Some(WiringTerminal::Respond),
             },
@@ -113,49 +119,76 @@ fn wiring(id: &str, version: u32) -> WiringDocument {
 }
 
 /// Install the production catalog schema and the facts one wiring gates against.
-async fn provision_project(project: &Client) {
+async fn provision_project(project: &Client, project_url: &str) {
     project
         .batch_execute(
             "DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DO $$ BEGIN \
+             DO $$ DECLARE role_name text; BEGIN \
                PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
-               END IF; \
+               FOREACH role_name IN ARRAY ARRAY['wamn_app', 'wamn_scenario_author'] LOOP \
+                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
+                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+                 END IF; \
+               END LOOP; \
              END $$;",
         )
         .await
         .expect("reset the project catalog schema and prerequisite role");
-    ensure_catalog_storage(project)
+    project
+        .batch_execute(&format!("{CATALOG_SCHEMA_SQL}\n{APP_SCHEMA_SQL}"))
         .await
-        .expect("install the production catalog schema");
+        .expect("install the production package and application schemas");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("ctl crate lives under services/ctl");
+    apply_package::run(ApplyPackageArgs {
+        package: repository.join("packages/receiving"),
+        database_url: project_url.to_string(),
+        tenant: TENANT.to_string(),
+    })
+    .await
+    .expect("apply the real Receiving package");
     project
         .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await
         .expect("scope the project seed session");
-    project
-        .execute(
-            "INSERT INTO catalog.catalogs \
-                   (tenant_id, catalog_id, version, environment, schema_version, state) \
-             VALUES ($1, $2, $3, $4, '0.1', 'applied')",
-            &[&TENANT, &CATALOG, &CATALOG_VERSION, &ENVIRONMENT],
-        )
-        .await
-        .expect("seed the catalog version");
+    let component = AdmittedComponent {
+        scope: ComponentPackageScope {
+            tenant_id: TENANT.to_owned(),
+            package_id: PACKAGE.to_owned(),
+            package_version: PACKAGE_VERSION.to_owned(),
+        },
+        component: "receiving_data".to_owned(),
+        interface_version: "0.1".to_owned(),
+        operation: "run".to_owned(),
+        registered_operation: Some("wamn_receiving@1.0.0::purchase_order.get".to_owned()),
+        component_digest: COMPONENT.to_owned(),
+        imports: Vec::new(),
+        imports_fingerprint: FACT_FINGERPRINT.to_owned(),
+        effects: Vec::new(),
+        input_ports: Vec::new(),
+        output_ports: Vec::new(),
+        parameters: Vec::new(),
+    };
+    let projection_hash =
+        admitted_projection_hash(&component, &[]).expect("hash admitted fixture projection");
     project
         .execute(
             "INSERT INTO catalog.component_library \
-                   (tenant_id, catalog_id, catalog_version, component, interface_version, \
-                    operation, component_digest, imports, imports_fingerprint, effects, \
-                    input_ports, output_ports, parameters) \
-             VALUES ($1, $2, $3, 'http-request', '0.1', 'call', $4, \
-                     '[]'::jsonb, $5, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)",
+                   (tenant_id, package_id, package_version, component, interface_version, \
+                    operation, registered_operation, component_digest, projection_hash, imports, \
+                    imports_fingerprint, effects, input_ports, output_ports, parameters) \
+             VALUES ($1, $2, $3, 'receiving_data', '0.1', 'run', \
+                     'wamn_receiving@1.0.0::purchase_order.get', $4, $5, \
+                     '[]'::jsonb, $6, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)",
             &[
                 &TENANT,
-                &CATALOG,
-                &CATALOG_VERSION,
+                &PACKAGE,
+                &PACKAGE_VERSION,
                 &COMPONENT,
+                &projection_hash,
                 &FACT_FINGERPRINT,
             ],
         )
@@ -241,8 +274,8 @@ async fn author(
         &transaction,
         &AuthorWiringRequest {
             tenant_id: TENANT,
-            catalog_id: CATALOG,
-            gated_catalog_version: CATALOG_VERSION,
+            package_id: PACKAGE,
+            package_version: PACKAGE_VERSION,
             document,
         },
     )
@@ -269,8 +302,8 @@ async fn stored_wirings(project: &Client, wiring_id: &str) -> i64 {
     project
         .query_one(
             "SELECT count(*) FROM catalog.wirings \
-              WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3",
-            &[&TENANT, &CATALOG, &wiring_id],
+              WHERE tenant_id = $1 AND package_id = $2 AND wiring_id = $3",
+            &[&TENANT, &PACKAGE, &wiring_id],
         )
         .await
         .expect("count the authored wiring rows")
@@ -292,7 +325,7 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
         .expect("WAMN_AUTHOR_WIRING_CONTROL_PG_URL names a disposable PostgreSQL 18 database");
     let (mut project, project_task) = connect(&project_url).await;
     let (control, control_task) = connect(&control_url).await;
-    provision_project(&project).await;
+    provision_project(&project, &project_url).await;
     provision_control(&control).await;
 
     // 1. Never gated. The control store holds no row under this hash at all.
@@ -338,8 +371,8 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
     let stored: String = project
         .query_one(
             "SELECT wiring_hash FROM catalog.wirings \
-              WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = 'admitted'",
-            &[&TENANT, &CATALOG],
+              WHERE tenant_id = $1 AND package_id = $2 AND wiring_id = 'admitted'",
+            &[&TENANT, &PACKAGE],
         )
         .await
         .expect("read the authored wiring row")

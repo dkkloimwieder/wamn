@@ -17,7 +17,7 @@ const DIGEST_B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 fn scope(environment: &'static str) -> WiringScope<'static> {
     WiringScope {
         tenant_id: "tenant-a",
-        catalog_id: "catalog-a",
+        package_id: "package_a",
         environment,
     }
 }
@@ -138,12 +138,12 @@ fn lower<'a>(
     lower_active_wiring(
         GatedActiveWiring {
             scope: scope("prod"),
-            gated_catalog_version: 7,
+            package_version: "1.0.0",
             document,
         },
         ScopedWiringOperationFacts {
             scope: scope("prod"),
-            catalog_version: 7,
+            package_version: "1.0.0",
             operations,
         },
     )
@@ -395,12 +395,12 @@ fn parameter_and_scope_facts_cannot_drift_one_side_of_the_boundary() {
     let environment_drift = lower_active_wiring(
         GatedActiveWiring {
             scope: scope("prod"),
-            gated_catalog_version: 7,
+            package_version: "1.0.0",
             document: &document,
         },
         ScopedWiringOperationFacts {
             scope: scope("stage"),
-            catalog_version: 7,
+            package_version: "1.0.0",
             operations: &operations,
         },
     )
@@ -413,18 +413,18 @@ fn parameter_and_scope_facts_cannot_drift_one_side_of_the_boundary() {
     let version_drift = lower_active_wiring(
         GatedActiveWiring {
             scope: scope("prod"),
-            gated_catalog_version: 7,
+            package_version: "1.0.0",
             document: &document,
         },
         ScopedWiringOperationFacts {
             scope: scope("prod"),
-            catalog_version: 8,
+            package_version: "2.0.0",
             operations: &operations,
         },
     )
     .unwrap_err();
     assert_eq!(
         version_drift.kind(),
-        WiringLoweringErrorKind::CatalogVersionMismatch
+        WiringLoweringErrorKind::PackageVersionMismatch
     );
 }

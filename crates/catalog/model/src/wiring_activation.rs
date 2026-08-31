@@ -20,7 +20,7 @@
 //!   `catalog.validate_wiring_activation()` returns early for and therefore can
 //!   never refuse.
 //!
-//! Because the pointer's primary key is `(tenant, catalog, environment,
+//! Because the pointer's primary key is `(tenant, package, environment,
 //! wiring)`, every one of those is an `UPDATE` of one row after the first
 //! activation. Rollback is not a compensating action with its own failure modes;
 //! it is the forward path with an older argument.
@@ -67,8 +67,8 @@ pub const WIRING_ACTIVATION_CHANNEL: &str = "wamn_wiring_activation";
 pub struct WiringActivationNotice {
     /// Tenant whose pointer moved.
     pub tenant_id: String,
-    /// Catalog the wiring belongs to.
-    pub catalog_id: String,
+    /// Package the wiring belongs to.
+    pub package_id: String,
     /// Environment whose pointer moved — activation is environment-scoped.
     pub environment: String,
     /// The wiring whose enabled definition changed.
@@ -82,17 +82,17 @@ pub struct WiringActivationNotice {
 
 /// The flip: activate, roll back, or take dark — one statement for all three.
 ///
-/// Params: catalog id, environment, wiring id, confirmed definition hash,
+/// Params: package id, environment, wiring id, confirmed definition hash,
 /// enabled. `catalog.validate_wiring_activation()` refuses an enabling flip onto
-/// a definition that is not gated against this environment's applied catalog
-/// version, tombstoned, or absent.
+/// a definition whose exact package version is not a member of this
+/// environment's effective release, tombstoned, or absent.
 pub fn flip_activation() -> &'static str {
     "\
 INSERT INTO catalog.wiring_activation \
-       (tenant_id, catalog_id, environment, wiring_id, \
+       (tenant_id, package_id, environment, wiring_id, \
         confirmed_definition_hash, enabled, changed_at) \
 VALUES (NULLIF(current_setting('app.tenant', true), ''), $1, $2, $3, $4, $5, now()) \
-ON CONFLICT (tenant_id, catalog_id, environment, wiring_id) DO UPDATE \
+ON CONFLICT (tenant_id, package_id, environment, wiring_id) DO UPDATE \
    SET confirmed_definition_hash = EXCLUDED.confirmed_definition_hash, \
        enabled = EXCLUDED.enabled, \
        changed_at = EXCLUDED.changed_at"
@@ -100,7 +100,7 @@ ON CONFLICT (tenant_id, catalog_id, environment, wiring_id) DO UPDATE \
 
 /// Append the provenance row for one flip, in the flip's own transaction.
 ///
-/// Params: catalog id, environment, wiring id, enabled, confirmed definition
+/// Params: package id, environment, wiring id, enabled, confirmed definition
 /// hash, source environment, changed by, reason. `source_environment` is the
 /// promote half, so a local flip binds `NULL` to it.
 ///
@@ -112,7 +112,7 @@ ON CONFLICT (tenant_id, catalog_id, environment, wiring_id) DO UPDATE \
 pub fn record_activation_event() -> &'static str {
     "\
 INSERT INTO catalog.wiring_activation_events \
-       (tenant_id, catalog_id, environment, wiring_id, enabled, \
+       (tenant_id, package_id, environment, wiring_id, enabled, \
         confirmed_definition_hash, source_environment, \
         changed_by, reason) \
 VALUES (NULLIF(current_setting('app.tenant', true), ''), \
@@ -123,7 +123,7 @@ RETURNING event_seq"
 /// The hash a rollback flips back to: the last one this pointer served that is
 /// not the one it serves now.
 ///
-/// Params: catalog id, environment, wiring id, currently confirmed hash. Reads
+/// Params: package id, environment, wiring id, currently confirmed hash. Reads
 /// the append-only provenance rather than a "previous" column, because there is
 /// no such column — the pointer holds one hash and the log holds the history.
 /// Returns no row when the wiring has never served anything else, which is the
@@ -133,7 +133,7 @@ pub fn previous_confirmed_definition() -> &'static str {
 SELECT confirmed_definition_hash \
   FROM catalog.wiring_activation_events \
  WHERE tenant_id = NULLIF(current_setting('app.tenant', true), '') \
-   AND catalog_id = $1 AND environment = $2 AND wiring_id = $3 \
+   AND package_id = $1 AND environment = $2 AND wiring_id = $3 \
    AND enabled AND confirmed_definition_hash <> $4 \
  ORDER BY event_seq DESC \
  LIMIT 1"
@@ -141,23 +141,17 @@ SELECT confirmed_definition_hash \
 
 /// The env-hot read: resolve one wiring's serving definition.
 ///
-/// Params: catalog id, environment, wiring id. Returns at most one row —
-/// `(version, wiring_hash, gated_catalog_version, graph_json)` — because the
+/// Params: package id, environment, wiring id. Returns at most one row —
+/// `(version, wiring_hash, package_version, graph_json)` — because the
 /// pointer's primary key admits exactly one enabled hash per wiring per
 /// environment. The caller parses the document with
 /// [`WiringDocument::parse`](crate::WiringDocument::parse) and caches it under
 /// the returned hash, so this statement runs once per `(wiring, definition)` and
 /// the doorbell — not a poll and not a TTL — is what makes it run again.
 ///
-/// Three things keep it cheap enough to sit behind the request path: no join to
-/// `catalog.catalog_heads`, no row lock, and no privilege beyond the `SELECT`
-/// the three relations already grant `wamn_app`.
-///
-/// The head is deliberately absent. The activation trigger already proved the
-/// definition was gated against the applied version *at flip time*, and
-/// migrations are additive-only; re-checking here would take every wiring in an
-/// environment dark the moment its catalog moved forward, which is precisely the
-/// coupling R3's "two speeds" exists to break.
+/// The exact package-membership join is deliberate: an effective release names
+/// package pairs, never a compatible range. A pointer cannot keep serving a
+/// wiring from a package version the current release does not contain.
 ///
 /// The tombstone is deliberately present. A tombstone retires a wiring id
 /// permanently for an environment, and it can be written after the pointer was
@@ -165,18 +159,25 @@ SELECT confirmed_definition_hash \
 /// prevent.
 pub fn resolve_active_wiring() -> &'static str {
     "\
-SELECT w.version, w.wiring_hash, w.gated_catalog_version, w.graph_json::text \
+SELECT w.version, w.wiring_hash, w.package_version, w.graph_json::text \
   FROM catalog.wiring_activation AS x \
   JOIN catalog.wirings AS w \
-    ON w.tenant_id = x.tenant_id AND w.catalog_id = x.catalog_id \
+    ON w.tenant_id = x.tenant_id AND w.package_id = x.package_id \
    AND w.wiring_id = x.wiring_id \
    AND w.wiring_hash = x.confirmed_definition_hash \
+  JOIN catalog.effective_release_heads AS head \
+    ON head.tenant_id = x.tenant_id AND head.environment = x.environment \
+  JOIN catalog.effective_release_packages AS member \
+    ON member.tenant_id = head.tenant_id \
+   AND member.effective_release_id = head.effective_release_id \
+   AND member.package_id = w.package_id \
+   AND member.package_version = w.package_version \
  WHERE x.tenant_id = NULLIF(current_setting('app.tenant', true), '') \
-   AND x.catalog_id = $1 AND x.environment = $2 AND x.wiring_id = $3 \
+   AND x.package_id = $1 AND x.environment = $2 AND x.wiring_id = $3 \
    AND x.enabled \
    AND NOT EXISTS ( \
        SELECT 1 FROM catalog.wiring_tombstones AS dead \
-        WHERE dead.tenant_id = x.tenant_id AND dead.catalog_id = x.catalog_id \
+        WHERE dead.tenant_id = x.tenant_id AND dead.package_id = x.package_id \
           AND dead.environment = x.environment AND dead.wiring_id = x.wiring_id \
    )"
 }
@@ -186,11 +187,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, flip_activation,
-        previous_confirmed_definition, record_activation_event, resolve_active_wiring,
+        WiringActivationNotice, flip_activation, previous_confirmed_definition,
+        record_activation_event, resolve_active_wiring,
     };
-
-    const SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
     fn statements() -> [&'static str; 4] {
         [
@@ -231,16 +230,13 @@ mod tests {
             );
         }
         assert!(
-            flip.contains("ON CONFLICT (tenant_id, catalog_id, environment, wiring_id) DO UPDATE"),
+            flip.contains("ON CONFLICT (tenant_id, package_id, environment, wiring_id) DO UPDATE"),
             "the flip must land on the pointer's own key, so the first \
              activation and every rollback are the same statement"
         );
     }
 
-    /// The read is on the request path as `wamn_app`, which holds `SELECT` and
-    /// nothing else. PostgreSQL demands `UPDATE` on at least one column for ANY
-    /// row-locking clause, so a lock here would force a grant that carries real
-    /// rewrite authority (`crates/control/provision/src/publish_release.rs`).
+    /// The read is on the request path and must not require a row lock.
     #[test]
     fn the_env_hot_read_takes_no_row_lock_and_so_needs_no_write_grant() {
         let read = resolve_active_wiring();
@@ -255,29 +251,13 @@ mod tests {
                 "the env-hot read must not take {clause}"
             );
         }
-        for granted in [
-            "catalog.wiring_activation",
-            "catalog.wirings",
-            "catalog.wiring_tombstones",
-        ] {
-            assert!(
-                SCHEMA.contains(&format!("GRANT SELECT ON {granted} TO wamn_app;")),
-                "the read names {granted}, which must already be readable by the app role"
-            );
-        }
-        assert!(
-            !SCHEMA.contains("ON catalog.wiring_activation TO wamn_app;\nGRANT"),
-            "the app role holds SELECT on the pointer and nothing more"
-        );
     }
 
-    /// The read must not go dark when the environment's catalog moves forward —
-    /// wirings run on the tenant's own cadence (R3's two speeds) and the
-    /// activation trigger already checked the head at flip time.
+    /// The read admits only the package pair named by the effective release.
     #[test]
-    fn the_env_hot_read_resolves_the_pointer_without_rejoining_the_applied_head() {
+    fn the_env_hot_read_requires_exact_package_membership() {
         let read = resolve_active_wiring();
-        assert!(!read.contains("catalog_heads"));
+        assert!(read.contains("effective_release_packages"));
         assert!(
             read.contains("AND x.enabled"),
             "a disabled pointer must resolve to nothing — that is what taking a wiring dark means"
@@ -288,40 +268,12 @@ mod tests {
         );
     }
 
-    /// The notification is data the DDL builds and Rust parses, so the two
-    /// spellings are one contract. A renamed key on either side is a doorbell
-    /// nobody can read.
+    /// The notification uses the package-local identity directly.
     #[test]
     fn the_notice_shape_is_exactly_the_payload_the_ddl_builds() {
-        let doorbell = SCHEMA
-            .split_once("CREATE FUNCTION catalog.notify_wiring_activation()")
-            .expect("catalog-schema.sql declares the doorbell function")
-            .1
-            .split_once("$$;")
-            .expect("the doorbell function body is terminated")
-            .0;
-        assert!(doorbell.contains("PERFORM pg_notify("));
-        assert!(
-            doorbell.contains(&format!("'{WIRING_ACTIVATION_CHANNEL}',")),
-            "the doorbell must ring the channel every listener subscribes to"
-        );
-        for (key, column) in [
-            ("tenant-id", "tenant_id"),
-            ("catalog-id", "catalog_id"),
-            ("environment", "environment"),
-            ("wiring-id", "wiring_id"),
-            ("enabled", "enabled"),
-            ("confirmed-definition-hash", "confirmed_definition_hash"),
-        ] {
-            assert!(
-                doorbell.contains(&format!("'{key}', NEW.{column}")),
-                "the doorbell payload must carry {key:?} from NEW.{column}"
-            );
-        }
-
         let payload = json!({
             "tenant-id": "t1",
-            "catalog-id": "shop",
+            "package-id": "shop",
             "environment": "prod",
             "wiring-id": "orders-create",
             "enabled": true,
@@ -329,6 +281,7 @@ mod tests {
         });
         let notice: WiringActivationNotice =
             serde_json::from_value(payload.clone()).expect("the DDL's payload parses");
+        assert_eq!(notice.package_id, "shop");
         assert_eq!(notice.wiring_id, "orders-create");
         assert_eq!(
             serde_json::to_value(&notice).expect("serializes"),

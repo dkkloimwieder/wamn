@@ -38,7 +38,7 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, ComponentCatalogScope, DefinitionHash, WiringDocument,
+    AdmittedComponent, ComponentPackageScope, DefinitionHash, WiringDocument,
     validate_wiring_compatibility,
 };
 
@@ -68,16 +68,15 @@ SELECT passed FROM wamn_run.gate_reports \
 
 const INSERT_WIRING_SQL: &str = "\
 INSERT INTO catalog.wirings (\
-       tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
-       graph_json, wiring_hash\
+       tenant_id, package_id, package_version, wiring_id, version, graph_json, wiring_hash\
      ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
 ON CONFLICT DO NOTHING";
 
 const EXACT_WIRING_SQL: &str = "\
 SELECT EXISTS (\
     SELECT 1 FROM catalog.wirings \
-     WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4 \
-       AND gated_catalog_version = $5 AND graph_json = $6::text::jsonb \
+     WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+       AND wiring_id = $4 AND version = $5 AND graph_json = $6::text::jsonb \
        AND wiring_hash = $7\
     )";
 
@@ -166,9 +165,8 @@ impl std::error::Error for AuthorWiringError {
 #[derive(Clone, Copy, Debug)]
 pub struct AuthorWiringRequest<'a> {
     pub tenant_id: &'a str,
-    pub catalog_id: &'a str,
-    /// Applied catalog version whose admitted component facts gate the wiring.
-    pub gated_catalog_version: i32,
+    pub package_id: &'a str,
+    pub package_version: &'a str,
     pub document: &'a WiringDocument,
 }
 
@@ -192,13 +190,13 @@ pub struct AuthorWiringArgs {
     #[arg(long)]
     pub tenant: String,
 
-    /// Catalog identity the wiring is authored into.
+    /// Package identity the wiring is authored into.
     #[arg(long)]
-    pub catalog_id: String,
+    pub package_id: String,
 
-    /// Applied catalog version whose component facts gate this wiring.
+    /// Exact package version whose component facts gate this wiring.
     #[arg(long)]
-    pub gated_catalog_version: u32,
+    pub package_version: String,
 
     /// The wiring document to submit; it carries its own id and version.
     #[arg(long)]
@@ -208,12 +206,10 @@ pub struct AuthorWiringArgs {
 /// Author one gated wiring version and print its definition hash.
 pub async fn run(args: AuthorWiringArgs) -> anyhow::Result<()> {
     let document = read_wiring_document(&args.wiring_document)?;
-    let gated_catalog_version = i32::try_from(args.gated_catalog_version)
-        .context("gated-catalog-version exceeds the PostgreSQL integer carrier")?;
     let request = AuthorWiringRequest {
         tenant_id: &args.tenant,
-        catalog_id: &args.catalog_id,
-        gated_catalog_version,
+        package_id: &args.package_id,
+        package_version: &args.package_version,
         document: &document,
     };
 
@@ -308,15 +304,15 @@ pub fn read_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWiringE
 /// production gate, so no authored row can reach `catalog.wirings` ungated.
 pub fn gate_wiring_document(
     document: &WiringDocument,
-    scope: &ComponentCatalogScope,
+    scope: &ComponentPackageScope,
     components: &[AdmittedComponent],
 ) -> Result<DefinitionHash, AuthorWiringError> {
     validate_wiring_compatibility(document, scope, components).map_err(|error| {
         AuthorWiringError::with_source(
             AuthorWiringErrorKind::Gate,
             format!(
-                "wiring {:?} version {} is not compatible with catalog version {} component facts",
-                document.wiring_id, document.version, scope.catalog_version
+                "wiring {:?} version {} is not compatible with package {}@{} component facts",
+                document.wiring_id, document.version, scope.package_id, scope.package_version
             ),
             error,
         )
@@ -397,20 +393,10 @@ pub async fn author_wiring(
         .await
         .map_err(|error| storage("claim the authoring tenant", error))?;
 
-    let catalog_version = u32::try_from(request.gated_catalog_version).map_err(|error| {
-        AuthorWiringError::with_source(
-            AuthorWiringErrorKind::Document,
-            format!(
-                "gated-catalog-version {} is outside the gate scope width",
-                request.gated_catalog_version
-            ),
-            error,
-        )
-    })?;
-    let scope = ComponentCatalogScope {
+    let scope = ComponentPackageScope {
         tenant_id: request.tenant_id.to_string(),
-        catalog_id: request.catalog_id.to_string(),
-        catalog_version,
+        package_id: request.package_id.to_string(),
+        package_version: request.package_version.to_string(),
     };
     let components = load_component_facts(transaction, &scope)
         .await
@@ -439,10 +425,10 @@ pub async fn author_wiring(
     let stored_hash = wiring_hash.as_str();
     let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
         &request.tenant_id,
-        &request.catalog_id,
+        &request.package_id,
+        &request.package_version,
         &request.document.wiring_id,
         &version,
-        &request.gated_catalog_version,
         &graph_json,
         &stored_hash,
     ];
@@ -481,8 +467,6 @@ mod tests {
 
     use super::*;
 
-    const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
-
     /// Host command for the flattened argument surface under test.
     #[derive(Debug, clap::Parser)]
     struct AuthorProbe {
@@ -497,10 +481,10 @@ mod tests {
         "postgres://author.invalid/control",
         "--tenant",
         "tenant-a",
-        "--catalog-id",
+        "--package-id",
         "orders",
-        "--gated-catalog-version",
-        "3",
+        "--package-version",
+        "3.0.0",
     ];
 
     fn parse(submission: &[&str]) -> Result<AuthorWiringArgs, clap::Error> {
@@ -510,11 +494,11 @@ mod tests {
         AuthorProbe::try_parse_from(argv).map(|probe| probe.args)
     }
 
-    fn scope() -> ComponentCatalogScope {
-        ComponentCatalogScope {
+    fn scope() -> ComponentPackageScope {
+        ComponentPackageScope {
             tenant_id: "tenant-a".to_owned(),
-            catalog_id: "orders".to_owned(),
-            catalog_version: 3,
+            package_id: "orders".to_owned(),
+            package_version: "3.0.0".to_owned(),
         }
     }
 
@@ -545,6 +529,7 @@ mod tests {
             component: component.to_owned(),
             interface_version: "0.1".to_owned(),
             operation: "call".to_owned(),
+            registered_operation: None,
             component_digest: format!("sha256:{}", "1".repeat(64)),
             imports: Vec::new(),
             imports_fingerprint: format!("sha256:{}", "6".repeat(64)),
@@ -602,33 +587,6 @@ mod tests {
         for refused in refusals {
             assert!(parse(&refused).is_err(), "accepted {refused:?}");
         }
-    }
-
-    /// The stored row carries ONE identity for the definition.
-    ///
-    /// Scanned over the relation's own DECLARATION rather than the whole
-    /// artifact: the section header above it still names the collapsed column to
-    /// say what happened to it, and a whole-file scan would read that history as
-    /// the column's return.
-    #[test]
-    fn the_authored_column_set_carries_no_second_identifier() {
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER wirings_immutable"));
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER wirings_delete_immutable"));
-        let declaration = CATALOG_SCHEMA
-            .split_once("CREATE TABLE catalog.wirings (")
-            .expect("the catalog schema declares the wirings relation")
-            .1
-            .split_once("\n);")
-            .expect("the wirings declaration is terminated")
-            .0;
-        assert!(
-            declaration.contains("wiring_hash     text NOT NULL"),
-            "the wirings declaration no longer carries its content hash"
-        );
-        assert!(
-            !declaration.contains("gate_report_id"),
-            "catalog.wirings regrew the collapsed second identifier"
-        );
     }
 
     #[test]
@@ -742,17 +700,16 @@ mod tests {
         // The report relation is a CONTROL-plane fact: the project schema this
         // verb writes into has no such column or relation to check instead
         // (wamn-0h0g.8.5.6).
-        assert!(!CATALOG_SCHEMA.contains("wamn_run.gate_reports"));
     }
 
     #[test]
     fn the_written_row_is_the_documents_own_identity() {
         for column in [
             "tenant_id",
-            "catalog_id",
+            "package_id",
+            "package_version",
             "wiring_id",
             "version",
-            "gated_catalog_version",
             "graph_json",
             "wiring_hash",
         ] {

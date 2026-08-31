@@ -71,7 +71,7 @@ impl Drop for ScratchCredential {
 
 #[test]
 fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
-    let bytes = br#"{"format-version":2}"#;
+    let bytes = br#"{"format-version":3}"#;
     let (layer, _, manifest) = release_manifest_artifact_layout(bytes);
     let digest = layer.sha256_digest();
 
@@ -106,11 +106,11 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
 
 #[test]
 fn pulled_bytes_load_through_the_weld_naming_their_carrier() {
-    let canonical = br#"{"attachments":{},"components":[],"format-version":2,"registrations":{},"release":{"catalog-id":"cat","catalog-version":7,"environment":"prod","tenant-id":"t1"},"wirings":[]}"#;
+    let canonical = br#"{"attachments":{},"components":[],"format-version":3,"registrations":{},"release":{"effective-release-id":7,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"wirings":[]}"#;
 
     let weld = ReleaseManifestWeld::load_canonical_bytes(canonical, ARTIFACT_BASE)
         .expect("verified canonical bytes load without a mount");
-    assert_eq!(weld.release().release_version, 7);
+    assert_eq!(weld.release().effective_release_id, 7);
     assert_eq!(
         weld.release().manifest_digest.as_str(),
         component_digest(canonical)
@@ -209,12 +209,12 @@ async fn a_published_release_pulls_back_byte_exact_and_welds_the_release_it_name
         "WAMN_RELEASE_MANIFEST_DIGEST",
         "the published manifest digest, sha256:<64 lowercase hex>",
     );
-    let release_version: i32 = live_env(
-        "WAMN_RELEASE_MANIFEST_RELEASE_VERSION",
-        "the catalog version the mint froze into that manifest",
+    let effective_release_id: i32 = live_env(
+        "WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID",
+        "the environment-local effective release id the mint froze into that manifest",
     )
     .parse()
-    .expect("WAMN_RELEASE_MANIFEST_RELEASE_VERSION is an i32");
+    .expect("WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID is an i32");
 
     // The exact pair of calls both service `load_release` functions make, in
     // that order and with that spelling. This proves the mechanism where it
@@ -242,9 +242,9 @@ async fn a_published_release_pulls_back_byte_exact_and_welds_the_release_it_name
     // make, made here against a third party that stored the bytes.
     assert_eq!(weld.release().manifest_digest.as_str(), manifest_digest);
     assert_eq!(
-        weld.release().release_version,
-        release_version,
-        "the narrowed release version must be the catalog version the mint froze"
+        weld.release().effective_release_id,
+        effective_release_id,
+        "the carried effective release id must be the identity the mint froze"
     );
     // Nothing was dropped on the way through the parse: the welded document
     // re-encodes to the exact bytes the registry served.
@@ -370,7 +370,7 @@ fn source_for(registry: &LyingRegistry, credential: &ScratchCredential) -> Relea
 
 #[tokio::test]
 async fn a_conforming_stub_returns_the_exact_published_bytes() {
-    let canonical = br#"{"format-version":2}"#;
+    let canonical = br#"{"format-version":3}"#;
     let (digest, wire) = published_artifact(canonical);
 
     let registry = lying_registry(
@@ -391,7 +391,7 @@ async fn a_conforming_stub_returns_the_exact_published_bytes() {
 
 #[tokio::test]
 async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
-    let canonical = br#"{"format-version":2}"#;
+    let canonical = br#"{"format-version":3}"#;
     let (digest, mut wire) = published_artifact(canonical);
     // The layer digest still names the exact bytes served, so the layout check
     // and `oci-client`'s own digest verification both pass. Only the declared
@@ -437,7 +437,7 @@ async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
 /// `release_manifest_source::tests::a_body_the_named_digest_does_not_address_refuses_as_a_digest_mismatch`.
 #[tokio::test]
 async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
-    let canonical = br#"{"format-version":2}"#;
+    let canonical = br#"{"format-version":3}"#;
     let (digest, wire) = published_artifact(canonical);
     // Same length, different content, so the size check cannot be what fires.
     let mut lied = canonical.to_vec();

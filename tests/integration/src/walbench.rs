@@ -9,8 +9,7 @@
 //! WAL (the instrument self-check), and the op counts are exact. Pure
 //! host-side (raw `tokio_postgres`, no wasm): WAL is a Postgres mechanism. It
 //! provisions a fresh ephemeral schema (`wamn_walbench`) through the
-//! superuser and applies the REAL 3.2 tenant floor (`Migration::create`) for
-//! the retained receiving catalog, so the baseline's
+//! superuser and applies the explicit measurement-table floor, so the baseline's
 //! schema matches the `FOR TABLES IN SCHEMA app` publication l5i9.14 measures
 //! the delta against (app-schema WAL only; the run-plane is context, not the
 //! denominator).
@@ -40,6 +39,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::measurement_schema;
 use anyhow::{Context as _, bail, ensure};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
@@ -48,16 +48,11 @@ use wamn_control_provision::{
     workload_generation_role,
 };
 use wamn_gate_harness::{check, emit_csv, percentile};
-use wamn_schema_compiler::Migration;
 
 const SCHEMA: &str = "wamn_walbench";
 const TENANT: &str = "walbench-tenant";
 const APP_GENERATION_PASSWORD: &str = "walbench-app-generation-0123456789abcdef0123456789abcdef";
 const APP_GENERATION_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
-/// The retained receiving catalog. `include_str!` bakes it into the binary at
-/// compile time, so no runtime file dependency remains.
-const CATALOG_JSON: &str =
-    include_str!("../../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json");
 
 struct PreparedAppGeneration {
     database: String,
@@ -150,14 +145,8 @@ pub(crate) fn wide_blob(seed: usize, size: usize) -> String {
     s
 }
 
-fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
-    wamn_schema_model::Catalog::from_json(CATALOG_JSON)
-        .map_err(|e| anyhow::anyhow!("poc-receiving catalog parse: {e}"))
-}
-
-/// Drop-and-recreate the ephemeral schema and apply the REAL 3.2 floor for the
-/// poc-receiving catalog (under `search_path` so the unqualified generated DDL
-/// lands here). No publication, no slot, no trigger — this IS the pre-CDC env.
+/// Drop and recreate the explicit measurement schema. No publication, slot, or
+/// trigger is installed: this is the pre-CDC denominator.
 async fn provision(admin_url: &str) -> anyhow::Result<PreparedAppGeneration> {
     let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
         .await
@@ -204,14 +193,10 @@ async fn provision(admin_url: &str) -> anyhow::Result<PreparedAppGeneration> {
             ))
             .await
             .context("create ephemeral schema")?;
-        let floor = Migration::create(&catalog()?)
-            .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-            .sql()
-            .map_err(|e| anyhow::anyhow!("floor sql: {e}"))?;
         client
-            .batch_execute(&format!("SET search_path TO {SCHEMA}; {floor}"))
+            .batch_execute(&measurement_schema::floor_sql(SCHEMA))
             .await
-            .context("apply the 3.2 floor")?;
+            .context("apply the measurement-table floor")?;
         anyhow::Ok(PreparedAppGeneration {
             database,
             role: app_role,
@@ -999,31 +984,6 @@ mod tests {
         assert!(
             max_share < 0.05,
             "no byte should dominate (got {max_share})"
-        );
-    }
-
-    #[test]
-    fn poc_catalog_parses_and_compiles_the_floor() {
-        let cat = catalog().expect("poc-receiving catalog parses");
-        let floor = Migration::create(&cat).unwrap().sql().unwrap();
-        // The representative app tables the baseline writes.
-        for t in [
-            "suppliers",
-            "users",
-            "receipts",
-            "receipt_lines",
-            "quality_holds",
-            "dispositions",
-        ] {
-            assert!(
-                floor.contains(&format!("CREATE TABLE \"{t}\"")),
-                "floor creates {t}"
-            );
-        }
-        // No outbox / trigger in this floor — pre-CDC, app tables only.
-        assert!(
-            !floor.to_lowercase().contains("trigger"),
-            "no trigger in the pre-CDC floor"
         );
     }
 }

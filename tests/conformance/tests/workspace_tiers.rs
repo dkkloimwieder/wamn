@@ -18,7 +18,7 @@ const COMPONENT_WORKSPACES: [(&str, &str); 2] = [
 const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
-const ROOT_DEFAULT_MEMBER_PATHS: [&str; 16] = [
+const ROOT_DEFAULT_MEMBER_PATHS: [&str; 15] = [
     "crates/authoring/model",
     "crates/catalog/model",
     "crates/execution/contract",
@@ -31,7 +31,6 @@ const ROOT_DEFAULT_MEMBER_PATHS: [&str; 16] = [
     "crates/platform/pg-core",
     "crates/platform/runtime",
     "crates/scenarios/model",
-    "crates/schema/model",
     "services/executor",
     "services/host",
     "services/scenario-worker",

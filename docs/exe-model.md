@@ -114,10 +114,11 @@ pooler trigger, not an alternative identity model.
 
 ## Release, promotion and observability
 
-- A release closes over catalog version, component/interface digests, bindings
-  and wirings. Promotion applies additive schema, pulls missing digests, verifies
-  target bindings, re-gates wirings and flips pointers. Failure is resumable; no
-  deployment saga is introduced.
+- A release closes over exact `(package_id, package_version)` memberships,
+  component/interface digests, bindings and wirings. `apply-package` is the sole
+  migration applier. Promotion verifies target package manifests and ordered
+  migration ledgers, copies verified component/wiring facts, re-gates wirings
+  and flips pointers. Failure is resumable; no deployment saga is introduced.
 - Registration identity is immutable release content. Hot operational state uses
   pointer-flipped activation; it does not mutate a manifest digest.
 - OTel carries trace context, one span per component invocation/effect, and

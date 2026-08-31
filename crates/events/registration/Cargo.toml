@@ -6,10 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# A registration resolves against the canonical catalog (3.1) — by entity ID,
-# the rename-proof key (EVT-OIDMAP) — and reuses its Issue/Severity validation
-# shape.
-wamn-schema-model = { workspace = true }
 # The op set is the same Op the CDC envelope carries, so a registration's ops
 # and the wire's `<op>` segment can never drift.
 wamn-event-wire = { workspace = true }

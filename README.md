@@ -19,8 +19,8 @@ pinned in one place: `workspace.dependencies.wash-runtime.rev` in the root
 services/               native deployable Rust services
   host                  production host: washlet embedding + host plugins
                         (wamn:postgres, logging, jetstream) — washlet only (SR9)
-  ctl                   one-shot control-plane verbs (provision-*, publish/
-                        migrate-catalog, dump/restore/copy-project-env,
+  ctl                   one-shot control-plane verbs (provision-*, apply-package,
+                        publish-release, dump/restore/copy-project-env,
                         enable-cdc-project-env) — SR9 split
   dispatcher            shared trigger dispatcher service (SR9 split)
   executor              production router executor service; emits the stable
@@ -40,9 +40,7 @@ crates/                 shared Rust workspace packages
   data/
     api                 wamn-api: HTTP/event-registration adapter
   schema/
-    model               wamn-schema-model: metadata model + JSON Schema
-    compiler            wamn-schema-compiler: DDL, RLS, and seed compilation
-    control             wamn-schema-control: lifecycle, migration, and impact
+    control             wamn-schema-control: package migration and runtime storage
     generator           wamn-schema-generator: package contracts and projections
     introspection       wamn-schema-introspection: migration policy + catalog IR
   execution/
@@ -138,7 +136,7 @@ cargo test                       # a specific crate: cargo test -p wamn-router
 
 # lint + format
 # --workspace is required: without it Cargo selects default-members only, which
-# is 16 of the 36 workspace crates. --keep-going is required because Cargo stops
+# is 15 of the 34 workspace crates. --keep-going is required because Cargo stops
 # scheduling new units at the first error, hiding every later package's lints.
 cargo clippy --workspace --all-targets --keep-going && cargo fmt --all --check
 ```

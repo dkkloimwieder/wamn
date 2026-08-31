@@ -245,26 +245,26 @@ fn run_state_sql_matches_the_model() {
     // RIDER 1 of the ruling: an unnamed column's transition arm silently never
     // fires, so the column-scoped trigger MUST name the class.
     assert!(sql.contains(
-        "BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment,\n                 capture_mode, durability_class, wiring_id, wiring_version,\n                 wiring_hash, binding_world_json,\n                 release_version, manifest_digest"
+        "BEFORE UPDATE OF flow_id, flow_version, package_id, effective_release_id, environment,\n                 capture_mode, durability_class, wiring_id, wiring_version,\n                 wiring_hash, binding_world_json, manifest_digest"
     ));
-    // The claim-time release record: NULL at admission, written by the claiming
-    // worker, and cleared again by EVERY arm that reopens claimability — the
-    // classifier's pre-effect reclaim and the queue park (wamn-0h0g.15.82). The
-    // guard is transition-constrained rather than write-once — NULL -> value and
-    // value -> NULL are permitted, value -> value' never is (wamn-0h0g.15.55).
-    assert!(sql.contains("    release_version int,"));
+    // The effective release is pinned at admission. The claim records only the
+    // verified manifest digest, and every arm that reopens claimability clears
+    // that digest — the classifier's pre-effect reclaim and the queue park
+    // (wamn-0h0g.15.82). The guard is transition-constrained rather than
+    // write-once: NULL -> value and value -> NULL are permitted, while value ->
+    // value' never is (wamn-0h0g.15.55).
+    assert!(sql.contains("    effective_release_id int NOT NULL,"));
+    assert!(!sql.contains("    release_version int,"));
     assert!(sql.contains("    manifest_digest text,"));
     assert!(sql.contains("CONSTRAINT runs_release_record_check"));
     assert!(sql.contains(
-        "IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN"
+        "IF OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.manifest_digest IS NULL THEN"
     ));
     // The erasure arm cannot name its caller, so it proves nothing references
-    // the pair being erased: still runnable and no effect attempt.
+    // the digest being erased: still runnable and no effect attempt.
     assert!(sql.contains("IF NEW.status NOT IN ('dispatched', 'running')"));
     assert!(sql.contains("OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect"));
-    assert!(sql.contains(
-        "ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN"
-    ));
+    assert!(sql.contains("ELSIF NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN"));
     assert!(sql.contains("MESSAGE = 'run-release-record-immutable'"));
     assert!(!sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app"));
     assert!(sql.contains("GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;"));
@@ -345,7 +345,7 @@ fn live_database(url: &str) -> String {
 /// Apply `deploy/sql/run-state.sql` to a throwaway Postgres and assert the tenant RLS
 /// isolates rows and the idempotency index dedupes. Gated on
 /// `WAMN_RUN_STORE_PG_URL` (a superuser URL — the harness prepares an App generation);
-/// skips cleanly when unset. Mirrors the wamn-schema-compiler / wamn-schema-compiler / wamn-schema-compiler gates.
+/// skips cleanly when unset.
 #[test]
 fn run_state_schema_applies_and_isolates_on_postgres() {
     let Ok(url) = std::env::var("WAMN_RUN_STORE_PG_URL") else {
@@ -403,13 +403,14 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
          CREATE SCHEMA catalog;\n\
-         CREATE TABLE catalog.releases (\n\
-           tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL,\n\
-           PRIMARY KEY (tenant_id, catalog_id, catalog_version)\n\
+         CREATE TABLE catalog.effective_releases (\n\
+           tenant_id text NOT NULL, effective_release_id int NOT NULL,\n\
+           environment text NOT NULL, verified_publisher_principal text NOT NULL,\n\
+           PRIMARY KEY (tenant_id, effective_release_id)\n\
          );\n\
-         INSERT INTO catalog.releases VALUES\n\
-           ('t1','run-state-fixture',1), ('t2','run-state-fixture',1),\n\
-           ('t3','run-state-fixture',1);\n"
+         INSERT INTO catalog.effective_releases VALUES\n\
+           ('t1',1,'test','test-publisher'), ('t2',1,'test','test-publisher'),\n\
+           ('t3',1,'test','test-publisher');\n"
     ));
     script.push_str(&ddl);
     script.push('\n');
@@ -423,7 +424,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     // Seed two tenants as the superuser (bypasses RLS): each has one run.
     script.push_str(
         "INSERT INTO wamn_run.runs (\
-           tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
+           tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,\
            wiring_id, wiring_version, status, idempotency_key\
          ) VALUES\
            ('t1','run-a','f',1,'run-state-fixture',1,'test',\
@@ -455,7 +456,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         "DO $$ BEGIN \
            BEGIN \
              INSERT INTO wamn_run.runs (\
-               tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
+               tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,\
                wiring_id, wiring_version, idempotency_key\
              ) VALUES ('t1','run-a2','f',1,'run-state-fixture',1,'test',\
                'fixture-wiring',1,'k-a'); \
@@ -463,7 +464,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            EXCEPTION WHEN unique_violation THEN NULL; END; \
          END $$;\n\
          INSERT INTO wamn_run.runs (\
-           tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
+           tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,\
            wiring_id, wiring_version, idempotency_key\
          ) VALUES ('t3','run-c','f',1,'run-state-fixture',1,'test',\
            'fixture-wiring',1,'k-a');\n",

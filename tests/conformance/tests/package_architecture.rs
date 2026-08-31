@@ -12,7 +12,7 @@ const COMPONENT_WORKSPACES: [(&str, &str, usize); 2] = [
     ("components", "components/Cargo.toml", 8),
     ("components-no-std", "components/no-std/Cargo.toml", 2),
 ];
-const ROOT_MEMBER_COUNT: usize = 36;
+const ROOT_MEMBER_COUNT: usize = 34;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -799,45 +799,6 @@ fn real_workspaces_satisfy_package_architecture() {
     assert!(
         manifest.graph_delta.accepted_edges.is_empty(),
         "an accepted graph edge reappeared without a guard naming it"
-    );
-}
-
-#[test]
-fn migration_ir_generator_has_no_legacy_schema_consumers() {
-    let root = repository_root();
-    let metadata = cargo_metadata(&root, "Cargo.toml");
-    let packages = package_by_id(&metadata);
-    let generator = metadata
-        .packages
-        .iter()
-        .find(|package| package.name == "wamn-schema-generator")
-        .expect("generator package is a root workspace member");
-    let node = metadata
-        .resolve
-        .as_ref()
-        .expect("cargo metadata includes the dependency graph")
-        .nodes
-        .iter()
-        .find(|node| node.id == generator.id)
-        .expect("generator dependency node exists");
-    let dependencies = node
-        .deps
-        .iter()
-        .map(|dependency| {
-            packages
-                .get(dependency.pkg.as_str())
-                .expect("dependency package is present in cargo metadata")
-                .name
-                .as_str()
-        })
-        .collect::<BTreeSet<_>>();
-
-    assert!(
-        dependencies.is_disjoint(&BTreeSet::from([
-            "wamn-schema-model",
-            "wamn-schema-compiler",
-        ])),
-        "migration-IR generator adopted a superseded schema crate: {dependencies:?}"
     );
 }
 

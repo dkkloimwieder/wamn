@@ -44,7 +44,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_authoring_model::GateRefusal;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentParameter, AdmittedComponentPort,
-    ComponentCatalogScope, WiringDocument, validate_wiring_compatibility,
+    ComponentPackageScope, WiringDocument, validate_wiring_compatibility,
 };
 use wamn_control_provision::{
     MANAGEMENT_ADMITTER_ROLE, ManagementAdmissionConnection, parse_management_admission_url, sql,
@@ -86,17 +86,17 @@ const ADMISSION_SCOPE_SQL: &str =
 /// Read the same complete admitted component facts the compatibility validator
 /// receives on the CLI authoring path.
 const SELECT_COMPONENT_FACTS_SQL: &str = "\
-SELECT component, interface_version, operation, component_digest, \
+SELECT component, interface_version, operation, registered_operation, component_digest, \
        imports::text, imports_fingerprint, input_ports::text, \
        output_ports::text, parameters::text, effects::text \
   FROM catalog.component_library \
- WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+ WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
  ORDER BY component COLLATE \"C\", interface_version COLLATE \"C\"";
 
 /// Append exactly the seven columns management `Publish` is granted.
 const INSERT_WIRING_SQL: &str = "\
 INSERT INTO catalog.wirings (\
-       tenant_id, catalog_id, wiring_id, version, gated_catalog_version, \
+       tenant_id, package_id, package_version, wiring_id, version, \
        graph_json, wiring_hash\
      ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
 ON CONFLICT DO NOTHING";
@@ -105,15 +105,14 @@ ON CONFLICT DO NOTHING";
 const EXACT_WIRING_SQL: &str = "\
 SELECT EXISTS (\
     SELECT 1 FROM catalog.wirings \
-     WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4 \
-       AND gated_catalog_version = $5 AND graph_json = $6::text::jsonb \
+     WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+       AND wiring_id = $4 AND version = $5 AND graph_json = $6::text::jsonb \
        AND wiring_hash = $7\
     )";
 
 // THE CANDIDATE LOOKUP IS DELETED (wamn-0h0g.8.28), not moved.
 //
-// `SELECT catalog_id, wiring_id, version, gated_catalog_version, graph_json FROM
-// catalog.wirings WHERE tenant_id = $1 AND wiring_hash = $2` stood here and
+// A query of `catalog.wirings` by the submitted document's hash stood here and
 // resolved the gate's candidate from the STORED ROW. It was leftover coupling
 // from the retired reservation protocol, and execution refuted it: authorship
 // refuses to write that row without a green report for its own hash, and this
@@ -141,13 +140,13 @@ SELECT EXISTS (\
 /// projection and refuses a candidate that reaches a non-empty one.
 ///
 /// The join is the candidate's `nodes` object onto the library at the candidate's
-/// own applied catalog version, exactly as the store-alias diagnostic below
+/// own applied package version, exactly as the store-alias diagnostic below
 /// resolves it, so a gate and a run agree on which components a document reaches.
 /// A node naming no library row contributes nothing here: an unresolvable
 /// component is the admission statement's `candidate-definition-invalid`, a
 /// different and already-typed refusal.
 ///
-/// Params: `$1` tenant, `$2` catalog id, `$3` catalog version, `$4` nodes.
+/// Params: `$1` tenant, `$2` package id, `$3` package version, `$4` nodes.
 const SELECT_EFFECTFUL_COMPONENTS_SQL: &str = "WITH node AS ( \
         SELECT entry.value ->> 'component' AS component, \
                entry.value ->> 'interface-version' AS interface_version, \
@@ -156,8 +155,8 @@ const SELECT_EFFECTFUL_COMPONENTS_SQL: &str = "WITH node AS ( \
     ) \
     SELECT DISTINCT library.component \
       FROM node JOIN catalog.component_library AS library \
-        ON library.tenant_id = $1 AND library.catalog_id = $2 \
-       AND library.catalog_version = $3 \
+        ON library.tenant_id = $1 AND library.package_id = $2 \
+       AND library.package_version = $3 \
        AND library.component = node.component \
        AND library.interface_version = node.interface_version \
        AND library.operation = node.operation \
@@ -180,24 +179,31 @@ const SELECT_UNRESOLVED_STORE_ALIASES_SQL: &str = "WITH node AS ( \
     ), component AS ( \
         SELECT DISTINCT library.component_digest \
           FROM node JOIN catalog.component_library AS library \
-            ON library.tenant_id = $1 AND library.catalog_id = $2 \
-           AND library.catalog_version = $3 \
+            ON library.tenant_id = $1 AND library.package_id = $2 \
+           AND library.package_version = $3 \
            AND library.component = node.component \
            AND library.interface_version = node.interface_version \
            AND library.operation = node.operation \
+    ), release_scope AS ( \
+        SELECT head.effective_release_id \
+          FROM catalog.effective_release_heads AS head \
+          JOIN catalog.effective_release_packages AS member \
+            ON member.tenant_id = head.tenant_id \
+           AND member.effective_release_id = head.effective_release_id \
+           AND member.package_id = $2 AND member.package_version = $3 \
+         WHERE head.tenant_id = $1 AND head.environment = $5 \
     ), requirement AS ( \
         SELECT required.component_digest, required.store_alias \
           FROM component JOIN catalog.connection_requirements AS required \
-            ON required.tenant_id = $1 AND required.artifact_hash IS NULL \
-           AND required.requirement_name IS NULL \
+            ON required.tenant_id = $1 \
            AND required.component_digest = component.component_digest \
     ) \
     SELECT DISTINCT requirement.store_alias \
       FROM requirement \
+      LEFT JOIN release_scope ON true \
       LEFT JOIN catalog.connection_bindings AS binding \
-        ON binding.tenant_id = $1 AND binding.catalog_id = $2 \
-       AND binding.catalog_version = $3 AND binding.artifact_hash IS NULL \
-       AND binding.requirement_name IS NULL \
+        ON binding.tenant_id = $1 \
+       AND binding.effective_release_id = release_scope.effective_release_id \
        AND binding.component_digest = requirement.component_digest \
        AND binding.store_alias = requirement.store_alias \
        AND binding.environment = $5 AND binding.binding_status = 'active' \
@@ -219,12 +225,9 @@ const SELECT_UNRESOLVED_STORE_ALIASES_SQL: &str = "WITH node AS ( \
 /// The exact candidate row one test-set command selects.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandidateWiring {
-    pub catalog_id: String,
-    /// The applied catalog version this definition was gated against. It is the
-    /// admission statement's `expected_catalog_version` BY CONSTRUCTION: the
-    /// candidate CTE joins `gated_catalog_version = expected_catalog_version`,
-    /// so any other value selects no candidate at all.
-    pub catalog_version: i32,
+    pub package_id: String,
+    /// Exact package version whose admitted facts judge this definition.
+    pub package_version: String,
     pub wiring_id: String,
     pub wiring_version: i32,
     pub wiring_hash: String,
@@ -269,8 +272,8 @@ pub(crate) enum PreparePublishResult {
 #[derive(Debug)]
 pub(crate) struct PreparedWiringPublication {
     tenant_id: Box<str>,
-    catalog_id: Box<str>,
-    gated_catalog_version: i32,
+    package_id: Box<str>,
+    package_version: Box<str>,
     document: WiringDocument,
     stored_version: i32,
     graph_json: String,
@@ -395,8 +398,8 @@ impl AdmissionSurface {
     /// only after that exact report exists and is green.
     pub(crate) async fn prepare_publish(
         &self,
-        catalog_id: &str,
-        gated_catalog_version: i32,
+        package_id: &str,
+        package_version: &str,
         submitted_document: &Value,
     ) -> anyhow::Result<PreparePublishResult> {
         let document = match WiringDocument::parse(submitted_document) {
@@ -412,20 +415,19 @@ impl AdmissionSurface {
             Err(error) => {
                 return Ok(PreparePublishResult::InvalidDocument {
                     detail: format!(
-                        "wiring {:?} version {} exceeds the catalog storage width: {error}",
+                        "wiring {:?} version {} exceeds the storage width: {error}",
                         document.wiring_id, document.version
                     ),
                 });
             }
         };
-        let catalog_version = u32::try_from(gated_catalog_version)
-            .context("gated catalog version is outside the compatibility scope width")?;
-        let scope = ComponentCatalogScope {
-            tenant_id: self.tenant_id.to_string(),
-            catalog_id: catalog_id.to_owned(),
-            catalog_version,
-        };
-        let components = self.component_facts(&scope, gated_catalog_version).await?;
+        let scope = ComponentPackageScope::new(
+            self.tenant_id.to_string(),
+            package_id.to_owned(),
+            package_version.to_owned(),
+        )
+        .context("publication package coordinate is invalid")?;
+        let components = self.component_facts(&scope).await?;
         let wiring_hash = document.wiring_hash().as_str().to_owned();
         if validate_wiring_compatibility(&document, &scope, &components).is_err() {
             return Ok(PreparePublishResult::ExecutableDrift);
@@ -434,8 +436,8 @@ impl AdmissionSurface {
             .context("serialize the validated wiring document for storage")?;
         Ok(PreparePublishResult::Ready(PreparedWiringPublication {
             tenant_id: self.tenant_id.clone(),
-            catalog_id: catalog_id.into(),
-            gated_catalog_version,
+            package_id: package_id.into(),
+            package_version: package_version.into(),
             document,
             stored_version,
             graph_json,
@@ -453,15 +455,16 @@ impl AdmissionSurface {
             bail!("prepared publication belongs to another admission tenant");
         }
         let tenant_id = self.tenant_id.as_ref();
-        let catalog_id = publication.catalog_id.as_ref();
+        let package_id = publication.package_id.as_ref();
+        let package_version = publication.package_version.as_ref();
         let wiring_id = publication.wiring_id();
         let wiring_hash = publication.wiring_hash();
         let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
             &tenant_id,
-            &catalog_id,
+            &package_id,
+            &package_version,
             &wiring_id,
             &publication.stored_version,
-            &publication.gated_catalog_version,
             &publication.graph_json,
             &wiring_hash,
         ];
@@ -484,14 +487,13 @@ impl AdmissionSurface {
 
     async fn component_facts(
         &self,
-        scope: &ComponentCatalogScope,
-        catalog_version: i32,
+        scope: &ComponentPackageScope,
     ) -> anyhow::Result<Vec<AdmittedComponent>> {
         let rows = self
             .client
             .query(
                 SELECT_COMPONENT_FACTS_SQL,
-                &[&scope.tenant_id, &scope.catalog_id, &catalog_version],
+                &[&scope.tenant_id, &scope.package_id, &scope.package_version],
             )
             .await
             .context("read the publication scope's admitted component facts")?;
@@ -503,26 +505,27 @@ impl AdmissionSurface {
                     component: component.clone(),
                     interface_version: row.get(1),
                     operation: row.get(2),
-                    component_digest: row.get(3),
-                    imports: decode_component_json(row.get(4), &component, "imports")?,
-                    imports_fingerprint: row.get(5),
+                    registered_operation: row.get(3),
+                    component_digest: row.get(4),
+                    imports: decode_component_json(row.get(5), &component, "imports")?,
+                    imports_fingerprint: row.get(6),
                     input_ports: decode_component_json::<Vec<AdmittedComponentPort>>(
-                        row.get(6),
+                        row.get(7),
                         &component,
                         "input-ports",
                     )?,
                     output_ports: decode_component_json::<Vec<AdmittedComponentPort>>(
-                        row.get(7),
+                        row.get(8),
                         &component,
                         "output-ports",
                     )?,
                     parameters: decode_component_json::<Vec<AdmittedComponentParameter>>(
-                        row.get(8),
+                        row.get(9),
                         &component,
                         "parameters",
                     )?,
                     effects: decode_component_json::<Vec<AdmittedComponentEffect>>(
-                        row.get(9),
+                        row.get(10),
                         &component,
                         "effects",
                     )?,
@@ -553,8 +556,8 @@ impl AdmissionSurface {
                 SELECT_EFFECTFUL_COMPONENTS_SQL,
                 &[
                     &self.tenant_id.as_ref(),
-                    &candidate.catalog_id,
-                    &candidate.catalog_version,
+                    &candidate.package_id,
+                    &candidate.package_version,
                     &candidate.nodes_object(),
                 ],
             )
@@ -575,8 +578,8 @@ impl AdmissionSurface {
                 SELECT_UNRESOLVED_STORE_ALIASES_SQL,
                 &[
                     &self.tenant_id.as_ref(),
-                    &candidate.catalog_id,
-                    &candidate.catalog_version,
+                    &candidate.package_id,
+                    &candidate.package_version,
                     &candidate.nodes_object(),
                     &environment,
                 ],
@@ -699,10 +702,10 @@ fn admission_acl_expectations() -> Vec<AclExpectation> {
 #[derive(Clone, Copy, Debug)]
 pub struct GateRequest<'a> {
     pub environment: &'a str,
-    /// Catalog identity whose admitted component facts judge this document.
-    pub catalog_id: &'a str,
-    /// Applied catalog version those facts are read at.
-    pub catalog_version: i32,
+    /// Package identity whose admitted component facts judge this document.
+    pub package_id: &'a str,
+    /// Exact package version those facts are read at.
+    pub package_version: &'a str,
     /// The submitted wiring document, already validated by
     /// [`wamn_catalog::WiringDocument::parse`].
     pub document: &'a wamn_catalog::WiringDocument,
@@ -757,8 +760,8 @@ pub async fn run_gate(
     // never taken from the caller (wamn-0h0g.7.8).
     let document = request.document;
     let candidate = CandidateWiring {
-        catalog_id: request.catalog_id.to_owned(),
-        catalog_version: request.catalog_version,
+        package_id: request.package_id.to_owned(),
+        package_version: request.package_version.to_owned(),
         wiring_id: document.wiring_id.clone(),
         wiring_version: i32::try_from(document.version)
             .context("wiring version exceeds the PostgreSQL integer carrier")?,
@@ -917,8 +920,8 @@ mod tests {
             ) \
             SELECT DISTINCT library.component \
               FROM node JOIN catalog.component_library AS library \
-                ON library.tenant_id = $1 AND library.catalog_id = $2 \
-               AND library.catalog_version = $3 \
+                ON library.tenant_id = $1 AND library.package_id = $2 \
+               AND library.package_version = $3 \
                AND library.component = node.component \
                AND library.interface_version = node.interface_version \
                AND library.operation = node.operation \
@@ -939,7 +942,7 @@ mod tests {
             "library.component = node.component",
             "library.interface_version = node.interface_version",
             "library.operation = node.operation",
-            "library.catalog_version = $3",
+            "library.package_version = $3",
         ] {
             assert!(
                 SELECT_UNRESOLVED_STORE_ALIASES_SQL.contains(shared),
@@ -953,8 +956,8 @@ mod tests {
     #[test]
     fn a_candidate_with_no_nodes_object_is_read_as_reaching_nothing() {
         let candidate = |graph: Value| CandidateWiring {
-            catalog_id: "catalog-a".to_owned(),
-            catalog_version: 1,
+            package_id: "package_a".to_owned(),
+            package_version: "1.0.0".to_owned(),
             wiring_id: "wiring-a".to_owned(),
             wiring_version: 1,
             wiring_hash: "sha256:".to_owned() + &"0".repeat(64),
@@ -978,10 +981,10 @@ mod tests {
     fn the_publish_surface_is_column_exact_at_the_runtime_boundary() {
         const INSERT_COLUMNS: [&str; 7] = [
             "tenant_id",
-            "catalog_id",
+            "package_id",
+            "package_version",
             "wiring_id",
             "version",
-            "gated_catalog_version",
             "graph_json",
             "wiring_hash",
         ];
@@ -1015,8 +1018,8 @@ mod tests {
         }
         assert_eq!(
             acl.len(),
-            18,
-            "schema + six reads + seven inserts + omitted column + three table negatives"
+            20,
+            "schema + eight reads + seven inserts + omitted column + three table negatives"
         );
     }
 
@@ -1026,16 +1029,16 @@ mod tests {
     fn publication_append_uses_only_the_server_derived_exact_identity() {
         assert_eq!(
             INSERT_WIRING_SQL,
-            "INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
-             gated_catalog_version, graph_json, wiring_hash) \
+            "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
+             version, graph_json, wiring_hash) \
              VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
              ON CONFLICT DO NOTHING"
         );
         assert_eq!(
             EXACT_WIRING_SQL,
             "SELECT EXISTS (SELECT 1 FROM catalog.wirings \
-             WHERE tenant_id = $1 AND catalog_id = $2 AND wiring_id = $3 AND version = $4 \
-             AND gated_catalog_version = $5 AND graph_json = $6::text::jsonb \
+             WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+             AND wiring_id = $4 AND version = $5 AND graph_json = $6::text::jsonb \
              AND wiring_hash = $7)"
         );
         assert!(!INSERT_WIRING_SQL.contains("DO UPDATE"));

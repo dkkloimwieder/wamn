@@ -1,6 +1,7 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 2 closes over component digests, wiring definitions, attachments, and
+//! Format 3 closes over exact package membership, component digests, wiring
+//! definitions, attachments, and
 //! registrations. It contains no flow, execution-plan, call-graph, or callable
 //! identity. Producers must source every member from current catalog records;
 //! this model intentionally provides no legacy-plan conversion.
@@ -16,15 +17,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    ArtifactHash, AttachmentKind, CatalogIdentityError, DefinitionHash, HASH_PREFIX,
-    ManifestDigest, validate_digest, validate_text,
+    ArtifactHash, AttachmentKind, CatalogIdentityError, DefinitionHash, EffectiveReleaseId,
+    HASH_PREFIX, ManifestDigest, PackageCoordinate, package::validate_canonical_operation,
+    validate_digest, validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 2;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 3;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
+
+/// The attachment auth-policy mode that requires a platform access token.
+pub const PAT_AUTHENTICATION_MODE: &str = "pat";
+
+/// Stable refusal literal for malformed or unsupported attachment auth policy.
+pub const INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL: &str = "invalid-attachment-auth-policy";
 
 /// Stable refusal literal for a serving-manifest format this reader will not admit.
 pub const UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL: &str =
@@ -58,9 +66,9 @@ pub fn release_manifest_configmap_name(
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingRelease {
     pub tenant_id: String,
-    pub catalog_id: String,
-    pub catalog_version: u32,
+    pub effective_release_id: EffectiveReleaseId,
     pub environment: String,
+    pub packages: BTreeSet<PackageCoordinate>,
 }
 
 /// One immutable component artifact in the release closure.
@@ -71,15 +79,20 @@ pub struct ServingRelease {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponent {
+    pub package_id: String,
     pub component: String,
     pub interface_version: String,
     pub digest: ArtifactHash,
+    /// Registered application identity pinned with the admitted component.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<String>,
 }
 
 /// One immutable wiring definition in the release closure.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingWiring {
+    pub package_id: String,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub graph_hash: DefinitionHash,
@@ -90,11 +103,17 @@ pub struct ServingWiring {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingAttachment {
     pub kind: AttachmentKind,
+    pub package_id: String,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub definition_hash: DefinitionHash,
     pub definition: Value,
     pub auth_policy: Value,
+    /// Exact operation authority selected by this attachment. Attachments that
+    /// do not invoke a package operation carry no token; callers never infer one
+    /// from route, wiring, or component syntax.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<String>,
 }
 
 /// The delivery grain frozen for one release registration.
@@ -114,6 +133,7 @@ fn registration_input_is_event(input: &ServingRegistrationInput) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingRegistration {
+    pub package_id: String,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub entity: String,
@@ -167,14 +187,16 @@ impl ServingManifest {
 
     /// The content digest over [`Self::canonical_bytes`].
     pub fn digest(&self) -> ManifestDigest {
-        ManifestDigest::parse(wamn_execution_contract::canonical_json_sha256(&self.as_value()))
-            .expect("the shared canonicalizer emits a canonical sha256 digest")
+        ManifestDigest::parse(wamn_execution_contract::canonical_json_sha256(
+            &self.as_value(),
+        ))
+        .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-2 bytes.
+    /// Parse, validate, and admit only canonical format-3 bytes.
     ///
-    /// The version is classified before the format-2 schema is decoded. This is
-    /// what makes a format-1 mount an explicit typed refusal rather than a
+    /// The version is classified before the format-3 schema is decoded. This is
+    /// what makes an older mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
     pub fn from_canonical_bytes(
@@ -211,49 +233,102 @@ impl ServingManifest {
             });
         }
         validate_text(&self.release.tenant_id, "tenant-id")?;
-        validate_text(&self.release.catalog_id, "catalog-id")?;
         validate_text(&self.release.environment, "environment")?;
-        if self.release.catalog_version == 0 {
-            return Err(CatalogIdentityError::ZeroVersion {
-                field: "catalog-version",
-            });
+        if self.release.packages.is_empty() {
+            return invalid("an effective release must contain at least one exact package pair");
+        }
+        let mut package_versions = BTreeMap::new();
+        for package in &self.release.packages {
+            if package_versions
+                .insert(package.package_id(), package.package_version())
+                .is_some()
+            {
+                return Err(CatalogIdentityError::DuplicateMember {
+                    field: "release-packages",
+                    id: package.package_id().to_owned(),
+                });
+            }
         }
 
         for component in &self.components {
+            validate_package_member(&package_versions, &component.package_id)?;
             validate_text(&component.component, "component")?;
             validate_text(&component.interface_version, "interface-version")?;
+            validate_registered_operation(
+                &package_versions,
+                &component.package_id,
+                component.registered_operation.as_deref(),
+            )?;
         }
 
         let mut targets = BTreeSet::new();
         for wiring in &self.wirings {
+            validate_package_member(&package_versions, &wiring.package_id)?;
             validate_text(&wiring.wiring_id, "wiring-id")?;
             if wiring.wiring_version == 0 {
                 return Err(CatalogIdentityError::ZeroVersion {
                     field: "wiring-version",
                 });
             }
-            if !targets.insert((wiring.wiring_id.as_str(), wiring.wiring_version)) {
+            if !targets.insert((
+                wiring.package_id.as_str(),
+                wiring.wiring_id.as_str(),
+                wiring.wiring_version,
+            )) {
                 return invalid("a wiring identity-version pair occurs more than once");
             }
         }
 
         for (attachment_id, attachment) in &self.attachments {
             validate_text(attachment_id, "attachment-id")?;
-            validate_wiring_target(&targets, &attachment.wiring_id, attachment.wiring_version)?;
+            validate_package_member(&package_versions, &attachment.package_id)?;
+            validate_wiring_target(
+                &targets,
+                &attachment.package_id,
+                &attachment.wiring_id,
+                attachment.wiring_version,
+            )?;
             if !attachment.definition.is_object() || !attachment.auth_policy.is_object() {
                 return invalid("attachment definition and resolved source must be JSON objects");
+            }
+            let auth_mode = attachment
+                .auth_policy
+                .as_object()
+                .and_then(|policy| policy.get("mode"))
+                .and_then(Value::as_str);
+            if !matches!(
+                auth_mode,
+                Some(NO_AUTHENTICATION_MODE | PAT_AUTHENTICATION_MODE)
+            ) {
+                return Err(CatalogIdentityError::InvalidAttachmentAuthPolicy {
+                    attachment_id: attachment_id.clone(),
+                });
+            }
+            if auth_mode == Some(NO_AUTHENTICATION_MODE)
+                && attachment.registered_operation.is_some()
+            {
+                return Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
+                    attachment_id: attachment_id.clone(),
+                });
             }
             if contains_retired_identity(&attachment.definition)
                 || contains_retired_identity(&attachment.auth_policy)
             {
                 return invalid("attachment configuration carries retired flow or plan identity");
             }
+            validate_registered_operation(
+                &package_versions,
+                &attachment.package_id,
+                attachment.registered_operation.as_deref(),
+            )?;
         }
 
         for (registration_id, registration) in &self.registrations {
             validate_text(registration_id, "registration-id")?;
+            validate_package_member(&package_versions, &registration.package_id)?;
             validate_wiring_target(
                 &targets,
+                &registration.package_id,
                 &registration.wiring_id,
                 registration.wiring_version,
             )?;
@@ -284,7 +359,8 @@ fn validate_format_version(document: &Value) -> Result<(), CatalogIdentityError>
 }
 
 fn validate_wiring_target(
-    targets: &BTreeSet<(&str, u32)>,
+    targets: &BTreeSet<(&str, &str, u32)>,
+    package_id: &str,
     wiring_id: &str,
     wiring_version: u32,
 ) -> Result<(), CatalogIdentityError> {
@@ -294,11 +370,46 @@ fn validate_wiring_target(
             field: "wiring-version",
         });
     }
-    if !targets.contains(&(wiring_id, wiring_version)) {
+    if !targets.contains(&(package_id, wiring_id, wiring_version)) {
         return Err(CatalogIdentityError::UnresolvableManifestWiring {
+            package_id: package_id.to_string(),
             wiring_id: wiring_id.to_string(),
             wiring_version,
         });
+    }
+    Ok(())
+}
+
+fn validate_package_member(
+    package_versions: &BTreeMap<&str, &str>,
+    package_id: &str,
+) -> Result<(), CatalogIdentityError> {
+    validate_text(package_id, "package-id")?;
+    if !package_versions.contains_key(package_id) {
+        return Err(CatalogIdentityError::InvalidDefinition {
+            message: format!("package {package_id:?} is absent from the effective release"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_registered_operation(
+    package_versions: &BTreeMap<&str, &str>,
+    package_id: &str,
+    operation: Option<&str>,
+) -> Result<(), CatalogIdentityError> {
+    let Some(operation) = operation else {
+        return Ok(());
+    };
+    validate_canonical_operation(operation)?;
+    let package_version = package_versions
+        .get(package_id)
+        .expect("package membership was validated before operation identity");
+    let expected_prefix = format!("{package_id}@{package_version}::");
+    if !operation.starts_with(&expected_prefix) {
+        return invalid(format!(
+            "registered operation {operation:?} does not belong to selected package {package_id:?} version {package_version:?}"
+        ));
     }
     Ok(())
 }
@@ -363,23 +474,30 @@ mod tests {
     fn release() -> ServingRelease {
         ServingRelease {
             tenant_id: "t1".into(),
-            catalog_id: "cat".into(),
-            catalog_version: 7,
+            effective_release_id: EffectiveReleaseId::new(7).unwrap(),
             environment: "prod".into(),
+            packages: BTreeSet::from([
+                PackageCoordinate::new("base", "1.0.0").unwrap(),
+                PackageCoordinate::new("overlay", "3.0.0").unwrap(),
+            ]),
         }
     }
 
     fn components() -> BTreeSet<ServingComponent> {
         BTreeSet::from([
             ServingComponent {
+                package_id: "overlay".into(),
                 component: "transform".into(),
                 interface_version: "0.1".into(),
                 digest: artifact_hash(COMPONENT_B),
+                registered_operation: None,
             },
             ServingComponent {
+                package_id: "base".into(),
                 component: "http-request".into(),
                 interface_version: "0.1".into(),
                 digest: artifact_hash(COMPONENT_A),
+                registered_operation: Some("base@1.0.0::purchase_order.get".into()),
             },
         ])
     }
@@ -387,11 +505,13 @@ mod tests {
     fn wirings() -> BTreeSet<ServingWiring> {
         BTreeSet::from([
             ServingWiring {
+                package_id: "overlay".into(),
                 wiring_id: "shipping".into(),
                 wiring_version: 2,
                 graph_hash: definition_hash(GRAPH_B),
             },
             ServingWiring {
+                package_id: "base".into(),
                 wiring_id: "orders".into(),
                 wiring_version: 3,
                 graph_hash: definition_hash(GRAPH_A),
@@ -402,6 +522,7 @@ mod tests {
     fn attachment() -> ServingAttachment {
         ServingAttachment {
             kind: AttachmentKind::Http,
+            package_id: "base".into(),
             wiring_id: "orders".into(),
             wiring_version: 3,
             definition_hash: definition_hash(DEFINITION),
@@ -410,12 +531,14 @@ mod tests {
                 "kind": "http",
                 "route": {"host": "*", "path": "/orders", "method": "POST"}
             }),
-            auth_policy: serde_json::json!({"mode": "none"}),
+            auth_policy: serde_json::json!({"mode": "pat"}),
+            registered_operation: Some("base@1.0.0::purchase_order.get".into()),
         }
     }
 
     fn registration() -> ServingRegistration {
         ServingRegistration {
+            package_id: "overlay".into(),
             wiring_id: "shipping".into(),
             wiring_version: 2,
             entity: "orders".into(),
@@ -452,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn only_canonical_format_two_bytes_are_admitted() {
+    fn only_canonical_format_three_bytes_are_admitted() {
         let manifest = manifest();
         let bytes = manifest.canonical_bytes();
         assert_eq!(
@@ -469,20 +592,148 @@ mod tests {
     }
 
     #[test]
-    fn format_one_is_a_typed_refusal_not_a_compatibility_arm() {
-        let legacy = br#"{"attachments":{},"flows":{},"format-version":"0.1","registrations":{},"release":{"catalog-id":"cat","catalog-version":1,"environment":"prod","tenant-id":"t1"}}"#;
+    fn format_two_is_a_typed_refusal_not_a_compatibility_arm() {
+        let legacy = br#"{"attachments":{},"components":[],"format-version":2,"registrations":{},"release":{},"wirings":[]}"#;
         let error = ServingManifest::from_canonical_bytes(legacy)
-            .expect_err("format one must never enter the format-two decoder");
+            .expect_err("format two must never enter the format-three decoder");
         assert_eq!(
             error,
             CatalogIdentityError::UnsupportedServingManifestVersion {
-                requested: "0.1".into()
+                requested: "2".into()
             }
         );
         assert!(
             error
                 .to_string()
                 .starts_with(UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL)
+        );
+    }
+
+    #[test]
+    fn attachment_operation_is_explicit_and_canonical() {
+        let mut malformed = attachment();
+        malformed.registered_operation = Some("purchase_order.get".into());
+        let error = ServingManifest::new(
+            release(),
+            components(),
+            wirings(),
+            BTreeMap::from([("orders".to_string(), malformed)]),
+            BTreeMap::new(),
+        )
+        .expect_err("an attachment cannot smuggle a local-only operation token");
+        assert!(
+            error
+                .to_string()
+                .contains("<package-id>@<package-version>::<local-operation>")
+        );
+    }
+
+    #[test]
+    fn registered_operations_match_the_containing_package_coordinate() {
+        for operation in [
+            "overlay@3.0.0::purchase_order.get",
+            "base@2.0.0::purchase_order.get",
+        ] {
+            let mut mismatched = attachment();
+            mismatched.registered_operation = Some(operation.into());
+            let error = ServingManifest::new(
+                release(),
+                components(),
+                wirings(),
+                BTreeMap::from([("orders".to_string(), mismatched)]),
+                BTreeMap::new(),
+            )
+            .expect_err("attachment operation must match its selected package coordinate");
+            assert!(error.to_string().contains("does not belong"));
+        }
+
+        let mut mismatched_components = components();
+        let mut component = mismatched_components
+            .pop_first()
+            .expect("fixture has a component");
+        component.registered_operation = Some("overlay@3.0.0::purchase_order.get".into());
+        mismatched_components.insert(component);
+        let error = ServingManifest::new(
+            release(),
+            mismatched_components,
+            wirings(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+        .expect_err("component operation must match its selected package coordinate");
+        assert!(error.to_string().contains("does not belong"));
+    }
+
+    #[test]
+    fn attachment_auth_policy_mode_is_closed_and_required() {
+        for policy in [
+            serde_json::json!({}),
+            serde_json::json!({"mode": 7}),
+            serde_json::json!({"mode": "invented"}),
+        ] {
+            let mut malformed = attachment();
+            malformed.auth_policy = policy;
+            assert_eq!(
+                ServingManifest::new(
+                    release(),
+                    components(),
+                    wirings(),
+                    BTreeMap::from([("orders".to_string(), malformed)]),
+                    BTreeMap::new(),
+                ),
+                Err(CatalogIdentityError::InvalidAttachmentAuthPolicy {
+                    attachment_id: "orders".into(),
+                })
+            );
+        }
+
+        let mut pat = attachment();
+        pat.auth_policy = serde_json::json!({"mode": PAT_AUTHENTICATION_MODE});
+        ServingManifest::new(
+            release(),
+            components(),
+            wirings(),
+            BTreeMap::from([("orders".to_string(), pat)]),
+            BTreeMap::new(),
+        )
+        .expect("PAT is the other supported attachment auth mode");
+
+        let mut anonymous = attachment();
+        anonymous.auth_policy = serde_json::json!({"mode": NO_AUTHENTICATION_MODE});
+        assert_eq!(
+            ServingManifest::new(
+                release(),
+                components(),
+                wirings(),
+                BTreeMap::from([("orders".to_string(), anonymous)]),
+                BTreeMap::new(),
+            ),
+            Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
+                attachment_id: "orders".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn one_effective_release_selects_only_one_version_of_each_package() {
+        let mut duplicate = release();
+        duplicate
+            .packages
+            .insert(PackageCoordinate::new("base", "2.0.0").unwrap());
+        let error = ServingManifest::new(
+            duplicate,
+            components(),
+            wirings(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+        .expect_err("two versions of one package must refuse");
+        assert_eq!(
+            error,
+            CatalogIdentityError::DuplicateMember {
+                field: "release-packages",
+                id: "base".into(),
+            }
         );
     }
 
@@ -499,6 +750,7 @@ mod tests {
                 BTreeMap::new(),
             ),
             Err(CatalogIdentityError::UnresolvableManifestWiring {
+                package_id: "base".into(),
                 wiring_id: "orders".into(),
                 wiring_version: 2,
             })
@@ -515,8 +767,26 @@ mod tests {
                 BTreeMap::from([("orders-changed".to_string(), missing)]),
             ),
             Err(CatalogIdentityError::UnresolvableManifestWiring {
+                package_id: "overlay".into(),
                 wiring_id: "ghost".into(),
                 wiring_version: 2,
+            })
+        );
+
+        let mut wrong_package = attachment();
+        wrong_package.package_id = "overlay".into();
+        assert_eq!(
+            ServingManifest::new(
+                release(),
+                components(),
+                wirings(),
+                BTreeMap::from([("orders".to_string(), wrong_package)]),
+                BTreeMap::new(),
+            ),
+            Err(CatalogIdentityError::UnresolvableManifestWiring {
+                package_id: "overlay".into(),
+                wiring_id: "orders".into(),
+                wiring_version: 3,
             })
         );
     }
@@ -527,7 +797,6 @@ mod tests {
         document["flows"] = serde_json::json!({});
         assert!(serde_json::from_value::<ServingManifest>(document).is_err());
     }
-
 
     #[test]
     fn the_delivery_ceiling_is_enforced_at_the_reader() {

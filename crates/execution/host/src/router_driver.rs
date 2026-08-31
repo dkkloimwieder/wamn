@@ -212,7 +212,7 @@ impl std::error::Error for CandidateExecutionRefusal {}
 #[derive(Debug, Clone)]
 pub struct RouterDriverRequest {
     pub tenant_id: String,
-    pub catalog_id: String,
+    pub package_id: String,
     pub environment: String,
     pub wiring_id: String,
     pub wiring_version: u32,
@@ -383,9 +383,9 @@ fn component_invocation_span(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateWiringTarget {
     pub tenant_id: String,
-    pub catalog_id: String,
+    pub package_id: String,
     pub environment: String,
-    pub catalog_version: u32,
+    pub effective_release_id: u32,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub wiring_hash: String,
@@ -425,14 +425,14 @@ pub(crate) struct PreparedReleaseReadiness {
 
 #[derive(Debug, PartialEq, Eq)]
 struct CatalogFacts {
-    catalog_version: u32,
+    effective_release_id: u32,
     components: Arc<[AdmittedComponent]>,
 }
 
 impl CatalogFacts {
     fn from_resolved(resolved: &ResolvedActiveWiring) -> Self {
         Self {
-            catalog_version: resolved.catalog_version,
+            effective_release_id: resolved.effective_release_id,
             components: Arc::clone(&resolved.components),
         }
     }
@@ -556,10 +556,10 @@ impl RouterDriver {
             "release-wiring-preload-exceeds-cache-capacity"
         );
         let mut components = BTreeMap::<String, AdmittedComponent>::new();
-        for (wiring_id, wiring_version) in &targets {
+        for (package_id, wiring_id, wiring_version) in &targets {
             let request = RouterDriverRequest {
                 tenant_id: manifest.release.tenant_id.clone(),
-                catalog_id: manifest.release.catalog_id.clone(),
+                package_id: package_id.clone(),
                 environment: manifest.release.environment.clone(),
                 wiring_id: wiring_id.clone(),
                 wiring_version: *wiring_version,
@@ -595,9 +595,8 @@ impl RouterDriver {
             .release_component_bindings_ready(
                 &self.config.project,
                 &manifest.release.tenant_id,
-                &manifest.release.catalog_id,
+                manifest.release.effective_release_id.get(),
                 &manifest.release.environment,
-                manifest.release.catalog_version,
                 &component_digests,
             )
             .await
@@ -672,7 +671,7 @@ impl RouterDriver {
         let target = &request.target;
         let driver_request = RouterDriverRequest {
             tenant_id: target.tenant_id.clone(),
-            catalog_id: target.catalog_id.clone(),
+            package_id: target.package_id.clone(),
             environment: target.environment.clone(),
             wiring_id: target.wiring_id.clone(),
             wiring_version: target.wiring_version,
@@ -775,9 +774,9 @@ impl RouterDriver {
             .resolve_candidate_wiring(
                 &self.config.project,
                 &target.tenant_id,
-                &target.catalog_id,
+                &target.package_id,
                 &target.environment,
-                target.catalog_version,
+                target.effective_release_id,
                 &target.wiring_id,
                 target.wiring_version,
                 &target.wiring_hash,
@@ -818,8 +817,9 @@ impl RouterDriver {
         let facts = CatalogFacts::from_resolved(&resolved);
         if let Some(active) = self.cache.get_version(
             &target.tenant_id,
-            &target.catalog_id,
+            &target.package_id,
             &target.environment,
+            target.effective_release_id,
             &target.wiring_id,
             target.wiring_version,
         ) {
@@ -834,8 +834,9 @@ impl RouterDriver {
         }
         match self.cache.insert_version(
             &target.tenant_id,
-            &target.catalog_id,
+            &target.package_id,
             &target.environment,
+            target.effective_release_id,
             &target.wiring_id,
             resolved.version,
             Arc::clone(&resolved.graph_hash),
@@ -867,11 +868,13 @@ impl RouterDriver {
         &self,
         request: &RouterDriverRequest,
     ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
+        let effective_release_id = self.release.manifest().release.effective_release_id.get();
         self.cache
             .get_version(
                 &request.tenant_id,
-                &request.catalog_id,
+                &request.package_id,
                 &request.environment,
+                effective_release_id,
                 &request.wiring_id,
                 request.wiring_version,
             )
@@ -882,11 +885,14 @@ impl RouterDriver {
         &self,
         request: &RouterDriverRequest,
     ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
+        let mounted_effective_release_id =
+            self.release.manifest().release.effective_release_id.get();
         loop {
             let token = match self.cache.get(
                 &request.tenant_id,
-                &request.catalog_id,
+                &request.package_id,
                 &request.environment,
+                mounted_effective_release_id,
                 &request.wiring_id,
             ) {
                 Lookup::Hit(active) if active.version == request.wiring_version => {
@@ -895,7 +901,7 @@ impl RouterDriver {
                 Lookup::Hit(_) => {
                     self.cache.invalidate(
                         &request.tenant_id,
-                        &request.catalog_id,
+                        &request.package_id,
                         &request.environment,
                         &request.wiring_id,
                     );
@@ -908,18 +914,23 @@ impl RouterDriver {
                 .resolve_active_wiring(
                     &self.config.project,
                     &request.tenant_id,
-                    &request.catalog_id,
+                    &request.package_id,
                     &request.environment,
                     &request.wiring_id,
                     request.wiring_version,
                 )
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("active-wiring-not-found"))?;
+            anyhow::ensure!(
+                resolved.effective_release_id == mounted_effective_release_id,
+                "active-wiring-effective-release-mismatch"
+            );
             let facts = CatalogFacts::from_resolved(&resolved);
             match self.cache.insert(
                 &request.tenant_id,
-                &request.catalog_id,
+                &request.package_id,
                 &request.environment,
+                mounted_effective_release_id,
                 &request.wiring_id,
                 resolved.version,
                 Arc::clone(&resolved.graph_hash),
@@ -940,24 +951,25 @@ impl RouterDriver {
         &self,
         request: &RouterDriverRequest,
     ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
+        let effective_release_id = self.release.manifest().release.effective_release_id.get();
         if let Some(active) = self.cache.get_version(
             &request.tenant_id,
-            &request.catalog_id,
+            &request.package_id,
             &request.environment,
+            effective_release_id,
             &request.wiring_id,
             request.wiring_version,
         ) {
             return Ok(active);
         }
-        let release = self.release.manifest();
         let resolved = self
             .postgres
             .resolve_release_wiring(
                 &self.config.project,
                 &request.tenant_id,
-                &request.catalog_id,
+                &request.package_id,
                 &request.environment,
-                release.release.catalog_version,
+                effective_release_id,
                 self.release.release().manifest_digest.as_str(),
                 &request.wiring_id,
                 request.wiring_version,
@@ -967,8 +979,9 @@ impl RouterDriver {
         let facts = CatalogFacts::from_resolved(&resolved);
         match self.cache.insert_version(
             &request.tenant_id,
-            &request.catalog_id,
+            &request.package_id,
             &request.environment,
+            effective_release_id,
             &request.wiring_id,
             resolved.version,
             Arc::clone(&resolved.graph_hash),
@@ -988,8 +1001,11 @@ impl RouterDriver {
         anyhow::ensure!(request.wiring_version > 0, "wiring-version-zero");
         anyhow::ensure!(
             release.tenant_id == request.tenant_id
-                && release.catalog_id == request.catalog_id
-                && release.environment == request.environment,
+                && release.environment == request.environment
+                && release
+                    .packages
+                    .iter()
+                    .any(|package| package.package_id() == request.package_id),
             "router-request-release-scope-mismatch"
         );
         Ok(())
@@ -1000,15 +1016,18 @@ impl RouterDriver {
         target: &CandidateWiringTarget,
     ) -> Result<(), CandidateExecutionRefusal> {
         let release = &self.release.manifest().release;
-        if target.catalog_version == 0 || target.wiring_version == 0 {
+        if target.effective_release_id == 0 || target.wiring_version == 0 {
             return Err(CandidateExecutionRefusal::new(
                 CandidateExecutionRefusalKind::Identity,
                 "candidate-wiring-coordinate-incomplete",
             ));
         }
         if release.tenant_id != target.tenant_id
-            || release.catalog_id != target.catalog_id
             || release.environment != target.environment
+            || !release
+                .packages
+                .iter()
+                .any(|package| package.package_id() == target.package_id)
         {
             return Err(CandidateExecutionRefusal::new(
                 CandidateExecutionRefusalKind::Identity,
@@ -1031,11 +1050,10 @@ impl RouterDriver {
     ) -> Result<(), CandidateExecutionRefusal> {
         if active.version != target.wiring_version
             || active.graph_hash.as_ref() != target.wiring_hash
-            || active.facts.catalog_version != target.catalog_version
+            || active.facts.effective_release_id != target.effective_release_id
             || active.facts.components.iter().any(|component| {
                 component.scope.tenant_id != target.tenant_id
-                    || component.scope.catalog_id != target.catalog_id
-                    || component.scope.catalog_version != target.catalog_version
+                    || component.scope.package_id != target.package_id
             })
         {
             return Err(CandidateExecutionRefusal::new(
@@ -1077,6 +1095,7 @@ impl RouterDriver {
         active: &ActiveWiring<CatalogFacts>,
     ) -> anyhow::Result<()> {
         let expected = ServingWiring {
+            package_id: request.package_id.clone(),
             wiring_id: request.wiring_id.clone(),
             wiring_version: request.wiring_version,
             graph_hash: DefinitionHash::parse(active.graph_hash.as_ref())
@@ -1087,25 +1106,33 @@ impl RouterDriver {
             "wiring-not-in-carried-release"
         );
         anyhow::ensure!(
-            active.facts.catalog_version == self.release.manifest().release.catalog_version,
-            "wiring-catalog-version-not-carried"
+            active.facts.effective_release_id
+                == self.release.manifest().release.effective_release_id.get(),
+            "wiring-effective-release-not-carried"
         );
         Ok(())
     }
 
     fn validate_release_component(&self, component: &AdmittedComponent) -> anyhow::Result<()> {
         let manifest = self.release.manifest();
+        let package_version = manifest
+            .release
+            .packages
+            .iter()
+            .find(|package| package.package_id() == component.scope.package_id)
+            .map(|package| package.package_version());
         anyhow::ensure!(
             component.scope.tenant_id == manifest.release.tenant_id
-                && component.scope.catalog_id == manifest.release.catalog_id
-                && component.scope.catalog_version == manifest.release.catalog_version,
+                && package_version == Some(component.scope.package_version.as_str()),
             "release-component-scope-mismatch"
         );
         let expected = ServingComponent {
+            package_id: component.scope.package_id.clone(),
             component: component.component.clone(),
             interface_version: component.interface_version.clone(),
             digest: ArtifactHash::parse(component.component_digest.clone())
                 .context("component fact carries a non-canonical artifact hash")?,
+            registered_operation: component.registered_operation.clone(),
         };
         anyhow::ensure!(
             manifest.components.contains(&expected),
@@ -1127,10 +1154,12 @@ impl RouterDriver {
             .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
         if matches!(closure, ExecutionClosure::Released) {
             let release_component = ServingComponent {
+                package_id: component.scope.package_id.clone(),
                 component: component.component.clone(),
                 interface_version: component.interface_version.clone(),
                 digest: ArtifactHash::parse(component.component_digest.clone())
                     .context("component fact carries a non-canonical artifact hash")?,
+                registered_operation: component.registered_operation.clone(),
             };
             anyhow::ensure!(
                 self.release
@@ -1141,7 +1170,7 @@ impl RouterDriver {
             );
         }
         let release = matches!(closure, ExecutionClosure::Released).then(|| ReleaseIdentity {
-            release_version: self.release.release().release_version,
+            effective_release_id: self.release.release().effective_release_id,
             manifest_digest: self.release.release().manifest_digest.clone(),
         });
         let connection_closure = match closure {
@@ -1151,8 +1180,7 @@ impl RouterDriver {
                 binding_world,
                 ..
             } => ConnectionExecutionClosure::Candidate {
-                catalog_id: target.catalog_id.clone(),
-                catalog_version: target.catalog_version,
+                effective_release_id: target.effective_release_id,
                 environment: target.environment.clone(),
                 wiring_hash: target.wiring_hash.clone(),
                 component: component.component.clone(),
@@ -1171,6 +1199,7 @@ impl RouterDriver {
                 release,
             },
             invocation: ConnectionInvocation {
+                package_id: request.package_id.clone(),
                 wiring_id: request.wiring_id.clone(),
                 wiring_version: active.version,
                 node_id: call.node.clone(),
@@ -1234,12 +1263,18 @@ impl RouterDriver {
     }
 }
 
-fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, u32)> {
+fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, String, u32)> {
     manifest
         .attachments
         .values()
         .filter(|attachment| synchronous_request_kind(attachment.kind))
-        .map(|attachment| (attachment.wiring_id.clone(), attachment.wiring_version))
+        .map(|attachment| {
+            (
+                attachment.package_id.clone(),
+                attachment.wiring_id.clone(),
+                attachment.wiring_version,
+            )
+        })
         .collect()
 }
 
@@ -1508,8 +1543,8 @@ mod tests {
     };
     use tracing_subscriber::layer::SubscriberExt as _;
     use wamn_catalog::{
-        SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingRegistration,
-        ServingRegistrationInput, ServingRelease,
+        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
+        ServingRegistration, ServingRegistrationInput, ServingRelease,
     };
 
     use super::*;
@@ -1553,7 +1588,7 @@ mod tests {
     fn driver_request(traceparent: Option<&str>) -> RouterDriverRequest {
         RouterDriverRequest {
             tenant_id: "tenant-a".to_owned(),
-            catalog_id: "orders".to_owned(),
+            package_id: "orders".to_owned(),
             environment: "prod".to_owned(),
             wiring_id: "route-order".to_owned(),
             wiring_version: 7,
@@ -1600,6 +1635,7 @@ mod tests {
     fn attachment(kind: AttachmentKind, wiring_id: &str) -> ServingAttachment {
         ServingAttachment {
             kind,
+            package_id: "orders".to_owned(),
             wiring_id: wiring_id.to_owned(),
             wiring_version: 3,
             definition_hash: DefinitionHash::parse(
@@ -1608,6 +1644,7 @@ mod tests {
             .expect("fixture definition hash is canonical"),
             definition: serde_json::json!({}),
             auth_policy: serde_json::json!({}),
+            registered_operation: None,
         }
     }
 
@@ -1849,9 +1886,9 @@ mod tests {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
                 tenant_id: "tenant-a".to_owned(),
-                catalog_id: "orders".to_owned(),
-                catalog_version: 7,
+                effective_release_id: EffectiveReleaseId::new(7).unwrap(),
                 environment: "prod".to_owned(),
+                packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
             },
             components: BTreeSet::new(),
             wirings: BTreeSet::new(),
@@ -1876,6 +1913,7 @@ mod tests {
             registrations: BTreeMap::from([(
                 "events".to_owned(),
                 ServingRegistration {
+                    package_id: "orders".to_owned(),
                     wiring_id: "stream-wiring".to_owned(),
                     wiring_version: 4,
                     entity: "order".to_owned(),
@@ -1888,8 +1926,8 @@ mod tests {
         assert_eq!(
             synchronous_wiring_targets(&manifest),
             BTreeSet::from([
-                ("request-wiring".to_owned(), 3),
-                ("studio-wiring".to_owned(), 3),
+                ("orders".to_owned(), "request-wiring".to_owned(), 3),
+                ("orders".to_owned(), "studio-wiring".to_owned(), 3),
             ])
         );
     }

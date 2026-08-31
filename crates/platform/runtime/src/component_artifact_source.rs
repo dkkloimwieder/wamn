@@ -478,7 +478,7 @@ mod tests {
     use oci_client::errors::DigestError;
     use serde_json::json;
     use wamn_catalog::{
-        AdmittedComponent, ComponentCatalogScope, ComponentDeclaration, ComponentPortDeclaration,
+        AdmittedComponent, ComponentDeclaration, ComponentPackageScope, ComponentPortDeclaration,
         normalize_component_fact,
     };
 
@@ -487,14 +487,15 @@ mod tests {
     fn admitted(bytes: &[u8]) -> AdmittedComponent {
         normalize_component_fact(
             ComponentDeclaration {
-                scope: ComponentCatalogScope {
+                scope: ComponentPackageScope {
                     tenant_id: "tenant-a".to_owned(),
-                    catalog_id: "orders".to_owned(),
-                    catalog_version: 3,
+                    package_id: "orders".to_owned(),
+                    package_version: "1.0.0".to_owned(),
                 },
                 component: "transform".to_owned(),
                 interface_version: "0.1.0".to_owned(),
                 operation: "run".to_owned(),
+                registered_operation: None,
                 input_ports: vec![ComponentPortDeclaration {
                     name: "input".to_owned(),
                     schema: json!({}),

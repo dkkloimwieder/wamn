@@ -8,12 +8,12 @@
 //!
 //! ## Two levels, and why
 //!
-//! Entries are keyed by exact identity — `(environment, wiring id, version)` —
-//! because a wiring version is **immutable**: `catalog.wirings.version` is
-//! monotonic and its content is pinned by `confirmed_definition_hash`, so a
-//! resident entry can never become wrong. A separate pointer index records which
-//! version each `(environment, wiring)` currently resolves to, mirroring
-//! `catalog.wiring_activation`. That is the only mutable half, and the only half
+//! Entries are keyed by exact identity — `(package, environment, effective
+//! release, wiring id, version)` — because a wiring version is **immutable** and
+//! its resolved component/binding facts belong to one effective release. A
+//! separate pointer index records which version each release-scoped activation
+//! currently resolves to, mirroring `catalog.wiring_activation` plus the active
+//! effective-release head. That is the only mutable half, and the only half
 //! [`WiringCache::invalidate`] touches.
 //!
 //! The split earns its keep on rollback: flipping back to a version still
@@ -57,8 +57,9 @@ use crate::wiring::Wiring;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Pointer {
     tenant_id: Arc<str>,
-    catalog_id: Arc<str>,
+    package_id: Arc<str>,
     environment: Arc<str>,
+    effective_release_id: u32,
     wiring_id: Arc<str>,
 }
 
@@ -239,14 +240,16 @@ where
     pub fn get(
         &self,
         tenant_id: &str,
-        catalog_id: &str,
+        package_id: &str,
         environment: &str,
+        effective_release_id: u32,
         wiring_id: &str,
     ) -> Lookup<T> {
         let pointer = Pointer {
             tenant_id: Arc::from(tenant_id),
-            catalog_id: Arc::from(catalog_id),
+            package_id: Arc::from(package_id),
             environment: Arc::from(environment),
+            effective_release_id,
             wiring_id: Arc::from(wiring_id),
         };
         let mut state = self.state.lock().expect("wiring cache lock poisoned");
@@ -282,16 +285,18 @@ where
     pub fn get_version(
         &self,
         tenant_id: &str,
-        catalog_id: &str,
+        package_id: &str,
         environment: &str,
+        effective_release_id: u32,
         wiring_id: &str,
         version: u32,
     ) -> Option<ActiveWiring<T>> {
         let key = EntryKey {
             pointer: Pointer {
                 tenant_id: Arc::from(tenant_id),
-                catalog_id: Arc::from(catalog_id),
+                package_id: Arc::from(package_id),
                 environment: Arc::from(environment),
+                effective_release_id,
                 wiring_id: Arc::from(wiring_id),
             },
             version,
@@ -327,8 +332,9 @@ where
     pub fn insert(
         &self,
         tenant_id: &str,
-        catalog_id: &str,
+        package_id: &str,
         environment: &str,
+        effective_release_id: u32,
         wiring_id: &str,
         version: u32,
         graph_hash: impl Into<Arc<str>>,
@@ -338,8 +344,9 @@ where
     ) -> CacheInsert<T> {
         let pointer = Pointer {
             tenant_id: Arc::from(tenant_id),
-            catalog_id: Arc::from(catalog_id),
+            package_id: Arc::from(package_id),
             environment: Arc::from(environment),
+            effective_release_id,
             wiring_id: Arc::from(wiring_id),
         };
         let graph_hash = graph_hash.into();
@@ -395,8 +402,9 @@ where
     pub fn insert_version(
         &self,
         tenant_id: &str,
-        catalog_id: &str,
+        package_id: &str,
         environment: &str,
+        effective_release_id: u32,
         wiring_id: &str,
         version: u32,
         graph_hash: impl Into<Arc<str>>,
@@ -406,8 +414,9 @@ where
         let key = EntryKey {
             pointer: Pointer {
                 tenant_id: Arc::from(tenant_id),
-                catalog_id: Arc::from(catalog_id),
+                package_id: Arc::from(package_id),
                 environment: Arc::from(environment),
+                effective_release_id,
                 wiring_id: Arc::from(wiring_id),
             },
             version,
@@ -448,8 +457,13 @@ where
         })
     }
 
-    /// Forget which version this pointer resolves to, sending the next delivery
-    /// back to the store for it. **This is the pointer-flip entry point.**
+    /// Forget which version this activation resolves to across every resident
+    /// effective release, sending the next delivery back to the store.
+    /// **This is the pointer-flip entry point.**
+    ///
+    /// The doorbell names package/environment/wiring but carries no effective
+    /// release id, so one notice drops every active release-scoped pointer for
+    /// that coordinate. Immutable graph entries remain resident.
     ///
     /// Returns whether a pointer was actually dropped — which is NOT the same
     /// question as whether the flip took effect. It also overtakes every
@@ -469,19 +483,20 @@ where
     pub fn invalidate(
         &self,
         tenant_id: &str,
-        catalog_id: &str,
+        package_id: &str,
         environment: &str,
         wiring_id: &str,
     ) -> bool {
-        let pointer = Pointer {
-            tenant_id: Arc::from(tenant_id),
-            catalog_id: Arc::from(catalog_id),
-            environment: Arc::from(environment),
-            wiring_id: Arc::from(wiring_id),
-        };
         let mut state = self.state.lock().expect("wiring cache lock poisoned");
         state.generation += 1;
-        state.active.remove(&pointer).is_some()
+        let before = state.active.len();
+        state.active.retain(|pointer, _| {
+            pointer.tenant_id.as_ref() != tenant_id
+                || pointer.package_id.as_ref() != package_id
+                || pointer.environment.as_ref() != environment
+                || pointer.wiring_id.as_ref() != wiring_id
+        });
+        state.active.len() != before
     }
 
     /// Forget EVERY pointer, sending the next delivery of every wiring back to
@@ -568,4 +583,83 @@ fn touch(order: &mut VecDeque<EntryKey>, key: &EntryKey) {
         order.remove(position);
     }
     order.push_back(key.clone());
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+
+    use serde_json::Value;
+
+    use super::{CacheInsert, WiringCache};
+    use crate::wiring::{Wiring, WiringNode};
+
+    fn wiring(entry: &str) -> Wiring {
+        Wiring::compile(
+            entry,
+            vec![WiringNode {
+                id: entry.to_owned(),
+                component: "echo".to_owned(),
+                config: Value::Null,
+                connection: None,
+                terminal: None,
+            }],
+            Vec::new(),
+        )
+        .expect("fixture wiring compiles")
+    }
+
+    #[test]
+    fn effective_releases_do_not_share_resolved_facts() {
+        const TENANT: &str = "tenant-a";
+        const PACKAGE: &str = "orders";
+        const ENVIRONMENT: &str = "prod";
+        const WIRING: &str = "create-order";
+        let cache = WiringCache::new(NonZeroUsize::new(4).expect("non-zero cache bound"));
+
+        for (release_id, facts) in [(7, "release-7"), (8, "release-8")] {
+            let token = cache
+                .get(TENANT, PACKAGE, ENVIRONMENT, release_id, WIRING)
+                .miss()
+                .expect("another release cannot satisfy this lookup");
+            let inserted = cache.insert(
+                TENANT,
+                PACKAGE,
+                ENVIRONMENT,
+                release_id,
+                WIRING,
+                1,
+                "sha256:graph",
+                wiring(facts),
+                facts,
+                token,
+            );
+            assert!(matches!(inserted, CacheInsert::Installed(_)));
+        }
+
+        let release_7 = cache
+            .get(TENANT, PACKAGE, ENVIRONMENT, 7, WIRING)
+            .hit()
+            .expect("release 7 remains resident");
+        let release_8 = cache
+            .get(TENANT, PACKAGE, ENVIRONMENT, 8, WIRING)
+            .hit()
+            .expect("release 8 remains resident");
+        assert_eq!(*release_7.facts, "release-7");
+        assert_eq!(*release_8.facts, "release-8");
+
+        assert!(cache.invalidate(TENANT, PACKAGE, ENVIRONMENT, WIRING));
+        assert!(
+            cache
+                .get(TENANT, PACKAGE, ENVIRONMENT, 7, WIRING)
+                .hit()
+                .is_none()
+        );
+        assert!(
+            cache
+                .get(TENANT, PACKAGE, ENVIRONMENT, 8, WIRING)
+                .hit()
+                .is_none()
+        );
+    }
 }

@@ -216,7 +216,7 @@ impl ReleaseManifestSource {
     /// wash-runtime keeps the matching reader `oci::extra_ca_certificates()`
     /// private, and its only public transfer surface pushes and pulls wasm
     /// components — not this artifact's
-    /// `application/vnd.wamn.release-manifest.v2+json` layer over an empty
+    /// `application/vnd.wamn.release-manifest.v3+json` layer over an empty
     /// config. See standing trigger 5 in
     /// `docs/architecture/native-alignment-ledger.md` (`wamn-kdhw`).
     pub fn with_ca_paths(mut self, paths: &[PathBuf]) -> Result<Self, ReleaseManifestFetchError> {
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn a_body_the_layer_descriptor_overstates_refuses_as_a_size_mismatch() {
-        let canonical = br#"{"format-version":2}"#;
+        let canonical = br#"{"format-version":3}"#;
         let exact = i64::try_from(canonical.len()).expect("fixture length fits");
 
         verify_transferred_body(canonical, exact, &component_digest(canonical), REFERENCE)
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn a_body_the_named_digest_does_not_address_refuses_as_a_digest_mismatch() {
-        let canonical = br#"{"format-version":2}"#;
+        let canonical = br#"{"format-version":3}"#;
         // Same length as the named bytes, so the size arm cannot be what fires.
         let served = br#"{"Format-version":2}"#;
         assert_eq!(served.len(), canonical.len());

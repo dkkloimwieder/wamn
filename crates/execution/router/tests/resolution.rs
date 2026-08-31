@@ -14,8 +14,9 @@ use serde_json::Value;
 use wamn_router::{CacheInsert, Wiring, WiringCache, WiringNode};
 
 const TENANT: &str = "t1";
-const CATALOG: &str = "shop";
+const PACKAGE: &str = "shop";
 const ENV: &str = "prod";
+const RELEASE: u32 = 7;
 
 fn cache(max_entries: usize) -> WiringCache {
     WiringCache::new(NonZeroUsize::new(max_entries).expect("fixture bound is non-zero"))
@@ -53,18 +54,26 @@ fn graph_hash(wiring_id: &str, version: u32) -> String {
 fn resolve(
     cache: &WiringCache,
     environment: &str,
+    effective_release_id: u32,
     wiring_id: &str,
     version: u32,
     graph: Wiring,
 ) -> Arc<Wiring> {
     let token = cache
-        .get(TENANT, CATALOG, environment, wiring_id)
+        .get(
+            TENANT,
+            PACKAGE,
+            environment,
+            effective_release_id,
+            wiring_id,
+        )
         .miss()
         .expect("a fixture resolves only what it has just found missing");
     match cache.insert(
         TENANT,
-        CATALOG,
+        PACKAGE,
         environment,
+        effective_release_id,
         wiring_id,
         version,
         graph_hash(wiring_id, version),
@@ -84,11 +93,11 @@ fn resolve(
 #[test]
 fn a_resolved_wiring_is_served_from_memory_on_every_later_delivery() {
     let cache = cache(8);
-    let installed = resolve(&cache, ENV, "orders", 7, wiring("v7"));
+    let installed = resolve(&cache, ENV, RELEASE, "orders", 7, wiring("v7"));
 
     for _ in 0..3 {
         let hit = cache
-            .get(TENANT, CATALOG, ENV, "orders")
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
             .hit()
             .expect("resident after insert");
         assert_eq!(hit.version, 7);
@@ -103,7 +112,12 @@ fn a_resolved_wiring_is_served_from_memory_on_every_later_delivery() {
 #[test]
 fn an_unresolved_wiring_misses() {
     let cache = cache(8);
-    assert!(cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none());
+    assert!(
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
+            .hit()
+            .is_none()
+    );
     assert!(cache.is_empty());
 }
 
@@ -112,17 +126,17 @@ fn an_unresolved_wiring_misses() {
 #[test]
 fn environments_do_not_share_a_pointer() {
     let cache = cache(8);
-    resolve(&cache, ENV, "orders", 7, wiring("prod-v7"));
+    resolve(&cache, ENV, RELEASE, "orders", 7, wiring("prod-v7"));
 
     assert!(
         cache
-            .get(TENANT, CATALOG, "staging", "orders")
+            .get(TENANT, PACKAGE, "staging", RELEASE, "orders")
             .hit()
             .is_none()
     );
     assert_eq!(
         cache
-            .get(TENANT, CATALOG, ENV, "orders")
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
             .hit()
             .expect("prod resident")
             .version,
@@ -138,20 +152,28 @@ fn environments_do_not_share_a_pointer() {
 #[test]
 fn invalidate_sends_the_next_lookup_back_to_the_store() {
     let cache = cache(8);
-    resolve(&cache, ENV, "orders", 7, wiring("v7"));
-    assert!(cache.get(TENANT, CATALOG, ENV, "orders").hit().is_some());
+    resolve(&cache, ENV, RELEASE, "orders", 7, wiring("v7"));
+    assert!(
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
+            .hit()
+            .is_some()
+    );
 
     assert!(
-        cache.invalidate(TENANT, CATALOG, ENV, "orders"),
+        cache.invalidate(TENANT, PACKAGE, ENV, "orders"),
         "invalidating a live pointer reports that it dropped one"
     );
 
     assert!(
-        cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none(),
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
+            .hit()
+            .is_none(),
         "a flipped pointer must miss, or the flip never takes effect"
     );
     assert!(
-        !cache.invalidate(TENANT, CATALOG, ENV, "orders"),
+        !cache.invalidate(TENANT, PACKAGE, ENV, "orders"),
         "invalidating an already-dropped pointer reports nothing dropped"
     );
 }
@@ -175,7 +197,7 @@ fn a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointe
 
     // t0: the delivery misses and goes to the store, which says v7.
     let token = cache
-        .get(TENANT, CATALOG, ENV, "orders")
+        .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
         .miss()
         .expect("nothing is resident yet");
     let read = store;
@@ -184,7 +206,7 @@ fn a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointe
     // back.
     store = (8, "v8");
     assert!(
-        !cache.invalidate(TENANT, CATALOG, ENV, "orders"),
+        !cache.invalidate(TENANT, PACKAGE, ENV, "orders"),
         "there is no resident pointer to drop — that is the whole difficulty"
     );
 
@@ -193,8 +215,9 @@ fn a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointe
         matches!(
             cache.insert(
                 TENANT,
-                CATALOG,
+                PACKAGE,
                 ENV,
+                RELEASE,
                 "orders",
                 read.0,
                 graph_hash("orders", read.0),
@@ -207,21 +230,25 @@ fn a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointe
         "a read from before the flip must not become the pointer after it"
     );
     assert!(
-        cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none(),
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
+            .hit()
+            .is_none(),
         "the superseded version was installed and will be served until the next flip"
     );
 
     // And the answer to a refusal is to resolve again, which now sees the flip.
     let retry = cache
-        .get(TENANT, CATALOG, ENV, "orders")
+        .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
         .miss()
         .expect("the refused install left nothing resident");
     assert!(
         matches!(
             cache.insert(
                 TENANT,
-                CATALOG,
+                PACKAGE,
                 ENV,
+                RELEASE,
                 "orders",
                 store.0,
                 graph_hash("orders", store.0),
@@ -235,7 +262,7 @@ fn a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointe
     );
     assert_eq!(
         cache
-            .get(TENANT, CATALOG, ENV, "orders")
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
             .hit()
             .expect("the retry resolved")
             .version,
@@ -251,7 +278,7 @@ fn a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer() 
     let cache = cache(8);
 
     let token = cache
-        .get(TENANT, CATALOG, ENV, "orders")
+        .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
         .miss()
         .expect("nothing is resident yet");
 
@@ -265,8 +292,9 @@ fn a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer() 
         matches!(
             cache.insert(
                 TENANT,
-                CATALOG,
+                PACKAGE,
                 ENV,
+                RELEASE,
                 "orders",
                 7,
                 graph_hash("orders", 7),
@@ -278,7 +306,12 @@ fn a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer() 
         ),
         "a read begun before the reconnect may not repopulate the cache"
     );
-    assert!(cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none());
+    assert!(
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
+            .hit()
+            .is_none()
+    );
 }
 
 /// Invalidation drops the POINTER, not the graphs — which is what makes a
@@ -286,11 +319,11 @@ fn a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer() 
 #[test]
 fn invalidate_keeps_the_graphs_so_a_rollback_flip_is_a_hit() {
     let cache = cache(8);
-    let seven = resolve(&cache, ENV, "orders", 7, wiring("v7"));
-    cache.invalidate(TENANT, CATALOG, ENV, "orders");
+    let seven = resolve(&cache, ENV, RELEASE, "orders", 7, wiring("v7"));
+    cache.invalidate(TENANT, PACKAGE, ENV, "orders");
     assert_eq!(cache.len(), 1, "the graph stayed resident");
 
-    let rolled_back = resolve(&cache, ENV, "orders", 7, wiring("v7-recompiled"));
+    let rolled_back = resolve(&cache, ENV, RELEASE, "orders", 7, wiring("v7-recompiled"));
 
     assert!(
         Arc::ptr_eq(&rolled_back, &seven),
@@ -302,12 +335,12 @@ fn invalidate_keeps_the_graphs_so_a_rollback_flip_is_a_hit() {
 #[test]
 fn a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident() {
     let cache = cache(8);
-    let seven = resolve(&cache, ENV, "orders", 7, wiring("v7"));
-    cache.invalidate(TENANT, CATALOG, ENV, "orders");
-    resolve(&cache, ENV, "orders", 8, wiring("v8"));
+    let seven = resolve(&cache, ENV, RELEASE, "orders", 7, wiring("v7"));
+    cache.invalidate(TENANT, PACKAGE, ENV, "orders");
+    resolve(&cache, ENV, RELEASE, "orders", 8, wiring("v8"));
 
     let hit = cache
-        .get(TENANT, CATALOG, ENV, "orders")
+        .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
         .hit()
         .expect("the new version resolves");
     assert_eq!(hit.version, 8);
@@ -325,9 +358,16 @@ fn a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident() {
 #[test]
 fn invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip() {
     let cache = cache(8);
-    resolve(&cache, ENV, "orders", 7, wiring("orders-v7"));
-    resolve(&cache, ENV, "refunds", 3, wiring("refunds-v3"));
-    resolve(&cache, "staging", "orders", 2, wiring("staging-v2"));
+    resolve(&cache, ENV, RELEASE, "orders", 7, wiring("orders-v7"));
+    resolve(&cache, ENV, RELEASE, "refunds", 3, wiring("refunds-v3"));
+    resolve(
+        &cache,
+        "staging",
+        RELEASE,
+        "orders",
+        2,
+        wiring("staging-v2"),
+    );
 
     assert_eq!(
         cache.invalidate_all(),
@@ -338,7 +378,7 @@ fn invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip() {
     for (environment, wiring_id) in [(ENV, "orders"), (ENV, "refunds"), ("staging", "orders")] {
         assert!(
             cache
-                .get(TENANT, CATALOG, environment, wiring_id)
+                .get(TENANT, PACKAGE, environment, RELEASE, wiring_id)
                 .hit()
                 .is_none(),
             "{environment}/{wiring_id} resumed against a pointer no flip was seen for"
@@ -358,13 +398,20 @@ fn invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip() {
 #[test]
 fn invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing() {
     let cache = cache(8);
-    let seven = resolve(&cache, ENV, "orders", 7, wiring("orders-v7"));
-    resolve(&cache, ENV, "refunds", 3, wiring("refunds-v3"));
+    let seven = resolve(&cache, ENV, RELEASE, "orders", 7, wiring("orders-v7"));
+    resolve(&cache, ENV, RELEASE, "refunds", 3, wiring("refunds-v3"));
 
     cache.invalidate_all();
 
     assert_eq!(cache.len(), 2, "the graphs stayed resident");
-    let re_read = resolve(&cache, ENV, "orders", 7, wiring("orders-v7-recompiled"));
+    let re_read = resolve(
+        &cache,
+        ENV,
+        RELEASE,
+        "orders",
+        7,
+        wiring("orders-v7-recompiled"),
+    );
     assert!(
         Arc::ptr_eq(&re_read, &seven),
         "the re-read after a reconnect must land on the resident graph"
@@ -377,24 +424,35 @@ fn invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing() {
 #[test]
 fn eviction_is_bounded_and_least_recently_used() {
     let cache = cache(2);
-    resolve(&cache, ENV, "a", 1, wiring("a"));
-    resolve(&cache, ENV, "b", 1, wiring("b"));
+    resolve(&cache, ENV, RELEASE, "a", 1, wiring("a"));
+    resolve(&cache, ENV, RELEASE, "b", 1, wiring("b"));
     // Touch `a`, making `b` the least recently used.
     cache
-        .get(TENANT, CATALOG, ENV, "a")
+        .get(TENANT, PACKAGE, ENV, RELEASE, "a")
         .hit()
         .expect("a is resident");
 
-    resolve(&cache, ENV, "c", 1, wiring("c"));
+    resolve(&cache, ENV, RELEASE, "c", 1, wiring("c"));
 
     assert_eq!(cache.len(), 2, "the entry bound holds");
     assert!(
-        cache.get(TENANT, CATALOG, ENV, "a").hit().is_some(),
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "a")
+            .hit()
+            .is_some(),
         "the touched entry survived"
     );
-    assert!(cache.get(TENANT, CATALOG, ENV, "c").hit().is_some());
     assert!(
-        cache.get(TENANT, CATALOG, ENV, "b").hit().is_none(),
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "c")
+            .hit()
+            .is_some()
+    );
+    assert!(
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "b")
+            .hit()
+            .is_none(),
         "the least recently used entry was the one evicted"
     );
 }
@@ -404,12 +462,22 @@ fn eviction_is_bounded_and_least_recently_used() {
 #[test]
 fn an_evicted_entry_leaves_behind_no_pointer() {
     let cache = cache(1);
-    resolve(&cache, ENV, "a", 1, wiring("a"));
-    resolve(&cache, ENV, "b", 1, wiring("b"));
+    resolve(&cache, ENV, RELEASE, "a", 1, wiring("a"));
+    resolve(&cache, ENV, RELEASE, "b", 1, wiring("b"));
 
     assert_eq!(cache.len(), 1);
-    assert!(cache.get(TENANT, CATALOG, ENV, "a").hit().is_none());
-    assert!(cache.get(TENANT, CATALOG, ENV, "b").hit().is_some());
+    assert!(
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "a")
+            .hit()
+            .is_none()
+    );
+    assert!(
+        cache
+            .get(TENANT, PACKAGE, ENV, RELEASE, "b")
+            .hit()
+            .is_some()
+    );
 }
 
 // ---- the instrument --------------------------------------------------------

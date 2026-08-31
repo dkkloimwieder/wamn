@@ -59,16 +59,16 @@ pub struct WamnPostgres {
     runners: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the caller's `app.role` claim (a `roles.name`). Absent
     /// (the default) binds the empty role, which is the deny floor every
-    /// compiled role gate coalesces to. When set, a per-role RLS policy
-    /// (`crates/schema/compiler/src/rls/compile.rs`) gates on the caller's role
-    /// instead of denying.
+    /// compiled role gate coalesces to. When set, a per-role RLS policy using
+    /// the claim contract documented by `deploy/sql/app-schema.sql` gates on
+    /// the caller's role instead of denying.
     roles: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the caller's `app.user_id` claim (a `users.id` uuid).
     /// Absent (the default) binds the empty string, which the compiled
     /// ownership predicate `NULLIF(…, '')::uuid` turns into NULL → deny. When
     /// set, a per-user RLS policy compares against the caller's own id.
     users: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the `(release version, manifest digest)` this pod carries.
+    /// component id → the `(effective release id, manifest digest)` this pod carries.
     /// Absent (the default) ⇒ the production claim records nothing, so every
     /// path that never mounted a release identity is byte-unchanged. When set,
     /// the claim writes the pair onto the run it leases, write-once.
@@ -87,18 +87,17 @@ pub struct WamnPostgres {
     pub(super) destroyed: Arc<AtomicU64>,
 }
 
-/// The release a pod carries — the `(release version, manifest digest)` pair
+/// The release a pod carries — the `(effective release id, manifest digest)` pair
 /// derived from the verified content of its mounted serving manifest
 /// ([`ReleaseManifestWeld`](crate::release_manifest::ReleaseManifestWeld)).
 ///
-/// Runs are never version-pinned: a run executes under the release its CLAIMING
-/// pod carries, and the production claim records this pair onto that run exactly
-/// once. It is host-injected identity like the tenant and the lease owner, never
-/// guest-supplied.
+/// Admission pins the effective release. The production claim verifies that
+/// pin and records the claiming pod's manifest digest. Both values are
+/// host-injected identity, never guest-supplied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseIdentity {
-    /// The release (catalog) version — `runs.release_version`.
-    pub release_version: i32,
+    /// The release identity — `runs.effective_release_id`.
+    pub effective_release_id: i32,
     /// The serving manifest's digest — `runs.manifest_digest`. The
     /// `sha256:<64 lowercase hex>` shape the run plane's
     /// `runs_release_record_check` admits is carried by the type, so there is no
@@ -133,15 +132,15 @@ pub struct SessionClaims {
     pub role: Option<String>,
     /// `app.user_id` — the caller's `users.id` for compiled ownership RLS.
     pub user_id: Option<String>,
-    /// The `(release version, manifest digest)` the claiming pod carries.
+    /// The `(effective release id, manifest digest)` the claiming pod carries.
     pub release: Option<ReleaseIdentity>,
 }
 
 /// Host-only identity used to load one HTTP effect authorization snapshot.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionEffectLookup<'a> {
-    pub catalog_id: &'a str,
-    pub catalog_version: i32,
+    pub package_id: &'a str,
+    pub effective_release_id: i32,
     pub environment: &'a str,
     pub wiring_id: &'a str,
     pub wiring_version: i32,
@@ -239,6 +238,7 @@ pub struct ConnectionEffectSnapshot {
     pub wiring_hash: String,
     pub component: Option<String>,
     pub interface_version: Option<String>,
+    pub registered_operation: Option<String>,
     pub requirement_json: Option<serde_json::Value>,
     pub requirement_hash: Option<String>,
     pub node_permitted: bool,
@@ -265,18 +265,26 @@ pub struct ConnectionEffectSnapshot {
 /// checked separately by `ConnectionHttp`, because its canonical bytes are not
 /// a database relation and must not be projected back into Postgres.
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
-WITH selected_wiring AS MATERIALIZED ( \
-    SELECT wiring.wiring_hash, wiring.graph_json \
-      FROM catalog.wirings AS wiring \
-     WHERE wiring.tenant_id = $1 \
-       AND wiring.catalog_id = $2 \
-       AND wiring.gated_catalog_version = $3 \
-       AND wiring.wiring_id = $5 \
+WITH release_scope AS MATERIALIZED ( \
+    SELECT member.package_version \
+      FROM catalog.effective_release_packages AS member \
+     WHERE member.tenant_id = $1 \
+       AND member.package_id = $2 \
+       AND member.effective_release_id = $3 \
+), selected_wiring AS MATERIALIZED ( \
+    SELECT wiring.wiring_hash, wiring.graph_json, release_scope.package_version \
+      FROM release_scope \
+      JOIN catalog.wirings AS wiring \
+        ON wiring.tenant_id = $1 \
+       AND wiring.package_id = $2 \
+       AND wiring.package_version = release_scope.package_version \
+     WHERE wiring.wiring_id = $5 \
        AND wiring.version = $6 \
        AND wiring.graph_json ->> 'wiring-id' = $5 \
        AND wiring.graph_json ->> 'version' = $6::text \
 ) \
 SELECT wiring.wiring_hash, component.component, component.interface_version, \
+       component.registered_operation, \
        requirement.requirement_json::text, requirement.requirement_hash, \
        COALESCE( \
            node.value IS NOT NULL \
@@ -294,24 +302,19 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
   FROM selected_wiring AS wiring \
   LEFT JOIN catalog.component_library AS component \
     ON component.tenant_id = $1 \
-   AND component.catalog_id = $2 \
-   AND component.catalog_version = $3 \
+   AND component.package_id = $2 \
+   AND component.package_version = wiring.package_version \
    AND component.component_digest = $8 \
   LEFT JOIN LATERAL ( \
       SELECT wiring.graph_json #> ARRAY['nodes', $7] AS value \
   ) AS node ON true \
   LEFT JOIN catalog.connection_requirements AS requirement \
     ON requirement.tenant_id = $1 \
-   AND requirement.artifact_hash IS NULL \
-   AND requirement.requirement_name IS NULL \
    AND requirement.component_digest = $8 \
    AND requirement.store_alias = $9 \
   LEFT JOIN catalog.connection_bindings AS binding \
     ON binding.tenant_id = $1 \
-   AND binding.catalog_id = $2 \
-   AND binding.catalog_version = $3 \
-   AND binding.artifact_hash IS NULL \
-   AND binding.requirement_name IS NULL \
+   AND binding.effective_release_id = $3 \
    AND binding.component_digest = $8 \
    AND binding.store_alias = $9 \
    AND binding.environment = $4 \
@@ -432,8 +435,8 @@ fn causation_emit_sql(c: &Causation) -> String {
 ///   COALESCEd to the current value like `$3`/`$4`: an absent claim binds `''`,
 ///   which is exactly the deny floor
 ///   `COALESCE(current_setting('app.role', true), '')` and
-///   `NULLIF(current_setting('app.user_id', true), '')::uuid` compile to
-///   (`crates/schema/compiler/src/rls/compile.rs`). Re-asserting whatever the
+///   `NULLIF(current_setting('app.user_id', true), '')::uuid` use in the static
+///   application-schema RLS contract. Re-asserting whatever the
 ///   pooled connection currently carries would let a session-level value survive
 ///   into the next component's transaction, turning a shared connection into a
 ///   role escalation; binding the floor cannot.
@@ -1023,15 +1026,15 @@ impl WamnPostgres {
     }
 
     /// Register the release this pod carries for a component id. The production
-    /// claim writes it onto every run it leases, write-once. The bench harness
-    /// and live tests call this directly; the host path feeds it from the loaded
+    /// claim verifies its effective release against every run it leases and
+    /// records the manifest digest write-once. The bench harness and live tests
+    /// call this directly; the host path feeds it from the loaded
     /// [`ReleaseManifestWeld`](crate::release_manifest::ReleaseManifestWeld),
     /// whose pair is derived from verified manifest content. Absent leaves the
     /// claim recording nothing.
     ///
     /// The digest arrives as [`ManifestDigest`], so its shape is already proven;
-    /// only the version still needs a check, and typing that value is owed by
-    /// whoever gives the catalog version one type.
+    /// only the integer release identity still needs a check.
     ///
     /// # Why effect authority needs no equality check against this record
     ///
@@ -1039,21 +1042,18 @@ impl WamnPostgres {
     /// so the digest recorded on a run IS the digest of the manifest the recording
     /// pod loaded — structurally, not because anything compares them (owner ruling
     /// `wamn-0h0g.15.102`, after `wamn-0h0g.15.103` struck the asserted carrier).
-    /// That survives a re-claim by a differently-released pod: the record is
-    /// write-once, and the run plane only lets it be cleared while the run has NO
-    /// effect attempts at all (`run-release-record-immutable`,
-    /// `deploy/sql/run-state.sql`), so whichever pod holds a run's lease always
-    /// carries the release that run records. This is what makes the host-side
-    /// plan-closure check honest without a comparator (`wamn-0h0g.15.66`).
+    /// The admission-pinned effective release and write-once digest are what
+    /// make the host-side closure check honest without a second identity
+    /// carrier.
     pub fn set_release_identity(
         &self,
         component_id: &str,
-        release_version: i32,
+        effective_release_id: i32,
         manifest_digest: ManifestDigest,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            release_version > 0,
-            "invalid release version {release_version}: a positive catalog version is required"
+            effective_release_id > 0,
+            "invalid effective release id {effective_release_id}: a positive value is required"
         );
         self.release_identities
             .write()
@@ -1061,7 +1061,7 @@ impl WamnPostgres {
             .insert(
                 component_id.to_string(),
                 ReleaseIdentity {
-                    release_version,
+                    effective_release_id,
                     manifest_digest,
                 },
             );
@@ -1174,7 +1174,7 @@ impl WamnPostgres {
         match claims.release.as_ref() {
             Some(release) => self.set_release_identity(
                 component_id,
-                release.release_version,
+                release.effective_release_id,
                 release.manifest_digest.clone(),
             )?,
             None => drop(
@@ -1531,8 +1531,8 @@ impl WamnPostgres {
             let candidate_generation = lookup.candidate_binding.map(|binding| binding.generation);
             let params: [&(dyn ToSql + Sync); 11] = [
                 &tenant,
-                &lookup.catalog_id,
-                &lookup.catalog_version,
+                &lookup.package_id,
+                &lookup.effective_release_id,
                 &lookup.environment,
                 &lookup.wiring_id,
                 &lookup.wiring_version,
@@ -1562,22 +1562,23 @@ impl WamnPostgres {
                 wiring_hash: row.try_get(0)?,
                 component: row.try_get(1)?,
                 interface_version: row.try_get(2)?,
-                requirement_json: json(3)?,
-                requirement_hash: row.try_get(4)?,
-                node_permitted: row.try_get::<_, Option<bool>>(5)?.unwrap_or(false),
-                binding_active: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
-                binding_valid: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
-                instance_id: row.try_get(8)?,
-                validation_hash: row.try_get(9)?,
-                requirement_type: row.try_get(10)?,
-                contract: row.try_get(11)?,
-                instance_enabled: row.try_get::<_, Option<bool>>(12)?.unwrap_or(false),
-                active_generation: row.try_get(13)?,
-                instance_revision: row.try_get(14)?,
-                generation: row.try_get(15)?,
-                definition: json(16)?,
-                definition_hash: row.try_get(17)?,
-                credential_handle: row.try_get(18)?,
+                registered_operation: row.try_get(3)?,
+                requirement_json: json(4)?,
+                requirement_hash: row.try_get(5)?,
+                node_permitted: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
+                binding_active: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
+                binding_valid: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
+                instance_id: row.try_get(9)?,
+                validation_hash: row.try_get(10)?,
+                requirement_type: row.try_get(11)?,
+                contract: row.try_get(12)?,
+                instance_enabled: row.try_get::<_, Option<bool>>(13)?.unwrap_or(false),
+                active_generation: row.try_get(14)?,
+                instance_revision: row.try_get(15)?,
+                generation: row.try_get(16)?,
+                definition: json(17)?,
+                definition_hash: row.try_get(18)?,
+                credential_handle: row.try_get(19)?,
             };
             Ok(Some(snapshot))
         }
@@ -1968,8 +1969,11 @@ mod tests {
     /// caller names no tenant at all.
     #[test]
     fn a_guest_credential_resolves_for_its_own_tenant_and_no_other() {
-        let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url("acme", "host-default"))))
-            .expect("compose with a credential");
+        let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
+            "acme",
+            "host-default",
+        ))))
+        .expect("compose with a credential");
         assert!(
             host.provider
                 .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("acme"))
@@ -2000,8 +2004,11 @@ mod tests {
 
     #[test]
     fn the_composed_credential_becomes_the_default_project() {
-        let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url("acme", "host-default"))))
-            .expect("compose with a credential");
+        let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
+            "acme",
+            "host-default",
+        ))))
+        .expect("compose with a credential");
         assert!(
             composed
                 .provider
@@ -2249,18 +2256,20 @@ mod tests {
     #[test]
     fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
         for required in [
-            "FROM catalog.wirings AS wiring",
-            "wiring.gated_catalog_version = $3",
+            "FROM catalog.effective_release_packages AS member",
+            "JOIN catalog.wirings AS wiring",
+            "member.effective_release_id = $3",
+            "wiring.package_id = $2",
+            "wiring.package_version = release_scope.package_version",
             "wiring.wiring_id = $5",
             "wiring.version = $6",
             "wiring.graph_json ->> 'wiring-id' = $5",
             "component.component_digest = $8",
+            "component.registered_operation",
             "wiring.graph_json #> ARRAY['nodes', $7]",
-            "requirement.artifact_hash IS NULL",
-            "requirement.requirement_name IS NULL",
             "requirement.component_digest = $8",
             "requirement.store_alias = $9",
-            "binding.catalog_version = $3",
+            "binding.effective_release_id = $3",
             "binding.environment = $4",
         ] {
             assert!(
@@ -2643,7 +2652,9 @@ mod tests {
             return;
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(live_guest_url(&admin_url, LIVE_TENANT).await)),
+            credentials: Some(ClassCredentials::every_class(
+                live_guest_url(&admin_url, LIVE_TENANT).await,
+            )),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -2747,13 +2758,12 @@ mod tests {
     /// deliberately does not link. The floor is not this fixture's subject: the
     /// RESTRICTIVE per-role and per-user layer is, and that is a different claim
     /// class item 2 leaves alone. The production floor is proven live by
-    /// `crates/control/provision/tests/deploy_sql_authority.rs` and
-    /// `crates/schema/compiler/tests/ddl.rs`.
+    /// `crates/control/provision/tests/deploy_sql_authority.rs` and the static
+    /// `deploy/sql/app-schema.sql` contract.
     ///
-    /// The 3.2 tenant floor plus the 3.5 row-ownership rule in the shape
-    /// `crates/schema/compiler/src/rls/compile.rs` emits (pinned by
-    /// `crates/schema/compiler/tests/rls.rs`), over a table the probe role does
-    /// not own so RLS applies to it.
+    /// The 3.2 tenant floor plus the row-ownership rule documented by
+    /// `deploy/sql/app-schema.sql`, over a table the probe role does not own so
+    /// RLS applies to it.
     fn rls_fixture_sql(schema: &str, probe: &str, tenant: &str, u1: &str, u2: &str) -> String {
         format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
@@ -2782,8 +2792,8 @@ mod tests {
     // that is never handed those claims denies EVERYTHING. Before this bead
     // `CLAIM_SQL` bound only tenant / statement_timeout / search_path /
     // app.runner, so every per-user policy silently denied on the production
-    // path while `crates/schema/compiler/tests/rls.rs` passed on hand-written
-    // `SET LOCAL`. This drives the REAL plugin (`one_shot`) as a NOSUPERUSER
+    // path while isolated policy tests passed on hand-written `SET LOCAL`.
+    // This drives the REAL plugin (`one_shot`) as a NOSUPERUSER
     // NOBYPASSRLS role, so it fails against a `CLAIM_SQL` that does not inject
     // the caller's identity.
     #[tokio::test]
@@ -2816,7 +2826,9 @@ mod tests {
             .expect("seed the per-user RLS fixture as the superuser owner");
 
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(database_url_for_role(&admin_url, &probe, &probe))),
+            credentials: Some(ClassCredentials::every_class(database_url_for_role(
+                &admin_url, &probe, &probe,
+            ))),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -2908,7 +2920,9 @@ mod tests {
             .expect("seed the per-user RLS fixture as the superuser owner");
 
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(database_url_for_role(&admin_url, &probe, &probe))),
+            credentials: Some(ClassCredentials::every_class(database_url_for_role(
+                &admin_url, &probe, &probe,
+            ))),
             guest_pool_max_size: 2,
             platform_pool_max_size: 2,
             wait_timeout_ms: 2_000,
@@ -3022,8 +3036,8 @@ mod tests {
         .expect("the acquiring tenant binds");
 
         let lookup = ConnectionEffectLookup {
-            catalog_id: "catalog",
-            catalog_version: 1,
+            package_id: "catalog",
+            effective_release_id: 1,
             environment: "dev",
             wiring_id: "wiring",
             wiring_version: 1,
@@ -3091,8 +3105,8 @@ mod tests {
         );
 
         let lookup = ConnectionEffectLookup {
-            catalog_id: "catalog",
-            catalog_version: 1,
+            package_id: "catalog",
+            effective_release_id: 1,
             environment: "dev",
             wiring_id: "wiring",
             wiring_version: 1,
@@ -3173,8 +3187,8 @@ mod tests {
         .expect("the acquiring tenant binds");
 
         let lookup = ConnectionEffectLookup {
-            catalog_id: "catalog",
-            catalog_version: 1,
+            package_id: "catalog",
+            effective_release_id: 1,
             environment: "dev",
             wiring_id: "wiring",
             wiring_version: 1,
@@ -3379,7 +3393,9 @@ mod tests {
             return;
         };
         let pg = WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(live_guest_url(&admin_url, LIVE_TENANT).await)),
+            credentials: Some(ClassCredentials::every_class(
+                live_guest_url(&admin_url, LIVE_TENANT).await,
+            )),
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2_000,

@@ -349,7 +349,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     // THE WELD IS CONSTRUCTED FIRST, and the ordering is load-bearing rather than
     // tidy. Under ruling wamn-0h0g.15.102 the verified manifest is the SOLE carrier
-    // of the (release version, manifest digest) pair, so every consumer takes the
+    // of the (effective release id, manifest digest) pair, so every consumer takes the
     // pair from this object — including the claim-time recording that
     // wamn-0h0g.15.103 repoints at it. A component that bound before the weld
     // existed would have no pair to record. Building it here, ahead of the NATS
@@ -607,7 +607,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // stack, which is the whole serving period.
     match release.as_ref() {
         Some(weld) => tracing::info!(
-            release_version = weld.release().release_version,
+            effective_release_id = weld.release().effective_release_id,
             manifest_digest = %weld.release().manifest_digest,
             "wamn-host welded to its release"
         ),

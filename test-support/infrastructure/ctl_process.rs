@@ -1,16 +1,14 @@
 //! Process-boundary adapter for integration proofs that drive `wamn-ctl`.
 
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use tokio::process::Command;
 
 const CTL_BINARY_ENV: &str = "WAMN_CTL_BIN";
 const CTL_OPS_BINARY_ENV: &str = "WAMN_CTL_OPS_BIN";
-static INPUT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Run `wamn-ctl` with `args`, returning its captured process output.
 pub async fn run<I, S>(args: I) -> anyhow::Result<Output>
@@ -67,38 +65,15 @@ fn require_success(name: &str, output: Output) -> anyhow::Result<Output> {
 }
 
 /// Reconcile replica identity through the public ctl command.
-pub async fn reconcile_replica_identity(
-    admin_url: &str,
-    catalog: &wamn_schema_model::Catalog,
-    schema: &str,
-) -> anyhow::Result<Output> {
-    let sequence = INPUT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "wamn-ctl-ri-{}-{sequence}.json",
-        std::process::id()
-    ));
-    std::fs::write(&path, catalog.to_json())
-        .with_context(|| format!("write ctl catalog input {}", path.display()))?;
-    let output = run_checked([
+pub async fn reconcile_replica_identity(admin_url: &str, package: &Path) -> anyhow::Result<Output> {
+    run_checked([
         OsString::from("reconcile-replica-identity"),
         OsString::from("--admin-database-url"),
         OsString::from(admin_url),
-        OsString::from("--catalog"),
-        path.as_os_str().to_owned(),
-        OsString::from("--schema"),
-        OsString::from(schema),
+        OsString::from("--package"),
+        package.as_os_str().to_owned(),
     ])
-    .await;
-    let cleanup = std::fs::remove_file(&path)
-        .with_context(|| format!("remove ctl catalog input {}", path.display()));
-    match (output, cleanup) {
-        (Ok(output), Ok(())) => Ok(output),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-        (Err(error), Err(cleanup_error)) => Err(error).context(format!(
-            "remove ctl catalog input also failed: {cleanup_error:#}"
-        )),
-    }
+    .await
 }
 
 fn ctl_binary() -> OsString {
@@ -148,7 +123,7 @@ mod tests {
     fn command_preserves_the_public_cli_boundary() {
         let command = ctl_command(
             OsStr::new("/proof/wamn-ctl"),
-            ["migrate-catalog", "--tenant", "tenant-a"],
+            ["apply-package", "--tenant", "tenant-a"],
         );
         let command = command.as_std();
         assert_eq!(command.get_program(), "/proof/wamn-ctl");
@@ -157,7 +132,7 @@ mod tests {
             [
                 "--log-level",
                 "error",
-                "migrate-catalog",
+                "apply-package",
                 "--tenant",
                 "tenant-a",
             ]

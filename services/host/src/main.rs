@@ -6,7 +6,7 @@
 //! long-lived services live in their own artifacts (SR9): `wamn-dispatcher`,
 //! `wamn-run-worker`, `wamn-cdc-reader`.
 //!
-//! The one-shot control-plane verbs (provision*, publish/migrate-catalog,
+//! The one-shot control-plane verbs (provision*, apply-package, publish/promote,
 //! dump/restore/copy-project-env, enable-cdc-project-env) live in `wamn-ctl`
 //! (SR9); this artifact ships none of them.
 //!

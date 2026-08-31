@@ -12,17 +12,11 @@ ops = [
     "dep:futures-util",
     "dep:wamn-event-wire",
     "wamn-control-provision/ops",
-    "wamn-schema-control/ops",
 ]
 
 [[bin]]
 name = "wamn-ctl-ops"
 path = "src/bin/wamn-ctl-ops.rs"
-required-features = ["ops"]
-
-[[test]]
-name = "impact_report_live"
-path = "tests/impact_report_live.rs"
 required-features = ["ops"]
 
 [[test]]
@@ -53,17 +47,13 @@ oci-client = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"], optional = true }
 futures-util = { workspace = true, optional = true }
 wamn-event-wire = { workspace = true, optional = true }
-# 4.1b publish-catalog: catalog snapshot model + the 3.2 tenant-floor DDL.
-wamn-schema-model = { workspace = true }
-wamn-schema-compiler = { workspace = true }
-# publish-catalog --flow: parse and validate the immutable graph.
+# Release authoring parses and validates immutable execution graphs.
 wamn-execution-contract = { workspace = true }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.
 wamn-catalog = { workspace = true }
-# 2.5 migrate-catalog: the pure migration engine — reads the current applied
-# catalog, plans the one-transaction apply (DDL + lifecycle + history).
 wamn-schema-control = { workspace = true }
+wamn-schema-introspection = { workspace = true }
 # 2.3 provision-project: the pure CREATE DATABASE / role / GRANT CONNECT
 # builders + project-id naming + credential Secret rendering.
 wamn-control-provision = { workspace = true }
@@ -72,15 +62,12 @@ wamn-control-registry = { workspace = true }
 # MVP management authentication: stable service principals, project roles, and
 # independently issued/revoked PATs for provision-project-env.
 wamn-platform-identity = { workspace = true }
+wamn-pg-core = { workspace = true }
 # push-component is the sole production caller of byte admission and shares
 # the immutable OCI media/reference contract with the runtime pull side.
 wamn-runtime = { workspace = true }
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and its live gate share.
 wamn-run-state = { workspace = true }
-# 11.8 ops-only impact-report: the PURE schema-change impact analysis
-# (entities → flows via registration + node config → generated API).
-# This shell reads the dependency rows and calls wamn_schema_control::impact::analyze.
-
 [lints]
 workspace = true

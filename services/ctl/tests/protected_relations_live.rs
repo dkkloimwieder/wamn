@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::sql;
-use wamn_ctl::migrate_catalog::{self, MigrateCatalogArgs};
+use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_run_plane;
 use wamn_schema_control::BareSchemaName;
 
@@ -27,8 +27,7 @@ const CONTROL_PORTABLE_STORE_SQL: &str =
 const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
-const WITNESS_SCHEMA: &str = "audit_app";
-const WITNESS_ENTITY: &str = "audit_records";
+const WITNESS_SCHEMA: &str = "receiving";
 const AUTHOR_SQL_EXPOSURE: &str = "author SQL, RLS-bounded";
 const AUTHOR_SQL_ROLES: [&str; 2] = ["wamn_app", "wamn_control_author"];
 
@@ -186,10 +185,7 @@ fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
         .collect::<Vec<_>>();
     relations.extend(manifest.families.into_iter().map(|family| {
         let _ = &family.ignored;
-        let physical_relation = family
-            .pattern
-            .replace("<app_schema>", WITNESS_SCHEMA)
-            .replace("<catalog_entity_name>", WITNESS_ENTITY);
+        let physical_relation = family.pattern.replace("<app_schema>", WITNESS_SCHEMA);
         DeclaredRelation {
             scope: source_scopes
                 .get(&family.schema_source)
@@ -292,7 +288,9 @@ async fn install_control_database(client: &Client) {
 async fn install_project_database(client: &Client, url: &str, repository: &Path) {
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS wamn_run CASCADE",
+            "DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_run CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE",
         )
         .await
         .expect("remove same-qualified control portable schemas before project install");
@@ -337,43 +335,13 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
         "the converged post-check did not name exactly the project run-plane record"
     );
 
-    let catalog_path = std::env::temp_dir().join(format!(
-        "wamn-protected-relations-{}.catalog.json",
-        std::process::id()
-    ));
-    let catalog = serde_json::json!({
-        "schema-version": "0.1",
-        "catalog-id": "protected-relation-audit",
-        "version": 1,
-        "entities": [{
-            "id": "audit-records",
-            "name": WITNESS_ENTITY,
-            "fields": [{
-                "id": "value",
-                "name": "value",
-                "type": { "kind": "text" }
-            }]
-        }],
-        "relations": []
-    });
-    std::fs::write(
-        &catalog_path,
-        serde_json::to_vec_pretty(&catalog).expect("serialize witness catalog"),
-    )
-    .expect("write witness catalog");
-    let migrate_result = migrate_catalog::run(MigrateCatalogArgs {
-        admin_database_url: url.to_string(),
+    apply_package::run(ApplyPackageArgs {
+        package: repository.join("packages/receiving"),
+        database_url: url.to_string(),
         tenant: "protected-relation-audit".to_string(),
-        environment: "dev".to_string(),
-        schema: WITNESS_SCHEMA.to_string(),
-        target: catalog_path.clone(),
-        base: None,
-        dry_run: false,
-        skip_reconcile_replica_identity: true,
     })
-    .await;
-    let _ = std::fs::remove_file(&catalog_path);
-    migrate_result.expect("install canonical application-family witnesses");
+    .await
+    .expect("apply the package-owned Receiving migration stream");
 
     // The management surface revokes and regrants across `catalog` as well as
     // the run schema, so it must follow the catalog install, not precede it.
@@ -387,10 +355,12 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
 
 /// Portable relations the control store installs that the project plane also
 /// installs, so both copies must carry an identical column and constraint shape.
-const SHARED_PORTABLE_RELATIONS: [&str; 5] = [
-    "catalog.catalogs",
-    "catalog.releases",
-    "catalog.catalog_heads",
+const SHARED_PORTABLE_RELATIONS: [&str; 7] = [
+    "catalog.packages",
+    "catalog.package_migrations",
+    "catalog.effective_releases",
+    "catalog.effective_release_packages",
+    "catalog.effective_release_heads",
     "catalog.component_library",
     "catalog.connection_requirements",
 ];
@@ -400,8 +370,12 @@ const SHARED_PORTABLE_RELATIONS: [&str; 5] = [
 /// project-side and no project installer recreates these, so they have no
 /// project fingerprint by design. Comparing them across planes is what
 /// manufactured the seven-relation drift this list retires.
-const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 2] =
-    ["catalog.authoring_command_audit", "wamn_run.gate_reports"];
+const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 4] = [
+    "catalog.authoring_command_audit",
+    "catalog.deployment_attestations",
+    "wamn_run.gate_reports",
+    "wamn_authority.author_login_tenants",
+];
 
 async fn portable_fingerprints(
     client: &Client,
@@ -478,11 +452,7 @@ fn normalize_catalog_text(relation: &str, value: &str) -> String {
     } else {
         value.to_string()
     };
-    if relation == "<app_schema>.<catalog_entity_name>" {
-        value.replace(WITNESS_ENTITY, "<catalog_entity_name>")
-    } else {
-        value
-    }
+    value
 }
 
 fn constraint_kind(value: &str) -> &'static str {
@@ -553,7 +523,8 @@ async fn generate_rows(
              JOIN pg_catalog.pg_roles owner ON owner.oid=c.relowner \
              WHERE c.relkind IN ('r','p') \
                AND n.nspname IN ('registry','provisioning','identity','catalog', \
-                                  'app_system','wamn_run','wamn_authority','audit_app') \
+                                  'app_system','wamn_run','wamn_authority','audit_app', \
+                                  'receiving') \
              ORDER BY 1",
             &[],
         )

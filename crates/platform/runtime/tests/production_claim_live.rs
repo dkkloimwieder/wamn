@@ -34,12 +34,11 @@ use wamn_runtime::plugins::wamn_postgres::{
 mod common;
 
 use common::{
-    CATALOG_ID, COMPONENT, EMPTY_HASH, ENVIRONMENT, POD_MANIFEST_DIGEST, POD_RELEASE_VERSION,
-    ROLLED_COMPONENT, ROLLED_MANIFEST_DIGEST, ROLLED_RELEASE_VERSION, SCHEMA, TENANT, WIRING_ID,
-    WIRING_VERSION, assert_callerless_terminal, assert_prior_winner_terminal,
-    assert_terminal_status_dequeued, connect, expire_effect_run, install_fixture,
-    install_prior_caller_winner, make_callerless, queue_attempts, quote_literal, ready_run,
-    release_record, seed_exhausted_run, seed_run, teardown,
+    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_EFFECTIVE_RELEASE_ID, POD_MANIFEST_DIGEST,
+    ROLLED_COMPONENT, SCHEMA, TENANT, WIRING_ID, WIRING_VERSION, assert_callerless_terminal,
+    assert_prior_winner_terminal, assert_terminal_status_dequeued, connect, expire_effect_run,
+    install_fixture, install_prior_caller_winner, make_callerless, queue_attempts, quote_literal,
+    ready_run, release_record, seed_exhausted_run, seed_run, teardown,
 };
 
 #[test]
@@ -71,25 +70,45 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let fixture = install_fixture(&url).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
+    let release_package_ids = [PACKAGE_ID.to_owned(), "cat_overlay".to_owned()];
 
-    // Exact global FIFO: stream sequence, then run id, breaks equal timestamps.
-    for (run_id, stream_seq) in [("fifo-c", 2), ("fifo-b", 1), ("fifo-a", 1)] {
-        seed_run(admin, run_id, "cat-main", stream_seq).await?;
+    // Exact release-wide global FIFO: stream sequence, then run id, breaks equal
+    // timestamps across package boundaries. An earlier foreign-package row does
+    // not enter the mounted release's one SQL turn.
+    seed_run(admin, "fifo-foreign", "cat_foreign", 0).await?;
+    for (run_id, package_id, stream_seq) in [
+        ("fifo-c", PACKAGE_ID, 2),
+        ("fifo-b", "cat_overlay", 1),
+        ("fifo-a", PACKAGE_ID, 1),
+    ] {
+        seed_run(admin, run_id, package_id, stream_seq).await?;
     }
     let mut fifo = Vec::new();
     for _ in 0..3 {
-        fifo.push(ready_run(
-            plugin
-                .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
-                .await?,
-        ));
+        let result = plugin
+            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .await?;
+        let ProductionClaimResult::Ready {
+            run_id, package_id, ..
+        } = result
+        else {
+            panic!("expected a release-package FIFO row, got {result:?}");
+        };
+        fifo.push((run_id, package_id));
     }
-    assert_eq!(fifo, ["fifo-a", "fifo-b", "fifo-c"]);
+    assert_eq!(
+        fifo,
+        [
+            ("fifo-a".into(), PACKAGE_ID.into()),
+            ("fifo-b".into(), "cat_overlay".into()),
+            ("fifo-c".into(), PACKAGE_ID.into()),
+        ]
+    );
 
     // A second claimer skips the exact FIFO head while the first claimer holds
     // its production row locks, then the rolled-back head remains claimable.
-    seed_run(admin, "double-a", "cat-main", 10).await?;
-    seed_run(admin, "double-b", "cat-main", 11).await?;
+    seed_run(admin, "double-a", "cat_main", 10).await?;
+    seed_run(admin, "double-b", "cat_main", 11).await?;
     let first_claimer = connect(&url).await?;
     first_claimer
         .batch_execute(&format!(
@@ -100,19 +119,22 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
         .await?;
     let locked = first_claimer
-        .query_one(&select_production_claim_sql(), &[&CATALOG_ID, &ENVIRONMENT])
+        .query_one(
+            &select_production_claim_sql(),
+            &[&release_package_ids.as_slice(), &ENVIRONMENT],
+        )
         .await?;
     assert_eq!(locked.get::<_, String>(0), "double-a");
     let skipped = ready_run(
         plugin
-            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
     );
     assert_eq!(skipped, "double-b");
     first_claimer.batch_execute("ROLLBACK").await?;
     let released = ready_run(
         plugin
-            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
     );
     let claimed = BTreeSet::from([skipped, released]);
@@ -131,12 +153,12 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
+                   (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
                     environment,wiring_id,wiring_version,input_json,state_json,invocation_context, \
                     trigger_source,event_source_run_id,event_root_run_id,event_depth, \
                     admission_context_version,platform_revision,capture_mode,idempotency_key, \
                     response_deadline_at,run_deadline_at) \
-                 VALUES ($1,'pre-effect','root',1,'running','cat-main',1,'test',$2,$3, \
+                 VALUES ($1,'pre-effect','root',1,'running','cat_main',1,'test',$2,$3, \
                     '{{\"input\":7}}','{{\"cursor\":9}}','{{\"source\":{{\"case\":\"a\"}}}}', \
                     'event','source-run','root-run',3,'0.1','platform-a','full','idem-a', \
                     '2030-01-01','2030-01-02')"
@@ -160,7 +182,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .query_one(
                 &format!(
                     "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at',\
-                    'release_version','manifest_digest']::text[])::text \
+                    'manifest_digest']::text[])::text \
                    FROM {SCHEMA}.runs AS r WHERE tenant_id=$1 AND run_id='pre-effect'"
                 ),
                 &[&TENANT],
@@ -169,20 +191,30 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .get::<_, String>(0),
     )?;
     let pre_effect = plugin
-        .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+        .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
         .await?;
-    let (run_id, payload, lease_generation, wiring_id, wiring_version) = match pre_effect {
-        ProductionClaimResult::Ready {
-            run_id,
-            payload,
-            lease_generation,
-            wiring_id,
-            wiring_version,
-            ..
-        } => (run_id, payload, lease_generation, wiring_id, wiring_version),
-        other => panic!("expected pre-effect retry to execute, got {other:?}"),
-    };
+    let (run_id, package_id, payload, lease_generation, wiring_id, wiring_version) =
+        match pre_effect {
+            ProductionClaimResult::Ready {
+                run_id,
+                package_id,
+                payload,
+                lease_generation,
+                wiring_id,
+                wiring_version,
+                ..
+            } => (
+                run_id,
+                package_id,
+                payload,
+                lease_generation,
+                wiring_id,
+                wiring_version,
+            ),
+            other => panic!("expected pre-effect retry to execute, got {other:?}"),
+        };
     assert_eq!(run_id, "pre-effect");
+    assert_eq!(package_id, PACKAGE_ID);
     assert_eq!(lease_generation, 5);
     assert_eq!(wiring_id, WIRING_ID);
     assert_eq!(wiring_version, WIRING_VERSION);
@@ -198,7 +230,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .query_one(
                 &format!(
                     "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at',\
-                    'release_version','manifest_digest']::text[])::text \
+                    'manifest_digest']::text[])::text \
                    FROM {SCHEMA}.runs AS r WHERE tenant_id=$1 AND run_id='pre-effect'"
                 ),
                 &[&TENANT],
@@ -210,7 +242,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(
         release_record(admin, "pre-effect").await?,
         (
-            Some(POD_RELEASE_VERSION),
+            POD_EFFECTIVE_RELEASE_ID,
             Some(POD_MANIFEST_DIGEST.to_string())
         ),
         "the retry claim recorded the claiming pod's release exactly once"
@@ -233,9 +265,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
+                   (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
                     environment,wiring_id,wiring_version,trigger_source) \
-                 VALUES ($1,'janitor','root',1,'running','cat-main',1,'test',$2,$3,'http')"
+                 VALUES ($1,'janitor','root',1,'running','cat_main',1,'test',$2,$3,'http')"
             ),
             &[&TENANT, &WIRING_ID, &WIRING_VERSION],
         )
@@ -253,7 +285,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor".into()
@@ -293,7 +325,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     make_callerless(admin, "janitor-callerless").await?;
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor-callerless".into()
@@ -305,7 +337,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let janitor_winner = install_prior_caller_winner(admin, "janitor-winner").await?;
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor-winner".into()
@@ -328,7 +360,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // tenant forever. The advance now runs before the grant's subtransaction,
     // so a refusal still counts as crash evidence. A probe trigger stands in
     // for any database guard that can refuse the grant.
-    seed_run(admin, "grant-refused", "cat-main", 65).await?;
+    seed_run(admin, "grant-refused", "cat_main", 65).await?;
     admin
         .execute(
             &format!(
@@ -357,7 +389,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ))
         .await?;
     let starved = plugin
-        .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+        .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
         .await
         .expect_err("the probed grant refuses");
     assert_eq!(starved.kind(), ProductionClaimErrorKind::Storage);
@@ -379,7 +411,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "grant-refused".into()
@@ -426,15 +458,15 @@ async fn production_claim_live() -> anyhow::Result<()> {
         )
         .await?;
     // The fixture's release-pin guard shares the class gate: even with an
-    // attributed attempt, this `standard` run may clear a claim-time pair.
+    // attributed attempt, this `standard` run may clear a claim-time digest.
     admin
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.runs \
-                    SET release_version=$2, manifest_digest=$3 \
+                    SET manifest_digest=$2 \
                   WHERE tenant_id=$1 AND run_id='standard-ledger'"
             ),
-            &[&TENANT, &POD_RELEASE_VERSION, &POD_MANIFEST_DIGEST],
+            &[&TENANT, &POD_MANIFEST_DIGEST],
         )
         .await?;
     assert_eq!(
@@ -442,25 +474,25 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .execute(
                 &format!(
                     "UPDATE {SCHEMA}.runs \
-                        SET release_version=NULL, manifest_digest=NULL \
+                        SET manifest_digest=NULL \
                       WHERE tenant_id=$1 AND run_id='standard-ledger'"
                 ),
                 &[&TENANT],
             )
             .await
-            .context("clear a standard run's release pair despite attributed effect evidence")?,
+            .context("clear a standard run's manifest digest despite attributed effect evidence")?,
         1
     );
     assert_eq!(
         plugin
-            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Empty,
         "the default class was let into the shelved crash floor by its ledger"
     );
     assert_eq!(
         plugin
-            .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+            .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
             run_id: "standard-ledger".into()
@@ -469,25 +501,26 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_terminal_status_dequeued(admin, "standard-ledger", "infrastructure-failure").await?;
 
-    // ---- the claim-time release record (wamn-0h0g.15.11, carrying the two
+    // ---- the claim-time manifest record (wamn-0h0g.15.11, carrying the two
     // surviving proof legs of the superseded wamn-0h0g.4.14) -----------------
     //
-    // CLAIM-TIME POD IDENTITY IS INDEPENDENT OF ADMISSION IDENTITY. The run is
-    // admitted under catalog version 1, while the pair the claim records is the
-    // CLAIMING POD's version 7 manifest. The claim must not rewrite the run's
-    // own immutable admission identity.
-    seed_run(admin, "release-record", "cat-main", 70).await?;
-    assert_eq!(release_record(admin, "release-record").await?, (None, None));
+    // Admission pins the effective release. The matching pod records only its
+    // verified manifest digest; it never rewrites that release identity.
+    seed_run(admin, "release-record", PACKAGE_ID, 70).await?;
+    assert_eq!(
+        release_record(admin, "release-record").await?,
+        (POD_EFFECTIVE_RELEASE_ID, None)
+    );
     assert_eq!(
         ready_run(
             plugin
-                .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+                .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"
     );
     let recorded = (
-        Some(POD_RELEASE_VERSION),
+        POD_EFFECTIVE_RELEASE_ID,
         Some(POD_MANIFEST_DIGEST.to_string()),
     );
     assert_eq!(release_record(admin, "release-record").await?, recorded);
@@ -495,7 +528,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         admin
             .query_one(
                 &format!(
-                    "SELECT catalog_version FROM {SCHEMA}.runs \
+                    "SELECT effective_release_id FROM {SCHEMA}.runs \
                       WHERE tenant_id=$1 AND run_id='release-record'"
                 ),
                 &[&TENANT],
@@ -503,58 +536,55 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .await?
             .get::<_, i32>(0),
         1,
-        "claim-time release recording must not move the admitted catalog version"
+        "claim-time manifest recording must not move the admitted effective release"
     );
 
     // SAME-RELEASE RE-CLAIM. The classifier's pre-effect reclaim clears the
-    // abandoned attempt's pair and the grant records this pod's again, so the
-    // observable pair is unchanged.
+    // abandoned attempt's digest and the grant records this pod's again, so the
+    // observable record is unchanged.
     expire_effect_run(admin, "release-record").await?;
     assert_eq!(
         ready_run(
             plugin
-                .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+                .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"
     );
     assert_eq!(release_record(admin, "release-record").await?, recorded);
 
-    // RESET PER CLAIM ATTEMPT (wamn-0h0g.15.55). A pod carrying a DIFFERENT
-    // release re-claims an expired pre-effect run successfully: the pair is
-    // write-once per ATTEMPT, and the classifier's reset — not an exception in
-    // the guard — is what lets the next claim record afresh. Under a rollout
-    // this is the normal case, not an edge case.
+    // An effective release is an admission pin, not a claim-time rollout slot.
+    // A pod carrying another release cannot claim this run; the transaction
+    // rolls back its pre-effect reset and lease update together.
     expire_effect_run(admin, "release-record").await?;
+    let mismatched = plugin
+        .claim_next_production(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+        .await
+        .expect_err("a different effective release cannot claim an admitted run");
+    assert_eq!(mismatched.kind(), ProductionClaimErrorKind::Contract);
+    assert_eq!(
+        mismatched.to_string(),
+        "production claim grant production lease failed: claiming effective release does not match the run admission pin"
+    );
+    assert_eq!(release_record(admin, "release-record").await?, recorded);
     assert_eq!(
         ready_run(
             plugin
-                .claim_next_production(ROLLED_COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+                .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"
     );
-    let rerecorded = (
-        Some(ROLLED_RELEASE_VERSION),
-        Some(ROLLED_MANIFEST_DIGEST.to_string()),
-    );
-    assert_eq!(
-        release_record(admin, "release-record").await?,
-        rerecorded,
-        "the reclaiming pod records its own release, not the dead attempt's"
-    );
+    assert_eq!(release_record(admin, "release-record").await?, recorded);
 
     // The erasure is not a blanket hole. A terminal status still pins the
     // record here, and an attributed effect pins it on the premium class.
     // value -> value' is refused on every path and every class.
-    let third_pair = format!(
-        "release_version=9, manifest_digest={}",
-        quote_literal(EMPTY_HASH)
-    );
+    let third_digest = quote_literal(EMPTY_HASH);
     let rewritten = admin
         .execute(
             &format!(
-                "UPDATE {SCHEMA}.runs SET {third_pair} \
+                "UPDATE {SCHEMA}.runs SET manifest_digest={third_digest} \
                   WHERE tenant_id=$1 AND run_id='release-record'"
             ),
             &[&TENANT],
@@ -570,25 +600,28 @@ async fn production_claim_live() -> anyhow::Result<()> {
     admin
         .execute(
             &format!(
-                "UPDATE {SCHEMA}.runs SET release_version=NULL, manifest_digest=NULL \
+                "UPDATE {SCHEMA}.runs SET manifest_digest=NULL \
                   WHERE tenant_id=$1 AND run_id='release-record'"
             ),
             &[&TENANT],
         )
         .await
         .expect("a runnable, effect-free run may reopen its claimability");
-    assert_eq!(release_record(admin, "release-record").await?, (None, None));
+    assert_eq!(
+        release_record(admin, "release-record").await?,
+        (POD_EFFECTIVE_RELEASE_ID, None)
+    );
     admin
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.runs \
-                    SET release_version=$2, manifest_digest=$3 \
+                    SET manifest_digest=$2 \
                   WHERE tenant_id=$1 AND run_id='release-record'"
             ),
-            &[&TENANT, &ROLLED_RELEASE_VERSION, &ROLLED_MANIFEST_DIGEST],
+            &[&TENANT, &POD_MANIFEST_DIGEST],
         )
         .await?;
-    assert_eq!(release_record(admin, "release-record").await?, rerecorded);
+    assert_eq!(release_record(admin, "release-record").await?, recorded);
 
     // A TERMINAL STATUS STILL DOES REFUSE IT: a finished run keeps the audit
     // link to the release closure it ran, on every class.
@@ -604,7 +637,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let terminal = admin
         .execute(
             &format!(
-                "UPDATE {SCHEMA}.runs SET release_version=NULL, manifest_digest=NULL \
+                "UPDATE {SCHEMA}.runs SET manifest_digest=NULL \
                   WHERE tenant_id=$1 AND run_id='release-record'"
             ),
             &[&TENANT],
@@ -618,7 +651,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .message(),
         "run-release-record-immutable"
     );
-    assert_eq!(release_record(admin, "release-record").await?, rerecorded);
+    assert_eq!(release_record(admin, "release-record").await?, recorded);
     admin
         .execute(
             &format!(

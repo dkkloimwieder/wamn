@@ -21,7 +21,7 @@
 #     wamn_outbox_event trigger/function, legacy registration `state` keys)
 #   - the per-database `catalog` metadata schema when absent
 # It never drops a retained column or table. Floor/entity tables and flow/seed
-# CONTENT are out of scope (publish-catalog / f1-provision own those).
+# CONTENT is out of scope (apply-package and project provisioning own it).
 #
 # PER-PROJECT-ENV (the `.example` convention): the verb reconciles ONE schema
 # (`--schema` + a superuser URL to that project's DB), so run ONE Job per

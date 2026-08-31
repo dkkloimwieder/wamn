@@ -1631,6 +1631,7 @@ fn control_authoring_state_ownership_is_explicit_and_bounded() {
         reads,
         BTreeSet::from([
             "catalog.authoring_command_audit",
+            "catalog.connection_requirements",
             "catalog.deployment_attestations",
             // `get-report` resolves what the gate wrote. A writer without this
             // reader is the capability hole wamn-0h0g.8.5.6 closed.
@@ -1706,9 +1707,9 @@ fn missing_scan_exclusion_path_is_rejected() {
 
 #[test]
 fn unregistered_canonical_table_is_rejected() {
-    let registered = BTreeSet::from([("catalog.catalogs", "canonical.sql")]);
+    let registered = BTreeSet::from([("catalog.packages", "canonical.sql")]);
     let discovered = BTreeSet::from([
-        ("catalog.catalogs".to_string(), "canonical.sql"),
+        ("catalog.packages".to_string(), "canonical.sql"),
         ("catalog.rogue".to_string(), "canonical.sql"),
     ]);
     let error = compare_canonical_objects(&registered, &discovered).unwrap_err();
@@ -1904,30 +1905,6 @@ fn external_authority_classes_are_excluded() {
 }
 
 #[test]
-fn generated_tenant_family_is_covered() {
-    let repository = repository();
-    let manifest = read_manifest(&repository);
-    let family = manifest
-        .families
-        .iter()
-        .find(|family| family.id == "generated-tenant-entities")
-        .expect("generated tenant family");
-    assert_eq!(family.pattern, "<app_schema>.<catalog_entity_name>");
-    let dynamic_paths: BTreeSet<&str> = manifest
-        .scan_policy
-        .dynamic_writers
-        .iter()
-        .filter(|writer| writer.family == family.id)
-        .map(|writer| writer.path.as_str())
-        .collect();
-    assert_eq!(
-        dynamic_paths,
-        BTreeSet::from(["crates/schema/compiler/src/seed/emit.rs"])
-    );
-    validate_dynamic_writers(&repository, &manifest).expect("dynamic writer markers are live");
-}
-
-#[test]
 fn unqualified_writer_requires_declared_source_context() {
     let manifest = read_manifest(&repository());
     let covered = Discovery {
@@ -2047,18 +2024,18 @@ fn hyphenated_error_message_literal_is_not_an_update() {
     let discoveries = discover_writes(
         "deploy/sql/catalog-schema.sql",
         1,
-        "CREATE FUNCTION catalog.guard_catalog_head_update() RETURNS trigger AS $function$ \
+        "CREATE FUNCTION catalog.guard_effective_release_head_update() RETURNS trigger AS $function$ \
          BEGIN \
-             IF NEW.applied_catalog_version <> OLD.applied_catalog_version + 1 THEN \
+             IF NEW.effective_release_id <= 0 THEN \
                  RAISE EXCEPTION USING ERRCODE = '55000', \
-                     MESSAGE = 'catalog-head-uncontrolled-update'; \
+                     MESSAGE = 'effective-release-head-uncontrolled-update'; \
              END IF; \
-             UPDATE catalog.catalog_heads SET updated_at = now() \
-              WHERE catalog_id = NEW.catalog_id; \
+             UPDATE catalog.effective_release_heads SET updated_at = now() \
+              WHERE environment = NEW.environment; \
              RETURN NEW; \
          END $function$ LANGUAGE plpgsql",
     );
-    assert_only_write(&discoveries, "update", "catalog.catalog_heads");
+    assert_only_write(&discoveries, "update", "catalog.effective_release_heads");
 }
 
 #[test]
@@ -2089,10 +2066,10 @@ fn grant_privilege_list_is_not_a_write() {
     let discoveries = discover_writes(
         "deploy/sql/catalog-schema.sql",
         1,
-        "GRANT SELECT, INSERT, UPDATE ON catalog.catalog_heads TO wamn_scenario_author; \
-         UPDATE catalog.catalog_heads SET updated_at = now() WHERE catalog_id = $1;",
+        "GRANT SELECT, INSERT, UPDATE ON catalog.effective_release_heads TO wamn_scenario_author; \
+         UPDATE catalog.effective_release_heads SET updated_at = now() WHERE environment = $1;",
     );
-    assert_only_write(&discoveries, "update", "catalog.catalog_heads");
+    assert_only_write(&discoveries, "update", "catalog.effective_release_heads");
 }
 
 #[test]

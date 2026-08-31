@@ -1,6 +1,5 @@
 mod support;
 
-use std::collections::BTreeSet;
 use std::fs::{OpenOptions, TryLockError};
 use std::process::Command;
 
@@ -11,7 +10,7 @@ const MVP_VERBS: &[&str] = &[
     "provision-org",
     "provision-project-env",
     "enable-cdc-project-env",
-    "migrate-catalog",
+    "apply-package",
     "push-component",
     "reconcile-replica-identity",
     "reconcile-run-plane",
@@ -23,7 +22,6 @@ const OPS_VERBS: &[&str] = &[
     "restore-project-env",
     "copy-project-env",
     "prune-run-history",
-    "impact-report",
     "dead-letters",
 ];
 
@@ -103,14 +101,14 @@ fn mvp_binary_exposes_only_mvp_verbs() {
 }
 
 #[test]
-fn mvp_migrate_catalog_has_no_destructive_override() {
-    let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "migrate-catalog");
+fn package_apply_has_one_exact_directory_and_no_destructive_override() {
+    let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "apply-package");
     for flag in ["--confirm-with-backup", "--acknowledge-impact"] {
-        assert!(!output.contains(flag), "MVP migrate-catalog exposed {flag}");
+        assert!(!output.contains(flag), "package apply exposed {flag}");
     }
     assert!(
-        output.contains("--dry-run"),
-        "MVP migrate-catalog lost dry-run"
+        output.contains("--package <PACKAGE>"),
+        "package apply omitted its exact directory"
     );
 }
 
@@ -118,10 +116,10 @@ fn mvp_migrate_catalog_has_no_destructive_override() {
 fn replica_identity_repair_is_an_explicit_one_shot_operator_surface() {
     let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "reconcile-replica-identity");
     assert!(
-        output.contains("Detect or repair per-entity REPLICA IDENTITY drift"),
+        output.contains("per-model REPLICA IDENTITY drift"),
         "operator help must state the command's drift-repair purpose"
     );
-    for flag in ["--admin-database-url", "--catalog", "--schema", "--dry-run"] {
+    for flag in ["--admin-database-url", "--package", "--dry-run"] {
         assert!(output.contains(flag), "operator repair omitted {flag}");
     }
     for recurring in ["--schedule", "--cadence"] {
@@ -209,7 +207,6 @@ fn mvp_dependency_tree_does_not_enable_ops() {
     let tree = String::from_utf8(output.stdout).expect("cargo tree output is UTF-8");
     for feature in [
         "wamn-control-provision feature \"ops\"",
-        "wamn-schema-compiler feature \"ops\"",
         "wamn-schema-control feature \"ops\"",
     ] {
         assert!(
@@ -271,10 +268,6 @@ fn terminalize_surface_accepts_no_asserted_effect_identity_or_outcome() {
         );
     }
 }
-
-// wamn-hopk R5: this read ../src/lib.rs as text to assert the impact-report
-// shell is ops-gated. The cfg(feature) IS that guarantee, and the two
-// help-output tests prove it behaviourally against the real binaries.
 
 #[cfg(feature = "ops")]
 #[test]

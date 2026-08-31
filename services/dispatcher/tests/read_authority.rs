@@ -364,19 +364,27 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     run_ok(
         &project_url,
         &format!(
-            "INSERT INTO catalog.catalogs (tenant_id, catalog_id, version, schema_version) VALUES \
-               ('{TENANT}','cat-a',1,'0.1'), ('{OTHER_TENANT}','cat-b',1,'0.1'); \
-             INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) VALUES \
-               ('{TENANT}','cat-a',1), ('{OTHER_TENANT}','cat-b',1); \
+            "INSERT INTO catalog.packages \
+               (tenant_id, package_id, package_version, manifest_sha256) VALUES \
+               ('{TENANT}','cat_a','1.0.0','sha256:' || repeat('a',64)), \
+               ('{OTHER_TENANT}','cat_b','1.0.0','sha256:' || repeat('b',64)); \
+             INSERT INTO catalog.effective_releases \
+               (tenant_id, effective_release_id, environment, verified_publisher_principal) VALUES \
+               ('{TENANT}',1,'dev','dispatcher-read-live'), \
+               ('{OTHER_TENANT}',1,'dev','dispatcher-read-live'); \
+             INSERT INTO catalog.effective_release_packages \
+               (tenant_id, effective_release_id, package_id, package_version) VALUES \
+               ('{TENANT}',1,'cat_a','1.0.0'), \
+               ('{OTHER_TENANT}',1,'cat_b','1.0.0'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) VALUES \
                ('{TENANT}','dev','standard'), ('{OTHER_TENANT}','dev','standard'); \
              INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
+               (tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, \
                 environment) VALUES \
-               ('{TENANT}','run-a1','flow-a',1,'cat-a',1,'dev'), \
-               ('{TENANT}','run-a2','flow-a',1,'cat-a',1,'dev'), \
-               ('{OTHER_TENANT}','run-b1','flow-b',1,'cat-b',1,'dev'); \
+               ('{TENANT}','run-a1','flow-a',1,'cat_a',1,'dev'), \
+               ('{TENANT}','run-a2','flow-a',1,'cat_a',1,'dev'), \
+               ('{OTHER_TENANT}','run-b1','flow-b',1,'cat_b',1,'dev'); \
              INSERT INTO wamn_run.run_queue (tenant_id, run_id) VALUES \
                ('{TENANT}','run-a1'), ('{OTHER_TENANT}','run-b1');\n"
         ),

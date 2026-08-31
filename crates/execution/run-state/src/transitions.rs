@@ -382,8 +382,8 @@ mod tests {
     fn from_zero_schema_carries_the_callable_run_spine() {
         let run = include_str!("../../../../deploy/sql/run-state.sql");
         for field in [
-            "catalog_id",
-            "catalog_version",
+            "package_id",
+            "effective_release_id",
             "attachment_id",
             "registration_id",
             "event_source_run_id",

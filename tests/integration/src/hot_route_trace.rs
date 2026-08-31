@@ -36,7 +36,7 @@ mod tests {
     use wamn_execution_host::{RouterDriverRequest, WiringResolution};
 
     use crate::trusted_http_route::{
-        self, CATALOG, ENVIRONMENT, RouteOptions, TENANT, WIRING_ID, WIRING_VERSION,
+        self, ENVIRONMENT, PACKAGE, RouteOptions, TENANT, WIRING_ID, WIRING_VERSION,
     };
 
     const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
@@ -196,7 +196,7 @@ mod tests {
             .driver
             .execute(RouterDriverRequest {
                 tenant_id: TENANT.to_owned(),
-                catalog_id: CATALOG.to_owned(),
+                package_id: PACKAGE.to_owned(),
                 environment: ENVIRONMENT.to_owned(),
                 wiring_id: WIRING_ID.to_owned(),
                 wiring_version: WIRING_VERSION,

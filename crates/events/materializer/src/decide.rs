@@ -1,5 +1,7 @@
 //! Pure selection of one fetched event for a registration delivery.
 
+use std::collections::BTreeSet;
+
 use serde_json::Value;
 use wamn_event_reg::EventRegistration;
 use wamn_event_wire::{Causation, DerivedEvent, Envelope};
@@ -36,6 +38,7 @@ pub fn verified_source_event_id(
 ///
 /// Scope equality is checked before identity derivation, so bytes claiming a
 /// foreign tenant/project/environment cannot borrow the local header identity.
+/// An absent package cannot have a package-scoped derived identity.
 pub fn verified_derived_source_event_id(
     tenant: &str,
     project: &str,
@@ -46,10 +49,12 @@ pub fn verified_derived_source_event_id(
     if event.tenant != tenant || event.project != project || event.environment != environment {
         return None;
     }
+    let package_id = event.package_id.as_deref()?;
     let expected = wamn_event_wire::derived_msg_id(
         tenant,
         project,
         environment,
+        package_id,
         &event.entity,
         event.op,
         &event.dedup_id,
@@ -63,6 +68,7 @@ pub fn verified_derived_source_event_id(
 /// Normal non-delivery outcomes owned by registration filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipReason {
+    PackageMismatch,
     EntityMismatch,
     OpMismatch,
     ForeignTenant,
@@ -72,6 +78,8 @@ pub enum SkipReason {
 /// Deterministic registration refusals that must remain operator-visible.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RefuseReason {
+    PackageIdentityAbsent,
+    PackageIdentityUnknown { package_id: String },
     DepthExceeded { parent: Causation },
     TenantUnscopable,
     OldImageAbsent,
@@ -109,9 +117,22 @@ pub fn decide(
     registration: &EventRegistration,
     condition: Option<&CompiledCondition>,
     envelope: &Envelope,
+    known_packages: &BTreeSet<String>,
     tenant: &str,
     max_depth: u32,
 ) -> Verdict {
+    match envelope.package_id.as_deref() {
+        None => return Verdict::Refuse(RefuseReason::PackageIdentityAbsent),
+        Some(package_id) if !known_packages.contains(package_id) => {
+            return Verdict::Refuse(RefuseReason::PackageIdentityUnknown {
+                package_id: package_id.to_owned(),
+            });
+        }
+        Some(package_id) if package_id != registration.package_id => {
+            return Verdict::Skip(SkipReason::PackageMismatch);
+        }
+        Some(_) => {}
+    }
     if envelope.entity.as_deref() != Some(registration.entity.as_str()) {
         return Verdict::Skip(SkipReason::EntityMismatch);
     }
@@ -155,9 +176,22 @@ pub fn decide_derived(
     registration: &EventRegistration,
     condition: Option<&CompiledCondition>,
     event: &DerivedEvent,
+    known_packages: &BTreeSet<String>,
     tenant: &str,
     max_depth: u32,
 ) -> Verdict {
+    match event.package_id.as_deref() {
+        None => return Verdict::Refuse(RefuseReason::PackageIdentityAbsent),
+        Some(package_id) if !known_packages.contains(package_id) => {
+            return Verdict::Refuse(RefuseReason::PackageIdentityUnknown {
+                package_id: package_id.to_owned(),
+            });
+        }
+        Some(package_id) if package_id != registration.package_id => {
+            return Verdict::Skip(SkipReason::PackageMismatch);
+        }
+        Some(_) => {}
+    }
     if event.entity != registration.entity.as_str() {
         return Verdict::Skip(SkipReason::EntityMismatch);
     }
@@ -201,7 +235,7 @@ mod tests {
         EventRegistration {
             schema_version: "0.1".into(),
             registration_id: "r1".into(),
-            catalog_id: "cat".into(),
+            package_id: "cat".into(),
             flow_id: "legacy-flow".into(),
             entity: "receipts".into(),
             ops: vec![Op::Insert, Op::Update],
@@ -214,6 +248,7 @@ mod tests {
         serde_json::from_value(json!({
             "op": "insert",
             "new": {"tenant_id": "t1", "status": "ready"},
+            "package_id": "cat",
             "entity": "receipts",
             "table": "receipts",
             "lsn": 42,
@@ -223,10 +258,21 @@ mod tests {
         .unwrap()
     }
 
+    fn known_packages() -> BTreeSet<String> {
+        BTreeSet::from(["cat".to_owned(), "other".to_owned()])
+    }
+
     #[test]
     fn matching_event_delivers_business_input_without_flow_or_run_identity() {
         assert_eq!(
-            decide(&registration(None), None, &envelope(), "t1", 16),
+            decide(
+                &registration(None),
+                None,
+                &envelope(),
+                &known_packages(),
+                "t1",
+                16,
+            ),
             Verdict::Deliver(json!({
                 "event": "insert",
                 "new": {"tenant_id": "t1", "status": "ready"}
@@ -239,7 +285,14 @@ mod tests {
         let registration = registration(Some("new.status == 'ready'"));
         let condition = serviceable(&registration).unwrap().unwrap();
         assert!(matches!(
-            decide(&registration, Some(&condition), &envelope(), "other", 16),
+            decide(
+                &registration,
+                Some(&condition),
+                &envelope(),
+                &known_packages(),
+                "other",
+                16,
+            ),
             Verdict::Skip(SkipReason::ForeignTenant)
         ));
     }
@@ -253,7 +306,14 @@ mod tests {
             depth: 16,
         });
         assert!(matches!(
-            decide(&registration(None), None, &envelope, "t1", 16),
+            decide(
+                &registration(None),
+                None,
+                &envelope,
+                &known_packages(),
+                "t1",
+                16,
+            ),
             Verdict::Refuse(RefuseReason::DepthExceeded { .. })
         ));
     }
@@ -276,6 +336,7 @@ mod tests {
             "t1",
             "app",
             "dev",
+            "cat",
             "receipts",
             Op::Insert,
             json!(["arbitrary", {"status": "ready"}]),
@@ -291,7 +352,14 @@ mod tests {
     #[test]
     fn matching_derived_event_delivers_exact_arbitrary_payload() {
         assert_eq!(
-            decide_derived(&registration(None), None, &derived(3), "t1", 16),
+            decide_derived(
+                &registration(None),
+                None,
+                &derived(3),
+                &known_packages(),
+                "t1",
+                16,
+            ),
             Verdict::Deliver(json!(["arbitrary", {"status": "ready"}]))
         );
     }
@@ -301,11 +369,25 @@ mod tests {
         let registration = registration(Some("new[1].status == 'ready'"));
         let condition = serviceable(&registration).unwrap().unwrap();
         assert!(matches!(
-            decide_derived(&registration, Some(&condition), &derived(3), "t1", 16),
+            decide_derived(
+                &registration,
+                Some(&condition),
+                &derived(3),
+                &known_packages(),
+                "t1",
+                16,
+            ),
             Verdict::Deliver(_)
         ));
         assert!(matches!(
-            decide_derived(&registration, Some(&condition), &derived(16), "t1", 16),
+            decide_derived(
+                &registration,
+                Some(&condition),
+                &derived(16),
+                &known_packages(),
+                "t1",
+                16,
+            ),
             Verdict::Refuse(RefuseReason::DepthExceeded { .. })
         ));
     }
@@ -317,6 +399,7 @@ mod tests {
             "t1",
             "app",
             "dev",
+            event.package_id.as_deref().unwrap(),
             &event.entity,
             event.op,
             &event.dedup_id,
@@ -334,6 +417,11 @@ mod tests {
             verified_derived_source_event_id("t1", "app", "dev", &event, &[&expected, &expected])
                 .is_none()
         );
+        let mut absent = event;
+        absent.package_id = None;
+        assert!(
+            verified_derived_source_event_id("t1", "app", "dev", &absent, &[&expected]).is_none()
+        );
     }
 
     #[test]
@@ -344,6 +432,7 @@ mod tests {
             "t1",
             "app",
             "dev",
+            event.package_id.as_deref().unwrap(),
             &event.entity,
             event.op,
             &event.dedup_id,
@@ -352,8 +441,57 @@ mod tests {
             .expect("host-scoped source identity verifies");
         assert_eq!(source.as_str(), message_id);
         assert_eq!(
-            decide_derived(&registration(None), None, &event, "t1", 16),
+            decide_derived(
+                &registration(None),
+                None,
+                &event,
+                &known_packages(),
+                "t1",
+                16,
+            ),
             Verdict::Deliver(json!(["arbitrary", {"status": "ready"}]))
+        );
+    }
+
+    #[test]
+    fn package_identity_has_exactly_match_skip_absent_and_unknown_paths() {
+        let registration = registration(None);
+        let known = known_packages();
+
+        let mut other = envelope();
+        other.package_id = Some("other".into());
+        assert_eq!(
+            decide(&registration, None, &other, &known, "t1", 16),
+            Verdict::Skip(SkipReason::PackageMismatch)
+        );
+
+        let mut absent = envelope();
+        absent.package_id = None;
+        absent.entity = None;
+        assert_eq!(
+            decide(&registration, None, &absent, &known, "t1", 16),
+            Verdict::Refuse(RefuseReason::PackageIdentityAbsent)
+        );
+
+        let mut unknown = envelope();
+        unknown.package_id = Some("unknown".into());
+        assert_eq!(
+            decide(&registration, None, &unknown, &known, "t1", 16),
+            Verdict::Refuse(RefuseReason::PackageIdentityUnknown {
+                package_id: "unknown".into(),
+            })
+        );
+
+        assert!(matches!(
+            decide(&registration, None, &envelope(), &known, "t1", 16),
+            Verdict::Deliver(_)
+        ));
+
+        let mut derived_absent = derived(0);
+        derived_absent.package_id = None;
+        assert_eq!(
+            decide_derived(&registration, None, &derived_absent, &known, "t1", 16,),
+            Verdict::Refuse(RefuseReason::PackageIdentityAbsent)
         );
     }
 }

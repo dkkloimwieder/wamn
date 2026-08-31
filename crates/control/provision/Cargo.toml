@@ -51,8 +51,8 @@ url = { workspace = true }
 # renderers are pure JSON. The `provision-project` driver (wamn-ctl) holds the
 # tokio_postgres connection; the optional live-apply gate (tests/provision.rs)
 # shells out to `psql` — so there is no database dependency even in dev, the same
-# pattern as wamn-schema-compiler / wamn-run-state. PostgreSQL quoting comes
-# from the guest-safe wamn-pg-core leaf.
+# pattern as wamn-run-state. PostgreSQL quoting comes from the guest-safe
+# wamn-pg-core leaf.
 
 [dev-dependencies]
 chrono = { workspace = true, features = ["std"] }

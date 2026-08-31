@@ -11,9 +11,8 @@
 //!
 //! Registrations are stored as jsonb in `catalog.event_registrations`
 //! (deploy/sql/catalog-schema.sql), managed through the minimal CRUD surface in
-//! [`wamn_api::registration`]. Rename-proof by entity-id keying (EVT-OIDMAP,
-//! wamn-l5i9.11); 11.8 impact analysis (wamn-wvb) covers registrations via the
-//! `entity_id` storage column.
+//! [`wamn_api::registration`]. The entity is the package-local model key;
+//! `wamn.json` is the only model-key to schema/table mapping.
 
 mod model;
 mod oldref;
@@ -21,7 +20,7 @@ mod validate;
 
 pub use model::{EventRegistration, RegistrationInput, SCHEMA_VERSION};
 pub use oldref::{condition_references_old, references_old};
-pub use validate::validate;
+pub use validate::{RegistrationIssue, validate};
 
 // Re-exported so a consumer names the op set through this one crate; it is the
 // same [`Op`] the CDC envelope carries (`wamn_event_wire`).

@@ -165,7 +165,7 @@ pub fn component_digest(component_bytes: &[u8]) -> String {
 mod tests {
     use serde_json::json;
     use wamn_catalog::{
-        ComponentCatalogScope, ComponentParameterDeclaration, ComponentPortDeclaration,
+        ComponentPackageScope, ComponentParameterDeclaration, ComponentPortDeclaration,
     };
 
     use super::*;
@@ -173,14 +173,15 @@ mod tests {
     fn request() -> ComponentAdmissionRequest {
         ComponentAdmissionRequest {
             declaration: ComponentDeclaration {
-                scope: ComponentCatalogScope {
+                scope: ComponentPackageScope {
                     tenant_id: "tenant-a".to_string(),
-                    catalog_id: "orders".to_string(),
-                    catalog_version: 4,
+                    package_id: "orders".to_string(),
+                    package_version: "1.0.0".to_string(),
                 },
                 component: "transform".to_string(),
                 interface_version: "0.1.0".to_string(),
                 operation: "map".to_string(),
+                registered_operation: None,
                 input_ports: vec![ComponentPortDeclaration {
                     name: "input".to_string(),
                     schema: json!({"type": "object"}),

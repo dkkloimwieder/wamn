@@ -48,7 +48,7 @@ const IDLE_POLL_MS: u64 = 250;
 struct QueueScope {
     tenant_id: String,
     project: String,
-    catalog_id: String,
+    package_ids: Vec<String>,
     environment: String,
 }
 
@@ -59,6 +59,7 @@ enum QueueDriverRequest {
 
 fn queue_delivery_span(
     scope: &QueueScope,
+    package_id: &str,
     run_id: &str,
     wiring_id: &str,
     wiring_version: u32,
@@ -69,7 +70,7 @@ fn queue_delivery_span(
         "wamn.queue.delivery",
         wamn.tenant = %scope.tenant_id,
         wamn.project = %scope.project,
-        wamn.catalog_id = %scope.catalog_id,
+        wamn.package_id = %package_id,
         wamn.environment = %scope.environment,
         wamn.run_id = %run_id,
         wamn.wiring_id = %wiring_id,
@@ -382,7 +383,13 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     let scope = QueueScope {
         tenant_id: release.manifest().release.tenant_id.clone(),
         project: args.project.clone(),
-        catalog_id: release.manifest().release.catalog_id.clone(),
+        package_ids: release
+            .manifest()
+            .release
+            .packages
+            .iter()
+            .map(|package| package.package_id().to_owned())
+            .collect(),
         environment: release.manifest().release.environment.clone(),
     };
     let lease_ttl_ms = i64::try_from(args.lease_ttl_ms)
@@ -407,7 +414,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             role: None,
             user_id: None,
             release: Some(ReleaseIdentity {
-                release_version: release.release().release_version,
+                effective_release_id: release.release().effective_release_id,
                 manifest_digest: release.release().manifest_digest.clone(),
             }),
         },
@@ -463,9 +470,9 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     tracing::info!(
         runner = %owner,
         tenant = %scope.tenant_id,
-        catalog_id = %scope.catalog_id,
+        package_count = scope.package_ids.len(),
         environment = %scope.environment,
-        release_version = release.release().release_version,
+        effective_release_id = release.release().effective_release_id,
         manifest_digest = %release.release().manifest_digest,
         wiring_cache_capacity = args.wiring_cache_capacity.get().get(),
         lease_ttl_ms,
@@ -521,7 +528,7 @@ async fn drain_one(
     match postgres
         .reap_one_exhausted_production(
             QUEUE_CLAIM_SCOPE,
-            &scope.catalog_id,
+            &scope.package_ids,
             &scope.environment,
             PRODUCTION_JANITOR_GRACE_MS,
         )
@@ -536,7 +543,7 @@ async fn drain_one(
     match postgres
         .claim_next_production(
             QUEUE_CLAIM_SCOPE,
-            &scope.catalog_id,
+            &scope.package_ids,
             &scope.environment,
             lease_ttl_ms,
         )
@@ -558,6 +565,7 @@ async fn drain_one(
         }
         ProductionClaimResult::Ready {
             run_id,
+            package_id,
             payload,
             lease_generation,
             wiring_id,
@@ -568,16 +576,17 @@ async fn drain_one(
         } => {
             let wiring_version = u32::try_from(wiring_version)
                 .context("claimed wiring version is not a positive u32")?;
-            let queue_span = queue_delivery_span(scope, &run_id, &wiring_id, wiring_version);
+            let queue_span =
+                queue_delivery_span(scope, &package_id, &run_id, &wiring_id, wiring_version);
             let result_only = candidate.is_some();
             let request = match candidate {
                 Some(candidate) => QueueDriverRequest::Candidate(CandidateCaseRequest {
                     target: CandidateWiringTarget {
                         tenant_id: scope.tenant_id.clone(),
-                        catalog_id: scope.catalog_id.clone(),
+                        package_id: package_id.clone(),
                         environment: scope.environment.clone(),
-                        catalog_version: u32::try_from(candidate.catalog_version)
-                            .context("candidate catalog version is not a positive u32")?,
+                        effective_release_id: u32::try_from(candidate.effective_release_id)
+                            .context("candidate effective release id is not a positive u32")?,
                         wiring_id,
                         wiring_version,
                         wiring_hash: candidate.wiring_hash,
@@ -590,7 +599,7 @@ async fn drain_one(
                 }),
                 None => QueueDriverRequest::Released(RouterDriverRequest {
                     tenant_id: scope.tenant_id.clone(),
-                    catalog_id: scope.catalog_id.clone(),
+                    package_id: package_id.clone(),
                     environment: scope.environment.clone(),
                     wiring_id,
                     wiring_version,
@@ -608,6 +617,7 @@ async fn drain_one(
                 driver,
                 postgres,
                 jetstream,
+                &package_id,
                 &run_id,
                 lease_generation,
                 lease_ttl_ms,
@@ -630,6 +640,7 @@ async fn drive_claim(
     driver: &RouterDriver,
     postgres: &WamnPostgres,
     jetstream: &WamnJetstream,
+    package_id: &str,
     run_id: &str,
     lease_generation: i64,
     lease_ttl_ms: i64,
@@ -741,6 +752,7 @@ async fn drive_claim(
             let publish = jetstream
                 .publish_derived(DerivedPublishRequest {
                     component_id: QUEUE_CLAIM_SCOPE.to_owned(),
+                    package_id: package_id.to_owned(),
                     entity,
                     operation,
                     payload: event.clone(),
@@ -1098,13 +1110,13 @@ mod tests {
         let scope = QueueScope {
             tenant_id: "tenant-a".to_owned(),
             project: "project-a".to_owned(),
-            catalog_id: "orders".to_owned(),
+            package_ids: vec!["orders".to_owned()],
             environment: "prod".to_owned(),
         };
 
         let ambient = tracing::info_span!("ambient-service-span");
         ambient.in_scope(|| {
-            let queue = queue_delivery_span(&scope, "run-9", "route-order", 7);
+            let queue = queue_delivery_span(&scope, "orders", "run-9", "route-order", 7);
             queue.in_scope(|| {});
         });
         drop(ambient);
@@ -1130,7 +1142,7 @@ mod tests {
         };
         assert_eq!(attribute("wamn.tenant").as_deref(), Some("tenant-a"));
         assert_eq!(attribute("wamn.project").as_deref(), Some("project-a"));
-        assert_eq!(attribute("wamn.catalog_id").as_deref(), Some("orders"));
+        assert_eq!(attribute("wamn.package_id").as_deref(), Some("orders"));
         assert_eq!(attribute("wamn.environment").as_deref(), Some("prod"));
         assert_eq!(attribute("wamn.run_id").as_deref(), Some("run-9"));
         assert_eq!(attribute("wamn.wiring_id").as_deref(), Some("route-order"));

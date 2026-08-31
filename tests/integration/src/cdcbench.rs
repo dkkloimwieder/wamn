@@ -43,7 +43,7 @@
 //!   all        — drain, lag, ri (NOT switchover: it needs an external
 //!                trigger and usually a different target cluster).
 //!
-//! Substrate = the rie2ebench pattern: a gate-owned throwaway DATABASE
+//! Substrate = the gate-owned throwaway-database pattern: a DATABASE
 //! (`wamn_ccdc`) on a `wal_level=logical` Postgres — created and dropped WITH
 //! (FORCE), the REAL deploy/sql DDL via `include_str!`, the REAL
 //! wamn-control-provision/wamn-control-registry builders, the slot created LAST (provisioning
@@ -69,6 +69,7 @@ use tokio_postgres::{Client, NoTls};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use crate::ctl_process;
+use crate::measurement_schema;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, cdc_object_name,
     event_stream_name, sql as provision_sql, workload_generation_role,
@@ -77,7 +78,6 @@ use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
 use wamn_gate_harness::{check, emit_csv, percentile};
-use wamn_schema_compiler::Migration;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -165,19 +165,11 @@ const TENANT: &str = "ccdc-tenant";
 const CDC_PW: &str = "wamn_cdc_pw";
 const APP_PW: &str = "ccdc-app-generation";
 const APP_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
-const CATALOG_ID: &str = "poc-material-receiving";
+const PACKAGE_ID: &str = measurement_schema::PACKAGE_ID;
 
 // The shipped DDL + retained receiving catalog, compiled in (drift-proof).
 const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
-const CATALOG_JSON: &str =
-    include_str!("../../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json");
-
-fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
-    wamn_schema_model::Catalog::from_json(CATALOG_JSON)
-        .map_err(|e| anyhow::anyhow!("poc-receiving catalog parse: {e}"))
-}
-
 /// A delete-only registration on `entity` — exactly what drives the l5i9.31
 /// reconcile to REPLICA IDENTITY FULL for that entity's table (the ri axis
 /// flips through the REAL machinery, not a hand ALTER).
@@ -185,7 +177,7 @@ fn registration_json(reg_id: &str, entity: &str) -> String {
     serde_json::json!({
         "schema-version": "0.1",
         "registration-id": reg_id,
-        "catalog-id": CATALOG_ID,
+        "package-id": PACKAGE_ID,
         "flow-id": "ccdc-flow",
         "entity": entity,
         "ops": ["delete"],
@@ -195,7 +187,7 @@ fn registration_json(reg_id: &str, entity: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Small helpers (the rie2ebench / walbench idioms)
+// Small helpers (the CDC / walbench idioms)
 // ---------------------------------------------------------------------------
 
 /// Swap the database path segment of a libpq URL (the gate controls the URL —
@@ -398,7 +390,7 @@ fn unix_ms() -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// Provisioning + teardown (the rie2ebench substrate, reader-only scope)
+// Provisioning + teardown (the disposable CDC substrate, reader-only scope)
 // ---------------------------------------------------------------------------
 
 /// Fresh throwaway DB with the REAL substrate: shipped system+catalog DDL,
@@ -512,24 +504,18 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     .await
     .context("event_readers row")?;
 
-    // The app floor (the REAL 3.2 DDL for the poc-receiving catalog — the
-    // same model C-WAL-0 measured, so the delta divides cleanly) + CDC.
+    // The same explicit measurement floor C-WAL-0 uses, plus CDC.
     db.batch_execute(&provision_sql::ensure_schema_sql("app"))
         .await
         .context("app schema")?;
-    // The floor grants table privileges to wamn_app (wamn-schema-compiler emit); schema
-    // USAGE comes from the project-provisioning verb in production — grant it
-    // here explicitly (the walbench ephemeral-schema precedent).
+    // Schema USAGE comes from project provisioning in production; grant it here
+    // explicitly for the disposable measurement database.
     db.batch_execute("GRANT USAGE ON SCHEMA app TO wamn_app")
         .await
         .context("app schema usage grant")?;
-    let floor = Migration::create(&catalog()?)
-        .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-        .sql()
-        .map_err(|e| anyhow::anyhow!("floor sql: {e}"))?;
-    db.batch_execute(&format!("SET search_path TO app; {floor}"))
+    db.batch_execute(&measurement_schema::floor_sql("app"))
         .await
-        .context("apply the 3.2 floor")?;
+        .context("apply the measurement-table floor")?;
     db.batch_execute("SET search_path TO public")
         .await
         .context("reset search_path")?;
@@ -544,13 +530,13 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     db.batch_execute(&provision_sql::ensure_entity_map_sql("app"))
         .await
         .context("entity map")?;
-    for entity in &catalog()?.entities {
+    for (model_id, table) in measurement_schema::model_tables() {
         db.execute(
             &provision_sql::upsert_entity_map_sql("app"),
-            &[&entity.id.as_str(), &entity.name.as_str()],
+            &[&model_id, &table],
         )
         .await
-        .with_context(|| format!("map entity {}", entity.id))?;
+        .with_context(|| format!("map model {model_id}"))?;
     }
     db.batch_execute(&provision_sql::grant_replication_access_sql(
         DB, &cdc_name, "app",
@@ -1229,11 +1215,11 @@ async fn ri_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
     for (reg_id, entity) in [("r-sup", "suppliers"), ("r-usr", "users")] {
         db.execute(
             "INSERT INTO catalog.event_registrations \
-             (tenant_id, catalog_id, registration_id, flow_id, entity_id, registration) \
+             (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
              VALUES ($1, $2, $3, $4, $5, $6::text::jsonb)",
             &[
                 &TENANT,
-                &CATALOG_ID,
+                &PACKAGE_ID,
                 &reg_id,
                 &"ccdc-flow",
                 &entity,
@@ -1256,12 +1242,20 @@ async fn ri_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
 
     // The REAL reconcile (l5i9.31/l5i9.61) — the delete registrations demand
     // FULL for exactly these two tables.
-    let reconcile = ctl_process::reconcile_replica_identity(
-        &swap_db(&args.admin_database_url, DB),
-        &catalog()?,
-        "app",
-    )
-    .await?;
+    let package =
+        std::env::temp_dir().join(format!("wamn-cdcbench-package-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&package);
+    measurement_schema::write_package_directory(&package, "app")
+        .context("write RI package fixture")?;
+    let reconcile =
+        ctl_process::reconcile_replica_identity(&swap_db(&args.admin_database_url, DB), &package)
+            .await;
+    let cleanup = std::fs::remove_dir_all(&package).context("remove RI package fixture");
+    let reconcile = match (reconcile, cleanup) {
+        (Ok(reconcile), Ok(())) => reconcile,
+        (Err(error), _) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+    };
     let reconcile = String::from_utf8(reconcile.stdout).context("RI output is UTF-8")?;
     let flips = reconcile
         .lines()
@@ -1694,25 +1688,6 @@ mod tests {
                 "{reg_id} must demand FULL (it drives the reconcile)"
             );
         }
-    }
-
-    /// The catalog compiles the floor for exactly the shapes the axes write,
-    /// and its id matches the registrations' catalog binding.
-    #[test]
-    fn catalog_matches_the_measured_shapes() {
-        let cat = catalog().expect("poc-receiving catalog parses");
-        assert_eq!(cat.catalog_id, CATALOG_ID);
-        let floor = Migration::create(&cat).unwrap().sql().unwrap();
-        for t in ["suppliers", "users"] {
-            assert!(
-                floor.contains(&format!("CREATE TABLE \"{t}\"")),
-                "floor creates {t}"
-            );
-        }
-        assert!(
-            !floor.to_lowercase().contains("trigger"),
-            "no trigger in the CDC-era floor (outbox retired, l5i9.19)"
-        );
     }
 
     #[test]

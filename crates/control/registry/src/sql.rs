@@ -205,30 +205,6 @@ pub fn select_event_reader_sql() -> &'static str {
 mod tests {
     use super::*;
 
-    const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
-
-    #[test]
-    fn catalog_release_storage_has_stable_head_and_db_immutable_artifacts() {
-        for table in ["releases", "catalog_heads"] {
-            assert!(
-                CATALOG_SCHEMA.contains(&format!("CREATE TABLE catalog.{table}")),
-                "missing catalog.{table}"
-            );
-        }
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER releases_immutable"));
-        assert!(CATALOG_SCHEMA.contains("MESSAGE = 'catalog-release-content-conflict'"));
-        assert!(!CATALOG_SCHEMA.contains("catalog.execution_bundles"));
-        assert!(CATALOG_SCHEMA.contains("PRIMARY KEY (tenant_id, catalog_id, environment)"));
-        assert!(CATALOG_SCHEMA.contains("GRANT SELECT ON catalog.releases"));
-        assert!(
-            !CATALOG_SCHEMA.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.releases")
-        );
-        assert!(
-            CATALOG_SCHEMA
-                .contains("REVOKE ALL ON FUNCTION catalog.publication_boundary(text) FROM PUBLIC")
-        );
-    }
-
     #[test]
     fn upsert_org_targets_the_placement_columns_and_upserts() {
         let sql = upsert_org_sql();
@@ -311,7 +287,7 @@ mod tests {
             assert!(sql.contains(col), "missing column {col}");
         }
         // Values are $n params; the jsonb travels as text then casts (the
-        // publish-catalog `::text::jsonb` bind lesson).
+        // management SQL `::text::jsonb` bind lesson).
         assert!(sql.contains("$3::text::jsonb"));
         assert!(sql.contains("$13"));
         // Insert-if-absent: a re-stamp NEVER clobbers an org's customization

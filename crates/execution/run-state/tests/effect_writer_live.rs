@@ -163,25 +163,29 @@ async fn native_effect_writer_live() {
         .await
         .expect("apply run-queue schema");
     admin
-        .batch_execute(&format!(
-            "INSERT INTO catalog.catalogs \
-               (tenant_id,catalog_id,version,environment,schema_version,state) \
-             VALUES ('tenant-live-a','writer-catalog',1,'test','0.1','draft'); \
-             INSERT INTO catalog.releases \
-               (tenant_id,catalog_id,catalog_version) \
-             VALUES ('tenant-live-a','writer-catalog',1); \
+        .batch_execute(
+            "INSERT INTO catalog.packages \
+               (tenant_id,package_id,package_version,manifest_sha256) \
+             VALUES ('tenant-live-a','writer_catalog','1.0.0', \
+               'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
+             INSERT INTO catalog.effective_releases \
+               (tenant_id,effective_release_id,environment,verified_publisher_principal) \
+             VALUES ('tenant-live-a',1,'test','test-publisher'); \
+             INSERT INTO catalog.effective_release_packages \
+               (tenant_id,effective_release_id,package_id,package_version) \
+             VALUES ('tenant-live-a',1,'writer_catalog','1.0.0'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id,expected_environment,durability_class) \
              VALUES ('tenant-live-a','test','standard'); \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
                 environment,wiring_id,wiring_version,status) \
-             VALUES ('tenant-live-a','writer-run','root',1,'writer-catalog',1, \
+             VALUES ('tenant-live-a','writer-run','root',1,'writer_catalog',1, \
                      'test','writer-wiring',1,'running'); \
              INSERT INTO wamn_run.run_queue \
                (tenant_id,run_id,lease_owner,lease_expires_at) \
-             VALUES ('tenant-live-a','writer-run','writer-live','2099-01-01');"
-        ))
+             VALUES ('tenant-live-a','writer-run','writer-live','2099-01-01');",
+        )
         .await
         .expect("seed one actively leased writer run");
 

@@ -7,10 +7,9 @@
 //!   `UserStatus::as_str`, and the FK cascades);
 //! - a **live-apply gate** proving the DB-enforced behavior — tenant RLS
 //!   isolation, the FK cascades (and audit-log immutability), the empty-tenant /
-//!   status CHECKs, and that `users.id` (uuid) + `roles.name` (text) are the
-//!   right targets for a REAL compiled 3.5 RLS policy — gated on
+//!   status CHECKs — gated on
 //!   `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness prepares App generations)
-//!   and skipped cleanly when unset (mirrors wamn-schema-compiler / wamn-schema-compiler / wamn-control-registry).
+//!   and skipped cleanly when unset.
 
 use std::path::Path;
 
@@ -158,10 +157,10 @@ fn tenant_floor_derives_from_the_connected_role() {
 }
 
 /// The `users.status` CHECK literals come from the model (`UserStatus::as_str`),
-/// drift-guarded like the registry's tier/env literals. `users.id` is the
-/// app.user_id ownership target (declared uuid; its type is proven live).
+/// drift-guarded like the registry's tier/env literals. The live arm below
+/// asks PostgreSQL for the `users.id` type and default.
 #[test]
-fn user_status_literals_and_ownership_target_are_pinned() {
+fn user_status_literals_are_pinned() {
     let sql = code_only(&app_schema_sql());
     assert!(sql.contains("users_status_check"));
     for s in UserStatus::ALL {
@@ -171,11 +170,6 @@ fn user_status_literals_and_ownership_target_are_pinned() {
             s.as_str()
         );
     }
-    // users.id is declared uuid (the ownership target the 3.5 builder casts to).
-    assert!(
-        sql.contains("id           uuid NOT NULL DEFAULT gen_random_uuid()"),
-        "users.id must be a uuid (the app.user_id ownership target)"
-    );
 }
 
 /// The FK cascades that keep the graph consistent are pinned: the user↔role
@@ -235,7 +229,7 @@ fn app_generation(database: &str, tenant: &str) -> String {
 /// DB-enforced behavior. Set `WAMN_SYSSCHEMA_PG_URL` to a superuser URL (the
 /// harness prepares tenant-scoped App generations); skipped when unset.
 #[test]
-fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
+fn app_schema_applies_and_enforces_isolation_on_postgres() {
     let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
         eprintln!(
             "skipping app_schema_applies_and_enforces_isolation_and_claims_on_postgres \
@@ -244,26 +238,10 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
         return;
     };
 
-    // A minimal single-entity catalog with a uuid owner column (no FKs — seeds
-    // cleanly). Its owner uuids ARE app_system.users ids, so the compiled 3.5
-    // policy proves users.id / roles.name are the right claim targets.
-    let catalog = notes_catalog();
-    let floor = wamn_schema_compiler::Migration::create(&catalog).unwrap();
-    let policy = wamn_schema_compiler::rls::AccessPolicy {
-        schema_version: "0.1".into(),
-        catalog_id: "docs".into(),
-        rules: vec![wamn_schema_compiler::rls::Rule::RowOwnership {
-            entity: "docs".into(),
-            owner_field: "owner_id".into(),
-            exempt_roles: vec!["admin".into()],
-            name: None,
-        }],
-    };
-    let policies = wamn_schema_compiler::rls::compile(&policy, &catalog).unwrap();
-
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
+    const U4: &str = "44444444-4444-4444-4444-444444444444";
     const TENANT_1: &str = "t1";
     const TENANT_2: &str = "t2";
 
@@ -295,17 +273,6 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
     // The schema itself (deploy/sql/app-schema.sql, applied verbatim as the superuser).
     script.push_str(&app_schema_sql());
     script.push('\n');
-    // The data table (3.2 floor) + its compiled 3.5 ownership policy, in a test
-    // schema. owner_id (uuid) rows will be owned by app_system.users ids.
-    script.push_str(
-        "CREATE SCHEMA wamn_sysschema_test AUTHORIZATION CURRENT_USER;\n\
-         GRANT USAGE ON SCHEMA wamn_sysschema_test TO wamn_app;\n\
-         SET search_path TO wamn_sysschema_test;\n",
-    );
-    script.push_str(&floor.sql().unwrap());
-    script.push_str(&policies.sql().unwrap());
-    script.push_str("\nRESET search_path;\n");
-
     // Seed as the superuser (bypasses RLS): two tenants for the isolation proof,
     // known user ids to tie the docs rows to. U1 has a role, key, config, and two
     // audit entries; the docs rows are owned by U1 and U2.
@@ -317,8 +284,7 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
          INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('t1','admin','receipts:read');\n\
          INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
          INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('t1','theme','\"dark\"'::jsonb);\n\
-         INSERT INTO app_system.audit_log (tenant_id, actor_id, action) VALUES ('t1','{U1}','user.login'),('t1','{U1}','receipt.create');\n\
-         INSERT INTO wamn_sysschema_test.docs (tenant_id, owner_id, body) VALUES ('t1','{U1}','a'),('t1','{U2}','b');\n"
+         INSERT INTO app_system.audit_log (tenant_id, actor_id, action) VALUES ('t1','{U1}','user.login'),('t1','{U1}','receipt.create');\n"
     ));
 
     // Tenant isolation follows current_user's prepared scope: tenant 1 sees only
@@ -356,38 +322,22 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
          DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=0, 'the stable ACL carrier derives no tenant'; END $$;\n\
          COMMIT;\n"
     ));
-    // Claim integration: the compiled 3.5 ownership policy filters the data table
-    // by app.user_id (= a users.id) and honors the exempt role (= a roles.name).
-    script.push_str(&format!(
-        "BEGIN;\n\
-         SET LOCAL ROLE {tenant_1_app};\n\
-         SET LOCAL search_path TO wamn_sysschema_test;\n\
-         SET LOCAL app.role = 'inspector';\n\
-         SET LOCAL app.user_id = '{U1}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM docs)=1, 'app.user_id (=a users.id) sees only its own row'; END $$;\n\
-         COMMIT;\n\
-         BEGIN;\n\
-         SET LOCAL ROLE {tenant_1_app};\n\
-         SET LOCAL search_path TO wamn_sysschema_test;\n\
-         SET LOCAL app.role = 'admin';\n\
-         SET LOCAL app.user_id = '{U2}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM docs)=2, 'app.role admin (a roles.name) is exempt — sees all'; END $$;\n\
-         COMMIT;\n\
-         BEGIN;\n\
-         SET LOCAL ROLE {tenant_1_app};\n\
-         SET LOCAL search_path TO wamn_sysschema_test;\n\
-         SET LOCAL app.role = 'inspector';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM docs)=0, 'no app.user_id claim denies ownership'; END $$;\n\
-         COMMIT;\n"
-    ));
-
-    // users.id is uuid (the ownership target's type — pinned mechanically here so
-    // a uuid→text mutation is caught even though the docs owner column is separate).
+    // users.id is an org-issued UUID: PostgreSQL must report both the exact type
+    // and the absence of any database-minted default.
     script.push_str(
-        "DO $$ DECLARE t text; BEGIN\n\
-           SELECT data_type INTO t FROM information_schema.columns\n\
-             WHERE table_schema='app_system' AND table_name='users' AND column_name='id';\n\
+        "DO $$ DECLARE t text; d text; BEGIN\n\
+           SELECT pg_catalog.format_type(a.atttypid, a.atttypmod),\n\
+                  pg_catalog.pg_get_expr(def.adbin, def.adrelid, true)\n\
+             INTO t, d\n\
+             FROM pg_catalog.pg_attribute AS a\n\
+             JOIN pg_catalog.pg_class AS relation ON relation.oid = a.attrelid\n\
+             JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace\n\
+             LEFT JOIN pg_catalog.pg_attrdef AS def\n\
+               ON def.adrelid = a.attrelid AND def.adnum = a.attnum\n\
+            WHERE namespace.nspname='app_system' AND relation.relname='users'\n\
+              AND a.attname='id' AND a.attnum > 0 AND NOT a.attisdropped;\n\
            ASSERT t='uuid', 'users.id must be uuid (the app.user_id ownership target)';\n\
+           ASSERT d IS NULL, 'users.id must have no server default; the org issues it';\n\
          END $$;\n",
     );
     // The status / empty-tenant CHECKs reject bad rows.
@@ -397,7 +347,7 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
            ASSERT false, 'an unknown user status must be rejected';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;\n\
          DO $$ BEGIN BEGIN\n\
-           INSERT INTO app_system.users (tenant_id, email) VALUES ('','x@none');\n\
+           INSERT INTO app_system.users (tenant_id, id, email) VALUES ('','{U4}','x@none');\n\
            ASSERT false, 'a ''-tenant row must be rejected (a45)';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;\n"
     ));
@@ -413,7 +363,6 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
     ));
 
     script.push_str("DROP SCHEMA app_system CASCADE;\n");
-    script.push_str("DROP SCHEMA wamn_sysschema_test CASCADE;\n");
 
     use std::io::Write;
     use std::process::{Command as Proc, Stdio};
@@ -437,41 +386,4 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
         "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
         String::from_utf8_lossy(&out.stderr)
     );
-}
-
-/// A minimal single-entity catalog with a uuid owner column and no foreign keys
-/// (the wamn-schema-compiler live-apply precedent) — owner uuids are `app_system.users` ids.
-fn notes_catalog() -> wamn_schema_model::Catalog {
-    use wamn_schema_model::{Catalog, Entity, Field, FieldType};
-    let f = |id: &str, ty: FieldType, nullable: bool| Field {
-        id: id.into(),
-        name: id.into(),
-        field_type: ty,
-        nullable,
-        default: None,
-        sensitive: false,
-        is_system: false,
-        label: None,
-        description: None,
-    };
-    Catalog {
-        schema_version: "0.1".into(),
-        catalog_id: "docs".into(),
-        version: 1,
-        name: None,
-        entities: vec![Entity {
-            id: "docs".into(),
-            name: "docs".into(),
-            is_system: false,
-            label: None,
-            description: None,
-            fields: vec![
-                f("owner_id", FieldType::Uuid, false),
-                f("body", FieldType::Text { max_len: None }, true),
-            ],
-            indexes: vec![],
-            constraints: vec![],
-        }],
-        relations: vec![],
-    }
 }

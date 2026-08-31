@@ -3,7 +3,7 @@
 //! The host binds the exact wiring, node position, occurrence and component
 //! digest before invoking a pooled component. The guest names only a store
 //! alias; the database must resolve that alias at the component grain and the
-//! mounted format-2 manifest must contain both the exact wiring version/hash and
+//! mounted format-3 manifest must contain both the exact wiring version/hash and
 //! component tuple. No run, plan, frame or effect-ledger fact participates.
 
 use std::collections::{HashMap, HashSet};
@@ -54,6 +54,7 @@ const AUTHORITY_SNAPSHOT_UNAVAILABLE: &str = "connection-authority-unavailable";
 /// Host-attested identity of one component invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionInvocation {
+    pub package_id: String,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub node_id: String,
@@ -69,8 +70,7 @@ pub enum ConnectionExecutionClosure {
     Released,
     /// Private admission froze an exact candidate wiring and binding world.
     Candidate {
-        catalog_id: String,
-        catalog_version: u32,
+        effective_release_id: u32,
         environment: String,
         wiring_hash: String,
         component: String,
@@ -146,6 +146,7 @@ impl ConnectionHttp {
             .unwrap_or_default();
         anyhow::ensure!(
             !component_id.is_empty()
+                && !invocation.package_id.is_empty()
                 && !invocation.wiring_id.is_empty()
                 && invocation.wiring_version > 0
                 && !invocation.node_id.is_empty()
@@ -156,8 +157,7 @@ impl ConnectionHttp {
             "connection-http-invocation-invalid"
         );
         if let ConnectionExecutionClosure::Candidate {
-            catalog_id,
-            catalog_version,
+            effective_release_id,
             environment,
             wiring_hash,
             component,
@@ -167,8 +167,7 @@ impl ConnectionHttp {
         {
             let graph = wiring_hash.strip_prefix("sha256:").unwrap_or_default();
             anyhow::ensure!(
-                !catalog_id.is_empty()
-                    && *catalog_version > 0
+                *effective_release_id > 0
                     && !environment.is_empty()
                     && !component.is_empty()
                     && !interface_version.is_empty()
@@ -230,15 +229,20 @@ impl ConnectionHttp {
             ),
             ConnectionExecutionClosure::Candidate { .. } => None,
         };
-        let (catalog_id, catalog_version, environment, candidate_binding) =
+        let (effective_release_id, environment, candidate_binding) =
             match (&invocation.closure, manifest) {
                 (ConnectionExecutionClosure::Released, Some(manifest)) => {
-                    if manifest.release.tenant_id != self.tenant.as_ref() {
+                    if manifest.release.tenant_id != self.tenant.as_ref()
+                        || !manifest
+                            .release
+                            .packages
+                            .iter()
+                            .any(|package| package.package_id() == invocation.package_id.as_str())
+                    {
                         return Err(ConnectionError::AttestationInvalid);
                     }
                     (
-                        manifest.release.catalog_id.as_str(),
-                        i32::try_from(manifest.release.catalog_version)
+                        i32::try_from(manifest.release.effective_release_id.get())
                             .map_err(|_| ConnectionError::AttestationInvalid)?,
                         manifest.release.environment.as_str(),
                         None,
@@ -246,16 +250,14 @@ impl ConnectionHttp {
                 }
                 (
                     ConnectionExecutionClosure::Candidate {
-                        catalog_id,
-                        catalog_version,
+                        effective_release_id,
                         environment,
                         binding_world,
                         ..
                     },
                     None,
                 ) => (
-                    catalog_id.as_str(),
-                    i32::try_from(*catalog_version)
+                    i32::try_from(*effective_release_id)
                         .map_err(|_| ConnectionError::AttestationInvalid)?,
                     environment.as_str(),
                     Some(
@@ -275,8 +277,8 @@ impl ConnectionHttp {
                 &self.project,
                 &self.tenant,
                 &ConnectionEffectLookup {
-                    catalog_id,
-                    catalog_version,
+                    package_id: &invocation.package_id,
+                    effective_release_id,
                     environment,
                     wiring_id: &invocation.wiring_id,
                     wiring_version,
@@ -390,7 +392,7 @@ fn require_direct_transport(
 }
 
 /// Require the exact host-bound component and immutable wiring version/hash to
-/// be members of the digest-verified format-2 release manifest.
+/// be members of the digest-verified format-3 release manifest.
 fn authorize_release_closure(
     manifest: &ServingManifest,
     invocation: &ConnectionInvocation,
@@ -403,15 +405,18 @@ fn authorize_release_closure(
         .map(
             |(component, interface_version)| -> Result<_, ConnectionError> {
                 Ok(ServingComponent {
+                    package_id: invocation.package_id.clone(),
                     component: component.clone(),
                     interface_version: interface_version.clone(),
                     digest: ArtifactHash::parse(invocation.component_digest.clone())
                         .map_err(|_| ConnectionError::AttestationInvalid)?,
+                    registered_operation: snapshot.registered_operation.clone(),
                 })
             },
         )
         .transpose()?;
     let wiring = ServingWiring {
+        package_id: invocation.package_id.clone(),
         wiring_id: invocation.wiring_id.clone(),
         wiring_version: invocation.wiring_version,
         graph_hash: DefinitionHash::parse(snapshot.wiring_hash.clone())
@@ -771,7 +776,9 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
-    use wamn_catalog::{SERVING_MANIFEST_FORMAT_VERSION, ServingRelease};
+    use wamn_catalog::{
+        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingRelease,
+    };
 
     use super::*;
     use crate::plugins::wamn_postgres::WamnPostgresConfig;
@@ -782,6 +789,7 @@ mod tests {
 
     fn invocation() -> ConnectionInvocation {
         ConnectionInvocation {
+            package_id: "package_a".to_string(),
             wiring_id: "orders".to_string(),
             wiring_version: 3,
             node_id: "notify".to_string(),
@@ -844,6 +852,7 @@ mod tests {
             wiring_hash: digest('b'),
             component: Some("http-request".to_string()),
             interface_version: Some("0.1".to_string()),
+            registered_operation: Some("package_a@1.0.0::orders.notify".to_string()),
             requirement_json: Some(serde_json::json!({
                 "component-digest": digest('a'),
                 "store-alias": "erp",
@@ -877,17 +886,20 @@ mod tests {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
                 tenant_id: "tenant-a".to_string(),
-                catalog_id: "catalog-a".to_string(),
-                catalog_version: 4,
+                effective_release_id: EffectiveReleaseId::new(4).unwrap(),
                 environment: "prod".to_string(),
+                packages: BTreeSet::from([PackageCoordinate::new("package_a", "1.0.0").unwrap()]),
             },
             components: BTreeSet::from([ServingComponent {
+                package_id: invocation.package_id.clone(),
                 component: snapshot.component.expect("component"),
                 interface_version: snapshot.interface_version.expect("interface version"),
                 digest: ArtifactHash::parse(invocation.component_digest)
                     .expect("fixture artifact hash is canonical"),
+                registered_operation: snapshot.registered_operation,
             }]),
             wirings: BTreeSet::from([ServingWiring {
+                package_id: invocation.package_id,
                 wiring_id: invocation.wiring_id,
                 wiring_version: invocation.wiring_version,
                 graph_hash: DefinitionHash::parse(snapshot.wiring_hash)

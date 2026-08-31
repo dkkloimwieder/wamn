@@ -82,10 +82,10 @@ WAMN_PLAN="$(
     | ($contract.tiers[$profiles.deploy_inventory_tier].root_packages) as $deploy_inventory
     | select($contract.schema_version == "0.1")
     | select($profiles.default_source == "cargo_metadata_workspace_default_members")
-    | select($defaults | length == 16 and length == (unique | length))
+    | select($defaults | length == 15 and length == (unique | length))
     | select($members | length == $contract.source_inventory.root_workspace.package_count)
     | select($members | length == (unique | length))
-    | select($all_additions | length == 14 and length == (unique | length))
+    | select($all_additions | length == 13 and length == (unique | length))
     | select(([$all_additions[] as $addition
                | select($defaults | index($addition) != null)] | length) == 0)
     | select($packages | length == $profiles.expected_package_counts[$profile])

@@ -324,15 +324,6 @@
     },
     {
       "workspace": "root",
-      "name": "wamn-schema-compiler",
-      "manifest_path": "crates/schema/compiler/Cargo.toml",
-      "role": "core",
-      "target_class": "shared",
-      "bounded_context": "schema",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
       "name": "wamn-schema-control",
       "manifest_path": "crates/schema/control/Cargo.toml",
       "role": "core",
@@ -355,15 +346,6 @@
       "manifest_path": "crates/schema/introspection/Cargo.toml",
       "role": "core",
       "target_class": "native",
-      "bounded_context": "schema",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-schema-model",
-      "manifest_path": "crates/schema/model/Cargo.toml",
-      "role": "contract",
-      "target_class": "shared",
       "bounded_context": "schema",
       "deployable": false
     },

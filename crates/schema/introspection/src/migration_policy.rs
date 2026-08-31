@@ -87,6 +87,44 @@ pub fn validate_migration_file(
     path: impl AsRef<Path>,
     configured_schema: &str,
 ) -> Result<(), MigrationPolicyError> {
+    validate_migration_file_for_schemas(path, &[configured_schema])
+}
+
+/// Validate one SQL migration against the manifest's complete schema set.
+pub fn validate_migration_file_for_schemas(
+    path: impl AsRef<Path>,
+    configured_schemas: &[&str],
+) -> Result<(), MigrationPolicyError> {
+    let path = path.as_ref();
+    let bytes = fs::read(path).map_err(|source| MigrationPolicyError {
+        kind: MigrationPolicyErrorKind::ArtifactRead,
+        path: path.to_path_buf(),
+        statement_index: None,
+        detail: "could not read migration SQL".into(),
+        source: Some(source),
+    })?;
+    validate_migration_bytes_for_schemas(path, &bytes, configured_schemas)
+}
+
+/// Validate the exact migration bytes an effect shell will hash and execute.
+///
+/// `path` remains diagnostic identity and enforces the artifact extension; the
+/// supplied bytes are the sole policy input, so validation and execution cannot
+/// observe two filesystem reads.
+pub fn validate_migration_bytes(
+    path: impl AsRef<Path>,
+    bytes: &[u8],
+    configured_schema: &str,
+) -> Result<(), MigrationPolicyError> {
+    validate_migration_bytes_for_schemas(path, bytes, &[configured_schema])
+}
+
+/// Validate exact migration bytes against every schema declared by a manifest.
+pub fn validate_migration_bytes_for_schemas(
+    path: impl AsRef<Path>,
+    bytes: &[u8],
+    configured_schemas: &[&str],
+) -> Result<(), MigrationPolicyError> {
     let path = path.as_ref();
     if path.extension() != Some(OsStr::new("sql")) {
         return Err(policy_error(
@@ -97,14 +135,14 @@ pub fn validate_migration_file(
         ));
     }
 
-    let sql = fs::read_to_string(path).map_err(|source| MigrationPolicyError {
+    let sql = std::str::from_utf8(bytes).map_err(|_| MigrationPolicyError {
         kind: MigrationPolicyErrorKind::ArtifactRead,
         path: path.to_path_buf(),
         statement_index: None,
         detail: "could not read migration SQL as UTF-8".into(),
-        source: Some(source),
+        source: None,
     })?;
-    let statements = lex_statements(&sql, path)?;
+    let statements = lex_statements(sql, path)?;
     if statements.is_empty() {
         return Err(policy_error(
             MigrationPolicyErrorKind::EmptyArtifact,
@@ -113,9 +151,17 @@ pub fn validate_migration_file(
             "migration contains no SQL statement",
         ));
     }
+    if configured_schemas.is_empty() {
+        return Err(policy_error(
+            MigrationPolicyErrorKind::CrossSchemaMutation,
+            path,
+            None,
+            "strict package manifest declares no application schema",
+        ));
+    }
 
     for (index, tokens) in statements.iter().enumerate() {
-        validate_statement(tokens, configured_schema, path, index + 1)?;
+        validate_statement(tokens, configured_schemas, path, index + 1)?;
     }
     Ok(())
 }
@@ -145,7 +191,7 @@ fn policy_error(
 
 fn validate_statement(
     tokens: &[Token<'_>],
-    configured_schema: &str,
+    configured_schemas: &[&str],
     path: &Path,
     statement_index: usize,
 ) -> Result<(), MigrationPolicyError> {
@@ -181,7 +227,7 @@ fn validate_statement(
         return refuse_statement(kind, path, statement_index, detail);
     }
     if words(tokens, 0, &["create", "table"]) {
-        return validate_create_table(tokens, configured_schema, path, statement_index);
+        return validate_create_table(tokens, configured_schemas, path, statement_index);
     }
     refuse_statement(
         MigrationPolicyErrorKind::UnsupportedStatement,
@@ -193,7 +239,7 @@ fn validate_statement(
 
 fn validate_create_table(
     tokens: &[Token<'_>],
-    configured_schema: &str,
+    configured_schemas: &[&str],
     path: &Path,
     statement_index: usize,
 ) -> Result<(), MigrationPolicyError> {
@@ -209,12 +255,14 @@ fn validate_create_table(
             "CREATE TABLE must use an unquoted schema-qualified target",
         );
     };
-    if schema_name != configured_schema {
+    if !configured_schemas.contains(&schema_name) {
         return refuse_statement(
             MigrationPolicyErrorKind::CrossSchemaMutation,
             path,
             statement_index,
-            format!("schema {schema_name:?} is outside configured schema {configured_schema:?}"),
+            format!(
+                "schema {schema_name:?} is outside configured application schemas {configured_schemas:?}"
+            ),
         );
     }
     if !matches!(tokens.get(5), Some(Token::Symbol(b'('))) {

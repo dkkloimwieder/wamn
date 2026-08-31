@@ -52,9 +52,9 @@ use crate::{APP_ROLE, DB_OWNER_ROLE};
 /// Same name as the control plane's `wamn_authority`, and deliberately a
 /// SEPARATE OBJECT in a separate database — the two-plane residency pattern.
 ///
-/// Re-exported, not redefined: the schema compiler EMITS CALLS to these
-/// functions and this crate CREATES them, so the names live in the leaf both
-/// depend on rather than once per crate.
+/// Re-exported, not redefined: project schema SQL calls these functions and
+/// this crate creates them, so their names live in the shared leaf rather than
+/// being repeated by each caller.
 pub use wamn_pg_core::{
     AUTHORITY_SCHEMA as TENANT_KEY_SCHEMA, CURRENT_TENANT_KEY_FUNCTION, TENANT_KEY_FUNCTION,
 };

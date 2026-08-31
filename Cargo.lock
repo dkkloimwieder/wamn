@@ -3448,12 +3448,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha1_smol"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
-
-[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4403,7 +4397,6 @@ checksum = "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
- "sha1_smol",
  "wasm-bindgen",
 ]
 
@@ -4534,12 +4527,12 @@ dependencies = [
  "wamn-control-registry",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-run-state",
  "wamn-runtime",
- "wamn-schema-compiler",
  "wamn-schema-control",
- "wamn-schema-model",
+ "wamn-schema-introspection",
 ]
 
 [[package]]
@@ -4574,7 +4567,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-event-wire",
- "wamn-schema-model",
 ]
 
 [[package]]
@@ -4715,8 +4707,6 @@ name = "wamn-project-state"
 version = "0.1.0"
 dependencies = [
  "wamn-control-provision",
- "wamn-schema-compiler",
- "wamn-schema-model",
 ]
 
 [[package]]
@@ -4791,9 +4781,7 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-run-state",
  "wamn-runtime",
- "wamn-schema-compiler",
  "wamn-schema-control",
- "wamn-schema-model",
  "wamn-test-infrastructure",
  "wash-runtime",
  "wasmtime-wasi",
@@ -4932,30 +4920,18 @@ name = "wamn-scheduler"
 version = "0.1.0"
 
 [[package]]
-name = "wamn-schema-compiler"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "uuid",
- "wamn-control-provision",
- "wamn-pg-core",
- "wamn-schema-model",
-]
-
-[[package]]
 name = "wamn-schema-control"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "wamn-catalog",
  "wamn-control-registry",
  "wamn-event-reg",
  "wamn-execution-contract",
  "wamn-pg-core",
- "wamn-schema-compiler",
- "wamn-schema-model",
+ "wamn-schema-generator",
 ]
 
 [[package]]
@@ -4986,22 +4962,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-schema-model"
-version = "0.1.0"
-dependencies = [
- "boon",
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "tokio",
- "wamn-schema-model",
 ]
 
 [[package]]

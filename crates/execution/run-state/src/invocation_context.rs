@@ -12,8 +12,8 @@ pub const INVOCATION_CONTEXT_VERSION: &str = "0.1";
 pub struct AdmittedPrincipal {
     tenant_id: String,
     environment: String,
-    catalog_id: String,
-    catalog_version: i32,
+    package_id: String,
+    effective_release_id: i32,
     run_id: String,
     flow_id: String,
     flow_version: u32,
@@ -29,8 +29,8 @@ impl AdmittedPrincipal {
     pub fn new(
         tenant_id: impl Into<String>,
         environment: impl Into<String>,
-        catalog_id: impl Into<String>,
-        catalog_version: i32,
+        package_id: impl Into<String>,
+        effective_release_id: i32,
         run_id: impl Into<String>,
         flow_id: impl Into<String>,
         flow_version: u32,
@@ -39,8 +39,8 @@ impl AdmittedPrincipal {
         let principal = Self {
             tenant_id: tenant_id.into(),
             environment: environment.into(),
-            catalog_id: catalog_id.into(),
-            catalog_version,
+            package_id: package_id.into(),
+            effective_release_id,
             run_id: run_id.into(),
             flow_id: flow_id.into(),
             flow_version,
@@ -58,12 +58,12 @@ impl AdmittedPrincipal {
         &self.environment
     }
 
-    pub fn catalog_id(&self) -> &str {
-        &self.catalog_id
+    pub fn package_id(&self) -> &str {
+        &self.package_id
     }
 
-    pub fn catalog_version(&self) -> i32 {
-        self.catalog_version
+    pub fn effective_release_id(&self) -> i32 {
+        self.effective_release_id
     }
 
     pub fn run_id(&self) -> &str {
@@ -85,11 +85,11 @@ impl AdmittedPrincipal {
     fn validate(&self) -> Result<(), InvocationContextError> {
         if self.tenant_id.is_empty()
             || self.environment.is_empty()
-            || self.catalog_id.is_empty()
+            || self.package_id.is_empty()
             || self.run_id.is_empty()
             || self.flow_id.is_empty()
             || self.artifact_digest.is_empty()
-            || self.catalog_version <= 0
+            || self.effective_release_id <= 0
             || self.flow_version == 0
         {
             return Err(InvocationContextError::InvalidPrincipal);
@@ -292,7 +292,7 @@ mod tests {
         AdmittedPrincipal::new(
             "tenant-a",
             "prod",
-            "catalog-a",
+            "package_a",
             7,
             "run-a",
             "flow-a",

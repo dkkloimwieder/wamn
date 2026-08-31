@@ -1,6 +1,6 @@
-//! Pure lowering from a gated catalog wiring to the router's executable graph.
+//! Pure lowering from a package-owned wiring to the router's executable graph.
 //!
-//! The catalog owns authored wiring data and the router owns a storage-blind
+//! The package owns authored wiring data and the router owns a storage-blind
 //! walk. This module is the sole consumer boundary between them: callers supply
 //! one already-active wiring and the operation facts gated with it, and this
 //! module refuses any one-sided drift before constructing a [`Wiring`]. It does
@@ -18,19 +18,19 @@ use wamn_router::{
     ERROR_PORT, Terminal, Wiring, WiringEdge as RouterEdge, WiringError, WiringNode as RouterNode,
 };
 
-/// Tenant/catalog/environment identity shared by a wiring and its gated facts.
+/// Tenant/package/environment identity shared by a wiring and its admitted facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WiringScope<'a> {
     pub tenant_id: &'a str,
-    pub catalog_id: &'a str,
+    pub package_id: &'a str,
     pub environment: &'a str,
 }
 
-/// One active wiring row after its catalog gate and pointer resolution.
+/// One active wiring row after exact-release membership and pointer resolution.
 #[derive(Debug, Clone, Copy)]
 pub struct GatedActiveWiring<'a> {
     pub scope: WiringScope<'a>,
-    pub gated_catalog_version: u32,
+    pub package_version: &'a str,
     pub document: &'a WiringDocument,
 }
 
@@ -58,11 +58,11 @@ pub struct WiringOperationFact {
     pub parameters: BTreeMap<String, WiringParameterFact>,
 }
 
-/// Operation facts gated against one catalog version in one environment.
+/// Operation facts admitted for one exact package version in one environment.
 #[derive(Debug, Clone, Copy)]
 pub struct ScopedWiringOperationFacts<'a> {
     pub scope: WiringScope<'a>,
-    pub catalog_version: u32,
+    pub package_version: &'a str,
     pub operations: &'a [WiringOperationFact],
 }
 
@@ -110,7 +110,7 @@ pub fn project_component_operation(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WiringLoweringErrorKind {
     ScopeMismatch,
-    CatalogVersionMismatch,
+    PackageVersionMismatch,
     MissingComponent,
     IncompatibleInterfaceVersion,
     MissingOperation,
@@ -173,7 +173,7 @@ impl From<WiringError> for WiringLoweringError {
 
 /// Lower one gated active wiring into the exact graph the router executes.
 ///
-/// The operation-fact scope and catalog version must match the active row.
+/// The operation-fact scope and exact package version must match the active row.
 /// Every document reference is checked before its authoring-only metadata is
 /// lowered. In particular, an absent target port is inferred only for a target
 /// operation declaring exactly one input, then carried by the router edge to
@@ -247,20 +247,20 @@ fn validate_scope(
             format!(
                 "active wiring scope ({:?}, {:?}, {:?}) differs from operation-fact scope ({:?}, {:?}, {:?})",
                 active.scope.tenant_id,
-                active.scope.catalog_id,
+                active.scope.package_id,
                 active.scope.environment,
                 facts.scope.tenant_id,
-                facts.scope.catalog_id,
+                facts.scope.package_id,
                 facts.scope.environment
             ),
         ));
     }
-    if active.gated_catalog_version != facts.catalog_version {
+    if active.package_version != facts.package_version {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::CatalogVersionMismatch,
+            WiringLoweringErrorKind::PackageVersionMismatch,
             format!(
-                "active wiring was gated against catalog version {}, but operation facts are from version {}",
-                active.gated_catalog_version, facts.catalog_version
+                "active wiring belongs to package version {:?}, but operation facts are from {:?}",
+                active.package_version, facts.package_version
             ),
         ));
     }

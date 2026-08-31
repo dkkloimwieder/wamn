@@ -30,7 +30,7 @@ use wamn_runtime::plugins::wamn_postgres::{ProductionClaimResult, ProductionReap
 mod common;
 
 use common::{
-    CATALOG_ID, COMPONENT, EMPTY_HASH, ENVIRONMENT, POD_MANIFEST_DIGEST, POD_RELEASE_VERSION,
+    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_EFFECTIVE_RELEASE_ID, POD_MANIFEST_DIGEST,
     RUNTIME_APPLICATION_NAME, SCHEMA, TENANT, WIRING_ID, WIRING_VERSION, WRITER_LATCH,
     assert_callerless_terminal, assert_prior_winner_terminal, effect_attempt, expire_effect_run,
     install_fixture, install_prior_caller_winner, make_callerless, ready_run, release_record,
@@ -48,6 +48,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     let fixture = install_fixture(&url).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
+    let release_package_ids = [PACKAGE_ID.to_owned(), "cat_overlay".to_owned()];
     let writer = &fixture.writer;
     let writer_role = fixture.writer_role.clone();
 
@@ -65,12 +66,12 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
+                   (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
                     environment,wiring_id,wiring_version,trigger_source,durability_class) \
-                 VALUES ($1,'effect-race','root',1,'running','cat-main',1,'test',$2,$3,'http', \
+                 VALUES ($1,'effect-race','root',1,'running',$2,1,'test',$3,$4,'http', \
                          'durable')"
             ),
-            &[&TENANT, &WIRING_ID, &WIRING_VERSION],
+            &[&TENANT, &PACKAGE_ID, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     admin
@@ -118,9 +119,10 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         .await?;
     let reaper = {
         let plugin = Arc::clone(plugin);
+        let release_package_ids = release_package_ids.clone();
         tokio::spawn(async move {
             plugin
-                .reap_one_exhausted_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 0)
+                .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
                 .await
         })
     };
@@ -139,7 +141,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     );
     assert_eq!(
         plugin
-            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Terminalized {
             run_id: "effect-race".into(),
@@ -190,7 +192,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     expire_effect_run(admin, "effect-callerless").await?;
     assert_eq!(
         plugin
-            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Terminalized {
             run_id: "effect-callerless".into(),
@@ -208,7 +210,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     expire_effect_run(admin, "effect-winner").await?;
     assert_eq!(
         plugin
-            .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+            .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Terminalized {
             run_id: "effect-winner".into(),
@@ -229,17 +231,17 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     // (`crates/execution/run-state/src/queue/sql.rs`, `park_sql`).
     //
     // The claim is what records the pair, so the run is claimed first.
-    seed_durable_run(admin, "effect-pin", "cat-main", 80).await?;
+    seed_durable_run(admin, "effect-pin", PACKAGE_ID, 80).await?;
     assert_eq!(
         ready_run(
             plugin
-                .claim_next_production(COMPONENT, CATALOG_ID, ENVIRONMENT, 30_000)
+                .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "effect-pin"
     );
     let recorded = (
-        Some(POD_RELEASE_VERSION),
+        POD_EFFECTIVE_RELEASE_ID,
         Some(POD_MANIFEST_DIGEST.to_string()),
     );
     assert_eq!(release_record(admin, "effect-pin").await?, recorded);
@@ -259,7 +261,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     let mid_effect = admin
         .execute(
             &format!(
-                "UPDATE {SCHEMA}.runs SET release_version=NULL, manifest_digest=NULL \
+                "UPDATE {SCHEMA}.runs SET manifest_digest=NULL \
                   WHERE tenant_id=$1 AND run_id='effect-pin'"
             ),
             &[&TENANT],

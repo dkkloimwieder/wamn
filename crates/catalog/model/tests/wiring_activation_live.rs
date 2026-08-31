@@ -143,7 +143,7 @@ fn hash(letter: char) -> String {
 /// `(hash, enabled)` of one delivered doorbell, for comparing whole sequences.
 fn rung(notice: &WiringActivationNotice) -> (String, bool) {
     assert_eq!(notice.tenant_id, "t1");
-    assert_eq!(notice.catalog_id, "shop");
+    assert_eq!(notice.package_id, "shop");
     assert_eq!(notice.environment, "prod");
     assert_eq!(notice.wiring_id, "orders-create");
     (notice.confirmed_definition_hash.clone(), notice.enabled)
@@ -171,17 +171,23 @@ fn preamble(database: &str, app_generation: &str) -> String {
          {catalog}\n\
          GRANT USAGE ON SCHEMA catalog TO wamn_app;\n\
          SET app.tenant = '{TENANT}';\n\
-         INSERT INTO catalog.catalogs \
-                (tenant_id, catalog_id, version, environment, schema_version, state) \
-         VALUES ('t1','shop',1,'prod','1','applied'), ('t1','shop',2,'prod','1','draft');\n\
-         INSERT INTO catalog.catalog_heads \
-                (tenant_id, catalog_id, environment, applied_catalog_version) \
-         VALUES ('t1','shop','prod',1);\n\
-         INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
-                gated_catalog_version, graph_json, wiring_hash) \
-         VALUES ('t1','shop','orders-create',1,1,'{{\"n\":1}}','{a}'), \
-                ('t1','shop','orders-create',2,1,'{{\"n\":2}}','{b}'), \
-                ('t1','shop','orders-create',3,2,'{{\"n\":3}}','{c}');\n",
+         INSERT INTO catalog.packages \
+                (tenant_id, package_id, package_version, manifest_sha256) \
+         VALUES ('t1','shop','1.0.0','{a}'), ('t1','shop','2.0.0','{b}');\n\
+         INSERT INTO catalog.effective_releases \
+                (tenant_id, effective_release_id, environment, verified_publisher_principal) \
+         VALUES ('t1',1,'prod','spiffe://wamn.test/publisher');\n\
+         INSERT INTO catalog.effective_release_packages \
+                (tenant_id, effective_release_id, package_id, package_version) \
+         VALUES ('t1',1,'shop','1.0.0');\n\
+         INSERT INTO catalog.effective_release_heads \
+                (tenant_id, environment, effective_release_id) \
+         VALUES ('t1','prod',1);\n\
+         INSERT INTO catalog.wirings (tenant_id, package_id, package_version, \
+                wiring_id, version, graph_json, wiring_hash) \
+         VALUES ('t1','shop','1.0.0','orders-create',1,'{{\"n\":1}}','{a}'), \
+                ('t1','shop','1.0.0','orders-create',2,'{{\"n\":2}}','{b}'), \
+                ('t1','shop','2.0.0','orders-create',3,'{{\"n\":3}}','{c}');\n",
         a = hash('a'),
         b = hash('b'),
         c = hash('c'),
@@ -269,8 +275,8 @@ fn wiring_activation_live() {
     // A tombstone retires the id even though the pointer row survives enabled.
     script.push_str(
         "INSERT INTO catalog.wiring_tombstones \
-                (tenant_id, catalog_id, environment, wiring_id, removed_in_catalog_version) \
-         VALUES ('t1','shop','prod','orders-create',1);\n",
+                (tenant_id, package_id, environment, wiring_id, retired_at, reason) \
+         VALUES ('t1','shop','prod','orders-create',now(),'retired by test');\n",
     );
     script.push_str(&read("tombstoned"));
     script.push_str("DELETE FROM catalog.wiring_tombstones;\n");
@@ -346,8 +352,8 @@ fn wiring_activation_live() {
         "five committed flips, five doorbells, and nothing for the rolled-back one\n{stdout}"
     );
 
-    // A definition gated against a catalog version this environment has not
-    // applied cannot be activated, however the caller spells the request.
+    // A definition whose package coordinate is absent from this environment's
+    // effective release cannot be activated, however the caller spells the request.
     let refused = refusal(
         &url,
         &format!(
@@ -494,9 +500,9 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
     script.push_str(&probe("after"));
     script.push_str(&format!(
         "SET app.tenant = 't1';\n\
-         INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
-                gated_catalog_version, graph_json, wiring_hash) \
-         VALUES ('t1','shop','orders-create',1,1,$doc${wire}$doc$,'{digest}');\n\
+         INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
+                version, graph_json, wiring_hash) \
+         VALUES ('t1','shop','1.0.0','orders-create',1,$doc${wire}$doc$,'{digest}');\n\
          SELECT 'stored=' || graph_json::text FROM catalog.wirings \
           WHERE wiring_id = 'orders-create' AND version = 1;\n",
         digest = document.wiring_hash(),

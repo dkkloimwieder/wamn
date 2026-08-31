@@ -5,6 +5,6 @@
 .dolt
 .beads
 docs
-# deploy/ is include_str!'d by publish-catalog's provisioning helpers
-# (sql/run-state.sql) — it must be in the build context.
+# deploy/ contains `include_str!` build inputs (including sql/run-state.sql),
+# so it must remain in the build context.
 vendor

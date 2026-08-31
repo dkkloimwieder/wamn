@@ -6,7 +6,7 @@
 //! or an immutable digest-named ConfigMap projected at
 //! [`RELEASE_MANIFEST_MOUNT_PATH`]. Either way the bytes are the *sole* carrier
 //! of release identity. The weld reads them once and derives both halves of the
-//! `(release version, manifest digest)` pair from the verified content itself,
+//! `(effective release id, manifest digest)` pair from the verified content itself,
 //! then holds the parsed document for the life of the process.
 //!
 //! # This is a weld, not a cache
@@ -81,7 +81,7 @@ pub enum WeldErrorKind {
     /// The manifest file is missing or unreadable.
     ManifestUnreadable,
     /// The manifest bytes failed parse, validation or canonicality, or carry a
-    /// release version the run plane cannot record — every refusal
+    /// effective release id the run plane cannot record — every refusal
     /// [`ServingManifest::from_canonical_bytes`] can raise, plus the one width
     /// narrowing this weld performs.
     ManifestRejected,
@@ -118,17 +118,16 @@ impl std::error::Error for WeldError {}
 
 /// The release a pod carries, derived from its verified manifest content.
 ///
-/// This is the `(release version, manifest digest)` pair that the production
-/// claim records write-once onto a run
+/// This is the `(effective release id, manifest digest)` pair the production
+/// claim uses to verify the run's admission pin and record the digest write-once
 /// ([`ReleaseIdentity`](crate::plugins::wamn_postgres::ReleaseIdentity)). It is
 /// host-injected identity, never guest-supplied — and, since it comes out of the
 /// same bytes the readers resolve against, the two cannot disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CarriedRelease {
-    /// The release (catalog) version — `runs.release_version`. Derived from
-    /// [`ServingRelease::catalog_version`](wamn_catalog::ServingRelease), a
-    /// header field inside the canonical preimage.
-    pub release_version: i32,
+    /// The environment-local release identity derived from the manifest's
+    /// canonical preimage.
+    pub effective_release_id: i32,
     /// The serving manifest's digest — `runs.manifest_digest`. Derived from the
     /// manifest's own canonical bytes.
     pub manifest_digest: ManifestDigest,
@@ -185,23 +184,21 @@ impl ReleaseManifestWeld {
                 )
             })?;
 
-        // The one narrowing on this path: the manifest carries the release version
-        // as `u32`, the run plane records it as `int`. Refuse rather than wrap —
-        // reconciling them is owed by whoever gives the catalog version one type.
-        let release_version = i32::try_from(manifest.release.catalog_version).map_err(|error| {
-            WeldError::new(
-                WeldErrorKind::ManifestRejected,
-                format!(
-                    "serving manifest {origin} names release version {} which the run plane \
+        let effective_release_id = i32::try_from(manifest.release.effective_release_id.get())
+            .map_err(|error| {
+                WeldError::new(
+                    WeldErrorKind::ManifestRejected,
+                    format!(
+                        "serving manifest {origin} names effective release {} which the run plane \
                          cannot record: {error}",
-                    manifest.release.catalog_version
-                ),
-            )
-        })?;
+                        manifest.release.effective_release_id.get()
+                    ),
+                )
+            })?;
 
         Ok(Self {
             release: CarriedRelease {
-                release_version,
+                effective_release_id,
                 manifest_digest,
             },
             manifest,
@@ -225,8 +222,8 @@ mod tests {
     use std::path::PathBuf;
 
     use wamn_catalog::{
-        ArtifactHash, DefinitionHash, ServingComponent, ServingRelease, ServingWiring,
-        UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
+        ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate, ServingComponent,
+        ServingRelease, ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };
 
     use super::*;
@@ -234,22 +231,25 @@ mod tests {
     const COMPONENT: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const GRAPH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    const RELEASE_VERSION: u32 = 7;
+    const EFFECTIVE_RELEASE_ID: u32 = 7;
 
     fn fixture() -> ServingManifest {
         ServingManifest::new(
             ServingRelease {
                 tenant_id: "t1".into(),
-                catalog_id: "cat".into(),
-                catalog_version: RELEASE_VERSION,
+                effective_release_id: EffectiveReleaseId::new(EFFECTIVE_RELEASE_ID).unwrap(),
                 environment: "prod".into(),
+                packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             BTreeSet::from([ServingComponent {
+                package_id: "cat".into(),
                 component: "transform".into(),
                 interface_version: "0.1".into(),
                 digest: ArtifactHash::parse(COMPONENT).expect("fixture artifact hash is canonical"),
+                registered_operation: None,
             }]),
             BTreeSet::from([ServingWiring {
+                package_id: "cat".into(),
                 wiring_id: "orders".into(),
                 wiring_version: 2,
                 graph_hash: DefinitionHash::parse(GRAPH)
@@ -330,8 +330,8 @@ mod tests {
         // the pair recorded onto a run and the document resolved against are, by
         // construction, the same fact.
         assert_eq!(
-            weld.release().release_version,
-            i32::try_from(expected.release.catalog_version).expect("fixture version fits"),
+            weld.release().effective_release_id,
+            i32::try_from(expected.release.effective_release_id.get()).expect("fixture id fits"),
         );
         assert_eq!(weld.release().manifest_digest, expected.digest());
     }
@@ -361,7 +361,7 @@ mod tests {
     fn a_format_one_manifest_refuses_with_the_frozen_literal() {
         let mounts = Mounts::new("format-one");
         mounts.write_manifest_bytes(
-            br#"{"attachments":{},"flows":{},"format-version":"0.1","registrations":{},"release":{"catalog-id":"cat","catalog-version":1,"environment":"prod","tenant-id":"t1"}}"#,
+            br#"{"attachments":{},"components":[],"format-version":1,"registrations":{},"release":{"effective-release-id":1,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"wirings":[]}"#,
         );
 
         let error = mounts.load().expect_err("format one refuses at the weld");

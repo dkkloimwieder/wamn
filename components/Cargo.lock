@@ -1236,7 +1236,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-event-wire",
- "wamn-schema-model",
 ]
 
 [[package]]
@@ -1296,15 +1295,6 @@ dependencies = [
  "uuid",
  "wamn-execution-contract",
  "wamn-postgres-sqlx",
-]
-
-[[package]]
-name = "wamn-schema-model"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
 ]
 
 [[package]]

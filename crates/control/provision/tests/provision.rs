@@ -2,7 +2,7 @@
 //! throwaway Postgres when `WAMN_PROVISION_PG_URL` is set (a **superuser** URL —
 //! `CREATE DATABASE` / `CREATE ROLE` need it, exactly as the CNPG cluster
 //! superuser does in production). Skips cleanly when unset. Shells out to `psql`
-//! (no DB dependency in the crate), the wamn-schema-compiler / wamn-schema-compiler / wamn-schema-compiler pattern.
+//! so the crate retains no database dependency.
 //!
 //! It drives the **real** builders and asserts their effects on the live
 //! cluster: a legacy password-bearing app LOGIN converges to the passwordless

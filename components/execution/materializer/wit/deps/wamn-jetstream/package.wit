@@ -144,10 +144,10 @@ interface consumer {
   /// on the durable name: rebinding an existing durable returns a handle to it.
   bind: func(config: consumer-config) -> result<durable-consumer, js-error>;
 
-  /// Bind a release registration exactly. The host verifies the catalog and
+  /// Bind a release registration exactly. The host verifies the package and
   /// registration ids against the serving manifest and ties every fetched
   /// message to that identity for host-derived dead-letter publication.
-  bind-registration: func(catalog-id: string, registration-id: string, config: consumer-config) -> result<durable-consumer, js-error>;
+  bind-registration: func(package-id: string, registration-id: string, config: consumer-config) -> result<durable-consumer, js-error>;
 }
 
 /// Post-commit wake hint — the l5i9.17 doorbell takeover. The dispatcher rings

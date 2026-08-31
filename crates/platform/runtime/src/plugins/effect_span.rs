@@ -323,7 +323,7 @@ pub(crate) fn record_effect_ms(
 pub(crate) struct AckLagRegistration<'a> {
     pub tenant: &'a str,
     pub environment: &'a str,
-    pub catalog_id: &'a str,
+    pub package_id: &'a str,
     pub registration_id: &'a str,
 }
 
@@ -340,14 +340,14 @@ fn ack_lag_labels(
     let registration = registration.unwrap_or(AckLagRegistration {
         tenant: "",
         environment: "",
-        catalog_id: "",
+        package_id: "",
         registration_id: "",
     });
     [
         opentelemetry::KeyValue::new("wamn.project", project.to_string()),
         opentelemetry::KeyValue::new("wamn.tenant", registration.tenant.to_string()),
         opentelemetry::KeyValue::new("wamn.environment", registration.environment.to_string()),
-        opentelemetry::KeyValue::new("wamn.catalog_id", registration.catalog_id.to_string()),
+        opentelemetry::KeyValue::new("wamn.package_id", registration.package_id.to_string()),
         opentelemetry::KeyValue::new(
             "wamn.registration_id",
             registration.registration_id.to_string(),
@@ -476,7 +476,7 @@ mod tests {
     }
 
     /// A consumer bound through `bind_registration` carries the registration, so
-    /// the sample is attributable to one registration of one catalog.
+    /// the sample is attributable to one registration of one package.
     #[test]
     fn ack_lag_records_the_message_age_under_its_registration() {
         let harness = AckLagHarness::install();
@@ -486,7 +486,7 @@ mod tests {
             Some(AckLagRegistration {
                 tenant: "acme",
                 environment: "prod",
-                catalog_id: "cat-7",
+                package_id: "package_a",
                 registration_id: "orders-changed",
             }),
             published_at(),
@@ -500,7 +500,7 @@ mod tests {
                     ("wamn.project", "orders"),
                     ("wamn.tenant", "acme"),
                     ("wamn.environment", "prod"),
-                    ("wamn.catalog_id", "cat-7"),
+                    ("wamn.package_id", "package_a"),
                     ("wamn.registration_id", "orders-changed"),
                 ]),
                 250.0,
@@ -530,7 +530,7 @@ mod tests {
                     ("wamn.project", "orders"),
                     ("wamn.tenant", ""),
                     ("wamn.environment", ""),
-                    ("wamn.catalog_id", ""),
+                    ("wamn.package_id", ""),
                     ("wamn.registration_id", ""),
                 ]),
                 40.0,
@@ -555,5 +555,4 @@ mod tests {
         assert_eq!(series.len(), 1, "one sample was recorded");
         assert_eq!(series[0].2, 0.0, "a future publish clamps to zero lag");
     }
-
 }

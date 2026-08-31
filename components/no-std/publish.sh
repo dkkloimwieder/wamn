@@ -2,27 +2,29 @@
 set -eu
 
 usage() {
-  echo "usage: $0 TENANT_ID CATALOG_ID CATALOG_VERSION ARTIFACT_BASE REGISTRY_AUTH_FILE SYSTEM_DATABASE_URL [--insecure-registry]" >&2
+  echo "usage: $0 TENANT_ID PACKAGE_ID PACKAGE_VERSION PACKAGE_DIRECTORY ARTIFACT_BASE REGISTRY_AUTH_FILE PROJECT_DATABASE_URL CONTROL_DATABASE_URL [--insecure-registry]" >&2
   exit 64
 }
 
-[ "$#" -ge 6 ] && [ "$#" -le 7 ] || usage
+[ "$#" -ge 8 ] && [ "$#" -le 9 ] || usage
 tenant_id=$1
-catalog_id=$2
-catalog_version=$3
-artifact_base=$4
-registry_auth_file=$5
-system_database_url=$6
-registry_mode=${7-}
+package_id=$2
+package_version=$3
+package_directory=$4
+artifact_base=$5
+registry_auth_file=$6
+project_database_url=$7
+control_database_url=$8
+registry_mode=${9-}
 
 case "$tenant_id" in
   '' | *[!A-Za-z0-9._-]*) usage ;;
 esac
-case "$catalog_id" in
-  '' | *[!A-Za-z0-9._-]*) usage ;;
+case "$package_id" in
+  '' | [!a-z]* | *_ | *__* | *[!a-z0-9_]*) usage ;;
 esac
-case "$catalog_version" in
-  '' | *[!0-9]*) usage ;;
+case "$package_version" in
+  '' | *[!A-Za-z0-9._+-]*) usage ;;
 esac
 case "$registry_mode" in
   '' | --insecure-registry) ;;
@@ -40,8 +42,8 @@ render_declaration() {
   component=$1
   sed \
     -e "s/__TENANT_ID__/$tenant_id/g" \
-    -e "s/__CATALOG_ID__/$catalog_id/g" \
-    -e "s/__CATALOG_VERSION__/$catalog_version/g" \
+    -e "s/__PACKAGE_ID__/$package_id/g" \
+    -e "s/__PACKAGE_VERSION__/$package_version/g" \
     "$script_dir/$component/declaration.json.in" >"$scratch/$component.json"
 }
 
@@ -63,21 +65,25 @@ fi
 
 cargo run --manifest-path "$repo_root/Cargo.toml" --locked -p wamn-ctl -- \
   push-component \
+  --package "$package_directory" \
   --component-bytes "$component_target/transform.wasm" \
   --declaration "$scratch/transform.json" \
   --artifact-base "$artifact_base" \
   --registry-auth-file "$registry_auth_file" \
-  --system-database-url "$system_database_url" \
+  --project-database-url "$project_database_url" \
+  --control-database-url "$control_database_url" \
   --admit-platform-package wamn:node \
   "$@"
 
 cargo run --manifest-path "$repo_root/Cargo.toml" --locked -p wamn-ctl -- \
   push-component \
+  --package "$package_directory" \
   --component-bytes "$component_target/http_request.wasm" \
   --declaration "$scratch/http-request.json" \
   --artifact-base "$artifact_base" \
   --registry-auth-file "$registry_auth_file" \
-  --system-database-url "$system_database_url" \
+  --project-database-url "$project_database_url" \
+  --control-database-url "$control_database_url" \
   --admit-platform-package wamn:node \
   --admit-platform-package wamn:connection \
   "$@"

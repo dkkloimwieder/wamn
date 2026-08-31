@@ -4,7 +4,7 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    author_wiring, enable_cdc_project_env, migrate_catalog, print_release_env, promote, provision,
+    apply_package, author_wiring, enable_cdc_project_env, print_release_env, promote, provision,
     provision_org, provision_project_env, publish_release, push_component, push_release_manifest,
     reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
 };
@@ -30,23 +30,23 @@ enum Command {
     ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(enable_cdc_project_env::EnableCdcProjectEnvArgs),
-    /// Apply a catalog to a project DB: versioned, forward-only migration + lifecycle + history (2.5)
-    MigrateCatalog(migrate_catalog::MigrateCatalogArgs),
-    /// Validate and publish exact component bytes, then append their T1 library fact
+    /// Apply one exact package-owned migration stream to a project database.
+    ApplyPackage(apply_package::ApplyPackageArgs),
+    /// Validate/publish component bytes, then exact-project their facts to both planes
     PushComponent(push_component::PushComponentArgs),
     /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
     AuthorWiring(author_wiring::AuthorWiringArgs),
-    /// INTERIM: mint one format-2 release from named wirings plus hand-authored attachment and registration documents (a projection replaces the documents once the ruled registration-store move lands)
+    /// Mint one immutable format-3 effective release from exact package-owned facts.
     ///
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(publish_release::PublishReleaseArgs),
-    /// Publish canonical format-2 serving-manifest bytes as an immutable OCI artifact
+    /// Publish canonical format-3 serving-manifest bytes as an immutable OCI artifact
     PushReleaseManifest(push_release_manifest::PushReleaseManifestArgs),
     /// Print the release lines a pod template carries for one minted release (wamn-duyl)
     PrintReleaseEnv(print_release_env::PrintReleaseEnvArgs),
-    /// Promote one verified v2 release into a target environment
+    /// Promote one verified format-3 release into a target environment
     Promote(promote::PromoteArgs),
-    /// Detect or repair per-entity REPLICA IDENTITY drift from the catalog's registrations — one-shot, idempotent ALTERs (wamn-l5i9.31)
+    /// Detect or repair per-model REPLICA IDENTITY drift from package registrations — one-shot and idempotent.
     ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
     /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
     ReconcileRunPlane(reconcile_run_plane::ReconcileRunPlaneArgs),
@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,
-        Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
+        Command::ApplyPackage(args) => apply_package::run(args).await,
         Command::PushComponent(args) => push_component::run(args).await,
         Command::AuthorWiring(args) => author_wiring::run(args).await,
         Command::PublishRelease(args) => publish_release::run(args).await,

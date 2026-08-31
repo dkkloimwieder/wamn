@@ -873,7 +873,10 @@ async fn publish_route(
     else {
         return Ok(authorization_denied());
     };
-    if input.catalog_id.is_empty() || command.command_id.is_empty() {
+    if input.package_id.is_empty()
+        || input.package_version.is_empty()
+        || command.command_id.is_empty()
+    {
         return Ok(empty(StatusCode::BAD_REQUEST));
     }
     let mut backend = surface.backend.lock().await;
@@ -925,10 +928,8 @@ async fn publish(
         return Ok(settled);
     }
 
-    let gated_catalog_version = i32::try_from(input.gated_catalog_version)
-        .context("gated-catalog-version exceeds the PostgreSQL integer carrier")?;
     let preparation = admission
-        .prepare_publish(&input.catalog_id, gated_catalog_version, &input.document)
+        .prepare_publish(&input.package_id, &input.package_version, &input.document)
         .await?;
 
     // Unlike the effect-free gate, Publish mutates the project database. Hold
@@ -1008,7 +1009,10 @@ async fn gate_route(
     else {
         return Ok(authorization_denied());
     };
-    if input.catalog_id.is_empty() || command.command_id.is_empty() {
+    if input.package_id.is_empty()
+        || input.package_version.is_empty()
+        || command.command_id.is_empty()
+    {
         return Ok(empty(StatusCode::BAD_REQUEST));
     }
     let mut backend = surface.backend.lock().await;
@@ -1081,16 +1085,14 @@ async fn gate(
         return Ok(settled);
     }
 
-    let catalog_version = i32::try_from(input.gated_catalog_version)
-        .context("gated-catalog-version exceeds the PostgreSQL integer carrier")?;
     let judgment = match &parsed {
         Ok(document) => {
             crate::store::admission::run_gate(
                 admission,
                 &crate::store::admission::GateRequest {
                     environment: &scope.environment,
-                    catalog_id: &input.catalog_id,
-                    catalog_version,
+                    package_id: &input.package_id,
+                    package_version: &input.package_version,
                     document,
                 },
             )
@@ -1704,8 +1706,8 @@ mod tests {
                     "kind": "gate",
                     "input": {
                         "scope": input,
-                        "catalog-id": "orders",
-                        "gated-catalog-version": 1,
+                        "package-id": "orders",
+                        "package-version": "1.0.0",
                         "document": {
                             "format-version": "0.1",
                             "wiring-id": "orders-create",
@@ -1777,7 +1779,7 @@ mod tests {
             project_id: "receiving".to_owned(),
             environment: "dev".to_owned(),
         };
-        // Both surviving commands carry the DOCUMENT and its catalog placement
+        // Both surviving commands carry the DOCUMENT and its package placement
         // (wamn-0h0g.7.10, wamn-0h0g.8.28), so one fixture serves both.
         let document = serde_json::json!({
             "format-version": "0.1",
@@ -1795,8 +1797,8 @@ mod tests {
                 AuthoringCommandKind::Gate,
                 AuthoringCommand::Gate(Gate {
                     scope: scope.clone(),
-                    catalog_id: "orders".to_owned(),
-                    gated_catalog_version: 3,
+                    package_id: "orders".to_owned(),
+                    package_version: "1.0.0".to_owned(),
                     document: document.clone(),
                 }),
             ),
@@ -1804,8 +1806,8 @@ mod tests {
                 AuthoringCommandKind::Publish,
                 AuthoringCommand::Publish(PublishValidatedDraft {
                     scope,
-                    catalog_id: "orders".to_owned(),
-                    gated_catalog_version: 3,
+                    package_id: "orders".to_owned(),
+                    package_version: "1.0.0".to_owned(),
                     document,
                 }),
             ),

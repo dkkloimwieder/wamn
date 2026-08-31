@@ -118,13 +118,13 @@ where
         // is scoped by, and the version comes back with it.
         let dropped = self.cache.invalidate(
             &notice.tenant_id,
-            &notice.catalog_id,
+            &notice.package_id,
             &notice.environment,
             &notice.wiring_id,
         );
         tracing::info!(
             tenant_id = %notice.tenant_id,
-            catalog_id = %notice.catalog_id,
+            package_id = %notice.package_id,
             environment = %notice.environment,
             wiring_id = %notice.wiring_id,
             enabled = notice.enabled,
@@ -271,8 +271,9 @@ mod tests {
     use super::*;
 
     const TENANT: &str = "t1";
-    const CATALOG: &str = "shop";
+    const PACKAGE: &str = "shop";
     const ENV: &str = "prod";
+    const RELEASE: u32 = 7;
 
     fn cache() -> Arc<WiringCache> {
         Arc::new(WiringCache::new(
@@ -297,10 +298,10 @@ mod tests {
 
     /// A payload with the DDL's exact keys, built from the shared notice type so
     /// a renamed field cannot pass here and fail in production.
-    fn payload(tenant: &str, catalog: &str, environment: &str, wiring_id: &str) -> String {
+    fn payload(tenant: &str, package: &str, environment: &str, wiring_id: &str) -> String {
         serde_json::to_string(&WiringActivationNotice {
             tenant_id: tenant.to_string(),
-            catalog_id: catalog.to_string(),
+            package_id: package.to_string(),
             environment: environment.to_string(),
             wiring_id: wiring_id.to_string(),
             enabled: true,
@@ -328,14 +329,32 @@ mod tests {
         version: u32,
         graph: Wiring,
     ) -> Arc<Wiring> {
+        resolve_release(cache, environment, RELEASE, wiring_id, version, graph)
+    }
+
+    fn resolve_release(
+        cache: &WiringCache,
+        environment: &str,
+        effective_release_id: u32,
+        wiring_id: &str,
+        version: u32,
+        graph: Wiring,
+    ) -> Arc<Wiring> {
         let token = cache
-            .get(TENANT, CATALOG, environment, wiring_id)
+            .get(
+                TENANT,
+                PACKAGE,
+                environment,
+                effective_release_id,
+                wiring_id,
+            )
             .miss()
             .expect("a fixture resolves only what it has just found missing");
         match cache.insert(
             TENANT,
-            CATALOG,
+            PACKAGE,
             environment,
+            effective_release_id,
             wiring_id,
             version,
             graph_hash(wiring_id, version),
@@ -358,22 +377,47 @@ mod tests {
         let doorbell = doorbell(&cache);
 
         assert_eq!(
-            doorbell.rang(&payload(TENANT, CATALOG, ENV, "orders")),
+            doorbell.rang(&payload(TENANT, PACKAGE, ENV, "orders")),
             DoorbellEffect::Invalidated
         );
 
         assert!(
-            cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none(),
+            cache
+                .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
+                .hit()
+                .is_none(),
             "the flipped pointer must send the next delivery back to the store"
         );
         assert_eq!(
             cache
-                .get(TENANT, CATALOG, ENV, "refunds")
+                .get(TENANT, PACKAGE, ENV, RELEASE, "refunds")
                 .hit()
                 .expect("an unrelated wiring keeps serving")
                 .version,
             4
         );
+    }
+
+    #[test]
+    fn a_flip_invalidates_the_coordinate_across_resident_release_scopes() {
+        let cache = cache();
+        resolve_release(&cache, ENV, 7, "orders", 1, wiring("release-7"));
+        resolve_release(&cache, ENV, 8, "orders", 1, wiring("release-8"));
+
+        assert_eq!(
+            doorbell(&cache).rang(&payload(TENANT, PACKAGE, ENV, "orders")),
+            DoorbellEffect::Invalidated
+        );
+        for release_id in [7, 8] {
+            assert!(
+                cache
+                    .get(TENANT, PACKAGE, ENV, release_id, "orders")
+                    .hit()
+                    .is_none(),
+                "the release {release_id} pointer survived one coordinate notice"
+            );
+        }
+        assert_eq!(cache.len(), 2, "immutable release entries remain resident");
     }
 
     /// The whole point of the seam: after the flip the next resolution installs
@@ -385,16 +429,16 @@ mod tests {
         let one = resolve(&cache, ENV, "orders", 1, wiring("v1"));
         let doorbell = doorbell(&cache);
 
-        doorbell.rang(&payload(TENANT, CATALOG, ENV, "orders"));
+        doorbell.rang(&payload(TENANT, PACKAGE, ENV, "orders"));
         resolve(&cache, ENV, "orders", 2, wiring("v2"));
         let served = cache
-            .get(TENANT, CATALOG, ENV, "orders")
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
             .hit()
             .expect("the re-read resolved");
         assert_eq!(served.version, 2);
         assert_eq!(served.wiring.entry(), "v2");
 
-        doorbell.rang(&payload(TENANT, CATALOG, ENV, "orders"));
+        doorbell.rang(&payload(TENANT, PACKAGE, ENV, "orders"));
         let rolled_back = resolve(&cache, ENV, "orders", 1, wiring("v1-recompiled"));
         assert!(
             Arc::ptr_eq(&rolled_back, &one),
@@ -419,7 +463,7 @@ mod tests {
 
         // t0: the miss, and the store read it starts. The store says v1.
         let token = cache
-            .get(TENANT, CATALOG, ENV, "orders")
+            .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
             .miss()
             .expect("nothing is resident yet");
         let read = (1, "v1");
@@ -427,7 +471,7 @@ mod tests {
         // t1: the activation commits. t2: the doorbell rings, still before the
         // read has come back.
         assert_eq!(
-            doorbell.rang(&payload(TENANT, CATALOG, ENV, "orders")),
+            doorbell.rang(&payload(TENANT, PACKAGE, ENV, "orders")),
             DoorbellEffect::NotResident,
             "there is nothing to drop yet — the resolution is still in flight"
         );
@@ -437,8 +481,9 @@ mod tests {
             matches!(
                 cache.insert(
                     TENANT,
-                    CATALOG,
+                    PACKAGE,
                     ENV,
+                    RELEASE,
                     "orders",
                     read.0,
                     graph_hash("orders", read.0),
@@ -451,7 +496,10 @@ mod tests {
             "the flip would be undone by the resolution it interrupted"
         );
         assert!(
-            cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none(),
+            cache
+                .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
+                .hit()
+                .is_none(),
             "the hot path would serve the superseded version until the next flip"
         );
 
@@ -461,7 +509,7 @@ mod tests {
         assert_eq!(served.entry(), "v2");
         assert_eq!(
             cache
-                .get(TENANT, CATALOG, ENV, "orders")
+                .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
                 .hit()
                 .expect("the retry resolved")
                 .version,
@@ -472,21 +520,21 @@ mod tests {
     /// `pg_notify` is per-database and tenants share a database, so the payload
     /// is the only thing separating one tenant's flip from another's.
     #[test]
-    fn another_tenants_or_catalogs_flip_leaves_this_process_alone() {
+    fn another_tenants_or_packages_flip_leaves_this_process_alone() {
         let cache = cache();
         resolve(&cache, ENV, "orders", 1, wiring("v1"));
         let doorbell = doorbell(&cache);
 
-        for (tenant, catalog) in [("t2", CATALOG), (TENANT, "warehouse")] {
+        for (tenant, package) in [("t2", PACKAGE), (TENANT, "warehouse")] {
             assert_eq!(
-                doorbell.rang(&payload(tenant, catalog, ENV, "orders")),
+                doorbell.rang(&payload(tenant, package, ENV, "orders")),
                 DoorbellEffect::NotResident,
-                "{tenant}/{catalog} names a pointer this process does not hold"
+                "{tenant}/{package} names a pointer this process does not hold"
             );
         }
         assert_eq!(
             cache
-                .get(TENANT, CATALOG, ENV, "orders")
+                .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
                 .hit()
                 .expect("this tenant's pointer is untouched")
                 .version,
@@ -503,12 +551,12 @@ mod tests {
         let doorbell = doorbell(&cache);
 
         assert_eq!(
-            doorbell.rang(&payload(TENANT, CATALOG, "staging", "orders")),
+            doorbell.rang(&payload(TENANT, PACKAGE, "staging", "orders")),
             DoorbellEffect::NotResident
         );
         assert_eq!(
             cache
-                .get(TENANT, CATALOG, ENV, "orders")
+                .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
                 .hit()
                 .expect("prod still serves")
                 .version,
@@ -526,7 +574,7 @@ mod tests {
 
         let dark = serde_json::to_string(&WiringActivationNotice {
             tenant_id: TENANT.to_string(),
-            catalog_id: CATALOG.to_string(),
+            package_id: PACKAGE.to_string(),
             environment: ENV.to_string(),
             wiring_id: "orders".to_string(),
             enabled: false,
@@ -535,7 +583,12 @@ mod tests {
         .expect("the notice serializes");
 
         assert_eq!(doorbell.rang(&dark), DoorbellEffect::Invalidated);
-        assert!(cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none());
+        assert!(
+            cache
+                .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
+                .hit()
+                .is_none()
+        );
     }
 
     /// A payload this process cannot read is deployment skew, and it hides WHICH
@@ -543,7 +596,7 @@ mod tests {
     /// silently, so it is treated as a missed flip.
     #[test]
     fn an_unreadable_payload_drops_the_whole_cache_rather_than_guessing() {
-        let complete = payload(TENANT, CATALOG, ENV, "orders");
+        let complete = payload(TENANT, PACKAGE, ENV, "orders");
         // `deny_unknown_fields`: a DDL that grew a key this build cannot name.
         let surprising = format!(
             r#"{{{},"surprise":1}}"#,
@@ -560,10 +613,15 @@ mod tests {
                 DoorbellEffect::Unreadable,
                 "{unreadable} must not read as a routine notice"
             );
-            assert!(cache.get(TENANT, CATALOG, ENV, "orders").hit().is_none());
             assert!(
                 cache
-                    .get(TENANT, CATALOG, "staging", "refunds")
+                    .get(TENANT, PACKAGE, ENV, RELEASE, "orders")
+                    .hit()
+                    .is_none()
+            );
+            assert!(
+                cache
+                    .get(TENANT, PACKAGE, "staging", RELEASE, "refunds")
                     .hit()
                     .is_none()
             );
@@ -582,7 +640,7 @@ mod tests {
 
         let snake = json!({
             "tenant_id": TENANT,
-            "catalog_id": CATALOG,
+            "package_id": PACKAGE,
             "environment": ENV,
             "wiring_id": "orders",
             "enabled": true,
@@ -591,7 +649,7 @@ mod tests {
         .to_string();
         assert_eq!(doorbell.rang(&snake), DoorbellEffect::Unreadable);
 
-        let kebab = payload(TENANT, CATALOG, ENV, "orders");
+        let kebab = payload(TENANT, PACKAGE, ENV, "orders");
         assert!(kebab.contains(r#""wiring-id""#), "wire keys are kebab-case");
         assert!(kebab.contains(r#""confirmed-definition-hash""#));
     }
@@ -613,7 +671,7 @@ mod tests {
         for (environment, wiring_id) in [(ENV, "orders"), (ENV, "refunds"), ("staging", "orders")] {
             assert!(
                 cache
-                    .get(TENANT, CATALOG, environment, wiring_id)
+                    .get(TENANT, PACKAGE, environment, RELEASE, wiring_id)
                     .hit()
                     .is_none(),
                 "{environment}/{wiring_id} resumed against a pointer no flip was seen for"

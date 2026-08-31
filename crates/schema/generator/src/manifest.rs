@@ -214,13 +214,33 @@ pub enum CommandFetch {
 impl PackageManifest {
     /// Parse one complete manifest, refusing unknown fields at every level.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
-        serde_json::from_slice(bytes).map_err(|source| {
+        let manifest: Self = serde_json::from_slice(bytes).map_err(|source| {
             GenerateError::with_source(
                 GenerateErrorKind::InvalidManifest,
                 "wamn.json does not match the closed manifest vocabulary",
                 source,
             )
-        })
+        })?;
+        if manifest
+            .package
+            .predecessor_version
+            .as_deref()
+            .is_some_and(str::is_empty)
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                "package predecessor version must not be empty",
+            ));
+        }
+        if manifest.package.predecessor_version.as_deref()
+            == Some(manifest.package.version.as_str())
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                "package predecessor version must differ from the package version",
+            ));
+        }
+        Ok(manifest)
     }
 }
 
@@ -230,6 +250,8 @@ impl PackageManifest {
 pub struct PackageIdentity {
     pub id: String,
     pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predecessor_version: Option<String>,
 }
 
 /// Platform policy contract required before package promotion.

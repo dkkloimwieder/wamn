@@ -86,11 +86,11 @@ use wamn_control_provision::{
     workload_generation_role,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
+use wamn_pg_core::quote_ident;
 use wamn_platform_identity::{
     IdentityErrorKind, Principal, PrincipalKind, PrincipalStatus, assign_project_role,
     authenticate_pat, create_service, issue_pat, resolve_subject, revoke_pat,
 };
-use wamn_schema_compiler::sql::quote_ident;
 
 use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policy};
 

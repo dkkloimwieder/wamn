@@ -11,6 +11,8 @@
 //! transaction, or clock is reachable from here.
 
 mod component_library;
+mod connection;
+mod package;
 mod serving_manifest;
 mod wiring;
 mod wiring_activation;
@@ -18,17 +20,23 @@ mod wiring_compatibility;
 
 pub use component_library::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentParameter,
-    AdmittedComponentPort, ComponentCatalogScope, ComponentConnection, ComponentConnectionType,
-    ComponentDeclaration, ComponentFactError, ComponentFactErrorKind,
+    AdmittedComponentPort, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
+    ComponentFactError, ComponentFactErrorKind, ComponentPackageScope,
     ComponentParameterDeclaration, ComponentPortDeclaration, ComponentSchema,
     normalize_component_fact, schema_digests_match, verify_stored_effect_projection,
 };
+pub use connection::{
+    CONNECTION_DESCRIPTOR_VERSION, ConnectionAuthorityModel, ConnectionField, ConnectionFieldOwner,
+    ConnectionFieldOwnership, ConnectionTypeDescriptor, CredentialInjection,
+};
+pub use package::{EffectiveReleaseId, PackageCoordinate};
 pub use serving_manifest::{
-    MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX,
-    RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION,
-    ServingAttachment, ServingComponent, ServingManifest, ServingRegistration,
-    ServingRegistrationInput, ServingRelease, ServingWiring,
-    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, release_manifest_configmap_name,
+    INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL, MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE,
+    PAT_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
+    RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
+    ServingComponent, ServingManifest, ServingRegistration, ServingRegistrationInput,
+    ServingRelease, ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
+    release_manifest_configmap_name,
 };
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
@@ -100,7 +108,14 @@ pub enum CatalogIdentityError {
     UnsupportedServingManifestVersion {
         requested: String,
     },
+    InvalidAttachmentAuthPolicy {
+        attachment_id: String,
+    },
+    UnauthenticatedRegisteredOperation {
+        attachment_id: String,
+    },
     UnresolvableManifestWiring {
+        package_id: String,
         wiring_id: String,
         wiring_version: u32,
     },
@@ -172,13 +187,26 @@ impl fmt::Display for CatalogIdentityError {
                     UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, SERVING_MANIFEST_FORMAT_VERSION
                 )
             }
+            Self::InvalidAttachmentAuthPolicy { attachment_id } => {
+                write!(
+                    formatter,
+                    "{INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL}: attachment {attachment_id:?} must declare exactly one supported mode"
+                )
+            }
+            Self::UnauthenticatedRegisteredOperation { attachment_id } => {
+                write!(
+                    formatter,
+                    "attachment {attachment_id:?} cannot combine auth-policy.mode=\"none\" with registered-operation; set auth-policy.mode=\"pat\""
+                )
+            }
             Self::UnresolvableManifestWiring {
+                package_id,
                 wiring_id,
                 wiring_version,
             } => {
                 write!(
                     formatter,
-                    "wiring {wiring_id:?} version {wiring_version} is absent from the serving manifest"
+                    "wiring {package_id:?}/{wiring_id:?} version {wiring_version} is absent from the serving manifest"
                 )
             }
             Self::ManifestTooLarge { bytes, limit } => {
@@ -389,50 +417,6 @@ impl ArtifactId {
 
     pub fn flow_version(&self) -> u32 {
         self.flow_version
-    }
-}
-
-/// The immutable identity of a catalog release.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct ReleaseId {
-    tenant_id: String,
-    catalog_id: String,
-    catalog_version: u32,
-}
-
-impl ReleaseId {
-    pub fn new(
-        tenant_id: impl Into<String>,
-        catalog_id: impl Into<String>,
-        catalog_version: u32,
-    ) -> Result<Self, CatalogIdentityError> {
-        let tenant_id = tenant_id.into();
-        let catalog_id = catalog_id.into();
-        validate_text(&tenant_id, "tenant-id")?;
-        validate_text(&catalog_id, "catalog-id")?;
-        if catalog_version == 0 {
-            return Err(CatalogIdentityError::ZeroVersion {
-                field: "catalog-version",
-            });
-        }
-        Ok(Self {
-            tenant_id,
-            catalog_id,
-            catalog_version,
-        })
-    }
-
-    pub fn tenant_id(&self) -> &str {
-        &self.tenant_id
-    }
-
-    pub fn catalog_id(&self) -> &str {
-        &self.catalog_id
-    }
-
-    pub fn catalog_version(&self) -> u32 {
-        self.catalog_version
     }
 }
 
@@ -742,119 +726,6 @@ impl Attachment {
     }
 }
 
-/// A canonical immutable release and its fully resolved members.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Release {
-    id: ReleaseId,
-    artifacts: Vec<ArtifactIdentity>,
-    sources: Vec<Source>,
-    attachments: Vec<Attachment>,
-    canonical_bytes: Box<[u8]>,
-}
-
-impl Release {
-    pub fn new(
-        id: ReleaseId,
-        artifacts: Vec<ArtifactIdentity>,
-        sources: Vec<Source>,
-        attachments: Vec<Attachment>,
-    ) -> Result<Self, CatalogIdentityError> {
-        validate_sorted_unique(&artifacts, "artifacts", |artifact| {
-            format!(
-                "{}/{}/{:010}",
-                artifact.id.tenant_id, artifact.id.flow_id, artifact.id.flow_version
-            )
-        })?;
-        validate_sorted_unique(&sources, "sources", |source| source.id.to_string())?;
-        validate_sorted_unique(&attachments, "attachments", |attachment| {
-            attachment.id.to_string()
-        })?;
-        if artifacts
-            .iter()
-            .any(|artifact| artifact.id.tenant_id != id.tenant_id)
-        {
-            return Err(CatalogIdentityError::ArtifactMismatch);
-        }
-
-        let artifact_map: BTreeMap<_, _> = artifacts
-            .iter()
-            .map(|artifact| (artifact.id.clone(), artifact))
-            .collect();
-        let source_map: BTreeMap<_, _> = sources
-            .iter()
-            .map(|source| (source.id.clone(), source))
-            .collect();
-        for attachment in &attachments {
-            let Some(artifact) = artifact_map.get(&attachment.artifact.id) else {
-                return Err(CatalogIdentityError::ArtifactMismatch);
-            };
-            if *artifact != &attachment.artifact {
-                return Err(CatalogIdentityError::ArtifactMismatch);
-            }
-            for (source_id, resolved_source) in attachment
-                .source_ids
-                .iter()
-                .zip(&attachment.resolved_sources)
-            {
-                let Some(source) = source_map.get(source_id) else {
-                    return Err(CatalogIdentityError::UnresolvedSource {
-                        source_id: source_id.to_string(),
-                    });
-                };
-                if *source != resolved_source {
-                    return Err(CatalogIdentityError::SourceMismatch {
-                        source_id: source_id.to_string(),
-                    });
-                }
-            }
-        }
-
-        let id_bytes = canonical_serialized(&id);
-        let mut owned = vec![("release-id", id_bytes)];
-        for artifact in &artifacts {
-            owned.push(("artifact", artifact.canonical_bytes()));
-        }
-        for source in &sources {
-            owned.push(("source", source.canonical_bytes().to_vec()));
-        }
-        for attachment in &attachments {
-            owned.push(("attachment", attachment.canonical_bytes().to_vec()));
-        }
-        let borrowed: Vec<_> = owned
-            .iter()
-            .map(|(tag, bytes)| (*tag, bytes.as_slice()))
-            .collect();
-        let canonical_bytes = frames("release", borrowed).into_boxed_slice();
-        Ok(Self {
-            id,
-            artifacts,
-            sources,
-            attachments,
-            canonical_bytes,
-        })
-    }
-
-    pub fn id(&self) -> &ReleaseId {
-        &self.id
-    }
-
-    pub fn artifacts(&self) -> &[ArtifactIdentity] {
-        &self.artifacts
-    }
-
-    pub fn sources(&self) -> &[Source] {
-        &self.sources
-    }
-
-    pub fn attachments(&self) -> &[Attachment] {
-        &self.attachments
-    }
-
-    pub fn canonical_bytes(&self) -> &[u8] {
-        &self.canonical_bytes
-    }
-}
-
 fn validate_sorted_unique<T>(
     values: &[T],
     field: &'static str,
@@ -880,123 +751,6 @@ fn validate_sorted_unique<T>(
         previous = Some(current);
     }
     Ok(())
-}
-
-/// Current activation state for one attachment. It never participates in hashes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AttachmentActivation {
-    tenant_id: String,
-    catalog_id: String,
-    environment: String,
-    attachment_id: AttachmentId,
-    confirmed_definition_hash: DefinitionHash,
-    enabled: bool,
-}
-
-impl AttachmentActivation {
-    pub fn new(
-        tenant_id: impl Into<String>,
-        catalog_id: impl Into<String>,
-        environment: impl Into<String>,
-        attachment_id: AttachmentId,
-        confirmed_definition_hash: DefinitionHash,
-        enabled: bool,
-    ) -> Result<Self, CatalogIdentityError> {
-        let tenant_id = tenant_id.into();
-        let catalog_id = catalog_id.into();
-        let environment = environment.into();
-        validate_text(&tenant_id, "tenant-id")?;
-        validate_text(&catalog_id, "catalog-id")?;
-        validate_text(&environment, "environment")?;
-        Ok(Self {
-            tenant_id,
-            catalog_id,
-            environment,
-            attachment_id,
-            confirmed_definition_hash,
-            enabled,
-        })
-    }
-
-    pub fn definition_is_live(&self, hash: &DefinitionHash) -> bool {
-        self.enabled && self.confirmed_definition_hash == *hash
-    }
-
-    pub fn tenant_id(&self) -> &str {
-        &self.tenant_id
-    }
-
-    pub fn catalog_id(&self) -> &str {
-        &self.catalog_id
-    }
-
-    pub fn environment(&self) -> &str {
-        &self.environment
-    }
-
-    pub fn attachment_id(&self) -> &AttachmentId {
-        &self.attachment_id
-    }
-
-    pub fn confirmed_definition_hash(&self) -> &DefinitionHash {
-        &self.confirmed_definition_hash
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-}
-
-/// Stable applied-release head and lock identity for one environment.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CatalogHead {
-    tenant_id: String,
-    catalog_id: String,
-    environment: String,
-    applied_version: u32,
-}
-
-impl CatalogHead {
-    pub fn new(
-        tenant_id: impl Into<String>,
-        catalog_id: impl Into<String>,
-        environment: impl Into<String>,
-        applied_version: u32,
-    ) -> Result<Self, CatalogIdentityError> {
-        let tenant_id = tenant_id.into();
-        let catalog_id = catalog_id.into();
-        let environment = environment.into();
-        validate_text(&tenant_id, "tenant-id")?;
-        validate_text(&catalog_id, "catalog-id")?;
-        validate_text(&environment, "environment")?;
-        if applied_version == 0 {
-            return Err(CatalogIdentityError::ZeroVersion {
-                field: "applied-version",
-            });
-        }
-        Ok(Self {
-            tenant_id,
-            catalog_id,
-            environment,
-            applied_version,
-        })
-    }
-
-    pub fn applied_version(&self) -> u32 {
-        self.applied_version
-    }
-
-    pub fn tenant_id(&self) -> &str {
-        &self.tenant_id
-    }
-
-    pub fn catalog_id(&self) -> &str {
-        &self.catalog_id
-    }
-
-    pub fn environment(&self) -> &str {
-        &self.environment
-    }
 }
 
 fn frames<'a>(domain: &str, values: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> Vec<u8> {

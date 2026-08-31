@@ -87,6 +87,7 @@ pub enum ProductionClaimResult {
     /// A fresh lease committed for router execution.
     Ready {
         run_id: String,
+        package_id: String,
         payload: serde_json::Value,
         lease_generation: i64,
         wiring_id: String,
@@ -106,7 +107,7 @@ pub enum ProductionClaimResult {
 /// Candidate-only authority frozen on the durable run at admission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionCandidate {
-    pub catalog_version: i32,
+    pub effective_release_id: i32,
     pub wiring_hash: String,
     pub binding_world: CandidateBindingWorld,
 }
@@ -441,6 +442,7 @@ enum ClaimTurn {
 #[derive(Debug)]
 struct SelectedClaim {
     run_id: String,
+    package_id: String,
     had_prior_lease: bool,
     status: RunStatus,
     payload: serde_json::Value,
@@ -483,26 +485,23 @@ impl WamnPostgres {
     /// returned only after COMMIT, so router execution never starts under an
     /// uncommitted lease.
     ///
-    /// The lease grant also records this pod's `(release version, manifest
-    /// digest)` onto the run, write-once per claim attempt. A component with no
-    /// injected release identity records nothing. A pod whose release differs
-    /// from a pair the run already carries succeeds because the arm that
-    /// reopened the run's claimability already cleared it — the classifier's
-    /// pre-effect reclaim, in this same transaction, or the queue park that
-    /// released the lease; on any other path the database guard refuses the
-    /// claim.
+    /// The lease grant verifies the pod's effective release matches the
+    /// admission-pinned release and records its manifest digest, write-once per
+    /// claim attempt. A component with no injected release identity records no
+    /// digest. The caller passes the mounted release's exact package-id set;
+    /// selection remains one ordered SQL turn across that whole set.
     pub async fn claim_next_production(
         &self,
         component_id: &str,
-        catalog_id: &str,
+        package_ids: &[String],
         environment: &str,
         lease_ttl_ms: i64,
     ) -> Result<ProductionClaimResult, ProductionClaimError> {
-        if catalog_id.is_empty() || environment.is_empty() || lease_ttl_ms <= 0 {
+        if !valid_package_scope(package_ids) || environment.is_empty() || lease_ttl_ms <= 0 {
             return Err(ProductionClaimError::new(
                 ProductionClaimErrorKind::Contract,
                 "validate queue scope",
-                "catalog, environment, and positive lease TTL are required",
+                "a nonempty canonical package set, environment, and positive lease TTL are required",
             ));
         }
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
@@ -557,7 +556,7 @@ impl WamnPostgres {
         let result = claim_in_transaction(
             &connection,
             &runner,
-            catalog_id,
+            package_ids,
             environment,
             lease_ttl_ms,
             release.as_ref(),
@@ -596,19 +595,21 @@ impl WamnPostgres {
     ///
     /// The candidate and run rows are locked before a fresh effect-evidence
     /// snapshot. Caller JSON and its RFC 8785 hash are computed by the host,
-    /// never from PostgreSQL's non-canonical `jsonb::text` rendering.
+    /// never from PostgreSQL's non-canonical `jsonb::text` rendering. The
+    /// mounted release's exact package-id set is filtered in the same single
+    /// global-FIFO turn as ordinary claims.
     pub async fn reap_one_exhausted_production(
         &self,
         component_id: &str,
-        catalog_id: &str,
+        package_ids: &[String],
         environment: &str,
         grace_ms: i64,
     ) -> Result<ProductionReapResult, ProductionClaimError> {
-        if catalog_id.is_empty() || environment.is_empty() || grace_ms < 0 {
+        if !valid_package_scope(package_ids) || environment.is_empty() || grace_ms < 0 {
             return Err(ProductionClaimError::new(
                 ProductionClaimErrorKind::Contract,
                 "validate janitor scope",
-                "catalog, environment, and non-negative janitor grace are required",
+                "a nonempty canonical package set, environment, and non-negative janitor grace are required",
             ));
         }
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
@@ -659,7 +660,7 @@ impl WamnPostgres {
             ));
         }
 
-        let result = reap_in_transaction(&connection, catalog_id, environment, grace_ms).await;
+        let result = reap_in_transaction(&connection, package_ids, environment, grace_ms).await;
         match result {
             Ok(result) => {
                 if let Err(error) = connection.batch_execute("COMMIT").await {
@@ -1068,7 +1069,7 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionClai
 async fn claim_in_transaction(
     connection: &Object,
     runner: &str,
-    catalog_id: &str,
+    package_ids: &[String],
     environment: &str,
     lease_ttl_ms: i64,
     release: Option<&ReleaseIdentity>,
@@ -1079,7 +1080,7 @@ async fn claim_in_transaction(
         .await
         .map_err(|error| storage("prepare production candidate", error))?;
     let Some(row) = connection
-        .query_opt(&select, &[&catalog_id, &environment])
+        .query_opt(&select, &[&package_ids, &environment])
         .await
         .map_err(|error| storage("select production candidate", error))?
     else {
@@ -1168,11 +1169,10 @@ async fn claim_in_transaction(
         .await
         .map_err(|error| storage("prepare production lease grant", error))?;
     // The pod's own release identity, or NULL for both when it carries none.
-    // A run that already recorded a DIFFERENT pair refuses here, in the
-    // database (wamn-0h0g.15.55): the classifier's pre-effect reclaim is the
-    // only path that may clear the pair, and it does so above.
+    // PostgreSQL compares the effective release id to the immutable admission
+    // pin and records only the digest.
     let release = release.filter(|_| selected.candidate.is_none());
-    let release_version: Option<i32> = release.map(|identity| identity.release_version);
+    let effective_release_id: Option<i32> = release.map(|identity| identity.effective_release_id);
     let manifest_digest: Option<&str> = release.map(|identity| identity.manifest_digest.as_str());
     // The grant is the one abortable write left in this transaction, so it runs
     // in its own subtransaction: a database refusal rolls back to the savepoint
@@ -1188,7 +1188,7 @@ async fn claim_in_transaction(
                 &selected.run_id,
                 &runner,
                 &lease_ttl_ms,
-                &release_version,
+                &effective_release_id,
                 &manifest_digest,
             ],
         )
@@ -1210,12 +1210,13 @@ async fn claim_in_transaction(
         ProductionClaimError::new(
             ProductionClaimErrorKind::Contract,
             "grant production lease",
-            "selected queue row disappeared while locked",
+            "claiming effective release does not match the run admission pin",
         )
     })?;
     let lease_generation = row_value(&row, 0, "lease generation")?;
     Ok(ClaimTurn::Claimed(ProductionClaimResult::Ready {
         run_id: selected.run_id,
+        package_id: selected.package_id,
         payload: selected.payload,
         lease_generation,
         wiring_id: selected.wiring_id,
@@ -1228,7 +1229,7 @@ async fn claim_in_transaction(
 
 async fn reap_in_transaction(
     connection: &Object,
-    catalog_id: &str,
+    package_ids: &[String],
     environment: &str,
     grace_ms: i64,
 ) -> Result<ProductionReapResult, ProductionClaimError> {
@@ -1238,7 +1239,7 @@ async fn reap_in_transaction(
         .await
         .map_err(|error| storage("prepare exhausted candidate", error))?;
     let Some(row) = connection
-        .query_opt(&select, &[&grace_ms, &catalog_id, &environment])
+        .query_opt(&select, &[&grace_ms, &package_ids, &environment])
         .await
         .map_err(|error| storage("select exhausted candidate", error))?
     else {
@@ -1481,7 +1482,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let durable_caller_attached: bool = row_value(row, 8, "durable caller attachment")?;
     let flow_id: Option<String> = row_value(row, 9, "legacy flow id")?;
     let flow_version: Option<i32> = row_value(row, 10, "legacy flow version")?;
-    let catalog_version: i32 = row_value(row, 11, "catalog version")?;
+    let effective_release_id: i32 = row_value(row, 11, "effective release id")?;
     let wiring_hash: Option<String> = row_value(row, 12, "candidate wiring hash")?;
     let binding_world: Option<String> = row_value(row, 13, "candidate binding world")?;
     let payload_text: String = row_value(row, 3, "authoritative input")?;
@@ -1500,7 +1501,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
             None
         }
         (None, None, Some(wiring_hash), Some(binding_world))
-            if catalog_version > 0 && !wiring_hash.is_empty() =>
+            if effective_release_id > 0 && !wiring_hash.is_empty() =>
         {
             let binding_world = serde_json::from_str(&binding_world)
                 .map_err(|error| {
@@ -1520,7 +1521,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
                     })
                 })?;
             Some(ProductionCandidate {
-                catalog_version,
+                effective_release_id,
                 wiring_hash,
                 binding_world,
             })
@@ -1542,6 +1543,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     }
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
+        package_id: row_value(row, 14, "package id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
         status,
         payload,
@@ -1552,6 +1554,15 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         durable_caller_attached,
         candidate,
     })
+}
+
+fn valid_package_scope(package_ids: &[String]) -> bool {
+    !package_ids.is_empty()
+        && package_ids.iter().all(|package_id| {
+            !package_id.is_empty()
+                && package_id.trim() == package_id
+                && !package_id.as_bytes().contains(&0)
+        })
 }
 
 fn decode_wiring_identity(
@@ -1784,13 +1795,14 @@ mod tests {
     }
 
     #[test]
-    fn lease_grant_mints_the_claim_time_release_record_on_the_existing_write() {
+    fn lease_grant_verifies_release_and_mints_manifest_on_the_existing_write() {
         let lease_sql = grant_production_claim_sql();
         for required in [
             "SET status = 'running'",
-            "release_version = $4",
             "manifest_digest = $5",
+            "r.effective_release_id = $4",
             "r.status IN ('dispatched', 'running')",
+            "FROM leased JOIN marked",
         ] {
             assert!(lease_sql.contains(required), "lease grant omits {required}");
         }
@@ -1800,8 +1812,11 @@ mod tests {
             "the record is minted on the existing claim write, not a second one"
         );
 
-        // The pair travels from the claiming pod, so the candidate select never
-        // reads it back; a decoder that grew a field would need this to change.
+        assert!(!lease_sql.contains("release_version"));
+
+        // The digest travels from the claiming pod, so the candidate select
+        // never reads it back; a decoder that grew a field would need this to
+        // change.
         let select_sql = select_production_claim_sql();
         assert!(!select_sql.contains("release_version"));
         assert!(!select_sql.contains("manifest_digest"));
@@ -1827,9 +1842,10 @@ mod tests {
             "AS durable_caller_attached",
             "r.flow_id",
             "r.flow_version",
-            "r.catalog_version",
+            "r.effective_release_id",
             "r.wiring_hash",
             "r.binding_world_json::text",
+            "r.package_id",
         ]
         .into_iter()
         .enumerate()
@@ -1840,6 +1856,18 @@ mod tests {
             cursor += offset + column.len();
         }
         assert!(!projection.contains("execution_bundle_hash"));
+    }
+
+    #[test]
+    fn package_scope_requires_at_least_one_canonical_identity() {
+        assert!(!valid_package_scope(&[]));
+        assert!(!valid_package_scope(&[String::new()]));
+        assert!(!valid_package_scope(&[" receiving".to_owned()]));
+        assert!(!valid_package_scope(&["receiving\0overlay".to_owned()]));
+        assert!(valid_package_scope(&[
+            "base".to_owned(),
+            "client_overlay".to_owned(),
+        ]));
     }
 
     #[test]

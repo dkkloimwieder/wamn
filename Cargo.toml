@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/contract", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/model", "crates/schema/compiler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
+members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/contract", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
@@ -14,7 +14,6 @@ default-members = [
   "crates/platform/pg-core",
   "crates/platform/runtime",
   "crates/scenarios/model",
-  "crates/schema/model",
   "services/executor",
   "services/host",
   "services/scenario-worker",
@@ -170,11 +169,9 @@ wamn-runtime = { path = "crates/platform/runtime", version = "0.1.0" }
 wamn-scenario-model = { path = "crates/scenarios/model", version = "0.1.0" }
 wamn-scenario-worker = { path = "services/scenario-worker", version = "0.1.0" }
 wamn-scheduler = { path = "crates/execution/scheduler", version = "0.1.0" }
-wamn-schema-compiler = { path = "crates/schema/compiler", version = "0.1.0" }
 wamn-schema-control = { path = "crates/schema/control", version = "0.1.0" }
 wamn-schema-generator = { path = "crates/schema/generator", version = "0.1.0" }
 wamn-schema-introspection = { path = "crates/schema/introspection", version = "0.1.0" }
-wamn-schema-model = { path = "crates/schema/model", version = "0.1.0" }
 wamn-test-infrastructure = { path = "test-support/infrastructure", version = "0.1.0" }
 wamn-waker = { path = "services/waker", version = "0.1.0" }
 

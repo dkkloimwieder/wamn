@@ -42,7 +42,7 @@ const RELEASE_WELD_CONSTRUCTION: &str = "ReleaseManifestWeld::load";
 /// queue. Separate processes cannot share one object, so each constructs exactly
 /// once — and must do so before anything binds a component, because under ruling
 /// wamn-0h0g.15.102 the verified manifest is the sole carrier of the
-/// `(release version, manifest digest)` pair a claim records. A component that
+/// `(effective release id, manifest digest)` pair a claim records. A component that
 /// bound first would have no pair.
 ///
 /// The second process used to be the in-process run host, reached through
@@ -355,11 +355,13 @@ fn validate_release_identity_from_weld(source: &str, weld: &str, seam: &str) -> 
         ));
     };
     let body = &production[opened..closed];
-    for field in ["release_version", "manifest_digest"] {
-        let initializer = format!("{field}: {weld}.{field}");
-        if !body.contains(&initializer) {
+    for field in ["effective_release_id", "manifest_digest"] {
+        let initializer = body
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("{field}:")));
+        if !initializer.is_some_and(|line| line.contains(weld) && line.contains(field)) {
             return Err(format!(
-                "{seam} must initialize `{field}` as `{initializer}`; a pair read from \
+                "{seam} must initialize `{field}` from `{weld}.{field}`; a pair read from \
                  anywhere but the weld is a second carrier of the release identity the \
                  verified manifest was made sole owner of (wamn-0h0g.15.102)"
             ));
@@ -767,7 +769,9 @@ fn epoch_millis(source: &str, decl: &str, origin: &str) -> u64 {
         declarations, 1,
         "{origin} must declare `{decl}` exactly once; found {declarations}"
     );
-    let tail = &source[source.find(decl).expect("the counted declaration is present")..];
+    let tail = &source[source
+        .find(decl)
+        .expect("the counted declaration is present")..];
     let open = tail
         .find("from_millis(")
         .unwrap_or_else(|| panic!("{origin}: `{decl}` is no longer a from_millis constant"))
@@ -1206,7 +1210,7 @@ fn welded_release_identity() -> String {
     format!(
         "let release = load_release(base, digest)?;\n\
          let identity = {RELEASE_IDENTITY_CONSTRUCTION}\n\
-         \x20   release_version: release.release().release_version,\n\
+         \x20   effective_release_id: release.release().effective_release_id,\n\
          \x20   manifest_digest: release.release().manifest_digest.clone(),\n\
          }};\n"
     )
@@ -1233,7 +1237,7 @@ fn release_identity_inventory_rejects_a_removed_or_duplicated_construction() {
 
 #[test]
 fn release_identity_inventory_rejects_a_half_read_from_elsewhere() {
-    for stolen in ["release_version", "manifest_digest"] {
+    for stolen in ["effective_release_id", "manifest_digest"] {
         let mutant = welded_release_identity().replace(
             &format!("{stolen}: release.release()."),
             &format!("{stolen}: config.get("),

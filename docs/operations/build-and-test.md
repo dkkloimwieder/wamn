@@ -120,7 +120,7 @@ cargo test --workspace --no-fail-fast > sweep.txt 2>&1
 - `--workspace` is required. Cargo otherwise selects default members only.
   Measured at `1bffa614` from `cargo metadata --no-deps`: **17 default members
   of 35 workspace members.** The current `architecture/workspace-tiers.json`
-  `full_ci` tier carries all 36 members.
+  `full_ci` tier carries all 34 current members.
 
 **Measured state at `1bffa614`, by the owner, not re-run here: 168 binaries,
 1448 passed, 21 failed, 34 ignored, no compile errors. All 21 failures are
@@ -444,42 +444,6 @@ These are the section tags cited from source doc comments. Each one names the
 test that needs it, the variable that arms it, and what the substrate must be.
 Every substrate below is a **throwaway** Postgres — see the next section.
 
-### `[11.8]` — ops-only schema-change impact analysis
-
-`services/ctl/tests/impact_report_live.rs` (wamn-wvb). The file is
-`#![cfg(feature = "ops")]` **and** the target is `required-features = ["ops"]`
-in `services/ctl/Cargo.toml`.
-
-```bash
-WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
-  cargo test -p wamn-ctl --features ops --test impact_report_live
-```
-
-`WAMN_CTL_PG_URL` must be a **superuser** URL. Self-skips when unset.
-
-Two tests, both armed by that one variable and serialized by the shared
-`WAMN_CTL_PG_URL` lock.
-`impact_report_says_when_the_registration_edge_class_is_unevaluated`
-(wamn-0h0g.12.120) additionally MINTS a `wamn_app_<tenant key>_a` generation
-login — cluster-global, dropped in its own teardown — and DROPs
-`catalog.event_registrations` mid-test. Disposable server only, and give this
-binary its own container.
-
-### `[EVT-REG/D24]` — registration-orphan guard
-
-`services/ctl/tests/orphan_guard_live.rs` (wamn-rmxa, wamn-0h0g.12.119). Three
-`#[ignore]` tests; they fail loudly rather than skipping when invoked without
-configuration.
-
-```bash
-WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
-  cargo test -p wamn-ctl --test orphan_guard_live -- --ignored --test-threads=1
-```
-
-Superuser, path `/postgres`. Every test in the binary rebuilds the fixed
-`catalog` schema in its preamble and they must not interleave — the file
-carries its own `SERIALIZE` mutex, but `--test-threads=1` is the safe form.
-
 ### `[EVT-REPLICA-IDENT]` — per-entity `REPLICA IDENTITY FULL` reconciler
 
 `services/ctl/tests/replica_identity_live.rs` (wamn-l5i9.31).
@@ -515,24 +479,6 @@ reported `5 passed; 2 failed; 10 filtered out`, while `-- --include-ignored` on
 an identical fresh server reported `9 passed; 8 failed; 0 filtered out` — the
 same run, with six more reds visible. The flag was hiding them, which is the
 false-green class this document exists to close.
-
-### `[CATALOG-PLANE]` — the catalog plane-residency refusal
-
-`services/ctl/tests/catalog_plane_residency_live.rs` (`wamn-0h0g.12.180`).
-
-```bash
-WAMN_CTL_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
-  cargo test -p wamn-ctl --test catalog_plane_residency_live -- --ignored
-```
-
-Superuser URL. Builds BOTH stores from the production artifacts and proves
-`ensure_catalog_storage` refuses a CONTROL database *before* it mutates
-cluster-global role state. The witness is `catalog.authoring_command_audit`, not
-a shared name — `catalog.catalogs` exists in both planes and cannot tell them
-apart. Proves an UPGRADE, not a virgin install: it retires the release-component
-migration block, proves reinstallation, and asserts a further pass is a no-op on
-the table inventory. Reserves the shared `wamn-ctl` lock and hands the database
-back with `PUBLIC CONNECT` restored.
 
 ### `[PROVISION-ORDER]` — the documented provisioning order, end to end
 
@@ -580,8 +526,8 @@ only** (`cargo metadata`), and the `wamn-gates` binary
 (`tests/orchestrator/src/main.rs`) exposes exactly eight subcommands —
 `retention`, `readerbench`, `m1`, `m1-cleanup`, `serve-echo`, `socketguard`,
 `traceproof`, `dashproof` — and `cdcbench` is not among them. The same is true
-of `provisionbench`, `streambench`, `walbench`, `rie2ebench`, `catalog_live`,
-`causation_e2e`, `exposure_live`, and `trusted_http_route`. This is exactly the
+of `provisionbench`, `streambench`, `walbench`, `causation_e2e`,
+`exposure_live`, and `trusted_http_route`. This is exactly the
 shape `wamn-0h0g.15.137` exists to inventory: a verification artifact with no
 runner of record.
 
@@ -725,10 +671,10 @@ constraint "pg_authid_rolname_index", Key (rolname)=(wamn_app) already exists`
 no longer occurs. Guarding the role MOVED the parallel failure rather than
 removing it; do not remove the flag on the strength of that fix.
 
-Three arms: no guest-reachable relation keys on a settable claim; all 43
-re-keyed relations carry their `<table>_tkey` expression index (from
+Three arms: no guest-reachable relation keys on a settable claim; all governed
+relations carry their `<table>_tkey` expression index (from
 `pg_index`); and a login composed by `workload_generation_role` reads its own
-tenant and only its own from `catalog.catalogs` — while setting `app.tenant` to
+tenant and only its own from `catalog.packages` — while setting `app.tenant` to
 the other tenant, which now buys nothing.
 
 The two relations that KEEP the claim (`wamn_run.operator_run_actions`,
@@ -741,7 +687,7 @@ every governed relation now carries. The floor is the GUEST floor, narrowed
 matches the connected role, so that narrowing LOCKS OUT every platform-grain
 principal — at ZERO ROWS, with no error. One permissive arm `TO wamn_platform`
 per relation admits them. `every_governed_relation_carries_both_the_guest_floor_and_one_platform_arm`
-pins both counts per file (24/7/5/7), because adding a `TO` clause moves no
+pins both counts against each installed artifact, because adding a `TO` clause moves no
 governed clause, no retired clause and no expression index — a narrowing applied
 to 40 of the 43 passes every assertion that predates the bead.
 `the_platform_arm_admits_every_platform_family_from_the_server` asks `pg_policy`
@@ -769,41 +715,6 @@ hermeticity check.
 **Host-side readiness only.** `docker exec … psql` returns success during
 postgres:18's init-then-restart while the published port is still down; the only
 honest probe is connecting from the host.
-
-### `[DDL]` — the generated-DDL apply gates
-
-`crates/schema/compiler/tests/ddl.rs` (seven gates, `WAMN_DDL_PG_URL`). They
-apply real generated DDL to a throwaway Postgres.
-
-```bash
-WAMN_DDL_PG_URL=postgres://postgres:probe@localhost:5433/postgres \
-  cargo test -p wamn-schema-compiler --features ops --test ddl
-```
-
-**Generated DDL now has a database precondition** (`wamn-0h0g.22.6.2`): every
-emitted policy and tenant-key index calls `wamn_authority.tenant_key`, so the
-function must exist or nothing applies. Each gate installs it from
-`authority_derivations_sql` — the same builder provisioning uses, so no test
-carries a second definition of a security-critical function. The install is
-advisory-locked because these gates share one database and run in parallel.
-
-`the_generated_tenant_floor_admits_only_the_connected_guest_on_postgres`
-replaces the retired empty-claim gate: it mints a guest login with
-`workload_generation_role`, `SET ROLE`s to it, and proves the guest sees its own
-tenant's row and **not** another tenant's — plus that the stable `wamn_app` ACL
-role derives no key and sees nothing even while setting the retired
-`app.tenant`.
-
-`--nocapture` and a grep for `skipping` is the only proof these ran: with the
-variable set the count is 0, without it 7.
-
-**These gates gained the same database precondition again at
-`wamn-0h0g.22.17`**: every emitted floor is now narrowed `TO wamn_app` and
-followed by an `AS PERMISSIVE FOR ALL TO wamn_platform` arm, so `wamn_platform`
-must exist or the `CREATE POLICY` fails outright. The three project-database
-`deploy/sql` files each create it themselves (advisory-locked, EXCEPTION-guarded)
-for exactly that reason; a gate that emits DDL rather than applying a file must
-create it, or apply `sql::ensure_platform_group_role_sql()` first.
 
 ### `[MGMT-LIVE]` — the authenticated management authoring surface
 
@@ -852,9 +763,8 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `services/ctl/tests/guest_generation_live.rs` | `WAMN_GUEST_GENERATION_PG18_URL` | `cargo test -p wamn-ctl --features ops --test guest_generation_live -- --ignored --nocapture` |
 | `services/ctl/tests/management_admitter_generation_live.rs` | `WAMN_MANAGEMENT_ADMITTER_PG18_URL` | `cargo test -p wamn-ctl --test management_admitter_generation_live -- --ignored --nocapture` |
 | `services/ctl/tests/terminalize_effect_uncertain_live.rs` | `WAMN_OPERATOR_TERMINALIZE_PG18_URL` | `cargo test -p wamn-ctl --test terminalize_effect_uncertain_live` |
-| `services/ctl/tests/release_manifest_mint_live.rs` | `WAMN_RELEASE_MANIFEST_MINT_PG_URL` | `cargo test -p wamn-ctl --test release_manifest_mint_live -- --include-ignored` |
+| `services/ctl/tests/apply_package_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test apply_package_live` |
 | `services/ctl/tests/protected_relations_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --features ops --test protected_relations_live -- --ignored` |
-| `services/ctl/tests/catalog_confinement_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test catalog_confinement_live` |
 | `services/ctl/tests/author_wiring_gate_report_live.rs` | `WAMN_AUTHOR_WIRING_PROJECT_PG_URL` **and** `WAMN_AUTHOR_WIRING_CONTROL_PG_URL` | `cargo test -p wamn-ctl --test author_wiring_gate_report_live -- --ignored` |
 | `services/scenario-worker/tests/management_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-scenario-worker --test management_live` |
 | `crates/execution/run-state/tests/effect_writer_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --features native --test effect_writer_live -- --ignored` |
@@ -880,48 +790,29 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `crates/platform/runtime/tests/production_claim_durable_live.rs` | `WAMN_DURABLE_TIER_PG_URL` | `cargo test -p wamn-runtime --test production_claim_durable_live -- --include-ignored` |
 | `crates/platform/runtime/tests/release_manifest_source.rs` | `WAMN_RELEASE_MANIFEST_ARTIFACT_BASE` **and** `WAMN_REGISTRY_AUTH_FILE` | `cargo test -p wamn-runtime --test release_manifest_source -- --include-ignored` |
 | `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs` | `WAMN_POOL_LIFECYCLE_PG_URL` | `cargo test -p wamn-runtime --all-features --lib live_size_one_guest_and_platform_pools -- --include-ignored` |
-| `crates/schema/compiler/tests/rls.rs` | `WAMN_RLS_PG_URL` | `cargo test -p wamn-schema-compiler --test rls` |
-| `crates/schema/compiler/tests/seed.rs` | `WAMN_SEED_PG_URL` | `cargo test -p wamn-schema-compiler --test seed` |
-| `crates/schema/control/tests/migrate.rs` | `WAMN_MIGRATE_PG_URL` | `cargo test -p wamn-schema-control --test migrate` |
-| `services/ctl/tests/connection_storage_live.rs` | `WAMN_CONNECTION_STORAGE_PG_URL` | `cargo test -p wamn-ctl --test connection_storage_live` |
 | `services/ctl/tests/dispatch_reader_provisioning_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test dispatch_reader_provisioning_live` |
-| `services/ctl/tests/replica_identity_unreadable_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test replica_identity_unreadable_live` |
-| `services/ctl/tests/ri_orch_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test ri_orch_live -- --include-ignored --test-threads=1` |
 
-**The twenty-four rows from `cdc.rs` down were added by `wamn-0h0g.15.137.2`,
-which means every one of those gates had never entered an arming set.** Each was
-armed once, alone, on its own fresh `postgres:18` container. Nine are red.
-`authority.rs` and `migrate.rs` were re-measured with `--test-threads=1` and
-died identically, so neither red is a parallelism artifact:
+**The rows from `cdc.rs` down were added by `wamn-0h0g.15.137.2`, which means
+those gates had never entered an arming set.** Each was armed once, alone, on
+its own fresh `postgres:18` container. The surviving measured reds are:
 
 | gate | measured | first failing test and reason |
 | --- | --- | --- |
 | `run-state/tests/store.rs` | 7 passed / 1 failed | `run_state_schema_applies_and_isolates_on_postgres` — `ERROR: role "wamn_effect_writer" does not exist`; the bootstrap mints only `wamn_app`, and `run-state.sql` GRANTs to three roles |
 | `project-state/tests/authority.rs` | 0 passed / 3 failed | all three, e.g. `a_project_still_owns_its_own_configuration` — `ERROR: new row violates row-level security policy for table "configurations"` |
 | `project-state/tests/schema.rs` | 4 passed / 1 failed | `app_schema_applies_and_enforces_isolation_and_claims_on_postgres` — `ERROR: t1 sees its 2 users, not t2's` |
-| `schema-compiler/tests/rls.rs` | 12 passed / 1 failed | `compiled_policy_filters_rows_on_postgres` — `ERROR: schema "wamn_authority" does not exist` |
-| `schema-compiler/tests/seed.rs` | 10 passed / 1 failed | `seed_applies_and_reapply_is_idempotent` — `ERROR: schema "wamn_authority" does not exist` |
-| `schema-control/tests/migrate.rs` | 9 passed / 2 failed | `catalog_schema_from_zero_is_complete_and_transactional_on_postgres` — `ERROR: role "wamn_scenario_author" does not exist`; the second failure only cascades on the poisoned live-database lock |
 | `runtime/tests/production_claim_live.rs` | 1 passed / 1 failed | `production_claim_live` — `effect-writer credential role does not match its scoped generation` |
 | `runtime/tests/production_claim_durable_live.rs` | 0 passed / 1 failed | `production_claim_durable_live` — same credential refusal |
 | `runtime .../wamn_postgres/claims.rs` | 0 passed / 1 failed | `live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving` — `platform headroom remains available while guest is saturated: PgError::ConnectionUnavailable` |
 
-`crates/schema/control/tests/migrate.rs` **hides its own failure**: its `psql`
-helper `unwrap()`s the `write_all` into the child's stdin, so when `psql` exits
-early under `ON_ERROR_STOP` the test panics with
-`Err(BrokenPipe)` at `migrate.rs:549` and `wait_with_output` never runs. The
-SQL error above was recovered by dropping that one `unwrap`. Read a BrokenPipe
-panic from this file as "the reason is being swallowed", never as the reason.
-
-The fourteen green ones, armed and measured: `cdc` 2 passed 0.78s (**start the
+The surviving green gates, armed and measured: `cdc` 2 passed 0.78s (**start the
 container with `-c wal_level=logical`** or it false-reds), `control_storage` 11
 passed, `system_reader_grants` 2 passed, `provision` 1 passed, `database_owner`
 1 passed, `dump` 1 passed, `restore` 1 passed, `ops_storage` 6 passed,
-`identity_live` 1 passed, `pat_live` 1 passed, `connection_storage_live` 1
-passed, `dispatch_reader_provisioning_live` 1 passed,
-`replica_identity_unreadable_live` 2 passed, `ri_orch_live` 2 passed. Unarmed,
-every one of them printed a `skipping …` line and still reported `ok` in
-`0.00s`; the duration is the only honest signal.
+`identity_live` 1 passed, `pat_live` 1 passed, and
+`dispatch_reader_provisioning_live` 1 passed. Unarmed, every one of them printed
+a `skipping …` line and still reported `ok` in `0.00s`; the duration is the only
+honest signal.
 
 `crates/platform/runtime/tests/release_manifest_source.rs` could not be armed:
 its one ignored leg needs a live authenticated OCI registry holding a published
@@ -951,30 +842,19 @@ then dies with `ERROR: permission denied to create temporary tables in database
 "postgres"`. Give each of the two its **own** container. Measured together on
 one: `admission_live` ok in 3.52s, `run_state_live` FAILED in 1.03s.
 
-`services/ctl/tests/release_manifest_mint_live.rs` is mixed, and the counts here
-were wrong until `wamn-0h0g.15.137.2` measured them: it is **seven `#[ignore]`
-and two plain `#[test]`**, nine in all. Its row carried `-- --ignored`, which
-runs the seven and reports the other two as `2 filtered out` — measured
-`0 passed; 7 failed; 2 filtered out` against `2 passed; 7 failed; 0 filtered
-out` under `--include-ignored`. The row now carries `--include-ignored`; a
-mixed binary must never be armed with `-- --ignored`.
-
 `crates/control/provision/tests/control_portable_store.rs` is mixed the same way:
 one `#[ignore]` gate and the rest self-skipping, which is why its row carries
 `--include-ignored` rather than `--ignored`. Every gate in it applies the
 artifact to the SAME database and resets the control schemas first, so
-`--test-threads=1` is not optional: measured in parallel they collide on
-`ERROR: tuple concurrently updated`. Its wamn-0h0g.7.11 arm,
-`control_portable_store_renames_the_gate_ledger_literal_as_an_upgrade_on_postgres`,
-is an R55 UPGRADE proof: it seeds pre-rename `authoring_command_audit` rows in
-two tenants, applies `deploy/sql/control-portable-store.sql`, and asserts the
-migrated rows and the installed CHECK from `pg_catalog` — then applies a second
-time and asserts the post-state is unmoved. Run it alone with
+`--test-threads=1` is not optional. The binary proves the current package and
+effective-release record, immutable coordinate conflicts, exact control-author
+tenant authority, and the Rust deployment-attestation binding. Run the whole
+binary with
 
 ```bash
 WAMN_CONTROL_PORTABLE_PG_URL=postgresql://postgres:pw@127.0.0.1:PORT/postgres \
   cargo test -p wamn-control-provision --test control_portable_store -- \
-  --include-ignored control_portable_store_renames_the_gate_ledger_literal
+  --include-ignored --test-threads=1
 ```
 
 `author_wiring_gate_report_live` needs **two distinct databases** on a
@@ -1098,10 +978,10 @@ binary at all.
 0** (`wamn-0h0g.15.137` item 2). A mutation harness reports that as SURVIVED.
 
 **A `required-features` target is silently deselected.**
-`services/ctl/Cargo.toml` declares `required-features = ["ops"]` on both
-`impact_report_live` and `protected_relations_live`, so a bare
-`cargo test -p wamn-ctl` never builds them and is green without them. Naming
-one explicitly without the feature does error — measured:
+`services/ctl/Cargo.toml` declares `required-features = ["ops"]` on
+`protected_relations_live`, so a bare `cargo test -p wamn-ctl` never builds it
+and is green without it. Naming it explicitly without the feature does error —
+measured:
 
 ```
 $ cargo test -p wamn-ctl --test protected_relations_live --no-run
@@ -1114,9 +994,6 @@ Consider enabling them by passing, e.g., `--features="ops"`      # exit 101
 `#![cfg(feature = "native")]`, and `crates/execution/run-state/Cargo.toml`
 declares no `required-features` for it. Without `--features native` the binary
 builds, runs nothing, and prints `test result: ok`.
-`services/ctl/tests/impact_report_live.rs` carries the same `#![cfg]` but is
-*also* `required-features = ["ops"]`, which is what stops it failing this way —
-the manifest declaration is the protection, not the attribute.
 
 **Feature-gated unit tests need the feature *and* the right target.**
 `prune_run_history`'s tests are a `#[cfg(test)] mod tests` inside

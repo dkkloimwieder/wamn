@@ -35,14 +35,13 @@
 //! **Ownership:** CREATE/ALTER/DROP need table ownership, and attempt-history
 //! retirement must see every tenant through forced RLS. `wamn_app` and a plain
 //! schema owner cannot safely run it, so apply requires an administrative role
-//! with `SUPERUSER` or explicit `BYPASSRLS`, like `publish-catalog --provision`
+//! with `SUPERUSER` or explicit `BYPASSRLS`, like project schema installation
 //! / `reconcile-replica-identity`.
 //!
 //! **Scope:** strictly the `--schema` project-env schema plus the per-database
 //! `catalog` metadata schema; entity/floor tables in the schema are read for
-//! the legacy-trigger survey only and never altered (the floor is
-//! `publish-catalog --provision` / `migrate-catalog` territory, and flow/seed
-//! CONTENT restore stays `publish-catalog --flow` / `--seed-dataset`).
+//! the legacy-trigger survey only and never altered (application schema belongs
+//! to package apply; retained content restore belongs to the ops restore verb).
 //!
 //! `--dry-run` is STRICTLY read-only: it neither ensures the `wamn_app` role
 //! nor executes any plan action.
@@ -81,7 +80,7 @@ use wamn_schema_control::{
 };
 
 /// The action kinds permitted to execute BEFORE
-/// [`crate::publish_catalog::ensure_wamn_app_role`] in [`reconcile`].
+/// the role bootstrap in [`reconcile`].
 ///
 /// **This is a permission, not an ordering assertion.** Membership never claims
 /// an action leads the plan; it says the action MAY lead it. Every member either
@@ -517,7 +516,7 @@ pub async fn reconcile(
                 .with_context(|| format!("apply {:?} {}", action.kind, action.target))?;
             applied += 1;
         }
-        crate::publish_catalog::ensure_wamn_app_role(client).await?;
+        ensure_runtime_roles(client).await?;
         for action in &plan.actions[applied..] {
             client
                 .batch_execute(&action.sql)
@@ -526,6 +525,24 @@ pub async fn reconcile(
         }
     }
     Ok(plan)
+}
+
+async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    client
+        .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
+        .await
+        .context("ensure wamn_app role")?;
+    client
+        .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
+        .await
+        .context("ensure host-only wamn_scenario_author role")?;
+    client
+        .batch_execute(
+            "SELECT pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
+             REVOKE wamn_scenario_author FROM wamn_app",
+        )
+        .await
+        .context("separate guest and scenario-author roles")
 }
 
 /// The dispatcher read principal's in-database surface, converged from the
@@ -943,46 +960,7 @@ async fn observe(
             .context("read catalog tables")?
         {
             let table: String = row.get(0);
-            let column: String = row.get(1);
-            if row.get(2) {
-                obs.catalog_non_nullable_columns
-                    .insert((table.clone(), column.clone()));
-            }
-            obs.catalog_column_types
-                .insert((table.clone(), column.clone()), row.get(4));
             obs.catalog_tables.insert(table.clone());
-            obs.catalog_columns.entry(table).or_default().insert(column);
-        }
-        for row in client
-            .query(select_schema_indexes_sql(), &[&"catalog"])
-            .await
-            .context("read catalog indexes")?
-        {
-            obs.catalog_indexes.insert(row.get(0), row.get(1));
-        }
-        for row in client
-            .query(select_schema_checks_sql(), &[&"catalog"])
-            .await
-            .context("read catalog check constraints")?
-        {
-            obs.catalog_checks
-                .insert((row.get(0), row.get(1)), row.get(2));
-        }
-        for row in client
-            .query(select_schema_foreign_keys_sql(), &[&"catalog"])
-            .await
-            .context("read catalog foreign keys")?
-        {
-            obs.catalog_foreign_keys
-                .insert((row.get(0), row.get(1)), row.get(2));
-        }
-        for row in client
-            .query(select_schema_triggers_sql(), &[&"catalog"])
-            .await
-            .context("read catalog triggers")?
-        {
-            obs.catalog_triggers
-                .insert((row.get(0), row.get(1)), row.get(2));
         }
         if obs.catalog_tables.contains("event_registrations") {
             obs.stale_registration_key_rows = client

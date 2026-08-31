@@ -4,8 +4,8 @@
 //! (`docs/exe-model.md`, R1/R3): nodes name `(component, interface-version)`
 //! from the palette, edges connect declared ports, node parameters bind
 //! declared params, and the in-draft `cases` array rides the document. It is
-//! *data, not code* — versioned, gated against one applied catalog version, and
-//! activated by a pointer flip — so its storage is
+//! *data, not code* — versioned, gated against one environment effective
+//! release, and activated by a pointer flip — so its storage is
 //! `catalog.wirings` / `catalog.wiring_activation` rather than an OCI artifact.
 //!
 //! # The cases array attaches here (wamn-0h0g.18.4)
@@ -187,7 +187,7 @@ pub struct WiringDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<WiringEdge>,
     /// The in-draft test cases (wamn-0h0g.18.4). Run by the gate against the
-    /// real applied catalog at authoring and again at promote-time re-gate;
+    /// real effective release at authoring and again at promote-time re-gate;
     /// `generate crud` writes them by construction.
     ///
     /// Bounded by [`wamn_execution_contract::validate_cases`], and only when the
@@ -244,8 +244,10 @@ impl WiringDocument {
 
     /// The definition hash over this document's RFC 8785 canonical JSON.
     pub fn wiring_hash(&self) -> DefinitionHash {
-        DefinitionHash::parse(wamn_execution_contract::canonical_json_sha256(&self.as_value()))
-            .expect("the shared canonicalizer emits a canonical sha256 digest")
+        DefinitionHash::parse(wamn_execution_contract::canonical_json_sha256(
+            &self.as_value(),
+        ))
+        .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
     fn as_value(&self) -> Value {

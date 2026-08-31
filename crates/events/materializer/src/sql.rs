@@ -2,10 +2,19 @@
 
 /// Read registration documents and durable identities; no flow or plan lookup remains.
 pub fn select_registrations_sql() -> String {
-    "SELECT registration_id, catalog_id, registration::text AS registration \
+    "SELECT registration_id, package_id, registration::text AS registration \
        FROM catalog.event_registrations \
       WHERE tenant_id = current_setting('app.tenant', true) \
-      ORDER BY catalog_id, registration_id"
+      ORDER BY package_id, registration_id"
+        .to_string()
+}
+
+/// Read every package identity applied for the current tenant.
+pub fn select_known_package_ids_sql() -> String {
+    "SELECT DISTINCT package_id \
+       FROM catalog.packages \
+      WHERE tenant_id = current_setting('app.tenant', true) \
+      ORDER BY package_id"
         .to_string()
 }
 
@@ -31,5 +40,12 @@ mod tests {
                 "retired stream lookup survived: {retired}"
             );
         }
+    }
+
+    #[test]
+    fn package_identity_resolution_uses_applied_package_roots() {
+        let sql = select_known_package_ids_sql();
+        assert!(sql.contains("catalog.packages"));
+        assert!(sql.contains("current_setting('app.tenant', true)"));
     }
 }

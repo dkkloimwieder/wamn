@@ -33,12 +33,13 @@ use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::NoTls;
 use wamn_catalog::{
-    AdmittedComponent, ComponentDeclaration, SERVING_MANIFEST_FORMAT_VERSION, WiringDocument,
-    WiringNode, WiringTerminal, flip_activation,
+    AdmittedComponent, ComponentDeclaration, ConnectionTypeDescriptor,
+    SERVING_MANIFEST_FORMAT_VERSION, WiringDocument, WiringNode, WiringTerminal, flip_activation,
 };
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
+use wamn_ctl::push_component::admitted_projection_hash;
 use wamn_execution_host::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
@@ -53,12 +54,14 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_schema_control::connections::ComponentConnectionRequirement;
 
 /// The one tenant every seeded row and every claim is scoped to.
 pub const TENANT: &str = "tenant-a";
-pub const CATALOG: &str = "orders";
+pub const PACKAGE: &str = "orders";
 pub const ENVIRONMENT: &str = "prod";
-pub const CATALOG_VERSION: u32 = 1;
+pub const PACKAGE_VERSION: &str = "1.0.0";
+pub const EFFECTIVE_RELEASE_ID: i32 = 1;
 pub const WIRING_ID: &str = "hot-route";
 pub const WIRING_VERSION: u32 = 1;
 pub const NODE_ID: &str = "call-upstream";
@@ -227,8 +230,8 @@ fn declaration() -> anyhow::Result<ComponentDeclaration> {
     .context("read the http-request declaration template")?;
     let rendered = template
         .replace("__TENANT_ID__", TENANT)
-        .replace("__CATALOG_ID__", CATALOG)
-        .replace("__CATALOG_VERSION__", &CATALOG_VERSION.to_string());
+        .replace("__PACKAGE_ID__", PACKAGE)
+        .replace("__PACKAGE_VERSION__", PACKAGE_VERSION);
     serde_json::from_str(&rendered).context("parse the rendered http-request declaration")
 }
 
@@ -285,16 +288,21 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {
             "tenant-id": TENANT,
-            "catalog-id": CATALOG,
-            "catalog-version": CATALOG_VERSION,
+            "effective-release-id": EFFECTIVE_RELEASE_ID,
             "environment": ENVIRONMENT,
+            "packages": [{
+                "package-id": PACKAGE,
+                "package-version": PACKAGE_VERSION,
+            }],
         },
         "components": [{
+            "package-id": PACKAGE,
             "component": component.component,
             "interface-version": component.interface_version,
             "digest": component.component_digest,
         }],
         "wirings": [{
+            "package-id": PACKAGE,
             "wiring-id": WIRING_ID,
             "wiring-version": WIRING_VERSION,
             "graph-hash": wiring_hash,
@@ -302,6 +310,7 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
         "attachments": {
             (ATTACHMENT_ID): {
                 "kind": "http",
+                "package-id": PACKAGE,
                 "wiring-id": WIRING_ID,
                 "wiring-version": WIRING_VERSION,
                 "definition-hash": attachment_definition_hash,
@@ -419,7 +428,6 @@ async fn seed_with_client(
         .await
         .context("install the catalog and run-plane DDL")?;
 
-    let catalog_version = i32::try_from(CATALOG_VERSION).expect("fixture catalog version fits");
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
     let imports = serde_json::to_string(&component.imports).context("serialize imports")?;
@@ -430,15 +438,16 @@ async fn seed_with_client(
     let effects = serde_json::to_string(&component.effects).context("serialize effects")?;
     // The whole portable record component admission mints, not just its
     // descriptor: `requirement_hash` is the SHA-256 of exactly these bytes.
-    let requirement_json = serde_json::json!({
-        "component-digest": component.component_digest,
-        "store-alias": STORE_ALIAS,
-        "requirement": {
-            "requirement-type": "http",
-            "contract": CONTRACT,
-        },
-    })
-    .to_string();
+    let requirement = ComponentConnectionRequirement::new(
+        &component.component_digest,
+        STORE_ALIAS,
+        ConnectionTypeDescriptor::http_v1(),
+    );
+    let requirement_json = String::from_utf8(requirement.canonical_bytes())
+        .context("portable requirement bytes are UTF-8")?;
+    let requirement_hash = requirement.requirement_hash();
+    let projection_hash = admitted_projection_hash(component, std::slice::from_ref(&requirement))
+        .context("hash the complete admitted projection")?;
     // `require_direct_transport` demands an EXPLICIT null proxy-transport: an
     // absent key is a refusal, not a default.
     let definition_json = serde_json::json!({
@@ -455,44 +464,58 @@ async fn seed_with_client(
         .await
         .context("claim the seeding tenant")?;
 
+    let package_manifest = serde_json::json!({
+        "package": {"id": PACKAGE, "version": PACKAGE_VERSION},
+        "models": {},
+        "commands": {},
+        "queries": {},
+        "connections": {},
+        "components": {},
+    });
+    let package_manifest_sha256 = wamn_execution_contract::canonical_json_sha256(&package_manifest);
     client
         .execute(
-            "INSERT INTO catalog.catalogs \
-                    (tenant_id, catalog_id, version, environment, schema_version, state) \
-             VALUES ($1, $2, $3, $4, '1', 'applied')",
-            &[&TENANT, &CATALOG, &catalog_version, &ENVIRONMENT],
-        )
-        .await
-        .context("seed the catalog header")?;
-    client
-        .execute(
-            "INSERT INTO catalog.catalog_heads \
-                    (tenant_id, catalog_id, environment, applied_catalog_version) \
+            "INSERT INTO catalog.packages \
+                    (tenant_id, package_id, package_version, manifest_sha256) \
              VALUES ($1, $2, $3, $4)",
-            &[&TENANT, &CATALOG, &ENVIRONMENT, &catalog_version],
+            &[
+                &TENANT,
+                &PACKAGE,
+                &PACKAGE_VERSION,
+                &package_manifest_sha256,
+            ],
         )
         .await
-        .context("seed the applied catalog head")?;
-    // `catalog.connection_bindings` FKs this row.
+        .context("seed the exact package coordinate")?;
     client
         .execute(
-            "INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) \
-             VALUES ($1, $2, $3)",
-            &[&TENANT, &CATALOG, &catalog_version],
+            "INSERT INTO catalog.effective_releases \
+                    (tenant_id, effective_release_id, environment, verified_publisher_principal) \
+             VALUES ($1, $2, $3, 'trusted-http-route')",
+            &[&TENANT, &EFFECTIVE_RELEASE_ID, &ENVIRONMENT],
         )
         .await
-        .context("seed the release manifest row")?;
+        .context("seed the effective release")?;
     client
         .execute(
-            "INSERT INTO catalog.wirings (tenant_id, catalog_id, wiring_id, version, \
-                    gated_catalog_version, graph_json, wiring_hash) \
+            "INSERT INTO catalog.effective_release_packages \
+                    (tenant_id, effective_release_id, package_id, package_version) \
+             VALUES ($1, $2, $3, $4)",
+            &[&TENANT, &EFFECTIVE_RELEASE_ID, &PACKAGE, &PACKAGE_VERSION],
+        )
+        .await
+        .context("pin the package in the effective release")?;
+    client
+        .execute(
+            "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
+                    version, graph_json, wiring_hash) \
              VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)",
             &[
                 &TENANT,
-                &CATALOG,
+                &PACKAGE,
+                &PACKAGE_VERSION,
                 &WIRING_ID,
                 &wiring_version,
-                &catalog_version,
                 &graph_json,
                 &wiring_hash,
             ],
@@ -502,19 +525,21 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.component_library (\
-                 tenant_id, catalog_id, catalog_version, component, interface_version, operation, \
-                 component_digest, imports, imports_fingerprint, effects, input_ports, \
-                 output_ports, parameters\
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9, $10::text::jsonb, \
-                 $11::text::jsonb, $12::text::jsonb, $13::text::jsonb)",
+                 tenant_id, package_id, package_version, component, interface_version, operation, \
+                 registered_operation, component_digest, projection_hash, imports, imports_fingerprint, effects, \
+                 input_ports, output_ports, parameters\
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::jsonb, $11, \
+                 $12::text::jsonb, $13::text::jsonb, $14::text::jsonb, $15::text::jsonb)",
             &[
                 &TENANT,
-                &CATALOG,
-                &catalog_version,
+                &PACKAGE,
+                &PACKAGE_VERSION,
                 &component.component,
                 &component.interface_version,
                 &component.operation,
+                &component.registered_operation,
                 &component.component_digest,
+                &projection_hash,
                 &imports,
                 &component.imports_fingerprint,
                 &effects,
@@ -529,13 +554,14 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.release_components (\
-                 tenant_id, catalog_id, catalog_version, wiring_id, wiring_version, \
-                 component_digest\
-             ) VALUES ($1, $2, $3, $4, $5, $6)",
+                 tenant_id, effective_release_id, package_id, package_version, wiring_id, \
+                 wiring_version, component_digest\
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
             &[
                 &TENANT,
-                &CATALOG,
-                &catalog_version,
+                &EFFECTIVE_RELEASE_ID,
+                &PACKAGE,
+                &PACKAGE_VERSION,
                 &WIRING_ID,
                 &wiring_version,
                 &component.component_digest,
@@ -547,19 +573,27 @@ async fn seed_with_client(
     let manifest_digest = release.release().manifest_digest.as_str();
     client
         .execute(
-            "INSERT INTO catalog.release_manifest_v2_snapshots (\
-                 tenant_id, catalog_id, catalog_version, manifest_digest, canonical_bytes\
-             ) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO catalog.release_manifest_v3_snapshots (\
+                 tenant_id, effective_release_id, manifest_digest, canonical_bytes\
+             ) VALUES ($1, $2, $3, $4)",
             &[
                 &TENANT,
-                &CATALOG,
-                &catalog_version,
+                &EFFECTIVE_RELEASE_ID,
                 &manifest_digest,
                 &canonical_release,
             ],
         )
         .await
         .context("seed the exact serving-manifest snapshot")?;
+    client
+        .execute(
+            "INSERT INTO catalog.effective_release_heads \
+                    (tenant_id, environment, effective_release_id) \
+             VALUES ($1, $2, $3)",
+            &[&TENANT, &ENVIRONMENT, &EFFECTIVE_RELEASE_ID],
+        )
+        .await
+        .context("select the effective release")?;
 
     // The activation pointer, through the production statement itself — bound
     // directly, because the extended query protocol cannot pass parameters to a
@@ -569,7 +603,7 @@ async fn seed_with_client(
     client
         .execute(
             flip_activation(),
-            &[&CATALOG, &ENVIRONMENT, &WIRING_ID, &wiring_hash, &true],
+            &[&PACKAGE, &ENVIRONMENT, &WIRING_ID, &wiring_hash, &true],
         )
         .await
         .context("activate the wiring")?;
@@ -584,7 +618,7 @@ async fn seed_with_client(
                 &component.component_digest,
                 &STORE_ALIAS,
                 &requirement_json,
-                &format!("sha256:{}", "d".repeat(64)),
+                &requirement_hash,
             ],
         )
         .await
@@ -633,13 +667,12 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.connection_bindings (\
-                 tenant_id, catalog_id, catalog_version, component_digest, store_alias, \
+                 tenant_id, effective_release_id, component_digest, store_alias, \
                  environment, instance_id, binding_status, validation_status, validation_hash\
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'valid', $8)",
+             ) VALUES ($1, $2, $3, $4, $5, $6, 'active', 'valid', $7)",
             &[
                 &TENANT,
-                &CATALOG,
-                &catalog_version,
+                &EFFECTIVE_RELEASE_ID,
                 &component.component_digest,
                 &STORE_ALIAS,
                 &ENVIRONMENT,

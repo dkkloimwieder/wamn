@@ -1,13 +1,12 @@
-//! Publish canonical format-2 serving-manifest bytes as one OCI data artifact.
+//! Publish canonical format-3 serving-manifest bytes as one OCI data artifact.
 //!
 //! The manifest's RFC 8785 SHA-256 identity derives its immutable OCI tag. An
 //! exact retry pulls and verifies the existing artifact and performs no push.
 //! A tag holding any other layout or bytes refuses instead of being replaced.
 //!
-//! The bytes come from a file or, given a release coordinate, straight from the
-//! `catalog.release_manifest_v2_snapshots` row the mint froze. The snapshot
-//! source exists so that publishing a minted release never depends on a human
-//! copying canonical bytes out of PostgreSQL byte-exactly.
+//! The bytes come only from the `catalog.release_manifest_v3_snapshots` row the
+//! mint froze. Publication therefore cannot attest caller-supplied bytes that
+//! were never verified against the release identity.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -138,26 +137,16 @@ pub enum ReleaseManifestPublishDisposition {
 pub struct PublishedReleaseManifest {
     pub digest: ManifestDigest,
     pub disposition: ReleaseManifestPublishDisposition,
-    /// Release coordinate the published bytes carry: the tenant, catalog,
-    /// version and environment half of the deployment attestation key.
+    /// Effective-release coordinate carried by the published bytes.
     pub release: ServingRelease,
 }
 
 /// Arguments for the release-manifest distribution copy.
 #[derive(Debug, Args)]
 pub struct PushReleaseManifestArgs {
-    /// File containing the exact canonical format-2 ServingManifest JSON.
-    #[arg(
-        long,
-        required_unless_present = "database_url",
-        conflicts_with = "database_url"
-    )]
-    pub manifest: Option<PathBuf>,
-
-    /// Owner URL to the database holding the minted release snapshot, published
-    /// instead of a file. Requires the release coordinate that names it.
-    #[arg(long, requires_all = ["tenant", "catalog_id", "catalog_version"])]
-    pub database_url: Option<String>,
+    /// Owner URL to the database holding the minted release snapshot.
+    #[arg(long)]
+    pub database_url: String,
 
     /// Registry organization the release is deployed into. Required in both
     /// byte sources: the manifest fixes the rest of the attestation key, but
@@ -170,16 +159,12 @@ pub struct PushReleaseManifestArgs {
     pub project: String,
 
     /// Tenant claim carried by the minted release snapshot.
-    #[arg(long, requires = "database_url")]
-    pub tenant: Option<String>,
+    #[arg(long)]
+    pub tenant: String,
 
-    /// Catalog identity of the minted release snapshot.
-    #[arg(long, requires = "database_url")]
-    pub catalog_id: Option<String>,
-
-    /// Exact catalog version of the minted release snapshot.
-    #[arg(long, requires = "database_url")]
-    pub catalog_version: Option<u32>,
+    /// Integer identity of the minted effective release snapshot.
+    #[arg(long)]
+    pub effective_release_id: u32,
 
     /// Explicit `<registry>/<repository>` base for release manifests.
     #[arg(long)]
@@ -238,35 +223,16 @@ pub async fn run(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Read the bytes to publish from a file, or from the release that minted them.
+/// Read the bytes to publish from the release that minted them.
 async fn canonical_release_bytes(args: &PushReleaseManifestArgs) -> anyhow::Result<Vec<u8>> {
-    let Some(database_url) = args.database_url.as_deref() else {
-        let manifest = args
-            .manifest
-            .as_deref()
-            .expect("clap requires one release-bytes source");
-        return std::fs::read(manifest)
-            .with_context(|| format!("read serving manifest {}", manifest.display()));
-    };
-    let tenant = args
-        .tenant
-        .as_deref()
-        .expect("clap requires the snapshot tenant");
-    let catalog_id = args
-        .catalog_id
-        .as_deref()
-        .expect("clap requires the snapshot catalog");
-    let catalog_version = args
-        .catalog_version
-        .expect("clap requires the snapshot catalog version");
-    let catalog_version = i32::try_from(catalog_version)
-        .context("catalog-version exceeds the PostgreSQL integer carrier")?;
+    let effective_release_id = i32::try_from(args.effective_release_id)
+        .context("effective-release-id exceeds the PostgreSQL integer carrier")?;
 
-    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
         .await
         .context("connect to the release snapshot database")?;
     let connection_task = tokio::spawn(connection);
-    let read = select_snapshot(&mut client, tenant, catalog_id, catalog_version).await;
+    let read = select_snapshot(&mut client, &args.tenant, effective_release_id).await;
     match read {
         Ok(canonical_bytes) => {
             drop(client);
@@ -290,14 +256,13 @@ async fn canonical_release_bytes(args: &PushReleaseManifestArgs) -> anyhow::Resu
 pub(crate) async fn select_snapshot(
     client: &mut PgClient,
     tenant: &str,
-    catalog_id: &str,
-    catalog_version: i32,
+    effective_release_id: i32,
 ) -> anyhow::Result<Vec<u8>> {
     let transaction = client
         .transaction()
         .await
         .context("begin the release snapshot read")?;
-    let snapshot = read_release_snapshot(&transaction, tenant, catalog_id, catalog_version)
+    let snapshot = read_release_snapshot(&transaction, tenant, effective_release_id)
         .await
         .context("read the minted release snapshot")?;
     transaction
@@ -306,13 +271,13 @@ pub(crate) async fn select_snapshot(
         .context("close the release snapshot read")?;
     snapshot.with_context(|| {
         format!(
-            "tenant {tenant:?} catalog {catalog_id:?} version {catalog_version} \
-             has no minted v2 release snapshot"
+            "tenant {tenant:?} effective release {effective_release_id} \
+             has no minted format-3 release snapshot"
         )
     })
 }
 
-/// Publish canonical v2 bytes or prove that their exact artifact already exists.
+/// Publish canonical format-3 bytes or prove their exact artifact already exists.
 pub async fn publish_release_manifest(
     canonical_bytes: &[u8],
     artifact_base: &str,
@@ -324,7 +289,7 @@ pub async fn publish_release_manifest(
             ReleaseManifestPublishError::with_source(
                 ReleaseManifestPublishErrorKind::Document,
                 "release-manifest-document-refused",
-                "input is not canonical format-2 ServingManifest JSON",
+                "input is not canonical format-3 ServingManifest JSON",
                 source,
             )
         })?;
@@ -567,7 +532,7 @@ mod tests {
         PushProbe::try_parse_from(argv).map(|probe| probe.args)
     }
 
-    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1"}],"format-version":2,"registrations":{},"release":{"catalog-id":"orders","catalog-version":1,"environment":"prod","tenant-id":"tenant-a"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","wiring-id":"orders","wiring-version":1}]}"#;
+    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","package-id":"orders"}],"format-version":3,"registrations":{},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"orders","package-version":"1.0.0"}],"tenant-id":"tenant-a"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}"#;
 
     fn fixture_reference() -> Reference {
         Reference::with_tag(
@@ -580,82 +545,54 @@ mod tests {
     #[test]
     fn published_bytes_carry_their_own_half_of_the_attestation_key() {
         let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-2 bytes");
+            .expect("the fixture is canonical format-3 bytes");
         let coordinate = DeploymentCoordinate::new("acme", "billing", &manifest.release);
 
         // The environment is whatever the pushed bytes were projected for, read
         // out of those exact bytes rather than defaulted or re-typed by hand.
         assert_eq!(coordinate.triple.env.as_str(), "prod");
         assert_eq!(coordinate.tenant_id, "tenant-a");
-        assert_eq!(coordinate.catalog_id, "orders");
-        assert_eq!(coordinate.catalog_version, 1);
+        assert_eq!(coordinate.effective_release_id, 3);
         assert_eq!(coordinate.triple.org, "acme");
         assert_eq!(coordinate.triple.project, "billing");
     }
 
     #[test]
-    fn neither_byte_source_publishes_without_its_control_plane_placement() {
-        // The file source needs the placement just as much as the snapshot
-        // source: canonical bytes fix the rest of the key but never name the org
-        // and project they are deployed into.
-        for source in [
-            vec!["--manifest", "manifest.json"],
-            vec![
-                "--database-url",
-                "postgres://release.invalid/env",
-                "--tenant",
-                "tenant-a",
-                "--catalog-id",
-                "orders",
-                "--catalog-version",
-                "3",
-            ],
-        ] {
-            for placement in [vec!["--org", "acme"], vec!["--project", "billing"], vec![]] {
-                let mut argv = vec!["push-release-manifest"];
-                argv.extend_from_slice(&source);
-                argv.extend_from_slice(&DESTINATION);
-                argv.extend_from_slice(&placement);
-                assert!(
-                    PushProbe::try_parse_from(argv).is_err(),
-                    "published {source:?} with placement {placement:?}"
-                );
-            }
-        }
-
-        // The control database is required in BOTH byte sources for the same
-        // reason (wamn-0h0g.8.27): a push that cannot reach the control plane
-        // cannot record the fact that makes the pushed digest a release rather
-        // than a candidate.
-        for source in [
-            vec!["--manifest", "manifest.json"],
-            vec![
-                "--database-url",
-                "postgres://release.invalid/env",
-                "--tenant",
-                "tenant-a",
-                "--catalog-id",
-                "orders",
-                "--catalog-version",
-                "3",
-            ],
-        ] {
+    fn minted_snapshot_does_not_publish_without_its_control_plane_placement() {
+        let source = [
+            "--database-url",
+            "postgres://release.invalid/env",
+            "--tenant",
+            "tenant-a",
+            "--effective-release-id",
+            "3",
+        ];
+        for placement in [vec!["--org", "acme"], vec!["--project", "billing"], vec![]] {
             let mut argv = vec!["push-release-manifest"];
             argv.extend_from_slice(&source);
-            argv.extend_from_slice(&[
-                "--artifact-base",
-                "registry.example/wamn/releases",
-                "--registry-auth-file",
-                "auth.json",
-            ]);
-            argv.extend_from_slice(&PLACEMENT);
+            argv.extend_from_slice(&DESTINATION);
+            argv.extend_from_slice(&placement);
             assert!(
                 PushProbe::try_parse_from(argv).is_err(),
-                "published {source:?} with no control database to attest into"
+                "published with placement {placement:?}"
             );
         }
 
-        let placed = parse(&["--manifest", "manifest.json"]).expect("a placed file source parses");
+        let mut argv = vec!["push-release-manifest"];
+        argv.extend_from_slice(&source);
+        argv.extend_from_slice(&[
+            "--artifact-base",
+            "registry.example/wamn/releases",
+            "--registry-auth-file",
+            "auth.json",
+        ]);
+        argv.extend_from_slice(&PLACEMENT);
+        assert!(
+            PushProbe::try_parse_from(argv).is_err(),
+            "published with no control database to attest into"
+        );
+
+        let placed = parse(&source).expect("a placed minted snapshot parses");
         assert_eq!(placed.org, "acme");
         assert_eq!(placed.project, "billing");
         assert_eq!(
@@ -668,9 +605,17 @@ mod tests {
     fn the_parsed_placement_reaches_the_attestation_key() {
         // The link the surface exists for: what the operator typed on the
         // command line, not some other string in scope, is what keys the write.
-        let args = parse(&["--manifest", "manifest.json"]).expect("the file source parses");
+        let args = parse(&[
+            "--database-url",
+            "postgres://release.invalid/env",
+            "--tenant",
+            "tenant-a",
+            "--effective-release-id",
+            "3",
+        ])
+        .expect("the minted snapshot source parses");
         let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-2 bytes");
+            .expect("the fixture is canonical format-3 bytes");
         let coordinate = args.deployment_coordinate(&manifest.release);
 
         assert_eq!(coordinate.triple.org, "acme");
@@ -680,57 +625,37 @@ mod tests {
     }
 
     #[test]
-    fn a_release_publishes_from_a_file_or_from_its_minted_snapshot() {
-        let file = parse(&["--manifest", "manifest.json"]).expect("the file source parses");
-        assert_eq!(file.manifest.as_deref(), Some(Path::new("manifest.json")));
-        assert_eq!(file.database_url, None);
-
+    fn a_release_publishes_only_from_its_minted_snapshot() {
         let snapshot = parse(&[
             "--database-url",
             "postgres://release.invalid/env",
             "--tenant",
             "tenant-a",
-            "--catalog-id",
-            "orders",
-            "--catalog-version",
+            "--effective-release-id",
             "3",
         ])
         .expect("the minted-snapshot source parses");
-        assert_eq!(snapshot.manifest, None);
-        assert_eq!(snapshot.tenant.as_deref(), Some("tenant-a"));
-        assert_eq!(snapshot.catalog_id.as_deref(), Some("orders"));
-        assert_eq!(snapshot.catalog_version, Some(3));
+        assert_eq!(snapshot.database_url, "postgres://release.invalid/env");
+        assert_eq!(snapshot.tenant, "tenant-a");
+        assert_eq!(snapshot.effective_release_id, 3);
+
+        assert!(
+            parse(&["--manifest", "manifest.json"]).is_err(),
+            "caller-supplied bytes must not mint deployment evidence"
+        );
     }
 
     #[test]
-    fn exactly_one_complete_release_bytes_source_is_admitted() {
-        let refusals: [Vec<&str>; 4] = [
-            // Neither source names the bytes to publish.
+    fn a_complete_minted_snapshot_coordinate_is_required() {
+        let refusals: [Vec<&str>; 3] = [
             vec![],
-            // Both sources name them.
-            vec![
-                "--manifest",
-                "manifest.json",
-                "--database-url",
-                "postgres://release.invalid/env",
-                "--tenant",
-                "tenant-a",
-                "--catalog-id",
-                "orders",
-                "--catalog-version",
-                "3",
-            ],
-            // The snapshot source is missing part of its release coordinate.
             vec![
                 "--database-url",
                 "postgres://release.invalid/env",
                 "--tenant",
                 "tenant-a",
-                "--catalog-id",
-                "orders",
             ],
-            // A release coordinate is named without the database holding it.
-            vec!["--manifest", "manifest.json", "--tenant", "tenant-a"],
+            vec!["--tenant", "tenant-a", "--effective-release-id", "3"],
         ];
         for refused in refusals {
             assert!(parse(&refused).is_err(), "accepted {refused:?}");
@@ -740,7 +665,7 @@ mod tests {
     #[test]
     fn exact_layout_carries_only_canonical_manifest_bytes() {
         let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("fixture is a canonical v2 manifest");
+            .expect("fixture is a canonical format-3 manifest");
         let (layer, config, manifest) = release_manifest_artifact_layout(CANONICAL_MANIFEST);
         let verified = verify_manifest_layout(
             &manifest,
@@ -760,7 +685,7 @@ mod tests {
     fn format_one_and_noncanonical_documents_refuse_before_transport() {
         let legacy = std::str::from_utf8(CANONICAL_MANIFEST)
             .expect("fixture is UTF-8")
-            .replacen("\"format-version\":2", "\"format-version\":1", 1);
+            .replacen("\"format-version\":3", "\"format-version\":2", 1);
         let legacy = ServingManifest::from_canonical_bytes(legacy.as_bytes())
             .expect_err("format one refuses");
         assert!(format!("{legacy}").contains("unsupported-serving-manifest-version"));
@@ -773,7 +698,7 @@ mod tests {
     #[test]
     fn wrong_or_multi_layer_layout_refuses_as_conflict() {
         let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("fixture is a canonical v2 manifest");
+            .expect("fixture is a canonical format-3 manifest");
         let (_, _, mut manifest) = release_manifest_artifact_layout(CANONICAL_MANIFEST);
         manifest.layers[0].media_type = "application/octet-stream".to_owned();
         let error = verify_manifest_layout(

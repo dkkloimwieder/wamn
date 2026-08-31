@@ -23,9 +23,7 @@ use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use serde_json::Value;
-use wamn_catalog::{
-    AttachmentKind, NO_AUTHENTICATION_MODE, ServingAttachment, ServingManifest,
-};
+use wamn_catalog::{AttachmentKind, NO_AUTHENTICATION_MODE, ServingAttachment, ServingManifest};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -558,8 +556,8 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        ArtifactHash, DefinitionHash, RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingRelease,
-        ServingWiring,
+        ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
+        RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingRelease, ServingWiring,
     };
 
     use super::*;
@@ -569,18 +567,21 @@ mod tests {
     const GRAPH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const DEFINITION_HASH: &str =
         "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-    const CATALOG_VERSION: u32 = 7;
+    const EFFECTIVE_RELEASE_ID: u32 = 7;
 
     fn components() -> BTreeSet<ServingComponent> {
         BTreeSet::from([ServingComponent {
+            package_id: "cat".into(),
             component: "http-request".into(),
             interface_version: "0.1".into(),
             digest: ArtifactHash::parse(COMPONENT).expect("fixture artifact hash is canonical"),
+            registered_operation: None,
         }])
     }
 
     fn wirings() -> BTreeSet<ServingWiring> {
         BTreeSet::from([ServingWiring {
+            package_id: "cat".into(),
             wiring_id: "orders".into(),
             wiring_version: 1,
             graph_hash: DefinitionHash::parse(GRAPH).expect("fixture definition hash is canonical"),
@@ -590,12 +591,14 @@ mod tests {
     fn attachment(kind: AttachmentKind, definition: Value) -> ServingAttachment {
         ServingAttachment {
             kind,
+            package_id: "cat".into(),
             wiring_id: "orders".into(),
             wiring_version: 1,
             definition_hash: DefinitionHash::parse(DEFINITION_HASH)
                 .expect("fixture definition hash is canonical"),
             definition,
             auth_policy: json!({"mode": "none"}),
+            registered_operation: None,
         }
     }
 
@@ -619,9 +622,9 @@ mod tests {
         ServingManifest::new(
             ServingRelease {
                 tenant_id: "tenant-a".into(),
-                catalog_id: "cat".into(),
-                catalog_version: CATALOG_VERSION,
+                effective_release_id: EffectiveReleaseId::new(EFFECTIVE_RELEASE_ID).unwrap(),
                 environment: "prod".into(),
+                packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             components(),
             wirings(),

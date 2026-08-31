@@ -23,7 +23,7 @@ use wamn_runtime::release_manifest::ReleaseManifestWeld;
 #[derive(Debug)]
 pub(crate) struct ReleaseFixture<'a> {
     pub(crate) tenant: &'a str,
-    pub(crate) catalog: &'a str,
+    pub(crate) package: &'a str,
     pub(crate) environment: &'a str,
     pub(crate) registration: &'a str,
     pub(crate) wiring: &'a str,
@@ -43,14 +43,16 @@ pub(crate) fn load_release(
         "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release": {
             "tenant-id": fixture.tenant,
-            "catalog-id": fixture.catalog,
-            // The bind gate reads only the registration projection, so any
-            // non-zero version serves; 1 is what the seeded catalog heads carry.
-            "catalog-version": 1,
+            "effective-release-id": 1,
             "environment": fixture.environment,
+            "packages": [{
+                "package-id": fixture.package,
+                "package-version": "1.0.0"
+            }],
         },
         "components": [],
         "wirings": [{
+            "package-id": fixture.package,
             "wiring-id": fixture.wiring,
             "wiring-version": 1,
             "graph-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -58,6 +60,7 @@ pub(crate) fn load_release(
         "attachments": {},
         "registrations": {
             fixture.registration: {
+                "package-id": fixture.package,
                 "wiring-id": fixture.wiring,
                 "wiring-version": 1,
                 "entity": fixture.entity,

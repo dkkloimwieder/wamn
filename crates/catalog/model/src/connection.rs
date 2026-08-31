@@ -1,4 +1,4 @@
-//! Portable connection-type semantics shared by components and legacy flows.
+//! Portable connection-type semantics owned beside component admission.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -75,48 +75,23 @@ pub struct ConnectionTypeDescriptor {
 impl ConnectionTypeDescriptor {
     /// The minimum portable HTTP connection descriptor.
     pub fn http_v1() -> Self {
+        let author = ConnectionFieldOwner::Author;
+        let environment = ConnectionFieldOwner::Environment;
         Self {
-            descriptor_version: CONNECTION_DESCRIPTOR_VERSION.to_string(),
-            requirement_type: "http".to_string(),
-            contract: "wamn:connection/http@0.1.0".to_string(),
+            descriptor_version: CONNECTION_DESCRIPTOR_VERSION.to_owned(),
+            requirement_type: "http".to_owned(),
+            contract: "wamn:connection/http@0.1.0".to_owned(),
             authority_model: ConnectionAuthorityModel::HttpOrigin,
             field_ownership: vec![
-                ConnectionFieldOwnership {
-                    field: ConnectionField::Method,
-                    owner: ConnectionFieldOwner::Author,
-                },
-                ConnectionFieldOwnership {
-                    field: ConnectionField::RelativeTarget,
-                    owner: ConnectionFieldOwner::Author,
-                },
-                ConnectionFieldOwnership {
-                    field: ConnectionField::Headers,
-                    owner: ConnectionFieldOwner::Author,
-                },
-                ConnectionFieldOwnership {
-                    field: ConnectionField::Body,
-                    owner: ConnectionFieldOwner::Author,
-                },
-                ConnectionFieldOwnership {
-                    field: ConnectionField::Authority,
-                    owner: ConnectionFieldOwner::Environment,
-                },
-                ConnectionFieldOwnership {
-                    field: ConnectionField::Tls,
-                    owner: ConnectionFieldOwner::Environment,
-                },
-                ConnectionFieldOwnership {
-                    field: ConnectionField::Redirect,
-                    owner: ConnectionFieldOwner::Environment,
-                },
-                ConnectionFieldOwnership {
-                    field: ConnectionField::Proxy,
-                    owner: ConnectionFieldOwner::Environment,
-                },
-                ConnectionFieldOwnership {
-                    field: ConnectionField::Credential,
-                    owner: ConnectionFieldOwner::Environment,
-                },
+                ownership(ConnectionField::Method, author),
+                ownership(ConnectionField::RelativeTarget, author),
+                ownership(ConnectionField::Headers, author),
+                ownership(ConnectionField::Body, author),
+                ownership(ConnectionField::Authority, environment),
+                ownership(ConnectionField::Tls, environment),
+                ownership(ConnectionField::Redirect, environment),
+                ownership(ConnectionField::Proxy, environment),
+                ownership(ConnectionField::Credential, environment),
             ],
             credential_injection: CredentialInjection::EnvironmentSelectedHttpHeader,
         }
@@ -126,4 +101,8 @@ impl ConnectionTypeDescriptor {
     pub fn identity_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("connection descriptor identity serializes")
     }
+}
+
+fn ownership(field: ConnectionField, owner: ConnectionFieldOwner) -> ConnectionFieldOwnership {
+    ConnectionFieldOwnership { field, owner }
 }

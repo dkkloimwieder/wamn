@@ -80,12 +80,12 @@ fn schema_discriminators<'a>(schema: &'a Value, definition: &str, field: &str) -
 /// renamed field on any of them fails here.
 #[test]
 fn exact_two_commands_and_one_query_round_trip() {
-    // Both commands carry the DOCUMENT and its catalog placement: `publish` since
+    // Both commands carry the DOCUMENT and its package placement: `publish` since
     // wamn-0h0g.7.10, `gate` since wamn-0h0g.8.28 re-pointed the gate off the
     // stored row it could not have read on a first transition.
     let input = json!({
-        "scope": scope(), "catalog-id": "orders",
-        "gated-catalog-version": 3, "document": wiring_document()
+        "scope": scope(), "package-id": "orders",
+        "package-version": "1.0.0", "document": wiring_document()
     });
     let commands = [
         // wamn-0h0g.7.11 moved this pin deliberately: the wire literal is now
@@ -425,9 +425,8 @@ fn retired_and_forbidden_vocabulary_is_absent() {
         );
     }
     for required in [
-        // Quoted: bare `gate` is a substring of `gated-catalog-version` and of
-        // every `Gate*` definition name, so an unquoted probe would pass on a
-        // schema that had lost the literal entirely.
+        // Quoted: bare `gate` is a substring of every `Gate*` definition name,
+        // so an unquoted probe would pass on a schema that had lost the literal.
         "\"gate\"",
         "get-report",
         "publish",
@@ -493,7 +492,7 @@ fn query_request_is_exactly_the_three_ratified_fields() {
     );
 }
 
-/// Publish carries the document and its catalog placement, and NOTHING that
+/// Publish carries the document and its package placement, and NOTHING that
 /// asserts an identity the server must derive (wamn-0h0g.7.10).
 ///
 /// The removed halves are pinned as removed, not merely absent from the happy
@@ -506,15 +505,15 @@ fn query_request_is_exactly_the_three_ratified_fields() {
 fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
     let complete = json!({
         "scope": scope(),
-        "catalog-id": "orders",
-        "gated-catalog-version": 3,
+        "package-id": "orders",
+        "package-version": "1.0.0",
         "document": wiring_document()
     });
     decode(&command("publish", complete.clone()));
 
     // Every field is load-bearing: dropping any one leaves `catalog.wirings`
     // unwritable, so none may carry a serde default.
-    for field in ["scope", "catalog-id", "gated-catalog-version", "document"] {
+    for field in ["scope", "package-id", "package-version", "document"] {
         let mut omitted = complete.clone();
         assert!(
             omitted
@@ -562,6 +561,6 @@ fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
     let schema = wamn_authoring_model::json_schema();
     assert_eq!(
         schema["definitions"]["PublishValidatedDraft"]["required"],
-        json!(["catalog-id", "document", "gated-catalog-version", "scope"])
+        json!(["document", "package-id", "package-version", "scope"])
     );
 }

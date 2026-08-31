@@ -265,39 +265,11 @@ BEGIN
 END
 $$;
 
--- Admission pins never change. The claim-time release record is write-once PER
--- CLAIM ATTEMPT, not per run-eternity: it names THE RELEASE OF THE CLAIM
--- CURRENTLY EXECUTING THIS RUN (wamn-0h0g.13.55). It is NULL on the admitted
--- row, the claiming worker writes its own pod identity, and EVERY arm that
--- REOPENS CLAIMABILITY — the classifier's pre-effect reclaim and the queue park
--- that releases a lease — clears it again so the next claim records afresh. The
--- guard is therefore TRANSITION-CONSTRAINED:
---     NULL  -> value    permitted  (a claim records this attempt's pod)
---     value -> NULL     permitted  (an arm reopens claimability)
---     value -> value'   REFUSED always
--- A trigger cannot see WHICH statement is updating the row, so the erasure arm
--- does not try to name its caller; it encodes the property that makes the
--- erasure safe. Two legs remain, and each defends a distinct thing:
---   * STILL RUNNABLE. A terminal run keeps the audit link to the release closure
---     it finished under. Nothing reopens a terminal run's claimability, so nothing
---     needs to erase it.
---   * NO IMMUTABLE EFFECT ATTEMPT, ON A `durable` RUN. An attributed effect
---     names the release that fired it, and that link is never rewritten out
---     from under it. This is the leg that refuses a mid-effect release rewrite;
---     a run carrying an attempt is classified terminal effect-uncertain by its
---     next claim and never re-executes under a second release.
---     THE CLASS PREDICATE IS LOAD-BEARING, NOT DECORATION (wamn-0h0g.20.2).
---     Only the executor's pre-effect reclaim can clear this pair, and it first
---     classifies the immutable attempt ledger under the durable-class rule.
--- The `node_runs` leg that stood beside them was dropped by wamn-0h0g.15.82. It
--- encoded the OLD contract, "the release this RUN executed under"; under the
--- redefined contract an executed node is a HISTORY fact, not a current-claim
--- fact. Keeping it made the queue park the one claimability-reopening arm that
--- could not clear (a parked run has generally executed nodes), so a pod waking
--- that run on a different release refused — and because a released lease is not
--- crash evidence the run was then both unreapable and permanently its tenant's
--- FIFO head. What nodes 1..k ran under is a per-segment audit question whose
--- honest home is per-claim, and nothing is built for it here.
+-- Admission pins, including `effective_release_id`, never change. The claiming
+-- pod proves it carries that release and records only its verified manifest
+-- digest. That digest is write-once per claim attempt: a runnable pre-effect
+-- reclaim may clear it; a terminal run or durable run with immutable effect
+-- evidence may not. The next claim then records the digest afresh.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -305,8 +277,8 @@ AS $$
 BEGIN
     IF NEW.flow_id IS DISTINCT FROM OLD.flow_id
        OR NEW.flow_version IS DISTINCT FROM OLD.flow_version
-       OR NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
-       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
+       OR NEW.package_id IS DISTINCT FROM OLD.package_id
+       OR NEW.effective_release_id IS DISTINCT FROM OLD.effective_release_id
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
        OR NEW.durability_class IS DISTINCT FROM OLD.durability_class
@@ -318,8 +290,8 @@ BEGIN
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
     END IF;
-    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN
-        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN
+    IF OLD.manifest_digest IS NOT NULL THEN
+        IF NEW.manifest_digest IS NULL THEN
             IF NEW.status NOT IN ('dispatched', 'running')
                OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect
                            WHERE effect.tenant_id = OLD.tenant_id
@@ -329,8 +301,7 @@ BEGIN
                     ERRCODE = '55000',
                     MESSAGE = 'run-release-record-immutable';
             END IF;
-        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version
-           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN
+        ELSIF NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN
             RAISE EXCEPTION USING
                 ERRCODE = '55000',
                 MESSAGE = 'run-release-record-immutable';
@@ -416,8 +387,8 @@ CREATE TABLE wamn_run.runs (
     -- fabricates component provenance for historical flow rows.
     flow_id         text,
     flow_version    int,
-    catalog_id      text NOT NULL,
-    catalog_version int NOT NULL,
+    package_id      text NOT NULL,
+    effective_release_id int NOT NULL,
     environment     text NOT NULL,
     attachment_id   text,
     registration_id text,
@@ -460,14 +431,9 @@ CREATE TABLE wamn_run.runs (
     -- derived by private management admission. Array order is
     -- (component-digest, store-alias); callers never author this value.
     binding_world_json jsonb,
-    -- The claim-time release record. A run is NOT version-pinned at admission:
-    -- it executes under the release its CLAIMING pod carries, and the worker
-    -- writes that pod's own release identity here when it takes the lease,
-    -- once per claim attempt, enforced by `guard_run_admission_pins_immutable`.
-    -- Both are NULL on the admitted row and move together. `release_version`
-    -- is the release (catalog) version; `manifest_digest` is the RFC 8785
-    -- digest of that release's component/interface/wiring serving closure.
-    release_version int,
+    -- Admission pins the exact effective release. At claim, the worker proves
+    -- its mounted release has that identity and records the RFC 8785 digest of
+    -- its component/interface/wiring serving closure, once per claim attempt.
     manifest_digest text,
     input_json      jsonb,
     result_json     jsonb,
@@ -494,8 +460,8 @@ CREATE TABLE wamn_run.runs (
                                               'incompatible-contract', 'unbound-requirement')),
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
-    CHECK (catalog_id <> ''
-           AND catalog_version > 0
+    CHECK (package_id <> ''
+           AND effective_release_id > 0
            AND environment <> ''),
     CHECK (jsonb_typeof(invocation_context) = 'object'
            AND octet_length(invocation_context::text) <= 16384),
@@ -523,15 +489,9 @@ CREATE TABLE wamn_run.runs (
     CONSTRAINT runs_capture_mode_source_check CHECK (
       capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'
     ),
-    -- Both `IS NOT NULL` conjuncts are load-bearing: without them a well-formed
-    -- HALF pair makes this disjunct NULL rather than false, and a CHECK whose
-    -- expression is NULL is SATISFIED — so `(7, NULL)` and `(NULL, <digest>)`
-    -- were both accepted and the pair was not paired (wamn-0h0g.15.126).
     CONSTRAINT runs_release_record_check CHECK (
-      (release_version IS NULL AND manifest_digest IS NULL)
-      OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL
-          AND release_version > 0
-          AND manifest_digest ~ '^sha256:[0-9a-f]{64}$')
+      manifest_digest IS NULL
+      OR manifest_digest ~ '^sha256:[0-9a-f]{64}$'
     ),
     CONSTRAINT runs_wiring_identity_check CHECK (
       (wiring_id IS NULL AND wiring_version IS NULL)
@@ -558,15 +518,15 @@ CREATE TABLE wamn_run.runs (
     ),
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk
-        FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.releases (tenant_id, catalog_id, catalog_version)
+        FOREIGN KEY (tenant_id, effective_release_id)
+        REFERENCES catalog.effective_releases (tenant_id, effective_release_id)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
 CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing and trusted CDC event-causation traversal.
 CREATE INDEX runs_flow ON wamn_run.runs (tenant_id, flow_id, created_at);
-CREATE INDEX runs_release ON wamn_run.runs (tenant_id, catalog_id, catalog_version);
+CREATE INDEX runs_release ON wamn_run.runs (tenant_id, effective_release_id);
 CREATE INDEX runs_event_root ON wamn_run.runs (tenant_id, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
 CREATE INDEX runs_response_deadline ON wamn_run.runs (tenant_id, response_deadline_at)
@@ -631,10 +591,9 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- The guard is column-scoped, so the claim-time record columns must be named
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment,
+BEFORE UPDATE OF flow_id, flow_version, package_id, effective_release_id, environment,
                  capture_mode, durability_class, wiring_id, wiring_version,
-                 wiring_hash, binding_world_json,
-                 release_version, manifest_digest
+                 wiring_hash, binding_world_json, manifest_digest
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only

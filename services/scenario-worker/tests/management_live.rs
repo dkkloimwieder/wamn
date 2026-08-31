@@ -107,8 +107,10 @@ fn candidate_graph(wiring_id: &str, component: &str, operation: &str) -> serde_j
     })
 }
 
-/// The applied catalog version every seeded candidate is gated against.
-const CANDIDATE_CATALOG_VERSION: i32 = 1;
+/// The exact package version every seeded candidate is gated against.
+const CANDIDATE_PACKAGE_VERSION: &str = "1.0.0";
+/// The active effective release whose binding world the gate judges against.
+const CANDIDATE_EFFECTIVE_RELEASE_ID: i32 = 1;
 /// The identity the SERVER will derive for one submitted document.
 ///
 /// It is derived here the same way and by the same reader (wamn-0h0g.8.28), not
@@ -130,10 +132,14 @@ fn derived_hash(document: &serde_json::Value) -> String {
 /// accepted gate's report is stored under, the report id the receipt hands back,
 /// and what `get-report` resolves. There is no second identifier to derive,
 /// choose, or mismatch -- the column that used to carry one is gone.
-const CANDIDATE_CATALOG: &str = "catalog-candidate";
+const CANDIDATE_PACKAGE: &str = "candidate_package";
+const CANDIDATE_MANIFEST_SHA256: &str =
+    "sha256:1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c";
 const CANDIDATE_WIRING: &str = "orders-create";
 const CANDIDATE_COMPONENT_DIGEST: &str =
     "sha256:2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d";
+const CANDIDATE_PROJECTION_HASH: &str =
+    "sha256:4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f";
 const CANDIDATE_IMPORTS_FINGERPRINT: &str =
     "sha256:3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e";
 /// A SECOND candidate, identical in every way that matters to admission except
@@ -145,6 +151,8 @@ const EFFECTFUL_WIRING: &str = "orders-charge";
 const EFFECTFUL_COMPONENT: &str = "ledger";
 const EFFECTFUL_COMPONENT_DIGEST: &str =
     "sha256:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+const EFFECTFUL_PROJECTION_HASH: &str =
+    "sha256:7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c";
 const EFFECTFUL_IMPORTS_FINGERPRINT: &str =
     "sha256:6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b";
 /// Fixed loopback port for the gate. The gate is serial and env-gated, so a
@@ -444,7 +452,7 @@ async fn provision_project(
     Ok((project, task))
 }
 
-/// Seed the one applied catalog and the one gated candidate wiring.
+/// Seed one applied package and its active effective release.
 ///
 /// The candidate's component declares NO connection requirements, so its binding
 /// world is the empty array. That is deliberate: a stable empty world still
@@ -454,24 +462,35 @@ async fn provision_project(
 async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
     project
         .batch_execute(&format!(
-            "INSERT INTO catalog.catalogs \
-               (tenant_id, catalog_id, version, environment, schema_version, state) \
-             VALUES ('{TENANT}', '{CANDIDATE_CATALOG}', 1, '{ENVIRONMENT}', '0.1', 'applied'); \
-             INSERT INTO catalog.releases (tenant_id, catalog_id, catalog_version) \
-             VALUES ('{TENANT}', '{CANDIDATE_CATALOG}', 1); \
+            "INSERT INTO catalog.packages \
+               (tenant_id, package_id, package_version, manifest_sha256) \
+             VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
+                     '{CANDIDATE_MANIFEST_SHA256}'); \
+             INSERT INTO catalog.effective_releases \
+               (tenant_id, effective_release_id, environment) \
+             VALUES ('{TENANT}', {CANDIDATE_EFFECTIVE_RELEASE_ID}, '{ENVIRONMENT}'); \
+             INSERT INTO catalog.effective_release_packages \
+               (tenant_id, effective_release_id, package_id, package_version) \
+             VALUES ('{TENANT}', {CANDIDATE_EFFECTIVE_RELEASE_ID}, '{CANDIDATE_PACKAGE}', \
+                     '{CANDIDATE_PACKAGE_VERSION}'); \
+             INSERT INTO catalog.effective_release_heads \
+               (tenant_id, environment, effective_release_id) \
+             VALUES ('{TENANT}', '{ENVIRONMENT}', {CANDIDATE_EFFECTIVE_RELEASE_ID}); \
              INSERT INTO catalog.component_library \
-               (tenant_id, catalog_id, catalog_version, component, interface_version, operation, \
-                component_digest, imports, imports_fingerprint, effects, input_ports, \
-                output_ports, parameters) \
-             VALUES ('{TENANT}', '{CANDIDATE_CATALOG}', 1, 'entity', '0.1', 'create', \
-                     '{CANDIDATE_COMPONENT_DIGEST}', '[]', '{CANDIDATE_IMPORTS_FINGERPRINT}', \
-                     '[]', '[]', '[]', '[]'); \
+               (tenant_id, package_id, package_version, component, interface_version, operation, \
+                component_digest, projection_hash, imports, imports_fingerprint, effects, \
+                input_ports, output_ports, parameters) \
+             VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
+                     'entity', '0.1', 'create', \
+                     '{CANDIDATE_COMPONENT_DIGEST}', '{CANDIDATE_PROJECTION_HASH}', '[]', \
+                     '{CANDIDATE_IMPORTS_FINGERPRINT}', '[]', '[]', '[]', '[]'); \
              INSERT INTO catalog.component_library \
-               (tenant_id, catalog_id, catalog_version, component, interface_version, operation, \
-                component_digest, imports, imports_fingerprint, effects, input_ports, \
-                output_ports, parameters) \
-             VALUES ('{TENANT}', '{CANDIDATE_CATALOG}', 1, '{EFFECTFUL_COMPONENT}', '0.1', \
-                     'charge', '{EFFECTFUL_COMPONENT_DIGEST}', \
+               (tenant_id, package_id, package_version, component, interface_version, operation, \
+                component_digest, projection_hash, imports, imports_fingerprint, effects, \
+                input_ports, output_ports, parameters) \
+             VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
+                     '{EFFECTFUL_COMPONENT}', '0.1', 'charge', \
+                     '{EFFECTFUL_COMPONENT_DIGEST}', '{EFFECTFUL_PROJECTION_HASH}', \
                      '[\"wamn:postgres/client@0.1.0\"]', '{EFFECTFUL_IMPORTS_FINGERPRINT}', \
                      '[{{\"package\":\"wamn:postgres\",\"interfaces\":\
 [\"wamn:postgres/client@0.1.0\"]}}]', '[]', '[]', '[]'); \
@@ -480,7 +499,7 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
              VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');"
         ))
         .await
-        .context("seed the applied catalog and environment policy")?;
+        .context("seed the applied package, effective release, and environment policy")?;
     // AND NOTHING INTO `catalog.wirings` (wamn-0h0g.8.28).
     //
     // Two rows used to be inserted here by direct admin SQL so the gate could
@@ -492,9 +511,9 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
     // command carries, and this relation stays EMPTY for the whole run, which
     // `stored_wiring_count` asserts.
     //
-    // What IS seeded above stays seeded: applied catalogs, the component library
-    // and the environment policy are facts the catalog installer legitimately
-    // writes, and they are the postures the gate judges a document AGAINST.
+    // What IS seeded above stays seeded: the applied package, effective release,
+    // component library, and environment policy are facts their owning verbs
+    // legitimately write, and they are the postures the gate judges against.
     Ok(())
 }
 
@@ -517,8 +536,9 @@ async fn stored_wiring(project: &Client) -> Option<(String, u32, String, serde_j
     project
         .query_opt(
             "SELECT wiring_id, version, wiring_hash, graph_json \
-               FROM catalog.wirings WHERE tenant_id = $1 AND catalog_id = $2",
-            &[&TENANT, &CANDIDATE_CATALOG],
+               FROM catalog.wirings \
+              WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3",
+            &[&TENANT, &CANDIDATE_PACKAGE, &CANDIDATE_PACKAGE_VERSION],
         )
         .await
         .expect("read the published wiring")
@@ -536,7 +556,7 @@ async fn stored_wiring(project: &Client) -> Option<(String, u32, String, serde_j
 async fn minted_release_snapshot_count(project: &Client) -> i64 {
     project
         .query_one(
-            "SELECT count(*) FROM catalog.release_manifest_v2_snapshots WHERE tenant_id = $1",
+            "SELECT count(*) FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1",
             &[&TENANT],
         )
         .await
@@ -546,7 +566,7 @@ async fn minted_release_snapshot_count(project: &Client) -> i64 {
 
 /// One `gate` request carrying one document, in one project.
 ///
-/// The command carries the DOCUMENT and its catalog placement (wamn-0h0g.8.28).
+/// The command carries the DOCUMENT and its package placement (wamn-0h0g.8.28).
 /// Nothing here names a stored row, which is why an empty `catalog.wirings` is
 /// no longer an obstacle to being gated.
 fn gate_document_in(command_id: &str, project: &str, document: &serde_json::Value) -> String {
@@ -559,8 +579,8 @@ fn gate_document_in(command_id: &str, project: &str, document: &serde_json::Valu
                 "kind": "gate",
                 "input": {
                     "scope": {"project-id": project, "environment": ENVIRONMENT},
-                    "catalog-id": CANDIDATE_CATALOG,
-                    "gated-catalog-version": CANDIDATE_CATALOG_VERSION,
+                    "package-id": CANDIDATE_PACKAGE,
+                    "package-version": CANDIDATE_PACKAGE_VERSION,
                     "document": document,
                 },
             },
@@ -594,8 +614,8 @@ fn publish_document_in(command_id: &str, project: &str, document: &serde_json::V
                 "kind": "publish",
                 "input": {
                     "scope": {"project-id": project, "environment": ENVIRONMENT},
-                    "catalog-id": CANDIDATE_CATALOG,
-                    "gated-catalog-version": CANDIDATE_CATALOG_VERSION,
+                    "package-id": CANDIDATE_PACKAGE,
+                    "package-version": CANDIDATE_PACKAGE_VERSION,
                     "document": document,
                 },
             },
@@ -1091,8 +1111,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         &{
             let document = gate_document_for("gate-injected-body", PROJECT);
             let smuggled = document.replace(
-                r#""catalog-id""#,
-                r#""principal":"bob@example.com","catalog-id""#,
+                r#""package-id""#,
+                r#""principal":"bob@example.com","package-id""#,
             );
             assert_ne!(smuggled, document, "the injection matched nothing");
             smuggled
@@ -1168,7 +1188,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
 
     // ---- publish is mounted, but its green guard precedes the append -------
-    // The document is valid and compatible with the applied catalog, so the
+    // The document is valid and compatible with the effective release, so the
     // missing report is the only refusing predicate. The server derives the
     // report key from these bytes; the command carries no hash to forge.
     let candidate_document = candidate_graph(CANDIDATE_WIRING, "entity", "create");
@@ -1457,7 +1477,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     //
     // This is the behavioural proof, not a source scan. The effectful candidate
     // is identical to the gated one in every way admission cares about -- same
-    // tenant, same applied catalog version, same well-formed single case, its
+    // tenant, same effective release, same well-formed single case, its
     // own wiring hash and its own gate report -- and differs ONLY in the
     // `effects` value of the component its node resolves to. It therefore
     // cannot be refused for any other reason, and if the posture read were
@@ -1522,7 +1542,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
 
     // The PURE candidate was ACCEPTED a few lines above, against the very same
-    // catalog version and the very same posture read. That is what makes this a
+    // effective release and the very same posture read. That is what makes this a
     // predicate rather than a blanket refusal: one document passes the clause
     // and one does not, and the effects projection is the only difference.
     assert_eq!(

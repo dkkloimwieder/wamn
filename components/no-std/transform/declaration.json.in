@@ -1,8 +1,8 @@
 {
   "scope": {
     "tenant-id": "__TENANT_ID__",
-    "catalog-id": "__CATALOG_ID__",
-    "catalog-version": __CATALOG_VERSION__
+    "package-id": "__PACKAGE_ID__",
+    "package-version": "__PACKAGE_VERSION__"
   },
   "component": "transform",
   "interface-version": "0.1.0",

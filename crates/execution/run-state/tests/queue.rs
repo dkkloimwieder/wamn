@@ -206,7 +206,7 @@ fn global_fifo_uses_available_stream_run_tie_break() {
     assert!(sql.contains("AS MATERIALIZED"));
     assert!(sql.contains("FOR UPDATE OF selected_run, q SKIP LOCKED"));
     assert!(sql.contains("LIMIT 1"));
-    assert!(sql.contains("selected_run.catalog_id = $1"));
+    assert!(sql.contains("selected_run.package_id = ANY($1::text[])"));
     assert!(sql.contains("selected_run.environment = $2"));
     assert!(sql.contains("AS router_caller_attached"));
     assert!(sql.contains("AS durable_caller_attached"));
@@ -245,14 +245,16 @@ fn production_lease_uses_a_fresh_post_fence_clock() {
 fn app_pre_effect_step_clears_only_abandoned_run_state() {
     let sql = clear_pre_effect_state_sql();
     assert!(sql.contains("SET state_json = NULL"));
-    // The abandoned attempt's release record is projection of that attempt and
+    // The abandoned attempt's manifest record is projection of that attempt and
     // joins the replacement set, so the next claim records afresh
     // (wamn-0h0g.15.55).
-    assert!(sql.contains("release_version = NULL, manifest_digest = NULL"));
+    assert!(sql.contains("manifest_digest = NULL"));
+    assert!(!sql.contains("release_version"));
     for preserved in [
         "input_json =",
         "invocation_context =",
-        "catalog_id =",
+        "package_id =",
+        "effective_release_id =",
         "updated_at =",
         "DELETE FROM effect_attempts",
     ] {
@@ -320,7 +322,7 @@ fn janitor_excludes_effect_attempts() {
     let select = select_exhausted_production_sql();
     assert!(select.contains("q.attempts >= q.max_attempts"));
     assert!(select.contains("FOR UPDATE OF selected_run, q SKIP LOCKED"));
-    assert!(select.contains("selected_run.catalog_id = $2"));
+    assert!(select.contains("selected_run.package_id = ANY($2::text[])"));
     assert!(select.contains("selected_run.environment = $3"));
     assert!(!select.contains("effect_attempts"));
     let terminalize = terminalize_exhausted_production_sql();

@@ -11,10 +11,9 @@
 //! runs into the global FIFO. This crate is ONLY the declaration surface; it
 //! does not decode, materialize, or enqueue.
 //!
-//! **Rename-proof by entity-id keying (EVT-OIDMAP, wamn-l5i9.11):**
-//! [`entity`](EventRegistration::entity) is the stable catalog **entity id**, not
-//! a table name — the same id the CDC envelope carries in its `entity` segment
-//! ([`wamn_event_wire::Envelope`]). A table rename never orphans a registration.
+//! [`entity`](EventRegistration::entity) is the package-local stable model key
+//! from `wamn.json`, not a relation name. The manifest is the sole mapping from
+//! that key to a schema/table pair.
 //!
 //! **Impact analysis (11.8, wamn-wvb) covers registrations:** because the entity
 //! is referenced by id, "what breaks if I drop/rename entity X" enumerates the
@@ -37,7 +36,6 @@
 use serde::{Deserialize, Serialize};
 
 use wamn_event_wire::Op;
-use wamn_schema_model::EntityId;
 
 /// The registration-model **format** version.
 pub const SCHEMA_VERSION: &str = "0.1";
@@ -56,7 +54,7 @@ pub enum RegistrationInput {
 /// One event registration — a subscribing flow's declaration of the row events
 /// it wants and how they are filtered.
 ///
-/// The `(catalog_id, registration_id)` pair is the identity (unique within a
+/// The `(package_id, registration_id)` pair is the identity (unique within a
 /// tenant); `flow_id` + `entity` are denormalized into storage columns for the
 /// materializer's per-entity sweep and impact analysis.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,17 +62,17 @@ pub enum RegistrationInput {
 pub struct EventRegistration {
     /// The registration-model format version (e.g. `"0.1"`). See [`SCHEMA_VERSION`].
     pub schema_version: String,
-    /// Stable id, unique within its catalog (the storage row key).
+    /// Stable id, unique within its package (the storage row key).
     pub registration_id: String,
-    /// The catalog this registration belongs to (`Catalog::catalog_id`).
-    pub catalog_id: String,
+    /// Package-local ownership. Package version is deliberately absent because
+    /// registrations remain hot-editable while releases select exact versions.
+    pub package_id: String,
     /// The subscribing flow (`Flow::id`) — the durable consumer the materializer
     /// opens, and the `run_id = <flow>:evt:<seq>` prefix (§5).
     pub flow_id: String,
-    /// The entity whose row events fire this registration — the stable catalog
-    /// **entity id** (rename-proof, EVT-OIDMAP), matching the CDC envelope's
-    /// `entity` segment.
-    pub entity: EntityId,
+    /// Stable package-local model key, matching the CDC envelope's `entity`
+    /// segment. It is resolved through the strict package manifest.
+    pub entity: String,
     /// The row ops that fire it. **Non-empty** — a registration matching no op is
     /// inert (rejected by [`validate`](crate::validate)).
     pub ops: Vec<Op>,

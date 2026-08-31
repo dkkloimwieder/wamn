@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use wamn_schema_introspection::migration_policy::{
     MigrationPolicyError, MigrationPolicyErrorKind, validate_migration_file,
+    validate_migration_file_for_schemas,
 };
 
 static ARTIFACT_ID: AtomicU64 = AtomicU64::new(0);
@@ -48,6 +49,26 @@ fn accepts_the_package_owned_receiving_migration() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../packages/receiving/migrations/0001_initial.sql");
     validate_migration_file(&path, "receiving").expect("Receiving migration must be admitted");
+}
+
+#[test]
+fn admits_every_manifest_schema_and_refuses_an_out_of_set_target() {
+    let admitted = TempArtifact::write(
+        "sql",
+        "CREATE TABLE receiving.one (id uuid); CREATE TABLE inventory.two (id uuid);",
+    );
+    validate_migration_file_for_schemas(admitted.path(), &["inventory", "receiving"])
+        .expect("both manifest-declared schemas are admitted");
+
+    let refused = TempArtifact::write(
+        "sql",
+        "CREATE TABLE receiving.one (id uuid); CREATE TABLE control.hidden (id uuid);",
+    );
+    let error = validate_migration_file_for_schemas(refused.path(), &["inventory", "receiving"])
+        .expect_err("a target outside the manifest schema set must refuse");
+    assert_eq!(error.kind(), MigrationPolicyErrorKind::CrossSchemaMutation);
+    assert_eq!(error.statement_index(), Some(2));
+    assert!(error.to_string().contains("control"));
 }
 
 #[test]

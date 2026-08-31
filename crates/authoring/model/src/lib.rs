@@ -338,30 +338,30 @@ pub struct ValidatedDraftRef {
 /// the input, the judgment is a total function of it, and the gate reads
 /// `catalog.wirings` not at all.
 ///
-/// `catalog_id` and `gated_catalog_version` ride with it for the same reason
+/// `package_id` and `package_version` ride with it for the same reason
 /// `publish` carries them (wamn-0h0g.7.10): the postures that can refuse a
 /// candidate — the admitted effect projection and the resolvable binding world —
-/// are facts of one APPLIED CATALOG VERSION, and neither value rides the
+/// are facts of one exact package coordinate, and neither value rides the
 /// document. They came off the stored row before; now they are stated.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Gate {
     pub scope: AuthoringScope,
-    /// Catalog identity whose admitted component facts judge this document.
-    pub catalog_id: String,
-    /// Applied catalog version those facts are read at.
-    pub gated_catalog_version: u32,
+    /// Package identity whose admitted component facts judge this document.
+    pub package_id: String,
+    /// Exact package version those facts are read at.
+    pub package_version: String,
     /// The wiring document itself — the same bytes `publish` carries.
     pub document: serde_json::Value,
 }
 
-/// Publish one gated wiring document into a named catalog version.
+/// Publish one gated wiring document into a named package version.
 ///
 /// # What this carries, and why each field is here (wamn-0h0g.7.10)
 ///
 /// `catalog.wirings` needs seven values. `tenant_id` is the authenticated
 /// scope's, `wiring_id` and `version` ride the document, and `graph_json` IS the
-/// document — but `catalog_id` and `gated_catalog_version` ride NEITHER the
+/// document — but `package_id` and `package_version` ride NEITHER the
 /// document nor its hash, which is why `ctl author-wiring` takes both as
 /// separate argv. So the command carries them too, and the row is writable from
 /// this input alone.
@@ -388,10 +388,10 @@ pub struct Gate {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PublishValidatedDraft {
     pub scope: AuthoringScope,
-    /// Catalog identity the wiring is published into.
-    pub catalog_id: String,
-    /// Applied catalog version whose component facts gate this document.
-    pub gated_catalog_version: u32,
+    /// Package identity the wiring is published into.
+    pub package_id: String,
+    /// Exact package version whose component facts gate this document.
+    pub package_version: String,
     /// The wiring document itself — `catalog.wirings.graph_json`.
     pub document: serde_json::Value,
 }

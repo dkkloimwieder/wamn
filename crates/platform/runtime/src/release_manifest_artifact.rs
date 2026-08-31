@@ -15,9 +15,9 @@ use crate::component_artifact::{
     ComponentArtifactReference, ComponentArtifactReferenceError, component_artifact_reference,
 };
 
-/// OCI artifact type and single-layer media type for canonical format-2 bytes.
+/// OCI artifact type and single-layer media type for canonical format-3 bytes.
 pub const RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE: &str =
-    "application/vnd.wamn.release-manifest.v2+json";
+    "application/vnd.wamn.release-manifest.v3+json";
 
 /// OCI's required empty config descriptor for a data artifact.
 pub const RELEASE_MANIFEST_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.empty.v1+json";
@@ -65,7 +65,7 @@ impl std::error::Error for ReleaseManifestLayoutRefusal {}
 /// The two descriptors a verified release-manifest artifact carries.
 #[derive(Debug)]
 pub struct ReleaseManifestArtifactBlobs<'a> {
-    /// The single layer holding the canonical format-2 manifest bytes.
+    /// The single layer holding the canonical format-3 manifest bytes.
     pub layer: &'a OciDescriptor,
     /// The required empty OCI config descriptor.
     pub config: &'a OciDescriptor,
@@ -158,7 +158,7 @@ mod tests {
     fn release_manifest_artifact_wire_literals_are_pinned() {
         assert_eq!(
             RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE,
-            "application/vnd.wamn.release-manifest.v2+json"
+            "application/vnd.wamn.release-manifest.v3+json"
         );
         assert_eq!(
             RELEASE_MANIFEST_CONFIG_MEDIA_TYPE,

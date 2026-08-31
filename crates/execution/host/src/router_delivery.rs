@@ -157,7 +157,7 @@ impl RouterDeliveryBridge {
         let release = &self.release.manifest().release;
         let request = RouterDriverRequest {
             tenant_id: release.tenant_id.clone(),
-            catalog_id: release.catalog_id.clone(),
+            package_id: target.package_id.clone(),
             environment: release.environment.clone(),
             // Cloned, not moved: the settled preview after the driver call still
             // has to name the delivery it settles, and `request` is gone by then.
@@ -191,7 +191,8 @@ impl RouterDeliveryBridge {
                     &result,
                 )
                 .await;
-                self.publish_emit(&delivery.outcome, causation).await?;
+                self.publish_emit(&target.package_id, &delivery.outcome, causation)
+                    .await?;
                 lower_outcome(delivery.outcome)
             }
             Err(error) if error.downcast_ref::<PreloadedWiringMissing>().is_some() => {
@@ -266,6 +267,7 @@ impl RouterDeliveryBridge {
 
     async fn publish_emit(
         &self,
+        package_id: &str,
         outcome: &Outcome,
         causation: Causation,
     ) -> Result<(), DeliveryError> {
@@ -281,6 +283,7 @@ impl RouterDeliveryBridge {
         self.jetstream
             .publish_derived(DerivedPublishRequest {
                 component_id: ROUTER_DELIVERY_ID.to_owned(),
+                package_id: package_id.to_owned(),
                 entity: entity.clone(),
                 operation: *operation,
                 payload: event.clone(),
@@ -397,6 +400,7 @@ impl<'a> SourceRef<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedTarget {
+    package_id: String,
     wiring_id: String,
     wiring_version: u32,
     caller_attached: bool,
@@ -413,6 +417,7 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                 .attachments
                 .get(id)
                 .map(|attachment| ResolvedTarget {
+                    package_id: attachment.package_id.clone(),
                     wiring_id: attachment.wiring_id.clone(),
                     wiring_version: attachment.wiring_version,
                     caller_attached: true,
@@ -438,6 +443,7 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                 .registrations
                 .get(id)
                 .map(|registration| ResolvedTarget {
+                    package_id: registration.package_id.clone(),
                     wiring_id: registration.wiring_id.clone(),
                     wiring_version: registration.wiring_version,
                     caller_attached: false,
@@ -661,11 +667,11 @@ mod tests {
 
     use super::*;
 
-    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1"}],"format-version":2,"registrations":{"orders-changed":{"entity":"orders","ops":["insert","update"],"wiring-id":"shipping","wiring-version":2}},"release":{"catalog-id":"manifest-mint-catalog","catalog-version":3,"environment":"prod","tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","wiring-id":"shipping","wiring-version":2}]}"#;
+    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","package-id":"manifest_mint"}],"format-version":3,"registrations":{"orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
 
     fn manifest() -> ServingManifest {
         ServingManifest::from_canonical_bytes(MANIFEST)
-            .expect("format-2 fixture is canonical")
+            .expect("format-3 fixture is canonical")
             .0
     }
 
@@ -674,6 +680,7 @@ mod tests {
         assert_eq!(
             resolve_target(&manifest(), SourceRef::Attachment("orders-http")),
             Some(ResolvedTarget {
+                package_id: "manifest_mint".into(),
                 wiring_id: "orders".into(),
                 wiring_version: 1,
                 caller_attached: true,
@@ -684,6 +691,7 @@ mod tests {
         assert_eq!(
             resolve_target(&manifest(), SourceRef::Registration("orders-changed")),
             Some(ResolvedTarget {
+                package_id: "manifest_mint".into(),
                 wiring_id: "shipping".into(),
                 wiring_version: 2,
                 caller_attached: false,

@@ -11,9 +11,10 @@
 //! by a total with nothing running through it is the weakest proof this branch
 //! accepts, so each statement is executed here, verbatim, with bound
 //! parameters, as the minted generation. The union of the relations the three
-//! touch IS [`sql::EXECUTOR_PLATFORM_CATALOG_RELATIONS`]: activation, heads,
-//! wirings and tombstones plus the library (active); the v2 snapshot and
-//! release components (release); and the four connection relations (candidate).
+//! touch IS [`sql::EXECUTOR_PLATFORM_CATALOG_RELATIONS`]: activation, effective
+//! release heads and membership, wirings and tombstones plus the library
+//! (active); the v3 snapshot and release components (release); and the four
+//! connection relations (candidate).
 //!
 //! THE RAW STATEMENTS RATHER THAN `resolve_active_wiring` AND FRIENDS. Those
 //! wrappers decode and LOWER the result through `wiring_lowering`, which is a
@@ -62,9 +63,10 @@ const GENERATION_PASSWORD: &str = "executor-surface-proof-password";
 const ELSEWHERE: &str = "w68_execplat_elsewhere";
 
 const TENANT: &str = "t1";
-const CATALOG_ID: &str = "cat";
+const PACKAGE_ID: &str = "cat";
+const PACKAGE_VERSION: &str = "1.0.0";
 const ENVIRONMENT: &str = "prod";
-const CATALOG_VERSION: i32 = 1;
+const EFFECTIVE_RELEASE_ID: i32 = 1;
 const WIRING_ID: &str = "wiring-a";
 const WIRING_VERSION: i32 = 1;
 /// The retired pointer: enabled, well formed, and tombstoned.
@@ -256,56 +258,73 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .context("assert the generation identity")?;
 
     let component_digest = digest("a");
+    let projection_hash = digest("6");
     let imports_fingerprint = digest("b");
     let wiring_hash = digest("c");
     let dead_wiring_hash = digest("d");
-    let manifest_body = "{\"release\":{\"environment\":\"prod\"}}";
+    let manifest_sha256 = digest("f");
+    let requirement_hash = digest("1");
+    let definition_hash = digest("2");
+    let validation_hash = digest("3");
+    let manifest_body = concat!(
+        "{\"attachments\":{},\"components\":[],\"format-version\":3,",
+        "\"registrations\":{},\"release\":{\"effective-release-id\":1,",
+        "\"environment\":\"prod\",\"packages\":[{\"package-id\":\"cat\",",
+        "\"package-version\":\"1.0.0\",\"tenant-id\":\"t1\"}],",
+        "\"tenant-id\":\"t1\"},\"wirings\":[]}"
+    );
     admin
         .batch_execute(&format!(
-            "INSERT INTO catalog.catalogs \
-               (tenant_id,catalog_id,version,environment,schema_version,state) \
-             VALUES ('{TENANT}','{CATALOG_ID}',{CATALOG_VERSION},'{ENVIRONMENT}','0.1','applied'); \
-             INSERT INTO catalog.releases (tenant_id,catalog_id,catalog_version) \
-             VALUES ('{TENANT}','{CATALOG_ID}',{CATALOG_VERSION}); \
-             INSERT INTO catalog.catalog_heads \
-               (tenant_id,catalog_id,environment,applied_catalog_version) \
-             VALUES ('{TENANT}','{CATALOG_ID}','{ENVIRONMENT}',{CATALOG_VERSION}); \
+            "INSERT INTO catalog.packages \
+               (tenant_id,package_id,package_version,manifest_sha256) \
+             VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{manifest_sha256}'); \
+             INSERT INTO catalog.effective_releases \
+               (tenant_id,effective_release_id,environment,verified_publisher_principal) \
+             VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{ENVIRONMENT}','test-publisher'); \
+             INSERT INTO catalog.effective_release_packages \
+               (tenant_id,effective_release_id,package_id,package_version) \
+             VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{PACKAGE_ID}','{PACKAGE_VERSION}'); \
+             INSERT INTO catalog.effective_release_heads \
+               (tenant_id,environment,effective_release_id) \
+             VALUES ('{TENANT}','{ENVIRONMENT}',{EFFECTIVE_RELEASE_ID}); \
              INSERT INTO catalog.component_library \
-               (tenant_id,catalog_id,catalog_version,component,interface_version,operation, \
-                component_digest,imports,imports_fingerprint,effects,input_ports,output_ports, \
-                parameters) \
-             VALUES ('{TENANT}','{CATALOG_ID}',{CATALOG_VERSION},'entity','0.1','create', \
-                     '{component_digest}','[]','{imports_fingerprint}','[]','[]','[]','[]'); \
+               (tenant_id,package_id,package_version,component,interface_version,operation, \
+                component_digest,projection_hash,imports,imports_fingerprint,effects,input_ports, \
+                output_ports,parameters) \
+             VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','entity','0.1','create', \
+                     '{component_digest}','{projection_hash}','[]','{imports_fingerprint}', \
+                     '[]','[]','[]','[]'); \
              INSERT INTO catalog.wirings \
-               (tenant_id,catalog_id,wiring_id,version,gated_catalog_version, \
+               (tenant_id,package_id,package_version,wiring_id,version, \
                 graph_json,wiring_hash) VALUES \
-               ('{TENANT}','{CATALOG_ID}','{WIRING_ID}',{WIRING_VERSION},{CATALOG_VERSION}, \
+               ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{WIRING_ID}',{WIRING_VERSION}, \
                 '{live_graph}','{wiring_hash}'), \
-               ('{TENANT}','{CATALOG_ID}','{DEAD_WIRING_ID}',{WIRING_VERSION},{CATALOG_VERSION}, \
+               ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{DEAD_WIRING_ID}',{WIRING_VERSION}, \
                 '{dead_graph}','{dead_wiring_hash}'); \
              INSERT INTO catalog.wiring_activation \
-               (tenant_id,catalog_id,environment,wiring_id,confirmed_definition_hash,enabled) \
+               (tenant_id,package_id,environment,wiring_id,confirmed_definition_hash,enabled) \
              VALUES \
-               ('{TENANT}','{CATALOG_ID}','{ENVIRONMENT}','{WIRING_ID}','{wiring_hash}',true), \
-               ('{TENANT}','{CATALOG_ID}','{ENVIRONMENT}','{DEAD_WIRING_ID}', \
+               ('{TENANT}','{PACKAGE_ID}','{ENVIRONMENT}','{WIRING_ID}','{wiring_hash}',true), \
+               ('{TENANT}','{PACKAGE_ID}','{ENVIRONMENT}','{DEAD_WIRING_ID}', \
                 '{dead_wiring_hash}',true); \
              INSERT INTO catalog.wiring_tombstones \
-               (tenant_id,catalog_id,environment,wiring_id,removed_in_catalog_version) \
-             VALUES ('{TENANT}','{CATALOG_ID}','{ENVIRONMENT}','{DEAD_WIRING_ID}', \
-                     {CATALOG_VERSION}); \
+               (tenant_id,package_id,environment,wiring_id,reason) \
+             VALUES ('{TENANT}','{PACKAGE_ID}','{ENVIRONMENT}','{DEAD_WIRING_ID}', \
+                     'surface-proof'); \
              INSERT INTO catalog.release_components \
-               (tenant_id,catalog_id,catalog_version,wiring_id,wiring_version,component_digest) \
-             VALUES ('{TENANT}','{CATALOG_ID}',{CATALOG_VERSION},'{WIRING_ID}',{WIRING_VERSION}, \
-                     '{component_digest}'); \
-             INSERT INTO catalog.release_manifest_v2_snapshots \
-               (tenant_id,catalog_id,catalog_version,manifest_digest,canonical_bytes) \
-             SELECT '{TENANT}','{CATALOG_ID}',{CATALOG_VERSION}, \
+               (tenant_id,effective_release_id,package_id,package_version,wiring_id, \
+                wiring_version,component_digest) \
+             VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{PACKAGE_ID}','{PACKAGE_VERSION}', \
+                     '{WIRING_ID}',{WIRING_VERSION},'{component_digest}'); \
+             INSERT INTO catalog.release_manifest_v3_snapshots \
+               (tenant_id,effective_release_id,manifest_digest,canonical_bytes) \
+             SELECT '{TENANT}',{EFFECTIVE_RELEASE_ID}, \
                     'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to('{manifest_body}', 'UTF8') AS bytes) AS frozen; \
              INSERT INTO catalog.connection_requirements \
                (tenant_id,component_digest,store_alias,requirement_json,requirement_hash) \
              VALUES ('{TENANT}','{component_digest}','a-store', \
-                     '{{\"requirement-type\":\"http\"}}','req-a'); \
+                     '{{\"requirement-type\":\"http\"}}','{requirement_hash}'); \
              INSERT INTO catalog.connection_instances \
                (tenant_id,environment,instance_id,requirement_type,contract) \
              VALUES ('{TENANT}','{ENVIRONMENT}','instance-a','http','wamn:http/0.1'); \
@@ -313,23 +332,24 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                (tenant_id,environment,instance_id,generation,definition_json, \
                 definition_hash,credential_set_handle) \
              VALUES ('{TENANT}','{ENVIRONMENT}','instance-a',1, \
-                     '{{\"base-url\":\"https://a.invalid\"}}','definition-a-1','credential-a-1'); \
+                     '{{\"base-url\":\"https://a.invalid\"}}','{definition_hash}', \
+                     'credential-a-1'); \
              UPDATE catalog.connection_instances \
                 SET active_generation=1,revision=revision+1, \
                     updated_at=clock_timestamp()+interval '1 second' \
               WHERE tenant_id='{TENANT}' AND environment='{ENVIRONMENT}'; \
              INSERT INTO catalog.connection_bindings \
-               (tenant_id,catalog_id,catalog_version,component_digest,store_alias, \
+               (tenant_id,effective_release_id,component_digest,store_alias, \
                 environment,instance_id,binding_status,validation_status,validation_hash) \
-             VALUES ('{TENANT}','{CATALOG_ID}',{CATALOG_VERSION},'{component_digest}','a-store', \
-                     '{ENVIRONMENT}','instance-a','active','valid','validation-a'); \
+             VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{component_digest}','a-store', \
+                     '{ENVIRONMENT}','instance-a','active','valid','{validation_hash}'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id,expected_environment,durability_class) \
              VALUES ('{TENANT}','{ENVIRONMENT}','standard'); \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
                 wiring_id,wiring_version,status,input_json) \
-             VALUES ('{TENANT}','run-1','f',1,'{CATALOG_ID}',{CATALOG_VERSION},'{ENVIRONMENT}', \
+             VALUES ('{TENANT}','run-1','f',1,'{PACKAGE_ID}',{EFFECTIVE_RELEASE_ID},'{ENVIRONMENT}', \
                      '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}'); \
              INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('{TENANT}','run-1');",
             live_graph = graph(WIRING_ID),
@@ -348,7 +368,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             ACTIVE_WIRING_SQL,
             &[
                 &TENANT,
-                &CATALOG_ID,
+                &PACKAGE_ID,
                 &ENVIRONMENT,
                 &WIRING_ID,
                 &WIRING_VERSION,
@@ -362,17 +382,19 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         "the enabled pointer resolved to no row under the executor credential"
     );
     assert_eq!(active[0].get::<_, i32>(0), WIRING_VERSION);
-    assert_eq!(active[0].get::<_, i32>(1), CATALOG_VERSION);
-    assert_eq!(active[0].get::<_, String>(3), wiring_hash);
-    let components: Value = serde_json::from_str(&active[0].get::<_, String>(4))?;
+    assert_eq!(active[0].get::<_, i32>(1), EFFECTIVE_RELEASE_ID);
+    assert_eq!(active[0].get::<_, String>(2), PACKAGE_VERSION);
+    assert_eq!(active[0].get::<_, String>(4), wiring_hash);
+    let components: Value = serde_json::from_str(&active[0].get::<_, String>(5))?;
     assert_eq!(
         components,
         serde_json::json!([{
             "scope": {
-                "tenant-id": TENANT, "catalog-id": CATALOG_ID,
-                "catalog-version": CATALOG_VERSION,
+                "tenant-id": TENANT, "package-id": PACKAGE_ID,
+                "package-version": PACKAGE_VERSION,
             },
             "component": "entity", "interface-version": "0.1", "operation": "create",
+            "registered-operation": null,
             "component-digest": component_digest, "imports": [],
             "imports-fingerprint": imports_fingerprint, "effects": [],
             "input-ports": [], "output-ports": [], "parameters": [],
@@ -390,7 +412,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             ACTIVE_WIRING_SQL,
             &[
                 &TENANT,
-                &CATALOG_ID,
+                &PACKAGE_ID,
                 &ENVIRONMENT,
                 &DEAD_WIRING_ID,
                 &WIRING_VERSION,
@@ -404,9 +426,9 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     let manifest_digest: String = admin
         .query_one(
-            "SELECT manifest_digest FROM catalog.release_manifest_v2_snapshots \
-              WHERE tenant_id=$1 AND catalog_id=$2 AND catalog_version=$3",
-            &[&TENANT, &CATALOG_ID, &CATALOG_VERSION],
+            "SELECT manifest_digest FROM catalog.release_manifest_v3_snapshots \
+              WHERE tenant_id=$1 AND effective_release_id=$2",
+            &[&TENANT, &EFFECTIVE_RELEASE_ID],
         )
         .await?
         .get(0);
@@ -415,11 +437,11 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             RELEASE_WIRING_SQL,
             &[
                 &TENANT,
-                &CATALOG_ID,
+                &PACKAGE_ID,
                 &ENVIRONMENT,
                 &WIRING_ID,
                 &WIRING_VERSION,
-                &CATALOG_VERSION,
+                &EFFECTIVE_RELEASE_ID,
                 &manifest_digest,
             ],
         )
@@ -430,8 +452,9 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         1,
         "the frozen release version resolved to no row under the executor credential"
     );
-    assert_eq!(release[0].get::<_, String>(3), wiring_hash);
-    let release_components: Value = serde_json::from_str(&release[0].get::<_, String>(4))?;
+    assert_eq!(release[0].get::<_, String>(2), PACKAGE_VERSION);
+    assert_eq!(release[0].get::<_, String>(4), wiring_hash);
+    let release_components: Value = serde_json::from_str(&release[0].get::<_, String>(5))?;
     assert_eq!(
         release_components.as_array().map(Vec::len),
         Some(1),
@@ -446,11 +469,11 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             RELEASE_WIRING_SQL,
             &[
                 &TENANT,
-                &CATALOG_ID,
+                &PACKAGE_ID,
                 &ENVIRONMENT,
                 &WIRING_ID,
                 &WIRING_VERSION,
-                &CATALOG_VERSION,
+                &EFFECTIVE_RELEASE_ID,
                 &digest("e"),
             ],
         )
@@ -465,11 +488,11 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             CANDIDATE_WIRING_SQL,
             &[
                 &TENANT,
-                &CATALOG_ID,
+                &PACKAGE_ID,
                 &ENVIRONMENT,
                 &WIRING_ID,
                 &WIRING_VERSION,
-                &CATALOG_VERSION,
+                &EFFECTIVE_RELEASE_ID,
                 &wiring_hash,
             ],
         )
@@ -481,24 +504,24 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         "the frozen candidate resolved to no row under the executor credential"
     );
     assert_eq!(
-        (candidate[0].get::<_, i64>(5), candidate[0].get::<_, i64>(6)),
+        (candidate[0].get::<_, i64>(6), candidate[0].get::<_, i64>(7)),
         (1, 0),
         "the candidate node summary is wrong"
     );
     assert_eq!(
-        (candidate[0].get::<_, i64>(7), candidate[0].get::<_, i64>(8)),
+        (candidate[0].get::<_, i64>(8), candidate[0].get::<_, i64>(9)),
         (1, 1),
         "the requirement did not resolve to one usable binding"
     );
-    let binding_world: Value = serde_json::from_str(&candidate[0].get::<_, String>(9))?;
+    let binding_world: Value = serde_json::from_str(&candidate[0].get::<_, String>(10))?;
     assert_eq!(
         binding_world,
         serde_json::json!([{
             "component-digest": component_digest, "store-alias": "a-store",
-            "requirement-hash": "req-a", "instance-id": "instance-a",
+            "requirement-hash": requirement_hash, "instance-id": "instance-a",
             "instance-revision": 1, "requirement-type": "http",
-            "contract": "wamn:http/0.1", "validation-hash": "validation-a",
-            "generation": 1, "definition-hash": "definition-a-1",
+            "contract": "wamn:http/0.1", "validation-hash": validation_hash,
+            "generation": 1, "definition-hash": definition_hash,
             "credential-set-handle": "credential-a-1",
         }]),
         "the binding world the four connection relations produce is wrong"
@@ -511,11 +534,11 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             CANDIDATE_WIRING_SQL,
             &[
                 &TENANT,
-                &CATALOG_ID,
+                &PACKAGE_ID,
                 &ENVIRONMENT,
                 &WIRING_ID,
                 &WIRING_VERSION,
-                &CATALOG_VERSION,
+                &EFFECTIVE_RELEASE_ID,
                 &dead_wiring_hash,
             ],
         )

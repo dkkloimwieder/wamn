@@ -60,12 +60,15 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
             "INSERT INTO {SCHEMA}.environment_policies \
                (tenant_id,expected_environment,durability_class) \
              VALUES ('t1','dev','standard'); \
-             INSERT INTO catalog.catalogs \
-               (tenant_id,catalog_id,version,environment,schema_version,state) \
-             VALUES ('t1','cat',1,'dev','0.1','applied'); \
-             INSERT INTO catalog.releases \
-               (tenant_id,catalog_id,catalog_version) \
-             VALUES ('t1','cat',1);"
+             INSERT INTO catalog.packages \
+               (tenant_id,package_id,package_version,manifest_sha256) \
+             VALUES ('t1','cat','1.0.0','{HASH}'); \
+             INSERT INTO catalog.effective_releases \
+               (tenant_id,effective_release_id,environment,verified_publisher_principal) \
+             VALUES ('t1',1,'dev','terminalize-live'); \
+             INSERT INTO catalog.effective_release_packages \
+               (tenant_id,effective_release_id,package_id,package_version) \
+             VALUES ('t1',1,'cat','1.0.0');"
         ))
         .await
         .expect("seed admission pin parents");
@@ -77,7 +80,7 @@ async fn seed_run(client: &Client, run: &str, status: &str, fail_kind: Option<&s
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                   (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
                     environment,status,capture_mode,input_json, \
                     result_json,state_json,caller_outcome_kind,caller_outcome_json, \
                     caller_release_node_id,caller_outcome_hash,caller_released_at,fail_kind, \

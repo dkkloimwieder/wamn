@@ -16,7 +16,7 @@
 
    The client does not copy or edit the platform package. The platform does not edit client-owned definitions.
 2. The POC includes a narrow `effective_release_builder` that combines one exact platform application package version and one exact client overlay application package version, validates ownership and consumed contracts, detects conflicts, and emits exact effective bindings. A general-purpose extension resolver remains deferred.
-3. Each package owns an ordered PostgreSQL migration stream. The physical data model is authored as migration SQL; WAMN does not introduce a YAML or JSON schema DSL.
+3. Each package version owns an ordered, cumulative PostgreSQL migration stream. Every non-root version declares its exact `predecessor_version`; package versions form one linear, one-leaf lineage. The physical data model is authored as migration SQL; WAMN does not introduce a YAML or JSON schema DSL.
 4. Schema authority is one way:
 
    ```text
@@ -207,7 +207,7 @@ Illustrative platform package:
 
 ```text
 wamn_receiving/
-  migration/
+  migrations/
     0001_initial.sql
 
   query/
@@ -229,7 +229,7 @@ Illustrative client overlay:
 
 ```text
 client_acme_receiving/
-  migration/
+  migrations/
     0001_add_inspection_required.sql
     0002_quality_inspection.sql
 
@@ -250,6 +250,7 @@ The migration files own physical PostgreSQL structure. Application metadata decl
 
 ```text
 package identity and base contract dependencies
+predecessor_version and cumulative migration lineage
 definition ownership
 CRUD and route exposure
 operation permissions
@@ -707,7 +708,19 @@ Client pre-processing may call that registered operation through a BFF. Client p
 
 ### 10.1 Separate immutable migration streams
 
-Platform and client packages retain independent ordered migration histories. Published migrations have stable identities and immutable checksums.
+Platform and client package IDs retain independent, ordered migration lineages. Each package version carries the complete cumulative migration stream from its lineage root. A root version declares `predecessor_version: null`; every later version names the exact prior version:
+
+```text
+wamn_receiving@1.0.0
+  predecessor_version: null
+  migrations: [0001_initial.sql]
+
+wamn_receiving@1.1.0
+  predecessor_version: "1.0.0"
+  migrations: [0001_initial.sql, 0002_add_receipt_reference.sql]
+```
+
+The predecessor's ordered paths and checksums must be a byte-identical prefix of the candidate. The only admitted successor names the current leaf as its predecessor, so a package ID has one linear lineage and exactly one leaf; forks, merges, skipped predecessors, removal, reordering, and mutation of inherited migrations refuse.
 
 ```text
 existing migration id + same checksum
@@ -716,16 +729,19 @@ existing migration id + same checksum
 existing migration id + different checksum
   → refuse
 
-new migration appended to published package prefix
-  → eligible
+new migration presented at a package version already held by an effective release
+  → package-version-sealed; refuse
+  → remedy: publish a new package version that names the current leaf as predecessor_version
 
-removal or reordering of published migration
-  → refuse
+new package version + exact current-leaf predecessor + byte-identical inherited prefix
+  → eligible; apply only the new cumulative suffix
 ```
 
-Unpublished migrations may be edited. After publication, correction is a new migration.
+Before a package version's first effective-release membership, its candidate stream may be corrected. The first membership locks the package coordinate and seals that exact cumulative stream atomically. After sealing, neither a new ledger row nor changed bytes may be added at that coordinate; every correction or addition requires a new cumulative package version.
 
-The effective release records the exact ordered combination of platform and client migration identities.
+The effective release records exact package coordinates. Their immutable package records own the cumulative migration histories; the release does not carry a second ledger snapshot.
+
+[Owner-ruling correction, 2026-08-30 — package-coordinate seal; publish a new cumulative version rather than appending after effective-release membership.]
 
 ### 10.2 Verification environment
 
@@ -757,8 +773,10 @@ fresh install:
 
 upgrade:
   current effective release database
+  + candidate whose predecessor_version is the current package version
   + representative predecessor fixture when needed
-  → candidate package migration delta
+  → verify the predecessor as the candidate's byte-identical cumulative prefix
+  → apply only the candidate package migration suffix
   → target schema_state_id
 ```
 
@@ -783,7 +801,7 @@ The POC supports only active-predecessor-compatible additive migration. Drain-re
 ### 11.1 Initial effective release build
 
 ```text
-1. Verify immutable platform and client migration prefixes.
+1. Verify exact cumulative platform and client migration streams and their linear predecessor lineages.
 2. Apply exact platform and client streams to a fresh database.
 3. Introspect the effective managed schema.
 4. Generate package-owned data access, operation contracts, clients, and the platform security overlay.
@@ -816,7 +834,9 @@ Candidate preparation:
 
 ```text
 start from a representative effective_release_r17 database
-→ apply only the tested platform migration delta
+→ require platform 1.1.0 predecessor_version = 1.0.0
+→ verify the installed 1.0.0 ledger as the byte-identical cumulative prefix
+→ apply only the tested platform migration suffix
 → preserve every client-owned definition
 → introspect the candidate effective schema
 → verify client-consumed base operation contracts
@@ -854,8 +874,8 @@ The client controls activation of a compatible candidate. The platform may later
 Assume one deployment writer:
 
 ```text
-1. Verify expected current package and migration state.
-2. Apply exact tested migration delta and immutable migration records.
+1. Verify the expected current package version is the candidate's explicit predecessor and current lineage leaf.
+2. Verify the inherited cumulative prefix, then apply the exact tested migration suffix and immutable candidate-version records.
 3. Introspect and require the candidate schema_state_id.
 4. Derive and apply the platform-owned RLS/grant overlay.
 5. Verify required schema and platform-policy contracts.
@@ -1039,7 +1059,6 @@ An immutable effective release closes over:
 ```text
 exact platform base package and version
 exact client overlay package and version
-ordered package migration identities and checksums
 effective schema_state_id
 package required schema and platform-policy contracts
 derived effective catalog IR

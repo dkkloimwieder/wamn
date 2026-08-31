@@ -104,11 +104,14 @@ pub const ENVIRONMENT_CONFIG_KEY: &str = "wamn.environment";
 
 /// The host-owned inputs needed to publish one admitted Emit terminal.
 ///
-/// Scope is intentionally absent. [`WamnJetstream::publish_derived`] resolves
-/// tenant, project, and environment from the claim bound to `component_id`.
+/// Tenant, project, and environment are intentionally absent:
+/// [`WamnJetstream::publish_derived`] resolves them from the claim bound to
+/// `component_id`. `package_id` is supplied only by the native host caller from
+/// its welded release/run/wiring identity; it is not a guest WIT operand.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DerivedPublishRequest {
     pub component_id: String,
+    pub package_id: String,
     pub entity: String,
     pub operation: Op,
     pub payload: serde_json::Value,
@@ -421,6 +424,15 @@ fn prepare_derived_publication(
     claim: JetstreamClaim,
     request: DerivedPublishRequest,
 ) -> Result<PreparedDerivedPublication, DerivedPublishError> {
+    if request.package_id.is_empty()
+        || request.package_id.trim() != request.package_id
+        || request.package_id.as_bytes().contains(&0)
+    {
+        return Err(DerivedPublishError::new(
+            DerivedPublishErrorKind::InvalidInput,
+            "derived event package-id is empty or noncanonical",
+        ));
+    }
     if request.entity.is_empty() || request.entity.trim() != request.entity {
         return Err(DerivedPublishError::new(
             DerivedPublishErrorKind::InvalidInput,
@@ -444,6 +456,7 @@ fn prepare_derived_publication(
         claim.tenant.to_string(),
         claim.project.to_string(),
         claim.environment.to_string(),
+        request.package_id,
         request.entity,
         request.operation,
         request.payload,
@@ -461,6 +474,10 @@ fn prepare_derived_publication(
         &claim.tenant,
         &claim.project,
         &claim.environment,
+        event
+            .package_id
+            .as_deref()
+            .expect("the native constructor always supplies package identity"),
         &event.entity,
         event.op,
         &event.dedup_id,
@@ -486,7 +503,7 @@ fn prepare_derived_publication(
 struct DeadLetterIdentity {
     tenant: Box<str>,
     environment: Box<str>,
-    catalog_id: Box<str>,
+    package_id: Box<str>,
     registration_id: Box<str>,
     subject: Box<str>,
 }
@@ -504,7 +521,7 @@ fn dead_letter_attributes(identity: &DeadLetterIdentity) -> [KeyValue; 4] {
     [
         KeyValue::new("wamn.tenant", identity.tenant.to_string()),
         KeyValue::new("wamn.environment", identity.environment.to_string()),
-        KeyValue::new("wamn.catalog", identity.catalog_id.to_string()),
+        KeyValue::new("wamn.package", identity.package_id.to_string()),
         KeyValue::new("wamn.registration", identity.registration_id.to_string()),
     ]
 }
@@ -1183,9 +1200,9 @@ fn bind_refusal(release: Option<&ServingManifest>, filter_subject: &str) -> Opti
     };
     if !release_sources(manifest, entity, op) {
         return Some(format!(
-            "{UNREGISTERED_SOURCE}: no registration in release {} of catalog {:?} \
+            "{UNREGISTERED_SOURCE}: no registration in effective release {} \
              sources entity {entity:?} op {op:?}",
-            manifest.release.catalog_version, manifest.release.catalog_id
+            manifest.release.effective_release_id.get()
         ));
     }
     None
@@ -1193,7 +1210,7 @@ fn bind_refusal(release: Option<&ServingManifest>, filter_subject: &str) -> Opti
 
 fn exact_registration_identity(
     release: Option<&ServingManifest>,
-    catalog_id: &str,
+    package_id: &str,
     registration_id: &str,
     filter_subject: &str,
 ) -> Result<DeadLetterIdentity, String> {
@@ -1203,19 +1220,19 @@ fn exact_registration_identity(
             {registration_id:?} cannot be resolved"
         )
     })?;
-    if manifest.release.catalog_id != catalog_id {
-        return Err(format!(
-            "{UNREGISTERED_SOURCE}: release catalog {:?} does not match requested catalog {catalog_id:?}",
-            manifest.release.catalog_id
-        ));
-    }
     let registration = manifest.registrations.get(registration_id).ok_or_else(|| {
         format!(
-            "{UNREGISTERED_SOURCE}: release {} of catalog {:?} has no registration \
+            "{UNREGISTERED_SOURCE}: effective release {} has no registration \
                  {registration_id:?}",
-            manifest.release.catalog_version, manifest.release.catalog_id
+            manifest.release.effective_release_id.get()
         )
     })?;
+    if registration.package_id != package_id {
+        return Err(format!(
+            "{UNREGISTERED_SOURCE}: registration {registration_id:?} belongs to package {:?}, not requested package {package_id:?}",
+            registration.package_id
+        ));
+    }
     let (entity, op) = subject_source(filter_subject).ok_or_else(|| {
         format!(
             "{UNREGISTERED_SOURCE}: filter subject {filter_subject:?} does not name one entity \
@@ -1234,13 +1251,13 @@ fn exact_registration_identity(
     let subject = dead_letter_subject(
         &manifest.release.tenant_id,
         &manifest.release.environment,
-        &manifest.release.catalog_id,
+        package_id,
         registration_id,
     );
     Ok(DeadLetterIdentity {
         tenant: manifest.release.tenant_id.clone().into_boxed_str(),
         environment: manifest.release.environment.clone().into_boxed_str(),
-        catalog_id: manifest.release.catalog_id.clone().into_boxed_str(),
+        package_id: package_id.into(),
         registration_id: registration_id.into(),
         subject: subject.into_boxed_str(),
     })
@@ -1276,10 +1293,10 @@ async fn bind_consumer(
     registration: Option<(&str, &str)>,
 ) -> Result<JsConsumer, JsError> {
     let dead_letter = match registration {
-        Some((catalog_id, registration_id)) => Some(
+        Some((package_id, registration_id)) => Some(
             exact_registration_identity(
                 plugin.serving_manifest(),
-                catalog_id,
+                package_id,
                 registration_id,
                 &config.filter_subject,
             )
@@ -1388,7 +1405,7 @@ impl consumer::Host for ActiveCtx<'_> {
 
     async fn bind_registration(
         &mut self,
-        catalog_id: String,
+        package_id: String,
         registration_id: String,
         config: consumer::ConsumerConfig,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<JsConsumer>, JsError>> {
@@ -1397,7 +1414,7 @@ impl consumer::Host for ActiveCtx<'_> {
         let claim = plugin.claim_for(&component_id);
         let span = js_span(&claim, &component_id, "bind-registration");
         let started = std::time::Instant::now();
-        let bound = bind_consumer(&plugin, &config, Some((&catalog_id, &registration_id)))
+        let bound = bind_consumer(&plugin, &config, Some((&package_id, &registration_id)))
             .instrument(span)
             .await;
         record_effect_ms(
@@ -1586,7 +1603,7 @@ impl consumer::HostMessage for ActiveCtx<'_> {
                 dead_letter.as_ref().map(|identity| AckLagRegistration {
                     tenant: &identity.tenant,
                     environment: &identity.environment,
-                    catalog_id: &identity.catalog_id,
+                    package_id: &identity.package_id,
                     registration_id: &identity.registration_id,
                 }),
                 SystemTime::from(info.published),
@@ -1881,8 +1898,8 @@ mod tests {
     use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
     use wamn_catalog::{
-        DefinitionHash, ServingRegistration, ServingRegistrationInput, ServingRelease,
-        ServingWiring,
+        DefinitionHash, EffectiveReleaseId, PackageCoordinate, ServingRegistration,
+        ServingRegistrationInput, ServingRelease, ServingWiring,
     };
 
     use super::*;
@@ -1986,6 +2003,7 @@ mod tests {
     fn derived_request(component_id: &str, dedup_id: &str) -> DerivedPublishRequest {
         DerivedPublishRequest {
             component_id: component_id.into(),
+            package_id: "receiving".into(),
             entity: "orders".into(),
             operation: Op::Update,
             payload: serde_json::json!(["arbitrary", {"status": "ready"}]),
@@ -2019,6 +2037,7 @@ mod tests {
                 "acme",
                 "app",
                 "dev",
+                "receiving",
                 "orders",
                 Op::Update,
                 dangerous_author_id,
@@ -2031,6 +2050,7 @@ mod tests {
         assert_eq!(event.tenant, "acme");
         assert_eq!(event.project, "app");
         assert_eq!(event.environment, "dev");
+        assert_eq!(event.package_id.as_deref(), Some("receiving"));
         assert_eq!(event.entity, "orders");
         assert_eq!(event.op, Op::Update);
         assert_eq!(event.dedup_id, dangerous_author_id);
@@ -2038,6 +2058,20 @@ mod tests {
             event.payload,
             serde_json::json!(["arbitrary", {"status": "ready"}])
         );
+    }
+
+    #[test]
+    fn derived_publication_refuses_a_noncanonical_package_identity() {
+        let claim = JetstreamClaim {
+            tenant: "acme".into(),
+            project: "app".into(),
+            environment: "dev".into(),
+        };
+        let mut request = derived_request("component-1", "author:orders:7");
+        request.package_id = " receiving".into();
+        let error = prepare_derived_publication(claim, request)
+            .expect_err("a noncanonical package identity must refuse");
+        assert_eq!(error.kind(), DerivedPublishErrorKind::InvalidInput);
     }
 
     #[test]
@@ -2116,6 +2150,7 @@ mod tests {
     /// A serving release registering exactly one entity's ops.
     fn release_registering(entity: &str, ops: &[&str]) -> ServingManifest {
         let registration = ServingRegistration {
+            package_id: "cat".into(),
             wiring_id: "event-handler".into(),
             wiring_version: 1,
             entity: entity.to_string(),
@@ -2125,12 +2160,13 @@ mod tests {
         ServingManifest::new(
             ServingRelease {
                 tenant_id: "t1".into(),
-                catalog_id: "cat".into(),
-                catalog_version: 7,
+                effective_release_id: EffectiveReleaseId::new(7).unwrap(),
                 environment: "prod".into(),
+                packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             BTreeSet::new(),
             BTreeSet::from([ServingWiring {
+                package_id: "cat".into(),
                 wiring_id: "event-handler".into(),
                 wiring_version: 1,
                 graph_hash: DefinitionHash::parse(
@@ -2236,12 +2272,12 @@ mod tests {
         assert!(
             exact_registration_identity(
                 Some(&manifest),
-                "other-catalog",
+                "other_package",
                 "r1",
                 "evt.acme.proj.prod.receipts.>"
             )
             .is_err(),
-            "registration ids are catalog-scoped and must not collide across releases"
+            "registration ids are package-scoped and must not collide across packages"
         );
     }
 
@@ -2904,13 +2940,13 @@ mod tests {
         let identity = DeadLetterIdentity {
             tenant: "tenant-a".into(),
             environment: "prod".into(),
-            catalog_id: "orders".into(),
+            package_id: "orders".into(),
             registration_id: "orders-changed".into(),
             subject: "dlq.tenant-a.prod.orders.orders-changed".into(),
         };
         let labels = vec![
-            ("wamn.catalog".to_owned(), "orders".to_owned()),
             ("wamn.environment".to_owned(), "prod".to_owned()),
+            ("wamn.package".to_owned(), "orders".to_owned()),
             ("wamn.registration".to_owned(), "orders-changed".to_owned()),
             ("wamn.tenant".to_owned(), "tenant-a".to_owned()),
         ];

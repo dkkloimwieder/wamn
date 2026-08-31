@@ -1,163 +1,76 @@
-//! The `reconcile-replica-identity` subcommand (EVT-REPLICA-IDENT, wamn-l5i9.31):
-//! the **effect shell** for the pure `wamn_schema_control` REPLICA IDENTITY reconciler.
-//!
-//! `REPLICA IDENTITY FULL` is a per-entity knob the platform manages (l5i9.1
-//! decision d): an entity runs FULL only when a registered row-event needs the
-//! OLD image — any registration whose condition reads root `old` ("changed-to")
-//! or that subscribes to `delete` (delete tenant-scoping / delete-payload
-//! conditions need the old image) — and DEFAULT everywhere else (WAL stays
-//! minimal; the global default is NEVER flipped). This shell reads the catalog's
-//! registrations across ALL tenants (RI is per-TABLE, tables are shared, so the
-//! requirement is the union), reads each table's CURRENT `pg_class.relreplident`,
-//! calls the pure planner, and — unless `--dry-run` — runs the idempotent
-//! `ALTER TABLE … REPLICA IDENTITY FULL|DEFAULT` flips.
-//!
-//! **Ownership:** `ALTER TABLE … REPLICA IDENTITY` needs table ownership — the
-//! `wamn_app` role cannot run it — so this connects as a **superuser**, like
-//! `migrate-catalog`. Table/schema ownership ALONE is not enough
-//! (wamn-0h0g.12.103): `catalog.event_registrations` is
-//! `FORCE ROW LEVEL SECURITY`, so even its own non-superuser owner reads zero
-//! registrations with no error, and the reconcile now REFUSES that instead of
-//! planning a reset of every entity to DEFAULT. The operator supplies that
-//! authority only while invoking this one-shot command; wamn-0h0g.12.70 retired
-//! the suspended, unstartable CronJob that distributed it on a recurring spec.
-//!
-//! **NON-RETROACTIVE:** a flip to FULL enriches only WAL written AFTER it. Events
-//! captured before the flip permanently lack the old image; a newly registered
-//! changed-to condition evaluates only from the flip forward (the materializer
-//! treats an absent old image as cannot-evaluate, never condition-false).
-//!
-//! **Operational note:** `migrate-catalog` runs this automatically after a
-//! successful apply. Run this command after a registration create/delete that
-//! adds or removes an old-image / delete subscription. It is idempotent — a
-//! reconcile at the target state is a no-op.
+//! Reconcile per-model PostgreSQL REPLICA IDENTITY from package registrations.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
-
 use wamn_schema_control::{
-    EventRegistration, ReplicaIdentity, ReplicaIdentityPlan, UnreadableRegistrations,
-    UnreadableRegistrationsKind, reconcile_replica_identity, select_replica_identity_sql, sql,
+    EventRegistration, ManagedModel, ReplicaIdentity, ReplicaIdentityPlan, UnreadableRegistrations,
+    UnreadableRegistrationsKind, plan_package_migrations, reconcile_replica_identity,
+    select_replica_identity_sql,
 };
+
+const SELECT_REGISTRATIONS_SQL: &str = "\
+SELECT registration::text FROM catalog.event_registrations \
+ WHERE package_id = $1 ORDER BY tenant_id, registration_id";
 
 #[derive(Debug, Args)]
 pub struct ReconcileReplicaIdentityArgs {
-    /// Superuser Postgres URL to the PROJECT database (holds the `catalog`
-    /// metadata schema and the data schema). ALTER … REPLICA IDENTITY needs table
-    /// ownership, so a superuser/schema-owner is required. Env `WAMN_PG_ADMIN_URL`.
+    /// Superuser connection to the project database.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: String,
 
-    /// Path to the applied catalog JSON (the entity-id → table-name map the
-    /// reconciler flips against — the same document you `migrate-catalog`).
+    /// Package root whose strict manifest maps model keys to physical tables.
     #[arg(long)]
-    pub catalog: PathBuf,
+    pub package: PathBuf,
 
-    /// The data schema the entity tables live in.
-    #[arg(long, default_value = "public")]
-    pub schema: String,
-
-    /// Print the reconcile plan (flips + no-ops + skipped) without applying it.
+    /// Print the plan without applying it.
     #[arg(long)]
     pub dry_run: bool,
 }
 
 pub async fn run(args: ReconcileReplicaIdentityArgs) -> anyhow::Result<()> {
-    if !crate::migrate_catalog::is_bare_ident(&args.schema) {
-        bail!(
-            "--schema must be a bare identifier [a-z_][a-z0-9_]*: {:?}",
-            args.schema
-        );
-    }
-    let catalog_src = std::fs::read_to_string(&args.catalog)
-        .with_context(|| format!("read catalog {}", args.catalog.display()))?;
-    let catalog = wamn_schema_model::Catalog::from_json(&catalog_src)
-        .map_err(|e| anyhow::anyhow!("catalog parse/validate: {e}"))?;
+    let directory = crate::apply_package::read_package_directory(&args.package)?;
+    let package =
+        plan_package_migrations(&directory, None).context("derive package model mapping")?;
+    let package_id = package.coordinate.package_id().to_owned();
 
-    let (client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
+    let (client, connection) = tokio_postgres::connect(&args.admin_database_url, NoTls)
         .await
-        .context("admin connect")?;
-    let conn_task = tokio::spawn(conn);
-    let result = reconcile(&client, &catalog, &args.schema, !args.dry_run).await;
+        .context("connect to project database")?;
+    let connection_task = tokio::spawn(connection);
+    let result = reconcile(&client, &package_id, &package.models, !args.dry_run).await;
     drop(client);
-    let _ = conn_task.await;
+    if result.is_err() {
+        connection_task.abort();
+    } else {
+        connection_task
+            .await
+            .context("join replica-identity database connection")?
+            .context("drive replica-identity database connection")?;
+    }
     let plan = result?;
-
     print_plan(&plan, args.dry_run);
     Ok(())
 }
 
-/// The operational caller (EVT-RI-ORCH, wamn-l5i9.61): run the RI reconcile as a
-/// post-apply step from `migrate-catalog`, so a catalog migration never leaves
-/// an entity that needs the old image on REPLICA IDENTITY DEFAULT (the
-/// non-retroactive flip makes that window a permanent old-image gap). Migration
-/// already connects as the superuser `ALTER … REPLICA IDENTITY` requires; this
-/// reuses the SAME tested `reconcile` path the standalone verb and live gate
-/// exercise, applies the flips, and prints a concise summary.
-///
-/// Blast radius: scoped STRICTLY to `schema` — the project-env's own data schema
-/// the verb was already writing to. The cross-tenant union is only in WHICH
-/// registrations demand FULL (RI is per-table, tables are shared within the
-/// schema); no table outside `schema` is ever read or altered. Idempotent: a
-/// reconcile at target flips nothing. The migration verb gates this behind
-/// `--skip-reconcile-replica-identity` for the rare operator who wants to run the
-/// standalone verb separately.
-pub async fn reconcile_after_apply(
-    client: &tokio_postgres::Client,
-    catalog: &wamn_schema_model::Catalog,
-    schema: &str,
-) -> anyhow::Result<()> {
-    let plan = reconcile(client, catalog, schema, true).await?;
-    print_apply_summary(&plan);
-    Ok(())
-}
-
-/// Concise post-apply reconcile summary (distinct from the standalone verb's
-/// per-flip `print_plan`): names the closed old-image gaps (the correctness bit)
-/// and the count of DEFAULT resets, or reports a clean no-op.
-fn print_apply_summary(plan: &ReplicaIdentityPlan) {
-    if plan.is_noop() {
-        println!(
-            "replica identity reconciled: no flips ({} entities already at target)",
-            plan.unchanged.len()
-        );
-        return;
-    }
-    let gaps = plan.pending_old_image_gap();
-    let resets = plan.flips.len() - gaps.len();
-    if !gaps.is_empty() {
-        println!(
-            "replica identity reconciled: flipped {} entit{} to FULL (old-image gap closed): {}",
-            gaps.len(),
-            if gaps.len() == 1 { "y" } else { "ies" },
-            gaps.join(", "),
-        );
-    }
-    if resets > 0 {
-        println!(
-            "replica identity reconciled: reset {resets} entit{} to DEFAULT (no longer need the old image)",
-            if resets == 1 { "y" } else { "ies" }
-        );
-    }
-}
-
-/// The reusable core: read the catalog's registrations (across all tenants) and
-/// the schema's current `pg_class.relreplident`, plan the reconcile, and — when
-/// `apply` — run the flips. Returns the plan (for reporting / gate assertions).
-/// Shared by the CLI verb and the live gate so both exercise one code path.
 pub async fn reconcile(
     client: &tokio_postgres::Client,
-    catalog: &wamn_schema_model::Catalog,
-    schema: &str,
+    package_id: &str,
+    models: &[ManagedModel],
     apply: bool,
 ) -> anyhow::Result<ReplicaIdentityPlan> {
-    let registrations = read_registrations(client, &catalog.catalog_id).await?;
-    let current = read_current_identities(client, schema).await?;
-    let plan = reconcile_replica_identity(catalog, &registrations, &current, schema);
+    let registrations = read_registrations(client, package_id).await?;
+    let schemas = models
+        .iter()
+        .map(|model| model.schema.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let current = read_current_identities(client, &schemas).await?;
+    let plan = reconcile_replica_identity(models, &registrations, &current);
     if apply {
         for flip in &plan.flips {
             client
@@ -169,29 +82,9 @@ pub async fn reconcile(
     Ok(plan)
 }
 
-/// Every event registration DOCUMENT for `catalog_id`, parsed, across ALL
-/// tenants — or a REFUSAL BY NAME if the full set cannot be read
-/// (wamn-0h0g.12.103).
-///
-/// **This read is fail-closed, and must stay that way.** An empty registration
-/// set and an unreadable one are indistinguishable downstream: both reach the
-/// pure planner as an empty slice, which then plans a reset to DEFAULT for every
-/// entity currently at FULL. That flip is NON-RETROACTIVE, so the events captured
-/// until the next repair permanently lack their old image while the run reports
-/// clean. The two unreadable states are therefore named, not swallowed:
-///
-/// - **absent** — no `catalog.event_registrations` table at all (a catalog schema
-///   dropped and partially rebuilt). Not a provisioned-but-empty registration
-///   set, which is legitimate and reconciles normally.
-/// - **unreadable** — the read errored. The dangerous member of this class is
-///   silent: the table is `FORCE ROW LEVEL SECURITY`, so a session that does not
-///   BYPASS RLS (a non-superuser owner included) reads zero rows with NO error.
-///   The read therefore runs under `row_security = off`, the pg_dump idiom, which
-///   makes Postgres raise SQLSTATE 42501 instead of filtering — so the silence
-///   becomes an error and the error becomes this refusal.
 async fn read_registrations(
     client: &tokio_postgres::Client,
-    catalog_id: &str,
+    package_id: &str,
 ) -> anyhow::Result<Vec<EventRegistration>> {
     let table_present: bool = client
         .query_one(
@@ -204,66 +97,54 @@ async fn read_registrations(
     if !table_present {
         return Err(UnreadableRegistrations {
             kind: UnreadableRegistrationsKind::Absent,
-            catalog_id: catalog_id.to_string(),
+            package_id: package_id.to_owned(),
         }
         .into());
     }
     client
         .batch_execute("SET row_security = off")
         .await
-        .context("SET row_security = off for the cross-tenant registration read")?;
-    let read = client
-        .query(
-            &sql::select_registration_docs_for_catalog_sql(),
-            &[&catalog_id],
-        )
-        .await;
-    // Best-effort restore: a failed read inside a caller's open transaction
-    // aborts it, so RESET cannot run and the caller is already unwinding to a
-    // ROLLBACK that restores the GUC anyway.
+        .context("require a complete cross-tenant registration read")?;
+    let read = client.query(SELECT_REGISTRATIONS_SQL, &[&package_id]).await;
     let _ = client.batch_execute("RESET row_security").await;
-    let rows = read.map_err(|e| {
-        anyhow::Error::new(e).context(UnreadableRegistrations {
+    let rows = read.map_err(|source| {
+        anyhow::Error::new(source).context(UnreadableRegistrations {
             kind: UnreadableRegistrationsKind::Unreadable,
-            catalog_id: catalog_id.to_string(),
+            package_id: package_id.to_owned(),
         })
     })?;
-    let mut regs = Vec::with_capacity(rows.len());
-    for row in &rows {
-        let doc: String = row.get(0);
-        // A malformed stored registration is a hard error: RI is a correctness
-        // knob, and silently skipping a delete/old-condition registration would
-        // under-provision FULL (a cross-tenant delete leak / a corrupt eval).
-        let reg = EventRegistration::from_json(&doc)
-            .with_context(|| format!("parse stored registration document: {doc}"))?;
-        regs.push(reg);
-    }
-    Ok(regs)
+    rows.into_iter()
+        .map(|row| {
+            let document: String = row.get(0);
+            EventRegistration::from_json(&document)
+                .with_context(|| format!("parse stored registration document: {document}"))
+        })
+        .collect()
 }
 
-/// Every ordinary table's current REPLICA IDENTITY in `schema`, keyed by table
-/// name (the pure planner folds it through `ReplicaIdentity`). Tables absent here
-/// (floor not applied) are skipped by the planner.
 async fn read_current_identities(
     client: &tokio_postgres::Client,
-    schema: &str,
-) -> anyhow::Result<BTreeMap<String, ReplicaIdentity>> {
+    schemas: &[String],
+) -> anyhow::Result<BTreeMap<(String, String), ReplicaIdentity>> {
     let rows = client
-        .query(select_replica_identity_sql(), &[&schema])
+        .query(select_replica_identity_sql(), &[&schemas])
         .await
         .context("read pg_class.relreplident")?;
     let mut current = BTreeMap::new();
-    for row in &rows {
-        let table: String = row.get(0);
-        let ident: String = row.get(1);
-        let c = ident.chars().next().unwrap_or('d');
-        current.insert(table, ReplicaIdentity::from_relreplident(c));
+    for row in rows {
+        let schema: String = row.get(0);
+        let table: String = row.get(1);
+        let identity: String = row.get(2);
+        current.insert(
+            (schema, table),
+            ReplicaIdentity::from_relreplident(identity.chars().next().unwrap_or('d')),
+        );
     }
     Ok(current)
 }
 
-fn ident_kw(i: ReplicaIdentity) -> &'static str {
-    match i {
+fn identity_keyword(identity: ReplicaIdentity) -> &'static str {
+    match identity {
         ReplicaIdentity::Full => "FULL",
         ReplicaIdentity::Default => "DEFAULT",
     }
@@ -273,23 +154,21 @@ fn print_plan(plan: &ReplicaIdentityPlan, dry_run: bool) {
     let verb = if dry_run { "would flip" } else { "flipped" };
     if plan.flips.is_empty() {
         println!(
-            "replica identity already reconciled — no flips ({} entities already at target)",
+            "replica identity already reconciled: {} model(s) at target",
             plan.unchanged.len()
         );
-    } else {
-        for f in &plan.flips {
-            println!(
-                "{verb} {} ({}): REPLICA IDENTITY {} -> {}",
-                f.table,
-                f.entity_id,
-                ident_kw(f.from),
-                ident_kw(f.to),
-            );
-        }
     }
-    for t in &plan.skipped_absent {
+    for flip in &plan.flips {
         println!(
-            "  [skip] table {t} does not exist yet (floor not applied) — reconcile after migrate-catalog applies the floor"
+            "{verb} {}.{} ({}): {} -> {}",
+            flip.schema,
+            flip.table,
+            flip.model_id,
+            identity_keyword(flip.from),
+            identity_keyword(flip.to)
         );
+    }
+    for table in &plan.skipped_absent {
+        println!("[skip] {table} is absent; apply the package before reconciling");
     }
 }

@@ -376,8 +376,8 @@ async fn connect_as(url: &str, role: &str, password: &str) -> Client {
 async fn seed_run_admission_facts(
     su: &Client,
     tenant_id: &str,
-    catalog_id: &str,
-    catalog_version: i32,
+    package_id: &str,
+    effective_release_id: i32,
     environment: &str,
     durability_class: &str,
 ) {
@@ -392,21 +392,29 @@ async fn seed_run_admission_facts(
     .await
     .expect("seed the project-local environment policy");
     su.execute(
-        "INSERT INTO catalog.catalogs \
-           (tenant_id,catalog_id,version,environment,schema_version,state) \
-         VALUES ($1,$2,$3,$4,'0.1','applied')",
-        &[&tenant_id, &catalog_id, &catalog_version, &environment],
+        "INSERT INTO catalog.packages \
+           (tenant_id,package_id,package_version,manifest_sha256) \
+         VALUES ($1,$2,'1.0.0',$3)",
+        &[&tenant_id, &package_id, &EMPTY_EXECUTION_BUNDLE_HASH],
     )
     .await
-    .expect("seed run-pin catalog");
+    .expect("seed run-pin package");
     su.execute(
-        "INSERT INTO catalog.releases \
-           (tenant_id,catalog_id,catalog_version) \
-         VALUES ($1,$2,$3)",
-        &[&tenant_id, &catalog_id, &catalog_version],
+        "INSERT INTO catalog.effective_releases \
+           (tenant_id,effective_release_id,environment,verified_publisher_principal) \
+         VALUES ($1,$2,$3,'run-plane-live')",
+        &[&tenant_id, &effective_release_id, &environment],
     )
     .await
-    .expect("seed run-pin release manifest");
+    .expect("seed run-pin effective release");
+    su.execute(
+        "INSERT INTO catalog.effective_release_packages \
+           (tenant_id,effective_release_id,package_id,package_version) \
+         VALUES ($1,$2,$3,'1.0.0')",
+        &[&tenant_id, &effective_release_id, &package_id],
+    )
+    .await
+    .expect("seed run-pin package membership");
 }
 
 /// Hermetic reset: drop the target schema + the shared `catalog` schema and
@@ -622,7 +630,7 @@ async fn seed_failure_detail_run(su: &Client, run_id: &str) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
                 environment,status,fail_kind,terminal_reason, \
                 caller_outcome_kind,caller_outcome_json,caller_http_status, \
                 caller_released_at,fail_node,fail_reason) \
@@ -1447,7 +1455,7 @@ async fn authoring_privileges_at_record_plan_no_repair_live() {
     // for any reason at all reads as agreement. Re-open one catalog read plus
     // both retired run-plane reads and require all three repairs.
     su.batch_execute(&format!(
-        "GRANT SELECT ON catalog.releases TO wamn_scenario_author; \
+        "GRANT SELECT ON catalog.effective_releases TO wamn_scenario_author; \
          GRANT SELECT ON {SCHEMA}.environment_policies TO wamn_scenario_author; \
          GRANT SELECT ON {SCHEMA}.runs TO wamn_scenario_author"
     ))
@@ -1472,7 +1480,7 @@ async fn authoring_privileges_at_record_plan_no_repair_live() {
     assert_eq!(
         drifted_repairs,
         vec![
-            "catalog.releases",
+            "catalog.effective_releases",
             "rp_live.environment_policies",
             "runs.capture_mode",
         ],
@@ -1483,7 +1491,7 @@ async fn authoring_privileges_at_record_plan_no_repair_live() {
         .await
         .expect("apply the three author-read repairs");
     for relation in [
-        "catalog.releases",
+        "catalog.effective_releases",
         "rp_live.environment_policies",
         "rp_live.runs",
     ] {
@@ -1800,12 +1808,12 @@ async fn frame_identity_cutover_leg(su: &Client) {
         su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
             .await
             .expect("apply current run-state for populated frame drift refusal");
-        seed_run_admission_facts(su, "t1", "frame-cat", 1, "dev", "standard").await;
+        seed_run_admission_facts(su, "t1", "frame_cat", 1, "dev", "standard").await;
         su.batch_execute(&format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
                 status) \
-             VALUES ('t1',$${label}$$,'f',1,'frame-cat',1,'dev','running'); \
+             VALUES ('t1',$${label}$$,'f',1,'frame_cat',1,'dev','running'); \
              INSERT INTO {SCHEMA}.effect_attempts \
                (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                 local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
@@ -2010,12 +2018,12 @@ async fn frame_identity_cutover_leg(su: &Client) {
     su.batch_execute(&format!("DROP TABLE {SCHEMA}.effect_attempts CASCADE;"))
         .await
         .expect("remove effect peer");
-    seed_run_admission_facts(su, "t1", "frame-cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "frame_cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
             status) \
-         VALUES ('t1','framed-current','f',1,'frame-cat',1,'dev','running');"
+         VALUES ('t1','framed-current','f',1,'frame_cat',1,'dev','running');"
     ))
     .await
     .expect("seed a current populated run");
@@ -2090,12 +2098,12 @@ async fn effect_writer_cutover_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply current run-state for writer cutover");
-    seed_run_admission_facts(su, "t1", "writer-cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "writer_cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
             status) \
-         VALUES ('t1','writer-projection','f',1,'writer-cat',1,'dev', \
+         VALUES ('t1','writer-projection','f',1,'writer_cat',1,'dev', \
                  'running');"
     ))
     .await
@@ -2863,14 +2871,14 @@ async fn shared_runner_legacy_leg(su: &Client) {
         .expect("shared-runner refusal is a database refusal");
     // The bespoke `execution-pin-cutover-requires-empty-run-and-release-membership`
     // refusal no longer exists anywhere in the tree. The RULE it enforced does:
-    // the admission pins are NOT NULL in the record, so PostgreSQL itself
-    // refuses the ADD against populated legacy rows rather than let the
-    // reconciler fabricate provenance for them. That is the documented
-    // contract — "a legacy row that violates the canonical contract aborts
-    // reconciliation rather than being rewritten or deleted".
+    // the package/release admission pins are NOT NULL in the record, so
+    // PostgreSQL itself refuses the ADD against populated legacy rows rather
+    // than let the reconciler fabricate provenance for them. That is the
+    // documented contract — "a legacy row that violates the canonical contract
+    // aborts reconciliation rather than being rewritten or deleted".
     assert_eq!(database.code().code(), "23502");
     assert!(
-        database.message().contains("catalog_id") && database.message().contains("runs"),
+        database.message().contains("package_id") && database.message().contains("runs"),
         "the refusal names the pin carrier it could not fabricate: {}",
         database.message()
     );
@@ -2893,7 +2901,7 @@ async fn shared_runner_legacy_leg(su: &Client) {
         retained.get::<_, Option<String>>(2).as_deref(),
         Some("completed")
     );
-    for column in ["catalog_id", "catalog_version", "environment"] {
+    for column in ["package_id", "effective_release_id", "environment"] {
         assert!(
             !column_exists(su, "runs", column).await,
             "refusal leaves pin column {column} absent"
@@ -2909,7 +2917,7 @@ async fn child_run_cutover_leg(su: &Client) {
     seed_run_admission_facts(su, "child-cutover", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
             environment,trigger_source, \
             event_source_run_id,event_root_run_id,event_depth) \
          VALUES ('child-cutover','retained-run','f',1,'cat',1,'dev', \
@@ -3060,7 +3068,7 @@ async fn rerun_lineage_cutover_leg(su: &Client) {
          CREATE INDEX runs_root ON {SCHEMA}.runs (tenant_id,root_run_id) \
            WHERE root_run_id IS NOT NULL; \
          INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
             environment,trigger_source,input_json,state_json,replay_of,root_run_id, \
             event_source_run_id,event_root_run_id,event_depth) \
          VALUES ('rerun-cutover','retained-run','f',1,'cat',1,'dev', \
@@ -3395,7 +3403,7 @@ async fn partition_plane_cutover_leg(su: &Client) {
     seed_run_admission_facts(su, "partition", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
             environment) \
          VALUES ('partition','retained-run','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_queue \
@@ -3507,7 +3515,7 @@ async fn partition_plane_active_lease_refusal_leg(su: &Client) {
                 seed_run_admission_facts(su, "leased", "cat", 1, "dev", "standard").await;
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.runs \
-                       (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                       (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
                         environment) \
                      VALUES ('leased','active-run','f',1,'cat',1,'dev'); \
                      INSERT INTO {SCHEMA}.run_queue \
@@ -3580,7 +3588,7 @@ async fn partition_plane_unobservable_lease_refusal_leg(su: &Client) {
                 seed_run_admission_facts(su, "ambiguous", "cat", 1, "dev", "standard").await;
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.runs \
-                       (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                       (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
                         environment) \
                      VALUES ('ambiguous','queue-run','f',1,'cat',1,'dev'); \
                      INSERT INTO {SCHEMA}.run_queue (tenant_id,run_id,partition_key) \
@@ -3644,7 +3652,7 @@ async fn partition_plane_dead_letter_refusal_leg(su: &Client) {
     seed_run_admission_facts(su, "dead-letter", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
             environment) \
          VALUES ('dead-letter','failed-run','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_dead_letters \
@@ -3768,7 +3776,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     seed_run_admission_facts(su, "t1", "cat", 1, "dev", "durable").await;
     su.execute(
         "INSERT INTO catalog.event_registrations \
-           (tenant_id, catalog_id, registration_id, flow_id, entity_id, registration) \
+           (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
          VALUES ('t1', 'cat', 'r1', 'f', 'e', \
                  $1::text::jsonb)",
         &[&r#"{"registration-id":"r1","partition-key":"serial","retained":"yes","state":"shadow"}"#],
@@ -3778,7 +3786,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     // A pre-existing queue row: the ADD COLUMN defaults must land on it.
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+             (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
               environment) \
              VALUES ('t1','r-old','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r-old');"
@@ -3849,7 +3857,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     assert_eq!(projected, "durable");
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
             environment) \
          VALUES ('t1','r-policy-durable','f',1,'cat',1,'dev')"
     ))
@@ -3901,7 +3909,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     .expect("reconcile changed environment policy");
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
             environment) \
          VALUES ('t1','r-policy-standard','f',1,'cat',1,'dev')"
     ))
@@ -4010,7 +4018,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     let registration: String = su
         .query_one(
             "SELECT registration::text FROM catalog.event_registrations \
-              WHERE registration_id = 'r1'",
+              WHERE tenant_id = 't1' AND package_id = 'cat' AND registration_id = 'r1'",
             &[],
         )
         .await
@@ -4052,7 +4060,7 @@ async fn queue_missing_leg(su: &Client) {
     seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+             (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
               environment) \
              VALUES ('t1','r1','f',1,'cat',1,'dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
@@ -4219,7 +4227,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     seed_run_admission_facts(su, "t2", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+             (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
               environment) \
              VALUES ('t1','r1','f',1,'cat',1,'dev'), \
                     ('t2','r2','f',1,'cat',1,'dev'); \
@@ -4238,7 +4246,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     for refused in [
         format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment) \
+               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment) \
              VALUES ('t1','r3','f',1,'cat',1,'dev')"
         ),
         format!("INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1','r3')"),
@@ -4783,7 +4791,7 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     seed_run_admission_facts(su, "t1", "capture", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
             status) \
          VALUES ('t1','legacy-off','f',1,'capture',1,'dev', \
                  'completed'); \
@@ -4823,7 +4831,7 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+                   (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
                     status,trigger_source,capture_mode) \
                  VALUES ('t1','published-full','f',1,'capture',1,'dev', \
                          'completed','http','full')"
@@ -4836,7 +4844,7 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
                 status,trigger_source,capture_mode) \
              VALUES ('t1','draft-full','f',1,'capture',1,'dev', \
                      'completed','scenario-draft','full')"
@@ -4862,7 +4870,7 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
             "admission",
             format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+                   (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
                     status,trigger_source) \
                  VALUES ('t1','app-forged','f',1,'capture',1,'dev','dispatched','test')"
             ),
@@ -5726,7 +5734,7 @@ async fn persisted_literal_check_drift_leg(su: &Client) {
     seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+             (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
               environment) \
              VALUES ('t1','r-budget','f',1,'cat',1,'dev');"
     ))

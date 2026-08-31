@@ -1,8 +1,8 @@
 use serde_json::json;
 use wamn_catalog::{
-    ArtifactHash, ArtifactId, ArtifactIdentity, Attachment, AttachmentActivation, AttachmentDraft,
-    AttachmentId, AttachmentKind, CanonicalJson, CatalogHead, CatalogIdentityError, DefinitionHash,
-    Release, ReleaseId, Source, SourceId, SourceKind,
+    ArtifactHash, ArtifactId, ArtifactIdentity, Attachment, AttachmentDraft, AttachmentId,
+    AttachmentKind, CanonicalJson, CatalogIdentityError, DefinitionHash, Source, SourceId,
+    SourceKind,
 };
 
 fn artifact_identity(tenant: &str, flow_version: u32, digit: char) -> ArtifactIdentity {
@@ -198,11 +198,7 @@ fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
     // Whitespace, key order and duplicate keys are still refused: the parse
     // re-serializes and compares bytes, and `serde_json::Map` is a `BTreeMap`,
     // so a canonical text is the only text that reproduces itself.
-    for noncanonical in [
-        r#"{ "a":1}"#,
-        r#"{"b":2,"a":1}"#,
-        "{\n\"a\":1\n}",
-    ] {
+    for noncanonical in [r#"{ "a":1}"#, r#"{"b":2,"a":1}"#, "{\n\"a\":1\n}"] {
         assert!(
             matches!(
                 CanonicalJson::parse(noncanonical),
@@ -239,44 +235,6 @@ fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
 }
 
 #[test]
-fn release_activation_head_and_hash_parser_preserve_scope_invariants() {
-    let artifact = artifact();
-    let sources = vec![source(
-        "auth",
-        SourceKind::Auth,
-        json!({"policy": "partner"}),
-    )];
-    let attachment = attachment(
-        &artifact,
-        &sources,
-        "public-api",
-        AttachmentKind::Http,
-        json!({"path": "/"}),
-    );
-    let release = Release::new(
-        ReleaseId::new("tenant-a", "main", 4).unwrap(),
-        vec![artifact.clone()],
-        sources,
-        vec![attachment.clone()],
-    )
-    .expect("release is canonical");
-    assert!(!release.canonical_bytes().is_empty());
-
-    let activation = AttachmentActivation::new(
-        "tenant-a",
-        "main",
-        "prod",
-        attachment.id().clone(),
-        attachment.definition_hash().clone(),
-        true,
-    )
-    .unwrap();
-    assert!(activation.definition_is_live(attachment.definition_hash()));
-    let other = DefinitionHash::parse(format!("sha256:{}", "f".repeat(64))).unwrap();
-    assert!(!activation.definition_is_live(&other));
-
-    let head = CatalogHead::new("tenant-a", "main", "prod", 4).unwrap();
-    assert_eq!(head.applied_version(), 4);
-    assert!(CatalogHead::new("tenant-a", "main", "prod", 0).is_err());
+fn hash_parser_preserves_canonical_digest_invariant() {
     assert!(DefinitionHash::parse(format!("sha256:{}", "A".repeat(64))).is_err());
 }

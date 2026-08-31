@@ -12,9 +12,9 @@
 //!    state replaces, not appends). This makes the `--clean` flag load-bearing.
 //!
 //! Set `WAMN_RESTORE_PG_URL` to a **superuser** URL (it CREATEs/DROPs throwaway
-//! databases); skipped cleanly when unset or when the client tools are absent
-//! (the wamn-schema-compiler / dump-gate pattern). The object-store transport is out
-//! of scope here; this validates the restore of the artifact, substrate-independent.
+//! databases); skipped cleanly when unset or when the client tools are absent.
+//! The object-store transport is out of scope here; this validates the restore
+//! of the artifact, substrate-independent.
 
 use std::process::Command as Proc;
 

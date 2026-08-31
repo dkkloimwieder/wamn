@@ -38,9 +38,7 @@ wamn-test-infrastructure = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-execution-host = { workspace = true }
 wamn-runtime = { workspace = true }
-wamn-schema-compiler = { workspace = true }
-wamn-schema-control = { workspace = true, features = ["ops"] }
-wamn-schema-model = { workspace = true }
+wamn-schema-control = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 

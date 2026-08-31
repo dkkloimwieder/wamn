@@ -80,8 +80,8 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
 
 FROM root-planner AS root-source
 COPY .cargo/config.toml ./.cargo/config.toml
-# The canonical deploy DDL (sql/run-state.sql) is include_str!'d by
-# publish-catalog's provisioning helpers — single source of truth, no clones.
+# The canonical deploy DDL is consumed by the ctl reconcilers and exact package
+# runner — single source of truth, no clones.
 COPY deploy ./deploy
 # wash-runtime resolves as a git dependency at the zero-delta fork revision
 # recorded in Cargo.toml and docs/architecture/native-alignment-ledger.md;

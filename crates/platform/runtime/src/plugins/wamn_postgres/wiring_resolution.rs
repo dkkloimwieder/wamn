@@ -18,24 +18,25 @@ use super::{CandidateBindingWorld, WamnPostgres};
 /// The single SQL snapshot behind a cache miss.
 pub const ACTIVE_WIRING_SQL: &str = "\
 WITH selected AS MATERIALIZED ( \
-    SELECT wiring.version, \
-           wiring.gated_catalog_version, \
-           wiring.graph_json, \
-           wiring.wiring_hash \
+    SELECT wiring.version, head.effective_release_id, member.package_version, \
+           wiring.graph_json, wiring.wiring_hash \
       FROM catalog.wiring_activation AS active \
-      JOIN catalog.catalog_heads AS head \
+      JOIN catalog.effective_release_heads AS head \
         ON head.tenant_id = active.tenant_id \
-       AND head.catalog_id = active.catalog_id \
        AND head.environment = active.environment \
+      JOIN catalog.effective_release_packages AS member \
+        ON member.tenant_id = head.tenant_id \
+       AND member.effective_release_id = head.effective_release_id \
+       AND member.package_id = active.package_id \
       JOIN catalog.wirings AS wiring \
         ON wiring.tenant_id = active.tenant_id \
-       AND wiring.catalog_id = active.catalog_id \
+       AND wiring.package_id = active.package_id \
+       AND wiring.package_version = member.package_version \
        AND wiring.wiring_id = active.wiring_id \
        AND wiring.version = $5 \
-       AND wiring.gated_catalog_version = head.applied_catalog_version \
        AND wiring.wiring_hash = active.confirmed_definition_hash \
      WHERE active.tenant_id = $1 \
-       AND active.catalog_id = $2 \
+       AND active.package_id = $2 \
        AND active.environment = $3 \
        AND active.wiring_id = $4 \
        AND active.enabled \
@@ -43,13 +44,14 @@ WITH selected AS MATERIALIZED ( \
            SELECT 1 \
              FROM catalog.wiring_tombstones AS dead \
             WHERE dead.tenant_id = active.tenant_id \
-              AND dead.catalog_id = active.catalog_id \
+              AND dead.package_id = active.package_id \
               AND dead.environment = active.environment \
               AND dead.wiring_id = active.wiring_id \
        ) \
 ) \
 SELECT selected.version, \
-       selected.gated_catalog_version, \
+       selected.effective_release_id, \
+       selected.package_version, \
        selected.graph_json::text, \
        selected.wiring_hash, \
        COALESCE( \
@@ -57,12 +59,13 @@ SELECT selected.version, \
                jsonb_build_object( \
                    'scope', jsonb_build_object( \
                        'tenant-id', $1::text, \
-                       'catalog-id', $2::text, \
-                       'catalog-version', component.catalog_version \
+                       'package-id', $2::text, \
+                       'package-version', component.package_version \
                    ), \
                    'component', component.component, \
                    'interface-version', component.interface_version, \
                    'operation', component.operation, \
+                   'registered-operation', component.registered_operation, \
                    'component-digest', component.component_digest, \
                    'imports', component.imports, \
                    'imports-fingerprint', component.imports_fingerprint, \
@@ -77,8 +80,8 @@ SELECT selected.version, \
   FROM selected \
   LEFT JOIN catalog.component_library AS component \
    ON component.tenant_id = $1 \
-   AND component.catalog_id = $2 \
-   AND component.catalog_version = selected.gated_catalog_version \
+   AND component.package_id = $2 \
+   AND component.package_version = selected.package_version \
    AND EXISTS ( \
        SELECT 1 \
          FROM jsonb_each(selected.graph_json -> 'nodes') AS node(node_id, definition) \
@@ -86,58 +89,66 @@ SELECT selected.version, \
           AND definition ->> 'interface-version' = component.interface_version \
           AND definition ->> 'operation' = component.operation \
    ) \
- GROUP BY selected.version, selected.gated_catalog_version, \
+ GROUP BY selected.version, selected.effective_release_id, \
+          selected.package_version, \
           selected.graph_json, selected.wiring_hash";
 
 /// The immutable-version snapshot behind a queued delivery. Unlike
 /// [`ACTIVE_WIRING_SQL`], this deliberately does not consult the mutable
 /// activation pointer: admission already froze the exact wiring version.
-/// Release membership and the verified format-2 snapshot keep that historical
-/// version scoped to the carried tenant/catalog/environment release.
+/// Exact package membership and the verified format-3 snapshot keep that
+/// historical version scoped to the carried tenant/package/environment release.
 pub const RELEASE_WIRING_SQL: &str = "\
 WITH release_scope AS MATERIALIZED ( \
-    SELECT snapshot.catalog_version \
-      FROM catalog.release_manifest_v2_snapshots AS snapshot \
+    SELECT snapshot.effective_release_id, member.package_version \
+      FROM catalog.release_manifest_v3_snapshots AS snapshot \
+      JOIN catalog.effective_release_packages AS member \
+        ON member.tenant_id = snapshot.tenant_id \
+       AND member.effective_release_id = snapshot.effective_release_id \
+       AND member.package_id = $2 \
      WHERE snapshot.tenant_id = $1 \
-       AND snapshot.catalog_id = $2 \
-       AND snapshot.catalog_version = $6 \
+       AND snapshot.effective_release_id = $6 \
        AND snapshot.manifest_digest = $7 \
        AND convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb \
              #>> '{release,environment}' = $3 \
 ), selected AS MATERIALIZED ( \
-    SELECT wiring.version, wiring.gated_catalog_version, \
+    SELECT wiring.version, release_scope.effective_release_id, \
+           release_scope.package_version, \
            wiring.graph_json, wiring.wiring_hash, \
-           release_scope.catalog_version AS release_catalog_version \
+           release_scope.effective_release_id AS release_id \
       FROM release_scope \
       JOIN catalog.wirings AS wiring \
         ON wiring.tenant_id = $1 \
-       AND wiring.catalog_id = $2 \
+       AND wiring.package_id = $2 \
+       AND wiring.package_version = release_scope.package_version \
        AND wiring.wiring_id = $4 \
        AND wiring.version = $5 \
-       AND wiring.gated_catalog_version = release_scope.catalog_version \
      WHERE EXISTS ( \
            SELECT 1 \
              FROM catalog.release_components AS member \
             WHERE member.tenant_id = $1 \
-              AND member.catalog_id = $2 \
-              AND member.catalog_version = release_scope.catalog_version \
+              AND member.effective_release_id = release_scope.effective_release_id \
+              AND member.package_id = $2 \
+              AND member.package_version = release_scope.package_version \
               AND member.wiring_id = $4 \
               AND member.wiring_version = $5 \
        ) \
 ) \
-SELECT selected.version, selected.gated_catalog_version, \
+SELECT selected.version, selected.effective_release_id, \
+       selected.package_version, \
        selected.graph_json::text, selected.wiring_hash, \
        COALESCE( \
            jsonb_agg( \
                jsonb_build_object( \
                    'scope', jsonb_build_object( \
                        'tenant-id', $1::text, \
-                       'catalog-id', $2::text, \
-                       'catalog-version', component.catalog_version \
+                       'package-id', $2::text, \
+                       'package-version', component.package_version \
                    ), \
                    'component', component.component, \
                    'interface-version', component.interface_version, \
                    'operation', component.operation, \
+                   'registered-operation', component.registered_operation, \
                    'component-digest', component.component_digest, \
                    'imports', component.imports, \
                    'imports-fingerprint', component.imports_fingerprint, \
@@ -152,16 +163,17 @@ SELECT selected.version, selected.gated_catalog_version, \
   FROM selected \
   LEFT JOIN catalog.release_components AS member \
     ON member.tenant_id = $1 \
-   AND member.catalog_id = $2 \
-   AND member.catalog_version = selected.release_catalog_version \
+   AND member.effective_release_id = selected.release_id \
+   AND member.package_id = $2 \
+   AND member.package_version = selected.package_version \
    AND member.wiring_id = $4 \
    AND member.wiring_version = $5 \
   LEFT JOIN catalog.component_library AS component \
     ON component.tenant_id = member.tenant_id \
-   AND component.catalog_id = member.catalog_id \
-   AND component.catalog_version = member.catalog_version \
+   AND component.package_id = member.package_id \
+   AND component.package_version = member.package_version \
    AND component.component_digest = member.component_digest \
- GROUP BY selected.version, selected.gated_catalog_version, \
+ GROUP BY selected.version, selected.effective_release_id, selected.package_version, \
           selected.graph_json, selected.wiring_hash";
 
 /// Exact immutable candidate wiring selected by private management admission.
@@ -170,15 +182,24 @@ SELECT selected.version, selected.gated_catalog_version, \
 /// serving release carried by this executor. The run supplies every immutable
 /// coordinate that admission read from the same row.
 pub const CANDIDATE_WIRING_SQL: &str = "\
-WITH selected AS MATERIALIZED ( \
-    SELECT wiring.version, wiring.gated_catalog_version, \
+WITH release_scope AS MATERIALIZED ( \
+    SELECT member.package_version \
+      FROM catalog.effective_release_packages AS member \
+     WHERE member.tenant_id = $1 \
+       AND member.effective_release_id = $6 \
+       AND member.package_id = $2 \
+), selected AS MATERIALIZED ( \
+    SELECT wiring.version, $6::int AS effective_release_id, \
+           release_scope.package_version, \
            wiring.graph_json, wiring.wiring_hash \
-      FROM catalog.wirings AS wiring \
+      FROM release_scope \
+      JOIN catalog.wirings AS wiring \
+        ON wiring.tenant_id = $1 \
+       AND wiring.package_id = $2 \
+       AND wiring.package_version = release_scope.package_version \
      WHERE wiring.tenant_id = $1 \
-       AND wiring.catalog_id = $2 \
        AND wiring.wiring_id = $4 \
        AND wiring.version = $5 \
-       AND wiring.gated_catalog_version = $6 \
        AND wiring.wiring_hash = $7 \
        AND $3::text <> '' \
 ), candidate_nodes AS MATERIALIZED ( \
@@ -191,8 +212,8 @@ WITH selected AS MATERIALIZED ( \
       ) AS node \
       LEFT JOIN catalog.component_library AS component \
         ON component.tenant_id = $1 \
-       AND component.catalog_id = $2 \
-       AND component.catalog_version = selected.gated_catalog_version \
+       AND component.package_id = $2 \
+       AND component.package_version = selected.package_version \
        AND component.component = node.value ->> 'component' \
        AND component.interface_version = node.value ->> 'interface-version' \
        AND component.operation = node.value ->> 'operation' \
@@ -207,8 +228,6 @@ WITH selected AS MATERIALIZED ( \
              WHERE component_admitted) AS candidate_component \
       JOIN catalog.connection_requirements AS requirement \
         ON requirement.tenant_id = $1 \
-       AND requirement.artifact_hash IS NULL \
-       AND requirement.requirement_name IS NULL \
        AND requirement.component_digest = candidate_component.component_digest \
 ), resolved_requirements AS MATERIALIZED ( \
     SELECT requirement.component_digest, requirement.store_alias, \
@@ -219,10 +238,7 @@ WITH selected AS MATERIALIZED ( \
       FROM requirements AS requirement \
       JOIN catalog.connection_bindings AS binding \
         ON binding.tenant_id = $1 \
-       AND binding.catalog_id = $2 \
-       AND binding.catalog_version = $6 \
-       AND binding.artifact_hash IS NULL \
-       AND binding.requirement_name IS NULL \
+       AND binding.effective_release_id = $6 \
        AND binding.component_digest = requirement.component_digest \
        AND binding.store_alias = requirement.store_alias \
        AND binding.environment = $3 \
@@ -262,19 +278,21 @@ WITH selected AS MATERIALIZED ( \
       LEFT JOIN resolved_requirements AS resolved \
         USING (component_digest, store_alias) \
 ) \
-SELECT selected.version, selected.gated_catalog_version, \
+SELECT selected.version, selected.effective_release_id, \
+       selected.package_version, \
        selected.graph_json::text, selected.wiring_hash, \
        COALESCE( \
            jsonb_agg( \
                jsonb_build_object( \
                    'scope', jsonb_build_object( \
                        'tenant-id', $1::text, \
-                       'catalog-id', $2::text, \
-                       'catalog-version', component.catalog_version \
+                       'package-id', $2::text, \
+                       'package-version', component.package_version \
                    ), \
                    'component', component.component, \
                    'interface-version', component.interface_version, \
                    'operation', component.operation, \
+                   'registered-operation', component.registered_operation, \
                    'component-digest', component.component_digest, \
                    'imports', component.imports, \
                    'imports-fingerprint', component.imports_fingerprint, \
@@ -292,8 +310,8 @@ SELECT selected.version, selected.gated_catalog_version, \
   FROM selected CROSS JOIN node_summary CROSS JOIN binding_world \
   LEFT JOIN catalog.component_library AS component \
     ON component.tenant_id = $1 \
-   AND component.catalog_id = $2 \
-   AND component.catalog_version = selected.gated_catalog_version \
+   AND component.package_id = $2 \
+   AND component.package_version = selected.package_version \
    AND EXISTS ( \
        SELECT 1 \
          FROM jsonb_each(selected.graph_json -> 'nodes') AS node(node_id, definition) \
@@ -301,7 +319,7 @@ SELECT selected.version, selected.gated_catalog_version, \
           AND definition ->> 'interface-version' = component.interface_version \
           AND definition ->> 'operation' = component.operation \
    ) \
- GROUP BY selected.version, selected.gated_catalog_version, \
+ GROUP BY selected.version, selected.effective_release_id, selected.package_version, \
           selected.graph_json, selected.wiring_hash, \
           node_summary.node_count, node_summary.invalid_node_count, \
           binding_world.requirement_count, binding_world.resolved_count, \
@@ -312,11 +330,9 @@ SELECT selected.version, selected.gated_catalog_version, \
 pub(crate) const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
 SELECT NOT EXISTS ( \
     SELECT 1 \
-      FROM catalog.connection_requirements AS requirement \
+     FROM catalog.connection_requirements AS requirement \
      WHERE requirement.tenant_id = $1 \
-       AND requirement.artifact_hash IS NULL \
-       AND requirement.requirement_name IS NULL \
-       AND requirement.component_digest = ANY($5::text[]) \
+       AND requirement.component_digest = ANY($4::text[]) \
        AND NOT EXISTS ( \
            SELECT 1 \
              FROM catalog.connection_bindings AS binding \
@@ -330,11 +346,8 @@ SELECT NOT EXISTS ( \
               AND generation.instance_id = instance.instance_id \
               AND generation.generation = instance.active_generation \
             WHERE binding.tenant_id = requirement.tenant_id \
-              AND binding.catalog_id = $2 \
-              AND binding.catalog_version = $3 \
-              AND binding.environment = $4 \
-              AND binding.artifact_hash IS NULL \
-              AND binding.requirement_name IS NULL \
+              AND binding.effective_release_id = $2 \
+              AND binding.environment = $3 \
               AND binding.component_digest = requirement.component_digest \
               AND binding.store_alias = requirement.store_alias \
               AND binding.binding_status = 'active' \
@@ -348,7 +361,7 @@ SELECT NOT EXISTS ( \
 #[derive(Debug, Clone)]
 pub struct ResolvedActiveWiring {
     pub version: u32,
-    pub catalog_version: u32,
+    pub effective_release_id: u32,
     pub graph_hash: Arc<str>,
     pub wiring: Wiring,
     pub components: Arc<[AdmittedComponent]>,
@@ -387,7 +400,7 @@ impl WamnPostgres {
         &self,
         project: &str,
         tenant_id: &str,
-        catalog_id: &str,
+        package_id: &str,
         environment: &str,
         wiring_id: &str,
         wiring_version: u32,
@@ -419,7 +432,7 @@ impl WamnPostgres {
 
         let params: [&(dyn ToSql + Sync); 5] = [
             &tenant_id,
-            &catalog_id,
+            &package_id,
             &environment,
             &wiring_id,
             &wiring_version,
@@ -431,7 +444,7 @@ impl WamnPostgres {
         let result = match selected {
             Ok(None) => Ok(None),
             Ok(Some(row)) => {
-                decode_active_wiring(tenant_id, catalog_id, environment, wiring_id, &row).map(Some)
+                decode_active_wiring(tenant_id, package_id, environment, wiring_id, &row).map(Some)
             }
             Err(error) => Err(error),
         };
@@ -457,7 +470,7 @@ impl WamnPostgres {
     ///
     /// This path is intentionally independent of `wiring_activation`: a flip
     /// after admission changes new direct deliveries, not history already
-    /// accepted by the queue. The exact format-2 release snapshot scopes the
+    /// accepted by the queue. The exact format-3 release snapshot scopes the
     /// version to the carried environment and release identity.
     #[expect(
         clippy::too_many_arguments,
@@ -467,17 +480,17 @@ impl WamnPostgres {
         &self,
         project: &str,
         tenant_id: &str,
-        catalog_id: &str,
+        package_id: &str,
         environment: &str,
-        release_version: u32,
+        effective_release_id: u32,
         manifest_digest: &str,
         wiring_id: &str,
         wiring_version: u32,
     ) -> anyhow::Result<Option<ResolvedActiveWiring>> {
-        anyhow::ensure!(release_version > 0, "release-version-zero");
+        anyhow::ensure!(effective_release_id > 0, "effective-release-id-zero");
         anyhow::ensure!(wiring_version > 0, "release-wiring-version-zero");
-        let release_version =
-            i32::try_from(release_version).context("release version exceeds PostgreSQL int")?;
+        let effective_release_id = i32::try_from(effective_release_id)
+            .context("effective release id exceeds PostgreSQL int")?;
         let wiring_version = i32::try_from(wiring_version)
             .context("release wiring version exceeds PostgreSQL int")?;
         let (connection, policy) = self
@@ -504,11 +517,11 @@ impl WamnPostgres {
 
         let params: [&(dyn ToSql + Sync); 7] = [
             &tenant_id,
-            &catalog_id,
+            &package_id,
             &environment,
             &wiring_id,
             &wiring_version,
-            &release_version,
+            &effective_release_id,
             &manifest_digest,
         ];
         let selected = connection
@@ -518,7 +531,7 @@ impl WamnPostgres {
         let result = match selected {
             Ok(None) => Ok(None),
             Ok(Some(row)) => {
-                decode_active_wiring(tenant_id, catalog_id, environment, wiring_id, &row).map(Some)
+                decode_active_wiring(tenant_id, package_id, environment, wiring_id, &row).map(Some)
             }
             Err(error) => Err(error),
         };
@@ -550,19 +563,22 @@ impl WamnPostgres {
         &self,
         project: &str,
         tenant_id: &str,
-        catalog_id: &str,
+        package_id: &str,
         environment: &str,
-        catalog_version: u32,
+        effective_release_id: u32,
         wiring_id: &str,
         wiring_version: u32,
         wiring_hash: &str,
         expected_binding_world: &CandidateBindingWorld,
     ) -> anyhow::Result<CandidateWiringResolution> {
-        anyhow::ensure!(catalog_version > 0, "candidate-catalog-version-zero");
+        anyhow::ensure!(
+            effective_release_id > 0,
+            "candidate-effective-release-id-zero"
+        );
         anyhow::ensure!(wiring_version > 0, "candidate-wiring-version-zero");
         anyhow::ensure!(!wiring_hash.is_empty(), "candidate-wiring-hash-empty");
-        let catalog_version = i32::try_from(catalog_version)
-            .context("candidate catalog version exceeds PostgreSQL int")?;
+        let effective_release_id = i32::try_from(effective_release_id)
+            .context("candidate effective release id exceeds PostgreSQL int")?;
         let wiring_version = i32::try_from(wiring_version)
             .context("candidate wiring version exceeds PostgreSQL int")?;
         let (connection, policy) = self
@@ -589,11 +605,11 @@ impl WamnPostgres {
 
         let params: [&(dyn ToSql + Sync); 7] = [
             &tenant_id,
-            &catalog_id,
+            &package_id,
             &environment,
             &wiring_id,
             &wiring_version,
-            &catalog_version,
+            &effective_release_id,
             &wiring_hash,
         ];
         let selected = connection
@@ -603,18 +619,18 @@ impl WamnPostgres {
         let result = match selected {
             Ok(None) => Ok(CandidateWiringResolution::Missing),
             Ok(Some(row)) => (|| -> anyhow::Result<CandidateWiringResolution> {
-                let node_count: i64 = row.try_get(5).context("decode candidate node count")?;
+                let node_count: i64 = row.try_get(6).context("decode candidate node count")?;
                 let invalid_node_count: i64 = row
-                    .try_get(6)
+                    .try_get(7)
                     .context("decode invalid candidate node count")?;
                 let requirement_count: i64 = row
-                    .try_get(7)
+                    .try_get(8)
                     .context("decode candidate requirement count")?;
                 let resolved_count: i64 = row
-                    .try_get(8)
+                    .try_get(9)
                     .context("decode resolved candidate requirement count")?;
                 let live_binding_world: String = row
-                    .try_get(9)
+                    .try_get(10)
                     .context("decode live candidate binding world")?;
                 if node_count == 0 || invalid_node_count != 0 {
                     Ok(CandidateWiringResolution::InvalidDefinition)
@@ -628,7 +644,7 @@ impl WamnPostgres {
                         Ok(live_binding_world) if &live_binding_world == expected_binding_world => {
                             match decode_active_wiring(
                                 tenant_id,
-                                catalog_id,
+                                package_id,
                                 environment,
                                 wiring_id,
                                 &row,
@@ -675,17 +691,16 @@ impl WamnPostgres {
         &self,
         project: &str,
         tenant_id: &str,
-        catalog_id: &str,
+        effective_release_id: u32,
         environment: &str,
-        catalog_version: u32,
         component_digests: &[String],
     ) -> anyhow::Result<bool> {
         if component_digests.is_empty() {
             return Ok(true);
         }
-        anyhow::ensure!(catalog_version > 0, "release-catalog-version-zero");
-        let catalog_version = i32::try_from(catalog_version)
-            .context("release catalog version exceeds PostgreSQL int")?;
+        anyhow::ensure!(effective_release_id > 0, "effective-release-id-zero");
+        let effective_release_id = i32::try_from(effective_release_id)
+            .context("effective release id exceeds PostgreSQL int")?;
         let component_digests = component_digests.to_vec();
         let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
@@ -709,10 +724,9 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
 
-        let params: [&(dyn ToSql + Sync); 5] = [
+        let params: [&(dyn ToSql + Sync); 4] = [
             &tenant_id,
-            &catalog_id,
-            &catalog_version,
+            &effective_release_id,
             &environment,
             &component_digests,
         ];
@@ -742,17 +756,18 @@ impl WamnPostgres {
 
 fn decode_active_wiring(
     tenant_id: &str,
-    catalog_id: &str,
+    package_id: &str,
     environment: &str,
     wiring_id: &str,
     row: &tokio_postgres::Row,
 ) -> anyhow::Result<ResolvedActiveWiring> {
     let version: i32 = row.try_get(0).context("decode active wiring version")?;
     let version = u32::try_from(version).context("active wiring version is not positive")?;
-    let gated_catalog_version: i32 = row.try_get(1).context("decode gated catalog version")?;
-    let gated_catalog_version =
-        u32::try_from(gated_catalog_version).context("gated catalog version is not positive")?;
-    let graph_json: String = row.try_get(2).context("decode wiring document JSON")?;
+    let effective_release_id: i32 = row.try_get(1).context("decode effective release id")?;
+    let effective_release_id =
+        u32::try_from(effective_release_id).context("effective release id is not positive")?;
+    let package_version: String = row.try_get(2).context("decode package version")?;
+    let graph_json: String = row.try_get(3).context("decode wiring document JSON")?;
     let graph_json = serde_json::from_str(&graph_json).context("parse wiring document JSON")?;
     let document = WiringDocument::parse(&graph_json).context("validate wiring document")?;
     anyhow::ensure!(document.wiring_id == wiring_id, "active-wiring-id-mismatch");
@@ -760,14 +775,14 @@ fn decode_active_wiring(
         document.version == version,
         "active-wiring-version-mismatch"
     );
-    let graph_hash: String = row.try_get(3).context("decode wiring graph hash")?;
+    let graph_hash: String = row.try_get(4).context("decode wiring graph hash")?;
     anyhow::ensure!(
         document.wiring_hash().as_str() == graph_hash,
         "active-wiring-hash-mismatch"
     );
 
     let components: String = row
-        .try_get(4)
+        .try_get(5)
         .context("decode active wiring component facts")?;
     let components: Vec<AdmittedComponent> =
         serde_json::from_str(&components).context("parse active wiring component facts")?;
@@ -775,19 +790,19 @@ fn decode_active_wiring(
     verify_served_effect_projections(&components)?;
     let scope = WiringScope {
         tenant_id,
-        catalog_id,
+        package_id,
         environment,
     };
     let operations: Vec<_> = components.iter().map(project_component_operation).collect();
     let wiring = lower_active_wiring(
         GatedActiveWiring {
             scope,
-            gated_catalog_version,
+            package_version: &package_version,
             document: &document,
         },
         ScopedWiringOperationFacts {
             scope,
-            catalog_version: gated_catalog_version,
+            package_version: &package_version,
             operations: &operations,
         },
     )
@@ -795,7 +810,7 @@ fn decode_active_wiring(
 
     Ok(ResolvedActiveWiring {
         version,
-        catalog_version: gated_catalog_version,
+        effective_release_id,
         graph_hash: Arc::from(graph_hash),
         wiring,
         components: components.into(),
@@ -844,7 +859,7 @@ fn components_used_by_document(
 mod tests {
     use serde_json::json;
     use wamn_catalog::{
-        ComponentCatalogScope, ComponentDeclaration, ComponentPortDeclaration,
+        ComponentDeclaration, ComponentPackageScope, ComponentPortDeclaration,
         normalize_component_fact,
     };
 
@@ -853,14 +868,15 @@ mod tests {
     fn component(name: &str, operation: &str, digest_byte: char) -> AdmittedComponent {
         normalize_component_fact(
             ComponentDeclaration {
-                scope: ComponentCatalogScope {
+                scope: ComponentPackageScope {
                     tenant_id: "tenant-a".to_owned(),
-                    catalog_id: "orders".to_owned(),
-                    catalog_version: 7,
+                    package_id: "orders".to_owned(),
+                    package_version: "1.2.0".to_owned(),
                 },
                 component: name.to_owned(),
                 interface_version: "0.1.0".to_owned(),
                 operation: operation.to_owned(),
+                registered_operation: None,
                 input_ports: vec![ComponentPortDeclaration {
                     name: "input".to_owned(),
                     schema: json!({}),
@@ -895,7 +911,7 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_catalog_component_is_absent_from_resolved_facts() {
+    fn unrelated_package_component_is_absent_from_resolved_facts() {
         let used = component("entity", "create", 'a');
         let unrelated = component("logging", "write", 'b');
 
@@ -917,7 +933,8 @@ mod tests {
 
     #[test]
     fn queued_query_uses_release_snapshot_and_never_the_active_pointer() {
-        assert!(RELEASE_WIRING_SQL.contains("release_manifest_v2_snapshots"));
+        assert!(RELEASE_WIRING_SQL.contains("release_manifest_v3_snapshots"));
+        assert!(RELEASE_WIRING_SQL.contains("effective_release_packages"));
         assert!(RELEASE_WIRING_SQL.contains("release_components"));
         assert!(!RELEASE_WIRING_SQL.contains("wiring_activation"));
     }
@@ -925,7 +942,8 @@ mod tests {
     #[test]
     fn candidate_query_rederives_the_complete_binding_world_without_activation() {
         for predicate in [
-            "wiring.gated_catalog_version = $6",
+            "member.effective_release_id = $6",
+            "wiring.package_version = release_scope.package_version",
             "wiring.wiring_hash = $7",
             "binding.environment = $3",
             "binding.binding_status = 'active'",
@@ -949,14 +967,9 @@ mod tests {
     #[test]
     fn readiness_query_requires_the_exact_component_grain_and_live_binding() {
         for predicate in [
-            "requirement.artifact_hash IS NULL",
-            "requirement.requirement_name IS NULL",
-            "requirement.component_digest = ANY($5::text[])",
-            "binding.catalog_id = $2",
-            "binding.catalog_version = $3",
-            "binding.environment = $4",
-            "binding.artifact_hash IS NULL",
-            "binding.requirement_name IS NULL",
+            "requirement.component_digest = ANY($4::text[])",
+            "binding.effective_release_id = $2",
+            "binding.environment = $3",
             "binding.component_digest = requirement.component_digest",
             "binding.store_alias = requirement.store_alias",
             "binding.binding_status = 'active'",
@@ -977,14 +990,15 @@ mod tests {
     /// refuses this shape.
     fn migration_defaulted(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
-            scope: ComponentCatalogScope {
+            scope: ComponentPackageScope {
                 tenant_id: "tenant-a".to_owned(),
-                catalog_id: "orders".to_owned(),
-                catalog_version: 7,
+                package_id: "orders".to_owned(),
+                package_version: "1.2.0".to_owned(),
             },
             component: "transform".to_owned(),
             interface_version: "0.1.0".to_owned(),
             operation: "map".to_owned(),
+            registered_operation: None,
             component_digest: format!("sha256:{}", "a".repeat(64)),
             imports: imports.iter().map(|name| (*name).to_owned()).collect(),
             imports_fingerprint: format!("sha256:{}", "b".repeat(64)),

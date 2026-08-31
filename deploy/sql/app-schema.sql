@@ -3,11 +3,10 @@
 -- users, roles (+ the user↔role linkage), permissions, configurations,
 -- audit_log, and api_keys.
 --
--- This is the AUTH/RBAC half of item 2.4. The "platform metadata" half
--- (entities, fields, relations, and release membership) is
--- ALREADY shipped and is deliberately NOT redefined here: the catalog model
--- lives in deploy/sql/catalog-schema.sql (catalog.entities / catalog.fields /
--- catalog.relations / catalog.release_components, 3.1). A
+-- This is the AUTH/RBAC half of item 2.4. Package coordinates, immutable
+-- migration ledgers, effective releases, and release membership are already
+-- shipped by deploy/sql/catalog-schema.sql and are deliberately not redefined
+-- here. A
 -- `deployments` table is deferred — a live WorkloadDeployment is a K8s CR, so a
 -- registry table would duplicate cluster state until there is a concrete reader
 -- (follow-up bead).
@@ -156,14 +155,15 @@ END
 $wamn_authority_bootstrap$;
 
 -- ---------------------------------------------------------------------------
--- Users — application accounts. `id` (uuid) is the app.user_id ownership target
--- (3.5). Identity only: no credential material lives here (auth is 4.2/8.1).
+-- Users — application accounts. `id` (uuid) is org-issued at birth and has no
+-- database default; it is the app.user_id ownership target (3.5). Identity
+-- only: no credential material lives here (auth is 4.2/8.1).
 -- `status` gates whether the account may authenticate (enforced by 4.2, not this
 -- schema). Email is unique within a tenant.
 -- ---------------------------------------------------------------------------
 CREATE TABLE app_system.users (
     tenant_id    text NOT NULL CHECK (tenant_id <> ''),
-    id           uuid NOT NULL DEFAULT gen_random_uuid(),
+    id           uuid NOT NULL,
     email        text NOT NULL,
     display_name text,
     status       text NOT NULL DEFAULT 'active',

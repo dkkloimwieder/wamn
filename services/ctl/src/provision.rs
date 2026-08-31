@@ -2,7 +2,7 @@
 //! **database** on the shared cluster (D6: CloudNativePG) and emit the
 //! credential the runtime + the future `K8sSecretProvider` (5x0.1) consume.
 //!
-//! An imperative CLI, run as a Job (the `publish-catalog` precedent — not a
+//! An imperative CLI, run as a Job (the management-verb precedent — not a
 //! Project CRD + controller, which is the 10.1 control plane). It connects as
 //! the cluster **superuser** (only the operator/superuser can create databases
 //! and roles — the runtime `wamn_app` role is `NOSUPERUSER NOCREATEDB`), runs

@@ -19,7 +19,7 @@
 //! time (`include_str!`) — the SAME files the wamn-gates `schema_drift` guard
 //! (wamn-9mg8) pins — and sliced per table, so the plan can never drift from
 //! what provisioning applies. Per-project schemas are the `wamn_run` → target
-//! rewrite (`rewrite_schema`, the `publish-catalog --runstate` convention).
+//! rewrite (`rewrite_schema`, the project-environment provisioning convention).
 //!
 //! What the plan covers (the wamn-1wdq manifestation set):
 //!
@@ -64,22 +64,23 @@ use std::fmt;
 use wamn_pg_core::{Identifier, InvalidIdentifier};
 
 /// The schema of record, compiled in — the same sources provisioning applies
-/// (`publish-catalog --runstate`, the f1 provisioning Job) and the wamn-9mg8
+/// (project-environment provisioning and the f1 provisioning Job) and the wamn-9mg8
 /// stand-in drift guard pins.
 const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
 const RUNS_ADMISSION_SCOPE_CHECK_DEF: &str =
-    "CHECK (catalog_id <> ''::text AND catalog_version > 0 AND environment <> ''::text)";
+    "CHECK (package_id <> ''::text AND effective_release_id > 0 AND environment <> ''::text)";
 const RUNS_WIRING_IDENTITY_CHECK_DEF: &str = "CHECK (wiring_id IS NULL AND wiring_version IS NULL OR wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0)";
 const RUNS_EXECUTION_GRAIN_CHECK_DEF: &str = "CHECK (flow_id IS NOT NULL AND flow_version IS NOT NULL AND flow_id <> ''::text AND flow_version > 0 AND wiring_hash IS NULL AND binding_world_json IS NULL OR flow_id IS NULL AND flow_version IS NULL AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0 AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text AND binding_world_json IS NOT NULL AND jsonb_typeof(binding_world_json) = 'array'::text)";
 #[cfg(test)]
-const RUNS_RELEASE_FK_DEF: &str = "FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.releases(tenant_id, catalog_id, catalog_version)";
+const RUNS_RELEASE_FK_DEF: &str = "FOREIGN KEY (tenant_id, effective_release_id) REFERENCES catalog.effective_releases(tenant_id, effective_release_id)";
 #[cfg(test)]
-const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs USING btree (tenant_id, catalog_id, catalog_version)";
+const RUNS_RELEASE_INDEX_DEF: &str =
+    "CREATE INDEX runs_release ON wamn_run.runs USING btree (tenant_id, effective_release_id)";
 const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
-const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment, capture_mode, durability_class, wiring_id, wiring_version, wiring_hash, binding_world_json, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
+const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF flow_id, flow_version, package_id, effective_release_id, environment, capture_mode, durability_class, wiring_id, wiring_version, wiring_hash, binding_world_json, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 /// The qual `wamn_run.environment_policies` must carry, as `pg_policy` renders
 /// it. Re-keyed onto `current_user` with the rest of the guest-reachable floor
 /// (`wamn-0h0g.22.6.3`); if this drifts from `deploy/sql/run-state.sql` the
@@ -237,15 +238,11 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_release_record_check",
-        // The claim-time release record: absent, or complete and well formed.
-        // Table-origin because it names two columns, and explicitly named so it
-        // can never collide with the retired child-run `runs_check3` numbering.
-        // The two `IS NOT NULL` conjuncts are what make "complete" true rather
-        // than merely claimed: a well-formed half pair leaves the second
-        // disjunct NULL, and a NULL CHECK expression is satisfied
-        // (wamn-0h0g.15.126). This literal is the `pg_get_constraintdef(oid,
-        // true)` pretty rendering, derived on PostgreSQL 18, not hand-written.
-        definition: "CHECK (release_version IS NULL AND manifest_digest IS NULL OR release_version IS NOT NULL AND manifest_digest IS NOT NULL AND release_version > 0 AND manifest_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
+        // The claim-time manifest record: absent, or well formed. The effective
+        // release id is already an immutable admission pin. Table-origin and
+        // explicitly named so it can never collide with the retired child-run
+        // `runs_check3` numbering.
+        definition: "CHECK (manifest_digest IS NULL OR manifest_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -486,7 +483,7 @@ const PIN_RUN_DURABILITY_CLASS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
-const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.flow_id IS DISTINCT FROM OLD.flow_id\n       OR NEW.flow_version IS DISTINCT FROM OLD.flow_version\n       OR NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode\n       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class\n       OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id\n       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version\n       OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash\n       OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id\n                             AND OLD.durability_class = 'durable') THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
+const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.flow_id IS DISTINCT FROM OLD.flow_id\n       OR NEW.flow_version IS DISTINCT FROM OLD.flow_version\n       OR NEW.package_id IS DISTINCT FROM OLD.package_id\n       OR NEW.effective_release_id IS DISTINCT FROM OLD.effective_release_id\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode\n       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class\n       OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id\n       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version\n       OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash\n       OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id\n                             AND OLD.durability_class = 'durable') THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
 const GUARD_TERMINAL_RUN_DELETE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_terminal_run_delete()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-delete-nonterminal';\n    END IF;\n    RETURN OLD;\nEND\n$function$\n";
 
@@ -587,8 +584,8 @@ AS $$
 BEGIN
     IF NEW.flow_id IS DISTINCT FROM OLD.flow_id
        OR NEW.flow_version IS DISTINCT FROM OLD.flow_version
-       OR NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
-       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
+       OR NEW.package_id IS DISTINCT FROM OLD.package_id
+       OR NEW.effective_release_id IS DISTINCT FROM OLD.effective_release_id
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
        OR NEW.durability_class IS DISTINCT FROM OLD.durability_class
@@ -600,8 +597,8 @@ BEGIN
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
     END IF;
-    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN
-        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN
+    IF OLD.manifest_digest IS NOT NULL THEN
+        IF NEW.manifest_digest IS NULL THEN
             IF NEW.status NOT IN ('dispatched', 'running')
                OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect
                            WHERE effect.tenant_id = OLD.tenant_id
@@ -611,8 +608,7 @@ BEGIN
                     ERRCODE = '55000',
                     MESSAGE = 'run-release-record-immutable';
             END IF;
-        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version
-           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN
+        ELSIF NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN
             RAISE EXCEPTION USING
                 ERRCODE = '55000',
                 MESSAGE = 'run-release-record-immutable';
@@ -677,9 +673,9 @@ const RUNS_TERMINAL_DELETE_ONLY_TRIGGER_SQL: &str = "CREATE TRIGGER \
 ///
 /// The steady-state trigger repair emits this exact frozen column list.
 const RUNS_ADMISSION_PINS_TRIGGER_SQL: &str = "CREATE TRIGGER runs_admission_pins_immutable \
-    BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment, \
+    BEFORE UPDATE OF flow_id, flow_version, package_id, effective_release_id, environment, \
     capture_mode, durability_class, wiring_id, wiring_version, wiring_hash, \
-    binding_world_json, release_version, manifest_digest \
+    binding_world_json, manifest_digest \
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
     wamn_run.guard_run_admission_pins_immutable();";
 
@@ -842,10 +838,6 @@ const EFFECT_OUTCOME_DISPATCH_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attemp
      FOREIGN KEY (tenant_id, attempt_id, dispatched_at) \
      REFERENCES wamn_run.effect_attempt_dispatches \
          (tenant_id, attempt_id, dispatched_at)";
-const RELEASE_PUBLISHER_CHECK_NAME: &str = "releases_verified_publisher_principal_check";
-const RELEASE_PUBLISHER_CHECK_DEF: &str =
-    "CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)";
-
 const RETIRED_EFFECT_ATTEMPT_COLUMNS: &[&str] = &[
     "attempt_key",
     "attempt_index",
@@ -991,10 +983,10 @@ fn observed_index<'a>(obs: &'a RunPlaneObservation, name: &str) -> Option<&'a St
 }
 
 fn postgres_visible_identifier(name: &str) -> &str {
-    if name.len() <= wamn_schema_model::MAX_IDENTIFIER_BYTES {
+    if name.len() <= 63 {
         return name;
     }
-    let mut end = wamn_schema_model::MAX_IDENTIFIER_BYTES;
+    let mut end = 63;
     while !name.is_char_boundary(end) {
         end -= 1;
     }
@@ -1354,16 +1346,6 @@ fn effect_writer_ledger_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneOb
     attempts_need_cutover || dispatches_need_cutover || retired_insert_guard_present
 }
 
-fn disposition_provenance_migration_sql() -> &'static str {
-    let start = CATALOG_SCHEMA_SQL
-        .find("-- BEGIN DISPOSITION PROVENANCE STORAGE MIGRATION")
-        .expect("disposition provenance migration start");
-    let end = CATALOG_SCHEMA_SQL
-        .find("-- END DISPOSITION PROVENANCE STORAGE MIGRATION")
-        .expect("disposition provenance migration end");
-    &CATALOG_SCHEMA_SQL[start..end]
-}
-
 /// The run-plane record files in APPLY ORDER: run-state first (schema header +
 /// `runs`, which everything FKs), then the queue.
 const RUN_PLANE_FILES: [&str; 2] = [RUN_STATE_SQL, RUN_QUEUE_SQL];
@@ -1384,40 +1366,31 @@ struct AuthoringPrivilegeSpec {
 const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "catalogs",
-        // wamn-0h0g.12.20 confined this relation to SELECT. This spec is the
-        // SIXTH encoding of the old blanket grant and the only one the run-plane
-        // reconciler owns: left at full DML it planned RepairAuthoringPrivilege
-        // forever -- never converging -- and each repair re-granted the very DML
-        // the DDL and the publish converge path had just revoked.
+        table: "packages",
         app: &["SELECT"],
         author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "releases",
-        // wamn-0h0g.22.20 revoked the author SELECT on this relation and the
-        // five catalog specs below it. The authority was DORMANT, measured from
-        // the server: `pg_auth_members` carries no edge for
-        // `wamn_scenario_author` in either direction, it is NOLOGIN NOINHERIT,
-        // and it holds no CONNECT on the project database. There is no bead
-        // behind an evidence-reader story that would need these reads, so
-        // justifying them in a comment would reproduce `wamn-p3ze` -- a false
-        // justification living beside a real grant.
-        //
-        // THE REVOKE HAS THREE EMITTERS AND THIS IS THE ONE THAT UNDOES THE
-        // OTHER TWO. Left at `&["SELECT"]` while `catalog-schema.sql` and
-        // `publish_catalog::ensure_authoring_catalog_privileges` grant nothing,
-        // `RepairAuthoringPrivilege` re-grants on every reconcile and
-        // `authoring_privileges_drifted` reports the revoked state AS DRIFT on
-        // every provisioned environment. `the_catalog_ddl_and_the_authoring_specs_agree_on_the_author`
-        // pins the two against each other so neither can move alone.
+        table: "package_migrations",
+        app: &[],
+        author: &[],
+    },
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::Catalog,
+        table: "effective_releases",
         app: &["SELECT"],
         author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "catalog_heads",
+        table: "effective_release_packages",
+        app: &["SELECT"],
+        author: &[],
+    },
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::Catalog,
+        table: "effective_release_heads",
         app: &["SELECT"],
         author: &[],
     },
@@ -1816,8 +1789,8 @@ fn stored_suite_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) 
 /// (or one restored from a pre-teardown snapshot) still carries them.
 pub const LEGACY_OUTBOX_TABLES: [&str; 2] = ["outbox", "evt_shadow"];
 
-/// The constant trigger AND function name the retired wamn-schema-compiler outbox emission
-/// used (`CREATE OR REPLACE TRIGGER wamn_outbox_event … EXECUTE FUNCTION
+/// The constant trigger and function name the retired outbox emission used
+/// (`CREATE OR REPLACE TRIGGER wamn_outbox_event … EXECUTE FUNCTION
 /// wamn_outbox_event()`, one trigger per entity table, the function unqualified
 /// so it landed in the apply-time schema).
 pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
@@ -2127,18 +2100,6 @@ pub struct RunPlaneObservation {
     pub catalog_schema_present: bool,
     /// Tables present in the `catalog` schema (empty when the schema is absent).
     pub catalog_tables: BTreeSet<String>,
-    /// Catalog table columns used by additive cross-plane migrations.
-    pub catalog_columns: BTreeMap<String, BTreeSet<String>>,
-    /// Catalog columns that carry NOT NULL authority.
-    pub catalog_non_nullable_columns: BTreeSet<(String, String)>,
-    /// PostgreSQL-formatted catalog column types.
-    pub catalog_column_types: BTreeMap<(String, String), String>,
-    /// Catalog CHECKs owned by additive cross-plane migrations.
-    pub catalog_checks: BTreeMap<(String, String), String>,
-    /// Catalog indexes, foreign keys, and user triggers observed exactly.
-    pub catalog_indexes: BTreeMap<String, String>,
-    pub catalog_foreign_keys: BTreeMap<(String, String), String>,
-    pub catalog_triggers: BTreeMap<(String, String), String>,
     /// Rows in `catalog.event_registrations` still carrying a retired `state`
     /// or `partition-key` key (0 when the table is absent).
     pub stale_registration_key_rows: i64,
@@ -2224,9 +2185,6 @@ pub enum RunPlaneActionKind {
     EnsureCatalogSchema,
     /// Create a missing `catalog` table from its record section.
     CreateCatalogTable,
-    /// Add the nullable verified author/publisher provenance columns required
-    /// before immutable attempt writers activate.
-    EnsureCatalogProvenance,
     /// Converge authoring-state schema/table grants and remove guest write
     /// authority or membership in the host-only role.
     RepairAuthoringPrivilege,
@@ -3052,26 +3010,6 @@ $retire_run_projection_authority$;"#,
                     sql: table_section(CATALOG_SCHEMA_SQL, "catalog", &table),
                 });
             }
-        }
-        let release_needs_provenance = obs.catalog_tables.contains("releases")
-            && !obs
-                .catalog_columns
-                .get("releases")
-                .is_some_and(|columns| columns.contains("verified_publisher_principal"));
-        let release_check_needs_repair = obs.catalog_tables.contains("releases")
-            && obs
-                .catalog_checks
-                .get(&(
-                    "releases".to_string(),
-                    RELEASE_PUBLISHER_CHECK_NAME.to_string(),
-                ))
-                .is_none_or(|definition| definition != RELEASE_PUBLISHER_CHECK_DEF);
-        if release_needs_provenance || release_check_needs_repair {
-            plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::EnsureCatalogProvenance,
-                target: "catalog.disposition-provenance".to_string(),
-                sql: disposition_provenance_migration_sql().to_string(),
-            });
         }
     }
 
@@ -4084,7 +4022,7 @@ fn ident_tokens(sql: &str) -> BTreeSet<&str> {
 }
 
 fn quote_ident(s: &str) -> String {
-    wamn_schema_compiler::sql::quote_ident(s)
+    wamn_pg_core::quote_ident(s)
 }
 
 fn repair_environment_policy_row_security_sql(schema: &BareSchemaName) -> String {
@@ -4361,7 +4299,8 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
       WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author', \
                         'wamn_effect_writer') \
         AND ((table_schema = 'catalog' AND table_name IN \
-              ('catalogs', 'releases', 'catalog_heads', \
+              ('packages', 'package_migrations', 'effective_releases', \
+               'effective_release_packages', 'effective_release_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (table_schema = $1 AND table_name IN ('environment_policies', 'runs'))) \
@@ -4385,7 +4324,8 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
                               'wamn_effect_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'releases', 'catalog_heads', \
+              ('packages', 'package_migrations', 'effective_releases', \
+               'effective_release_packages', 'effective_release_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
@@ -4410,7 +4350,8 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
                               'wamn_effect_writer') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'releases', 'catalog_heads', \
+              ('packages', 'package_migrations', 'effective_releases', \
+               'effective_release_packages', 'effective_release_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
@@ -4431,7 +4372,8 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
        JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
       WHERE relation.relkind = 'r' \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'releases', 'catalog_heads', \
+              ('packages', 'package_migrations', 'effective_releases', \
+               'effective_release_packages', 'effective_release_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
@@ -4706,12 +4648,12 @@ pub fn count_stale_registration_keys_sql() -> &'static str {
 // repo layout convention (one `CREATE TABLE <q>.<t> (` per table, one column
 // per definition start line, full-line `--` comments, statements after the
 // table body up to the next CREATE TABLE belong to that table's section); the
-// tests below pin the parse against all four shipped files so a layout change
+// tests below pin the parse against all three shipped files so a layout change
 // fails here, not silently.
 // ---------------------------------------------------------------------------
 
 /// The canonical deploy DDL rewrite from the `wamn_run` schema to the target
-/// project schema (the `publish-catalog --runstate` convention, relocated here
+/// project schema (the project-environment provisioning convention, relocated here
 /// as the single owner). The dot-anchored replace leaves prose mentions like
 /// `wamn_run_store` untouched. [`BareSchemaName`] makes the unquoted
 /// interpolation requirement explicit in the API.
@@ -4936,40 +4878,6 @@ mod tests {
 
     use super::*;
 
-    // Verified against the last complete reorganized schema in git history
-    // (`95be7d1`). Keeping the required final apparatus as one exact suffix
-    // detects mid-token truncation, omitted grants/indexes, reordered objects,
-    // and unreviewed objects appended after the canonical tail.
-    const EVENT_REGISTRATIONS_TAIL: &str = "\
-CREATE POLICY event_registrations_tenant ON catalog.event_registrations
-    TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY event_registrations_platform ON catalog.event_registrations
-    AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
-CREATE INDEX event_registrations_tkey
-    ON catalog.event_registrations ((wamn_authority.tenant_key(tenant_id)));
-GRANT SELECT ON catalog.event_registrations TO wamn_app;
--- wamn-0h0g.12.29: callable-flow admission locks the live registration with
--- `FOR KEY SHARE` as wamn_app, and PostgreSQL demands UPDATE on at least one
--- column for ANY row-locking clause. `tenant_id` is the only column whose
--- FORCE-RLS WITH CHECK admits nothing but the value already in the row, so this
--- grant buys the lock and carries no semantic rewrite authority.
-GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;
--- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
-CREATE INDEX event_registrations_by_entity
-    ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
-
--- Closes the BEGIN at the head of the file (wamn-jnms).
-COMMIT;
-";
-
-    fn catalog_tail_is_complete(sql: &str) -> bool {
-        sql.ends_with(EVENT_REGISTRATIONS_TAIL)
-    }
-
     fn schema(value: &str) -> BareSchemaName {
         BareSchemaName::new(value).expect("test schema is valid")
     }
@@ -5086,12 +4994,7 @@ COMMIT;
             }
         }
         for table in record_tables(CATALOG_SCHEMA_SQL, "catalog") {
-            let columns = record_columns(CATALOG_SCHEMA_SQL, "catalog", &table)
-                .into_iter()
-                .map(|(column, _)| column)
-                .collect();
             obs.catalog_tables.insert(table.clone());
-            obs.catalog_columns.insert(table, columns);
         }
         for spec in AUTHORING_PRIVILEGE_SPECS {
             let schema_name = match spec.schema {
@@ -5169,13 +5072,6 @@ COMMIT;
                 );
             }
         }
-        obs.catalog_checks.insert(
-            (
-                "releases".to_string(),
-                RELEASE_PUBLISHER_CHECK_NAME.to_string(),
-            ),
-            RELEASE_PUBLISHER_CHECK_DEF.to_string(),
-        );
         for spec in CHECK_SPECS {
             obs.checks.insert(
                 (spec.table.to_string(), spec.name.to_string()),
@@ -5227,8 +5123,8 @@ COMMIT;
             }
         }
         for (column, ty) in [
-            ("catalog_id", "text"),
-            ("catalog_version", "integer"),
+            ("package_id", "text"),
+            ("effective_release_id", "integer"),
             ("environment", "text"),
         ] {
             let key = ("runs".to_string(), column.to_string());
@@ -5387,7 +5283,7 @@ COMMIT;
     }
 
     #[test]
-    fn record_tables_are_pinned() {
+    fn run_plane_record_tables_are_pinned() {
         assert_eq!(
             record_tables(RUN_STATE_SQL, "wamn_run"),
             [
@@ -5400,73 +5296,6 @@ COMMIT;
             ]
         );
         assert_eq!(record_tables(RUN_QUEUE_SQL, "wamn_run"), ["run_queue"]);
-        let catalog = record_tables(CATALOG_SCHEMA_SQL, "catalog");
-        assert!(catalog.first().is_some_and(|t| t == "catalogs"));
-        assert!(catalog.contains(&"event_registrations".to_string()));
-        // wamn-0h0g.26.21: the flow-era release plane left the record whole.
-        for retired_table in [
-            "flow_artifacts",
-            "release_flows",
-            "release_exposure_manifests",
-            "release_sources",
-            "release_attachments",
-            "attachment_tombstones",
-            "attachment_activation",
-            "attachment_activation_events",
-        ] {
-            assert!(!catalog.contains(&retired_table.to_string()));
-        }
-        for connection_table in [
-            "connection_requirements",
-            "connection_instances",
-            "connection_generations",
-            "connection_bindings",
-        ] {
-            assert!(catalog.contains(&connection_table.to_string()));
-        }
-        // The project-authoring relations (`flow_drafts`,
-        // `draft_safe_connection_grants`, `authoring_command_audit`) left this
-        // file with wamn-0h0g.9.11.3 (805701ec) — `deploy/sql/control-portable-store.sql`
-        // owns them now and `control_portable_store` is their pin.
-        for retired_here in [
-            "flow_drafts",
-            "draft_safe_connection_grants",
-            "authoring_command_audit",
-        ] {
-            assert!(!catalog.contains(&retired_here.to_string()));
-        }
-        assert_eq!(
-            catalog.len(),
-            23,
-            "catalog-schema.sql table count: {catalog:?}"
-        );
-    }
-
-    #[test]
-    fn catalog_schema_ends_with_the_complete_event_registration_apparatus() {
-        assert!(catalog_tail_is_complete(CATALOG_SCHEMA_SQL));
-    }
-
-    #[test]
-    fn catalog_tail_guard_rejects_truncation_omission_and_object_order_drift() {
-        let truncated = CATALOG_SCHEMA_SQL
-            .strip_suffix("COMMIT;\n")
-            .expect("canonical tail ends with the file's own transaction terminator");
-        assert!(!catalog_tail_is_complete(truncated));
-
-        let without_grant = CATALOG_SCHEMA_SQL.replace(
-            "GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;\n",
-            "",
-        );
-        assert!(!catalog_tail_is_complete(&without_grant));
-
-        let grant = "GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;\n";
-        let before_tail = CATALOG_SCHEMA_SQL
-            .strip_suffix(EVENT_REGISTRATIONS_TAIL)
-            .expect("canonical schema has the guarded tail");
-        let reordered_tail = format!("{}{grant}", EVENT_REGISTRATIONS_TAIL.replace(grant, ""));
-        let reordered = format!("{before_tail}{reordered_tail}");
-        assert!(!catalog_tail_is_complete(&reordered));
     }
 
     #[test]
@@ -5515,41 +5344,39 @@ COMMIT;
     fn fresh_schema_omits_execution_bundle_carriers() {
         let runs = table_section(RUN_STATE_SQL, "wamn_run", "runs");
         for column in [
-            "catalog_id      text NOT NULL",
-            "catalog_version int NOT NULL",
+            "package_id      text NOT NULL",
+            "effective_release_id int NOT NULL",
             "environment     text NOT NULL",
         ] {
             assert!(runs.contains(column), "runs contract missing {column}");
         }
-        assert!(runs.contains("catalog_version > 0"));
+        assert!(runs.contains("effective_release_id > 0"));
         assert!(runs.contains("CONSTRAINT runs_release_fk"));
         assert!(runs.contains(
-            "FOREIGN KEY (tenant_id, catalog_id, catalog_version)\n        REFERENCES catalog.releases"
+            "FOREIGN KEY (tenant_id, effective_release_id)\n        REFERENCES catalog.effective_releases"
         ));
         assert!(runs.contains(
-            "CREATE INDEX runs_release ON wamn_run.runs (tenant_id, catalog_id, catalog_version)"
+            "CREATE INDEX runs_release ON wamn_run.runs (tenant_id, effective_release_id)"
         ));
         assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-admission-pin-immutable'"));
         assert!(!runs.contains(RETIRED_EXECUTION_BUNDLE_COLUMN));
         assert!(!CATALOG_SCHEMA_SQL.contains("catalog.execution_bundles"));
 
-        // The claim-time release record: two nullable columns, one paired
-        // CHECK, and both named in the column-scoped guard's trigger so the
-        // write-once arm can fire at all.
-        assert!(runs.contains("release_version int"));
+        // The claim-time manifest record is separate from the immutable
+        // admission-pinned effective release id.
+        assert!(!runs.contains("release_version int"));
         assert!(runs.contains("manifest_digest text"));
         assert!(runs.contains("CONSTRAINT runs_release_record_check"));
         assert!(runs.contains(
-            "(release_version IS NULL AND manifest_digest IS NULL)\n      OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL"
+            "manifest_digest IS NULL\n      OR manifest_digest ~ '^sha256:[0-9a-f]{64}$'"
         ));
         // The durability-class carrier joins the same column-scoped guard
         // (wamn-0h0g.20.1 rider 1): a column the trigger does not NAME never
         // fires its transition arm, so the class would be silently mutable.
         for trigger_fragment in [
-            "BEFORE UPDATE OF flow_id, flow_version, catalog_id, catalog_version, environment,",
+            "BEFORE UPDATE OF flow_id, flow_version, package_id, effective_release_id, environment,",
             "capture_mode, durability_class, wiring_id, wiring_version,",
-            "wiring_hash, binding_world_json,",
-            "release_version, manifest_digest",
+            "wiring_hash, binding_world_json, manifest_digest",
         ] {
             assert!(
                 RUN_STATE_SQL.contains(trigger_fragment),
@@ -5559,7 +5386,7 @@ COMMIT;
         assert!(runs.contains("durability_class text NOT NULL DEFAULT 'standard'"));
         assert!(runs.contains("CHECK (durability_class IN ('standard', 'durable'))"));
         assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-release-record-immutable'"));
-        assert!(RUN_STATE_SQL.contains("OLD.release_version IS NOT NULL"));
+        assert!(!RUN_STATE_SQL.contains("OLD.release_version IS NOT NULL"));
         assert!(RUN_STATE_SQL.contains("OLD.manifest_digest IS NOT NULL"));
 
         assert!(!CATALOG_SCHEMA_SQL.contains(RETIRED_EXECUTION_BUNDLE_COLUMN));
@@ -5719,8 +5546,8 @@ COMMIT;
             );
         }
 
-        let cat = table_section(CATALOG_SCHEMA_SQL, "catalog", "catalogs");
-        assert!(cat.contains("catalogs_one_applied_per_env"));
+        let package = table_section(CATALOG_SCHEMA_SQL, "catalog", "packages");
+        assert!(package.contains("manifest_sha256"));
 
         let actions = table_section(RUN_STATE_SQL, "wamn_run", "operator_run_actions");
         assert!(actions.contains("operator_run_actions_delete_immutable"));
@@ -6258,7 +6085,7 @@ COMMIT;
         // privilege — is re-pinned on a relation the reconciler still owns.
         let mut obs = observation_at_record();
         obs.authoring_table_owners.insert(
-            ("catalog".to_string(), "catalogs".to_string()),
+            ("catalog".to_string(), "packages".to_string()),
             "wamn_app".to_string(),
         );
         obs.authoring_effective_table_privileges
@@ -6272,7 +6099,7 @@ COMMIT;
         obs.authoring_effective_table_privileges
             .entry((
                 "catalog".to_string(),
-                "releases".to_string(),
+                "effective_releases".to_string(),
                 SCENARIO_AUTHOR_ROLE.to_string(),
             ))
             .or_default()
@@ -6280,7 +6107,7 @@ COMMIT;
         obs.authoring_effective_column_privileges
             .entry((
                 "catalog".to_string(),
-                "catalog_heads".to_string(),
+                "effective_release_heads".to_string(),
                 "wamn_app".to_string(),
             ))
             .or_default()
@@ -6288,10 +6115,10 @@ COMMIT;
 
         let plan = plan_run_plane(&schema("demo"), &obs);
         for table in [
-            "catalogs",
+            "packages",
             "connection_bindings",
-            "releases",
-            "catalog_heads",
+            "effective_releases",
+            "effective_release_heads",
         ] {
             let repair = plan
                 .actions
@@ -7347,55 +7174,6 @@ COMMIT;
         );
     }
 
-    #[test]
-    fn catalog_provenance_columns_are_reconciled_before_runtime_activation() {
-        let mut obs = observation_at_record();
-        obs.catalog_columns
-            .get_mut("releases")
-            .expect("release manifest columns")
-            .remove("verified_publisher_principal");
-
-        let plan = plan_run_plane(&schema("demo"), &obs);
-        let action = plan
-            .actions
-            .iter()
-            .find(|action| action.kind == RunPlaneActionKind::EnsureCatalogProvenance)
-            .expect("catalog provenance migration");
-        assert!(
-            action
-                .sql
-                .contains("ADD COLUMN IF NOT EXISTS verified_publisher_principal")
-        );
-    }
-
-    #[test]
-    fn catalog_provenance_check_drift_is_repaired() {
-        let mut obs = observation_at_record();
-        obs.catalog_checks.insert(
-            (
-                "releases".to_string(),
-                RELEASE_PUBLISHER_CHECK_NAME.to_string(),
-            ),
-            "CHECK (true)".to_string(),
-        );
-
-        let action = plan_run_plane(&schema("demo"), &obs)
-            .actions
-            .into_iter()
-            .find(|action| action.kind == RunPlaneActionKind::EnsureCatalogProvenance)
-            .expect("catalog provenance CHECK repair");
-        assert!(
-            action
-                .sql
-                .contains("DROP CONSTRAINT IF EXISTS releases_verified_publisher_principal_check")
-        );
-        assert!(
-            action
-                .sql
-                .contains("ADD CONSTRAINT releases_verified_publisher_principal_check")
-        );
-    }
-
     /// From zero (an empty database): the full run-plane set in FK order behind
     /// the schema ensure, plus the whole catalog schema — the fixture-wipe
     /// restore path (manifestations 3 + 5).
@@ -7799,12 +7577,10 @@ COMMIT;
     /// Every `catalog` relation `sql` GRANTs `grantee` a SELECT on, whatever else
     /// the statement grants and whoever else it grants to.
     ///
-    /// Kept byte-for-byte in step with `wamn_ctl::publish_catalog`'s scanner of
-    /// the same name: that one reads the CONVERGE emitter against this same file,
-    /// and the two set equalities are what close the three-emitter inventory
-    /// (`wamn-0h0g.22.33`). They cannot share one copy — the converge lives in
-    /// `services/ctl`, which depends on this crate and not the reverse — so each
-    /// side carries the scan and pins it against a literal fixture.
+    /// This reads the fresh-install emitter independently of
+    /// [`AUTHORING_PRIVILEGE_SPECS`], which drives run-plane reconciliation. The
+    /// equality above and the literal fixtures below keep those two emitters in
+    /// agreement (`wamn-0h0g.22.33`).
     fn catalog_selects_for(sql: &str, grantee: &str) -> BTreeSet<String> {
         let body = sql
             .lines()
@@ -8323,16 +8099,15 @@ GRANT INSERT ON catalog.write_only TO wamn_scenario_author;
         );
     }
 
-    /// The dot-anchored rewrite (relocated from publish_catalog as the single
-    /// owner): qualified names + the schema header rewrite; prose does not.
+    /// The run-plane reconciler's dot-anchored rewrite changes qualified names
+    /// and the schema header, but not prose.
     #[test]
     fn schema_rewrite_is_dot_anchored() {
         let schema = schema("poc_f1");
-        // `run-state.sql` is the ONLY record file production rewrites whole
-        // (`publish_catalog::ensure_runstate`) and the only one carrying the
-        // schema header; the legacy flow registry (fixture-only) was the second
-        // input to this sweep until wamn-0h0g.12.102 (e45ca35b) deleted it with
-        // its call site.
+        // `run-state.sql` is the only run-plane record carrying the schema
+        // header. The legacy flow registry (fixture-only) was the second input
+        // to this sweep until wamn-0h0g.12.102 (e45ca35b) deleted it with its
+        // call site.
         let out = rewrite_schema(RUN_STATE_SQL, &schema);
         assert!(out.contains("CREATE TABLE poc_f1.runs"), "runs");
         assert!(!out.contains("wamn_run."), "no qualified wamn_run left");
@@ -8479,7 +8254,7 @@ GRANT INSERT ON catalog.write_only TO wamn_scenario_author;
             }
         }
         assert!(select_authoring_effective_table_privileges_sql().contains("has_table_privilege"));
-        assert!(select_authoring_effective_table_privileges_sql().contains("releases"));
+        assert!(select_authoring_effective_table_privileges_sql().contains("effective_releases"));
         assert!(select_authoring_table_owners_sql().contains("relation.relowner"));
         assert!(
             select_authoring_effective_column_privileges_sql().contains("has_any_column_privilege")

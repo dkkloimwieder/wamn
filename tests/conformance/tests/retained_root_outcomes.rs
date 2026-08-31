@@ -6,21 +6,32 @@ use std::path::{Path, PathBuf};
 
 const PACKAGE_ROLES: &str = "architecture/package-roles.json";
 
-
 // (package, root module, F.1 outcome)
 // (package, root module)
 const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-authoring-model", "crates/authoring/model/src/lib.rs"),
     ("wamn-catalog", "crates/catalog/model/src/lib.rs"),
     ("wamn-cdc-reader", "services/cdc-reader/src/lib.rs"),
-    ("wamn-component-policy", "crates/platform/component-policy/src/lib.rs"),
-    ("wamn-control-provision", "crates/control/provision/src/lib.rs"),
-    ("wamn-control-registry", "crates/control/registry/src/lib.rs"),
+    (
+        "wamn-component-policy",
+        "crates/platform/component-policy/src/lib.rs",
+    ),
+    (
+        "wamn-control-provision",
+        "crates/control/provision/src/lib.rs",
+    ),
+    (
+        "wamn-control-registry",
+        "crates/control/registry/src/lib.rs",
+    ),
     ("wamn-ctl", "services/ctl/src/lib.rs"),
     ("wamn-dispatcher", "services/dispatcher/src/lib.rs"),
     ("wamn-event-reg", "crates/events/registration/src/lib.rs"),
     ("wamn-event-wire", "crates/events/wire/src/lib.rs"),
-    ("wamn-execution-contract", "crates/execution/contract/src/lib.rs"),
+    (
+        "wamn-execution-contract",
+        "crates/execution/contract/src/lib.rs",
+    ),
     ("wamn-execution-host", "crates/execution/host/src/lib.rs"),
     ("wamn-executor", "services/executor/src/lib.rs"),
     ("wamn-gate-harness", "test-support/harness/src/lib.rs"),
@@ -28,8 +39,14 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-host", "services/host/src/main.rs"),
     ("wamn-materializer", "crates/events/materializer/src/lib.rs"),
     ("wamn-pg-core", "crates/platform/pg-core/src/lib.rs"),
-    ("wamn-platform-identity", "crates/identity/platform/src/lib.rs"),
-    ("wamn-project-state", "crates/identity/project-state/src/lib.rs"),
+    (
+        "wamn-platform-identity",
+        "crates/identity/platform/src/lib.rs",
+    ),
+    (
+        "wamn-project-state",
+        "crates/identity/project-state/src/lib.rs",
+    ),
     ("wamn-proof-conformance", "tests/conformance/src/lib.rs"),
     ("wamn-proof-integration", "tests/integration/src/lib.rs"),
     ("wamn-proof-system", "tests/system/src/lib.rs"),
@@ -37,33 +54,51 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-run-state", "crates/execution/run-state/src/lib.rs"),
     ("wamn-runtime", "crates/platform/runtime/src/lib.rs"),
     ("wamn-scenario-model", "crates/scenarios/model/src/lib.rs"),
-    ("wamn-scenario-worker", "services/scenario-worker/src/lib.rs"),
+    (
+        "wamn-scenario-worker",
+        "services/scenario-worker/src/lib.rs",
+    ),
     ("wamn-scheduler", "crates/execution/scheduler/src/lib.rs"),
-    ("wamn-schema-compiler", "crates/schema/compiler/src/lib.rs"),
     ("wamn-schema-control", "crates/schema/control/src/lib.rs"),
-    ("wamn-schema-generator", "crates/schema/generator/src/lib.rs"),
+    (
+        "wamn-schema-generator",
+        "crates/schema/generator/src/lib.rs",
+    ),
     (
         "wamn-schema-introspection",
         "crates/schema/introspection/src/lib.rs",
     ),
-    ("wamn-schema-model", "crates/schema/model/src/lib.rs"),
-    ("wamn-test-infrastructure", "test-support/infrastructure/lib.rs"),
+    (
+        "wamn-test-infrastructure",
+        "test-support/infrastructure/lib.rs",
+    ),
     ("wamn-waker", "services/waker/src/lib.rs"),
     ("http-route", "components/ingress/http-route/src/lib.rs"),
-    ("materializer", "components/execution/materializer/src/main.rs"),
-    ("wamn-postgres-sqlx", "components/data/postgres-sqlx/src/lib.rs"),
+    (
+        "materializer",
+        "components/execution/materializer/src/main.rs",
+    ),
+    (
+        "wamn-postgres-sqlx",
+        "components/data/postgres-sqlx/src/lib.rs",
+    ),
     (
         "wamn-receiving-data-access",
         "components/data/receiving-data/src/lib.rs",
     ),
     ("busyloop", "components/fixtures/busyloop/src/main.rs"),
-    ("connection-http-standard", "components/fixtures/connection-http-standard/src/lib.rs"),
+    (
+        "connection-http-standard",
+        "components/fixtures/connection-http-standard/src/lib.rs",
+    ),
     ("sockprobe", "components/fixtures/sockprobe/src/main.rs"),
-    ("sqlx-command", "components/fixtures/sqlx-command/src/main.rs"),
+    (
+        "sqlx-command",
+        "components/fixtures/sqlx-command/src/main.rs",
+    ),
     ("http-request", "components/no-std/http-request/src/lib.rs"),
     ("transform", "components/no-std/transform/src/lib.rs"),
 ];
-
 
 #[derive(Debug, Deserialize)]
 struct PackageRoles {

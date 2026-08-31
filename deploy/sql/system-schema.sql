@@ -5,7 +5,8 @@
 --
 -- This is the schema that fills the EMPTY wamn_system DB the T1 cluster
 -- (deploy/platform/wamn-sysdb.yaml, wamn-q3n.2) bootstraps: registry-model → registry
--- tables, the way deploy/sql/catalog-schema.sql followed crates/schema/model.
+-- tables. Project databases independently install the package/effective-release
+-- catalog from deploy/sql/catalog-schema.sql.
 --
 -- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql
 -- (which builds the S2–S6 *tenant-data* fixtures). This is applied into the T1
