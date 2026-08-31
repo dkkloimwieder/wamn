@@ -1009,12 +1009,15 @@ mod tests {
     async fn execute_update(
         client: &Client,
         id: Uuid,
-        expected_revision: i64,
+        expected_row_version: i64,
         supplier_id: Uuid,
     ) -> Result<UpdateResult> {
         let supplier_id = Some(supplier_id);
         let row = client
-            .query_one(UPDATE_SQL, &[&id, &expected_revision, &true, &supplier_id])
+            .query_one(
+                UPDATE_SQL,
+                &[&id, &expected_row_version, &true, &supplier_id],
+            )
             .await
             .context("execute exact generated purchase_order.update SQL")?;
         Ok(update_result(&row))

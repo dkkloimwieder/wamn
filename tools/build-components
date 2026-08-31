@@ -31,11 +31,15 @@ readonly WAMN_REPOSITORY_ROOT="$(
   pwd -P
 )"
 readonly WAMN_TIER_MANIFEST="$WAMN_REPOSITORY_ROOT/architecture/workspace-tiers.json"
+readonly WAMN_VIRTUALIZATION_MANIFEST="$WAMN_REPOSITORY_ROOT/tools/component-virtualization.json"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 
 command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
 [[ -r "$WAMN_TIER_MANIFEST" ]] || {
   wamn_fail 65 "cannot read $WAMN_TIER_MANIFEST"
+}
+[[ -r "$WAMN_VIRTUALIZATION_MANIFEST" ]] || {
+  wamn_fail 65 "cannot read $WAMN_VIRTUALIZATION_MANIFEST"
 }
 if [[ "$WAMN_CARGO" == */* ]]; then
   [[ -x "$WAMN_CARGO" ]] || {
@@ -111,6 +115,96 @@ WAMN_PLAN="$(
 )" || wamn_fail 65 'component profile, canonical inventory, and locked metadata drifted'
 readonly WAMN_PLAN
 
+# This is an allowlist, not discovery: upstream import filtering does not cover
+# filesystem imports, so an undeclared std guest must remain raw and fail its
+# own admission rather than inherit this profile implicitly.
+declare WAMN_VIRTUALIZATION_PLAN
+WAMN_VIRTUALIZATION_PLAN="$(
+  printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s \
+    --slurpfile tier "$WAMN_TIER_MANIFEST" \
+    --slurpfile virtualization "$WAMN_VIRTUALIZATION_MANIFEST" \
+    --arg profile "$WAMN_PROFILE" '
+    def basename:
+      type == "string"
+      and length > 0
+      and (contains("/") | not)
+      and . != "."
+      and . != "..";
+    def relative_path:
+      type == "string"
+      and length > 0
+      and (startswith("/") | not)
+      and (split("/") | all(length > 0 and . != "." and . != ".."));
+
+    . as $metadata
+    | $tier[0] as $contract
+    | $virtualization[0] as $virtual
+    | $contract.source_inventory.component_workspaces as $workspaces
+    | (if $profile == "m1"
+       then $contract.profiles.components.m1_inventory_tier
+       else $contract.profiles.components.proof_inventory_tier
+       end) as $tier_name
+    | $contract.tiers[$tier_name].component_packages as $selected
+    | select(($virtual | keys | sort)
+             == (["artifacts", "output_subdirectory", "profile", "tool"] | sort))
+    | select(($virtual.tool | keys | sort) == ["manifest", "package"])
+    | select($virtual.profile | test("^[a-z0-9][a-z0-9-]*$"))
+    | select($virtual.output_subdirectory == ("virtualized/" + $virtual.profile))
+    | select($virtual.tool.manifest | relative_path)
+    | select($virtual.tool.package | type == "string" and length > 0)
+    | select($metadata | length == ($workspaces | length))
+    | [range($workspaces | length) as $index
+       | {manifest: $workspaces[$index].manifest,
+          metadata: $metadata[$index]}] as $owners
+    | select([$virtual.artifacts[]
+              | select((keys | sort)
+                       != ["output_file", "package", "raw_file", "workspace_manifest"])]
+             | length == 0)
+    | select($virtual.artifacts | length > 0)
+    | select(($virtual.artifacts | map(.package) | length)
+             == ($virtual.artifacts | map(.package) | unique | length))
+    | select(($virtual.artifacts | map(.workspace_manifest + "\u0000" + .raw_file) | length)
+             == ($virtual.artifacts
+                 | map(.workspace_manifest + "\u0000" + .raw_file) | unique | length))
+    | select(($virtual.artifacts | map(.output_file) | length)
+             == ($virtual.artifacts | map(.output_file) | unique | length))
+    | select([$virtual.artifacts[] as $artifact
+              | select(($artifact.package | type != "string" or length == 0)
+                       or ($artifact.workspace_manifest | relative_path | not)
+                       or ($artifact.raw_file | basename | not)
+                       or ($artifact.output_file | basename | not)
+                       or ($artifact.raw_file | endswith(".wasm") | not)
+                       or ($artifact.output_file | endswith(".wasm") | not)
+                       or ($contract.tiers.product_components.component_packages
+                           | index($artifact.package) == null))]
+             | length == 0)
+    | [$virtual.artifacts[] as $artifact
+       | [$owners[] | select(.manifest == $artifact.workspace_manifest)] as $matching_owners
+       | select($matching_owners | length == 1)
+       | $matching_owners[0] as $owner
+       | [$owner.metadata.packages[]
+          | select(.name == $artifact.package)
+          | select(.id as $id | $owner.metadata.workspace_members | index($id) != null)] as $packages
+       | select($packages | length == 1)
+       | $packages[0] as $package
+       | [$package.targets[] | select(.crate_types | index("cdylib") != null)] as $targets
+       | select($targets | length == 1)
+       | select($artifact.raw_file == ($targets[0].name + ".wasm"))
+       | {package: $artifact.package,
+          raw: ($owner.metadata.target_directory
+                + "/wasm32-wasip2/debug/" + $artifact.raw_file),
+          output: ($owner.metadata.target_directory + "/"
+                   + $virtual.output_subdirectory + "/" + $artifact.output_file)}] as $artifacts
+    | select($artifacts | length == ($virtual.artifacts | length))
+    | select([$artifacts[] | select(.raw == .output)] | length == 0)
+    | {profile: $virtual.profile,
+       tool: $virtual.tool,
+       artifacts: [$artifacts[] | select(.package as $package | $selected | index($package) != null)]}
+    | select(.artifacts | length > 0)
+  '
+)" || wamn_fail 65 'component virtualization allowlist and locked metadata drifted'
+readonly WAMN_VIRTUALIZATION_PLAN
+
 readonly WAMN_LEG_COUNT="$(jq -r 'length' <<<"$WAMN_PLAN")"
 ((WAMN_LEG_COUNT > 0)) || wamn_fail 65 "$WAMN_PROFILE has an empty component selection"
 printf 'build-components: %s selects %s component packages across %s workspaces\n' \
@@ -138,4 +232,53 @@ for ((leg = 0; leg < WAMN_LEG_COUNT; leg += 1)); do
     fi
   fi
 done
-exit "$WAMN_EXIT_STATUS"
+if ((WAMN_EXIT_STATUS != 0)); then
+  exit "$WAMN_EXIT_STATUS"
+fi
+
+readonly WAMN_VIRTUALIZATION_PROFILE="$(jq -r '.profile' <<<"$WAMN_VIRTUALIZATION_PLAN")"
+readonly WAMN_VIRTUALIZER_MANIFEST="$WAMN_REPOSITORY_ROOT/$(
+  jq -r '.tool.manifest' <<<"$WAMN_VIRTUALIZATION_PLAN"
+)"
+readonly WAMN_VIRTUALIZER_PACKAGE="$(jq -r '.tool.package' <<<"$WAMN_VIRTUALIZATION_PLAN")"
+readonly WAMN_VIRTUALIZATION_COUNT="$(jq -r '.artifacts | length' <<<"$WAMN_VIRTUALIZATION_PLAN")"
+
+WAMN_PENDING_OUTPUT=''
+wamn_cleanup_partial_output() {
+  if [[ -n "$WAMN_PENDING_OUTPUT" ]]; then
+    rm -f -- "$WAMN_PENDING_OUTPUT"
+  fi
+}
+trap wamn_cleanup_partial_output EXIT
+
+printf 'build-components: %s normalizes %s declared artifacts with profile %s\n' \
+  "$WAMN_PROFILE" "$WAMN_VIRTUALIZATION_COUNT" "$WAMN_VIRTUALIZATION_PROFILE" >&2
+for ((artifact = 0; artifact < WAMN_VIRTUALIZATION_COUNT; artifact += 1)); do
+  input="$(jq -r --argjson artifact "$artifact" \
+    '.artifacts[$artifact].raw' <<<"$WAMN_VIRTUALIZATION_PLAN")"
+  output="$(jq -r --argjson artifact "$artifact" \
+    '.artifacts[$artifact].output' <<<"$WAMN_VIRTUALIZATION_PLAN")"
+  package="$(jq -r --argjson artifact "$artifact" \
+    '.artifacts[$artifact].package' <<<"$WAMN_VIRTUALIZATION_PLAN")"
+
+  [[ -s "$input" ]] || wamn_fail 65 "raw component is missing or empty for $package: $input"
+  mkdir -p -- "$(dirname -- "$output")"
+  WAMN_PENDING_OUTPUT="${output}.partial.$$"
+  rm -f -- "$WAMN_PENDING_OUTPUT"
+
+  virtualizer_status=0
+  "$WAMN_CARGO" run --locked --offline \
+    --manifest-path "$WAMN_VIRTUALIZER_MANIFEST" \
+    -p "$WAMN_VIRTUALIZER_PACKAGE" -- \
+    --input "$input" --output "$WAMN_PENDING_OUTPUT" || virtualizer_status=$?
+  if ((virtualizer_status != 0)); then
+    wamn_fail "$virtualizer_status" \
+      "virtualization failed for $package with profile $WAMN_VIRTUALIZATION_PROFILE"
+  fi
+  [[ -s "$WAMN_PENDING_OUTPUT" ]] || {
+    wamn_fail 65 "virtualizer produced no component for $package"
+  }
+  mv -f -- "$WAMN_PENDING_OUTPUT" "$output"
+  WAMN_PENDING_OUTPUT=''
+  printf 'build-components: normalized %s -> %s\n' "$package" "$output" >&2
+done

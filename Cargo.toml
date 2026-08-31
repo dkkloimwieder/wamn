@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/contract", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
+members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/contract", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
@@ -138,12 +138,16 @@ tracing-opentelemetry = { version = "0.32", default-features = false }
 tracing-subscriber = "0.3"
 async-trait = "0.1"
 wasm-encoder = "0.251"
+# Post-link normalization uses one immutable upstream adapter. Its embedded
+# `virtual_adapter-wasip2.wasm` is sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632.
+wasi-virt = { version = "=0.2.0", git = "https://github.com/bytecodealliance/WASI-Virt.git", rev = "448f6df8f688cee5d6995e96b1ffc31f9bf00742", default-features = false }
 
 # Every project crate has one canonical path + version identity (M-CRATES-IN-WORKSPACE).
 wamn-authoring-model = { path = "crates/authoring/model", version = "0.1.0" }
 wamn-catalog = { path = "crates/catalog/model", version = "0.1.0" }
 wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }
+wamn-component-virtualizer = { path = "crates/platform/component-virtualizer", version = "0.1.0" }
 wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }
 wamn-control-registry = { path = "crates/control/registry", version = "0.1.0" }
 wamn-ctl = { path = "services/ctl", version = "0.1.0" }

@@ -1,0 +1,7 @@
+package wamn:receiving-operation@0.1.0;
+
+world receiving-operation {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/client@0.1.0;
+  export wamn:node/handler@0.1.0;
+}

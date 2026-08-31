@@ -137,11 +137,17 @@ impl RecordReceiptErrorKind {
     }
 }
 
-/// Contextual command failure translated once by the future operation adapter.
+/// Contextual command failure translated once by the owning operation adapter.
 #[derive(Debug)]
 pub struct RecordReceiptError {
     kind: RecordReceiptErrorKind,
     context: Box<str>,
+    field: Option<&'static str>,
+    id: Option<Box<str>>,
+    minimum: Option<usize>,
+    maximum: Option<usize>,
+    observed: Option<usize>,
+    constraint: Option<&'static str>,
     source: Option<Box<dyn Error + Send + Sync + 'static>>,
 }
 
@@ -156,16 +162,68 @@ impl RecordReceiptError {
         &self.context
     }
 
+    /// Field owned by a command-domain refusal.
+    pub const fn field(&self) -> Option<&'static str> {
+        self.field
+    }
+
+    /// Exact offending identity owned by a line-domain refusal.
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
+    }
+
+    /// Optional lower input bound.
+    pub const fn minimum(&self) -> Option<usize> {
+        self.minimum
+    }
+
+    /// Optional upper input bound.
+    pub const fn maximum(&self) -> Option<usize> {
+        self.maximum
+    }
+
+    /// Optional observed input bound.
+    pub const fn observed(&self) -> Option<usize> {
+        self.observed
+    }
+
+    /// Exact named constraint owned by a command refusal.
+    pub const fn constraint(&self) -> Option<&'static str> {
+        self.constraint
+    }
+
     fn new(kind: RecordReceiptErrorKind, context: impl Into<Box<str>>) -> Self {
         Self {
             kind,
             context: context.into(),
+            field: None,
+            id: None,
+            minimum: None,
+            maximum: None,
+            observed: None,
+            constraint: None,
             source: None,
         }
     }
 
-    fn invalid(context: impl Into<Box<str>>) -> Self {
-        Self::new(RecordReceiptErrorKind::InvalidInput, context)
+    fn invalid(context: impl Into<Box<str>>, field: &'static str) -> Self {
+        let mut error = Self::new(RecordReceiptErrorKind::InvalidInput, context);
+        error.field = Some(field);
+        error
+    }
+
+    fn invalid_range(
+        context: impl Into<Box<str>>,
+        field: &'static str,
+        minimum: usize,
+        maximum: usize,
+        observed: usize,
+    ) -> Self {
+        let mut error = Self::invalid(context, field);
+        error.minimum = Some(minimum);
+        error.maximum = Some(maximum);
+        error.observed = Some(observed);
+        error
     }
 
     fn internal(context: impl Into<Box<str>>) -> Self {
@@ -201,20 +259,54 @@ impl RecordReceiptError {
         Self {
             kind,
             context: context.into(),
+            field: None,
+            id: None,
+            minimum: None,
+            maximum: None,
+            observed: None,
+            constraint: None,
             source: Some(Box::new(source)),
         }
     }
 
-    fn with_sqlx_source(
+    fn with_constraint_source(
         kind: RecordReceiptErrorKind,
         context: &'static str,
+        constraint: &'static str,
         source: SqlxError,
     ) -> Self {
         Self {
             kind,
             context: context.into(),
+            field: None,
+            id: None,
+            minimum: None,
+            maximum: None,
+            observed: None,
+            constraint: Some(constraint),
             source: Some(Box::new(source)),
         }
+    }
+
+    fn domain(
+        kind: RecordReceiptErrorKind,
+        context: impl Into<Box<str>>,
+        field: &'static str,
+    ) -> Self {
+        let mut error = Self::new(kind, context);
+        error.field = Some(field);
+        error
+    }
+
+    fn domain_id(
+        kind: RecordReceiptErrorKind,
+        context: impl Into<Box<str>>,
+        field: &'static str,
+        id: impl Into<Box<str>>,
+    ) -> Self {
+        let mut error = Self::domain(kind, context, field);
+        error.id = Some(id.into());
+        error
     }
 }
 
@@ -247,7 +339,12 @@ pub async fn record_receipt(
     connection: &mut WamnConnection,
     input: &[RecordReceiptInput],
 ) -> Result<Box<[RecordReceiptItemOutcome]>, RecordReceiptError> {
-    validate_count("record_receipt item", input.len(), MAX_RECORD_RECEIPT_ITEMS)?;
+    validate_count(
+        "record_receipt item",
+        "input",
+        input.len(),
+        MAX_RECORD_RECEIPT_ITEMS,
+    )?;
     let mut output = Vec::with_capacity(input.len());
     for item in input {
         let result = record_receipt_item(connection, item).await;
@@ -294,15 +391,18 @@ fn prepare(command: &RecordReceiptInput) -> Result<PreparedCommand, RecordReceip
     if command.value.idempotency_key.is_empty() {
         return Err(RecordReceiptError::invalid(
             "idempotency_key must not be empty",
+            "value.idempotency_key",
         ));
     }
     if command.value.receipt_reference.is_empty() {
         return Err(RecordReceiptError::invalid(
             "receipt_reference must not be empty",
+            "value.receipt_reference",
         ));
     }
     validate_count(
         "record_receipt line",
+        "value.line",
         command.value.line.len(),
         MAX_RECORD_RECEIPT_LINES,
     )?;
@@ -318,9 +418,10 @@ fn prepare(command: &RecordReceiptInput) -> Result<PreparedCommand, RecordReceip
             "value.line[].purchase_order_line_id",
         )?;
         if !seen.insert(purchase_order_line_id) {
-            return Err(RecordReceiptError::invalid(format!(
-                "duplicate purchase_order_line_id {purchase_order_line_id}"
-            )));
+            return Err(RecordReceiptError::invalid(
+                format!("duplicate purchase_order_line_id {purchase_order_line_id}"),
+                "value.line[].purchase_order_line_id",
+            ));
         }
         let location_id = canonical_uuid(&line.location_id, "value.line[].location_id")?;
         validate_positive_numeric(&line.quantity)?;
@@ -391,15 +492,17 @@ async fn record_receipt_in(
             .await
             .map_err(|source| sql_error("lock purchase_order", source))?
             .ok_or_else(|| {
-                RecordReceiptError::new(
+                RecordReceiptError::domain(
                     RecordReceiptErrorKind::PurchaseOrderNotFound,
                     "purchase_order does not exist",
+                    "value.purchase_order_id",
                 )
             })?;
     if purchase_order.status != "open" {
-        return Err(RecordReceiptError::new(
+        return Err(RecordReceiptError::domain(
             RecordReceiptErrorKind::PurchaseOrderNotOpen,
             "purchase_order is not open",
+            "value.purchase_order_id",
         ));
     }
 
@@ -414,6 +517,7 @@ async fn record_receipt_in(
         validation.outcome.as_deref().ok_or_else(|| {
             RecordReceiptError::internal("line validator returned a null outcome")
         })?,
+        validation.id,
     )?;
 
     let receipt_constraints = AllowedConstraints::new(
@@ -436,9 +540,10 @@ async fn record_receipt_in(
         if error.kind() == AccessErrorKind::UniqueViolation
             && error.constraint() == Some("receipt_purchase_order_id_receipt_reference_key")
         {
-            RecordReceiptError::with_sqlx_source(
+            RecordReceiptError::with_constraint_source(
                 RecordReceiptErrorKind::ReceiptReferenceConflict,
                 "receipt_reference already exists for purchase_order",
+                "receipt_purchase_order_id_receipt_reference_key",
                 source,
             )
         } else {
@@ -512,9 +617,10 @@ fn replay_result(
     canonical_command: &[u8],
 ) -> Result<RecordReceiptResult, RecordReceiptError> {
     if replay.canonical_command != canonical_command {
-        return Err(RecordReceiptError::new(
+        return Err(RecordReceiptError::domain(
             RecordReceiptErrorKind::IdempotencyConflict,
             "idempotency_key is already bound to a different canonical command",
+            "value.idempotency_key",
         ));
     }
     let status = replay
@@ -533,20 +639,35 @@ fn replay_result(
     })
 }
 
-fn refuse_line_outcome(outcome: &str) -> Result<(), RecordReceiptError> {
-    let kind = match outcome {
+fn refuse_line_outcome(outcome: &str, id: Option<WamnUuid>) -> Result<(), RecordReceiptError> {
+    let (kind, field) = match outcome {
         "ready" => return Ok(()),
-        "purchase_order_line_not_found" => RecordReceiptErrorKind::PurchaseOrderLineNotFound,
-        "purchase_order_line_mismatch" => RecordReceiptErrorKind::PurchaseOrderLineMismatch,
-        "location_not_found" => RecordReceiptErrorKind::LocationNotFound,
-        "quantity_exceeds_remaining" => RecordReceiptErrorKind::QuantityExceedsRemaining,
+        "purchase_order_line_not_found" => (
+            RecordReceiptErrorKind::PurchaseOrderLineNotFound,
+            "value.line[].purchase_order_line_id",
+        ),
+        "purchase_order_line_mismatch" => (
+            RecordReceiptErrorKind::PurchaseOrderLineMismatch,
+            "value.line[].purchase_order_line_id",
+        ),
+        "location_not_found" => (
+            RecordReceiptErrorKind::LocationNotFound,
+            "value.line[].location_id",
+        ),
+        "quantity_exceeds_remaining" => (
+            RecordReceiptErrorKind::QuantityExceedsRemaining,
+            "value.line[].quantity",
+        ),
         _ => {
             return Err(RecordReceiptError::internal(
                 "line validator returned an undeclared outcome",
             ));
         }
     };
-    Err(RecordReceiptError::new(kind, outcome))
+    let id = id.ok_or_else(|| {
+        RecordReceiptError::internal("line validator refusal omitted its offending id")
+    })?;
+    Err(RecordReceiptError::domain_id(kind, outcome, field, id.0))
 }
 
 fn sql_error(context: &'static str, source: SqlxError) -> RecordReceiptError {
@@ -569,22 +690,34 @@ fn require_distinct_ids<'a>(
     }
 }
 
-fn validate_count(object: &str, actual: usize, maximum: usize) -> Result<(), RecordReceiptError> {
+fn validate_count(
+    object: &str,
+    field: &'static str,
+    actual: usize,
+    maximum: usize,
+) -> Result<(), RecordReceiptError> {
     if (1..=maximum).contains(&actual) {
         Ok(())
     } else {
-        Err(RecordReceiptError::invalid(format!(
-            "{object} count must be 1..={maximum}; observed {actual}"
-        )))
+        Err(RecordReceiptError::invalid_range(
+            format!("{object} count must be 1..={maximum}; observed {actual}"),
+            field,
+            1,
+            maximum,
+            actual,
+        ))
     }
 }
 
-fn canonical_uuid(value: &str, object: &str) -> Result<Uuid, RecordReceiptError> {
+fn canonical_uuid(value: &str, field: &'static str) -> Result<Uuid, RecordReceiptError> {
     Uuid::parse_str(value)
         .ok()
         .filter(|parsed| parsed.hyphenated().to_string() == value)
         .ok_or_else(|| {
-            RecordReceiptError::invalid(format!("{object} must be a canonical lowercase UUID"))
+            RecordReceiptError::invalid(
+                format!("{field} must be a canonical lowercase UUID"),
+                field,
+            )
         })
 }
 
@@ -597,6 +730,7 @@ fn canonical_timestamp(value: &str) -> Result<String, RecordReceiptError> {
         .ok_or_else(|| {
             RecordReceiptError::invalid(
                 "value.occurred_at must be UTC RFC3339 with six fractional digits",
+                "value.occurred_at",
             )
         })
 }
@@ -621,6 +755,7 @@ fn validate_positive_numeric(value: &str) -> Result<(), RecordReceiptError> {
     } else {
         Err(RecordReceiptError::invalid(
             "value.line[].quantity must be a positive canonical PostgreSQL numeric string",
+            "value.line[].quantity",
         ))
     }
 }
@@ -700,7 +835,7 @@ mod tests {
         }
         match with_request_id(
             &input.request_id,
-            Err(RecordReceiptError::invalid("refused for proof")),
+            Err(RecordReceiptError::invalid("refused for proof", "input")),
         ) {
             RecordReceiptItemOutcome::Refused { request_id, .. } => {
                 assert_eq!(request_id.as_ref(), REQUEST_ID);
@@ -724,17 +859,27 @@ mod tests {
     fn malformed_shapes_refuse_with_invalid_input() {
         for actual in [0, MAX_RECORD_RECEIPT_ITEMS + 1] {
             assert_eq!(
-                validate_count("record_receipt item", actual, MAX_RECORD_RECEIPT_ITEMS)
-                    .unwrap_err()
-                    .kind(),
+                validate_count(
+                    "record_receipt item",
+                    "input",
+                    actual,
+                    MAX_RECORD_RECEIPT_ITEMS,
+                )
+                .unwrap_err()
+                .kind(),
                 RecordReceiptErrorKind::InvalidInput
             );
         }
         for actual in [0, MAX_RECORD_RECEIPT_LINES + 1] {
             assert_eq!(
-                validate_count("record_receipt line", actual, MAX_RECORD_RECEIPT_LINES)
-                    .unwrap_err()
-                    .kind(),
+                validate_count(
+                    "record_receipt line",
+                    "value.line",
+                    actual,
+                    MAX_RECORD_RECEIPT_LINES,
+                )
+                .unwrap_err()
+                .kind(),
                 RecordReceiptErrorKind::InvalidInput
             );
         }

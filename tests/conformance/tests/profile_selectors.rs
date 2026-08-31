@@ -15,6 +15,7 @@ const ROOT_MANIFEST: &str = "Cargo.toml";
 const COMPONENT_MANIFESTS: [&str; 2] = ["components/Cargo.toml", "components/no-std/Cargo.toml"];
 const PROFILE_TOOL: &str = "tools/profile";
 const COMPONENT_TOOL: &str = "tools/build-components";
+const COMPONENT_VIRTUALIZATION: &str = "tools/component-virtualization.json";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {
@@ -28,6 +29,13 @@ struct CargoPackage {
     id: String,
     name: String,
     features: BTreeMap<String, Vec<String>>,
+    targets: Vec<CargoTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoTarget {
+    name: String,
+    crate_types: Vec<String>,
 }
 
 fn repository_root() -> PathBuf {
@@ -166,6 +174,108 @@ fn assert_unique(label: &str, values: &[String]) {
 }
 
 #[test]
+fn virtualization_allowlist_matches_component_metadata() {
+    let root = repository_root();
+    let contract = read_contract(&root);
+    let virtualization: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(COMPONENT_VIRTUALIZATION))
+            .expect("failed to read component virtualization contract"),
+    )
+    .expect("component virtualization contract must be JSON");
+    let profile = virtualization["profile"]
+        .as_str()
+        .expect("virtualization profile must be a string");
+    let expected_output_subdirectory = format!("virtualized/{profile}");
+    assert_eq!(
+        virtualization["output_subdirectory"].as_str(),
+        Some(expected_output_subdirectory.as_str())
+    );
+
+    let root_metadata = parse_metadata(&cargo_metadata_output(&root, ROOT_MANIFEST), ROOT_MANIFEST);
+    let tool_package = virtualization["tool"]["package"]
+        .as_str()
+        .expect("virtualizer package must be a string");
+    assert_eq!(
+        virtualization["tool"]["manifest"].as_str(),
+        Some(ROOT_MANIFEST)
+    );
+    assert!(
+        names_for_ids(&root_metadata, &root_metadata.workspace_members)
+            .iter()
+            .any(|package| package == tool_package),
+        "virtualizer tool package must be a root workspace member"
+    );
+
+    let component_metadata = COMPONENT_MANIFESTS
+        .iter()
+        .map(|manifest| {
+            (
+                *manifest,
+                parse_metadata(&cargo_metadata_output(&root, manifest), manifest),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let product_components =
+        string_array(&contract, "/tiers/product_components/component_packages")
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+
+    let artifacts = virtualization["artifacts"]
+        .as_array()
+        .expect("virtualization artifacts must be an array");
+    let mut configured = BTreeSet::new();
+    let mut outputs = BTreeSet::new();
+    for artifact in artifacts {
+        let package_name = artifact["package"]
+            .as_str()
+            .expect("virtualization package must be a string");
+        let workspace_manifest = artifact["workspace_manifest"]
+            .as_str()
+            .expect("virtualization workspace manifest must be a string");
+        let raw_file = artifact["raw_file"]
+            .as_str()
+            .expect("virtualization raw file must be a string");
+        let output_file = artifact["output_file"]
+            .as_str()
+            .expect("virtualization output file must be a string");
+
+        assert!(configured.insert(package_name.to_owned()));
+        assert!(outputs.insert(output_file.to_owned()));
+        assert!(product_components.contains(package_name));
+        assert_eq!(
+            Path::new(raw_file)
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some(raw_file)
+        );
+        assert_eq!(
+            Path::new(output_file)
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some(output_file)
+        );
+
+        let metadata = component_metadata
+            .get(workspace_manifest)
+            .unwrap_or_else(|| panic!("unknown component workspace {workspace_manifest}"));
+        let package = metadata
+            .packages
+            .iter()
+            .find(|package| package.name == package_name)
+            .unwrap_or_else(|| panic!("{package_name} is absent from {workspace_manifest}"));
+        assert!(metadata.workspace_members.contains(&package.id));
+        let cdylib_targets = package
+            .targets
+            .iter()
+            .filter(|target| target.crate_types.iter().any(|kind| kind == "cdylib"))
+            .collect::<Vec<_>>();
+        assert_eq!(cdylib_targets.len(), 1);
+        assert_eq!(raw_file, format!("{}.wasm", cdylib_targets[0].name));
+    }
+    assert!(!configured.is_empty());
+}
+
+#[test]
 fn profile_contract_matches_locked_metadata() {
     let root = repository_root();
     let contract = read_contract(&root);
@@ -181,8 +291,8 @@ fn profile_contract_matches_locked_metadata() {
         component_members.extend(members);
     }
 
-    assert_eq!(root_members.len(), 34);
-    assert_eq!(component_members.len(), 10);
+    assert_eq!(root_members.len(), 35);
+    assert_eq!(component_members.len(), 17);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -205,6 +315,7 @@ fn profile_contract_matches_locked_metadata() {
         "deploy additions",
         &string_array(&contract, "/profiles/root/deploy_additions"),
         &[
+            "wamn-component-virtualizer",
             "wamn-ctl",
             "wamn-control-provision",
             "wamn-control-registry",
@@ -232,9 +343,9 @@ fn profile_contract_matches_locked_metadata() {
     let profile_counts = [
         ("m1", 19),
         ("m2", 21),
-        ("deploy", 28),
-        ("full", 34),
-        ("ops", 34),
+        ("deploy", 29),
+        ("full", 35),
+        ("ops", 35),
     ];
     let mut profiles = BTreeMap::new();
     for (profile, expected_count) in profile_counts {
@@ -299,7 +410,18 @@ fn profile_contract_matches_locked_metadata() {
     assert_exact_set(
         "component m1",
         &component_m1,
-        &["http-route", "http-request", "materializer", "transform"],
+        &[
+            "http-route",
+            "http-request",
+            "materializer",
+            "receiving-purchase-order-get",
+            "receiving-purchase-order-query",
+            "receiving-purchase-order-update",
+            "receiving-receipt-get",
+            "receiving-receipt-query",
+            "receiving-receiving-record-receipt",
+            "transform",
+        ],
     );
     assert_exact_set(
         "component proof",
@@ -310,16 +432,23 @@ fn profile_contract_matches_locked_metadata() {
             "http-route",
             "http-request",
             "materializer",
+            "receiving-purchase-order-get",
+            "receiving-purchase-order-query",
+            "receiving-purchase-order-update",
+            "receiving-receipt-get",
+            "receiving-receipt-query",
+            "receiving-receiving-record-receipt",
             "sockprobe",
             "sqlx-command",
+            "std-virtualization-probe",
             "transform",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 4);
-    assert_eq!(component_proof.len(), 10);
+    assert_eq!(component_m1.len(), 10);
+    assert_eq!(component_proof.len(), 17);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(
@@ -332,6 +461,7 @@ fn profile_contract_matches_locked_metadata() {
             "connection-http-standard",
             "sockprobe",
             "sqlx-command",
+            "std-virtualization-probe",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
         ]
@@ -378,7 +508,23 @@ if [[ "${1:-}" == metadata ]]; then
   command cat -- "$WAMN_FAKE_METADATA_DIRECTORY/${manifest//\//_}"
   exit 0
 fi
-exit 23
+if [[ "${1:-}" == run ]]; then
+  status="${WAMN_FAKE_VIRTUALIZER_STATUS:-23}"
+  if [[ "$status" == 0 ]]; then
+    input=''
+    output=''
+    while (($# > 0)); do
+      case "$1" in
+        --input) input="$2"; shift 2 ;;
+        --output) output="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    command cp -- "$input" "$output"
+  fi
+  exit "$status"
+fi
+exit "${WAMN_FAKE_BUILD_STATUS:-23}"
 "#,
     )
     .expect("failed to write fake Cargo");
@@ -396,6 +542,12 @@ fn write_fake_metadata(directory: &Path, manifest: &Path, metadata: &[u8]) {
         metadata,
     )
     .expect("failed to write canned Cargo metadata");
+}
+
+fn metadata_with_target_directory(metadata: &[u8], target_directory: &Path) -> Vec<u8> {
+    let mut value: Value = serde_json::from_slice(metadata).expect("Cargo metadata must be JSON");
+    value["target_directory"] = Value::String(target_directory.display().to_string());
+    serde_json::to_vec(&value).expect("rewritten Cargo metadata must serialize")
 }
 
 fn captured_invocations(path: &Path) -> Vec<Vec<String>> {
@@ -550,6 +702,193 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
     }
 
     fs::remove_dir_all(&scratch).expect("failed to remove selector scratch directory");
+}
+
+#[test]
+fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
+    let root = repository_root();
+    let virtualization: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(COMPONENT_VIRTUALIZATION))
+            .expect("failed to read component virtualization contract"),
+    )
+    .expect("component virtualization contract must be JSON");
+    let artifacts = virtualization["artifacts"]
+        .as_array()
+        .expect("virtualization artifacts must be an array");
+    let output_subdirectory = virtualization["output_subdirectory"]
+        .as_str()
+        .expect("virtualization output subdirectory must be a string");
+
+    let scratch = scratch_directory("virtualization");
+    let fake_cargo = write_fake_cargo(&scratch);
+    let capture = scratch.join("captured argv");
+    let metadata_directory = scratch.join("canned metadata");
+    fs::create_dir(&metadata_directory).expect("failed to create canned metadata directory");
+
+    let mut target_directories = BTreeMap::new();
+    for manifest in COMPONENT_MANIFESTS {
+        let output = cargo_metadata_output(&root, manifest);
+        let target_directory = scratch.join(format!("{} target", manifest.replace('/', "-")));
+        fs::create_dir(&target_directory).expect("failed to create fake target directory");
+        let rewritten = metadata_with_target_directory(&output.stdout, &target_directory);
+        write_fake_metadata(&metadata_directory, &root.join(manifest), &rewritten);
+        target_directories.insert(manifest.to_owned(), target_directory);
+    }
+
+    let mut expected_inputs = BTreeSet::new();
+    for artifact in artifacts {
+        let package = artifact["package"]
+            .as_str()
+            .expect("virtualization package must be a string");
+        let workspace_manifest = artifact["workspace_manifest"]
+            .as_str()
+            .expect("workspace manifest must be a string");
+        let raw_file = artifact["raw_file"]
+            .as_str()
+            .expect("raw file must be a string");
+        let target_directory = target_directories
+            .get(workspace_manifest)
+            .expect("configured workspace must have fake metadata");
+        let input = target_directory
+            .join("wasm32-wasip2")
+            .join("debug")
+            .join(raw_file);
+        fs::create_dir_all(input.parent().expect("raw component must have a parent"))
+            .expect("failed to create raw component directory");
+        fs::write(&input, format!("raw:{package}")).expect("failed to write fake raw component");
+        expected_inputs.insert(input);
+    }
+
+    let output = Command::new(root.join(COMPONENT_TOOL))
+        .current_dir(&scratch)
+        .env("CARGO", &fake_cargo)
+        .env("WAMN_FAKE_CARGO_LOG", &capture)
+        .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+        .env("WAMN_FAKE_BUILD_STATUS", "0")
+        .env("WAMN_FAKE_VIRTUALIZER_STATUS", "0")
+        .arg("m1")
+        .output()
+        .expect("failed to execute component virtualization profile");
+    assert!(
+        output.status.success(),
+        "component virtualization profile failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let invocations = captured_invocations(&capture);
+    let virtualizer_runs = invocations
+        .iter()
+        .filter(|invocation| invocation.get(1).is_some_and(|argument| argument == "run"))
+        .collect::<Vec<_>>();
+    assert_eq!(virtualizer_runs.len(), artifacts.len());
+    let mut actual_inputs = BTreeSet::new();
+    for invocation in virtualizer_runs {
+        let package_position = invocation
+            .iter()
+            .position(|argument| argument == "-p")
+            .expect("virtualizer invocation must select a package");
+        assert_eq!(
+            invocation.get(package_position + 1).map(String::as_str),
+            virtualization["tool"]["package"].as_str()
+        );
+        let input_position = invocation
+            .iter()
+            .position(|argument| argument == "--input")
+            .expect("virtualizer invocation must name its raw input");
+        let output_position = invocation
+            .iter()
+            .position(|argument| argument == "--output")
+            .expect("virtualizer invocation must name its separate output");
+        let input = PathBuf::from(
+            invocation
+                .get(input_position + 1)
+                .expect("--input must have a value"),
+        );
+        let partial_output = PathBuf::from(
+            invocation
+                .get(output_position + 1)
+                .expect("--output must have a value"),
+        );
+        assert_ne!(input, partial_output);
+        assert!(
+            partial_output
+                .to_string_lossy()
+                .contains(&format!("/{output_subdirectory}/"))
+        );
+        actual_inputs.insert(input);
+    }
+    assert_eq!(actual_inputs, expected_inputs);
+
+    for artifact in artifacts {
+        let package = artifact["package"]
+            .as_str()
+            .expect("package must be a string");
+        let workspace_manifest = artifact["workspace_manifest"]
+            .as_str()
+            .expect("workspace manifest must be a string");
+        let output_file = artifact["output_file"]
+            .as_str()
+            .expect("output file must be a string");
+        let normalized = target_directories[workspace_manifest]
+            .join(output_subdirectory)
+            .join(output_file);
+        assert_eq!(
+            fs::read_to_string(&normalized).expect("normalized component must exist"),
+            format!("raw:{package}")
+        );
+    }
+
+    let first = &artifacts[0];
+    let first_workspace = first["workspace_manifest"]
+        .as_str()
+        .expect("workspace manifest must be a string");
+    let first_output = target_directories[first_workspace]
+        .join(output_subdirectory)
+        .join(
+            first["output_file"]
+                .as_str()
+                .expect("output file must be a string"),
+        );
+    fs::write(&first_output, "previous-normalized")
+        .expect("failed to seed the previous normalized component");
+    let failed = Command::new(root.join(COMPONENT_TOOL))
+        .current_dir(&scratch)
+        .env("CARGO", &fake_cargo)
+        .env("WAMN_FAKE_CARGO_LOG", &capture)
+        .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+        .env("WAMN_FAKE_BUILD_STATUS", "0")
+        .env("WAMN_FAKE_VIRTUALIZER_STATUS", "29")
+        .arg("m1")
+        .output()
+        .expect("failed to execute refusing component virtualization profile");
+    assert_eq!(failed.status.code(), Some(29));
+    assert_eq!(
+        fs::read_to_string(&first_output).expect("previous normalized component must remain"),
+        "previous-normalized"
+    );
+    let first_file = first_output
+        .file_name()
+        .expect("normalized component must have a file name")
+        .to_string_lossy();
+    let partial_prefix = format!("{first_file}.partial.");
+    assert!(
+        fs::read_dir(
+            first_output
+                .parent()
+                .expect("normalized component must have a parent")
+        )
+        .expect("failed to list normalized component directory")
+        .all(|entry| {
+            !entry
+                .expect("normalized component directory entry must be readable")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(&partial_prefix)
+        }),
+        "failed virtualization must remove its partial output"
+    );
+
+    fs::remove_dir_all(&scratch).expect("failed to remove virtualization scratch directory");
 }
 
 #[test]

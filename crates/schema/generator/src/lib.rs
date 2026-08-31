@@ -31,17 +31,18 @@ pub use generate::{
     PackageWeld, corpus_sha256, generate,
 };
 pub use manifest::{
-    AuthoredSqlDeclaration, AuthoredSqlVariant, CommandCanonicalization, CommandDeclaration,
-    CommandErrorLiteral, CommandFetch, CommandInputDeclaration, CommandLineOrder,
-    CommandRelationDeclaration, CommandResultDeclaration, CommandStatementDeclaration,
-    CommandTransaction, CommandValueDeclaration, ComponentDeclaration, ConnectionDeclaration,
-    ContractFieldDeclaration, CountLimitDeclaration, CrudAction, CursorDeclaration,
-    CursorDirection, CursorEncoding, CursorPayload, FilterBinding, FilterDeclaration, InputRefusal,
-    ItemSemantics, LimitDeclaration, ModelDeclaration, NumericSpelling, OperationDeclaration,
-    PackageIdentity, PackageManifest, PaginationDeclaration, PaginationKind,
-    PolicyContractRequirement, PolicyContractState, ResultClass, SortDeclaration, SortKey,
-    TieBreakerDeclaration, TimestamptzSpelling, UuidSpelling, canonical_operation_identity,
-    canonical_operation_prefix, validate_operation_vocabulary,
+    AccessOperationErrorLiteral, AuthoredSqlDeclaration, AuthoredSqlVariant,
+    CommandCanonicalization, CommandDeclaration, CommandErrorLiteral, CommandFetch,
+    CommandInputDeclaration, CommandLineOrder, CommandRelationDeclaration,
+    CommandResultDeclaration, CommandStatementDeclaration, CommandTransaction,
+    CommandValueDeclaration, ComponentDeclaration, ConnectionDeclaration, ContractFieldDeclaration,
+    CountLimitDeclaration, CrudAction, CursorDeclaration, CursorDirection, CursorEncoding,
+    CursorPayload, FilterBinding, FilterDeclaration, InputRefusal, ItemSemantics, LimitDeclaration,
+    ModelDeclaration, NumericSpelling, OperationDeclaration, OperationErrorDetailDeclaration,
+    OperationErrorDetailKey, PackageIdentity, PackageManifest, PaginationDeclaration,
+    PaginationKind, PolicyContractRequirement, PolicyContractState, ResultClass, SortDeclaration,
+    SortKey, TieBreakerDeclaration, TimestamptzSpelling, UuidSpelling,
+    canonical_operation_identity, canonical_operation_prefix, validate_operation_vocabulary,
 };
 pub use parity::{ParityError, ParityErrorKind, validate_parity_json};
 pub use wamn_schema_introspection::ir::CatalogIr;

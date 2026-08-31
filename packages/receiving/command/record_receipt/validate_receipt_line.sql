@@ -39,22 +39,56 @@ fact AS (
         locked.purchase_order_id AS line_purchase_order_id,
         locked.ordered_quantity,
         locked.received_quantity,
-        locked_location.id AS location_id
+        requested.location_id AS requested_location_id,
+        locked_location.id AS locked_location_id
     FROM requested
     LEFT JOIN locked
         ON locked.id = requested.purchase_order_line_id
     LEFT JOIN locked_location
         ON locked_location.id = requested.location_id
+),
+classified AS (
+    SELECT
+        CASE
+            WHEN locked_id IS NULL
+                THEN 'purchase_order_line_not_found'
+            WHEN line_purchase_order_id <> $1
+                THEN 'purchase_order_line_mismatch'
+            WHEN locked_location_id IS NULL
+                THEN 'location_not_found'
+            WHEN quantity > ordered_quantity - received_quantity
+                THEN 'quantity_exceeds_remaining'
+            ELSE NULL
+        END AS outcome,
+        CASE
+            WHEN locked_id IS NULL
+                THEN purchase_order_line_id
+            WHEN line_purchase_order_id <> $1
+                THEN purchase_order_line_id
+            WHEN locked_location_id IS NULL
+                THEN requested_location_id
+            WHEN quantity > ordered_quantity - received_quantity
+                THEN purchase_order_line_id
+            ELSE NULL
+        END AS id
+    FROM fact
+),
+violation AS (
+    SELECT outcome, id
+    FROM classified
+    WHERE outcome IS NOT NULL
+    ORDER BY
+        CASE outcome
+            WHEN 'purchase_order_line_not_found' THEN 1
+            WHEN 'purchase_order_line_mismatch' THEN 2
+            WHEN 'location_not_found' THEN 3
+            WHEN 'quantity_exceeds_remaining' THEN 4
+        END,
+        id
+    LIMIT 1
 )
-SELECT CASE
-    WHEN bool_or(locked_id IS NULL)
-        THEN 'purchase_order_line_not_found'
-    WHEN bool_or(line_purchase_order_id <> $1)
-        THEN 'purchase_order_line_mismatch'
-    WHEN bool_or(location_id IS NULL)
-        THEN 'location_not_found'
-    WHEN bool_or(quantity > ordered_quantity - received_quantity)
-        THEN 'quantity_exceeds_remaining'
-    ELSE 'ready'
-END AS outcome
-FROM fact;
+SELECT
+    COALESCE(violation.outcome, 'ready') AS outcome,
+    violation.id
+FROM (SELECT 1) AS singleton
+LEFT JOIN violation ON TRUE;

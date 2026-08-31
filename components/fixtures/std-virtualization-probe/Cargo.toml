@@ -1,0 +1,18 @@
+[package]
+name = "std-virtualization-probe"
+version.workspace = true
+edition.workspace = true
+description = "Behavioral proof fixture for the standard-library WASI virtualization stage"
+license = "Apache-2.0"
+
+[dependencies]
+serde_json = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+bench = false
+
+[lints]
+workspace = true

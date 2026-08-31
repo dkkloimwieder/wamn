@@ -75,7 +75,13 @@ fn validated_limit(limit: Option<i64>) -> Result<i64, AccessError> {
     if (1..=MAX_PAGE_SIZE).contains(&limit) {
         Ok(limit)
     } else {
-        Err(AccessError::invalid("receipt limit must be 1..=100"))
+        Err(AccessError::invalid_range(
+            "receipt limit must be 1..=100",
+            "limit",
+            1,
+            MAX_PAGE_SIZE,
+            limit,
+        ))
     }
 }
 
@@ -104,7 +110,7 @@ fn cursor_from_row(row: &ReceiptRow) -> Result<Box<str>, AccessError> {
 
 fn parse_input_uuid(value: &str, context: &str) -> Result<Uuid, AccessError> {
     parse_canonical_uuid(value)
-        .ok_or_else(|| AccessError::invalid(format!("{context} is not a canonical UUID")))
+        .ok_or_else(|| AccessError::invalid(format!("{context} is not a canonical UUID"), "id"))
 }
 
 fn parse_row_uuid(value: &str) -> Result<Uuid, AccessError> {

@@ -453,9 +453,30 @@ fn manifest() -> Value {
                 ],
                 "enum_fields": {"status": ["open", "complete", "cancelled"]},
                 "operations": {
-                    "get": {"permission": "purchase_order.get", "result": "one"},
+                    "get": {
+                        "permission": "purchase_order.get",
+                        "error_details": {
+                            "invalid_input": {"required": ["field"]},
+                            "not_found": {"required": ["field", "id"]},
+                            "retry": {},
+                            "timeout": {},
+                            "permission_denied": {"required": ["operation"]},
+                            "internal_error": {}
+                        },
+                        "result": "one"
+                    },
                     "query": {
                         "permission": "purchase_order.query",
+                        "error_details": {
+                            "invalid_input": {
+                                "required": ["field"],
+                                "optional": ["minimum", "maximum", "observed"]
+                            },
+                            "retry": {},
+                            "timeout": {},
+                            "permission_denied": {"required": ["operation"]},
+                            "internal_error": {}
+                        },
                         "authored_sql": {
                             "default": "query/open_purchase_order.sql",
                             "variants": [
@@ -498,6 +519,17 @@ fn manifest() -> Value {
                     },
                     "update": {
                         "permission": "purchase_order.update",
+                        "error_details": {
+                            "invalid_input": {"required": ["field"]},
+                            "not_found": {"required": ["field", "id"]},
+                            "concurrency_conflict": {
+                                "required": ["expected_row_version", "observed_row_version"]
+                            },
+                            "retry": {},
+                            "timeout": {},
+                            "permission_denied": {"required": ["operation"]},
+                            "internal_error": {}
+                        },
                         "writable_fields": ["supplier_id"],
                         "revision_field": "row_version",
                         "result": "one"
@@ -507,10 +539,16 @@ fn manifest() -> Value {
         },
         "connections": {"postgres": {"interface": "wamn:postgres@0.1.0"}},
         "components": {
-            "receiving_data": {
-                "operations": [
-                    "purchase_order.get", "purchase_order.query", "purchase_order.update"
-                ],
+            "purchase_order_get": {
+                "operations": ["purchase_order.get"],
+                "connections": ["postgres"]
+            },
+            "purchase_order_query": {
+                "operations": ["purchase_order.query"],
+                "connections": ["postgres"]
+            },
+            "purchase_order_update": {
+                "operations": ["purchase_order.update"],
                 "connections": ["postgres"]
             }
         }
@@ -640,12 +678,107 @@ fn parsed_manifest(value: &Value) -> PackageManifest {
 }
 
 #[test]
-fn shared_operation_vocabulary_refuses_unknown_repeated_and_missing_group_members() {
+fn operation_error_details_are_required_closed_and_exact() {
+    let mut missing_declaration = manifest();
+    missing_declaration["models"]["purchase_order"]["operations"]["get"]
+        .as_object_mut()
+        .unwrap()
+        .remove("error_details");
+    assert!(
+        PackageManifest::from_slice(&serde_json::to_vec(&missing_declaration).unwrap()).is_err(),
+        "an operation without its error-detail declaration was accepted"
+    );
+
+    let mut unknown_code = manifest();
+    unknown_code["models"]["purchase_order"]["operations"]["get"]["error_details"]["database_error"] =
+        json!({});
+    assert!(
+        PackageManifest::from_slice(&serde_json::to_vec(&unknown_code).unwrap()).is_err(),
+        "an undeclared error code was accepted"
+    );
+
+    let mut unknown_schema_key = manifest();
+    unknown_schema_key["models"]["purchase_order"]["operations"]["get"]["error_details"]["invalid_input"]
+        ["sqlstate"] = json!(true);
+    assert!(
+        PackageManifest::from_slice(&serde_json::to_vec(&unknown_schema_key).unwrap()).is_err(),
+        "an open-ended detail declaration was accepted"
+    );
+
+    let mut missing_code = manifest();
+    missing_code["models"]["purchase_order"]["operations"]["get"]["error_details"]
+        .as_object_mut()
+        .unwrap()
+        .remove("not_found");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&missing_code))
+            .expect_err("an incomplete error-code set was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut wrong_detail = manifest();
+    wrong_detail["models"]["purchase_order"]["operations"]["update"]["error_details"]["concurrency_conflict"]
+        ["required"] = json!(["expected_row_version", "id"]);
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&wrong_detail))
+            .expect_err("incorrect concurrency detail keys were accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut repeated_detail = manifest();
+    repeated_detail["models"]["purchase_order"]["operations"]["query"]["error_details"]["invalid_input"]
+        ["optional"] = json!(["minimum", "maximum", "observed", "observed"]);
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&repeated_detail))
+            .expect_err("a repeated detail key was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut command_detail = shipped_manifest();
+    command_detail["commands"]["receiving.record_receipt"]["error_details"]["receipt_reference_conflict"]
+        ["required"] = json!(["field"]);
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&command_detail))
+            .expect_err("an incorrect command detail schema was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+}
+
+#[test]
+fn shared_operation_vocabulary_refuses_non_singular_unknown_repeated_and_missing_components() {
+    let mut non_singular = manifest();
+    non_singular["components"]["purchase_order_get"]["operations"] =
+        json!(["purchase_order.get", "purchase_order.query"]);
+    let error = validate_operation_vocabulary(&parsed_manifest(&non_singular))
+        .expect_err("a component owning multiple operations was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
+    assert_eq!(
+        error.context(),
+        "purchase_order_get must declare exactly one operation"
+    );
+    assert_eq!(
+        run(&catalog(false), &non_singular, &QUERY_SOURCES)
+            .expect_err("generation accepted a component owning multiple operations")
+            .kind(),
+        GenerateErrorKind::InvalidComponent
+    );
+
+    let mut empty = manifest();
+    empty["components"]["purchase_order_get"]["operations"] = json!([]);
+    let error = validate_operation_vocabulary(&parsed_manifest(&empty))
+        .expect_err("a component owning no operation was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
+    assert_eq!(
+        error.context(),
+        "purchase_order_get must declare exactly one operation"
+    );
+
     let mut unknown = manifest();
-    unknown["components"]["receiving_data"]["operations"]
-        .as_array_mut()
-        .expect("operations array")
-        .push(json!("purchase_order.delete"));
+    unknown["components"]["purchase_order_get"]["operations"] = json!(["purchase_order.delete"]);
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&unknown))
             .expect_err("unknown grouped operation was accepted")
@@ -660,10 +793,7 @@ fn shared_operation_vocabulary_refuses_unknown_repeated_and_missing_group_member
     );
 
     let mut repeated = manifest();
-    repeated["components"]["receiving_data"]["operations"]
-        .as_array_mut()
-        .expect("operations array")
-        .push(json!("purchase_order.get"));
+    repeated["components"]["purchase_order_update"]["operations"] = json!(["purchase_order.get"]);
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&repeated))
             .expect_err("repeated grouped operation was accepted")
@@ -678,8 +808,10 @@ fn shared_operation_vocabulary_refuses_unknown_repeated_and_missing_group_member
     );
 
     let mut missing = manifest();
-    missing["components"]["receiving_data"]["operations"] =
-        json!(["purchase_order.get", "purchase_order.query"]);
+    missing["components"]
+        .as_object_mut()
+        .expect("components object")
+        .remove("purchase_order_update");
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&missing))
             .expect_err("ungrouped declared operation was accepted")
@@ -750,6 +882,10 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
         &package,
         "generated/contracts/purchase_order/update.input.json",
     );
+    assert_eq!(
+        input["expected_row_version"],
+        json!({"field": "row_version", "type": "int64", "required": true})
+    );
     assert_eq!(input["writable_fields"][0]["field"], "supplier_id");
     assert_eq!(
         input["writable_fields"][0]["explicit_null"],
@@ -800,7 +936,7 @@ fn operation_identity_errors_and_constraint_names_are_closed() {
     assert!(cases.iter().any(|case| {
         case["literal"] == "internal_error"
             && case["from"] == json!(["query_error", "row_limit_exceeded"])
-            && case["detail"] == "opaque"
+            && case["detail"] == json!({})
     }));
     let named_constraint_cases = cases
         .iter()
@@ -1001,6 +1137,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             "visibility": "public",
             "fields": [
                 {"name": "outcome", "type": "Option<String>"},
+                {"name": "observed_row_version", "type": "Option<i64>"},
                 {"name": "created_at", "type": "Option<wamn_postgres_sqlx::TimestampTz>"},
                 {"name": "id", "type": "Option<wamn_postgres_sqlx::Uuid>"},
                 {"name": "purchase_order_number", "type": "Option<String>"},
@@ -1017,6 +1154,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             "visibility": "public",
             "fields": [
                 {"name": "outcome", "type": "Option<String>"},
+                {"name": "observed_row_version", "type": "Option<i64>"},
                 {"name": "created_at", "type": "Option<chrono::DateTime<chrono::Utc>>"},
                 {"name": "id", "type": "Option<uuid::Uuid>"},
                 {"name": "purchase_order_number", "type": "Option<String>"},

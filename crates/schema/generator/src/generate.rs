@@ -10,11 +10,12 @@ use wamn_schema_introspection::ir::{
 };
 
 use crate::manifest::{
-    AuthoredSqlDeclaration, CommandDeclaration, CommandErrorLiteral, CommandFetch,
-    CommandTransaction, CommandValueDeclaration, ContractFieldDeclaration, CrudAction,
-    CursorDirection, ModelDeclaration, OperationDeclaration, PackageManifest,
-    PolicyContractRequirement, PolicyContractState, ResultClass, SortDeclaration,
-    canonical_operation_identity, validate_identifier, validate_operation_vocabulary,
+    AccessOperationErrorLiteral, AuthoredSqlDeclaration, CommandDeclaration, CommandErrorLiteral,
+    CommandFetch, CommandTransaction, CommandValueDeclaration, ContractFieldDeclaration,
+    CrudAction, CursorDirection, ModelDeclaration, OperationDeclaration,
+    OperationErrorDetailDeclaration, PackageManifest, PolicyContractRequirement,
+    PolicyContractState, ResultClass, SortDeclaration, canonical_operation_identity,
+    validate_identifier, validate_operation_vocabulary,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
@@ -135,7 +136,10 @@ const RECORD_RECEIPT_STATEMENTS: &[ExpectedCommandStatement] = &[
             command_value("purchase_order_id", ColumnType::Uuid, false),
             command_value("line", ColumnType::Json, false),
         ],
-        row: &[command_value("outcome", ColumnType::Text, true)],
+        row: &[
+            command_value("outcome", ColumnType::Text, true),
+            command_value("id", ColumnType::Uuid, true),
+        ],
     },
 ];
 
@@ -628,7 +632,41 @@ fn validate_operation(
             require_mutation_shape(&context, operation, true)?;
         }
     }
+    validate_constraint_error_details(&context, table, action, operation)?;
     Ok(())
+}
+
+fn validate_constraint_error_details(
+    context: &str,
+    table: &Table,
+    action: CrudAction,
+    operation: &OperationDeclaration,
+) -> Result<(), GenerateError> {
+    use AccessOperationErrorLiteral as Code;
+
+    let expected = operation_constraints(table, action, operation)
+        .into_iter()
+        .map(|constraint| constraint_error_code(constraint.kind()))
+        .collect::<BTreeSet<_>>();
+    let declared = operation
+        .error_details
+        .keys()
+        .copied()
+        .filter(|code| {
+            matches!(
+                code,
+                Code::UniqueViolation | Code::ForeignKeyViolation | Code::CheckViolation
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    if declared == expected {
+        Ok(())
+    } else {
+        Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{context} must declare error details for its exact constraint kinds"),
+        ))
+    }
 }
 
 fn require_result(
@@ -1488,51 +1526,75 @@ fn command_error_contract(command: &CommandDeclaration) -> Value {
     let cases = command
         .errors
         .iter()
-        .map(|literal| match literal {
-            CommandErrorLiteral::InvalidInput => json!({
-                "literal": literal.as_str(),
-                "from": [
-                    "malformed_input",
-                    "envelope_count",
-                    "line_count",
-                    "duplicate_line",
-                    "nonpositive_quantity",
-                ],
-            }),
-            CommandErrorLiteral::ReceiptReferenceConflict => json!({
-                "literal": literal.as_str(),
-                "from": "unique_violation",
-                "constraint": "receipt_purchase_order_id_receipt_reference_key",
-            }),
-            CommandErrorLiteral::Retry => json!({
-                "literal": literal.as_str(),
-                "from": ["serialization_failure", "connection_unavailable"],
-                "automatic": false,
-            }),
-            CommandErrorLiteral::Timeout => json!({
-                "literal": literal.as_str(),
-                "from": "statement_timeout",
-            }),
-            CommandErrorLiteral::PermissionDenied => json!({
-                "literal": literal.as_str(),
-                "from": "permission_denied",
-            }),
-            CommandErrorLiteral::InternalError => json!({
-                "literal": literal.as_str(),
-                "from": ["query_error", "row_limit_exceeded", "undeclared_constraint"],
-                "detail": "opaque",
-            }),
-            CommandErrorLiteral::IdempotencyConflict => json!({
-                "literal": literal.as_str(),
-                "from": "same_key_different_canonical_command",
-            }),
-            _ => json!({
+        .map(|literal| {
+            let mut case = match literal {
+                CommandErrorLiteral::InvalidInput => json!({
+                    "literal": literal.as_str(),
+                    "from": [
+                        "malformed_input",
+                        "envelope_count",
+                        "line_count",
+                        "duplicate_line",
+                        "nonpositive_quantity",
+                    ],
+                }),
+                CommandErrorLiteral::ReceiptReferenceConflict => json!({
+                    "literal": literal.as_str(),
+                    "from": "unique_violation",
+                    "constraint": "receipt_purchase_order_id_receipt_reference_key",
+                }),
+                CommandErrorLiteral::Retry => json!({
+                    "literal": literal.as_str(),
+                    "from": ["serialization_failure", "connection_unavailable"],
+                    "automatic": false,
+                }),
+                CommandErrorLiteral::Timeout => json!({
+                    "literal": literal.as_str(),
+                    "from": "statement_timeout",
+                }),
+                CommandErrorLiteral::PermissionDenied => json!({
+                    "literal": literal.as_str(),
+                    "from": "permission_denied",
+                }),
+                CommandErrorLiteral::InternalError => json!({
+                    "literal": literal.as_str(),
+                    "from": ["query_error", "row_limit_exceeded", "undeclared_constraint"],
+                }),
+                CommandErrorLiteral::IdempotencyConflict => json!({
+                    "literal": literal.as_str(),
+                    "from": "same_key_different_canonical_command",
+                }),
+                _ => json!({
                 "literal": literal.as_str(),
                 "from": "transaction_invariant",
-            }),
+                }),
+            };
+            case.as_object_mut()
+                .expect("error contract case is an object")
+                .insert(
+                    "detail".to_owned(),
+                    error_detail_contract(
+                        command
+                            .error_details
+                            .get(literal)
+                            .expect("manifest validation closed command error details"),
+                    ),
+                );
+            case
         })
         .collect::<Vec<_>>();
     json!({"closed": true, "cases": cases})
+}
+
+fn error_detail_contract(detail: &OperationErrorDetailDeclaration) -> Value {
+    let mut contract = serde_json::Map::new();
+    if !detail.required.is_empty() {
+        contract.insert("required".to_owned(), json!(detail.required));
+    }
+    if !detail.optional.is_empty() {
+        contract.insert("optional".to_owned(), json!(detail.optional));
+    }
+    Value::Object(contract)
 }
 
 fn command_rows(command: &CommandDeclaration, projection: Projection) -> Vec<RustRow> {
@@ -2016,53 +2078,110 @@ fn input_contract(
             }),
         ),
         CrudAction::Create => common,
-        CrudAction::Update | CrudAction::Delete => merge_json(
-            common,
-            &json!({
+        CrudAction::Update | CrudAction::Delete => {
+            let revision = operation
+                .revision_field
+                .as_deref()
+                .expect("mutation validation requires a revision field");
+            let mut mutation = json!({
                 "id": {"type": "uuid", "required": true},
-                "expected_revision": {
-                    "field": operation.revision_field,
-                    "type": "int64",
-                    "required": true,
-                },
-            }),
-        ),
+            });
+            mutation
+                .as_object_mut()
+                .expect("mutation input contract is an object")
+                .insert(
+                    format!("expected_{revision}"),
+                    json!({
+                        "field": revision,
+                        "type": "int64",
+                        "required": true,
+                    }),
+                );
+            merge_json(common, &mutation)
+        }
     }
 }
 
 fn error_contract(table: &Table, action: CrudAction, operation: &OperationDeclaration) -> Value {
-    let mut literals = vec![
-        json!({"literal": "invalid_input"}),
-        json!({"literal": "permission_denied", "from": "permission_denied"}),
-        json!({
-            "literal": "retry",
-            "from": ["serialization_failure", "connection_unavailable"],
-            "automatic": false,
-        }),
-        json!({"literal": "timeout", "from": "statement_timeout"}),
-        json!({
-            "literal": "internal_error",
-            "from": ["query_error", "row_limit_exceeded"],
-            "detail": "opaque",
-        }),
+    use AccessOperationErrorLiteral as Code;
+
+    let mut cases = vec![
+        (Code::InvalidInput, json!({"literal": "invalid_input"})),
+        (
+            Code::PermissionDenied,
+            json!({"literal": "permission_denied", "from": "permission_denied"}),
+        ),
+        (
+            Code::Retry,
+            json!({
+                "literal": "retry",
+                "from": ["serialization_failure", "connection_unavailable"],
+                "automatic": false,
+            }),
+        ),
+        (
+            Code::Timeout,
+            json!({"literal": "timeout", "from": "statement_timeout"}),
+        ),
+        (
+            Code::InternalError,
+            json!({
+                "literal": "internal_error",
+                "from": ["query_error", "row_limit_exceeded"],
+            }),
+        ),
     ];
     if matches!(
         action,
         CrudAction::Get | CrudAction::Update | CrudAction::Delete
     ) {
-        literals.push(json!({"literal": "not_found"}));
+        cases.push((Code::NotFound, json!({"literal": "not_found"})));
     }
     if matches!(action, CrudAction::Update | CrudAction::Delete) {
-        literals.push(json!({"literal": "concurrency_conflict"}));
+        cases.push((
+            Code::ConcurrencyConflict,
+            json!({"literal": "concurrency_conflict"}),
+        ));
     }
     for constraint in operation_constraints(table, action, operation) {
-        literals.push(json!({
-            "literal": constraint_error(constraint.kind()),
-            "from": constraint_error(constraint.kind()),
-            "constraint": constraint.name(),
-        }));
+        let code = constraint_error_code(constraint.kind());
+        cases.push((
+            code,
+            json!({
+                "literal": constraint_error(constraint.kind()),
+                "from": constraint_error(constraint.kind()),
+                "constraint": constraint.name(),
+            }),
+        ));
     }
-    json!({"closed": true, "cases": literals})
+    let cases = cases
+        .into_iter()
+        .map(|(code, mut case)| {
+            case.as_object_mut()
+                .expect("error contract case is an object")
+                .insert(
+                    "detail".to_owned(),
+                    error_detail_contract(
+                        operation
+                            .error_details
+                            .get(&code)
+                            .expect("manifest validation closed access error details"),
+                    ),
+                );
+            case
+        })
+        .collect::<Vec<_>>();
+    json!({"closed": true, "cases": cases})
+}
+
+fn constraint_error_code(kind: &ConstraintKind) -> AccessOperationErrorLiteral {
+    match kind {
+        ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => {
+            AccessOperationErrorLiteral::UniqueViolation
+        }
+        ConstraintKind::ForeignKey { .. } => AccessOperationErrorLiteral::ForeignKeyViolation,
+        ConstraintKind::Check { .. } => AccessOperationErrorLiteral::CheckViolation,
+    }
 }
 
 fn operation_constraints<'a>(
@@ -2301,7 +2420,8 @@ fn wamn_api(
                     .collect(),
             }),
             CrudAction::Update => {
-                let result_row = operation_result_row(model_name, table, *action, Projection::Wamn);
+                let result_row =
+                    operation_result_row(model_name, table, *action, operation, Projection::Wamn);
                 let mut binds = vec![bind_for_column(table, "id", "id", false)];
                 let revision = operation
                     .revision_field
@@ -2338,7 +2458,8 @@ fn wamn_api(
                 operation_rows.push(result_row);
             }
             CrudAction::Delete => {
-                let result_row = operation_result_row(model_name, table, *action, Projection::Wamn);
+                let result_row =
+                    operation_result_row(model_name, table, *action, operation, Projection::Wamn);
                 let revision = operation
                     .revision_field
                     .as_deref()
@@ -2456,10 +2577,11 @@ fn operation_result_rows(
 ) -> Vec<RustRow> {
     model
         .operations
-        .keys()
-        .copied()
-        .filter(|action| matches!(action, CrudAction::Update | CrudAction::Delete))
-        .map(|action| operation_result_row(model_name, table, action, projection))
+        .iter()
+        .filter(|(action, _)| matches!(action, CrudAction::Update | CrudAction::Delete))
+        .map(|(action, operation)| {
+            operation_result_row(model_name, table, *action, operation, projection)
+        })
         .collect()
 }
 
@@ -2467,6 +2589,7 @@ fn operation_result_row(
     model_name: &str,
     table: &Table,
     action: CrudAction,
+    operation: &OperationDeclaration,
     projection: Projection,
 ) -> RustRow {
     let mut fields = vec![RustMember {
@@ -2474,6 +2597,14 @@ fn operation_result_row(
         rust_type: "Option<String>".to_owned(),
     }];
     if action == CrudAction::Update {
+        let revision = operation
+            .revision_field
+            .as_deref()
+            .expect("update validation requires a revision field");
+        fields.push(RustMember {
+            name: format!("observed_{}", rust_field(revision)),
+            rust_type: "Option<i64>".to_owned(),
+        });
         fields.extend(table.columns().iter().map(|column| RustMember {
             name: rust_field(column.name()),
             rust_type: optional_rust_type(column, projection),

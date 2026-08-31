@@ -5,7 +5,7 @@
   },
   "required_platform_policy_contract": {
     "id": "receiving_data_access",
-    "state": "unsatisfied"
+    "state": "satisfied"
   },
   "models": {
     "purchase_order": {
@@ -30,10 +30,36 @@
       "operations": {
         "get": {
           "permission": "purchase_order.get",
+          "error_details": {
+            "invalid_input": {
+              "required": ["field"]
+            },
+            "not_found": {
+              "required": ["field", "id"]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {
+              "required": ["operation"]
+            },
+            "internal_error": {}
+          },
           "result": "one"
         },
         "query": {
           "permission": "purchase_order.query",
+          "error_details": {
+            "invalid_input": {
+              "required": ["field"],
+              "optional": ["minimum", "maximum", "observed"]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {
+              "required": ["operation"]
+            },
+            "internal_error": {}
+          },
           "authored_sql": {
             "default": "query/open_purchase_order.sql",
             "variants": [
@@ -118,6 +144,23 @@
         },
         "update": {
           "permission": "purchase_order.update",
+          "error_details": {
+            "invalid_input": {
+              "required": ["field"]
+            },
+            "not_found": {
+              "required": ["field", "id"]
+            },
+            "concurrency_conflict": {
+              "required": ["expected_row_version", "observed_row_version"]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {
+              "required": ["operation"]
+            },
+            "internal_error": {}
+          },
           "writable_fields": [
             "supplier_id"
           ],
@@ -142,10 +185,36 @@
       "operations": {
         "get": {
           "permission": "receipt.get",
+          "error_details": {
+            "invalid_input": {
+              "required": ["field"]
+            },
+            "not_found": {
+              "required": ["field", "id"]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {
+              "required": ["operation"]
+            },
+            "internal_error": {}
+          },
           "result": "one"
         },
         "query": {
           "permission": "receipt.query",
+          "error_details": {
+            "invalid_input": {
+              "required": ["field"],
+              "optional": ["minimum", "maximum", "observed"]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {
+              "required": ["operation"]
+            },
+            "internal_error": {}
+          },
           "pagination": {
             "kind": "keyset",
             "cursor": {
@@ -292,6 +361,42 @@
         "permission_denied",
         "internal_error"
       ],
+      "error_details": {
+        "invalid_input": {
+          "required": ["field"],
+          "optional": ["minimum", "maximum", "observed"]
+        },
+        "purchase_order_not_found": {
+          "required": ["field"]
+        },
+        "purchase_order_not_open": {
+          "required": ["field"]
+        },
+        "purchase_order_line_not_found": {
+          "required": ["field", "id"]
+        },
+        "purchase_order_line_mismatch": {
+          "required": ["field", "id"]
+        },
+        "location_not_found": {
+          "required": ["field", "id"]
+        },
+        "quantity_exceeds_remaining": {
+          "required": ["field", "id"]
+        },
+        "receipt_reference_conflict": {
+          "required": ["constraint"]
+        },
+        "idempotency_conflict": {
+          "required": ["field"]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": ["operation"]
+        },
+        "internal_error": {}
+      },
       "constraint_errors": {
         "receipt_purchase_order_id_receipt_reference_key": "receipt_reference_conflict"
       },
@@ -473,6 +578,11 @@
               "name": "outcome",
               "type": "text",
               "nullable": true
+            },
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": true
             }
           ]
         },
@@ -635,13 +745,48 @@
     }
   },
   "components": {
-    "receiving_data": {
+    "purchase_order_get": {
       "operations": [
-        "purchase_order.get",
-        "purchase_order.query",
-        "purchase_order.update",
-        "receipt.get",
-        "receipt.query",
+        "purchase_order.get"
+      ],
+      "connections": [
+        "postgres"
+      ]
+    },
+    "purchase_order_query": {
+      "operations": [
+        "purchase_order.query"
+      ],
+      "connections": [
+        "postgres"
+      ]
+    },
+    "purchase_order_update": {
+      "operations": [
+        "purchase_order.update"
+      ],
+      "connections": [
+        "postgres"
+      ]
+    },
+    "receipt_get": {
+      "operations": [
+        "receipt.get"
+      ],
+      "connections": [
+        "postgres"
+      ]
+    },
+    "receipt_query": {
+      "operations": [
+        "receipt.query"
+      ],
+      "connections": [
+        "postgres"
+      ]
+    },
+    "receiving_record_receipt": {
+      "operations": [
         "receiving.record_receipt"
       ],
       "connections": [

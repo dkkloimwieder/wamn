@@ -23,4 +23,6 @@ mod route_authentication_live;
 mod router_tap_live;
 pub mod streambench;
 pub mod trusted_http_route;
+#[cfg(test)]
+mod virtualized_std_guest;
 pub mod walbench;

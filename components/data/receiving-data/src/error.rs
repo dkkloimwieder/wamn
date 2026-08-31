@@ -85,6 +85,11 @@ pub struct AccessError {
     kind: AccessErrorKind,
     context: Box<str>,
     constraint: Option<Box<str>>,
+    field: Option<&'static str>,
+    minimum: Option<i64>,
+    maximum: Option<i64>,
+    observed: Option<i64>,
+    observed_row_version: Option<i64>,
 }
 
 impl AccessError {
@@ -98,16 +103,60 @@ impl AccessError {
         self.constraint.as_deref()
     }
 
-    pub(crate) fn invalid(context: impl Into<Box<str>>) -> Self {
-        Self::new(AccessErrorKind::InvalidInput, context)
+    /// Input field owned by an `invalid_input` refusal.
+    pub const fn field(&self) -> Option<&'static str> {
+        self.field
+    }
+
+    /// Optional lower bound owned by an `invalid_input` refusal.
+    pub const fn minimum(&self) -> Option<i64> {
+        self.minimum
+    }
+
+    /// Optional upper bound owned by an `invalid_input` refusal.
+    pub const fn maximum(&self) -> Option<i64> {
+        self.maximum
+    }
+
+    /// Optional observed bound value owned by an `invalid_input` refusal.
+    pub const fn observed(&self) -> Option<i64> {
+        self.observed
+    }
+
+    /// Current row version returned by an optimistic-concurrency refusal.
+    pub const fn observed_row_version(&self) -> Option<i64> {
+        self.observed_row_version
+    }
+
+    pub(crate) fn invalid(context: impl Into<Box<str>>, field: &'static str) -> Self {
+        Self::new(AccessErrorKind::InvalidInput, context).with_field(field)
+    }
+
+    pub(crate) fn invalid_range(
+        context: impl Into<Box<str>>,
+        field: &'static str,
+        minimum: i64,
+        maximum: i64,
+        observed: i64,
+    ) -> Self {
+        let mut error = Self::invalid(context, field);
+        error.minimum = Some(minimum);
+        error.maximum = Some(maximum);
+        error.observed = Some(observed);
+        error
     }
 
     pub(crate) fn not_found(context: impl Into<Box<str>>) -> Self {
         Self::new(AccessErrorKind::NotFound, context)
     }
 
-    pub(crate) fn concurrency_conflict(context: impl Into<Box<str>>) -> Self {
-        Self::new(AccessErrorKind::ConcurrencyConflict, context)
+    pub(crate) fn concurrency_conflict(
+        context: impl Into<Box<str>>,
+        observed_row_version: i64,
+    ) -> Self {
+        let mut error = Self::new(AccessErrorKind::ConcurrencyConflict, context);
+        error.observed_row_version = Some(observed_row_version);
+        error
     }
 
     pub(crate) fn internal(context: impl Into<Box<str>>) -> Self {
@@ -124,6 +173,11 @@ impl AccessError {
             kind,
             context: context.into(),
             constraint,
+            field: None,
+            minimum: None,
+            maximum: None,
+            observed: None,
+            observed_row_version: None,
         }
     }
 
@@ -132,7 +186,17 @@ impl AccessError {
             kind,
             context: context.into(),
             constraint: None,
+            field: None,
+            minimum: None,
+            maximum: None,
+            observed: None,
+            observed_row_version: None,
         }
+    }
+
+    fn with_field(mut self, field: &'static str) -> Self {
+        self.field = Some(field);
+        self
     }
 }
 

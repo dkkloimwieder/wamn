@@ -1,0 +1,320 @@
+//! Live proof that the standard guest virtualization stage removes ambient
+//! environment access without hiding guest traps from the serving boundary.
+//!
+//! Gate recipe: `[STD-GUEST-VIRTUALIZATION]` in `docs/operations/build-and-test.md`.
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeSet, HashMap};
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use anyhow::{Context as _, ensure};
+    use bytes::Bytes;
+    use http_body_util::{BodyExt as _, Full};
+    use hyper::{Method, Request, StatusCode};
+    use wamn_execution_host::{
+        ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriverRequest, WiringResolution,
+    };
+    use wamn_runtime::engine::build_engine;
+    use wamn_runtime::plugins::flow_http_routing::FLOW_HTTP_ROUTING_ID;
+    use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
+    use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream};
+    use wash_runtime::engine::InstancePolicy;
+    use wash_runtime::engine::ctx::{Ctx, SharedCtx};
+    use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
+    use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+    use wash_runtime::types::LocalResources;
+    use wash_runtime::wasmtime::Store;
+    use wash_runtime::wasmtime::component::{Component, Linker};
+    use wasmtime_wasi_http::p2::WasiHttpView as _;
+    use wasmtime_wasi_http::p2::bindings::Proxy;
+    use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
+
+    use crate::trusted_http_route::{
+        self, ENVIRONMENT, PACKAGE, PROJECT, ROUTE_AUTHORITY, ROUTE_PATH, RouteOptions, TENANT,
+        WIRING_ID, WIRING_VERSION,
+    };
+
+    const SENTINEL_KEY: &str = "WAMN_STD_VIRTUALIZATION_SENTINEL";
+    const RECEIVING_ARTIFACTS: [(&str, &str); 6] = [
+        ("purchase_order_get", "purchase_order_get.wasm"),
+        ("purchase_order_query", "purchase_order_query.wasm"),
+        ("purchase_order_update", "purchase_order_update.wasm"),
+        ("receipt_get", "receipt_get.wasm"),
+        ("receipt_query", "receipt_query.wasm"),
+        ("receiving_record_receipt", "receiving_record_receipt.wasm"),
+    ];
+
+    fn required(key: &str) -> anyhow::Result<String> {
+        std::env::var(key)
+            .ok()
+            .filter(|value| !value.is_empty())
+            .with_context(|| format!("set {key} for the virtualized std guest proof"))
+    }
+
+    fn import_packages(
+        engine: &wash_runtime::engine::Engine,
+        component_bytes: &[u8],
+        label: &str,
+    ) -> anyhow::Result<BTreeSet<String>> {
+        let imports = wamn_runtime::component_imports(engine, component_bytes, label)?;
+        Ok(imports
+            .iter()
+            .map(wamn_component_policy::import_pkg)
+            .map(str::to_owned)
+            .collect())
+    }
+
+    #[test]
+    #[ignore = "requires the built and virtualized std probe and six Receiving artifacts"]
+    fn virtualized_artifacts_have_exact_imports_and_distinct_receiving_digests()
+    -> anyhow::Result<()> {
+        let probe = PathBuf::from(required("WAMN_STD_VIRTUALIZATION_COMPONENT_WASM")?);
+        let receiving_directory =
+            PathBuf::from(required("WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY")?);
+        let engine = build_engine(&[]).context("build the artifact-inspection engine")?;
+
+        let probe_bytes =
+            std::fs::read(&probe).with_context(|| format!("read {}", probe.display()))?;
+        let probe_packages = import_packages(&engine, &probe_bytes, "virtualized std probe")?;
+        ensure!(
+            probe_packages
+                == BTreeSet::from([
+                    "wamn:connection".to_owned(),
+                    "wamn:node".to_owned(),
+                    "wasi:clocks".to_owned(),
+                    "wasi:io".to_owned(),
+                ]),
+            "virtualized std probe imports {probe_packages:?}, not its exact four-package profile"
+        );
+
+        let expected_receiving = BTreeSet::from([
+            "wamn:node".to_owned(),
+            "wamn:postgres".to_owned(),
+            "wasi:clocks".to_owned(),
+            "wasi:io".to_owned(),
+        ]);
+        let mut digests = BTreeSet::new();
+        for (label, file_name) in RECEIVING_ARTIFACTS {
+            let path = receiving_directory.join(file_name);
+            let bytes = std::fs::read(&path)
+                .with_context(|| format!("read Receiving artifact {}", path.display()))?;
+            let packages = import_packages(&engine, &bytes, label)?;
+            ensure!(
+                packages == expected_receiving,
+                "virtualized Receiving artifact {label} imports {packages:?}, not its exact four-package profile"
+            );
+            let digest = wamn_runtime::component_admission::component_digest(&bytes);
+            ensure!(
+                digests.insert(digest.clone()),
+                "virtualized Receiving artifact {label} duplicates digest {digest}"
+            );
+        }
+        ensure!(
+            digests.len() == RECEIVING_ARTIFACTS.len(),
+            "expected six distinct Receiving artifact digests, observed {}",
+            digests.len()
+        );
+        Ok(())
+    }
+
+    async fn invoke_flow_http(
+        component_path: &Path,
+        routing: Arc<FlowHttpRouting>,
+        bridge: Arc<RouterDeliveryBridge>,
+        body: Bytes,
+    ) -> anyhow::Result<hyper::Response<Bytes>> {
+        let engine = build_engine(&[]).context("build the flow-http engine")?;
+        let raw = engine.inner();
+        let component_bytes = std::fs::read(component_path)
+            .with_context(|| format!("read {}", component_path.display()))?;
+        let component = Component::new(raw, &component_bytes)
+            .map_err(|error| anyhow::anyhow!("compile flow-http: {error}"))?;
+        let mut linker = Linker::new(raw);
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker).context("link WASI into flow-http")?;
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
+            .context("link wasi:http into flow-http")?;
+        let loopback = Arc::new(std::sync::Mutex::new(
+            wash_runtime::sockets::loopback::Network::default(),
+        ));
+        let mut workload = WorkloadComponent::new(
+            "virtualized-std-guest",
+            "virtualized-std-guest",
+            "wamn",
+            "flow-http",
+            component,
+            linker,
+            Vec::new(),
+            LocalResources::default(),
+            loopback,
+            InstancePolicy::Ephemeral,
+        );
+        let imports = workload.world().imports;
+        {
+            let mut item = WorkloadItem::Component(&mut workload);
+            routing
+                .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
+                .await
+                .context("bind release-backed HTTP routing")?;
+            bridge
+                .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
+                .await
+                .context("bind the production router-delivery bridge")?;
+        }
+
+        let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
+        plugins.insert(FLOW_HTTP_ROUTING_ID, routing);
+        plugins.insert(ROUTER_DELIVERY_ID, bridge);
+        let workload_id = workload.workload_id().to_owned();
+        let component_id = workload.id().to_owned();
+        let ctx = Ctx::builder(workload_id, component_id)
+            .with_plugins(plugins)
+            .build();
+        let mut store = Store::new(raw, SharedCtx::new(ctx));
+        store.set_epoch_deadline(u64::MAX / 2);
+        let compiled = workload.component().clone();
+        let proxy = Proxy::instantiate_async(&mut store, &compiled, workload.linker())
+            .await
+            .context("instantiate the shipped flow-http guest")?;
+
+        let body = Full::new(body).map_err(|never| -> ErrorCode { match never {} });
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("http://{ROUTE_AUTHORITY}{ROUTE_PATH}"))
+            .header("content-type", "application/json")
+            .body(body)
+            .context("build the proof request")?;
+        let incoming = store
+            .data_mut()
+            .http()
+            .new_incoming_request(Scheme::Http, request)
+            .map_err(|error| anyhow::anyhow!("lower the proof request: {error}"))?;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let out = store
+            .data_mut()
+            .http()
+            .new_response_outparam(sender)
+            .map_err(|error| anyhow::anyhow!("allocate the response outparam: {error}"))?;
+        let call = wasmtime_wasi::runtime::spawn(async move {
+            proxy
+                .wasi_http_incoming_handler()
+                .call_handle(&mut store, incoming, out)
+                .await
+                .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))
+        });
+        let response = receiver
+            .await
+            .context("flow-http did not set its response")?
+            .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
+        let (parts, body) = response.into_parts();
+        let body = body.collect().await.context("collect flow-http response")?;
+        call.await.context("join flow-http")?;
+        Ok(hyper::Response::from_parts(parts, body.to_bytes()))
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL and OCI, plus built virtualized probe and flow-http artifacts"]
+    async fn virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal()
+    -> anyhow::Result<()> {
+        required(SENTINEL_KEY)?;
+        let database_url = required("WAMN_STD_VIRTUALIZATION_PG_URL")?;
+        let artifact_base = required("WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE")?;
+        let component_wasm = PathBuf::from(required("WAMN_STD_VIRTUALIZATION_COMPONENT_WASM")?);
+        let flow_http_wasm = PathBuf::from(required("WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM")?);
+
+        let engine = build_engine(&[]).context("build the artifact-inspection engine")?;
+        let component_bytes = std::fs::read(&component_wasm)
+            .with_context(|| format!("read {}", component_wasm.display()))?;
+        let packages = import_packages(&engine, &component_bytes, "virtualized std probe")?;
+        ensure!(
+            packages
+                == BTreeSet::from([
+                    "wamn:connection".to_owned(),
+                    "wamn:node".to_owned(),
+                    "wasi:clocks".to_owned(),
+                    "wasi:io".to_owned(),
+                ]),
+            "virtualized std probe imports {packages:?}, not the exact four-package profile"
+        );
+
+        let route = trusted_http_route::build(&RouteOptions {
+            database_url,
+            artifact_base,
+            component_wasm,
+            // The probe retains the declared connection import to exercise the
+            // same admitted std profile, but never calls it.
+            upstream_base_url: "http://127.0.0.1:9".to_owned(),
+            path_and_query: "/unused".to_owned(),
+        })
+        .await
+        .context("build the released virtualized probe route")?;
+
+        let delivery = route
+            .driver
+            .execute(RouterDriverRequest {
+                tenant_id: TENANT.to_owned(),
+                package_id: PACKAGE.to_owned(),
+                environment: ENVIRONMENT.to_owned(),
+                wiring_id: WIRING_ID.to_owned(),
+                wiring_version: WIRING_VERSION,
+                delivery_id: "virtualized-environment-proof".to_owned(),
+                payload: serde_json::json!({"proof": "environment"}),
+                caller_attached: true,
+                resolution: WiringResolution::Active,
+                caller: None,
+                traceparent: None,
+                tracestate: None,
+            })
+            .await
+            .context("run the virtualized probe through RouterDriver")?;
+        ensure!(
+            delivery.outcome.result["sentinel-key"] == SENTINEL_KEY,
+            "the guest and native proof disagree on the sentinel identity"
+        );
+        ensure!(
+            delivery.outcome.result["sentinel-visible"] == false,
+            "a virtualized std guest observed {SENTINEL_KEY} from its host process"
+        );
+
+        route
+            .driver
+            .preload_release_wirings()
+            .await
+            .context("preload the proof wiring")?;
+        let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig { nats_url: None }));
+        let bridge = Arc::new(
+            RouterDeliveryBridge::new(
+                Arc::clone(&route.driver),
+                Arc::clone(&route.release),
+                jetstream,
+                PROJECT,
+            )
+            .context("bind the production delivery bridge")?,
+        );
+        let routing = Arc::new(
+            FlowHttpRouting::from_env(Some(Arc::clone(&route.release)))
+                .context("build release-backed HTTP routing")?,
+        );
+        let response = invoke_flow_http(
+            &flow_http_wasm,
+            routing,
+            bridge,
+            Bytes::from_static(br#"{"proof":"panic"}"#),
+        )
+        .await
+        .context("drive the deliberate panic through released ingress")?;
+        ensure!(
+            response.status() == StatusCode::SERVICE_UNAVAILABLE,
+            "a trapped guest mapped to HTTP {} instead of 503",
+            response.status()
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(response.body()).context("decode the typed refusal")?;
+        ensure!(
+            body["error"]["code"] == "execution-failed",
+            "a trapped guest did not map to the execution-failed refusal: {body}"
+        );
+        Ok(())
+    }
+}

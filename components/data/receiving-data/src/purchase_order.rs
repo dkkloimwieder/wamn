@@ -99,7 +99,7 @@ pub async fn get(
     connection: &mut WamnConnection,
     id: &str,
 ) -> Result<PurchaseOrderRow, AccessError> {
-    let id = canonical_uuid(id, "purchase_order id")?;
+    let id = canonical_uuid(id, "purchase_order id", "id")?;
     generated::get(connection, WamnUuid(id))
         .await
         .map_err(|source| {
@@ -199,15 +199,15 @@ pub async fn query(
 pub async fn update(
     connection: &mut WamnConnection,
     id: &str,
-    expected_revision: i64,
+    expected_row_version: i64,
     supplier_id: SupplierIdUpdate,
 ) -> Result<PurchaseOrderRow, AccessError> {
-    let id = canonical_uuid(id, "purchase_order id")?;
+    let id = canonical_uuid(id, "purchase_order id", "id")?;
     let (supplier_id_present, supplier_id) = supplier_update(supplier_id)?;
     let row = generated::update(
         connection,
         WamnUuid(id),
-        expected_revision,
+        expected_row_version,
         supplier_id_present,
         supplier_id,
     )
@@ -215,7 +215,7 @@ pub async fn update(
     .map_err(|source| {
         AccessError::from_sqlx("update purchase_order", &source, UPDATE_CONSTRAINTS)
     })?;
-    update_result(row)
+    update_result(row, expected_row_version)
 }
 
 #[derive(Debug)]
@@ -287,7 +287,13 @@ fn page_limit(limit: Option<i64>) -> Result<i64, AccessError> {
     if (1..=MAX_PAGE_SIZE).contains(&limit) {
         Ok(limit)
     } else {
-        Err(AccessError::invalid("purchase_order limit must be 1..=100"))
+        Err(AccessError::invalid_range(
+            "purchase_order limit must be 1..=100",
+            "limit",
+            1,
+            MAX_PAGE_SIZE,
+            limit,
+        ))
     }
 }
 
@@ -320,7 +326,13 @@ fn supplier_filter(values: Option<&[Box<str>]>) -> Result<Option<Json>, AccessEr
         .map(|values| {
             values
                 .iter()
-                .map(|value| canonical_uuid(value, "purchase_order supplier filter"))
+                .map(|value| {
+                    canonical_uuid(
+                        value,
+                        "purchase_order supplier filter",
+                        "filter.supplier_id",
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()
                 .map(|values| Json(serde_json::to_string(&values).expect("strings serialize")))
         })
@@ -342,12 +354,14 @@ fn supplier_update(supplier_id: SupplierIdUpdate) -> Result<(bool, Option<WamnUu
         SupplierIdUpdate::Omitted => Ok((false, None)),
         SupplierIdUpdate::Null => Err(AccessError::invalid(
             "purchase_order supplier_id does not accept explicit null",
+            "change.supplier_id",
         )),
         SupplierIdUpdate::Value(value) => Ok((
             true,
             Some(WamnUuid(canonical_uuid(
                 &value,
                 "purchase_order supplier_id",
+                "change.supplier_id",
             )?)),
         )),
     }
@@ -405,6 +419,7 @@ fn validate_status(value: &str) -> Result<(), AccessError> {
     } else {
         Err(AccessError::invalid(
             "purchase_order status cursor is outside the closed vocabulary",
+            "cursor",
         ))
     }
 }
@@ -419,12 +434,12 @@ fn validate_row_status(value: &str) -> Result<(), AccessError> {
     }
 }
 
-fn canonical_uuid(value: &str, context: &str) -> Result<String, AccessError> {
+fn canonical_uuid(value: &str, context: &str, field: &'static str) -> Result<String, AccessError> {
     uuid::Uuid::parse_str(value)
         .ok()
         .filter(|parsed| parsed.hyphenated().to_string() == value)
         .map(|parsed| parsed.hyphenated().to_string())
-        .ok_or_else(|| AccessError::invalid(format!("{context} is not a canonical UUID")))
+        .ok_or_else(|| AccessError::invalid(format!("{context} is not a canonical UUID"), field))
 }
 
 fn row_uuid(value: &WamnUuid) -> Result<uuid::Uuid, AccessError> {
@@ -444,12 +459,23 @@ fn canonical_timestamp(value: &DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
-fn update_result(row: generated::PurchaseOrderUpdateRow) -> Result<PurchaseOrderRow, AccessError> {
+fn update_result(
+    row: generated::PurchaseOrderUpdateRow,
+    expected_row_version: i64,
+) -> Result<PurchaseOrderRow, AccessError> {
     match row.outcome.as_deref() {
         Some("not_found") => Err(AccessError::not_found("purchase_order does not exist")),
-        Some("concurrency_conflict") => Err(AccessError::concurrency_conflict(
-            "purchase_order revision does not match",
-        )),
+        Some("concurrency_conflict") => match row.observed_row_version {
+            Some(observed_row_version) => Err(AccessError::concurrency_conflict(
+                format!(
+                    "purchase_order row_version {observed_row_version} does not match {expected_row_version}"
+                ),
+                observed_row_version,
+            )),
+            None => Err(AccessError::internal(
+                "purchase_order concurrency refusal omitted observed_row_version",
+            )),
+        },
         Some("updated") => match (
             row.id,
             row.purchase_order_number,
@@ -613,19 +639,19 @@ mod tests {
             ("unknown", AccessErrorKind::InternalError),
         ] {
             assert_eq!(
-                update_result(update_row(outcome, false))
+                update_result(update_row(outcome, false), 1)
                     .unwrap_err()
                     .kind(),
                 expected
             );
         }
         assert_eq!(
-            update_result(update_row("updated", false))
+            update_result(update_row("updated", false), 1)
                 .unwrap_err()
                 .kind(),
             AccessErrorKind::InternalError
         );
-        let updated = update_result(update_row("updated", true)).unwrap();
+        let updated = update_result(update_row("updated", true), 1).unwrap();
         assert_eq!(updated.id.0, FIRST_ID);
         assert_eq!(updated.supplier_id.0, SECOND_ID);
         assert_eq!(updated.row_version, 2);
@@ -646,6 +672,7 @@ mod tests {
     fn update_row(outcome: &str, complete: bool) -> generated::PurchaseOrderUpdateRow {
         generated::PurchaseOrderUpdateRow {
             outcome: Some(outcome.to_owned()),
+            observed_row_version: (outcome == "concurrency_conflict").then_some(2),
             created_at: complete.then(|| TimestampTz("2026-08-29T12:34:56+00:00".to_owned())),
             id: complete.then(|| WamnUuid(FIRST_ID.to_owned())),
             purchase_order_number: complete.then(|| "PO-100".to_owned()),

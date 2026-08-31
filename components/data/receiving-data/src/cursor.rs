@@ -47,6 +47,7 @@ impl CursorKey for Box<str> {
             Value::String(value) => Ok(value.into_boxed_str()),
             _ => Err(AccessError::invalid(
                 "cursor key type does not match the sort field",
+                "cursor",
             )),
         }
     }
@@ -61,6 +62,7 @@ impl CursorKey for DateTime<Utc> {
         let Value::String(value) = value else {
             return Err(AccessError::invalid(
                 "cursor key type does not match the sort field",
+                "cursor",
             ));
         };
         DateTime::parse_from_rfc3339(&value)
@@ -70,6 +72,7 @@ impl CursorKey for DateTime<Utc> {
             .ok_or_else(|| {
                 AccessError::invalid(
                     "timestamptz cursor key must be UTC RFC3339 with six fractional digits",
+                    "cursor",
                 )
             })
     }
@@ -116,15 +119,20 @@ pub(crate) fn decode_cursor<Key: CursorKey>(
 ) -> Result<DecodedCursor<Key>, AccessError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(encoded)
-        .map_err(|_| AccessError::invalid("cursor is not unpadded base64url"))?;
-    let wire: DecodedCursorWire = serde_json::from_slice(&bytes)
-        .map_err(|_| AccessError::invalid("cursor payload is not the closed v1 JSON shape"))?;
+        .map_err(|_| AccessError::invalid("cursor is not unpadded base64url", "cursor"))?;
+    let wire: DecodedCursorWire = serde_json::from_slice(&bytes).map_err(|_| {
+        AccessError::invalid("cursor payload is not the closed v1 JSON shape", "cursor")
+    })?;
     if wire.v != VERSION {
-        return Err(AccessError::invalid("cursor version is not supported"));
+        return Err(AccessError::invalid(
+            "cursor version is not supported",
+            "cursor",
+        ));
     }
     if wire.field.as_ref() != expected_field || wire.direction != expected_direction {
         return Err(AccessError::invalid(
             "cursor field or direction does not match the requested sort",
+            "cursor",
         ));
     }
     validate_field(&wire.field)?;
@@ -132,7 +140,10 @@ pub(crate) fn decode_cursor<Key: CursorKey>(
     let key = Key::from_json(wire.key)?;
     let canonical = canonical_bytes(&wire.field, wire.direction, &key, &wire.id);
     if canonical != bytes || URL_SAFE_NO_PAD.encode(&bytes) != encoded {
-        return Err(AccessError::invalid("cursor is not canonically encoded"));
+        return Err(AccessError::invalid(
+            "cursor is not canonically encoded",
+            "cursor",
+        ));
     }
     Ok(DecodedCursor { key, id })
 }
@@ -162,7 +173,9 @@ fn parse_uuid(value: &str) -> Result<Uuid, AccessError> {
     Uuid::parse_str(value)
         .ok()
         .filter(|parsed| parsed.hyphenated().to_string() == value)
-        .ok_or_else(|| AccessError::invalid("cursor id is not a canonical lowercase UUID"))
+        .ok_or_else(|| {
+            AccessError::invalid("cursor id is not a canonical lowercase UUID", "cursor")
+        })
 }
 
 fn validate_field(field: &str) -> Result<(), AccessError> {
@@ -174,7 +187,10 @@ fn validate_field(field: &str) -> Result<(), AccessError> {
     {
         Ok(())
     } else {
-        Err(AccessError::invalid("cursor field is not snake_case"))
+        Err(AccessError::invalid(
+            "cursor field is not snake_case",
+            "cursor",
+        ))
     }
 }
 

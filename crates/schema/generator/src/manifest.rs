@@ -29,6 +29,7 @@ pub struct CommandDeclaration {
     pub result: CommandResultDeclaration,
     pub canonicalization: CommandCanonicalization,
     pub errors: Vec<CommandErrorLiteral>,
+    pub error_details: BTreeMap<CommandErrorLiteral, OperationErrorDetailDeclaration>,
     #[serde(default)]
     pub constraint_errors: BTreeMap<String, CommandErrorLiteral>,
     pub relations: Vec<CommandRelationDeclaration>,
@@ -170,6 +171,64 @@ impl CommandErrorLiteral {
     }
 }
 
+/// Closed operation-error detail keys serialized on per-item refusals.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationErrorDetailKey {
+    Field,
+    Id,
+    ExpectedRowVersion,
+    ObservedRowVersion,
+    Minimum,
+    Maximum,
+    Observed,
+    Constraint,
+    Operation,
+}
+
+/// Required and optional keys for one exact error code.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperationErrorDetailDeclaration {
+    #[serde(default)]
+    pub required: Vec<OperationErrorDetailKey>,
+    #[serde(default)]
+    pub optional: Vec<OperationErrorDetailKey>,
+}
+
+/// Closed generated-operation refusal vocabulary.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessOperationErrorLiteral {
+    InvalidInput,
+    NotFound,
+    ConcurrencyConflict,
+    UniqueViolation,
+    ForeignKeyViolation,
+    CheckViolation,
+    Retry,
+    Timeout,
+    PermissionDenied,
+    InternalError,
+}
+
+impl AccessOperationErrorLiteral {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidInput => "invalid_input",
+            Self::NotFound => "not_found",
+            Self::ConcurrencyConflict => "concurrency_conflict",
+            Self::UniqueViolation => "unique_violation",
+            Self::ForeignKeyViolation => "foreign_key_violation",
+            Self::CheckViolation => "check_violation",
+            Self::Retry => "retry",
+            Self::Timeout => "timeout",
+            Self::PermissionDenied => "permission_denied",
+            Self::InternalError => "internal_error",
+        }
+    }
+}
+
 /// One migration-derived relation consumed by a custom command.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -249,8 +308,9 @@ impl PackageManifest {
 /// This is the shared semantic authority for generation and production grant
 /// reconciliation. The package and local operation identities obey the naming
 /// law, every operation names itself as its permission token, and every
-/// declared operation appears in exactly one component grouping. Unknown,
-/// repeated, and missing group members refuse.
+/// declared operation owns exactly one component artifact. Components with
+/// zero or multiple operations, and unknown, repeated, or missing members,
+/// refuse.
 pub fn validate_operation_vocabulary(
     manifest: &PackageManifest,
 ) -> Result<BTreeSet<String>, GenerateError> {
@@ -275,6 +335,7 @@ pub fn validate_operation_vocabulary(
                     format!("manifest repeats declared operation {identity}"),
                 ));
             }
+            validate_access_error_details(&identity, *action, &operation.error_details)?;
         }
     }
     for (command_name, command) in &manifest.commands {
@@ -293,6 +354,7 @@ pub fn validate_operation_vocabulary(
                 format!("manifest repeats declared operation {command_name}"),
             ));
         }
+        validate_command_error_details(command_name, &command.error_details)?;
     }
 
     if manifest.components.is_empty() {
@@ -304,19 +366,18 @@ pub fn validate_operation_vocabulary(
     let mut grouped = BTreeSet::new();
     for (name, component) in &manifest.components {
         validate_identifier(name, "component")?;
-        if component.operations.is_empty() {
+        if component.operations.len() != 1 {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidComponent,
-                format!("{name} must group at least one operation"),
+                format!("{name} must declare exactly one operation"),
             ));
         }
-        for operation in &component.operations {
-            if !declared.contains(operation) || !grouped.insert(operation.clone()) {
-                return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidComponent,
-                    format!("{name} references unknown or repeated operation {operation}"),
-                ));
-            }
+        let operation = &component.operations[0];
+        if !declared.contains(operation) || !grouped.insert(operation.clone()) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidComponent,
+                format!("{name} references unknown or repeated operation {operation}"),
+            ));
         }
     }
     if grouped != declared {
@@ -326,6 +387,137 @@ pub fn validate_operation_vocabulary(
         ));
     }
     Ok(declared)
+}
+
+fn validate_access_error_details(
+    operation: &str,
+    action: CrudAction,
+    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+) -> Result<(), GenerateError> {
+    use AccessOperationErrorLiteral as Code;
+    use OperationErrorDetailKey as Key;
+
+    let mut expected = BTreeSet::from([
+        Code::InvalidInput,
+        Code::Retry,
+        Code::Timeout,
+        Code::PermissionDenied,
+        Code::InternalError,
+    ]);
+    if matches!(
+        action,
+        CrudAction::Get | CrudAction::Update | CrudAction::Delete
+    ) {
+        expected.insert(Code::NotFound);
+    }
+    if matches!(action, CrudAction::Update | CrudAction::Delete) {
+        expected.insert(Code::ConcurrencyConflict);
+    }
+    for constraint in [
+        Code::UniqueViolation,
+        Code::ForeignKeyViolation,
+        Code::CheckViolation,
+    ] {
+        if details.contains_key(&constraint) {
+            expected.insert(constraint);
+        }
+    }
+    if details.keys().copied().collect::<BTreeSet<_>>() != expected {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation} must declare its exact closed error-detail code set"),
+        ));
+    }
+
+    for (code, detail) in details {
+        let (required, optional): (&[Key], &[Key]) = match code {
+            Code::InvalidInput if action == CrudAction::Query => {
+                (&[Key::Field], &[Key::Minimum, Key::Maximum, Key::Observed])
+            }
+            Code::InvalidInput => (&[Key::Field], &[]),
+            Code::NotFound => (&[Key::Field, Key::Id], &[]),
+            Code::ConcurrencyConflict => (&[Key::ExpectedRowVersion, Key::ObservedRowVersion], &[]),
+            Code::UniqueViolation | Code::ForeignKeyViolation | Code::CheckViolation => {
+                (&[Key::Constraint], &[])
+            }
+            Code::PermissionDenied => (&[Key::Operation], &[]),
+            Code::Retry | Code::Timeout | Code::InternalError => (&[], &[]),
+        };
+        validate_detail_keys(operation, code.as_str(), detail, required, optional)?;
+    }
+    Ok(())
+}
+
+fn validate_command_error_details(
+    operation: &str,
+    details: &BTreeMap<CommandErrorLiteral, OperationErrorDetailDeclaration>,
+) -> Result<(), GenerateError> {
+    use CommandErrorLiteral as Code;
+    use OperationErrorDetailKey as Key;
+
+    let expected = BTreeSet::from([
+        Code::InvalidInput,
+        Code::PurchaseOrderNotFound,
+        Code::PurchaseOrderNotOpen,
+        Code::PurchaseOrderLineNotFound,
+        Code::PurchaseOrderLineMismatch,
+        Code::LocationNotFound,
+        Code::QuantityExceedsRemaining,
+        Code::ReceiptReferenceConflict,
+        Code::IdempotencyConflict,
+        Code::Retry,
+        Code::Timeout,
+        Code::PermissionDenied,
+        Code::InternalError,
+    ]);
+    if details.keys().copied().collect::<BTreeSet<_>>() != expected {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation} must declare its exact closed error-detail code set"),
+        ));
+    }
+
+    for (code, detail) in details {
+        let (required, optional): (&[Key], &[Key]) = match code {
+            Code::InvalidInput => (&[Key::Field], &[Key::Minimum, Key::Maximum, Key::Observed]),
+            Code::PurchaseOrderNotFound
+            | Code::PurchaseOrderNotOpen
+            | Code::IdempotencyConflict => (&[Key::Field], &[]),
+            Code::PurchaseOrderLineNotFound
+            | Code::PurchaseOrderLineMismatch
+            | Code::LocationNotFound
+            | Code::QuantityExceedsRemaining => (&[Key::Field, Key::Id], &[]),
+            Code::ReceiptReferenceConflict => (&[Key::Constraint], &[]),
+            Code::PermissionDenied => (&[Key::Operation], &[]),
+            Code::Retry | Code::Timeout | Code::InternalError => (&[], &[]),
+        };
+        validate_detail_keys(operation, code.as_str(), detail, required, optional)?;
+    }
+    Ok(())
+}
+
+fn validate_detail_keys(
+    operation: &str,
+    code: &str,
+    detail: &OperationErrorDetailDeclaration,
+    required: &[OperationErrorDetailKey],
+    optional: &[OperationErrorDetailKey],
+) -> Result<(), GenerateError> {
+    let actual_required = detail.required.iter().copied().collect::<BTreeSet<_>>();
+    let actual_optional = detail.optional.iter().copied().collect::<BTreeSet<_>>();
+    let valid = actual_required.len() == detail.required.len()
+        && actual_optional.len() == detail.optional.len()
+        && actual_required.is_disjoint(&actual_optional)
+        && actual_required == required.iter().copied().collect()
+        && actual_optional == optional.iter().copied().collect();
+    if valid {
+        Ok(())
+    } else {
+        Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation} error {code} must declare its exact structured-detail keys"),
+        ))
+    }
 }
 
 /// Construct the one canonical package-qualified identity for a local operation.
@@ -463,6 +655,7 @@ impl CrudAction {
 #[serde(deny_unknown_fields)]
 pub struct OperationDeclaration {
     pub permission: String,
+    pub error_details: BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
     #[serde(default)]
     pub authored_sql: Option<AuthoredSqlDeclaration>,
     #[serde(default)]

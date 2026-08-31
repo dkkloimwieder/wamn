@@ -7,7 +7,23 @@ resolver = "2"
 # additive-only, and members here reach `serde_json/std`, which collides with a
 # guest-supplied `#[panic_handler]`. They live in the second workspace at
 # `no-std/`, whose manifest carries the full reason (wamn-0h0g.11.56).
-members = ["ingress/http-route", "execution/materializer", "data/postgres-sqlx", "data/receiving-data", "fixtures/busyloop", "fixtures/connection-http-standard", "fixtures/sockprobe", "fixtures/sqlx-command"]
+members = [
+    "application/receiving/purchase_order_get",
+    "application/receiving/purchase_order_query",
+    "application/receiving/purchase_order_update",
+    "application/receiving/receipt_get",
+    "application/receiving/receipt_query",
+    "application/receiving/receiving_record_receipt",
+    "ingress/http-route",
+    "execution/materializer",
+    "data/postgres-sqlx",
+    "data/receiving-data",
+    "fixtures/busyloop",
+    "fixtures/connection-http-standard",
+    "fixtures/sockprobe",
+    "fixtures/sqlx-command",
+    "fixtures/std-virtualization-probe",
+]
 exclude = ["no-std"]
 
 # Lint policy. IDENTICAL to the root workspace's by intent -- see the root
@@ -63,6 +79,7 @@ wamn-event-wire = { path = "../crates/events/wire", version = "0.1.0" }
 wamn-execution-contract = { path = "../crates/execution/contract", version = "0.1.0" }
 wamn-materializer = { path = "../crates/events/materializer", version = "0.1.0" }
 wamn-postgres-sqlx = { path = "data/postgres-sqlx", version = "0.1.0" }
+wamn-receiving-data-access = { path = "data/receiving-data", version = "0.1.0" }
 wamn-run-state = { path = "../crates/execution/run-state", version = "0.1.0" }
 
 [profile.release]
