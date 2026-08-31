@@ -47,20 +47,23 @@ fails the build naming the column; revision conflict returns
 Platform package `receiving`: migrations → IR → generated artifacts →
 component build → gate → publish → routes → traces. Commands as one
 explicit transaction inside one invocation (never across a wiring
-edge), through the .22.2a transport. **Folds in the deferred
-cluster-proof family (.15.153 + .15.25.4):** the M1 router-era rebuild
-(RouterDeliveryBridge, RouterDriver, released wiring, component
-closure) runs against this package — one proof, both owners closed.
-Exit: the full journey green on a disposable cluster; M1 family
-closed; no fabricated routes or authority anywhere in the proof.
+edge), through the .22.2a transport. **Folds in `.15.153`'s deferred
+flow-http cluster proof:** production RouterDeliveryBridge,
+RouterDriver, released wiring, and component closure run against this
+package. Exit: the full base-route journey and `.15.153` are green on
+disposable infrastructure; no fabricated routes or authority anywhere
+in the proof.
 
 **iv — Client overlay.** `client_acme_receiving`: independent
 migration stream, effective schema = exact base + exact overlay,
 ownership at definition level, overlay operations/routes beside base
 ones, base upgrade with unchanged overlay re-verified via contracts
-(additive base satisfies without overlay rebuild). Exit: the scenario
-document's upgrade walk executes; an overlay touching a base-owned
-definition refuses with the typed literal.
+(additive base satisfies without overlay rebuild). The first genuine
+post-commit consumer supplies `.15.25.4`'s materializer registration and
+router-era M1 journey; slice iii creates no placeholder registration.
+Exit: the scenario document's upgrade walk and genuine-consumer M1 leg
+execute; an overlay touching a base-owned definition refuses with the
+typed literal.
 
 **v — UI + TypeScript clients.** The new artifact class last: generated
 TS clients, static UI bundles as digest-identified artifacts, npm
@@ -70,6 +73,7 @@ operations against slice-iv's deployment.
 ## Tracker shape
 
 One epic; one bead per slice; slice beads split per R12 only when a
-lane claims. .15.153/.15.25.4 re-parent under slice iii. Post-epic
-holds (deferred effect-writer determination .10.15, nullable-wiring
-retirement, refinement-class findings) stay out of the epic.
+lane claims. `.15.153` is under slice iii; `.15.25.4` is under slice iv
+with the first real materializer consumer. Post-epic holds (deferred
+effect-writer determination .10.15, nullable-wiring retirement,
+refinement-class findings) stay out of the epic.

@@ -1,0 +1,92 @@
+# Receiving/PAT application and release overlay for values-host-default.yaml.
+# Apply both files, in this order:
+#
+#   helm upgrade --install -n wamn-system wamn-host \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
+#     -f deploy/platform/values-host-default.yaml \
+#     -f deploy/platform/values-host-receiving-pat.yaml
+#
+# Helm replaces lists rather than merging their members. `runtime.hostGroups`
+# is therefore repeated as one complete effective host group: an env-only list
+# here would silently discard the base profile's replicas, listener, mounts,
+# CA, and resource limits.
+#
+# The identity-reader and CallableHttp Secrets are production outputs of
+# `wamn-ctl provision-project-env`. Both references are explicitly mandatory;
+# an absent Secret leaves the host Pod unstartable. The route-caller bearer
+# Secret is intentionally not mounted here: callers present that PAT, while the
+# host verifies it against sysdb and derives the expected environment-scoped
+# service subject from this trusted org/project plus the released environment.
+# Human org-user membership remains owned by the identity epic and Slice v; it
+# is not fabricated as deployment configuration here.
+#
+# Replace the zero digest with `wamn-ctl print-release-env` output before
+# applying. A nonexistent digest makes startup refuse rather than serving an
+# unintended release.
+
+runtime:
+  hostGroups:
+    - name: default
+      namespace: wamn-system
+      replicas: 3
+      service:
+        type: ClusterIP
+      http:
+        enabled: true
+        port: 80
+      env:
+        - name: WAMN_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-host-db
+              key: url
+        - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
+        - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
+        - { name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT, value: "64" }
+        - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
+        - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
+        - name: WAMN_COMPONENT_ARTIFACT_BASE
+          value: registry.wamn-system.svc.cluster.local:5000/wamn/components
+        - name: WAMN_EVT_NATS_URL
+          value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+        - { name: WAMN_ORG, value: acme }
+        - { name: WAMN_PROJECT, value: receiving }
+        - { name: WAMN_SCHEMA, value: receiving }
+        - name: WAMN_SYSTEM_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-identity-reader-acme--receiving--dev
+              key: url
+              optional: false
+        - name: WAMN_HTTP_ADMITTER_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-http-admitter-acme--receiving--dev
+              key: url
+              optional: false
+      volumes:
+        - name: registry-pull
+          secret:
+            secretName: wamn-registry-pull
+            optional: false
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+      volumeMounts:
+        - name: registry-pull
+          mountPath: /etc/wamn/registry
+          readOnly: true
+      ociCaPaths:
+        - "/runtime-cert/ca.crt"
+      extraArgs:
+        - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
+        - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "250m"
+        limits:
+          memory: "4Gi"
+          cpu: "2"
+        defaultHeapMemory: "256MiB"
+        coreInstances: 512

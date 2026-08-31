@@ -272,7 +272,7 @@ fn request_head(request: &IncomingRequest) -> RequestHead {
 fn send_response(response_out: ResponseOutparam, response: HttpResponse) {
     let headers = Fields::new();
     if !response.body.is_empty() {
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+        let _ = headers.set("content-type", &[response.content_type.as_bytes().to_vec()]);
     }
     let outgoing = OutgoingResponse::new(headers);
     let _ = outgoing.set_status_code(response.status);

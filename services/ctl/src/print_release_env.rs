@@ -33,7 +33,7 @@ const MANIFEST_DIGEST_ENV: &str = "WAMN_RELEASE_MANIFEST_DIGEST";
 /// The executor's carrier: `env:` entries on its Deployment container.
 const EXECUTOR_CARRIER: &str = "deploy/platform/executor.yaml";
 /// The host's carrier: per host group `extraArgs`, flags rather than env.
-const HOST_CARRIER: &str = "deploy/platform/values-host-default.yaml";
+const HOST_CARRIER: &str = "deploy/platform/values-host-receiving-pat.yaml";
 
 const ARTIFACT_BASE_FLAG: &str = "--release-artifact-base";
 const MANIFEST_DIGEST_FLAG: &str = "--release-manifest-digest";
@@ -138,7 +138,7 @@ mod tests {
                 "# deploy/platform/executor.yaml env:\n\
                  WAMN_RELEASE_ARTIFACT_BASE=registry.example/wamn/releases\n\
                  WAMN_RELEASE_MANIFEST_DIGEST=sha256:{seven}\n\
-                 # deploy/platform/values-host-default.yaml hostGroups[].extraArgs\n\
+                 # deploy/platform/values-host-receiving-pat.yaml hostGroups[].extraArgs\n\
                  --release-artifact-base=registry.example/wamn/releases\n\
                  --release-manifest-digest=sha256:{seven}\n",
                 seven = "7".repeat(64)

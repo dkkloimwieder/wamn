@@ -1,5 +1,7 @@
-# Helm values for the HOST TIER of ONE environment — the MVP environment, whose
-# namespace is `wamn-system`.
+# Helm values for the application-neutral HOST TIER of ONE environment — the
+# MVP environment, whose namespace is `wamn-system`. This base intentionally
+# carries no application identity, PAT authority, or release coordinate; those
+# belong to an application/release overlay.
 #
 # ONE HELM RELEASE PER ENVIRONMENT (ruling wamn-0h0g.13.50, bead
 # wamn-0h0g.15.15): the runtime revision is environment-singular, so each
@@ -190,50 +192,6 @@ runtime:
       #     pull fails verification.
       ociCaPaths:
         - "/runtime-cert/ca.crt"
-      # [wamn-3ceu] THE HOST'S RELEASE, AND ITS FIRST ONE. Until now this file
-      # set no release at all, so `load_release(None, None, ..)` was the live
-      # path and every release-gated interface served nothing. This is an
-      # ADDITION, not a swap off a ConfigMap mount the host never had.
-      #
-      # Same carrier and same reasoning as the pool slots above: these two are
-      # not part of the chart's rendered surface either, since `wash host`
-      # upstream has no release model.
-      #
-      # The two are mutually required by the binary, so one without the other
-      # refuses at startup rather than serving a release-less host by accident.
-      #
-      # *** NOT ROLLABLE AS CHECKED IN. *** The digest is a 64-zero placeholder,
-      # and a digest that addresses no artifact fails the pull, so every host Pod
-      # crashloops. Set both to the values the mint prints, or drop these two
-      # entries to go back to a host that carries no release.
-      #
-      # WHY FLAGS AND NOT `env:`, given every entry above takes that carrier.
-      # The pair is OPTIONAL in the host binary — both absent means "this host
-      # serves no release", which is a state someone may choose on purpose. So a
-      # typo that lost both env NAMES would deploy cleanly and serve nothing,
-      # indistinguishable from that deliberate state. clap exits nonzero on an
-      # unknown FLAG, so the same typo crashloops the Pod instead and stalls the
-      # rollout, which is the failure that gets noticed. The executor's pair is
-      # REQUIRED rather than optional, so a value that fails to arrive is refused
-      # there whichever carrier it rides, and it can afford the plainer one —
-      # deploy/platform/executor.yaml.
-      #
-      # HOW A RELEASE GETS IN HERE, AND HOW IT COMES BACK OUT — the full runbook
-      # is in deploy/README.md, "Release rollout, and rollback by revert". In
-      # short: mint with `wamn-ctl publish-release` (the digest is the whole of
-      # its stdout), push the frozen bytes with `push-release-manifest`, read the
-      # lines both carriers take with `print-release-env` — which prints this
-      # flag pair already labelled with this file's path — HAND-EDIT the two
-      # entries below in one commit, then `helm upgrade` with this file. ROLLBACK
-      # IS `git revert` ON THAT COMMIT PLUS A RE-UPGRADE: no image any manifest
-      # in deploy/ schedules is digest-pinned — every one is a mutable tag,
-      # `runtime.image` above included — so this digest is the only thing in the
-      # tree a revert genuinely rolls back to exact bytes. Reverting stops
-      # pointing at the newer release; it never un-publishes it, since the mint
-      # is append-only and the pushed artifact immutable.
-      extraArgs:
-        - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
-        - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
       resources:
         requests:
           memory: "256Mi"

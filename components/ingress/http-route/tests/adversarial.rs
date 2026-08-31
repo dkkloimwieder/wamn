@@ -461,12 +461,48 @@ fn invalid_percent_encoding_and_payload_ceiling_refuse_before_delivery() {
     assert_eq!(output.status, 400);
     assert!(backend.deliveries.is_empty());
 
+    let mut backend = FakeBackend::new(route());
+    let output = request(&mut backend, &head(), &vec![b' '; 1025]);
+    assert_eq!(output.status, 413);
+    assert_eq!(output.content_type, "text/plain; charset=utf-8");
+    assert_eq!(output.body, b"request body exceeds 1024-byte limit\n");
+    assert!(backend.deliveries.is_empty());
+
     let mut selected = route();
     selected.mapped_limit = 8;
     let mut backend = FakeBackend::new(selected);
     let output = request(&mut backend, &head(), br#"{"amount":1}"#);
     assert_eq!(output.status, 413);
     assert_eq!(error_code(&output.body), "mapped-payload-too-large");
+    assert!(backend.deliveries.is_empty());
+}
+
+#[test]
+fn default_raw_body_ceiling_accepts_one_mebibyte_and_refuses_the_next_byte() {
+    const BODY_LIMIT: usize = 1024 * 1024;
+
+    let mut selected = route();
+    selected.mappings.clear();
+    selected.input_schema = json!({});
+    selected.body_limit = usize::MAX;
+    selected.mapped_limit = usize::MAX;
+
+    let mut accepted_body = vec![b' '; BODY_LIMIT];
+    accepted_body[..4].copy_from_slice(b"null");
+    let mut backend = FakeBackend::new(selected.clone());
+    let mut body = Chunks::json(&[&accepted_body]);
+    let output = handle_request(&mut backend, &mut body, &head(), AdapterLimits::default());
+    assert_eq!(output.status, 200);
+    assert_eq!(backend.deliveries.len(), 1);
+
+    let mut refused_body = accepted_body;
+    refused_body.push(b' ');
+    let mut backend = FakeBackend::new(selected);
+    let mut body = Chunks::json(&[&refused_body]);
+    let output = handle_request(&mut backend, &mut body, &head(), AdapterLimits::default());
+    assert_eq!(output.status, 413);
+    assert_eq!(output.content_type, "text/plain; charset=utf-8");
+    assert_eq!(output.body, b"request body exceeds 1048576-byte limit\n");
     assert!(backend.deliveries.is_empty());
 }
 

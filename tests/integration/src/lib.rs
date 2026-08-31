@@ -16,6 +16,8 @@ pub mod provisionbench;
 pub mod readerbench;
 #[cfg(test)]
 mod receiving_data_access;
+#[cfg(test)]
+mod receiving_publication;
 mod release_fixture;
 pub mod retention;
 #[cfg(test)]

@@ -37,8 +37,8 @@
 # the mint is append-only and the pushed artifact immutable.
 #
 # THIS FILE'S CARRIER IS `env:`; THE HOST'S IS FLAGS, and the asymmetry is
-# deliberate — see deploy/platform/values-host-default.yaml. This executor's
-# pair is REQUIRED by its parser, so a value that fails to arrive is refused
+# deliberate — see deploy/platform/values-host-receiving-pat.yaml. This
+# executor's pair is REQUIRED by its parser, so a value that fails to arrive is refused
 # whichever carrier it travels in, and the plainer carrier costs nothing here.
 # The host's pair is OPTIONAL, because a host serving no release is a legitimate
 # state, so a typo that loses both env names there would deploy cleanly and

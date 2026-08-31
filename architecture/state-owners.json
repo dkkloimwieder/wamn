@@ -259,6 +259,11 @@
         "path": "services/cdc-reader/src/lib.rs",
         "literal": "TRUNCATE observed — not published",
         "reason": "telemetry for an observed replication event, not a SQL statement"
+      },
+      {
+        "path": "crates/schema/generator/src/sql_lex.rs",
+        "literal": "UPDATE is missing SET",
+        "reason": "semantic analyzer diagnostic, not an executed SQL statement"
       }
     ]
   },

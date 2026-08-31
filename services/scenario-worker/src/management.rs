@@ -595,6 +595,24 @@ fn reconcile_command_scope(
 /// environment's project database, and the third reads identity out of the T1
 /// system database.
 pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
+    serve_inner(args, None).await
+}
+
+/// Serve and report the bound address once startup has completed.
+///
+/// This is the orchestration form of [`serve`]. The readiness signal observes
+/// the production listener; it does not replace or weaken any startup gate.
+pub async fn serve_with_readiness(
+    args: ManagementServeArgs,
+    readiness: tokio::sync::oneshot::Sender<SocketAddr>,
+) -> anyhow::Result<()> {
+    serve_inner(args, Some(readiness)).await
+}
+
+async fn serve_inner(
+    args: ManagementServeArgs,
+    readiness: Option<tokio::sync::oneshot::Sender<SocketAddr>>,
+) -> anyhow::Result<()> {
     let scope = args.control_authoring_scope();
     // The accepted value is deliberately discarded: this call exists to establish
     // the ORDER, and the backend re-derives it so an in-process caller that never
@@ -665,7 +683,13 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("bind management authoring surface on {address}"))?;
-    tracing::info!(%address, "management authoring surface listening");
+    let bound_address = listener
+        .local_addr()
+        .context("read management authoring listener address")?;
+    if let Some(readiness) = readiness {
+        let _ = readiness.send(bound_address);
+    }
+    tracing::info!(address = %bound_address, "management authoring surface listening");
     loop {
         let (stream, _) = listener
             .accept()

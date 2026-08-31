@@ -23,3 +23,45 @@ services:
       interval: 1s
       timeout: 2s
       retries: 60
+  receiving-route-postgres:
+    profiles:
+      - receiving-route
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: probe
+    volumes:
+      - type: bind
+        source: ../../deploy/sql/postgres-init.sql
+        target: /docker-entrypoint-initdb.d/postgres-init.sql
+        read_only: true
+    ports:
+      - "127.0.0.1:${WAMN_STD_VIRT_PG_PORT}:5432"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test "$(cat /proc/1/comm)" = postgres && PGPASSWORD=probe psql -h 127.0.0.1 -U postgres -Atqc 'select 1'
+      interval: 1s
+      timeout: 2s
+      retries: 60
+  authenticated-registry:
+    profiles:
+      - receiving-route
+    image: registry:2
+    environment:
+      REGISTRY_AUTH: htpasswd
+      REGISTRY_AUTH_HTPASSWD_REALM: WAMN Receiving route journey
+      REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+    volumes:
+      - type: bind
+        source: ${WAMN_RECEIVING_ROUTE_REGISTRY_HTPASSWD:-/dev/null}
+        target: /auth/htpasswd
+        read_only: true
+    ports:
+      - "127.0.0.1:${WAMN_RECEIVING_ROUTE_REGISTRY_PORT:-5004}:5000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -S -O /dev/null http://127.0.0.1:5000/v2/ 2>&1 | grep -q '401 Unauthorized'
+      interval: 1s
+      timeout: 2s
+      retries: 60

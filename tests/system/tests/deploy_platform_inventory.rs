@@ -130,15 +130,17 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 18] = [
         &[]),
 ];
 
-/// The one file in the tier that declares no Kubernetes object.
+/// The files in the tier that declare no Kubernetes object.
 ///
 /// `values-host-default.yaml` is Helm input for the host tier: the hand-rolled
 /// host Deployments became operator Host CRDs under `wamn-0h0g.15.15`/`.15.18`,
 /// so the host's bill of materials is a chart release plus these values rather
-/// than manifests in this directory. Its image is assembled from three keys
-/// (`registry` + `repository` + `tag`), which is why it cannot be scanned for
-/// an `image:` line like the rest.
-const HELM_VALUES_FILE: &str = "values-host-default.yaml";
+/// than manifests in this directory. The Receiving/PAT file is an application
+/// and release overlay over that base. The base image is assembled from three
+/// keys (`registry` + `repository` + `tag`), which is why it cannot be scanned
+/// for an `image:` line like the rest.
+const HOST_VALUES_FILE: &str = "values-host-default.yaml";
+const HELM_VALUES_FILES: [&str; 2] = [HOST_VALUES_FILE, "values-host-receiving-pat.yaml"];
 const HELM_VALUES_IMAGE_PARTS: [(&str, &str); 3] = [
     ("registry", "\"\""),
     ("repository", "wamn-host"),
@@ -210,8 +212,9 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 2] = [
 ///
 /// These carry an `<org>--<project>--<env>` suffix, so they cannot be listed as
 /// literals without pinning the demo triple into the proof.
-const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 3] = [
+const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 4] = [
     "wamn-authoring-",
+    "wamn-http-admitter-",
     "wamn-identity-reader-",
     "wamn-mgmt-admitter-",
 ];
@@ -355,7 +358,7 @@ fn the_platform_tier_holds_exactly_the_bill_of_materials() {
     let recorded: BTreeSet<String> = BILL_OF_MATERIALS
         .iter()
         .map(|(file, _, _)| (*file).to_string())
-        .chain(std::iter::once(HELM_VALUES_FILE.to_string()))
+        .chain(HELM_VALUES_FILES.map(str::to_string))
         .collect();
     assert_eq!(
         platform_files(&root),
@@ -382,10 +385,10 @@ fn the_platform_tier_holds_exactly_the_bill_of_materials() {
     }
 
     // The host tier's image is three keys, not one.
-    let host_values = read(&root, HELM_VALUES_FILE);
+    let host_values = read(&root, HOST_VALUES_FILE);
     assert!(
         images(&host_values).is_empty(),
-        "{HELM_VALUES_FILE} gained a literal image: line; the host image is \
+        "{HOST_VALUES_FILE} gained a literal image: line; the host image is \
          registry+repository+tag under runtime.image"
     );
     for (key, value) in HELM_VALUES_IMAGE_PARTS {
@@ -396,7 +399,7 @@ fn the_platform_tier_holds_exactly_the_bill_of_materials() {
                     |line| scalar_after(line, key) == Some(value.trim_matches('"'))
                         || line.trim() == format!("{key}: {value}")
                 ),
-            "{HELM_VALUES_FILE} must pin runtime.image.{key} = {value}"
+            "{HOST_VALUES_FILE} must pin runtime.image.{key} = {value}"
         );
     }
 }
@@ -523,7 +526,7 @@ fn every_mounted_secret_is_declared_here_or_named_a_prerequisite() {
     let files = BILL_OF_MATERIALS
         .iter()
         .map(|(file, _, _)| *file)
-        .chain(std::iter::once(HELM_VALUES_FILE));
+        .chain(HELM_VALUES_FILES);
     for file in files {
         let source = read(&root, file);
         for document in documents(&source) {

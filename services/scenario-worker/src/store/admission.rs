@@ -142,9 +142,8 @@ SELECT EXISTS (\
 /// The join is the candidate's `nodes` object onto the library at the candidate's
 /// own applied package version, exactly as the store-alias diagnostic below
 /// resolves it, so a gate and a run agree on which components a document reaches.
-/// A node naming no library row contributes nothing here: an unresolvable
-/// component is the admission statement's `candidate-definition-invalid`, a
-/// different and already-typed refusal.
+/// A node naming no library row contributes nothing here because `run_gate`'s
+/// compatibility validation refuses it before this posture is read.
 ///
 /// Params: `$1` tenant, `$2` package id, `$3` package version, `$4` nodes.
 const SELECT_EFFECTFUL_COMPONENTS_SQL: &str = "WITH node AS ( \
@@ -166,11 +165,10 @@ const SELECT_EFFECTFUL_COMPONENTS_SQL: &str = "WITH node AS ( \
 /// Name the store aliases the candidate requires and this environment cannot
 /// resolve.
 ///
-/// This mirrors the `requirements` / `resolved_requirements` legs of the
-/// admission statement, including instance lifecycle and active generation, so
-/// a refusal names exactly the aliases whose absence produced
-/// [`AdmissionResult::BindingWorldUnavailable`]. It is a diagnostic read only —
-/// the admission statement, not this query, decides whether a run is admitted.
+/// This mirrors the `requirements` / `resolved_requirements` legs of run
+/// admission, including instance lifecycle and active generation, so a refusal
+/// names exactly the aliases whose absence would produce
+/// [`AdmissionResult::BindingWorldUnavailable`]. It is a diagnostic read only.
 const SELECT_UNRESOLVED_STORE_ALIASES_SQL: &str = "WITH node AS ( \
         SELECT entry.value ->> 'component' AS component, \
                entry.value ->> 'interface-version' AS interface_version, \
@@ -541,11 +539,11 @@ impl AdmissionSurface {
             .collect()
     }
 
-    /// Name the effectful components this candidate reaches, for one refusal.
+    /// Name the effectful components this candidate's gate cases reach.
     ///
-    /// Empty means the candidate is gateable: every component it reaches carries
-    /// the empty effects projection, which is the POSITIVE fact the validator
-    /// derived rather than the absence of one.
+    /// Empty means this posture permits the candidate: every component it reaches
+    /// carries the empty effects projection, which is the POSITIVE fact the
+    /// validator derived rather than the absence of one.
     pub async fn effectful_components(
         &self,
         candidate: &CandidateWiring,
@@ -718,7 +716,7 @@ pub struct GateRequest<'a> {
 /// `wiring_hash` is therefore both the report's key and the report id the
 /// receipt hands back.
 ///
-/// `summary` names the cases the judged document DECLARES. It records no
+/// `summary` counts the cases the judged document declares. It records no
 /// per-case verdict, because nothing was executed — the gate judged the
 /// document, and a summary claiming case results would be a lie about work that
 /// did not happen.
@@ -748,8 +746,8 @@ pub enum GateJudgment {
 ///
 /// The order of the four legs is load-bearing and is the order they landed in:
 /// a candidate that does not resolve cannot be judged, a malformed `cases` array
-/// is refused before any posture is read, and **the effect-free clause fires
-/// before anything else can act on the candidate**.
+/// is refused before any posture is read, and **a nonempty case set's effect-free
+/// clause fires before anything else can act on the candidate**.
 pub async fn run_gate(
     admission: &AdmissionSurface,
     request: &GateRequest<'_>,
@@ -770,8 +768,28 @@ pub async fn run_gate(
         nodes: serde_json::to_value(&document.nodes)
             .context("re-serialize the judged document's nodes")?,
     };
-    if let Err(error) = validate_cases(&candidate.cases) {
+    if !candidate.cases.is_empty()
+        && let Err(error) = validate_cases(&candidate.cases)
+    {
         return Ok(GateJudgment::Refused(GateRefusal::InvalidTestSet {
+            detail: error.to_string(),
+        }));
+    }
+    let component_scope = match ComponentPackageScope::new(
+        admission.tenant_id.to_string(),
+        request.package_id,
+        request.package_version,
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            return Ok(GateJudgment::Refused(GateRefusal::InvalidDocument {
+                detail: error.to_string(),
+            }));
+        }
+    };
+    let components = admission.component_facts(&component_scope).await?;
+    if let Err(error) = validate_wiring_compatibility(document, &component_scope, &components) {
+        return Ok(GateJudgment::Refused(GateRefusal::InvalidDocument {
             detail: error.to_string(),
         }));
     }
@@ -785,13 +803,19 @@ pub async fn run_gate(
     // silently double-fires. This is the clause's ONE firing point in the tree:
     // it moved here with the gate verb when the composition machinery that used
     // to hold it was deleted, and it did not move out of the way.
-    let effectful = admission.effectful_components(&candidate).await?;
-    if !effectful.is_empty() {
-        return Ok(GateJudgment::Refused(
-            GateRefusal::EffectfulComponentReached {
-                components: effectful,
-            },
-        ));
+    // With no cases there is no execution posture to read: treating the nodes'
+    // effects alone as a refusal would turn this case contract into a blanket
+    // ban on effectful production wiring. The binding-world posture below still
+    // judges the document in either arm.
+    if !candidate.cases.is_empty() {
+        let effectful = admission.effectful_components(&candidate).await?;
+        if !effectful.is_empty() {
+            return Ok(GateJudgment::Refused(
+                GateRefusal::EffectfulComponentReached {
+                    components: effectful,
+                },
+            ));
+        }
     }
 
     // A candidate whose store aliases this environment cannot resolve reaches no
@@ -813,11 +837,7 @@ pub async fn run_gate(
     // effect-free clause above included — has already declined to fire.
     Ok(GateJudgment::Accepted(GateReport {
         summary: serde_json::json!({
-            "cases": candidate
-                .cases
-                .iter()
-                .map(|case| case.case_id.as_str())
-                .collect::<Vec<_>>(),
+            "cases": candidate.cases.len(),
         }),
         wiring_hash: candidate.wiring_hash,
         passed: true,

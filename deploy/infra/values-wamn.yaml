@@ -7,8 +7,9 @@
 #      ONE PER CLUSTER, in `wamn-system`, installed once: the CRDs are
 #      cluster-scoped, so every environment in the cluster shares this one
 #      operator version. It carries NO host groups.
-#   2. THE HOST TIER — `deploy/platform/values-host-default.yaml`, ONE HELM
-#      RELEASE PER ENVIRONMENT. Host images and host groups are per-environment,
+#   2. THE HOST TIER — `deploy/platform/values-host-default.yaml` plus the
+#      environment's application/release overlay, ONE HELM RELEASE PER
+#      ENVIRONMENT. Host images and host groups are per-environment,
 #      per-release values, which is why they live in the `platform/` tier
 #      (long-lived, per release) and not in `infra/` (install-once).
 #
@@ -17,7 +18,7 @@
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
 #     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
 #     -f deploy/infra/values-wamn.yaml
-#   # then this environment's host tier — deploy/platform/values-host-default.yaml
+#   # then this environment's host base plus its application/release overlay
 #
 # ############################################################################
 # [wamn-ob2f] *** THIS RELEASE MINTS THE CLUSTER'S CA, AND IT EXPIRES AFTER

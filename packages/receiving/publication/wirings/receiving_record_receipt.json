@@ -1,0 +1,14 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "receiving_record_receipt",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "receiving_record_receipt",
+      "interface-version": "0.1.0",
+      "operation": "run",
+      "terminal": "respond"
+    }
+  }
+}

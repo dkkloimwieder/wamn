@@ -4974,6 +4974,7 @@ dependencies = [
  "wamn-platform-identity",
  "wamn-run-state",
  "wamn-runtime",
+ "wamn-scenario-worker",
  "wamn-schema-control",
  "wamn-test-infrastructure",
  "wash-runtime",

@@ -1,0 +1,42 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "wamn_receiving",
+    "package-version": "1.0.0"
+  },
+  "component": "purchase_order_update",
+  "interface-version": "0.1.0",
+  "operation": "run",
+  "registered-operation": "wamn_receiving@1.0.0::purchase_order.update",
+  "input-ports": [{
+    "name": "input",
+    "schema": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["request_id", "id", "expected_row_version", "change"],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {"type": "string", "minLength": 1},
+          "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+          "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
+          "change": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "supplier_id": {
+                "type": ["string", "null"],
+                "x-wamn-explicit-null": "invalid_input"
+              }
+            }
+          }
+        }
+      }
+    }
+  }],
+  "output-ports": [{"name": "main", "schema": {"type": "array"}}],
+  "parameters": [],
+  "connections": []
+}

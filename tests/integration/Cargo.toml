@@ -40,6 +40,7 @@ wamn-platform-identity = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-execution-host = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-scenario-worker = { workspace = true }
 wamn-schema-control = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }

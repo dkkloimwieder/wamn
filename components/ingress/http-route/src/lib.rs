@@ -140,6 +140,7 @@ pub enum DeliveryError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponse {
     pub status: u16,
+    pub content_type: &'static str,
     pub body: Vec<u8>,
 }
 
@@ -158,7 +159,7 @@ pub struct AdapterLimits {
 impl Default for AdapterLimits {
     fn default() -> Self {
         Self {
-            body_bytes: 4 * 1024 * 1024,
+            body_bytes: 1024 * 1024,
             mapped_bytes: 4 * 1024 * 1024,
         }
     }
@@ -484,9 +485,9 @@ fn read_bounded(body: &mut impl BodyReader, limit: usize) -> Result<Vec<u8>, Htt
         let next = bytes
             .len()
             .checked_add(chunk.len())
-            .ok_or_else(|| error_response(413, "payload-too-large"))?;
+            .ok_or_else(|| body_too_large_response(limit))?;
         if next > limit {
-            return Err(error_response(413, "payload-too-large"));
+            return Err(body_too_large_response(limit));
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -637,6 +638,7 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
     match outcome {
         DeliveryOutcome::Respond(payload) => HttpResponse {
             status: 200,
+            content_type: "application/json",
             body: payload.into_bytes(),
         },
         DeliveryOutcome::Emit(_) => error_response(500, "http-route-emitted"),
@@ -671,6 +673,7 @@ fn delivery_error_response(error: DeliveryError) -> HttpResponse {
         DeliveryError::PermissionDenied { operation } => {
             return HttpResponse {
                 status: 403,
+                content_type: "application/json",
                 body: serde_json::to_vec(&json!({
                     "error": {
                         "code": "permission-denied",
@@ -712,6 +715,7 @@ fn detailed_error_response(
     }
     HttpResponse {
         status,
+        content_type: "application/json",
         body: serde_json::to_vec(&ErrorEnvelope {
             error: Value::Object(error),
         })
@@ -722,7 +726,16 @@ fn detailed_error_response(
 fn error_response(status: u16, code: &str) -> HttpResponse {
     HttpResponse {
         status,
+        content_type: "application/json",
         body: serde_json::to_vec(&json!({"error":{"code":code}})).unwrap_or_default(),
+    }
+}
+
+fn body_too_large_response(limit: usize) -> HttpResponse {
+    HttpResponse {
+        status: 413,
+        content_type: "text/plain; charset=utf-8",
+        body: format!("request body exceeds {limit}-byte limit\n").into_bytes(),
     }
 }
 

@@ -9,11 +9,13 @@
 //! parses, or digest-verifies a manifest of its own and adds no route table over
 //! the immutable in-memory projection.
 //!
-//! # Fields the attachment projection cannot source
+//! # Attachment-owned and adapter-owned fields
 //!
-//! `input-schema` and the byte ceilings have no carrier in [`ServingAttachment`].
-//! Each is answered with the value that leaves whichever authority *can* decide
-//! in charge, never with a guess; each is justified at its own field in
+//! An attachment definition may author `input-schema` and
+//! `raw-body-bytes.maximum`; this projection preserves those values. Their
+//! documented fallbacks apply only when the corresponding authored field is
+//! absent. The mapped-payload ceiling has no attachment carrier and remains
+//! adapter-governed; each fallback is justified at its own field in
 //! [`route_definition`].
 
 use std::collections::{HashMap, HashSet};
@@ -595,6 +597,17 @@ fn route_definition(
     attachment: &ServingAttachment,
 ) -> Option<RouteDefinition> {
     let route = attachment.definition.get("route")?;
+    let input_schema = match attachment.definition.get("input-schema") {
+        Some(schema) => serde_json::to_string(schema).ok()?,
+        None => UNCONSTRAINED_INPUT_SCHEMA.to_string(),
+    };
+    let body_limit = match attachment.definition.get("raw-body-bytes") {
+        Some(raw_body_bytes) => {
+            let authored = raw_body_bytes.get("maximum")?.as_u64()?;
+            u32::try_from(authored).ok()?.into()
+        }
+        None => ADAPTER_GOVERNED_BYTES,
+    };
     let mappings = match attachment.definition.get("mappings") {
         Some(mappings) => mappings
             .as_array()?
@@ -609,12 +622,11 @@ fn route_definition(
         path: route.get("path")?.as_str()?.to_string(),
         method: route.get("method")?.as_str()?.to_string(),
         mappings,
-        // The release currently carries no entry input-schema projection. An
-        // unconstraining schema is the truthful answer: it claims no validation
-        // this host cannot perform, while the guest still refuses malformed JSON
-        // and enforces the route's mapping contract.
-        input_schema: UNCONSTRAINED_INPUT_SCHEMA.to_string(),
-        body_limit: ADAPTER_GOVERNED_BYTES,
+        input_schema,
+        body_limit,
+        // No authored mapped-payload ceiling exists. This value leaves the
+        // adapter's own mapped-byte limit in charge rather than inventing a
+        // second policy here.
         mapped_limit: ADAPTER_GOVERNED_BYTES,
     })
 }
@@ -965,10 +977,9 @@ mod tests {
         );
     }
 
-    /// Fields with no carrier in the attachment projection. Each must leave
-    /// the authority that can decide in charge — see [`route_definition`].
+    /// An omitted attachment field leaves the downstream authority in charge.
     #[test]
-    fn the_fields_the_manifest_cannot_source_defer_to_their_real_authority() {
+    fn omitted_projection_fields_defer_to_their_real_authority() {
         let manifest = one_http_route();
 
         let served = route_definitions(&manifest, "POST", "api.example.test");
@@ -981,11 +992,61 @@ mod tests {
                 .expect("the guest parses this with serde_json and 503s if it cannot"),
             Value::Bool(true)
         );
-        for limit in [definition.body_limit, definition.mapped_limit] {
+        assert_eq!(definition.body_limit, ADAPTER_GOVERNED_BYTES);
+        assert_eq!(definition.mapped_limit, ADAPTER_GOVERNED_BYTES);
+    }
+
+    #[test]
+    fn authored_input_schema_and_raw_body_limit_are_projected_exactly() {
+        let input_schema = json!({
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+                "type": "object",
+                "required": ["request_id"],
+                "additionalProperties": false,
+            },
+        });
+        let mut definition = orders_definition();
+        definition["input-schema"] = input_schema.clone();
+        definition["raw-body-bytes"] = json!({"maximum": 1_048_576});
+        let manifest = release_manifest(BTreeMap::from([(
+            "orders".to_string(),
+            attachment(AttachmentKind::Http, definition),
+        )]));
+
+        let served = route_definitions(&manifest, "POST", "api.example.test");
+
+        let [definition] = served.as_slice() else {
+            panic!("exactly one attachment matches this request");
+        };
+        assert_eq!(
+            serde_json::from_str::<Value>(&definition.input_schema)
+                .expect("the projected schema remains JSON"),
+            input_schema
+        );
+        assert_eq!(definition.body_limit, 1_048_576);
+        assert_eq!(definition.mapped_limit, ADAPTER_GOVERNED_BYTES);
+    }
+
+    #[test]
+    fn a_present_raw_body_limit_never_falls_back_when_malformed() {
+        for raw_body_bytes in [
+            json!({}),
+            json!({"maximum": "1048576"}),
+            json!({"maximum": u64::from(u32::MAX) + 1}),
+        ] {
+            let mut definition = orders_definition();
+            definition["raw-body-bytes"] = raw_body_bytes;
+            let manifest = release_manifest(BTreeMap::from([(
+                "orders".to_string(),
+                attachment(AttachmentKind::Http, definition),
+            )]));
+
             assert!(
-                u32::try_from(limit).is_ok(),
-                "a ceiling wider than u32 fails the guest's usize::try_from on wasm32 and \
-                 turns every route lookup into a 503"
+                route_definitions(&manifest, "POST", "api.example.test").is_empty(),
+                "a malformed authored ceiling must fail its attachment closed"
             );
         }
     }

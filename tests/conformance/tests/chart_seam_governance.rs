@@ -17,13 +17,20 @@
 //! time with `CrossEnvironmentSchedulingDenied`.
 
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde_json::Value;
 
 const VALUES: &str = "deploy/infra/values-wamn.yaml";
 const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
+const RECEIVING_HOST_VALUES: &str = "deploy/platform/values-host-receiving-pat.yaml";
 const EXECUTOR: &str = "deploy/platform/executor.yaml";
 const SOCKPROBE: &str = "components/fixtures/sockprobe/src/main.rs";
 const EXPECTED_CHART_VERSION: &str = "2.8.0";
+static RENDER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const EXPECTED_RUNTIME_REVISION: &str = "5c4ec4a3";
 
 /// The component workloads the operator schedules onto the host tier — the only
@@ -74,6 +81,110 @@ fn read_repository_file(root: &Path, relative: &str) -> String {
     let path = root.join(relative);
     fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+}
+
+struct RenderDirectory(PathBuf);
+
+impl RenderDirectory {
+    fn create() -> Self {
+        let sequence = RENDER_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "wamn-host-render-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&path).expect("create isolated Helm render directory");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for RenderDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn render_host_deployment(root: &Path, values: &[&str]) -> Value {
+    let output = RenderDirectory::create();
+    let mut helm = Command::new("helm");
+    helm.current_dir(root).args([
+        "template",
+        "wamn-host",
+        "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+        "--version",
+        EXPECTED_CHART_VERSION,
+        "--namespace",
+        "wamn-system",
+    ]);
+    for value in values {
+        helm.args(["--values", value]);
+    }
+    helm.arg("--output-dir").arg(output.path());
+    let rendered = helm.output().expect("run the pinned Helm renderer");
+    assert!(
+        rendered.status.success(),
+        "Helm render failed: {}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    let rendered = fs::read(
+        output
+            .path()
+            .join("runtime-operator/templates/runtime/deployment.yaml"),
+    )
+    .expect("read rendered host Deployment");
+
+    let mut kubectl = Command::new("kubectl")
+        .current_dir(root)
+        .args([
+            "create",
+            "--dry-run=client",
+            "--validate=false",
+            "--filename=-",
+            "--output=json",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start the Kubernetes structural decoder");
+    kubectl
+        .stdin
+        .take()
+        .expect("kubectl stdin is piped")
+        .write_all(&rendered)
+        .expect("send rendered chart to the structural decoder");
+    let decoded = kubectl
+        .wait_with_output()
+        .expect("join the Kubernetes structural decoder");
+    assert!(
+        decoded.status.success(),
+        "Kubernetes decode failed: {}",
+        String::from_utf8_lossy(&decoded.stderr)
+    );
+    serde_json::from_slice(&decoded.stdout).expect("rendered host Deployment is JSON")
+}
+
+fn host_container(deployment: &Value) -> &Value {
+    let containers = deployment["spec"]["template"]["spec"]["containers"]
+        .as_array()
+        .expect("rendered host Deployment carries containers");
+    assert_eq!(
+        containers.len(),
+        1,
+        "host chart rendered an unexpected sidecar"
+    );
+    &containers[0]
+}
+
+fn environment_entry<'a>(container: &'a Value, name: &str) -> Option<&'a Value> {
+    container["env"]
+        .as_array()
+        .expect("rendered host container carries env")
+        .iter()
+        .find(|entry| entry["name"] == name)
 }
 
 fn installed_chart_version(values: &str) -> &str {
@@ -470,4 +581,142 @@ fn the_component_workloads_target_the_host_tier_environment() {
             );
         }
     }
+}
+
+#[test]
+#[ignore = "pulls and renders the pinned OCI chart; run via [RECEIVING-HOST-OVERLAY]"]
+fn receiving_pat_overlay_renders_a_complete_scoped_host() {
+    let root = repository_root();
+    let base = render_host_deployment(&root, &[HOST_VALUES]);
+    let receiving = render_host_deployment(&root, &[HOST_VALUES, RECEIVING_HOST_VALUES]);
+    let base_container = host_container(&base);
+    let receiving_container = host_container(&receiving);
+
+    for name in [
+        "WAMN_ORG",
+        "WAMN_PROJECT",
+        "WAMN_SCHEMA",
+        "WAMN_SYSTEM_URL",
+        "WAMN_HTTP_ADMITTER_PG_URL",
+    ] {
+        assert!(
+            environment_entry(base_container, name).is_none(),
+            "generic host unexpectedly carries Receiving setting {name}"
+        );
+    }
+    let base_args = base_container["args"]
+        .as_array()
+        .expect("rendered generic host carries args");
+    assert!(
+        base_args.iter().all(|argument| {
+            argument
+                .as_str()
+                .is_none_or(|argument| !argument.starts_with("--release-"))
+        }),
+        "generic host unexpectedly carries a release coordinate"
+    );
+    let receiving_args = receiving_container["args"]
+        .as_array()
+        .expect("rendered Receiving host carries args");
+    assert_eq!(
+        receiving_args.get(..base_args.len()),
+        Some(base_args.as_slice()),
+        "Receiving overlay changed or dropped a generic host argument"
+    );
+    assert_eq!(
+        receiving_args.len(),
+        base_args.len() + 2,
+        "Receiving overlay must add only the two release arguments"
+    );
+
+    let receiving_names = [
+        "WAMN_ORG",
+        "WAMN_PROJECT",
+        "WAMN_SCHEMA",
+        "WAMN_SYSTEM_URL",
+        "WAMN_HTTP_ADMITTER_PG_URL",
+    ];
+    let base_env = base_container["env"]
+        .as_array()
+        .expect("rendered generic host carries env");
+    let inherited_env = receiving_container["env"]
+        .as_array()
+        .expect("rendered Receiving host carries env")
+        .iter()
+        .filter(|entry| {
+            entry["name"]
+                .as_str()
+                .is_none_or(|name| !receiving_names.contains(&name))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inherited_env,
+        base_env.iter().collect::<Vec<_>>(),
+        "Receiving overlay changed or dropped a generic host environment entry"
+    );
+    assert_eq!(
+        receiving_container["env"]
+            .as_array()
+            .expect("rendered Receiving host carries env")
+            .len(),
+        base_env.len() + receiving_names.len(),
+        "Receiving overlay must add exactly its five scoped environment entries"
+    );
+
+    for (name, expected) in [
+        ("WAMN_ORG", "acme"),
+        ("WAMN_PROJECT", "receiving"),
+        ("WAMN_SCHEMA", "receiving"),
+    ] {
+        assert_eq!(
+            environment_entry(receiving_container, name).and_then(|entry| entry["value"].as_str()),
+            Some(expected),
+            "Receiving host rendered the wrong trusted {name} value"
+        );
+    }
+    for (name, secret) in [
+        (
+            "WAMN_SYSTEM_URL",
+            "wamn-identity-reader-acme--receiving--dev",
+        ),
+        (
+            "WAMN_HTTP_ADMITTER_PG_URL",
+            "wamn-http-admitter-acme--receiving--dev",
+        ),
+    ] {
+        let selector = &environment_entry(receiving_container, name)
+            .unwrap_or_else(|| panic!("Receiving host omitted {name}"))["valueFrom"]["secretKeyRef"];
+        assert_eq!(selector["name"], secret, "{name} names the wrong Secret");
+        assert_eq!(selector["key"], "url", "{name} reads the wrong key");
+        assert_eq!(
+            selector["optional"], false,
+            "{name} must fail deployment when its Secret is absent"
+        );
+    }
+
+    assert_eq!(base["spec"]["replicas"], receiving["spec"]["replicas"]);
+    assert_eq!(
+        base["spec"]["template"]["spec"]["volumes"],
+        receiving["spec"]["template"]["spec"]["volumes"],
+        "Receiving overlay lost the base host volumes through Helm list replacement"
+    );
+    for field in ["image", "ports", "resources", "volumeMounts"] {
+        assert_eq!(
+            base_container[field], receiving_container[field],
+            "Receiving overlay lost the base host {field} through Helm list replacement"
+        );
+    }
+
+    let release_args: Vec<&str> = receiving_args
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|argument| argument.starts_with("--release-"))
+        .collect();
+    assert_eq!(
+        release_args,
+        [
+            "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases",
+            "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        ]
+    );
 }

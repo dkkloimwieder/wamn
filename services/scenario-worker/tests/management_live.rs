@@ -148,6 +148,7 @@ const CANDIDATE_IMPORTS_FINGERPRINT: &str =
 /// FIRES rather than merely being written: gate cases are effect-free by
 /// contract, so this candidate must be refused, typed, with nothing admitted.
 const EFFECTFUL_WIRING: &str = "orders-charge";
+const EFFECTFUL_ZERO_CASE_WIRING: &str = "orders-charge-no-cases";
 const EFFECTFUL_COMPONENT: &str = "ledger";
 const EFFECTFUL_COMPONENT_DIGEST: &str =
     "sha256:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
@@ -915,7 +916,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("age one token past its expiry");
 
-    let mut surface = tokio::spawn(wamn_scenario_worker::management::serve(
+    let (readiness_tx, readiness_rx) = tokio::sync::oneshot::channel();
+    let mut surface = tokio::spawn(wamn_scenario_worker::management::serve_with_readiness(
         wamn_scenario_worker::management::ManagementServeArgs {
             bind: BIND.to_owned(),
             system_url: identity_reader_url(&url),
@@ -927,26 +929,18 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             tenant: TENANT.to_owned(),
             source_schema: SOURCE_SCHEMA.to_owned(),
         },
+        readiness_tx,
     ));
-    // The listener binds inside the spawned task; give it the connection.
-    //
-    // A `serve` that REFUSED one of its three connection inputs FINISHES instead
-    // of listening, and every later assertion then fails as a connection refusal
-    // a long way from its cause — which is exactly how the superuser this gate
-    // used to hand `serve` as its identity read stayed hidden (wamn-0h0g.22.19).
-    // Reading the finished task's error names the refusal where it happened.
-    for _ in 0..50 {
-        if surface.is_finished() {
-            let refused = (&mut surface)
-                .await
-                .expect("the surface task did not panic");
+    // Startup is observed at the production listener. If credential settlement
+    // refuses first, preserve that exact error instead of timing out elsewhere.
+    let bound = tokio::select! {
+        ready = readiness_rx => ready.expect("the management surface dropped readiness"),
+        stopped = &mut surface => {
+            let refused = stopped.expect("the surface task did not panic");
             panic!("the management surface never listened: {refused:?}");
         }
-        if TcpStream::connect(BIND).await.is_ok() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    };
+    assert_eq!(bound.to_string(), BIND);
 
     // ---- every untrusted presenter refuses, identically, before any command --
     let forged = format!("{PAT_TOKEN_PREFIX}0123456789abcdef_{}", "0".repeat(64));
@@ -1343,8 +1337,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert!(stored.0, "an accepted gate stored a failing report");
     assert_eq!(
         stored.1,
-        serde_json::json!({"cases": ["creates", "rejects"]}),
-        "the stored summary is not the judged document's own case set"
+        serde_json::json!({"cases": 2}),
+        "the stored summary does not count the judged document's cases"
     );
     // The REFUSED candidate below writes none, and the un-gated one never did:
     // one row exists, not one per candidate.
@@ -1377,7 +1371,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
                     "report-id": candidate_hash,
                     "validated-draft": {"validated-draft-id": candidate_hash},
                     "passed": true,
-                    "summary": {"cases": ["creates", "rejects"]},
+                    "summary": {"cases": 2},
                 },
             },
         }),
@@ -1469,6 +1463,86 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a service-token re-drive admitted a run"
     );
 
+    // An effectful wiring with no cases executes nothing, so the case-scoped
+    // effect posture has nothing to refuse. The remaining validation and
+    // binding-world checks still run before the report is accepted.
+    let mut effectful_without_cases =
+        candidate_graph(EFFECTFUL_ZERO_CASE_WIRING, EFFECTFUL_COMPONENT, "charge");
+    effectful_without_cases["cases"] = serde_json::json!([]);
+    let effectful_without_cases_hash = derived_hash(&effectful_without_cases);
+    let zero_case = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &gate_document_in("gate-effectful-no-cases", PROJECT, &effectful_without_cases),
+    )
+    .await;
+    assert_eq!(zero_case.status, 200, "{}", zero_case.body);
+    assert_eq!(
+        outcome(&zero_case.body)["status"],
+        serde_json::json!("completed"),
+        "an effectful wiring with no gate cases was refused: {}",
+        zero_case.body
+    );
+    assert_eq!(
+        stored_gate_report(&admin, &effectful_without_cases_hash).await,
+        Some((true, serde_json::json!({"cases": 0}))),
+        "the zero-case judgment did not persist its exact case count"
+    );
+    assert_eq!(
+        project_case_runs(&project).await,
+        runs,
+        "a zero-case judgment admitted a run"
+    );
+    assert_eq!(project_queue_count(&project).await, 0);
+
+    // Zero cases remove only execution proof. The Gate still validates the
+    // document against the exact package's admitted component facts; a missing
+    // operation cannot disappear through the posture queries' joins and mint a
+    // green report.
+    let mut incompatible_without_cases = candidate_graph(
+        "orders-missing-operation-no-cases",
+        "entity",
+        "missing-operation",
+    );
+    incompatible_without_cases["cases"] = serde_json::json!([]);
+    let incompatible_without_cases_hash = derived_hash(&incompatible_without_cases);
+    let incompatible = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &gate_document_in(
+            "gate-incompatible-no-cases",
+            PROJECT,
+            &incompatible_without_cases,
+        ),
+    )
+    .await;
+    assert_eq!(incompatible.status, 200, "{}", incompatible.body);
+    let refusal = outcome(&incompatible.body)["value"].clone();
+    assert_eq!(refusal["command"], serde_json::json!("gate"));
+    assert_eq!(
+        refusal["reason"]["kind"],
+        serde_json::json!("invalid-document"),
+        "an incompatible zero-case wiring was not refused: {}",
+        incompatible.body
+    );
+    assert!(
+        refusal["reason"]["detail"]
+            .as_str()
+            .is_some_and(|detail| !detail.is_empty()),
+        "the compatibility refusal carried no actionable detail: {}",
+        incompatible.body
+    );
+    assert!(
+        stored_gate_report(&admin, &incompatible_without_cases_hash)
+            .await
+            .is_none(),
+        "an incompatible zero-case wiring was given a green report"
+    );
+    assert_eq!(project_case_runs(&project).await, runs);
+    assert_eq!(project_queue_count(&project).await, 0);
+
     // ---- THE CONSTITUTIONAL CLAUSE FIRES ------------------------------------
     // wamn-0h0g.8.5.5: gate cases are EFFECT-FREE BY CONTRACT. A gate is a
     // judgment about a document, not an execution of it, so a candidate that
@@ -1477,7 +1551,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     //
     // This is the behavioural proof, not a source scan. The effectful candidate
     // is identical to the gated one in every way admission cares about -- same
-    // tenant, same effective release, same well-formed single case, its
+    // tenant, same effective release, same well-formed nonempty case set, its
     // own wiring hash and its own gate report -- and differs ONLY in the
     // `effects` value of the component its node resolves to. It therefore
     // cannot be refused for any other reason, and if the posture read were

@@ -1,0 +1,14 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "purchase_order_query",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "purchase_order_query",
+      "interface-version": "0.1.0",
+      "operation": "run",
+      "terminal": "respond"
+    }
+  }
+}

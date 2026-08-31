@@ -115,7 +115,8 @@ session remains alive until the final drain.
    kubectl -n wamn-system apply -f deploy/platform/host-db.example.yaml
    helm upgrade --install -n wamn-system wamn-host \
      oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
-     -f deploy/platform/values-host-default.yaml
+     -f deploy/platform/values-host-default.yaml \
+     -f deploy/platform/values-host-receiving-pat.yaml
    kubectl -n wamn-system rollout restart deployment/hostgroup-default
    kubectl -n wamn-system rollout status deployment/hostgroup-default --timeout=150s
    ```
@@ -179,9 +180,11 @@ pull, so both crashloop until a real release is written in.
 
 - `platform/executor.yaml` — an env PAIR, `WAMN_RELEASE_ARTIFACT_BASE` and
   `WAMN_RELEASE_MANIFEST_DIGEST`, on the Deployment's container.
-- `platform/values-host-default.yaml` — an extraArgs FLAG pair,
+- `platform/values-host-receiving-pat.yaml` — an extraArgs FLAG pair in the
+  complete Receiving/PAT overlay,
   `--release-artifact-base=` and `--release-manifest-digest=`, under
-  `runtime.hostGroups[].extraArgs`.
+  `runtime.hostGroups[].extraArgs`. `values-host-default.yaml` stays
+  application-neutral and release-less.
 
 The host takes flags DELIBERATELY, and the reason is in the two binaries' arg
 shapes rather than in taste. **The host's pair is OPTIONAL** — both absent is a
@@ -240,7 +243,8 @@ kubectl -n wamn-system apply -f deploy/platform/executor.yaml
 kubectl -n wamn-system rollout status deploy/executor --timeout=300s
 helm upgrade --install -n wamn-system wamn-host \
   oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
-  -f deploy/platform/values-host-default.yaml
+  -f deploy/platform/values-host-default.yaml \
+  -f deploy/platform/values-host-receiving-pat.yaml
 kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
 ```
 

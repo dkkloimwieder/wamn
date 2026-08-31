@@ -709,6 +709,31 @@ fn validate_request(request: &MintReleaseManifest<'_>) -> Result<(), MintManifes
             "a release with no wiring has no executable closure",
         ));
     }
+    validate_attachment_definition_hashes(request.attachments)?;
+    Ok(())
+}
+
+/// Require every attachment hash to identify its exact canonical definition.
+///
+/// The release mint is the production boundary that accepts the authored
+/// attachment map. Comparing here prevents a caller from pairing an unchanged
+/// identity claim with different route or contract bytes before either can
+/// enter the immutable serving snapshot.
+fn validate_attachment_definition_hashes(
+    attachments: &BTreeMap<String, ServingAttachment>,
+) -> Result<(), MintManifestError> {
+    for (attachment_id, attachment) in attachments {
+        let derived = wamn_execution_contract::canonical_json_sha256(&attachment.definition);
+        if attachment.definition_hash.as_str() != derived {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::Document,
+                format!(
+                    "attachment {attachment_id:?} definition-hash {} differs from canonical definition hash {derived}",
+                    attachment.definition_hash.as_str(),
+                ),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1181,6 +1206,39 @@ mod tests {
     use super::*;
 
     const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[test]
+    fn release_mint_binds_each_attachment_hash_to_its_definition() {
+        let definition = serde_json::json!({
+            "id": "receiving-http",
+            "kind": "http",
+            "route": {"host": "receiving.example", "path": "/receipt/get", "method": "POST"},
+        });
+        let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
+        let attachment = ServingAttachment {
+            kind: wamn_catalog::AttachmentKind::Http,
+            package_id: "wamn_receiving".to_owned(),
+            wiring_id: "receipt_get".to_owned(),
+            wiring_version: 1,
+            definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
+                .expect("the canonicalizer emits a valid definition hash"),
+            definition,
+            auth_policy: serde_json::json!({"mode": "pat"}),
+            registered_operation: Some("wamn_receiving@1.0.0::receipt.get".to_owned()),
+        };
+        let attachments = BTreeMap::from([("receiving-http".to_owned(), attachment.clone())]);
+        validate_attachment_definition_hashes(&attachments)
+            .expect("the exact canonical definition matches its authored hash");
+
+        let mut changed = attachment;
+        changed.definition["route"]["path"] = serde_json::json!("/receipt/query");
+        let error = validate_attachment_definition_hashes(&BTreeMap::from([(
+            "receiving-http".to_owned(),
+            changed,
+        )]))
+        .expect_err("changed definition bytes cannot retain the old identity");
+        assert_eq!(error.kind(), MintManifestErrorKind::Document);
+    }
 
     fn closure_component(component: &str, registered_operation: Option<&str>) -> AdmittedComponent {
         AdmittedComponent {

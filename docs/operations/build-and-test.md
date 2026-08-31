@@ -810,6 +810,23 @@ arm, 2 rows; with the arm dropped, **0 rows and no error**; with the pre-bead
 untargeted floor restored, `ERROR: permission denied for function
 current_tenant_key`.
 
+### `[RECEIVING-HOST-OVERLAY]` — rendered Receiving/PAT host values
+
+This gate renders the pinned runtime-operator chart twice: the generic values
+alone, then the same base plus the complete Receiving/PAT overlay. It decodes
+the rendered Deployment through Kubernetes' client-side loader and proves the
+base is release-less, the overlay preserves the full host profile despite Helm
+list replacement, and the trusted Receiving scope plus both mandatory scoped
+Secret references reach the Pod structurally. It creates no cluster object.
+
+```bash
+cargo test -p wamn-proof-conformance --test chart_seam_governance \
+  receiving_pat_overlay_renders_a_complete_scoped_host \
+  -- --ignored --exact --nocapture
+```
+
+The gate requires `helm` and `kubectl`; Helm pulls the chart pinned at 2.8.0.
+
 ### `[ROUTE-AUTH-LIVE]` — route PAT and exact-operation authorization
 
 This gate composes the production project-env/PAT provisioner, package applier,
@@ -830,6 +847,111 @@ docker rm -f wamn-route-auth-pg # BY EXPLICIT NAME. Never prune.
 
 It owns the fresh server: control/project databases and cluster-wide roles are
 created and reset. The frozen cluster is never a valid target.
+
+### `[RECEIVING-ROUTE-JOURNEY]` — published Receiving routes and traces
+
+This gate builds the six virtualized Receiving components and shipped
+`flow-http`, then drives production apply, push, gate, author, mint, attest,
+load, authentication, routing, and PostgreSQL paths. Its PostgreSQL 18 server
+and authenticated plain-HTTP registry are disposable and loopback-only. The
+Docker auth document must carry explicit non-empty `username` and `password`
+fields for the exact registry authority; credentials exist only in the scratch
+directory and are not printed.
+
+```bash
+set -euo pipefail
+umask 077
+
+RECEIVING_ROUTE_ROOT="$(pwd -P)"
+RECEIVING_ROUTE_SCRATCH="$(mktemp -d /tmp/wamn-receiving-route.XXXXXX)"
+RECEIVING_ROUTE_PROJECT="wamn-receiving-route-$$"
+RECEIVING_ROUTE_COMPOSE="$RECEIVING_ROUTE_ROOT/test-support/infrastructure/std-virtualization.compose.yaml"
+RECEIVING_ROUTE_PG_PORT=54332
+RECEIVING_ROUTE_REGISTRY_PORT=5004
+RECEIVING_ROUTE_AUTHORITY="127.0.0.1:${RECEIVING_ROUTE_REGISTRY_PORT}"
+RECEIVING_ROUTE_USERNAME=wamn-receiving-route
+RECEIVING_ROUTE_PASSWORD="$(openssl rand -hex 32)"
+RECEIVING_ROUTE_HTPASSWD="$RECEIVING_ROUTE_SCRATCH/htpasswd"
+RECEIVING_ROUTE_DOCKER_AUTH="$RECEIVING_ROUTE_SCRATCH/.dockerconfigjson"
+RECEIVING_ROUTE_CURL_AUTH="$RECEIVING_ROUTE_SCRATCH/curl.conf"
+
+receiving_route_cleanup() {
+  docker compose --profile receiving-route -p "$RECEIVING_ROUTE_PROJECT" \
+    -f "$RECEIVING_ROUTE_COMPOSE" down --volumes --remove-orphans \
+    >/dev/null 2>&1 || true
+  if [[ "$RECEIVING_ROUTE_SCRATCH" == /tmp/wamn-receiving-route.* ]]; then
+    rm -rf -- "$RECEIVING_ROUTE_SCRATCH"
+  fi
+}
+trap receiving_route_cleanup EXIT
+
+CARGO_TARGET_DIR="$RECEIVING_ROUTE_SCRATCH/target" \
+  "$RECEIVING_ROUTE_ROOT/tools/build-components" m1
+RECEIVING_ROUTE_COMPONENTS="$RECEIVING_ROUTE_SCRATCH/target/virtualized/std-empty-environment"
+RECEIVING_ROUTE_FLOW_HTTP="$RECEIVING_ROUTE_SCRATCH/target/wasm32-wasip2/debug/http_route.wasm"
+for component in purchase_order_get purchase_order_query purchase_order_update \
+  receipt_get receipt_query receiving_record_receipt; do
+  test -s "$RECEIVING_ROUTE_COMPONENTS/$component.wasm"
+done
+test -s "$RECEIVING_ROUTE_FLOW_HTTP"
+
+printf '%s\n' "$RECEIVING_ROUTE_PASSWORD" \
+  | docker run --rm -i --entrypoint htpasswd httpd:2-alpine \
+      -Bni "$RECEIVING_ROUTE_USERNAME" >"$RECEIVING_ROUTE_HTPASSWD"
+jq -n --arg authority "$RECEIVING_ROUTE_AUTHORITY" \
+  --arg username "$RECEIVING_ROUTE_USERNAME" \
+  --arg password "$RECEIVING_ROUTE_PASSWORD" \
+  '{auths:{($authority):{username:$username,password:$password}}}' \
+  >"$RECEIVING_ROUTE_DOCKER_AUTH"
+printf 'user = "%s:%s"\n' \
+  "$RECEIVING_ROUTE_USERNAME" "$RECEIVING_ROUTE_PASSWORD" \
+  >"$RECEIVING_ROUTE_CURL_AUTH"
+unset RECEIVING_ROUTE_PASSWORD
+jq -e --arg authority "$RECEIVING_ROUTE_AUTHORITY" '
+  .auths[$authority]
+  | (.username | type == "string" and length > 0)
+    and (.password | type == "string" and length > 0)
+' "$RECEIVING_ROUTE_DOCKER_AUTH" >/dev/null
+
+WAMN_STD_VIRT_PG_PORT="$RECEIVING_ROUTE_PG_PORT"
+WAMN_STD_VIRT_REGISTRY_PORT=5003
+WAMN_RECEIVING_ROUTE_REGISTRY_PORT="$RECEIVING_ROUTE_REGISTRY_PORT"
+WAMN_RECEIVING_ROUTE_REGISTRY_HTPASSWD="$RECEIVING_ROUTE_HTPASSWD"
+export WAMN_STD_VIRT_PG_PORT WAMN_STD_VIRT_REGISTRY_PORT
+export WAMN_RECEIVING_ROUTE_REGISTRY_PORT WAMN_RECEIVING_ROUTE_REGISTRY_HTPASSWD
+docker compose --profile receiving-route -p "$RECEIVING_ROUTE_PROJECT" \
+  -f "$RECEIVING_ROUTE_COMPOSE" up --detach --wait --wait-timeout 60 \
+  receiving-route-postgres authenticated-registry
+PGPASSWORD=probe psql \
+  "postgresql://postgres@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/postgres" \
+  -Atqc 'select 1' >/dev/null
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "http://${RECEIVING_ROUTE_AUTHORITY}/v2/")" = 401
+test "$(curl --config "$RECEIVING_ROUTE_CURL_AUTH" --silent --show-error \
+  --output /dev/null --write-out '%{http_code}' \
+  "http://${RECEIVING_ROUTE_AUTHORITY}/v2/")" = 200
+
+WAMN_RECEIVING_ROUTE_PG18_URL="postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/postgres" \
+WAMN_RECEIVING_ROUTE_COMPONENT_DIRECTORY="$RECEIVING_ROUTE_COMPONENTS" \
+WAMN_RECEIVING_ROUTE_FLOW_HTTP_WASM="$RECEIVING_ROUTE_FLOW_HTTP" \
+WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE="$RECEIVING_ROUTE_AUTHORITY/wamn/components" \
+WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE="$RECEIVING_ROUTE_AUTHORITY/wamn/releases" \
+WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE="$RECEIVING_ROUTE_DOCKER_AUTH" \
+  cargo test -p wamn-proof-integration --lib --locked --offline \
+  route_authentication_live::production_receiving_release_serves_all_six_pat_routes_with_correlated_traces \
+  -- --ignored --exact --nocapture --test-threads=1
+
+receiving_route_cleanup
+trap - EXIT
+```
+
+The route-specific PostgreSQL service applies the production
+`deploy/sql/postgres-init.sql` bootstrap on first start, including the stable
+NOLOGIN role floor that `reconcile-run-plane` verifies rather than creates. The
+explicit service list leaves the anonymous std-virtualization PostgreSQL and
+registry services unchanged and stopped. Cleanup removes only this Compose
+project, its volumes, and its validated scratch path. Never substitute shared
+infrastructure or the frozen cluster.
 
 ### Other live gates that carry their command in-source
 

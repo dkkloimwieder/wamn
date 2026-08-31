@@ -460,13 +460,15 @@ pub enum GateRefusal {
         requested: String,
         supported: String,
     },
-    /// The submitted bytes are not a wiring document.
+    /// The submitted bytes are not a wiring document valid in the named
+    /// package scope.
     ///
     /// This REPLACES the two retired lookup refusals (wamn-0h0g.8.28). Both
     /// described a search of `catalog.wirings` that the gate no longer performs:
     /// a document cannot be missing when the command carries it, and it cannot
     /// diverge from a stored row it is never compared to. What CAN go wrong is
-    /// that the bytes do not parse or do not validate, which is this.
+    /// that the bytes do not parse, do not validate, or do not resolve against
+    /// the package's admitted component facts, which is this.
     ///
     /// Their exact spellings are pinned as retired in this crate's contract test,
     /// so they are named there and deliberately not repeated here — a doc comment
