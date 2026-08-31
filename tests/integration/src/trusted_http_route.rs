@@ -406,6 +406,8 @@ async fn seed_with_client(
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let schema = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
         .context("read the catalog DDL")?;
+    let app_schema = std::fs::read_to_string(format!("{root}/deploy/sql/app-schema.sql"))
+        .context("read the application authorization DDL")?;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .context("read the run-state DDL")?;
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
@@ -420,8 +422,10 @@ async fn seed_with_client(
         .batch_execute(&format!(
             "{role_bootstrap}\n\
              DROP SCHEMA IF EXISTS catalog CASCADE;\n\
+             DROP SCHEMA IF EXISTS app_system CASCADE;\n\
              DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
              {schema}\n\
+             {app_schema}\n\
              {run_state}\n\
              {run_queue}"
         ))

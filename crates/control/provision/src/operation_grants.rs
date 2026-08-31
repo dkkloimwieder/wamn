@@ -340,7 +340,7 @@ mod tests {
     fn semantic_operation_vocabulary_refusal_reaches_the_grant_boundary() {
         let mut manifest: serde_json::Value =
             serde_json::from_slice(RECEIVING_MANIFEST).expect("fixture is JSON");
-        manifest["components"]["receiving_data"]["operations"]
+        manifest["components"]["receipt_get"]["operations"]
             .as_array_mut()
             .expect("operations array")
             .push(serde_json::json!("receipt.delete"));

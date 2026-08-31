@@ -790,6 +790,60 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
+name = "receiving-purchase-order-get"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "wamn-receiving-data-access",
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "receiving-purchase-order-query"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "wamn-receiving-data-access",
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "receiving-purchase-order-update"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "wamn-receiving-data-access",
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "receiving-receipt-get"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "wamn-receiving-data-access",
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "receiving-receipt-query"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "wamn-receiving-data-access",
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
+name = "receiving-receiving-record-receipt"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "wamn-receiving-data-access",
+ "wit-bindgen 0.44.0",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1080,6 +1134,14 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "std-virtualization-probe"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen 0.44.0",
+]
 
 [[package]]
 name = "syn"

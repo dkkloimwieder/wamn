@@ -143,6 +143,13 @@ async fn error_for(fixture: &Fixture, definition: &Value) -> GenerationValidatio
 async fn compatible_generation_records_every_validated_input_identity() {
     let fixture = Fixture::new();
     let definition = definition();
+    let hash = definition_hash(&definition);
+    assert_eq!(hash.len(), "sha256:".len() + 64);
+    assert!(hash.strip_prefix("sha256:").is_some_and(|digest| {
+        digest
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    }));
     let validated = validate_staged_connection_generation(
         &candidate(&definition),
         &fixture.snapshot(Some(&fixture.credential), &fixture.hosts, &fixture.network),
@@ -153,10 +160,7 @@ async fn compatible_generation_records_every_validated_input_identity() {
 
     assert_eq!(validated.requirement_type.as_ref(), HTTP_CONNECTION_TYPE);
     assert_eq!(validated.contract.as_ref(), HTTP_CONNECTION_CONTRACT);
-    assert_eq!(
-        validated.definition_hash.as_ref(),
-        definition_hash(&definition)
-    );
+    assert_eq!(validated.definition_hash.as_ref(), hash);
     assert_eq!(validated.primary_authority.host(), "erp.example");
     assert_eq!(
         validated.failover_authorities[0].host(),

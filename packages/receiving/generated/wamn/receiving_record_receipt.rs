@@ -53,6 +53,7 @@ pub(crate) struct UpdatePurchaseOrderLineRow {
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct ValidateReceiptLineRow {
     pub outcome: Option<String>,
+    pub id: Option<wamn_postgres_sqlx::Uuid>,
 }
 
 pub(crate) const CLAIM_COMMAND_SQL: &str = include_str!("../../command/record_receipt/claim_command.sql");

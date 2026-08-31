@@ -29,7 +29,8 @@ mod tests {
 
     /// Every vendored copy of the node ABI, repo-root-relative. The walk below
     /// cross-checks this list against disk BOTH ways.
-    const EXPECTED_NODE_ABI_COPIES: [&str; 2] = [
+    const EXPECTED_NODE_ABI_COPIES: [&str; 3] = [
+        "components/data/receiving-data/wit/deps/wamn-node/package.wit",
         "components/no-std/http-request/wit/deps/wamn-node/package.wit",
         "components/no-std/transform/wit/deps/wamn-node/package.wit",
     ];

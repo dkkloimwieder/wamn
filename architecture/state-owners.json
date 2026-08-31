@@ -1013,10 +1013,12 @@
       ],
       "schema_source": "deploy/sql/app-schema.sql",
       "writers": [
-        "project-state"
+        "project-state",
+        "provision-store"
       ],
       "readers": [
-        "project-state"
+        "project-state",
+        "provision-store"
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1047,10 +1049,12 @@
       ],
       "schema_source": "deploy/sql/app-schema.sql",
       "writers": [
-        "project-state"
+        "project-state",
+        "provision-store"
       ],
       "readers": [
-        "project-state"
+        "project-state",
+        "provision-store"
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"

@@ -144,11 +144,16 @@ pub struct RecordReceiptError {
     context: Box<str>,
     field: Option<&'static str>,
     id: Option<Box<str>>,
-    minimum: Option<usize>,
-    maximum: Option<usize>,
-    observed: Option<usize>,
+    range: Option<InputRange>,
     constraint: Option<&'static str>,
     source: Option<Box<dyn Error + Send + Sync + 'static>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct InputRange {
+    minimum: usize,
+    maximum: usize,
+    observed: usize,
 }
 
 impl RecordReceiptError {
@@ -174,17 +179,26 @@ impl RecordReceiptError {
 
     /// Optional lower input bound.
     pub const fn minimum(&self) -> Option<usize> {
-        self.minimum
+        match self.range {
+            Some(range) => Some(range.minimum),
+            None => None,
+        }
     }
 
     /// Optional upper input bound.
     pub const fn maximum(&self) -> Option<usize> {
-        self.maximum
+        match self.range {
+            Some(range) => Some(range.maximum),
+            None => None,
+        }
     }
 
     /// Optional observed input bound.
     pub const fn observed(&self) -> Option<usize> {
-        self.observed
+        match self.range {
+            Some(range) => Some(range.observed),
+            None => None,
+        }
     }
 
     /// Exact named constraint owned by a command refusal.
@@ -198,9 +212,7 @@ impl RecordReceiptError {
             context: context.into(),
             field: None,
             id: None,
-            minimum: None,
-            maximum: None,
-            observed: None,
+            range: None,
             constraint: None,
             source: None,
         }
@@ -220,9 +232,11 @@ impl RecordReceiptError {
         observed: usize,
     ) -> Self {
         let mut error = Self::invalid(context, field);
-        error.minimum = Some(minimum);
-        error.maximum = Some(maximum);
-        error.observed = Some(observed);
+        error.range = Some(InputRange {
+            minimum,
+            maximum,
+            observed,
+        });
         error
     }
 
@@ -261,9 +275,7 @@ impl RecordReceiptError {
             context: context.into(),
             field: None,
             id: None,
-            minimum: None,
-            maximum: None,
-            observed: None,
+            range: None,
             constraint: None,
             source: Some(Box::new(source)),
         }
@@ -280,9 +292,7 @@ impl RecordReceiptError {
             context: context.into(),
             field: None,
             id: None,
-            minimum: None,
-            maximum: None,
-            observed: None,
+            range: None,
             constraint: Some(constraint),
             source: Some(Box::new(source)),
         }

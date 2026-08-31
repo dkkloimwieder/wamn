@@ -17,6 +17,10 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "crates/platform/component-policy/src/lib.rs",
     ),
     (
+        "wamn-component-virtualizer",
+        "crates/platform/component-virtualizer/src/main.rs",
+    ),
+    (
         "wamn-control-provision",
         "crates/control/provision/src/lib.rs",
     ),
@@ -86,6 +90,30 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "wamn-receiving-data-access",
         "components/data/receiving-data/src/lib.rs",
     ),
+    (
+        "receiving-purchase-order-get",
+        "components/application/receiving/purchase_order_get/src/lib.rs",
+    ),
+    (
+        "receiving-purchase-order-query",
+        "components/application/receiving/purchase_order_query/src/lib.rs",
+    ),
+    (
+        "receiving-purchase-order-update",
+        "components/application/receiving/purchase_order_update/src/lib.rs",
+    ),
+    (
+        "receiving-receipt-get",
+        "components/application/receiving/receipt_get/src/lib.rs",
+    ),
+    (
+        "receiving-receipt-query",
+        "components/application/receiving/receipt_query/src/lib.rs",
+    ),
+    (
+        "receiving-receiving-record-receipt",
+        "components/application/receiving/receiving_record_receipt/src/lib.rs",
+    ),
     ("busyloop", "components/fixtures/busyloop/src/main.rs"),
     (
         "connection-http-standard",
@@ -95,6 +123,10 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     (
         "sqlx-command",
         "components/fixtures/sqlx-command/src/main.rs",
+    ),
+    (
+        "std-virtualization-probe",
+        "components/fixtures/std-virtualization-probe/src/lib.rs",
     ),
     ("http-request", "components/no-std/http-request/src/lib.rs"),
     ("transform", "components/no-std/transform/src/lib.rs"),

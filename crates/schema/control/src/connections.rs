@@ -64,7 +64,7 @@ impl ComponentConnectionRequirement {
 
     /// SHA-256 of [`Self::canonical_bytes`].
     pub fn requirement_hash(&self) -> String {
-        hex_sha256(&self.canonical_bytes())
+        prefixed_sha256(&self.canonical_bytes())
     }
 }
 
@@ -83,7 +83,7 @@ impl ConnectionGenerationDefinition {
     /// Stable hash stored beside the immutable definition.
     pub fn definition_hash(&self) -> String {
         let bytes = serde_json::to_vec(self).expect("connection generation definition serializes");
-        hex_sha256(&bytes)
+        prefixed_sha256(&bytes)
     }
 }
 
@@ -185,9 +185,11 @@ pub fn insert_component_connection_binding_sql() -> &'static str {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
+fn prefixed_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let hex = digest
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .collect::<String>();
+    format!("sha256:{hex}")
 }

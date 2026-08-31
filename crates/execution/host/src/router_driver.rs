@@ -1442,7 +1442,10 @@ impl NodeInstance {
             .with_plugins(plugins)
             .build();
         let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
-        store.set_epoch_deadline(1);
+        // Instantiation executes guest start code, so it needs the same bounded
+        // ceiling as a call. One tick is only 10 ms and interrupts valid
+        // virtualized std components before their instance is ready.
+        store.set_epoch_deadline(deadline_ticks(bounded_node_deadline_ms(None)));
         let compiled = workload.component().clone();
         let node = bindings::Node::instantiate_async(&mut store, &compiled, workload.linker())
             .await

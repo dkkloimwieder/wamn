@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 const PACKAGE_DECLARATION: &str = "package wamn:node@0.1.0;";
 const AUTHORITY_COPY: &str = "crates/execution/router/wit/package.wit";
 
-const EXPECTED_COPIES: [&str; 3] = [
+const EXPECTED_COPIES: [&str; 4] = [
+    "components/data/receiving-data/wit/deps/wamn-node/package.wit",
     "components/no-std/http-request/wit/deps/wamn-node/package.wit",
     "components/no-std/transform/wit/deps/wamn-node/package.wit",
     AUTHORITY_COPY,

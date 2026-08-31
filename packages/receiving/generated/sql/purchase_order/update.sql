@@ -20,6 +20,7 @@ SELECT
         WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'
         ELSE 'updated'
     END AS outcome,
+    (SELECT target.row_version FROM target) AS observed_row_version,
     updated.created_at,
     updated.id,
     updated.purchase_order_number,

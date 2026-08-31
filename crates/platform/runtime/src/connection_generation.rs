@@ -261,10 +261,10 @@ where
     })
 }
 
-/// Compute the canonical SHA-256 identity of a staged JSON definition.
+/// Compute the canonical `sha256:<hex>` identity of a staged JSON definition.
 pub fn definition_hash(definition: &Value) -> String {
     let bytes = serde_json::to_vec(definition).expect("JSON values always serialize");
-    hex::encode(Sha256::digest(bytes))
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 fn validate_contract(

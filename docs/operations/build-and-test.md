@@ -456,7 +456,8 @@ panic-to-typed-refusal mapping through the production router/ingress path.
 set -euo pipefail
 tools/build-components proof
 
-STD_VIRT_DIRECTORY=components/target/virtualized/std-empty-environment
+STD_VIRT_REPOSITORY_ROOT="$(pwd -P)"
+STD_VIRT_DIRECTORY="$STD_VIRT_REPOSITORY_ROOT/components/target/virtualized/std-empty-environment"
 mkdir -p "$STD_VIRT_DIRECTORY"
 cargo run -p wamn-component-virtualizer --locked --offline -- \
   --input components/target/wasm32-wasip2/debug/std_virtualization_probe.wasm \
@@ -487,7 +488,7 @@ WAMN_STD_VIRTUALIZATION_SENTINEL=must-not-cross \
 WAMN_STD_VIRTUALIZATION_PG_URL="$STD_VIRT_PG_URL" \
 WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE="127.0.0.1:${STD_VIRT_REGISTRY_PORT}/wamn/std-proof" \
 WAMN_STD_VIRTUALIZATION_COMPONENT_WASM="$STD_VIRT_DIRECTORY/std_virtualization_probe.wasm" \
-WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM=components/no-std/target/wasm32-wasip2/debug/http_route.wasm \
+WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM="$STD_VIRT_REPOSITORY_ROOT/components/target/wasm32-wasip2/debug/http_route.wasm" \
   cargo test -p wamn-proof-integration --lib --locked --offline \
   virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal \
   -- --ignored --exact --nocapture --test-threads=1

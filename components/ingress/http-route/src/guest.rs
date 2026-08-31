@@ -99,7 +99,7 @@ impl Backend for GuestBackend {
             }),
             parent_causation: None,
         };
-        delivery::deliver(&request)
+        delivery::deliver(request)
             .map(convert_delivery_outcome)
             .map_err(convert_delivery_error)
     }

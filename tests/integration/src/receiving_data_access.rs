@@ -86,9 +86,25 @@ mod tests {
 
     #[derive(Debug)]
     enum CommandAttemptError {
-        Domain(&'static str),
+        Domain(DomainRefusal),
         Database(tokio_postgres::Error),
         Internal(String),
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct DomainRefusal {
+        code: &'static str,
+        id: Option<Uuid>,
+    }
+
+    impl DomainRefusal {
+        const fn new(code: &'static str) -> Self {
+            Self { code, id: None }
+        }
+
+        const fn with_id(code: &'static str, id: Option<Uuid>) -> Self {
+            Self { code, id }
+        }
     }
 
     #[derive(Debug, Eq, PartialEq)]
@@ -369,7 +385,7 @@ mod tests {
 
         let committed = execute_record_receipt(client, &base)
             .await?
-            .map_err(anyhow::Error::msg)?;
+            .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
         ensure!(
             committed.purchase_order_id == purchase_order_id
                 && committed.purchase_order_status == "open"
@@ -391,7 +407,7 @@ mod tests {
         reordered.line.reverse();
         let replay = execute_record_receipt(client, &reordered)
             .await?
-            .map_err(anyhow::Error::msg)?;
+            .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
         ensure!(replay == committed, "immutable replay changed its result");
         ensure!(
             command_snapshot(client, first_line_id, second_line_id, purchase_order_id).await?
@@ -446,7 +462,7 @@ mod tests {
         };
         let completed = execute_record_receipt(client, &completion)
             .await?
-            .map_err(anyhow::Error::msg)?;
+            .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
         ensure!(
             completed.purchase_order_status == "complete" && completed.row_version == 3,
             "final receipt did not complete the purchase_order"
@@ -455,7 +471,7 @@ mod tests {
             command_snapshot(client, first_line_id, second_line_id, purchase_order_id).await?;
         let late_replay = execute_record_receipt(client, &reordered)
             .await?
-            .map_err(anyhow::Error::msg)?;
+            .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
         ensure!(
             late_replay == committed,
             "replay after a later receipt did not preserve the original result"
@@ -607,7 +623,7 @@ mod tests {
     async fn execute_record_receipt(
         client: &mut Client,
         command: &ReceiptCommand,
-    ) -> Result<std::result::Result<ReceiptCommandResult, &'static str>> {
+    ) -> Result<std::result::Result<ReceiptCommandResult, DomainRefusal>> {
         let transaction = client
             .transaction()
             .await
@@ -620,12 +636,12 @@ mod tests {
                     .context("commit exact record_receipt transaction")?;
                 Ok(Ok(result))
             }
-            Err(CommandAttemptError::Domain(literal)) => {
+            Err(CommandAttemptError::Domain(refusal)) => {
                 transaction
                     .rollback()
                     .await
                     .context("rollback refused record_receipt transaction")?;
-                Ok(Err(literal))
+                Ok(Err(refusal))
             }
             Err(CommandAttemptError::Database(source)) => {
                 transaction
@@ -685,9 +701,13 @@ mod tests {
             .query_opt(LOCK_PURCHASE_ORDER_SQL, &[&command.purchase_order_id])
             .await
             .map_err(CommandAttemptError::Database)?
-            .ok_or(CommandAttemptError::Domain("purchase_order_not_found"))?;
+            .ok_or_else(|| {
+                CommandAttemptError::Domain(DomainRefusal::new("purchase_order_not_found"))
+            })?;
         if purchase_order.get::<_, String>("status") != "open" {
-            return Err(CommandAttemptError::Domain("purchase_order_not_open"));
+            return Err(CommandAttemptError::Domain(DomainRefusal::new(
+                "purchase_order_not_open",
+            )));
         }
         let validation = transaction
             .query_one(
@@ -702,7 +722,7 @@ mod tests {
                 CommandAttemptError::Internal("line validator returned null".to_owned())
             })?;
         if outcome != "ready" {
-            return Err(CommandAttemptError::Domain(match outcome.as_str() {
+            let code = match outcome.as_str() {
                 "purchase_order_line_not_found" => "purchase_order_line_not_found",
                 "purchase_order_line_mismatch" => "purchase_order_line_mismatch",
                 "location_not_found" => "location_not_found",
@@ -712,7 +732,11 @@ mod tests {
                         "undeclared line validation outcome {outcome}"
                     )));
                 }
-            }));
+            };
+            return Err(CommandAttemptError::Domain(DomainRefusal::with_id(
+                code,
+                validation.get("id"),
+            )));
         }
         let occurred_at = DateTime::parse_from_rfc3339(&command.occurred_at)
             .map_err(|error| CommandAttemptError::Internal(error.to_string()))?
@@ -736,7 +760,9 @@ mod tests {
                     && database.constraint()
                         == Some("receipt_purchase_order_id_receipt_reference_key")
             }) {
-                return Err(CommandAttemptError::Domain("receipt_reference_conflict"));
+                return Err(CommandAttemptError::Domain(DomainRefusal::new(
+                    "receipt_reference_conflict",
+                )));
             }
             return Err(CommandAttemptError::Database(source));
         }
@@ -801,7 +827,9 @@ mod tests {
         canonical_command: &[u8],
     ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
         if row.get::<_, Vec<u8>>("canonical_command") != canonical_command {
-            return Err(CommandAttemptError::Domain("idempotency_conflict"));
+            return Err(CommandAttemptError::Domain(DomainRefusal::new(
+                "idempotency_conflict",
+            )));
         }
         Ok(ReceiptCommandResult {
             receipt_id: row.get("receipt_id"),
@@ -857,9 +885,22 @@ mod tests {
             Uuid::from_u128(0x400),
         )
         .await?;
+        let expected_id = match expected {
+            "purchase_order_line_not_found"
+            | "purchase_order_line_mismatch"
+            | "quantity_exceeds_remaining" => {
+                command.line.first().map(|line| line.purchase_order_line_id)
+            }
+            "location_not_found" => command.line.first().map(|line| line.location_id),
+            _ => None,
+        };
         let actual = execute_record_receipt(client, &command).await?;
         ensure!(
-            actual == Err(expected),
+            actual
+                == Err(DomainRefusal {
+                    code: expected,
+                    id: expected_id,
+                }),
             "expected {expected}, found {actual:?}"
         );
         let after = command_snapshot(

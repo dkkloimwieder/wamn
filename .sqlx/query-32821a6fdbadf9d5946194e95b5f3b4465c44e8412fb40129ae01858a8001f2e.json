@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH requested AS (\n    SELECT\n        purchase_order_line_id,\n        quantity::numeric AS quantity,\n        location_id\n    FROM jsonb_to_recordset($2::jsonb) AS input (\n        purchase_order_line_id uuid,\n        quantity text,\n        location_id uuid\n    )\n),\nlocked AS MATERIALIZED (\n    SELECT\n        purchase_order_line.id,\n        purchase_order_line.purchase_order_id,\n        purchase_order_line.ordered_quantity,\n        purchase_order_line.received_quantity\n    FROM purchase_order_line\n    JOIN requested\n        ON requested.purchase_order_line_id = purchase_order_line.id\n    ORDER BY purchase_order_line.id\n    FOR UPDATE OF purchase_order_line\n),\nlocked_location AS MATERIALIZED (\n    SELECT location.id\n    FROM location\n    WHERE location.id IN (\n        SELECT requested.location_id\n        FROM requested\n    )\n    ORDER BY location.id\n    FOR KEY SHARE OF location\n),\nfact AS (\n    SELECT\n        requested.purchase_order_line_id,\n        requested.quantity,\n        locked.id AS locked_id,\n        locked.purchase_order_id AS line_purchase_order_id,\n        locked.ordered_quantity,\n        locked.received_quantity,\n        requested.location_id AS requested_location_id,\n        locked_location.id AS locked_location_id\n    FROM requested\n    LEFT JOIN locked\n        ON locked.id = requested.purchase_order_line_id\n    LEFT JOIN locked_location\n        ON locked_location.id = requested.location_id\n),\nclassified AS (\n    SELECT\n        CASE\n            WHEN locked_id IS NULL\n                THEN 'purchase_order_line_not_found'\n            WHEN line_purchase_order_id <> $1\n                THEN 'purchase_order_line_mismatch'\n            WHEN locked_location_id IS NULL\n                THEN 'location_not_found'\n            WHEN quantity > ordered_quantity - received_quantity\n                THEN 'quantity_exceeds_remaining'\n            ELSE NULL\n        END AS outcome,\n        CASE\n            WHEN locked_id IS NULL\n                THEN purchase_order_line_id\n            WHEN line_purchase_order_id <> $1\n                THEN purchase_order_line_id\n            WHEN locked_location_id IS NULL\n                THEN requested_location_id\n            WHEN quantity > ordered_quantity - received_quantity\n                THEN purchase_order_line_id\n            ELSE NULL\n        END AS id\n    FROM fact\n),\nviolation AS (\n    SELECT outcome, id\n    FROM classified\n    WHERE outcome IS NOT NULL\n    ORDER BY\n        CASE outcome\n            WHEN 'purchase_order_line_not_found' THEN 1\n            WHEN 'purchase_order_line_mismatch' THEN 2\n            WHEN 'location_not_found' THEN 3\n            WHEN 'quantity_exceeds_remaining' THEN 4\n        END,\n        id\n    LIMIT 1\n)\nSELECT\n    COALESCE(violation.outcome, 'ready') AS outcome,\n    violation.id\nFROM (SELECT 1) AS singleton\nLEFT JOIN violation ON TRUE;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      null,
+      true
+    ]
+  },
+  "hash": "32821a6fdbadf9d5946194e95b5f3b4465c44e8412fb40129ae01858a8001f2e"
+}

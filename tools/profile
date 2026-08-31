@@ -85,7 +85,9 @@ WAMN_PLAN="$(
     | select($defaults | length == 15 and length == (unique | length))
     | select($members | length == $contract.source_inventory.root_workspace.package_count)
     | select($members | length == (unique | length))
-    | select($all_additions | length == 13 and length == (unique | length))
+    | select($all_additions
+             | length == ($profiles.expected_package_counts.deploy - ($defaults | length))
+               and length == (unique | length))
     | select(([$all_additions[] as $addition
                | select($defaults | index($addition) != null)] | length) == 0)
     | select($packages | length == $profiles.expected_package_counts[$profile])

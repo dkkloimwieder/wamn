@@ -622,7 +622,12 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             .arg(profile)
             .output()
             .unwrap_or_else(|error| panic!("failed to execute profile {profile}: {error}"));
-        assert_eq!(output.status.code(), Some(23), "profile {profile}");
+        assert_eq!(
+            output.status.code(),
+            Some(23),
+            "profile {profile}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         let packages = root_profile_packages(&contract, &root_metadata, profile);
         let root_manifest = root.join(ROOT_MANIFEST);
@@ -661,7 +666,12 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             .unwrap_or_else(|error| {
                 panic!("failed to execute component profile {profile}: {error}")
             });
-        assert_eq!(output.status.code(), Some(23), "component {profile}");
+        assert_eq!(
+            output.status.code(),
+            Some(23),
+            "component {profile}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         // One metadata read per component workspace, then one build leg per
         // workspace that owns a selected package. Every leg runs: the second
@@ -759,6 +769,25 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         expected_inputs.insert(input);
     }
 
+    let owned_output_directories = artifacts
+        .iter()
+        .map(|artifact| {
+            let workspace_manifest = artifact["workspace_manifest"]
+                .as_str()
+                .expect("workspace manifest must be a string");
+            target_directories[workspace_manifest].join(output_subdirectory)
+        })
+        .collect::<BTreeSet<_>>();
+    let stale_outputs = owned_output_directories
+        .iter()
+        .map(|directory| directory.join("undeclared-stale.wasm"))
+        .collect::<Vec<_>>();
+    for stale in &stale_outputs {
+        fs::create_dir_all(stale.parent().expect("stale output must have a parent"))
+            .expect("failed to create owned virtualization output directory");
+        fs::write(stale, "stale").expect("failed to seed undeclared stale output");
+    }
+
     let output = Command::new(root.join(COMPONENT_TOOL))
         .current_dir(&scratch)
         .env("CARGO", &fake_cargo)
@@ -818,6 +847,10 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         actual_inputs.insert(input);
     }
     assert_eq!(actual_inputs, expected_inputs);
+    assert!(
+        stale_outputs.iter().all(|path| !path.exists()),
+        "successful virtualization retained an undeclared stale output"
+    );
 
     for artifact in artifacts {
         let package = artifact["package"]
@@ -862,9 +895,9 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .output()
         .expect("failed to execute refusing component virtualization profile");
     assert_eq!(failed.status.code(), Some(29));
-    assert_eq!(
-        fs::read_to_string(&first_output).expect("previous normalized component must remain"),
-        "previous-normalized"
+    assert!(
+        !first_output.exists(),
+        "failed virtualization retained a stale normalized artifact"
     );
     let first_file = first_output
         .file_name()
@@ -881,9 +914,9 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .all(|entry| {
             !entry
                 .expect("normalized component directory entry must be readable")
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(&partial_prefix)
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&partial_prefix)
         }),
         "failed virtualization must remove its partial output"
     );

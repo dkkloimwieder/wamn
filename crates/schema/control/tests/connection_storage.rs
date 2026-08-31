@@ -18,7 +18,8 @@ fn component_requirement_identity_is_environment_independent() {
     let requirement = requirement();
     assert_eq!(requirement.component_digest(), "sha256:component-a");
     assert_eq!(requirement.store_alias(), "erp");
-    assert_eq!(requirement.requirement_hash().len(), 64);
+    assert_eq!(requirement.requirement_hash().len(), 71);
+    assert!(requirement.requirement_hash().starts_with("sha256:"));
     for forbidden in ["prod", "credential-secret", "instance-id"] {
         assert!(
             !requirement
@@ -40,6 +41,7 @@ fn generation_hash_covers_every_non_secret_field() {
     };
     let mut changed = baseline.clone();
     changed.proxy_reference = None;
+    assert!(baseline.definition_hash().starts_with("sha256:"));
     assert_ne!(baseline.definition_hash(), changed.definition_hash());
 }
 

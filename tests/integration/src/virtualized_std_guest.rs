@@ -8,11 +8,13 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+    use std::time::Duration;
 
     use anyhow::{Context as _, ensure};
     use bytes::Bytes;
     use http_body_util::{BodyExt as _, Full};
     use hyper::{Method, Request, StatusCode};
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use wamn_execution_host::{
         ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriverRequest, WiringResolution,
     };
@@ -64,6 +66,35 @@ mod tests {
             .map(wamn_component_policy::import_pkg)
             .map(str::to_owned)
             .collect())
+    }
+
+    async fn connection_origin() -> anyhow::Result<(String, tokio::task::JoinHandle<Vec<u8>>)> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("bind the connection-proof origin")?;
+        let address = listener
+            .local_addr()
+            .context("read the connection-proof origin address")?;
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("the probe connects");
+            let mut head = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                let read = socket.read(&mut byte).await.expect("read request head");
+                assert_ne!(read, 0, "the probe closed before finishing its head");
+                head.push(byte[0]);
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\
+                      connection: close\r\n\r\n",
+                )
+                .await
+                .expect("answer the connection probe");
+            socket.flush().await.expect("flush the connection answer");
+            head
+        });
+        Ok((format!("http://{address}"), served))
     }
 
     #[test]
@@ -132,9 +163,10 @@ mod tests {
         let component = Component::new(raw, &component_bytes)
             .map_err(|error| anyhow::anyhow!("compile flow-http: {error}"))?;
         let mut linker = Linker::new(raw);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker).context("link WASI into flow-http")?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
-            .context("link wasi:http into flow-http")?;
+            .map_err(|error| anyhow::anyhow!("link wasi:http into flow-http: {error}"))?;
         let loopback = Arc::new(std::sync::Mutex::new(
             wash_runtime::sockets::loopback::Network::default(),
         ));
@@ -176,7 +208,7 @@ mod tests {
         let compiled = workload.component().clone();
         let proxy = Proxy::instantiate_async(&mut store, &compiled, workload.linker())
             .await
-            .context("instantiate the shipped flow-http guest")?;
+            .map_err(|error| anyhow::anyhow!("instantiate the shipped flow-http guest: {error}"))?;
 
         let body = Full::new(body).map_err(|never| -> ErrorCode { match never {} });
         let request = Request::builder()
@@ -238,14 +270,13 @@ mod tests {
             "virtualized std probe imports {packages:?}, not the exact four-package profile"
         );
 
+        let (upstream_base_url, served) = connection_origin().await?;
         let route = trusted_http_route::build(&RouteOptions {
             database_url,
             artifact_base,
             component_wasm,
-            // The probe retains the declared connection import to exercise the
-            // same admitted std profile, but never calls it.
-            upstream_base_url: "http://127.0.0.1:9".to_owned(),
-            path_and_query: "/unused".to_owned(),
+            upstream_base_url,
+            path_and_query: "/connection-proof".to_owned(),
         })
         .await
         .context("build the released virtualized probe route")?;
@@ -275,6 +306,38 @@ mod tests {
         ensure!(
             delivery.outcome.result["sentinel-visible"] == false,
             "a virtualized std guest observed {SENTINEL_KEY} from its host process"
+        );
+
+        let connection = route
+            .driver
+            .execute(RouterDriverRequest {
+                tenant_id: TENANT.to_owned(),
+                package_id: PACKAGE.to_owned(),
+                environment: ENVIRONMENT.to_owned(),
+                wiring_id: WIRING_ID.to_owned(),
+                wiring_version: WIRING_VERSION,
+                delivery_id: "virtualized-connection-proof".to_owned(),
+                payload: serde_json::json!({"proof": "connection"}),
+                caller_attached: true,
+                resolution: WiringResolution::Active,
+                caller: None,
+                traceparent: None,
+                tracestate: None,
+            })
+            .await
+            .context("exercise the probe's admitted connection import")?;
+        ensure!(
+            connection.outcome.result["connection-status"] == 204,
+            "the virtualized probe did not observe the loopback origin's 204 response"
+        );
+        let request_head = tokio::time::timeout(Duration::from_secs(10), served)
+            .await
+            .context("the virtualized probe did not reach its loopback origin")?
+            .context("the loopback origin task failed")?;
+        ensure!(
+            request_head.starts_with(b"POST /connection-proof HTTP/1.1\r\n"),
+            "the connection proof reached the wrong operation: {}",
+            String::from_utf8_lossy(&request_head)
         );
 
         route

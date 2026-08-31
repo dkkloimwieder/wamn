@@ -14,6 +14,7 @@ pub struct PurchaseOrderRow {
 #[derive(Debug, sqlx::FromRow)]
 pub struct PurchaseOrderUpdateRow {
     pub outcome: Option<String>,
+    pub observed_row_version: Option<i64>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub id: Option<uuid::Uuid>,
     pub purchase_order_number: Option<String>,

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen 0.44 emits Vec::from_raw_parts with equal length and capacity"
+)]
+
 //! One-operation Receiving artifact.
 
 async fn invoke_operation(

@@ -17,6 +17,7 @@ pub struct PurchaseOrderRow {
 #[derive(Debug, sqlx::FromRow)]
 pub struct PurchaseOrderUpdateRow {
     pub outcome: Option<String>,
+    pub observed_row_version: Option<i64>,
     pub created_at: Option<wamn_postgres_sqlx::TimestampTz>,
     pub id: Option<wamn_postgres_sqlx::Uuid>,
     pub purchase_order_number: Option<String>,

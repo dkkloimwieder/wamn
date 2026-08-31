@@ -17,4 +17,3 @@ bench = false
 
 [lints]
 workspace = true
-

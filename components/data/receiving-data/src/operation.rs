@@ -628,7 +628,7 @@ fn serialized<T: Serialize>(output: &[ItemResult<T>]) -> String {
 pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
     let mut connection = WamnConnection::new();
-    let mut output = Vec::with_capacity(items.len());
+    let mut output: Vec<ItemResult<PurchaseOrderValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<GetInput>(&item) {
             Ok(parsed) => parsed,
@@ -656,7 +656,8 @@ pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> 
 pub async fn purchase_order_query(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
     let mut connection = WamnConnection::new();
-    let mut output = Vec::with_capacity(items.len());
+    let mut output: Vec<ItemResult<PageValue<PurchaseOrderValue>>> =
+        Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<PurchaseOrderQueryInput>(&item) {
             Ok(parsed) => purchase_order::QueryInput::from(parsed),
@@ -684,7 +685,7 @@ pub async fn purchase_order_query(input: &str) -> Result<String, InvocationError
 pub async fn purchase_order_update(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
     let mut connection = WamnConnection::new();
-    let mut output = Vec::with_capacity(items.len());
+    let mut output: Vec<ItemResult<PurchaseOrderValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<PurchaseOrderUpdateInput>(&item) {
             Ok(parsed) => parsed,
@@ -693,15 +694,12 @@ pub async fn purchase_order_update(input: &str) -> Result<String, InvocationErro
                 continue;
             }
         };
-        let expected_row_version = match parse_int64(&parsed.expected_row_version) {
-            Ok(value) => value,
-            Err(()) => {
-                output.push(refused(
-                    item.request_id,
-                    invalid_input("expected_row_version"),
-                ));
-                continue;
-            }
+        let Ok(expected_row_version) = parse_int64(&parsed.expected_row_version) else {
+            output.push(refused(
+                item.request_id,
+                invalid_input("expected_row_version"),
+            ));
+            continue;
         };
         let result = purchase_order::update(
             &mut connection,
@@ -733,7 +731,7 @@ pub async fn purchase_order_update(input: &str) -> Result<String, InvocationErro
 pub async fn receipt_get(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
     let mut connection = WamnConnection::new();
-    let mut output = Vec::with_capacity(items.len());
+    let mut output: Vec<ItemResult<ReceiptValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<GetInput>(&item) {
             Ok(parsed) => parsed,
@@ -761,7 +759,7 @@ pub async fn receipt_get(input: &str) -> Result<String, InvocationError> {
 pub async fn receipt_query(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
     let mut connection = WamnConnection::new();
-    let mut output = Vec::with_capacity(items.len());
+    let mut output: Vec<ItemResult<PageValue<ReceiptValue>>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<ReceiptQueryInput>(&item) {
             Ok(parsed) => receipt::QueryInput::from(parsed),
@@ -789,7 +787,7 @@ pub async fn receipt_query(input: &str) -> Result<String, InvocationError> {
 pub async fn receiving_record_receipt(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
     let mut connection = WamnConnection::new();
-    let mut output = Vec::with_capacity(items.len());
+    let mut output: Vec<ItemResult<RecordReceiptResultValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<RecordReceiptInput>(&item) {
             Ok(parsed) => parsed,

@@ -243,6 +243,24 @@ readonly WAMN_VIRTUALIZER_MANIFEST="$WAMN_REPOSITORY_ROOT/$(
 readonly WAMN_VIRTUALIZER_PACKAGE="$(jq -r '.tool.package' <<<"$WAMN_VIRTUALIZATION_PLAN")"
 readonly WAMN_VIRTUALIZATION_COUNT="$(jq -r '.artifacts | length' <<<"$WAMN_VIRTUALIZATION_PLAN")"
 
+# The profile directory is wholly owned output. Clear it after every raw build
+# succeeds and before emitting any current artifact, so a removed allowlist row
+# cannot survive as a stale component and satisfy a later byte-level proof.
+declare -A WAMN_VIRTUALIZATION_DIRECTORIES=()
+while IFS= read -r output; do
+  directory="$(dirname -- "$output")"
+  [[ -n "$directory" && "$directory" != / \
+     && "$directory" == */virtualized/"$WAMN_VIRTUALIZATION_PROFILE" ]] || {
+    wamn_fail 65 "unsafe virtualization output directory: $directory"
+  }
+  WAMN_VIRTUALIZATION_DIRECTORIES["$directory"]=1
+done < <(jq -r '.artifacts[].output' <<<"$WAMN_VIRTUALIZATION_PLAN")
+readonly WAMN_VIRTUALIZATION_DIRECTORIES
+for directory in "${!WAMN_VIRTUALIZATION_DIRECTORIES[@]}"; do
+  rm -rf -- "$directory"
+  mkdir -p -- "$directory"
+done
+
 WAMN_PENDING_OUTPUT=''
 wamn_cleanup_partial_output() {
   if [[ -n "$WAMN_PENDING_OUTPUT" ]]; then
