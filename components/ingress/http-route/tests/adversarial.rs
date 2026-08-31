@@ -33,8 +33,8 @@ struct FakeBackend {
     auth: Result<Option<String>, AuthRejection>,
     delivery: Result<DeliveryOutcome, DeliveryError>,
     fault: Fault,
-    auth_policies: Vec<String>,
-    deliveries: Vec<DeliveryRequest>,
+    authenticated_attachments: Vec<String>,
+    deliveries: Vec<DeliveryRequest<String>>,
     next_delivery_id: u64,
     permit_available: bool,
     permits: Arc<AtomicUsize>,
@@ -48,7 +48,7 @@ impl FakeBackend {
             auth: Ok(Some(AUTHENTICATED_USER_ID.to_string())),
             delivery: Ok(DeliveryOutcome::Respond(r#"{"ok":true}"#.to_string())),
             fault: Fault::None,
-            auth_policies: Vec::new(),
+            authenticated_attachments: Vec::new(),
             deliveries: Vec::new(),
             next_delivery_id: 1,
             permit_available: true,
@@ -60,6 +60,7 @@ impl FakeBackend {
 
 impl Backend for FakeBackend {
     type RoutePermit = TestPermit;
+    type AuthenticatedCaller = String;
 
     fn routes(
         &mut self,
@@ -73,10 +74,11 @@ impl Backend for FakeBackend {
 
     fn authenticate(
         &mut self,
-        policy: &str,
+        attachment_id: &str,
         _headers: &[Header],
     ) -> Result<Option<String>, AuthRejection> {
-        self.auth_policies.push(policy.to_string());
+        self.authenticated_attachments
+            .push(attachment_id.to_string());
         self.auth.clone()
     }
 
@@ -104,7 +106,10 @@ impl Backend for FakeBackend {
         format!("{id:032x}")
     }
 
-    fn deliver(&mut self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError> {
+    fn deliver(
+        &mut self,
+        request: DeliveryRequest<Self::AuthenticatedCaller>,
+    ) -> Result<DeliveryOutcome, DeliveryError> {
         self.deliveries.push(request);
         if self.fault == Fault::Deliver {
             return Err(DeliveryError::ExecutionFailed);
@@ -145,7 +150,6 @@ fn route() -> RouteDefinition {
         host: "api.example.test".to_string(),
         path: "/receipts/{receipt}".to_string(),
         method: "POST".to_string(),
-        auth_policy: "jwt:receipts".to_string(),
         mappings: vec![
             Mapping {
                 from: MappingSource::Body,
@@ -239,12 +243,19 @@ fn error_code(body: &[u8]) -> String {
         .to_string()
 }
 
+fn error_operation(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(body)
+        .expect("JSON error")
+        .pointer("/error/operation")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
 #[test]
-fn partial_body_selected_policy_mapping_and_attachment_delivery() {
+fn partial_body_selected_attachment_mapping_and_delivery() {
     let mut wildcard = route();
     wildcard.attachment_id = "wildcard".to_string();
     wildcard.host = "*".to_string();
-    wildcard.auth_policy = "wrong-policy".to_string();
     let mut backend = FakeBackend::new(route());
     backend.routes.insert(0, wildcard);
     let mut body = Chunks::json(&[br#"{"am"#, br#"ount":12.50}"#]);
@@ -253,25 +264,12 @@ fn partial_body_selected_policy_mapping_and_attachment_delivery() {
 
     assert_eq!(output.status, 200);
     assert_eq!(output.body, br#"{"ok":true}"#);
-    assert_eq!(backend.auth_policies, ["jwt:receipts"]);
+    assert_eq!(backend.authenticated_attachments, ["attachment-a"]);
     assert_eq!(body.reads, 3);
     let request = &backend.deliveries[0];
     assert_eq!(request.attachment_id, "attachment-a");
     assert_eq!(request.delivery_id.len(), 32);
-    assert_eq!(
-        request
-            .caller
-            .as_ref()
-            .and_then(|caller| caller.user_id.as_deref()),
-        Some(AUTHENTICATED_USER_ID)
-    );
-    assert_eq!(
-        request
-            .caller
-            .as_ref()
-            .and_then(|caller| caller.role.as_deref()),
-        None
-    );
+    assert_eq!(request.caller.as_deref(), Some(AUTHENTICATED_USER_ID));
     assert_eq!(
         request
             .trace
@@ -292,34 +290,32 @@ fn partial_body_selected_policy_mapping_and_attachment_delivery() {
 
 #[test]
 fn explicit_anonymous_admission_delivers_without_a_caller_identity() {
-    let mut anonymous = route();
-    anonymous.auth_policy = r#"{"mode":"none"}"#.to_string();
+    let anonymous = route();
     let mut backend = FakeBackend::new(anonymous);
     backend.auth = Ok(None);
 
     let output = request(&mut backend, &head(), br#"{"amount":1}"#);
 
     assert_eq!(output.status, 200);
-    assert_eq!(backend.auth_policies, [r#"{"mode":"none"}"#]);
+    assert_eq!(backend.authenticated_attachments, ["attachment-a"]);
     assert_eq!(backend.deliveries.len(), 1);
     assert_eq!(backend.deliveries[0].caller, None);
 }
 
 #[test]
-fn a_refused_anonymous_policy_never_reaches_delivery() {
-    let mut anonymous = route();
-    anonymous.auth_policy = r#"{"mode":"none"}"#.to_string();
+fn an_authentication_refusal_never_reaches_delivery() {
+    let anonymous = route();
     let mut backend = FakeBackend::new(anonymous);
     backend.auth = Err(AuthRejection {
-        status: 501,
-        code: "auth-policy-unsupported".to_string(),
+        status: 401,
+        code: "unauthorized".to_string(),
     });
     let mut body = Chunks::json(&[br#"{"amount":1}"#]);
 
     let output = handle_request(&mut backend, &mut body, &head(), limits());
 
-    assert_eq!(output.status, 501);
-    assert_eq!(error_code(&output.body), "auth-policy-unsupported");
+    assert_eq!(output.status, 401);
+    assert_eq!(output.body, br#"{"error":{"code":"unauthorized"}}"#);
     assert_eq!(body.reads, 0, "authorization precedes body reads");
     assert!(backend.deliveries.is_empty());
 }
@@ -422,8 +418,8 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
             br#"{"amount":1}"#.as_slice(),
             1024,
             Some(AuthRejection {
-                status: 403,
-                code: "forbidden".to_string(),
+                status: 401,
+                code: "unauthorized".to_string(),
             }),
         ),
     ];
@@ -438,7 +434,7 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
 
         let output = handle_request(&mut backend, &mut body, &head(), limits());
 
-        assert!(matches!(output.status, 400 | 403 | 413), "{name}");
+        assert!(matches!(output.status, 400 | 401 | 413), "{name}");
         assert!(
             backend.deliveries.is_empty(),
             "{name} unexpectedly delivered"
@@ -553,6 +549,40 @@ fn every_bridge_refusal_has_a_bounded_http_answer() {
             (status, code.to_string())
         );
     }
+}
+
+#[test]
+fn missing_exact_operation_is_the_only_discoverable_forbidden_refusal() {
+    const OPERATION: &str = "wamn_receiving@1.0.0::receipt.get";
+    let mut backend = FakeBackend::new(route());
+    backend.delivery = Err(DeliveryError::PermissionDenied {
+        operation: OPERATION.to_string(),
+    });
+
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+
+    assert_eq!(output.status, 403);
+    assert_eq!(error_code(&output.body), "permission-denied");
+    assert_eq!(error_operation(&output.body).as_deref(), Some(OPERATION));
+    assert_eq!(backend.deliveries.len(), 1);
+}
+
+#[test]
+fn authentication_backend_outage_has_one_generic_service_refusal() {
+    let mut backend = FakeBackend::new(route());
+    backend.auth = Err(AuthRejection {
+        status: 503,
+        code: "authentication-unavailable".to_string(),
+    });
+
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+
+    assert_eq!(output.status, 503);
+    assert_eq!(
+        output.body,
+        br#"{"error":{"code":"authentication-unavailable"}}"#
+    );
+    assert!(backend.deliveries.is_empty());
 }
 
 #[test]

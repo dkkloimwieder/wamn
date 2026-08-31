@@ -204,8 +204,7 @@ mod tests {
                 payload: serde_json::json!({"id": 1}),
                 caller_attached: true,
                 resolution: WiringResolution::Active,
-                role: None,
-                user_id: None,
+                caller: None,
                 traceparent: Some(INCOMING_TRACEPARENT.to_owned()),
                 tracestate: None,
             })

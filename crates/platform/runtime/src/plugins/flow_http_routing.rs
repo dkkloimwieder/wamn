@@ -2,12 +2,12 @@
 //!
 //! Reader 3 of the four the release-manifest weld enumerates
 //! ([`crate::release_manifest`]): it answers `routes` out of
-//! [`ServingManifest::attachments`] and performs **no database read on the serving
-//! path**. The weld is consulted by reference — this plugin never loads, parses or
-//! digest-verifies a manifest of its own, and adds no layer over the one it is
-//! given. The manifest is already parsed, in memory, for the life of the process;
-//! a route table derived from it would be a second copy of immutable state on the
-//! hottest path in the system, so there is none.
+//! [`ServingManifest::attachments`] with no database read. Authentication
+//! re-derives the selected attachment's policy from that same weld, verifies the
+//! PAT through the system identity reader, and loads the role's exact permission
+//! set through the existing callable-HTTP project pool. The plugin never loads,
+//! parses, or digest-verifies a manifest of its own and adds no route table over
+//! the immutable in-memory projection.
 //!
 //! # Fields the attachment projection cannot source
 //!
@@ -23,7 +23,11 @@ use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use serde_json::Value;
-use wamn_catalog::{AttachmentKind, NO_AUTHENTICATION_MODE, ServingAttachment, ServingManifest};
+use wamn_catalog::{
+    AttachmentKind, NO_AUTHENTICATION_MODE, PAT_AUTHENTICATION_MODE, ServingAttachment,
+    ServingManifest,
+};
+use wamn_platform_identity::{PrincipalKind, authenticate_pat, project_roles};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -38,6 +42,7 @@ mod bindings {
         imports: { default: async | trappable | tracing },
         with: {
             "wamn:flow-http-routing/routing.route-permit": super::RoutePermit,
+            "wamn:flow-http-routing/routing.authenticated-caller": super::AuthenticatedCaller,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -237,10 +242,95 @@ const UNCONSTRAINED_INPUT_SCHEMA: &str = "true";
 /// that conversion and turn every `routes` call into a 503.
 const ADAPTER_GOVERNED_BYTES: u64 = u32::MAX as u64;
 
+const ROUTE_CALLER_ROLE: &str = "route-caller";
+const UNAUTHORIZED_STATUS: u16 = 401;
+const UNAUTHORIZED_CODE: &str = "unauthorized";
+const AUTHENTICATION_UNAVAILABLE_STATUS: u16 = 503;
+const AUTHENTICATION_UNAVAILABLE_CODE: &str = "authentication-unavailable";
 /// 501, because the request is well formed and it is the *host* that lacks the
 /// mechanism — the caller can do nothing to satisfy a policy nothing implements.
 const UNSUPPORTED_POLICY_STATUS: u16 = 501;
 const UNSUPPORTED_POLICY_CODE: &str = "auth-policy-unsupported";
+
+/// Host-owned proof of an originating caller and its exact operation grants.
+///
+/// The guest can hold only the resource handle. It cannot construct this value,
+/// inspect the grant set, or replace the principal while forwarding it to router
+/// delivery.
+#[derive(Clone)]
+pub struct AuthenticatedCaller {
+    attachment_id: Box<str>,
+    principal_id: Box<str>,
+    permissions: Arc<HashSet<String>>,
+}
+
+impl std::fmt::Debug for AuthenticatedCaller {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedCaller")
+            .field("attachment_id", &self.attachment_id)
+            .field("principal_id", &self.principal_id)
+            .field("permission_count", &self.permissions.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl AuthenticatedCaller {
+    /// Return the immutable attachment identity whose policy minted this proof.
+    pub fn attachment_id(&self) -> &str {
+        &self.attachment_id
+    }
+
+    /// Return the opaque platform principal used by router traces and refusals.
+    pub fn principal_id(&self) -> &str {
+        &self.principal_id
+    }
+
+    /// Check one exact registered-operation token.
+    pub fn permits(&self, operation: &str) -> bool {
+        self.permissions.contains(operation)
+    }
+}
+
+/// Trusted dependencies and scope for PAT-backed route authentication.
+pub struct RouteAuthentication {
+    identity_reader: Arc<tokio_postgres::Client>,
+    postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+    org: Box<str>,
+    project: Box<str>,
+    expected_subject: Box<str>,
+}
+
+impl std::fmt::Debug for RouteAuthentication {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RouteAuthentication")
+            .field("org", &self.org)
+            .field("project", &self.project)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RouteAuthentication {
+    /// Bind the two read authorities to trusted package coordinates.
+    ///
+    /// Environment and tenant remain single-sourced from the welded release.
+    pub fn new(
+        identity_reader: Arc<tokio_postgres::Client>,
+        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+        org: impl Into<Box<str>>,
+        project: impl Into<Box<str>>,
+        expected_subject: impl Into<Box<str>>,
+    ) -> Self {
+        Self {
+            identity_reader,
+            postgres,
+            org: org.into(),
+            project: project.into(),
+            expected_subject: expected_subject.into(),
+        }
+    }
+}
 
 /// This process was given no release, so it can answer no route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,6 +354,7 @@ pub struct FlowHttpRouting {
     /// made where it is visible, at the construction site in
     /// `services/host/src/host.rs`, not here behind an `Option`.
     release: Option<Arc<ReleaseManifestWeld>>,
+    authentication: Option<Arc<RouteAuthentication>>,
     limiter: Arc<RouteLimiter>,
 }
 
@@ -278,6 +369,7 @@ impl std::fmt::Debug for FlowHttpRouting {
                 &self.release.as_deref().map(|weld| weld.release()),
             )
             .field("route_in_flight_limit", &self.limiter.limit)
+            .field("authentication_configured", &self.authentication.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -290,8 +382,16 @@ impl FlowHttpRouting {
     ) -> Self {
         Self {
             release,
+            authentication: None,
             limiter: RouteLimiter::new(route_in_flight_limit),
         }
+    }
+
+    /// Enable PAT authentication with host-selected database authorities.
+    #[must_use]
+    pub fn with_authentication(mut self, authentication: Arc<RouteAuthentication>) -> Self {
+        self.authentication = Some(authentication);
+        self
     }
 
     /// Read the chart-carried route ceiling, defaulting only when it is absent.
@@ -318,6 +418,101 @@ impl FlowHttpRouting {
             .attachments
             .get(attachment_id)
             .is_some_and(|attachment| carries_http_route(attachment.kind)))
+    }
+
+    async fn authenticate(
+        &self,
+        attachment_id: &str,
+        headers: &[Header],
+    ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
+        let weld = self
+            .release
+            .as_ref()
+            .ok_or_else(authentication_unavailable)?;
+        let manifest = weld.manifest();
+        let attachment = manifest
+            .attachments
+            .get(attachment_id)
+            .filter(|attachment| carries_http_route(attachment.kind))
+            .ok_or_else(authentication_unavailable)?;
+        let mode = attachment.auth_policy.get("mode").and_then(Value::as_str);
+        if mode == Some(NO_AUTHENTICATION_MODE) {
+            return Ok(None);
+        }
+        if mode != Some(PAT_AUTHENTICATION_MODE) {
+            return Err(AuthRejection {
+                status: UNSUPPORTED_POLICY_STATUS,
+                code: UNSUPPORTED_POLICY_CODE.to_string(),
+            });
+        }
+        let authentication = self
+            .authentication
+            .as_ref()
+            .ok_or_else(authentication_unavailable)?;
+        let token = required_bearer_token(headers)?;
+        let principal = authenticate_pat(authentication.identity_reader.as_ref(), token)
+            .await
+            .map_err(|error| {
+                tracing::warn!(error = %error, "route PAT authentication unavailable");
+                authentication_unavailable()
+            })?
+            .ok_or_else(unauthorized)?;
+        let principal = principal.principal();
+        if principal.kind() != PrincipalKind::Service
+            || principal.subject() != authentication.expected_subject.as_ref()
+        {
+            return Err(unauthorized());
+        }
+        let roles = project_roles(
+            authentication.identity_reader.as_ref(),
+            principal.id(),
+            &authentication.org,
+            &authentication.project,
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "route caller role lookup unavailable");
+            authentication_unavailable()
+        })?;
+        if !roles.iter().any(|role| role.as_str() == ROUTE_CALLER_ROLE) {
+            return Err(unauthorized());
+        }
+        let permissions = authentication
+            .postgres
+            .operation_permissions(
+                &authentication.project,
+                &manifest.release.tenant_id,
+                ROUTE_CALLER_ROLE,
+            )
+            .await
+            .map_err(|error| {
+                tracing::warn!(error = %error, "route operation grants unavailable");
+                authentication_unavailable()
+            })?;
+        Ok(Some(AuthenticatedCaller {
+            attachment_id: attachment_id.into(),
+            principal_id: principal.id().as_str().into(),
+            permissions: Arc::new(permissions.into_iter().collect()),
+        }))
+    }
+
+    /// Exercise production route authentication from an integration proof.
+    #[cfg(feature = "test-util")]
+    pub async fn authenticate_authorization_for_test(
+        &self,
+        attachment_id: &str,
+        authorization: Option<&str>,
+    ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
+        let headers = authorization
+            .map(|value| Header {
+                name: "authorization".to_string(),
+                value: value.to_string(),
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        self.authenticate(attachment_id, &headers)
+            .await
+            .map_err(|rejection| (rejection.status, rejection.code))
     }
 }
 
@@ -355,6 +550,23 @@ fn route_definitions(
 /// none and must never be reachable over HTTP.
 fn carries_http_route(kind: AttachmentKind) -> bool {
     matches!(kind, AttachmentKind::Http | AttachmentKind::Studio)
+}
+
+/// Return whether a serving release requires PAT-backed route authentication.
+///
+/// Only externally selectable HTTP route kinds participate. An internal or
+/// cron attachment carrying an otherwise identical document cannot make the
+/// host acquire route-authentication credentials it will never use.
+pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
+    manifest
+        .attachments
+        .iter()
+        .filter(|(_, attachment)| carries_http_route(attachment.kind))
+        .any(|(attachment_id, attachment)| {
+            route_definition(attachment_id, attachment).is_some()
+                && attachment.auth_policy.get("mode").and_then(Value::as_str)
+                    == Some(PAT_AUTHENTICATION_MODE)
+        })
 }
 
 /// Exactly the host and method predicates the adapter's own `select_route`
@@ -396,7 +608,6 @@ fn route_definition(
         host: route.get("host")?.as_str()?.to_string(),
         path: route.get("path")?.as_str()?.to_string(),
         method: route.get("method")?.as_str()?.to_string(),
-        auth_policy: attachment.auth_policy.to_string(),
         mappings,
         // The release currently carries no entry input-schema projection. An
         // unconstraining schema is the truthful answer: it claims no validation
@@ -437,27 +648,37 @@ fn input_mapping(value: &Value) -> Option<Mapping> {
     })
 }
 
-/// Apply the policy the adapter selected, after route selection supplied it.
-///
-/// Only one policy can be honoured truthfully today: there is no auth-policy
-/// vocabulary in this system — the resolved auth-source document is validated as
-/// nothing more than "an object" — and no secret store this host could verify a
-/// credential against. So an explicit no-authentication policy yields the
-/// no caller identity and every other document is a typed refusal. Fail-closed:
-/// no unrecognized policy can reach router delivery.
-fn authenticate_policy(policy: &str) -> Result<Option<String>, AuthRejection> {
-    let document = serde_json::from_str::<Value>(policy).ok();
-    let mode = document
-        .as_ref()
-        .and_then(|document| document.get("mode"))
-        .and_then(Value::as_str);
-    if mode == Some(NO_AUTHENTICATION_MODE) {
-        return Ok(None);
+/// Extract one standard bearer presentation without exposing why it failed.
+fn bearer_token(headers: &[Header]) -> Option<&str> {
+    let mut values = headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("authorization"));
+    let value = values.next()?.value.as_str();
+    if values.next().is_some() {
+        return None;
     }
-    Err(AuthRejection {
-        status: UNSUPPORTED_POLICY_STATUS,
-        code: UNSUPPORTED_POLICY_CODE.to_string(),
-    })
+    let mut fields = value.split_ascii_whitespace();
+    let scheme = fields.next()?;
+    let token = fields.next()?;
+    (scheme.eq_ignore_ascii_case("bearer") && fields.next().is_none()).then_some(token)
+}
+
+fn required_bearer_token(headers: &[Header]) -> Result<&str, AuthRejection> {
+    bearer_token(headers).ok_or_else(unauthorized)
+}
+
+fn unauthorized() -> AuthRejection {
+    AuthRejection {
+        status: UNAUTHORIZED_STATUS,
+        code: UNAUTHORIZED_CODE.to_string(),
+    }
+}
+
+fn authentication_unavailable() -> AuthRejection {
+    AuthRejection {
+        status: AUTHENTICATION_UNAVAILABLE_STATUS,
+        code: AUTHENTICATION_UNAVAILABLE_CODE.to_string(),
+    }
 }
 
 #[async_trait::async_trait]
@@ -507,15 +728,18 @@ impl routing::Host for ActiveCtx<'_> {
 
     async fn authenticate(
         &mut self,
-        policy: String,
-        // Unread: the only policy this host can honour authenticates nothing. A
-        // policy that inspects headers cannot land on this signature anyway —
-        // trusting a policy string the guest hands back would let a defective
-        // adapter downgrade a protected route, so a real policy has to be
-        // re-derived from the attachment instead.
-        _headers: Vec<Header>,
-    ) -> wash_runtime::wasmtime::Result<Result<Option<String>, AuthRejection>> {
-        Ok(authenticate_policy(&policy))
+        attachment_id: String,
+        headers: Vec<Header>,
+    ) -> wash_runtime::wasmtime::Result<Result<Option<Resource<AuthenticatedCaller>>, AuthRejection>>
+    {
+        let plugin = plugin_of(self)?;
+        let caller = match plugin.authenticate(&attachment_id, &headers).await {
+            Ok(caller) => caller,
+            Err(rejection) => return Ok(Err(rejection)),
+        };
+        Ok(Ok(caller
+            .map(|caller| self.table.push(caller))
+            .transpose()?))
     }
 
     async fn try_acquire(
@@ -545,6 +769,16 @@ impl routing::Host for ActiveCtx<'_> {
 impl routing::HostRoutePermit for ActiveCtx<'_> {
     async fn drop(&mut self, permit: Resource<RoutePermit>) -> wash_runtime::wasmtime::Result<()> {
         self.table.delete(permit)?;
+        Ok(())
+    }
+}
+
+impl routing::HostAuthenticatedCaller for ActiveCtx<'_> {
+    async fn drop(
+        &mut self,
+        caller: Resource<AuthenticatedCaller>,
+    ) -> wash_runtime::wasmtime::Result<()> {
+        self.table.delete(caller)?;
         Ok(())
     }
 }
@@ -717,9 +951,6 @@ mod tests {
         assert_eq!(definition.host, "api.example.test");
         assert_eq!(definition.path, "/orders/{order}");
         assert_eq!(definition.method, "POST");
-        // The resolved auth-source document, handed on as the opaque string the
-        // adapter returns to `authenticate`.
-        assert_eq!(definition.auth_policy, r#"{"mode":"none"}"#);
         assert_eq!(
             definition
                 .mappings
@@ -817,6 +1048,26 @@ mod tests {
     }
 
     #[test]
+    fn only_an_externally_selectable_pat_attachment_requires_route_authentication() {
+        let mut internal = attachment(AttachmentKind::Internal, orders_definition());
+        internal.auth_policy = json!({"mode": PAT_AUTHENTICATION_MODE});
+        let internal_only = release_manifest(BTreeMap::from([("internal".to_string(), internal)]));
+        assert!(!requires_pat_route_authentication(&internal_only));
+
+        let mut malformed = attachment(AttachmentKind::Http, json!({"route": {}}));
+        malformed.auth_policy = json!({"mode": PAT_AUTHENTICATION_MODE});
+        let malformed_only =
+            release_manifest(BTreeMap::from([("malformed".to_string(), malformed)]));
+        assert!(!requires_pat_route_authentication(&malformed_only));
+
+        let mut http = attachment(AttachmentKind::Http, orders_definition());
+        http.auth_policy = json!({"mode": PAT_AUTHENTICATION_MODE});
+        let protected = release_manifest(BTreeMap::from([("orders".to_string(), http)]));
+        assert!(requires_pat_route_authentication(&protected));
+        assert!(!requires_pat_route_authentication(&one_http_route()));
+    }
+
+    #[test]
     fn an_attachment_without_a_serviceable_route_is_skipped_and_the_rest_still_serve() {
         // A route with no path: an object, so the manifest still validates, but
         // nothing this host can serve.
@@ -887,26 +1138,67 @@ mod tests {
         assert_eq!(served_ids(&served), ["orders"]);
     }
 
-    #[test]
-    fn only_the_no_authentication_policy_yields_an_anonymous_absence() {
-        assert_eq!(
-            authenticate_policy(r#"{"mode":"none"}"#)
-                .expect("an explicit no-authentication policy authenticates"),
-            None
-        );
+    #[tokio::test]
+    async fn pat_mode_is_recognized_and_an_absent_backend_is_one_generic_outage() {
+        let mut protected = attachment(AttachmentKind::Http, orders_definition());
+        protected.auth_policy = json!({"mode": PAT_AUTHENTICATION_MODE});
+        let manifest = release_manifest(BTreeMap::from([("orders".to_string(), protected)]));
+        let mount = Mount::holding(&manifest, "pat-backend");
+        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
 
-        for unsupported in [
-            r#"{"mode":"bearer"}"#,
-            r#"{"policy":"api-key"}"#,
-            r#"{"scheme":"bearer"}"#,
-            "{}",
-            "not json at all",
+        let rejection = plugin
+            .authenticate("orders", &[])
+            .await
+            .expect_err("a protected route without its backend refuses");
+
+        assert_eq!(rejection.status, AUTHENTICATION_UNAVAILABLE_STATUS);
+        assert_eq!(rejection.code, AUTHENTICATION_UNAVAILABLE_CODE);
+    }
+
+    #[test]
+    fn bearer_parsing_has_one_success_shape_and_one_opaque_refusal_class() {
+        let header = |name: &str, value: &str| Header {
+            name: name.to_string(),
+            value: value.to_string(),
+        };
+        assert_eq!(
+            bearer_token(&[header("Authorization", "bEaReR secret")]),
+            Some("secret")
+        );
+        for refused in [
+            vec![],
+            vec![header("authorization", "Basic secret")],
+            vec![header("authorization", "Bearer")],
+            vec![header("authorization", "Bearer secret extra")],
+            vec![
+                header("authorization", "Bearer first"),
+                header("Authorization", "Bearer second"),
+            ],
         ] {
-            let rejection = authenticate_policy(unsupported)
-                .expect_err("a policy this host cannot apply must refuse");
-            assert_eq!(rejection.status, UNSUPPORTED_POLICY_STATUS);
-            assert_eq!(rejection.code, UNSUPPORTED_POLICY_CODE);
+            let rejection = required_bearer_token(&refused)
+                .expect_err("every malformed bearer presentation refuses");
+            assert_eq!(rejection.status, UNAUTHORIZED_STATUS);
+            assert_eq!(rejection.code, UNAUTHORIZED_CODE);
         }
+    }
+
+    #[test]
+    fn originating_caller_keeps_exact_permissions_only() {
+        let caller = AuthenticatedCaller {
+            attachment_id: "receiving-http".into(),
+            principal_id: "11111111-1111-4111-8111-111111111111".into(),
+            permissions: Arc::new(HashSet::from([
+                "wamn_receiving@1.0.0::receipt.get".to_string()
+            ])),
+        };
+        assert_eq!(caller.attachment_id(), "receiving-http");
+        assert_eq!(
+            caller.principal_id(),
+            "11111111-1111-4111-8111-111111111111"
+        );
+        assert!(caller.permits("wamn_receiving@1.0.0::receipt.get"));
+        assert!(!caller.permits("wamn_receiving@1.0.0::receipt.query"));
+        assert!(!caller.permits("receipt.get"));
     }
 
     #[test]

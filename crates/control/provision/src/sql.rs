@@ -765,10 +765,11 @@ fn quoted_column_list(columns: &[&str]) -> String {
 ///
 /// `AuthorityClass::CallableHttp` is selected from exactly one place in
 /// production — `WamnPostgres::connection_effect_snapshot` — and that method
-/// issues exactly one statement, `CONNECTION_EFFECT_SNAPSHOT_SQL`. Its `FROM`
-/// and `LEFT JOIN` clauses name [`HTTP_ADMITTER_CATALOG_RELATIONS`] and nothing
-/// else, so `USAGE` on `catalog` plus those seven `SELECT`s is the family's
-/// total authority anywhere in the cluster.
+/// issues the connection-effect snapshot plus the operation-grant lookup. Their
+/// `FROM` and `LEFT JOIN` clauses name
+/// [`HTTP_ADMITTER_CATALOG_RELATIONS`] plus `app_system.permissions`, so `USAGE`
+/// on those two schemas plus eight `SELECT`s is the family's total authority
+/// anywhere in the cluster.
 ///
 /// # What it deliberately does NOT hold
 ///
@@ -792,10 +793,10 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
     let schema = quote_ident(schema);
     let mut sql = format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog TO {role};",
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA catalog, app_system TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::HttpAdmitter),
     );
     for relation in HTTP_ADMITTER_CATALOG_RELATIONS {
@@ -804,6 +805,9 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
             relation = quote_ident(relation),
         ));
     }
+    sql.push_str(&format!(
+        " GRANT SELECT ON TABLE app_system.\"permissions\" TO {role};"
+    ));
     sql
 }
 
@@ -2043,17 +2047,17 @@ mod tests {
     /// Rust builder, so byte-equality here is the only thing that catches the
     /// builder moving in a plain `cargo test`.
     #[test]
-    fn the_http_admitter_surface_is_seven_catalog_selects_and_nothing_else() {
+    fn the_http_admitter_surface_adds_only_the_operation_grant_read() {
         let sql = grant_http_admitter_surface_sql("wamn_run");
         assert_eq!(
             surface_grants(WorkloadRoleFamily::HttpAdmitter, &sql),
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, \"wamn_run\" \
+            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA catalog, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             GRANT USAGE ON SCHEMA catalog TO \"wamn_http_admitter\"; \
+             GRANT USAGE ON SCHEMA catalog, app_system TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"effective_release_packages\" \
              TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_http_admitter\"; \
@@ -2062,8 +2066,9 @@ mod tests {
              TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_bindings\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_instances\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads seven catalog relations and holds \
+             GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE app_system.\"permissions\" TO \"wamn_http_admitter\";",
+            "the callable-HTTP admitter reads seven catalog relations and the operation grants, and holds \
              nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.

@@ -14,6 +14,7 @@ use crate::manifest::{
     CommandTransaction, CommandValueDeclaration, ContractFieldDeclaration, CrudAction,
     CursorDirection, ModelDeclaration, OperationDeclaration, PackageManifest,
     PolicyContractRequirement, PolicyContractState, ResultClass, SortDeclaration,
+    canonical_operation_identity, validate_identifier, validate_operation_vocabulary,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
@@ -450,13 +451,7 @@ pub fn corpus_sha256<'a>(entries: impl IntoIterator<Item = (&'a str, &'a [u8])>)
 }
 
 fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(), GenerateError> {
-    validate_identifier(&manifest.package.id, "package id")?;
-    if manifest.package.version.is_empty() {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
-            "package version must not be empty",
-        ));
-    }
+    validate_operation_vocabulary(manifest)?;
     validate_identifier(
         &manifest.required_platform_policy_contract.id,
         "platform policy contract",
@@ -480,19 +475,14 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
         ));
     }
 
-    let mut operation_ids = BTreeSet::new();
     for (model_name, model) in &manifest.models {
         validate_model(input.catalog, model_name, model)?;
-        for action in model.operations.keys() {
-            operation_ids.insert(format!("{model_name}.{}", action.as_str()));
-        }
     }
     for (command_name, command) in &manifest.commands {
         validate_command(input.catalog, command_name, command, manifest)?;
-        operation_ids.insert(command_name.clone());
     }
     validate_connections(manifest)?;
-    validate_components(manifest, &operation_ids)?;
+    validate_components(manifest)?;
     validate_authored_sources(manifest, input.authored_sql)?;
     Ok(())
 }
@@ -564,12 +554,6 @@ fn validate_operation(
     operation: &OperationDeclaration,
 ) -> Result<(), GenerateError> {
     let context = format!("{model_name}.{}", action.as_str());
-    if operation.permission != context {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} permission must equal its package-local operation identity"),
-        ));
-    }
     validate_field(table, model_name, "id")?;
 
     let server_owned = model.server_owned_fields.iter().collect::<BTreeSet<_>>();
@@ -803,7 +787,7 @@ fn validate_command(
     command: &CommandDeclaration,
     manifest: &PackageManifest,
 ) -> Result<(), GenerateError> {
-    if command_name != RECORD_RECEIPT || command.permission != command_name {
+    if command_name != RECORD_RECEIPT {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
             format!(
@@ -811,7 +795,6 @@ fn validate_command(
             ),
         ));
     }
-    validate_operation_identity(command_name)?;
     if !manifest.connections.contains_key(&command.connection) {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
@@ -917,23 +900,6 @@ fn validate_command(
     }
     validate_command_relations(catalog, command_name, command)?;
     validate_command_statements(command_name, command)
-}
-
-fn validate_operation_identity(value: &str) -> Result<(), GenerateError> {
-    let Some((module, operation)) = value.split_once('.') else {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
-            format!("operation `{value}` must have canonical module.operation form"),
-        ));
-    };
-    if operation.contains('.') {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
-            format!("operation `{value}` must contain exactly one module separator"),
-        ));
-    }
-    validate_identifier(module, "operation module")?;
-    validate_identifier(operation, "operation name")
 }
 
 fn require_contract_fields(
@@ -1242,32 +1208,13 @@ fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError>
     Ok(())
 }
 
-fn validate_components(
-    manifest: &PackageManifest,
-    operation_ids: &BTreeSet<String>,
-) -> Result<(), GenerateError> {
-    if manifest.components.is_empty() {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidComponent,
-            "manifest declares no component grouping",
-        ));
-    }
-    let mut grouped = BTreeSet::<String>::new();
+fn validate_components(manifest: &PackageManifest) -> Result<(), GenerateError> {
     for (name, component) in &manifest.components {
-        validate_identifier(name, "component")?;
-        if component.operations.is_empty() || component.connections.is_empty() {
+        if component.connections.is_empty() {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidComponent,
-                format!("{name} must declare operations and connections"),
+                format!("{name} must declare connections"),
             ));
-        }
-        for operation in &component.operations {
-            if !operation_ids.contains(operation) || !grouped.insert(operation.clone()) {
-                return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidComponent,
-                    format!("{name} references unknown or repeated operation {operation}"),
-                ));
-            }
         }
         for connection in &component.connections {
             if !manifest.connections.contains_key(connection) {
@@ -1277,12 +1224,6 @@ fn validate_components(
                 ));
             }
         }
-    }
-    if &grouped != operation_ids {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidComponent,
-            "every operation must be grouped exactly once",
-        ));
     }
     Ok(())
 }
@@ -1499,10 +1440,7 @@ fn emit_command_contracts(
         .split_once('.')
         .expect("command validation requires module.operation");
     let root = format!("generated/contracts/{module}/{operation}");
-    let operation_id = format!(
-        "{}@{}::{command_name}",
-        manifest.package.id, manifest.package.version
-    );
+    let operation_id = canonical_operation_identity(&manifest.package, command_name)?;
     let sql_files = command
         .statements
         .values()
@@ -2006,12 +1944,10 @@ fn emit_operation_contracts(
     operation: &OperationDeclaration,
     sql_paths: &[String],
 ) -> Result<(), GenerateError> {
-    let operation_id = format!(
-        "{}@{}::{model_name}.{}",
-        manifest.package.id,
-        manifest.package.version,
-        action.as_str()
-    );
+    let operation_id = canonical_operation_identity(
+        &manifest.package,
+        &format!("{model_name}.{}", action.as_str()),
+    )?;
     let root = format!("generated/contracts/{model_name}/{}", action.as_str());
     insert_json(
         files,
@@ -2867,21 +2803,6 @@ fn validate_field<'a>(
             field,
         )
     })
-}
-
-fn validate_identifier(value: &str, object: &str) -> Result<(), GenerateError> {
-    let mut bytes = value.bytes();
-    let valid_start = bytes.next().is_some_and(|byte| byte.is_ascii_lowercase());
-    let valid_tail =
-        bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
-    if valid_start && valid_tail && !value.ends_with('_') && !value.contains("__") {
-        Ok(())
-    } else {
-        Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
-            format!("{object} `{value}` must be singular snake_case"),
-        ))
-    }
 }
 
 fn safe_sql_path(path: &str) -> bool {

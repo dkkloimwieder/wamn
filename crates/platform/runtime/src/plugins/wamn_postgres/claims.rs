@@ -4,7 +4,7 @@
 //! `set_config()`-bound claim injection (`begin_with_claims`). This is the exact
 //! surface the injection review (R2/R16/R16b/cjv.2/l5i9.12.2) reasons about.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -28,6 +28,12 @@ use super::pool::{
 use super::resources::{run_execute, run_query};
 use super::types::map_pg_error;
 use super::{DEFAULT_PROJECT, PgError, RowSet, SqlValue};
+
+const OPERATION_PERMISSIONS_SQL: &str = "SELECT permission \
+    FROM app_system.permissions \
+    WHERE tenant_id = $1 AND role_name = $2 \
+    ORDER BY permission";
+const OPERATION_PERMISSION_TIMEOUT_SQL: &str = "SELECT set_config('statement_timeout', $1, true)";
 
 pub struct WamnPostgres {
     /// Resolves a project id → its database connection + policy.
@@ -265,19 +271,20 @@ pub struct ConnectionEffectSnapshot {
 /// checked separately by `ConnectionHttp`, because its canonical bytes are not
 /// a database relation and must not be projected back into Postgres.
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
-WITH release_scope AS MATERIALIZED ( \
-    SELECT member.package_version \
+WITH member AS MATERIALIZED ( \
+    SELECT member.tenant_id, member.package_id, member.package_version \
       FROM catalog.effective_release_packages AS member \
      WHERE member.tenant_id = $1 \
        AND member.package_id = $2 \
        AND member.effective_release_id = $3 \
 ), selected_wiring AS MATERIALIZED ( \
-    SELECT wiring.wiring_hash, wiring.graph_json, release_scope.package_version \
-      FROM release_scope \
+    SELECT wiring.wiring_hash, wiring.graph_json, \
+           member.tenant_id, member.package_id, member.package_version \
+      FROM member \
       JOIN catalog.wirings AS wiring \
-        ON wiring.tenant_id = $1 \
-       AND wiring.package_id = $2 \
-       AND wiring.package_version = release_scope.package_version \
+        ON wiring.tenant_id = member.tenant_id \
+       AND wiring.package_id = member.package_id \
+       AND wiring.package_version = member.package_version \
      WHERE wiring.wiring_id = $5 \
        AND wiring.version = $6 \
        AND wiring.graph_json ->> 'wiring-id' = $5 \
@@ -301,8 +308,8 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
        generation.credential_set_handle \
   FROM selected_wiring AS wiring \
   LEFT JOIN catalog.component_library AS component \
-    ON component.tenant_id = $1 \
-   AND component.package_id = $2 \
+    ON component.tenant_id = wiring.tenant_id \
+   AND component.package_id = wiring.package_id \
    AND component.package_version = wiring.package_version \
    AND component.component_digest = $8 \
   LEFT JOIN LATERAL ( \
@@ -356,10 +363,13 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
 /// This is still a defense-in-depth **blocklist**:
 /// [`statement_mutates_session`] matches only a leading `set`/`reset` keyword
 /// or the literal `set_config`, so a `DO` block whose `EXECUTE` string carries
-/// `SET app.role` passes it untouched. That escape is dormant only because no
-/// PRODUCTION policy reads `app.role` or `app.user_id` today; it arms the day
-/// an applier for compiled RLS ships. `wamn-0h0g.22.23` (OPEN) owns the matcher
-/// defect and carries that trigger — do not close this comment against it.
+/// `SET app.role` passes it untouched. The guard therefore applies to reachable
+/// guest APIs bearing RLS policies that read `app.role` or `app.user_id`; none
+/// exists in the Receiving slice. Its host-only operation-permission read binds
+/// predicates directly and installs neither caller-derived claim
+/// (`wamn-10yt.3.2`), so it does not arm this escape. `wamn-0h0g.22.23` (OPEN)
+/// owns the matcher defect and carries the trigger for the first such reachable
+/// API — do not close this comment against it.
 pub(super) fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
     if statement_mutates_session(sql) {
         tracing::warn!(
@@ -1600,6 +1610,78 @@ impl WamnPostgres {
         }
     }
 
+    /// Load the exact registered-operation tokens granted to one application role.
+    ///
+    /// This is host-only authorization work. It reuses the callable-HTTP
+    /// platform pool, selects the tenant and role through bound predicates, and
+    /// installs no `app.role` or `app.user_id` session claim. The returned set is
+    /// attached to the originating caller once and compared at every registered
+    /// invocation, including nested router steps.
+    pub async fn operation_permissions(
+        &self,
+        project: &str,
+        tenant: &str,
+        role: &str,
+    ) -> anyhow::Result<BTreeSet<String>> {
+        anyhow::ensure!(
+            valid_project(project),
+            "invalid operation-permission project"
+        );
+        anyhow::ensure!(valid_tenant(tenant), "invalid operation-permission tenant");
+        anyhow::ensure!(!role.is_empty(), "operation-permission role is empty");
+        let (connection, policy) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = connection.batch_execute("BEGIN").await {
+            self.destroy(connection);
+            return Err(error).context("begin registered-operation permission read");
+        }
+        let timeout = policy.statement_timeout_ms.to_string();
+        let timeout_statement = match connection
+            .prepare_cached(OPERATION_PERMISSION_TIMEOUT_SQL)
+            .await
+        {
+            Ok(statement) => statement,
+            Err(error) => {
+                self.destroy(connection);
+                return Err(error).context("prepare registered-operation permission timeout");
+            }
+        };
+        if let Err(error) = connection.execute(&timeout_statement, &[&timeout]).await {
+            self.destroy(connection);
+            return Err(error).context("set registered-operation permission timeout");
+        }
+        let result: anyhow::Result<BTreeSet<String>> = async {
+            let rows = connection
+                .query(OPERATION_PERMISSIONS_SQL, &[&tenant, &role])
+                .await
+                .context("read registered-operation permissions")?;
+            rows.into_iter()
+                .map(|row| {
+                    row.try_get::<_, String>(0)
+                        .context("decode registered-operation permission")
+                })
+                .collect()
+        }
+        .await;
+        match result {
+            Ok(permissions) => {
+                if let Err(error) = connection.batch_execute("COMMIT").await {
+                    self.destroy(connection);
+                    return Err(error).context("commit registered-operation permission read");
+                }
+                Ok(permissions)
+            }
+            Err(error) => {
+                if connection.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(connection);
+                }
+                Err(error)
+            }
+        }
+    }
+
     pub(super) fn destroy(&self, obj: Object) {
         destroy_connection(obj, &self.destroyed);
     }
@@ -2259,11 +2341,15 @@ mod tests {
             "FROM catalog.effective_release_packages AS member",
             "JOIN catalog.wirings AS wiring",
             "member.effective_release_id = $3",
-            "wiring.package_id = $2",
-            "wiring.package_version = release_scope.package_version",
+            "member.package_id = $2",
+            "wiring.package_id = member.package_id",
+            "wiring.package_version = member.package_version",
             "wiring.wiring_id = $5",
             "wiring.version = $6",
             "wiring.graph_json ->> 'wiring-id' = $5",
+            "component.tenant_id = wiring.tenant_id",
+            "component.package_id = wiring.package_id",
+            "component.package_version = wiring.package_version",
             "component.component_digest = $8",
             "component.registered_operation",
             "wiring.graph_json #> ARRAY['nodes', $7]",
@@ -2292,6 +2378,10 @@ mod tests {
             "flow_id",
             "artifact_hash =",
             "requirement_name =",
+            "catalog_id",
+            "catalog_version",
+            "gated_catalog_version",
+            "catalog_heads",
         ] {
             assert!(!sql.contains(retired), "effect authority retains {retired}");
         }
@@ -3221,6 +3311,23 @@ mod tests {
             "the callable-HTTP authority snapshot must check out as the \
              callable-HTTP family and no other"
         );
+    }
+
+    #[tokio::test]
+    async fn operation_permissions_reuse_only_the_callable_http_authority() {
+        let provider = Arc::new(RecordingProvider::default());
+        let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
+
+        pg.operation_permissions(DEFAULT_PROJECT, "tenant-a", "route-caller")
+            .await
+            .expect_err("a provider that names no credential resolves nothing");
+
+        let asked = provider
+            .asked
+            .lock()
+            .expect("recording provider lock poisoned")
+            .clone();
+        assert_eq!(asked, vec![AuthorityClass::CallableHttp]);
     }
 
     /// The tenant floor over rows belonging to TWO tenants, keyed on

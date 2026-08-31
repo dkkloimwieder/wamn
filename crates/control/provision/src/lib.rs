@@ -61,16 +61,17 @@ pub mod dump;
 mod error;
 pub mod management_admitter;
 mod name;
+pub mod operation_grants;
 pub mod org;
 #[cfg(feature = "ops")]
 pub mod restore;
 pub mod saga;
 pub mod secret;
 pub mod sql;
-/// The two T1 control-database read consumers' scoped credential contract.
-pub mod system_reader;
 #[cfg(feature = "ops")]
 pub mod state;
+/// The two T1 control-database read consumers' scoped credential contract.
+pub mod system_reader;
 /// The pure derivation guest RLS uses to reach a tenant from `current_user`.
 pub mod tenant_key;
 pub mod workload_role;

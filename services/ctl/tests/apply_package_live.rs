@@ -3,11 +3,14 @@
 mod support;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
+use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const TENANT: &str = "package-runner-live";
 
 async fn connect(url: &str) -> Client {
@@ -24,6 +27,8 @@ async fn install(client: &Client) {
     client
         .batch_execute(
             "DROP SCHEMA IF EXISTS receiving CASCADE; \
+             DROP SCHEMA IF EXISTS race_alpha CASCADE; \
+             DROP SCHEMA IF EXISTS race_beta CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
@@ -42,6 +47,10 @@ async fn install(client: &Client) {
         .batch_execute(CATALOG_SCHEMA)
         .await
         .expect("install production package catalog schema");
+    client
+        .batch_execute(APP_SCHEMA)
+        .await
+        .expect("install production application authorization floor");
 }
 
 fn fixture_root() -> PathBuf {
@@ -60,6 +69,34 @@ fn copy_receiving_package(root: &Path) {
         root.join("migrations/0001_initial.sql"),
     )
     .expect("copy exact initial migration");
+}
+
+fn copy_receiving_package_as(root: &Path, package_id: &str, schema: &str) {
+    copy_receiving_package(root);
+    let manifest_path = root.join("wamn.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path).expect("read copied package manifest"),
+    )
+    .expect("parse copied package manifest");
+    manifest["package"]["id"] = serde_json::Value::String(package_id.to_owned());
+    for model in manifest["models"]
+        .as_object_mut()
+        .expect("manifest models are an object")
+        .values_mut()
+    {
+        model["schema"] = serde_json::Value::String(schema.to_owned());
+    }
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize copied package manifest"),
+    )
+    .expect("write copied package manifest");
+
+    let migration_path = root.join("migrations/0001_initial.sql");
+    let migration = std::fs::read_to_string(&migration_path)
+        .expect("read copied package migration")
+        .replace("receiving.", &format!("{schema}."));
+    std::fs::write(migration_path, migration).expect("write copied package migration");
 }
 
 fn set_package_identity(root: &Path, version: &str, predecessor: Option<&str>) {
@@ -89,12 +126,107 @@ fn set_package_identity(root: &Path, version: &str, predecessor: Option<&str>) {
 }
 
 async fn apply(url: &str, package: &Path) -> anyhow::Result<()> {
+    apply_for_tenant(url, package, TENANT).await
+}
+
+async fn apply_for_tenant(url: &str, package: &Path, tenant: &str) -> anyhow::Result<()> {
     apply_package::run(ApplyPackageArgs {
         package: package.to_path_buf(),
         database_url: url.to_owned(),
-        tenant: TENANT.to_owned(),
+        tenant: tenant.to_owned(),
     })
     .await
+}
+
+async fn prove_concurrent_package_grants_share_one_carrier(url: &str) {
+    const RACE_TENANT: &str = "package-runner-race";
+    let alpha =
+        fixture_root().with_file_name(format!("apply-package-race-alpha-{}", std::process::id()));
+    let beta =
+        fixture_root().with_file_name(format!("apply-package-race-beta-{}", std::process::id()));
+    copy_receiving_package_as(&alpha, "race_alpha", "race_alpha");
+    copy_receiving_package_as(&beta, "race_beta", "race_beta");
+
+    let mut blocker = connect(url).await;
+    let observer = connect(url).await;
+    let blocker_tx = blocker
+        .transaction()
+        .await
+        .expect("begin grant lock blocker");
+    blocker_tx
+        .query_one(OPERATION_GRANT_LOCK_SQL, &[&RACE_TENANT])
+        .await
+        .expect("hold the shared tenant grant lock");
+
+    let alpha_url = url.to_owned();
+    let alpha_task =
+        tokio::spawn(async move { apply_for_tenant(&alpha_url, &alpha, RACE_TENANT).await });
+    let beta_url = url.to_owned();
+    let beta_task =
+        tokio::spawn(async move { apply_for_tenant(&beta_url, &beta, RACE_TENANT).await });
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let waiting: i64 = observer
+                .query_one(
+                    "SELECT count(*) FROM pg_stat_activity \
+                      WHERE datname = current_database() \
+                        AND wait_event_type = 'Lock' AND wait_event = 'advisory' \
+                        AND query LIKE '%wamn.operation-grants:%'",
+                    &[],
+                )
+                .await
+                .expect("observe package grant lock waiters")
+                .get(0);
+            if waiting == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both package families must wait on the shared carrier lock");
+
+    blocker_tx
+        .commit()
+        .await
+        .expect("release grant lock blocker");
+    alpha_task
+        .await
+        .expect("join alpha package apply")
+        .expect("apply alpha package");
+    beta_task
+        .await
+        .expect("join beta package apply")
+        .expect("apply beta package");
+
+    assert_eq!(
+        observer
+            .query_one(
+                "SELECT count(*) FROM app_system.roles \
+                  WHERE tenant_id = $1 AND name = 'route-caller' AND is_system",
+                &[&RACE_TENANT],
+            )
+            .await
+            .expect("read the shared route-caller role")
+            .get::<_, i64>(0),
+        1
+    );
+    assert_eq!(
+        observer
+            .query_one(
+                "SELECT count(*) FROM app_system.permissions \
+                  WHERE tenant_id = $1 AND role_name = 'route-caller' \
+                    AND (permission LIKE 'race_alpha@1.0.0::%' \
+                         OR permission LIKE 'race_beta@1.0.0::%')",
+                &[&RACE_TENANT],
+            )
+            .await
+            .expect("read both package grant sets")
+            .get::<_, i64>(0),
+        12,
+        "a concurrent first package lost its six grants"
+    );
 }
 
 async fn write_identity(client: &Client) -> Vec<String> {
@@ -109,6 +241,12 @@ async fn write_identity(client: &Client) -> Vec<String> {
                UNION ALL \
                SELECT 'entity:' || package_id || ':' || entity_id || ':' || xmin::text \
                  FROM receiving.wamn_entities \
+               UNION ALL \
+               SELECT 'role:' || name || ':' || xmin::text \
+                 FROM app_system.roles WHERE tenant_id = $1 \
+               UNION ALL \
+               SELECT 'permission:' || permission || ':' || xmin::text \
+                 FROM app_system.permissions WHERE tenant_id = $1 \
              ) AS observed ORDER BY identity COLLATE \"C\"",
             &[&TENANT],
         )
@@ -129,10 +267,60 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     let package = fixture_root();
     copy_receiving_package(&package);
     install(&client).await;
+    prove_concurrent_package_grants_share_one_carrier(&url).await;
+    client
+        .batch_execute(&format!(
+            "INSERT INTO app_system.roles (tenant_id, name, is_system) \
+                 VALUES ('{TENANT}', 'route-caller', false); \
+             INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
+                 ('{TENANT}', 'route-caller', 'wamn_receiving@1.0.0::obsolete.operation'), \
+                 ('{TENANT}', 'route-caller', 'client_overlay@1.0.0::receipt.get');"
+        ))
+        .await
+        .expect("seed exact-coordinate grant residue and a sibling coordinate");
 
     apply(&url, &package)
         .await
         .expect("first package apply commits");
+    assert!(
+        client
+            .query_one(
+                "SELECT is_system FROM app_system.roles \
+                  WHERE tenant_id = $1 AND name = 'route-caller'",
+                &[&TENANT],
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0),
+        "apply-package hardens the package grant carrier"
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT count(*) FROM app_system.permissions \
+                  WHERE tenant_id = $1 AND role_name = 'route-caller' \
+                    AND permission LIKE 'wamn_receiving@1.0.0::%'",
+                &[&TENANT],
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        6
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT count(*) FROM app_system.permissions \
+                  WHERE tenant_id = $1 AND role_name = 'route-caller' \
+                    AND permission = 'client_overlay@1.0.0::receipt.get'",
+                &[&TENANT],
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        1,
+        "one package coordinate cannot delete a sibling package grant"
+    );
     assert!(
         client
             .query_one("SELECT to_regnamespace('receiving') IS NOT NULL", &[])

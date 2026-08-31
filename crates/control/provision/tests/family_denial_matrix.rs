@@ -109,7 +109,8 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// The denial matrix is a claim about THESE objects: the run plane plus the
 /// catalog relations the platform families read. A family reaching one it does
 /// not own is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 19] = [
+const MATRIX_RELATIONS: [&str; 20] = [
+    "app_system.permissions",
     "catalog.component_library",
     "catalog.connection_bindings",
     "catalog.connection_generations",
@@ -182,6 +183,7 @@ const MATRIX: [FamilyReach; 9] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[
+            "app_system.permissions|SELECT|table",
             "catalog.component_library|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
@@ -272,6 +274,7 @@ const MATRIX: [FamilyReach; 9] = [
     FamilyReach {
         family: WorkloadRoleFamily::HttpAdmitter,
         relations: &[
+            "app_system.permissions|SELECT|table",
             "catalog.component_library|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
@@ -937,13 +940,11 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 /// pairs the matrix cannot speak for, so it is spelled out rather than left to
 /// be counted. Pairs naming one of the two MEASURED-EMPTY families as the object
 /// are excluded: those are asserted separately, by name, above.
-const CONTAINED_PAIRS: [(&str, &str); 6] = [
+const CONTAINED_PAIRS: [(&str, &str); 4] = [
     ("app", "http-admitter"),
     ("app", "retention"),
     ("effect-writer", "dispatch-reader"),
     ("executor-platform", "dispatch-reader"),
-    ("executor-platform", "http-admitter"),
-    ("management-admitter", "http-admitter"),
 ];
 
 // ---------------------------------------------------------------------------

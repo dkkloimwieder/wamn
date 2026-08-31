@@ -6,7 +6,7 @@
 //! then projects only the release identity to the control plane so a later
 //! deployment attestation can reference it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
@@ -176,6 +176,7 @@ pub enum MintManifestErrorKind {
     Release,
     Wiring,
     Component,
+    UnauthenticatedRegisteredOperation,
     ClosureConflict,
     Document,
     EnvironmentPolicyAbsent,
@@ -189,6 +190,7 @@ impl MintManifestErrorKind {
             Self::Release => "release",
             Self::Wiring => "wiring",
             Self::Component => "component",
+            Self::UnauthenticatedRegisteredOperation => "unauthenticated-registered-operation",
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
             Self::EnvironmentPolicyAbsent => "environment-policy-not-converged",
@@ -926,6 +928,7 @@ async fn resolve_wiring(
             error,
         )
     })?;
+    validate_anonymous_wiring_closure(request.attachments, target, &document, component_facts)?;
     wirings.insert(ServingWiring {
         package_id: target.package_id.clone(),
         wiring_id: target.wiring_id.clone(),
@@ -967,6 +970,78 @@ async fn resolve_wiring(
         });
     }
     Ok(())
+}
+
+/// Refuse an anonymous attachment whose selected wiring can reach a registered
+/// application operation.
+///
+/// The attachment itself cannot carry this fact for nested calls: reachability
+/// exists only in the exact stored wiring plus its admitted component facts, so
+/// release mint is the first boundary that can make the invalid composition
+/// unrepresentable without adding another manifest field (`wamn-10yt.3.2`).
+fn validate_anonymous_wiring_closure(
+    attachments: &BTreeMap<String, ServingAttachment>,
+    target: &ReleaseWiringTarget,
+    document: &WiringDocument,
+    component_facts: &[AdmittedComponent],
+) -> Result<(), MintManifestError> {
+    let anonymous_attachments = attachments.iter().filter(|(_, attachment)| {
+        attachment.package_id == target.package_id
+            && attachment.wiring_id == target.wiring_id
+            && attachment.wiring_version == target.wiring_version
+            && attachment
+                .auth_policy
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                == Some(wamn_catalog::NO_AUTHENTICATION_MODE)
+    });
+    let reachable = reachable_nodes(document);
+    for (attachment_id, _) in anonymous_attachments {
+        for (node_id, node) in document
+            .nodes
+            .iter()
+            .filter(|(node_id, _)| reachable.contains(*node_id))
+        {
+            let fact = component_facts
+                .iter()
+                .find(|fact| {
+                    fact.component == node.component
+                        && fact.interface_version == node.interface_version
+                        && fact.operation == node.operation
+                })
+                .expect("wiring compatibility resolved every reachable node");
+            if let Some(operation) = fact.registered_operation.as_deref() {
+                return Err(MintManifestError::new(
+                    MintManifestErrorKind::UnauthenticatedRegisteredOperation,
+                    format!(
+                        "attachment {attachment_id:?} reaches registered operation \
+                         {operation:?} at node {node_id:?}; set auth-policy mode = \
+                         {mode:?}",
+                        mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reachable_nodes(document: &WiringDocument) -> BTreeSet<String> {
+    let mut reachable = BTreeSet::new();
+    let mut pending = VecDeque::from([document.entry.as_str()]);
+    while let Some(node_id) = pending.pop_front() {
+        if !reachable.insert(node_id.to_owned()) {
+            continue;
+        }
+        pending.extend(
+            document
+                .edges
+                .iter()
+                .filter(|edge| edge.from == node_id)
+                .map(|edge| edge.to.as_str()),
+        );
+    }
+    reachable
 }
 
 async fn freeze_release(
@@ -1104,6 +1179,144 @@ fn storage(context: &'static str, error: tokio_postgres::Error) -> MintManifestE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn closure_component(component: &str, registered_operation: Option<&str>) -> AdmittedComponent {
+        AdmittedComponent {
+            scope: ComponentPackageScope {
+                tenant_id: "tenant-a".to_owned(),
+                package_id: "base".to_owned(),
+                package_version: "1.0.0".to_owned(),
+            },
+            component: component.to_owned(),
+            interface_version: "0.1.0".to_owned(),
+            operation: "run".to_owned(),
+            registered_operation: registered_operation.map(str::to_owned),
+            component_digest: DIGEST.to_owned(),
+            imports: Vec::new(),
+            imports_fingerprint: DIGEST.to_owned(),
+            effects: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+        }
+    }
+
+    fn closure_document(with_registered_edge: bool) -> WiringDocument {
+        let edges = with_registered_edge
+            .then(|| wamn_catalog::WiringEdge {
+                from: "entry".to_owned(),
+                from_port: wamn_execution_contract::MAIN_PORT.to_owned(),
+                to: "registered".to_owned(),
+                to_port: None,
+            })
+            .into_iter()
+            .collect();
+        WiringDocument::new(
+            "receiving",
+            1,
+            "entry",
+            BTreeMap::from([
+                (
+                    "entry".to_owned(),
+                    wamn_catalog::WiringNode {
+                        component: "entry-component".to_owned(),
+                        interface_version: "0.1.0".to_owned(),
+                        operation: "run".to_owned(),
+                        params: BTreeMap::new(),
+                        terminal: None,
+                    },
+                ),
+                (
+                    "registered".to_owned(),
+                    wamn_catalog::WiringNode {
+                        component: "registered-component".to_owned(),
+                        interface_version: "0.1.0".to_owned(),
+                        operation: "run".to_owned(),
+                        params: BTreeMap::new(),
+                        terminal: None,
+                    },
+                ),
+            ]),
+            edges,
+            Vec::new(),
+        )
+        .expect("construct the exact wiring closure")
+    }
+
+    fn closure_attachment(mode: &str) -> ServingAttachment {
+        ServingAttachment {
+            kind: wamn_catalog::AttachmentKind::Http,
+            package_id: "base".to_owned(),
+            wiring_id: "receiving".to_owned(),
+            wiring_version: 1,
+            definition_hash: wamn_catalog::DefinitionHash::parse(DIGEST)
+                .expect("fixture definition hash is canonical"),
+            definition: serde_json::json!({"route": {}}),
+            auth_policy: serde_json::json!({"mode": mode}),
+            registered_operation: None,
+        }
+    }
+
+    #[test]
+    fn release_mint_refuses_an_anonymous_path_to_a_registered_operation() {
+        let target = ReleaseWiringTarget {
+            package_id: "base".to_owned(),
+            package_version: "1.0.0".to_owned(),
+            wiring_id: "receiving".to_owned(),
+            wiring_version: 1,
+        };
+        let facts = [
+            closure_component("entry-component", None),
+            closure_component(
+                "registered-component",
+                Some("base@1.0.0::purchase_order.get"),
+            ),
+        ];
+        let anonymous = BTreeMap::from([(
+            "receiving-http".to_owned(),
+            closure_attachment(wamn_catalog::NO_AUTHENTICATION_MODE),
+        )]);
+        let error =
+            validate_anonymous_wiring_closure(&anonymous, &target, &closure_document(true), &facts)
+                .expect_err("anonymous reachability must fail at release mint");
+        assert_eq!(
+            error.kind(),
+            MintManifestErrorKind::UnauthenticatedRegisteredOperation
+        );
+        assert_eq!(
+            error.detail(),
+            "attachment \"receiving-http\" reaches registered operation \
+             \"base@1.0.0::purchase_order.get\" at node \"registered\"; set \
+             auth-policy mode = \"pat\""
+        );
+
+        assert!(
+            validate_anonymous_wiring_closure(
+                &anonymous,
+                &target,
+                &closure_document(false),
+                &facts,
+            )
+            .is_ok(),
+            "a disconnected registered component is not a reachable path"
+        );
+        let protected = BTreeMap::from([(
+            "receiving-http".to_owned(),
+            closure_attachment(wamn_catalog::PAT_AUTHENTICATION_MODE),
+        )]);
+        assert!(
+            validate_anonymous_wiring_closure(
+                &protected,
+                &target,
+                &closure_document(true),
+                &facts,
+            )
+            .is_ok(),
+            "PAT mode is the declared remedy"
+        );
+    }
 
     #[test]
     fn package_and_wiring_coordinates_are_exact() {

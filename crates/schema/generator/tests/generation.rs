@@ -5,7 +5,7 @@ use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
     AuthoredSql, GenerateErrorKind, GeneratedPackage, GenerationInput, GenerationProvenance,
-    corpus_sha256, generate, validate_parity_json,
+    PackageManifest, corpus_sha256, generate, validate_operation_vocabulary, validate_parity_json,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
@@ -631,6 +631,106 @@ fn strict_manifest_and_ir_references_fail_loudly() {
             .unwrap_err()
             .kind(),
         GenerateErrorKind::InvalidManifest
+    );
+}
+
+fn parsed_manifest(value: &Value) -> PackageManifest {
+    PackageManifest::from_slice(&serde_json::to_vec(value).expect("serialize manifest"))
+        .expect("parse strict manifest")
+}
+
+#[test]
+fn shared_operation_vocabulary_refuses_unknown_repeated_and_missing_group_members() {
+    let mut unknown = manifest();
+    unknown["components"]["receiving_data"]["operations"]
+        .as_array_mut()
+        .expect("operations array")
+        .push(json!("purchase_order.delete"));
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&unknown))
+            .expect_err("unknown grouped operation was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidComponent
+    );
+    assert_eq!(
+        run(&catalog(false), &unknown, &QUERY_SOURCES)
+            .expect_err("generation accepted an unknown grouped operation")
+            .kind(),
+        GenerateErrorKind::InvalidComponent
+    );
+
+    let mut repeated = manifest();
+    repeated["components"]["receiving_data"]["operations"]
+        .as_array_mut()
+        .expect("operations array")
+        .push(json!("purchase_order.get"));
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&repeated))
+            .expect_err("repeated grouped operation was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidComponent
+    );
+    assert_eq!(
+        run(&catalog(false), &repeated, &QUERY_SOURCES)
+            .expect_err("generation accepted a repeated grouped operation")
+            .kind(),
+        GenerateErrorKind::InvalidComponent
+    );
+
+    let mut missing = manifest();
+    missing["components"]["receiving_data"]["operations"] =
+        json!(["purchase_order.get", "purchase_order.query"]);
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&missing))
+            .expect_err("ungrouped declared operation was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidComponent
+    );
+    assert_eq!(
+        run(&catalog(false), &missing, &QUERY_SOURCES)
+            .expect_err("generation accepted an ungrouped declared operation")
+            .kind(),
+        GenerateErrorKind::InvalidComponent
+    );
+}
+
+#[test]
+fn shared_operation_vocabulary_refuses_permission_identity_drift() {
+    let mut mismatch = manifest();
+    mismatch["models"]["purchase_order"]["operations"]["get"]["permission"] =
+        json!("purchase_order.query");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&mismatch))
+            .expect_err("permission identity drift was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+    assert_eq!(
+        run(&catalog(false), &mismatch, &QUERY_SOURCES)
+            .expect_err("generation accepted permission identity drift")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+}
+
+#[test]
+fn shared_operation_vocabulary_refuses_noncanonical_coordinates() {
+    let mut package = manifest();
+    package["package"]["id"] = json!("wamn-Receiving");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&package))
+            .expect_err("noncanonical package id was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidIdentity
+    );
+
+    let mut version = manifest();
+    version["package"]["version"] = json!("1.0.0::shadow");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&version))
+            .expect_err("ambiguous package version was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidIdentity
     );
 }
 

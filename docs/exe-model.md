@@ -106,8 +106,11 @@ admission freezes it in `runs.durability_class`, and claims read only that carri
   PostgreSQL identity enforced by privileges and RLS. Nothing generated is
   gate-exempt or reflection-served.
 - Existing compiled RLS policies use role/user claims that the production claim
-  path does not inject. That correctness defect must close before generated APIs
-  or raw developer SQL become reachable.
+  path does not inject. That correctness defect must close before any generated
+  or raw-SQL guest API bearing those role/user-RLS policies becomes reachable.
+  Registered operations without such policies keep authorization host-side:
+  they compare the exact operation token against the authenticated principal's
+  grants and bind no caller-derived database claim (`wamn-10yt.3.2`).
 
 Per-tenant roles imply pools per credential. Connection multiplication is the
 pooler trigger, not an alternative identity model.

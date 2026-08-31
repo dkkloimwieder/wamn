@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
+test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
@@ -15,6 +16,7 @@ wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }
+wamn-platform-identity = { workspace = true }
 wamn-pg-core = { workspace = true }
 # wamn-0h0g.16.15: the pointer-flip doorbell subscriber. The router crate
 # declares no DB, no pooling, no runtime and no clock, so the LISTEN connection

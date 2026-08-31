@@ -89,7 +89,7 @@ use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_pg_core::quote_ident;
 use wamn_platform_identity::{
     IdentityErrorKind, Principal, PrincipalKind, PrincipalStatus, assign_project_role,
-    authenticate_pat, create_service, issue_pat, resolve_subject, revoke_pat,
+    authenticate_pat, create_service, issue_pat, resolve_subject, revoke_pat, route_caller_subject,
 };
 
 use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policy};
@@ -2601,7 +2601,8 @@ fn verify_executor_platform_acl_role_inventory(
 
 /// THE CALLABLE-HTTP ADMITTER DENIAL MATRIX (`wamn-0h0g.22.37`).
 ///
-/// `USAGE` on `catalog` plus six `SELECT`s, and NOTHING on the run plane — the
+/// `USAGE` on `catalog` and `app_system`, the exact catalog reads, one
+/// `app_system.permissions` read, and NOTHING on the run plane — the
 /// disjointness from the executor family is the security property, and it is
 /// asserted by equality for the same reason the two T1 readers' is. A `wamn_run`
 /// schema `USAGE` alone would fail here, which is what stops this credential
@@ -2620,13 +2621,27 @@ fn verify_http_admitter_acl_role_inventory(
         return Ok(());
     }
     let actual = acl_tuples(inventory);
-    let mut expected = BTreeSet::from([(
-        "schema".to_string(),
-        "catalog".to_string(),
-        "catalog".to_string(),
-        "USAGE".to_string(),
-    )]);
-    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
+    let mut expected = BTreeSet::from([
+        (
+            "schema".to_string(),
+            "app_system".to_string(),
+            "app_system".to_string(),
+            "USAGE".to_string(),
+        ),
+        (
+            "schema".to_string(),
+            "catalog".to_string(),
+            "catalog".to_string(),
+            "USAGE".to_string(),
+        ),
+        (
+            "relation".to_string(),
+            "app_system".to_string(),
+            "permissions".to_string(),
+            "SELECT".to_string(),
+        ),
+    ]);
+    for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
         expected.insert((
             "relation".to_string(),
             "catalog".to_string(),
@@ -2767,11 +2782,15 @@ const ROUTE_CALLER: PatPurpose = PatPurpose {
 };
 
 impl PatPurpose {
-    fn subject(self, triple: &Triple) -> String {
-        format!(
+    fn subject(self, triple: &Triple) -> anyhow::Result<String> {
+        if self == ROUTE_CALLER {
+            return route_caller_subject(&triple.org, &triple.project, triple.env.as_str())
+                .context("derive the canonical route-caller subject");
+        }
+        Ok(format!(
             "{}-{}--{}--{}",
             self.subject_stem, triple.org, triple.project, triple.env
-        )
+        ))
     }
 
     fn display_name(self, triple: &Triple) -> String {
@@ -2826,7 +2845,7 @@ async fn issue_pat_secret(
     purpose: PatPurpose,
     path: &Path,
 ) -> anyhow::Result<()> {
-    let subject = purpose.subject(triple);
+    let subject = purpose.subject(triple)?;
     let display_name = purpose.display_name(triple);
     let principal = resolve_or_create_service(client, &subject, &display_name).await?;
     anyhow::ensure!(
@@ -2864,7 +2883,7 @@ async fn issue_pat_secret(
         issued.token(),
         issued.record().prefix(),
         issued.record().expires_at(),
-    );
+    )?;
     write_secret_json(path, &secret)?;
     println!(
         "wrote {} ({} PAT Secret; kubectl apply)",
@@ -2927,9 +2946,9 @@ fn render_pat_secret(
     token: &str,
     prefix: &str,
     expires_at: &str,
-) -> Value {
-    let subject = purpose.subject(triple);
-    json!({
+) -> anyhow::Result<Value> {
+    let subject = purpose.subject(triple)?;
+    Ok(json!({
         "apiVersion": "v1",
         "kind": "Secret",
         "metadata": {
@@ -2956,7 +2975,7 @@ fn render_pat_secret(
         "stringData": {
             "token": token,
         },
-    })
+    }))
 }
 
 fn provision_summary(triple: &Triple, database: &str, cluster: &str) -> String {
@@ -3488,7 +3507,7 @@ mod tests {
         let triple = Triple::new("acme", "billing", "dev");
         assert_eq!(PAT_TTL, Duration::from_secs(2_592_000));
         assert_eq!(
-            MANAGEMENT_AUTHOR.subject(&triple),
+            MANAGEMENT_AUTHOR.subject(&triple).unwrap(),
             "wamn-management-author-acme--billing--dev"
         );
         assert_eq!(
@@ -3496,7 +3515,7 @@ mod tests {
             "WAMN management author acme/billing/dev"
         );
         assert_eq!(
-            ROUTE_CALLER.subject(&triple),
+            ROUTE_CALLER.subject(&triple).unwrap(),
             "wamn-route-caller-acme--billing--dev"
         );
         assert_eq!(
@@ -3512,7 +3531,8 @@ mod tests {
             "wamn_pat_token-material",
             "0123456789abcdef",
             "2026-09-09T12:34:56Z",
-        );
+        )
+        .unwrap();
         assert_eq!(
             secret,
             json!({
@@ -3561,7 +3581,8 @@ mod tests {
             "wamn_pat_other-material",
             "fedcba9876543210",
             "2026-09-09T12:34:56Z",
-        );
+        )
+        .unwrap();
         assert_eq!(
             route_secret["metadata"]["name"],
             "wamn-pat-route-caller-acme--billing--dev"

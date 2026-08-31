@@ -748,6 +748,27 @@ arm, 2 rows; with the arm dropped, **0 rows and no error**; with the pre-bead
 untargeted floor restored, `ERROR: permission denied for function
 current_tenant_key`.
 
+### `[ROUTE-AUTH-LIVE]` — route PAT and exact-operation authorization
+
+This gate composes the production project-env/PAT provisioner, package applier,
+scoped IdentityReader and HttpAdmitter generations, route authentication, and
+the every-invocation operation guard. It requires its variable and never
+self-skips.
+
+```bash
+docker run -d --name wamn-route-auth-pg -e POSTGRES_PASSWORD=probe \
+  -p 127.0.0.1:5439:5432 postgres:18
+until psql postgres://postgres:probe@localhost:5439/postgres -Atqc 'select 1'; do :; done
+WAMN_ROUTE_AUTH_PG18_URL=postgres://postgres:probe@localhost:5439/postgres \
+  cargo test -p wamn-proof-integration --lib --locked \
+  route_authentication_live::production_route_caller_authentication_and_operation_authorization \
+  -- --ignored --exact --nocapture --test-threads=1
+docker rm -f wamn-route-auth-pg # BY EXPLICIT NAME. Never prune.
+```
+
+It owns the fresh server: control/project databases and cluster-wide roles are
+created and reset. The frozen cluster is never a valid target.
+
 ### Other live gates that carry their command in-source
 
 These have no section tag; the file's own doc comment is the recipe of record.
@@ -766,6 +787,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `services/ctl/tests/apply_package_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test apply_package_live` |
 | `services/ctl/tests/protected_relations_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --features ops --test protected_relations_live -- --ignored` |
 | `services/ctl/tests/author_wiring_gate_report_live.rs` | `WAMN_AUTHOR_WIRING_PROJECT_PG_URL` **and** `WAMN_AUTHOR_WIRING_CONTROL_PG_URL` | `cargo test -p wamn-ctl --test author_wiring_gate_report_live -- --ignored` |
+| `tests/integration/src/route_authentication_live.rs` | `WAMN_ROUTE_AUTH_PG18_URL` | `cargo test -p wamn-proof-integration --lib route_authentication_live::production_route_caller_authentication_and_operation_authorization -- --ignored --exact --nocapture --test-threads=1` |
 | `services/scenario-worker/tests/management_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-scenario-worker --test management_live` |
 | `crates/execution/run-state/tests/effect_writer_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --features native --test effect_writer_live -- --ignored` |
 | `crates/execution/run-state/tests/run_state_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --test run_state_live -- --include-ignored` |
@@ -781,6 +803,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `crates/control/provision/tests/restore.rs` | `WAMN_RESTORE_PG_URL` | `cargo test -p wamn-control-provision --features ops --test restore` |
 | `crates/control/provision/tests/family_surface_grants.rs` | `WAMN_FAMILY_SURFACE_PG_URL` | `cargo test -p wamn-control-provision --test family_surface_grants` |
 | `crates/control/provision/tests/family_denial_matrix.rs` | `WAMN_DENIAL_MATRIX_PG_URL` | `cargo test -p wamn-control-provision --test family_denial_matrix -- --test-threads=1` |
+| `crates/control/provision/tests/operation_grants.rs` | `WAMN_OPERATION_GRANTS_PG18_URL` | `cargo test -p wamn-control-provision --test operation_grants` |
 | `crates/execution/run-state/tests/store.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --test store` |
 | `crates/identity/platform/tests/identity_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-platform-identity --test identity_live` |
 | `crates/identity/platform/tests/pat_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-platform-identity --test pat_live` |

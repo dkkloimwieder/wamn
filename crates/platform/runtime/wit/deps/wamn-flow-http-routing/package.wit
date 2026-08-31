@@ -34,7 +34,6 @@ interface routing {
     host: string,
     path: string,
     method: string,
-    auth-policy: string,
     mappings: list<mapping>,
     input-schema: string,
     body-limit: u64,
@@ -46,15 +45,18 @@ interface routing {
     code: string,
   }
 
+  /// Opaque host-owned proof of one authenticated originating caller.
+  resource authenticated-caller {}
+
   /// One admitted per-route slot. Dropping it releases the slot.
   resource route-permit {}
 
   /// Return route definitions carried by this process's release.
   routes: func(method: string, authority: string) -> result<list<route-definition>, string>;
 
-  /// Authenticate only after route selection has supplied the policy. None is
-  /// an explicitly anonymous policy; Some is the authenticated caller UUID.
-  authenticate: func(policy: string, headers: list<header>) -> result<option<string>, auth-rejection>;
+  /// Authenticate after route selection. The host re-derives policy from the
+  /// welded attachment; none is an explicitly anonymous policy.
+  authenticate: func(attachment-id: string, headers: list<header>) -> result<option<authenticated-caller>, auth-rejection>;
 
   /// Acquire immediately or return none when this attachment is at capacity.
   try-acquire: func(attachment-id: string) -> result<option<route-permit>, string>;

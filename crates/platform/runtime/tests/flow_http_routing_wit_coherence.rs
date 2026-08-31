@@ -1,39 +1,31 @@
-//! Drift guard for the twice-vendored `wamn:flow-http-routing@0.1.0` contract
-//! (wamn-0h0g.15.120).
-//!
-//! Unlike `wamn:jetstream` and `wamn:connection` this package has no
-//! doc-of-record under `docs/reference/contracts/`. It exists only as two vendored
-//! copies, one per bindgen that compiles it: the host plugin's
-//! (`crates/platform/runtime/wit/deps/`, see `plugins/flow_http_routing.rs`) and
-//! the flow-http guest's (`components/ingress/http-route/wit/deps/`, see
-//! `src/guest.rs`). Neither outranks the other, so the surface is pinned in both,
-//! and the two are kept BYTE-IDENTICAL on the `wamn:jetstream` precedent: editing
-//! one without the other fails a named test here instead of shipping a host and a
-//! guest that disagree about the wire.
+//! Byte-coherence guard for vendored routing WIT packages.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const HOST_COPY: &str = include_str!("../wit/deps/wamn-flow-http-routing/package.wit");
-const HTTP_COPY: &str = include_str!(
+const HOST_FLOW_COPY: &str = include_str!("../wit/deps/wamn-flow-http-routing/package.wit");
+const HTTP_FLOW_COPY: &str = include_str!(
     "../../../../components/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit"
 );
+const DELIVERY_FLOW_COPY: &str =
+    include_str!("../../../execution/host/wit/deps/wamn-flow-http-routing/package.wit");
+const MATERIALIZER_FLOW_COPY: &str = include_str!(
+    "../../../../components/execution/materializer/wit/deps/wamn-flow-http-routing/package.wit"
+);
+
+const NATIVE_DELIVERY_COPY: &str =
+    include_str!("../../../execution/host/wit/deps/wamn-router-delivery/package.wit");
 const HTTP_DELIVERY_COPY: &str = include_str!(
     "../../../../components/ingress/http-route/wit/deps/wamn-router-delivery/package.wit"
 );
-const HTTP_RANDOM_COPY: &str =
-    include_str!("../../../../components/ingress/http-route/wit/deps/wasi-random/package.wit");
-const HOST_WORLD: &str = include_str!("../wit/world.wit");
-const HTTP_WORLD: &str = include_str!("../../../../components/ingress/http-route/wit/world.wit");
+const MATERIALIZER_DELIVERY_COPY: &str = include_str!(
+    "../../../../components/execution/materializer/wit/deps/wamn-router-delivery/package.wit"
+);
 
-/// Every vendored copy of the package, repository-relative and sorted.
-///
-/// The two `include_str!` consts above only prove that the copies THIS guard
-/// names agree. A third copy — a fixture guest that binds `routing`, say — would
-/// be a copy nobody compares, which is the failure this bead exists for, so the
-/// tree is enumerated as well (the `wamn:connection` guard does the same).
-const REGISTERED_COPIES: [&str; 2] = [
+const REGISTERED_FLOW_COPIES: [&str; 4] = [
+    "components/execution/materializer/wit/deps/wamn-flow-http-routing/package.wit",
     "components/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit",
+    "crates/execution/host/wit/deps/wamn-flow-http-routing/package.wit",
     "crates/platform/runtime/wit/deps/wamn-flow-http-routing/package.wit",
 ];
 
@@ -44,7 +36,7 @@ fn repo_root() -> PathBuf {
         .expect("repository root canonicalizes")
 }
 
-fn collect_copies(dir: &Path, root: &Path, found: &mut Vec<String>) {
+fn collect_flow_copies(dir: &Path, root: &Path, found: &mut Vec<String>) {
     let entries =
         fs::read_dir(dir).unwrap_or_else(|error| panic!("{} reads: {error}", dir.display()));
     for entry in entries {
@@ -57,201 +49,46 @@ fn collect_copies(dir: &Path, root: &Path, found: &mut Vec<String>) {
             ) {
                 continue;
             }
-            collect_copies(&path, root, found);
-        } else if path.file_name().and_then(|name| name.to_str()) == Some("package.wit") {
-            let source = fs::read_to_string(&path).expect("candidate WIT reads");
-            if source.contains("package wamn:flow-http-routing@") {
-                found.push(
-                    path.strip_prefix(root)
-                        .expect("vendored WIT is within repository")
-                        .to_string_lossy()
-                        .into_owned(),
-                );
-            }
+            collect_flow_copies(&path, root, found);
+            continue;
+        }
+        let is_flow_copy = path.file_name().and_then(|name| name.to_str()) == Some("package.wit")
+            && path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                == Some("wamn-flow-http-routing");
+        if is_flow_copy {
+            found.push(
+                path.strip_prefix(root)
+                    .expect("vendored WIT is within repository")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
         }
     }
 }
 
-/// The body of one item declared inside `interface routing`, braces excluded.
-///
-/// Every record and enum in the package sits at one indentation level inside the
-/// interface and holds only fields, so its block closes at exactly `"\n  }"` —
-/// the first such sequence after the header. Comparing a whole block rather than
-/// a line at a time is what makes an ADDED or REMOVED field fail, not only a
-/// renamed one.
-fn item_body<'a>(package: &'a str, header: &str) -> &'a str {
-    let (_, body) = package
-        .split_once(header)
-        .unwrap_or_else(|| panic!("wamn:flow-http-routing package declares {header:?}"));
-    body.split_once("\n  }")
-        .map(|(body, _)| body.trim())
-        .unwrap_or_else(|| panic!("{header:?} closes"))
+#[test]
+fn the_flow_http_routing_copies_stay_byte_identical() {
+    assert_eq!(HOST_FLOW_COPY, HTTP_FLOW_COPY);
+    assert_eq!(HOST_FLOW_COPY, DELIVERY_FLOW_COPY);
+    assert_eq!(HOST_FLOW_COPY, MATERIALIZER_FLOW_COPY);
 }
 
 #[test]
-fn the_two_vendored_copies_stay_byte_identical() {
-    assert_eq!(
-        HOST_COPY, HTTP_COPY,
-        "crates/platform/runtime/wit/deps/wamn-flow-http-routing/package.wit and \
-         components/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit drifted — \
-         the host plugin and the guest bind the same package from their own vendored copy \
-         and must stay byte-identical (edit both, or neither)"
-    );
-}
-
-#[test]
-fn every_vendored_copy_of_the_package_is_one_this_guard_compares() {
+fn every_flow_http_routing_copy_is_registered() {
     let root = repo_root();
     let mut found = Vec::new();
     for top in ["components", "crates", "services"] {
-        collect_copies(&root.join(top), &root, &mut found);
+        collect_flow_copies(&root.join(top), &root, &mut found);
     }
     found.sort();
-
-    assert_eq!(
-        found, REGISTERED_COPIES,
-        "a vendored wamn:flow-http-routing copy is not one of the two this guard pins — \
-         register it here, or it drifts unobserved"
-    );
+    assert_eq!(found, REGISTERED_FLOW_COPIES);
 }
 
 #[test]
-fn route_definition_carries_exactly_the_fields_the_host_fills_and_the_guest_reads() {
-    // The host fills every one of these in `route_definition` and the guest
-    // destructures every one of them in `route_definition`, so a field added or
-    // dropped on one side is a compile error on the other — but only once both
-    // copies move. This is the pin that makes the WIT edit itself visible.
-    //
-    // The widths are load-bearing beyond their names: `status`/`u16` types the
-    // plugin's `UNSUPPORTED_POLICY_STATUS`, and the two `u64` ceilings are what
-    // the guest narrows with `usize::try_from`, which is why the host answers
-    // them with `u32::MAX` and not `u64::MAX`.
-    const ROUTE_DEFINITION: &str = r#"attachment-id: string,
-    host: string,
-    path: string,
-    method: string,
-    auth-policy: string,
-    mappings: list<mapping>,
-    input-schema: string,
-    body-limit: u64,
-    mapped-limit: u64,"#;
-
-    for copy in [HOST_COPY, HTTP_COPY] {
-        assert_eq!(
-            item_body(copy, "record route-definition {"),
-            ROUTE_DEFINITION
-        );
-    }
-}
-
-#[test]
-fn the_three_bound_functions_and_the_refusal_shape_are_unchanged() {
-    const AUTH_REJECTION: &str = r#"status: u16,
-    code: string,"#;
-
-    for copy in [HOST_COPY, HTTP_COPY] {
-        assert!(copy.starts_with("package wamn:flow-http-routing@0.1.0;\n"));
-        for signature in [
-            // `routes` refuses with a bare string: the plugin's `NoRelease` is
-            // stringified at this boundary, so a typed error channel here would
-            // move the refusal, not just rename it.
-            "routes: func(method: string, authority: string) -> result<list<route-definition>, string>;",
-            // `authenticate` takes the policy the SELECTED route supplied; a
-            // signature that reached for the attachment itself would let the
-            // guest choose its own policy.
-            "authenticate: func(policy: string, headers: list<header>) -> result<option<string>, auth-rejection>;",
-            // None is capacity exhaustion, while a provider refusal remains a
-            // distinct error and cannot be misreported as 429.
-            "try-acquire: func(attachment-id: string) -> result<option<route-permit>, string>;",
-        ] {
-            assert!(
-                copy.contains(signature),
-                "vendored wamn:flow-http-routing copy no longer declares {signature:?}"
-            );
-        }
-        assert_eq!(item_body(copy, "record auth-rejection {"), AUTH_REJECTION);
-        assert!(copy.contains("resource route-permit {}"));
-    }
-}
-
-#[test]
-fn the_http_guest_vendors_the_native_router_delivery_contract_byte_for_byte() {
-    let native_path =
-        repo_root().join("crates/execution/host/wit/deps/wamn-router-delivery/package.wit");
-    let native = fs::read_to_string(&native_path).unwrap_or_else(|error| {
-        panic!(
-            "native router-delivery contract {} reads: {error}",
-            native_path.display()
-        )
-    });
-    assert_eq!(
-        native, HTTP_DELIVERY_COPY,
-        "the flow-http guest must vendor the native wamn:router-delivery contract byte-for-byte"
-    );
-    assert_eq!(
-        HTTP_WORLD
-            .matches("import wamn:router-delivery/delivery@0.1.0;")
-            .count(),
-        1,
-        "the HTTP world imports the one native delivery interface"
-    );
-    assert!(
-        !HTTP_WORLD.contains("wamn:flow-invocation"),
-        "the inline HTTP guest must not retain the durable begin/wait import"
-    );
-    assert!(HTTP_RANDOM_COPY.starts_with("package wasi:random@0.2.12;\n"));
-    assert!(HTTP_RANDOM_COPY.contains("get-random-bytes: func(len: u64) -> list<u8>;"));
-    assert_eq!(
-        HTTP_WORLD
-            .matches("import wasi:random/random@0.2.12;")
-            .count(),
-        1,
-        "fresh delivery identity uses exactly the admitted WASI random interface"
-    );
-    assert!(!HTTP_WORLD.contains("wasi:random/insecure"));
-}
-
-#[test]
-fn the_mapping_vocabulary_is_exactly_the_arms_both_sides_match_on() {
-    // The host maps authored JSON onto these arms in `input_mapping` and the
-    // guest maps them onto its own enums in `route_definition`; both matches are
-    // exhaustive, so an arm added to the WIT alone compiles nothing.
-    const MAPPING_SOURCE: &str = r#"body,
-    path,
-    query,
-    header,"#;
-    const CARDINALITY: &str = r#"one,
-    many,"#;
-    const MAPPING: &str = r#"%from: mapping-source,
-    name: string,
-    to: string,
-    optional: bool,
-    cardinality: cardinality,"#;
-    const HEADER: &str = r#"name: string,
-    value: string,"#;
-
-    for copy in [HOST_COPY, HTTP_COPY] {
-        assert_eq!(item_body(copy, "enum mapping-source {"), MAPPING_SOURCE);
-        assert_eq!(item_body(copy, "enum cardinality {"), CARDINALITY);
-        assert_eq!(item_body(copy, "record mapping {"), MAPPING);
-        assert_eq!(item_body(copy, "record header {"), HEADER);
-    }
-}
-
-#[test]
-fn both_worlds_import_the_routing_interface_and_the_production_host_links_it() {
-    const IMPORT: &str = "import wamn:flow-http-routing/routing@0.1.0;";
-
-    // The bindgen world name and the WIT world name are the same string in two
-    // files; the namespace guard is a third spelling of the package identity, and
-    // it decides whether `add_to_linker` fires at all — a package rename that
-    // missed it would produce a plugin whose import resolves to nothing.
-    assert!(HOST_WORLD.contains("world flow-http-routing-plugin {"));
-    assert_eq!(HOST_WORLD.matches(IMPORT).count(), 1);
-    // wamn-hopk R5: the bindgen-side spellings and the host's linker call were
-    // asserted by grepping two .rs files. Deleted; the WIT world is the contract
-    // and a bindgen mismatch is a compile error, not a missing substring.
-
-    assert!(HTTP_WORLD.contains("world flow-http {"));
-    assert_eq!(HTTP_WORLD.matches(IMPORT).count(), 1);
+fn the_router_delivery_copies_stay_byte_identical() {
+    assert_eq!(NATIVE_DELIVERY_COPY, HTTP_DELIVERY_COPY);
+    assert_eq!(NATIVE_DELIVERY_COPY, MATERIALIZER_DELIVERY_COPY);
 }

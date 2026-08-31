@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -241,6 +241,156 @@ impl PackageManifest {
             ));
         }
         Ok(manifest)
+    }
+}
+
+/// Validate and return the manifest's exact package-local operation vocabulary.
+///
+/// This is the shared semantic authority for generation and production grant
+/// reconciliation. The package and local operation identities obey the naming
+/// law, every operation names itself as its permission token, and every
+/// declared operation appears in exactly one component grouping. Unknown,
+/// repeated, and missing group members refuse.
+pub fn validate_operation_vocabulary(
+    manifest: &PackageManifest,
+) -> Result<BTreeSet<String>, GenerateError> {
+    validate_package_identity(&manifest.package)?;
+
+    let mut declared = BTreeSet::new();
+    for (model_name, model) in &manifest.models {
+        validate_identifier(model_name, "operation module")?;
+        for (action, operation) in &model.operations {
+            let identity = format!("{model_name}.{}", action.as_str());
+            if operation.permission != identity {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!(
+                        "{identity} permission must equal its package-local operation identity"
+                    ),
+                ));
+            }
+            if !declared.insert(identity.clone()) {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!("manifest repeats declared operation {identity}"),
+                ));
+            }
+        }
+    }
+    for (command_name, command) in &manifest.commands {
+        validate_operation_identity(command_name)?;
+        if command.permission != command_name.as_str() {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{command_name} permission must equal its package-local operation identity"
+                ),
+            ));
+        }
+        if !declared.insert(command_name.clone()) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("manifest repeats declared operation {command_name}"),
+            ));
+        }
+    }
+
+    if manifest.components.is_empty() {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidComponent,
+            "manifest declares no component grouping",
+        ));
+    }
+    let mut grouped = BTreeSet::new();
+    for (name, component) in &manifest.components {
+        validate_identifier(name, "component")?;
+        if component.operations.is_empty() {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidComponent,
+                format!("{name} must group at least one operation"),
+            ));
+        }
+        for operation in &component.operations {
+            if !declared.contains(operation) || !grouped.insert(operation.clone()) {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidComponent,
+                    format!("{name} references unknown or repeated operation {operation}"),
+                ));
+            }
+        }
+    }
+    if grouped != declared {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidComponent,
+            "every operation must be grouped exactly once",
+        ));
+    }
+    Ok(declared)
+}
+
+/// Construct the one canonical package-qualified identity for a local operation.
+pub fn canonical_operation_identity(
+    package: &PackageIdentity,
+    local_operation: &str,
+) -> Result<String, GenerateError> {
+    validate_operation_identity(local_operation)?;
+    Ok(format!(
+        "{}{local_operation}",
+        canonical_operation_prefix(package)?
+    ))
+}
+
+/// Construct the canonical namespace prefix owned by one exact package coordinate.
+pub fn canonical_operation_prefix(package: &PackageIdentity) -> Result<String, GenerateError> {
+    validate_package_identity(package)?;
+    Ok(format!("{}@{}::", package.id, package.version))
+}
+
+fn validate_package_identity(package: &PackageIdentity) -> Result<(), GenerateError> {
+    validate_identifier(&package.id, "package id")?;
+    if package.version.is_empty()
+        || package.version.trim() != package.version
+        || package.version.as_bytes().contains(&0)
+        || package.version.contains('@')
+        || package.version.contains("::")
+    {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidIdentity,
+            "package version must be canonical text without operation-coordinate separators",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_operation_identity(value: &str) -> Result<(), GenerateError> {
+    let Some((module, operation)) = value.split_once('.') else {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidIdentity,
+            format!("operation `{value}` must have canonical module.operation form"),
+        ));
+    };
+    if operation.contains('.') {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidIdentity,
+            format!("operation `{value}` must contain exactly one module separator"),
+        ));
+    }
+    validate_identifier(module, "operation module")?;
+    validate_identifier(operation, "operation name")
+}
+
+pub(crate) fn validate_identifier(value: &str, object: &str) -> Result<(), GenerateError> {
+    let mut bytes = value.bytes();
+    let valid_start = bytes.next().is_some_and(|byte| byte.is_ascii_lowercase());
+    let valid_tail =
+        bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    if valid_start && valid_tail && !value.ends_with('_') && !value.contains("__") {
+        Ok(())
+    } else {
+        Err(GenerateError::new(
+            GenerateErrorKind::InvalidIdentity,
+            format!("{object} `{value}` must be singular snake_case"),
+        ))
     }
 }
 

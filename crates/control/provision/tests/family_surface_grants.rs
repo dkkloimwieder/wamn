@@ -48,6 +48,7 @@ use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
+const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 
 const ORG: &str = "acme";
 const PROJECT: &str = "billing";
@@ -189,6 +190,7 @@ fn reset(admin_url: &str, database: &str) {
     let mut script = String::from(
         "DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
+         DROP SCHEMA IF EXISTS app_system CASCADE;\n\
          DROP SCHEMA IF EXISTS wamn_authority CASCADE;\n",
     );
     for role in roles {
@@ -211,7 +213,7 @@ fn reset(admin_url: &str, database: &str) {
            NOINHERIT NOREPLICATION NOBYPASSRLS;\n",
     );
     run_admin(admin_url, "reset the family-surface fixture", &script);
-    for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE] {
+    for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         run_admin(admin_url, "apply a run-plane artifact", artifact);
     }
 }
@@ -591,14 +593,14 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
 
 /// THE CALLABLE-HTTP ADMITTER SURFACE, AS THE SERVER SEES IT.
 ///
-/// One statement, seven relations, and the run plane is the thing it must not
-/// reach — asserted by EQUALITY over the whole inventory, so acquiring the
-/// executor's authority fails here rather than at the next incident.
+/// Seven catalog relations, the exact operation-grant relation, and no run plane
+/// — asserted by EQUALITY over the whole inventory, so acquiring any adjacent
+/// authority fails here rather than at the next incident.
 #[test]
-fn the_http_admitter_role_holds_exactly_seven_catalog_selects_and_no_run_plane() {
+fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
     let Ok(admin) = std::env::var("WAMN_FAMILY_SURFACE_PG_URL") else {
         eprintln!(
-            "skipping the_http_admitter_role_holds_exactly_seven_catalog_selects_and_no_run_plane \
+            "skipping the_http_admitter_role_adds_exactly_the_operation_grant_read \
              (set WAMN_FAMILY_SURFACE_PG_URL to run)"
         );
         return;
@@ -624,25 +626,19 @@ fn the_http_admitter_role_holds_exactly_seven_catalog_selects_and_no_run_plane()
         ),
     );
 
-    let mut expected: Vec<String> = [
-        "component_library",
-        "connection_bindings",
-        "connection_generations",
-        "connection_instances",
-        "connection_requirements",
-        "effective_release_packages",
-        "wirings",
-    ]
-    .iter()
-    .map(|relation| format!("relation|catalog|{relation}|SELECT"))
-    .collect();
+    let mut expected: Vec<String> = sql::HTTP_ADMITTER_CATALOG_RELATIONS
+        .iter()
+        .map(|relation| format!("relation|catalog|{relation}|SELECT"))
+        .collect();
+    expected.push("relation|app_system|permissions|SELECT".to_owned());
+    expected.push("schema|app_system|app_system|USAGE".to_owned());
     expected.push("schema|catalog|catalog|USAGE".to_owned());
     expected.sort();
     assert_eq!(
         inventory(&admin, stable),
         expected,
         "the callable-HTTP admitter's aclexplode inventory is not exactly USAGE \
-         on catalog plus the seven SELECTs its one statement reads"
+         on catalog and app_system plus the eight SELECTs its host reads"
     );
     // MEASURED, and the reason the probe block below cannot assert a NEGATIVE
     // for `require_executor_platform_authority`: `deploy/sql/run-state.sql`
@@ -671,19 +667,20 @@ fn the_http_admitter_role_holds_exactly_seven_catalog_selects_and_no_run_plane()
     // this family out of band is REMOVED by a re-apply, not merely unmentioned.
     run_admin(
         &admin,
-        "widen the role onto the run plane",
+        "widen the role onto adjacent authority",
         &format!(
             "GRANT USAGE ON SCHEMA wamn_run TO {stable};\n\
              GRANT SELECT ON TABLE wamn_run.runs TO {stable};\n\
-             GRANT UPDATE (status) ON TABLE wamn_run.runs TO {stable};\n"
+             GRANT UPDATE (status) ON TABLE wamn_run.runs TO {stable};\n\
+             GRANT SELECT ON TABLE app_system.roles TO {stable};\n"
         ),
     );
     run_admin(&admin, "re-converge after the widening", &surface);
     assert_eq!(
         inventory(&admin, stable),
         expected,
-        "a hand-granted run-plane privilege survived a re-apply: this credential \
-         must never be reusable for admission or claim work"
+        "a hand-granted adjacent privilege survived a re-apply: this credential \
+         must never read role state or perform admission or claim work"
     );
 
     let mut probes = format!(
@@ -693,6 +690,15 @@ fn the_http_admitter_role_holds_exactly_seven_catalog_selects_and_no_run_plane()
            ASSERT (SELECT rolcanlogin FROM pg_roles WHERE rolname = r), \
              'the prepared generation must be able to authenticate'; \
            ASSERT has_schema_privilege(r, 'catalog', 'USAGE'), 'no catalog USAGE'; \
+           ASSERT has_schema_privilege(r, 'app_system', 'USAGE'), 'no app_system USAGE'; \
+           ASSERT has_table_privilege(r, 'app_system.permissions', 'SELECT'), \
+             'cannot read the exact operation grants'; \
+           ASSERT NOT has_table_privilege(r, 'app_system.permissions', 'INSERT') \
+             AND NOT has_table_privilege(r, 'app_system.permissions', 'UPDATE') \
+             AND NOT has_table_privilege(r, 'app_system.permissions', 'DELETE'), \
+             'the callable-HTTP admitter writes operation grants'; \
+           ASSERT NOT has_table_privilege(r, 'app_system.roles', 'SELECT'), \
+             'the callable-HTTP admitter reads adjacent role state'; \
            ASSERT NOT has_schema_privilege(r, 'wamn_run', 'USAGE'), \
              'the admitter authorizes an effect; it never touches the run plane'; \
            ASSERT NOT has_function_privilege(r, 'wamn_authority.tenant_key(text)', 'EXECUTE'), \
@@ -797,6 +803,11 @@ fn the_http_admitter_role_holds_exactly_seven_catalog_selects_and_no_run_plane()
                 validation_hash) \
              VALUES ('tenant-a', 1, '{digest}', 'upstream', 'prod', 'upstream', \
                      'active', 'valid', '{digest}');\n\
+             INSERT INTO app_system.roles (tenant_id, name, is_system) \
+             VALUES ('tenant-a', 'route-caller', true);\n\
+             INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+             VALUES ('tenant-a', 'route-caller', \
+                     'wamn_receiving@1.0.0::purchase_order.get');\n\
              COMMIT;\n"
         ),
     );
@@ -825,4 +836,14 @@ fn the_http_admitter_role_holds_exactly_seven_catalog_selects_and_no_run_plane()
              than into authority"
         );
     }
+    assert_eq!(
+        query(
+            &as_login,
+            "SELECT count(*) FROM app_system.permissions \
+              WHERE role_name = 'route-caller' \
+                AND permission = 'wamn_receiving@1.0.0::purchase_order.get'"
+        ),
+        "1",
+        "the callable-HTTP generation cannot read the exact operation grant"
+    );
 }

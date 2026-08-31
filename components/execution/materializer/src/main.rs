@@ -513,6 +513,9 @@ fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> Deli
             | DeliveryError::InvalidRequest
             | DeliveryError::InvalidPayload,
         ) => DeliveryDisposition::DeadLetter("router-deterministic-refusal"),
+        Err(DeliveryError::PermissionDenied(_)) => {
+            DeliveryDisposition::DeadLetter("router-permission-denied")
+        }
         Ok(DeliveryOutcome::Cancelled)
         | Err(DeliveryError::WiringNotPreloaded | DeliveryError::ExecutionFailed) => {
             DeliveryDisposition::Retry
@@ -535,7 +538,7 @@ fn deliver(
     parent_causation: Option<&wamn_event_wire::Causation>,
 ) -> Result<DeliveryOutcome, DeliveryError> {
     let payload = serde_json::to_string(payload).map_err(|_| DeliveryError::InvalidPayload)?;
-    delivery::deliver(&DeliveryRequest {
+    delivery::deliver(DeliveryRequest {
         source: Source::Registration(registration_id.to_string()),
         delivery_id,
         payload,
@@ -1075,6 +1078,15 @@ mod tests {
                 DeliveryDisposition::DeadLetter("router-deterministic-refusal")
             );
         }
+        let permission_denied = Err(DeliveryError::PermissionDenied(
+            delivery::PermissionDenial {
+                operation: "wamn_receiving@1.0.0::receipt.get".into(),
+            },
+        ));
+        assert_eq!(
+            delivery_disposition(&permission_denied),
+            DeliveryDisposition::DeadLetter("router-permission-denied")
+        );
         for result in [
             Ok(DeliveryOutcome::Discard),
             Ok(DeliveryOutcome::Respond("{}".into())),

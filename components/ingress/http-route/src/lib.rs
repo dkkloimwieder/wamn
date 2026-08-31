@@ -57,7 +57,6 @@ pub struct RouteDefinition {
     pub host: String,
     pub path: String,
     pub method: String,
-    pub auth_policy: String,
     pub mappings: Vec<Mapping>,
     pub input_schema: Value,
     pub body_limit: usize,
@@ -71,13 +70,6 @@ pub struct AuthRejection {
     pub code: String,
 }
 
-/// Authenticated caller facts forwarded to the trusted router bridge.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CallerContext {
-    pub role: Option<String>,
-    pub user_id: Option<String>,
-}
-
 /// Trace context forwarded unchanged to component execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceContext {
@@ -87,11 +79,11 @@ pub struct TraceContext {
 
 /// One attachment-originated request to the host-owned router bridge.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeliveryRequest {
+pub struct DeliveryRequest<Caller> {
     pub attachment_id: String,
     pub delivery_id: String,
     pub payload: String,
-    pub caller: Option<CallerContext>,
+    pub caller: Option<Caller>,
     pub trace: Option<TraceContext>,
 }
 
@@ -134,13 +126,14 @@ pub enum DeliveryOutcome {
 }
 
 /// Host-side delivery refusal before a router outcome exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryError {
     SourceNotFound,
     InvalidRequest,
     InvalidPayload,
     WiringNotPreloaded,
     ExecutionFailed,
+    PermissionDenied { operation: String },
 }
 
 /// A bounded HTTP response produced by the adapter.
@@ -204,6 +197,7 @@ pub trait BodyReader {
 /// and delivery crosses the single host-owned router bridge.
 pub trait Backend {
     type RoutePermit;
+    type AuthenticatedCaller;
 
     fn routes(
         &mut self,
@@ -212,15 +206,18 @@ pub trait Backend {
     ) -> Result<Vec<RouteDefinition>, ProviderError>;
     fn authenticate(
         &mut self,
-        policy: &str,
+        attachment_id: &str,
         headers: &[Header],
-    ) -> Result<Option<String>, AuthRejection>;
+    ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection>;
     fn try_acquire_route(
         &mut self,
         attachment_id: &str,
     ) -> Result<Option<Self::RoutePermit>, ProviderError>;
     fn new_delivery_id(&mut self) -> String;
-    fn deliver(&mut self, request: DeliveryRequest) -> Result<DeliveryOutcome, DeliveryError>;
+    fn deliver(
+        &mut self,
+        request: DeliveryRequest<Self::AuthenticatedCaller>,
+    ) -> Result<DeliveryOutcome, DeliveryError>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -259,8 +256,8 @@ fn try_handle(
         .map_err(|_| error_response(503, "routing-provider-failed"))?;
     let matched = select_route(routes, &method, &authority, &path)
         .map_err(|code| error_response(404, code))?;
-    let principal = backend
-        .authenticate(&matched.definition.auth_policy, &head.headers)
+    let caller = backend
+        .authenticate(&matched.definition.attachment_id, &head.headers)
         .map_err(rejection_response)?;
 
     let body_limit = matched.definition.body_limit.min(limits.body_bytes);
@@ -300,10 +297,7 @@ fn try_handle(
             attachment_id,
             delivery_id,
             payload,
-            caller: principal.map(|user_id| CallerContext {
-                role: None,
-                user_id: Some(user_id),
-            }),
+            caller,
             trace,
         })
         .map_err(delivery_error_response)?;
@@ -674,6 +668,18 @@ fn delivery_error_response(error: DeliveryError) -> HttpResponse {
         DeliveryError::InvalidPayload => (400, "delivery-invalid-payload"),
         DeliveryError::WiringNotPreloaded => (503, "wiring-not-preloaded"),
         DeliveryError::ExecutionFailed => (503, "execution-failed"),
+        DeliveryError::PermissionDenied { operation } => {
+            return HttpResponse {
+                status: 403,
+                body: serde_json::to_vec(&json!({
+                    "error": {
+                        "code": "permission-denied",
+                        "operation": operation,
+                    }
+                }))
+                .unwrap_or_default(),
+            };
+        }
     };
     error_response(status, code)
 }

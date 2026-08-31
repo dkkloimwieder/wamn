@@ -28,6 +28,7 @@ use wamn_runtime::engine::MAX_HOST_CALL_DURATION;
 use wamn_runtime::plugins::connection_http::{
     self, CONNECTION_HTTP_ID, ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
 };
+use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -166,6 +167,50 @@ impl fmt::Display for PreloadedWiringMissing {
 
 impl std::error::Error for PreloadedWiringMissing {}
 
+/// Exact operation authority missing from the originating caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PermissionDenied {
+    operation: Box<str>,
+}
+
+impl PermissionDenied {
+    pub(crate) fn new(operation: impl Into<Box<str>>) -> Self {
+        Self {
+            operation: operation.into(),
+        }
+    }
+
+    pub(crate) fn operation(&self) -> &str {
+        &self.operation
+    }
+}
+
+impl fmt::Display for PermissionDenied {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "permission denied for operation {}",
+            self.operation
+        )
+    }
+}
+
+impl std::error::Error for PermissionDenied {}
+
+pub(crate) fn authorize_registered_operation(
+    caller: Option<&AuthenticatedCaller>,
+    operation: Option<&str>,
+) -> Result<(), PermissionDenied> {
+    let Some(operation) = operation else {
+        return Ok(());
+    };
+    if caller.is_some_and(|caller| caller.permits(operation)) {
+        Ok(())
+    } else {
+        Err(PermissionDenied::new(operation))
+    }
+}
+
 /// Stable host classification for a candidate fact that cannot be retried
 /// into correctness. Availability failures deliberately use their original
 /// error types and remain queue-retryable.
@@ -220,8 +265,7 @@ pub struct RouterDriverRequest {
     pub payload: serde_json::Value,
     pub caller_attached: bool,
     pub resolution: WiringResolution,
-    pub role: Option<String>,
-    pub user_id: Option<String>,
+    pub caller: Option<AuthenticatedCaller>,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
 }
@@ -365,8 +409,12 @@ fn component_invocation_span(
         wamn.wiring_version = wiring_version,
         wamn.component_digest = %component_digest,
         wamn.node_id = %call.node,
+        wamn.caller_principal_id = tracing::field::Empty,
         wamn.input_port = tracing::field::Empty,
     );
+    if let Some(caller) = request.caller.as_ref() {
+        span.record("wamn.caller_principal_id", caller.principal_id());
+    }
     if let Some(input_port) = call.input_port.as_deref() {
         span.record("wamn.input_port", input_port);
     }
@@ -567,8 +615,7 @@ impl RouterDriver {
                 payload: serde_json::Value::Null,
                 caller_attached: false,
                 resolution: WiringResolution::Frozen,
-                role: None,
-                user_id: None,
+                caller: None,
                 traceparent: None,
                 tracestate: None,
             };
@@ -682,8 +729,7 @@ impl RouterDriver {
             // two facts separate when persisting the outcome.
             caller_attached: true,
             resolution: WiringResolution::Frozen,
-            role: None,
-            user_id: None,
+            caller: None,
             traceparent: request.traceparent,
             tracestate: request.tracestate,
         };
@@ -736,16 +782,19 @@ impl RouterDriver {
                     tokio::time::sleep(Duration::from_millis(remaining)).await;
                 }
                 Step::Invoke(call) => {
-                    let component_digest = &active
+                    let component = active
                         .facts
                         .component(&call.component)
-                        .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?
-                        .component_digest;
+                        .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
+                    authorize_registered_operation(
+                        request.caller.as_ref(),
+                        component.registered_operation.as_deref(),
+                    )?;
                     let span = component_invocation_span(
                         &request,
                         &self.config.project,
                         active.version,
-                        component_digest,
+                        &component.component_digest,
                         &call,
                         remote_parent.as_ref(),
                     );
@@ -1153,26 +1202,16 @@ impl RouterDriver {
             .component(&call.component)
             .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
         if matches!(closure, ExecutionClosure::Released) {
-            let release_component = ServingComponent {
-                package_id: component.scope.package_id.clone(),
-                component: component.component.clone(),
-                interface_version: component.interface_version.clone(),
-                digest: ArtifactHash::parse(component.component_digest.clone())
-                    .context("component fact carries a non-canonical artifact hash")?,
-                registered_operation: component.registered_operation.clone(),
-            };
-            anyhow::ensure!(
-                self.release
-                    .manifest()
-                    .components
-                    .contains(&release_component),
-                "component-not-in-carried-release"
-            );
+            self.validate_release_component(component)?;
         }
-        let release = matches!(closure, ExecutionClosure::Released).then(|| ReleaseIdentity {
-            effective_release_id: self.release.release().effective_release_id,
-            manifest_digest: self.release.release().manifest_digest.clone(),
-        });
+        let release = if matches!(closure, ExecutionClosure::Released) {
+            Some(ReleaseIdentity {
+                effective_release_id: self.release.release().effective_release_id,
+                manifest_digest: self.release.release().manifest_digest.clone(),
+            })
+        } else {
+            None
+        };
         let connection_closure = match closure {
             ExecutionClosure::Released => ConnectionExecutionClosure::Released,
             ExecutionClosure::Candidate {
@@ -1194,8 +1233,8 @@ impl RouterDriver {
                 project: Some(self.config.project.clone()),
                 schema: self.config.schema.clone(),
                 runner: Some(self.config.owner_prefix.clone()),
-                role: request.role.clone(),
-                user_id: request.user_id.clone(),
+                role: None,
+                user_id: None,
                 release,
             },
             invocation: ConnectionInvocation {
@@ -1596,8 +1635,7 @@ mod tests {
             payload: serde_json::json!({"id": 9}),
             caller_attached: true,
             resolution: WiringResolution::Preloaded,
-            role: None,
-            user_id: None,
+            caller: None,
             traceparent: traceparent.map(str::to_owned),
             tracestate: traceparent.map(|_| "vendor=value".to_owned()),
         }
@@ -1672,6 +1710,16 @@ mod tests {
     }
 
     #[test]
+    fn every_registered_invocation_requires_the_exact_operation_grant() {
+        let operation = "orders@7.0.0::purchase_order.get";
+
+        assert!(authorize_registered_operation(None, None).is_ok());
+        let denial = authorize_registered_operation(None, Some(operation))
+            .expect_err("a registered invocation without an originating caller is denied");
+        assert_eq!(denial.operation(), operation);
+    }
+
+    #[test]
     fn component_span_adopts_remote_traceparent_and_host_identity() {
         let harness = TraceHarness::install();
         let request = driver_request(Some(VALID_TRACEPARENT));
@@ -1719,6 +1767,7 @@ mod tests {
             attribute(component, "wamn.input_port").as_deref(),
             Some("request")
         );
+        assert_eq!(attribute(component, "wamn.caller_principal_id"), None);
     }
 
     #[test]

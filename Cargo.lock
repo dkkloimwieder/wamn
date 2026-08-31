@@ -4493,6 +4493,7 @@ dependencies = [
  "wamn-pg-core",
  "wamn-run-state",
  "wamn-schema-control",
+ "wamn-schema-generator",
 ]
 
 [[package]]
@@ -4668,8 +4669,11 @@ dependencies = [
  "clap",
  "opentelemetry",
  "tokio",
+ "tokio-postgres",
  "tracing",
+ "wamn-control-provision",
  "wamn-execution-host",
+ "wamn-platform-identity",
  "wamn-runtime",
  "wash-runtime",
 ]
@@ -4779,6 +4783,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-execution-host",
  "wamn-gate-harness",
+ "wamn-platform-identity",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
@@ -4870,6 +4875,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-pg-core",
+ "wamn-platform-identity",
  "wamn-router",
  "wamn-run-state",
  "wash-runtime",

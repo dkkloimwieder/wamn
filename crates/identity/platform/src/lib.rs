@@ -99,6 +99,17 @@ pub const MAX_PAT_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 /// stored in the clear as the index key, the whole string only as a digest.
 pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
 
+/// Construct the canonical service-principal subject for one route caller.
+pub fn route_caller_subject(
+    org: &str,
+    project: &str,
+    environment: &str,
+) -> Result<String, IdentityError> {
+    canonical_subject(&format!(
+        "wamn-route-caller-{org}--{project}--{environment}"
+    ))
+}
+
 /// Random bytes behind the non-secret lookup half of a token.
 const TOKEN_LOOKUP_BYTES: usize = 8;
 
@@ -842,7 +853,12 @@ mod tests {
     #[test]
     fn the_two_reads_the_management_surface_makes_take_no_row_lock() {
         for statement in [SELECT_PAT_BY_PREFIX_SQL, SELECT_PROJECT_ROLES_SQL] {
-            for locking in ["FOR UPDATE", "FOR NO KEY UPDATE", "FOR SHARE", "FOR KEY SHARE"] {
+            for locking in [
+                "FOR UPDATE",
+                "FOR NO KEY UPDATE",
+                "FOR SHARE",
+                "FOR KEY SHARE",
+            ] {
                 assert!(
                     !statement.contains(locking),
                     "an identity read takes a {locking} row lock, \
@@ -886,6 +902,19 @@ mod tests {
                 "accepted role {invalid:?}"
             );
         }
+    }
+
+    #[test]
+    fn route_caller_subject_is_exactly_environment_scoped_and_validated() {
+        assert_eq!(
+            route_caller_subject("acme", "receiving", "prod").unwrap(),
+            "wamn-route-caller-acme--receiving--prod"
+        );
+        assert_ne!(
+            route_caller_subject("acme", "receiving", "prod").unwrap(),
+            route_caller_subject("acme", "receiving", "dev").unwrap()
+        );
+        assert!(route_caller_subject("acme", "two words", "prod").is_err());
     }
 
     fn sample_record() -> PatRecord {

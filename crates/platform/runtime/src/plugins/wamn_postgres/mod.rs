@@ -23,8 +23,11 @@
 //!   non-settable identity — so a session that rewrites `app.tenant` no longer
 //!   rewrites its tenant. The matcher is still only a blocklist: a `DO` block
 //!   whose `EXECUTE` string carries `SET app.role` walks past it, and that
-//!   escape is dormant purely because no production policy reads `app.role` or
-//!   `app.user_id` yet (`wamn-0h0g.22.23`, OPEN, owns it).
+//!   escape is dormant only while no reachable guest API bears an RLS policy
+//!   that reads `app.role` or `app.user_id`. Host-only authorization reads that
+//!   bind their predicates directly and install neither caller-derived claim do
+//!   not cross that guard (`wamn-10yt.3.2`); it must close before any such
+//!   RLS-bearing guest API becomes reachable.
 //! - The AR1 raw-SQL / custom-node trust assumptions are MOOT, not pending:
 //!   their preconditions closed by SUBJECT-DELETION — the node-kind registry
 //!   retired and no raw-SQL node surface exists to enable — so no live security

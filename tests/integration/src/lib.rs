@@ -18,6 +18,8 @@ pub mod readerbench;
 mod receiving_data_access;
 mod release_fixture;
 pub mod retention;
+#[cfg(test)]
+mod route_authentication_live;
 mod router_tap_live;
 pub mod streambench;
 pub mod trusted_http_route;
