@@ -45,6 +45,7 @@ runtime:
         - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
         - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
         - { name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT, value: "64" }
+        - { name: WAMN_WASMTIME_CACHE_DIR, value: /tmp/wamn-wasmtime-cache }
         - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
         - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
         - name: WAMN_COMPONENT_ARTIFACT_BASE

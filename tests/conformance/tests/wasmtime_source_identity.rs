@@ -35,6 +35,7 @@ const DIRECT_CONSUMERS: [(&str, &[(&str, &str)]); 4] = [
     (
         "crates/platform/runtime/Cargo.toml",
         &[
+            ("wasmtime", "dependencies"),
             ("wasmtime-wasi", "dependencies"),
             ("wasmtime-wasi-http", "dependencies"),
         ],
@@ -82,6 +83,7 @@ struct CargoResolve {
 struct CargoNode {
     id: String,
     deps: Vec<CargoDependency>,
+    features: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -285,6 +287,12 @@ fn direct_wasmtime_consumers_inherit_workspace_source_contract() {
     let root = repository();
     let workspace = dependency_declarations(&root.join("Cargo.toml"), "workspace.dependencies");
 
+    assert_eq!(
+        workspace.get("wasmtime").map(String::as_str),
+        Some("{version=\"47.0.3\",default-features=false,features=[\"cache\"]}"),
+        "workspace must own the cache-enabled canonical `wasmtime` requirement"
+    );
+
     for dependency in ["wasmtime-wasi", "wasmtime-wasi-http"] {
         let expected = format!("\"{WASMTIME_REQUIREMENT}\"");
         assert_eq!(
@@ -320,6 +328,24 @@ fn resolved_wasmtime_type_universe_is_single_and_canonical() {
         .iter()
         .map(String::as_str)
         .collect();
+    let wasmtime = metadata
+        .packages
+        .iter()
+        .find(|package| package.name == "wasmtime")
+        .expect("metadata must resolve the Wasmtime core package");
+    let wasmtime_node = metadata
+        .resolve
+        .nodes
+        .iter()
+        .find(|node| node.id == wasmtime.id)
+        .expect("metadata must resolve the Wasmtime core feature set");
+    assert!(
+        wasmtime_node
+            .features
+            .iter()
+            .any(|feature| feature == "cache"),
+        "the serving engine requires Wasmtime's persistent compilation cache"
+    );
 
     assert_single_wasmtime_family(
         "cargo metadata",
@@ -363,7 +389,7 @@ fn resolved_wasmtime_type_universe_is_single_and_canonical() {
                     });
                 matches!(
                     package.name.as_str(),
-                    "wasmtime-wasi" | "wasmtime-wasi-http"
+                    "wasmtime" | "wasmtime-wasi" | "wasmtime-wasi-http"
                 )
                 .then(|| package.name.clone())
             })

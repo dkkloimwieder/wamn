@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use futures_util::{StreamExt as _, stream};
 use opentelemetry::propagation::Extractor;
 use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
@@ -83,6 +84,14 @@ pub const DEFAULT_WIRING_CACHE_CAPACITY: usize = 1_024;
 /// `tests/conformance/src/runtime_inventory.rs::the_manual_store_epoch_tick_still_mirrors_the_runtime_ticker`
 /// (`wamn-k9ea`), which is what makes the next sync notice.
 const MANUAL_STORE_EPOCH_TICK: Duration = Duration::from_millis(10);
+
+/// Cold-preload compiler workers per serving process.
+///
+/// Both shipped serving groups have two CPU cores. Two workers use that
+/// capacity without making six large Cranelift compilations or six live Stores
+/// contend at once. Instantiation remains serial below, preserving the
+/// readiness proof's original one-component resource grain.
+const PRELOAD_COMPILATION_CONCURRENCY: usize = 2;
 
 /// A non-zero wiring cache bound, parsed once at process construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -597,6 +606,7 @@ impl RouterDriver {
     pub(crate) async fn prepare_synchronous_release(
         &self,
     ) -> anyhow::Result<PreparedReleaseReadiness> {
+        let prepare_started = Instant::now();
         let manifest = self.release.manifest();
         let targets = synchronous_wiring_targets(manifest);
         anyhow::ensure!(
@@ -651,25 +661,61 @@ impl RouterDriver {
         anyhow::ensure!(bindings_ready, "release-component-requirement-unbound");
 
         let component_count = components.len();
-        let mut verified = Vec::with_capacity(component_count);
-        for component in components.into_values() {
-            let bytes = self
-                .source
-                .pull_verified(&component)
-                .await
-                .with_context(|| {
+        let pipelines = components.into_values().map(|component| {
+            let source = self.source.clone();
+            let engine = Arc::clone(&self.engine);
+            async move {
+                let component_started = Instant::now();
+                let pull_started = Instant::now();
+                let bytes = source.pull_verified(&component).await.with_context(|| {
                     format!(
                         "preload release component digest {:?}",
                         component.component_digest
                     )
                 })?;
-            verified.push((component, bytes));
-        }
+                let component_bytes = bytes.len();
+                tracing::info!(
+                    target: "wamn::router",
+                    component_digest = %component.component_digest,
+                    component_bytes,
+                    elapsed_ms = %pull_started.elapsed().as_millis(),
+                    "release component pull completed"
+                );
 
-        for (component, bytes) in verified {
-            NodeInstance::instantiate(
+                let compile_wall_started = Instant::now();
+                let compile_engine = Arc::clone(&engine);
+                let (compiled, compile_elapsed) = tokio::task::spawn_blocking(move || {
+                    let compile_started = Instant::now();
+                    (
+                        NodeInstance::compile(&compile_engine, &bytes),
+                        compile_started.elapsed(),
+                    )
+                })
+                .await
+                .context("join release component compilation task")?;
+                let compiled = compiled.with_context(|| {
+                    format!(
+                        "compile release component digest {:?}",
+                        component.component_digest
+                    )
+                })?;
+                tracing::info!(
+                    target: "wamn::router",
+                    component_digest = %component.component_digest,
+                    compile_ms = %compile_elapsed.as_millis(),
+                    compile_wall_ms = %compile_wall_started.elapsed().as_millis(),
+                    "release component compilation completed"
+                );
+                anyhow::Ok((component, compiled, component_started))
+            }
+        });
+        let mut pipelines = stream::iter(pipelines).buffered(PRELOAD_COMPILATION_CONCURRENCY);
+        while let Some(result) = pipelines.next().await {
+            let (component, compiled, component_started) = result?;
+            let instantiate_started = Instant::now();
+            NodeInstance::instantiate_compiled(
                 &self.engine,
-                &bytes,
+                compiled,
                 Arc::clone(&self.postgres),
                 Arc::clone(&self.credentials),
                 Arc::clone(&self.logging),
@@ -686,7 +732,21 @@ impl RouterDriver {
                     component.component_digest
                 )
             })?;
+            tracing::info!(
+                target: "wamn::router",
+                component_digest = %component.component_digest,
+                elapsed_ms = %instantiate_started.elapsed().as_millis(),
+                total_elapsed_ms = %component_started.elapsed().as_millis(),
+                "release component instantiation completed"
+            );
         }
+        tracing::info!(
+            target: "wamn::router",
+            synchronous_wirings = targets.len(),
+            component_digests = component_count,
+            elapsed_ms = %prepare_started.elapsed().as_millis(),
+            "synchronous release preload completed"
+        );
         Ok(PreparedReleaseReadiness {
             synchronous_wirings: targets.len(),
             component_digests: component_count,
@@ -1349,6 +1409,11 @@ impl fmt::Debug for NodeInstance {
 }
 
 impl NodeInstance {
+    fn compile(engine: &Engine, bytes: &[u8]) -> anyhow::Result<Component> {
+        Component::new(engine.inner(), bytes)
+            .map_err(|error| anyhow::anyhow!("compile wamn:node: {error}"))
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "instance construction welds each independent host capability"
@@ -1365,8 +1430,38 @@ impl NodeInstance {
         tenant_id: &str,
         component_fact: &AdmittedComponent,
     ) -> anyhow::Result<Self> {
-        let component = Component::new(engine.inner(), bytes)
-            .map_err(|error| anyhow::anyhow!("compile wamn:node: {error}"))?;
+        let component = Self::compile(engine, bytes)?;
+        Self::instantiate_compiled(
+            engine,
+            component,
+            postgres,
+            credentials,
+            logging,
+            allowed_hosts,
+            release,
+            config,
+            tenant_id,
+            component_fact,
+        )
+        .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "instance construction welds each independent host capability"
+    )]
+    async fn instantiate_compiled(
+        engine: &Engine,
+        component: Component,
+        postgres: Arc<WamnPostgres>,
+        credentials: Arc<WamnCredentials>,
+        logging: Arc<WamnLogging>,
+        allowed_hosts: Arc<[AllowedHost]>,
+        release: Arc<ReleaseManifestWeld>,
+        config: &RouterDriverConfig,
+        tenant_id: &str,
+        component_fact: &AdmittedComponent,
+    ) -> anyhow::Result<Self> {
         let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         let local = wash_runtime::types::LocalResources {

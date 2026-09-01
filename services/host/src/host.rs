@@ -27,7 +27,10 @@ use wamn_platform_identity::route_caller_subject;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
+use wamn_runtime::engine::{
+    DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
+    build_engine_with_host_memory_and_compilation_cache,
+};
 use wamn_runtime::plugins::flow_http_routing::{
     FlowHttpRouting, RouteAuthentication, requires_pat_route_authentication,
 };
@@ -127,6 +130,13 @@ pub struct HostArgs {
     /// The directory to use for caching OCI artifacts
     #[arg(long = "oci-cache-dir")]
     pub oci_cache_dir: Option<PathBuf>,
+
+    /// Host-private Wasmtime compiled-component cache.
+    ///
+    /// Keep this outside `--oci-cache-dir`: wash-runtime's OCI sweeper owns
+    /// every child of that directory and may delete it while the host runs.
+    #[arg(long = "wasmtime-cache-dir", env = "WAMN_WASMTIME_CACHE_DIR")]
+    pub wasmtime_cache_dir: Option<PathBuf>,
 
     /// Extra wasm proposals to enable on the engine (comma-separated)
     #[arg(long = "wasm-proposal", value_delimiter = ',')]
@@ -499,10 +509,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // shared execution-target doorbell subject) — no second connection.
     let doorbell_client = scheduler_nats_client.clone();
 
-    let engine = Arc::new(build_engine_with_host_memory(
-        &args.wasm_proposals,
-        host_memory(&args)?,
-    )?);
+    let host_memory = host_memory(&args)?;
+    let engine = Arc::new(
+        if let Some(compilation_cache_dir) = args.wasmtime_cache_dir.as_deref() {
+            build_engine_with_host_memory_and_compilation_cache(
+                &args.wasm_proposals,
+                host_memory,
+                compilation_cache_dir,
+            )?
+        } else {
+            build_engine_with_host_memory(&args.wasm_proposals, host_memory)?
+        },
+    );
     // wamn-0h0g.22.8.3: the host NAMES its own credential sources here rather
     // than letting the config layer pick one up implicitly. deploy/platform
     // injects WAMN_PG_URL via secretKeyRef (values-host-default.yaml ->

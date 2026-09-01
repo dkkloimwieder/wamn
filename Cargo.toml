@@ -92,6 +92,7 @@ return_self_not_must_use = "allow"#   8. Library-API concern, as above.
 # shared 47.0.3 requirement; enforce that source identity in conformance.
 wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "5c4ec4a3d008b3f401d9e763515f434deebc9936", default-features = false, features = ["oci"] }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
+wasmtime = { version = "47.0.3", default-features = false, features = ["cache"] }
 wasmtime-wasi = "47.0.3"
 wasmtime-wasi-http = "47.0.3"
 # pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch

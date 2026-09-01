@@ -11,6 +11,7 @@ wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements
 
 [dependencies]
 wash-runtime = { workspace = true }
+wasmtime = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }

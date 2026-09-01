@@ -1,6 +1,7 @@
 //! Shared Wasmtime engine configuration for host and bench.
 
 use std::ffi::OsString;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -107,7 +108,12 @@ pub fn build_engine_with_socket_policy(
     proposals: &[WasmProposal],
     socket_policy: SocketPolicy,
 ) -> anyhow::Result<Engine> {
-    build_engine_inner(proposals, socket_policy, default_host_memory_budgets())
+    build_engine_inner(
+        proposals,
+        socket_policy,
+        default_host_memory_budgets(),
+        None,
+    )
 }
 
 /// Build the platform engine with this host group's native memory budgets.
@@ -119,13 +125,36 @@ pub fn build_engine_with_host_memory(
     proposals: &[WasmProposal],
     host_memory: HostMemoryBudgets,
 ) -> anyhow::Result<Engine> {
-    build_engine_inner(proposals, host_socket_policy(), host_memory)
+    build_engine_inner(proposals, host_socket_policy(), host_memory, None)
+}
+
+/// Build the serving engine with a persistent compiled-component cache.
+///
+/// The caller owns the cache's persistence boundary. Wasmtime validates that
+/// the path is absolute and creates it before the engine starts.
+pub fn build_engine_with_host_memory_and_compilation_cache(
+    proposals: &[WasmProposal],
+    host_memory: HostMemoryBudgets,
+    compilation_cache_dir: &Path,
+) -> anyhow::Result<Engine> {
+    let mut cache_config = wasmtime::CacheConfig::new();
+    cache_config.with_directory(compilation_cache_dir);
+    let cache = wasmtime::Cache::new(cache_config).map_err(|error| {
+        anyhow::anyhow!(
+            "configure Wasmtime compilation cache at {}: {error}",
+            compilation_cache_dir.display()
+        )
+    })?;
+    let mut config = wasmtime::Config::new();
+    config.cache(Some(cache));
+    build_engine_inner(proposals, host_socket_policy(), host_memory, Some(config))
 }
 
 fn build_engine_inner(
     proposals: &[WasmProposal],
     socket_policy: SocketPolicy,
     host_memory: HostMemoryBudgets,
+    config: Option<wasmtime::Config>,
 ) -> anyhow::Result<Engine> {
     validate_pooling_capacity_environment(std::env::vars_os().map(|(key, _)| key))?;
     anyhow::ensure!(
@@ -145,6 +174,9 @@ fn build_engine_inner(
         .with_host_memory(host_memory)
         .with_pooling_allocator(true)
         .with_socket_policy(Arc::new(socket_policy));
+    if let Some(config) = config {
+        builder = builder.with_config(config);
+    }
     for proposal in proposals {
         builder = builder.with_wasm_proposal(*proposal);
     }
@@ -179,15 +211,44 @@ fn validate_pooling_capacity_environment(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::net::SocketAddr;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use wash_runtime::host::allowed_hosts::AllowedHost;
     use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
+    use wash_runtime::wasmtime::component::Component;
     use wash_runtime::wasmtime::{Instance, Module, Store};
 
     use super::*;
 
     const PAGE: usize = 64 * 1024;
+
+    fn cache_test_path() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("the test clock is after the Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "wamn-wasmtime-cache-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    fn file_count(path: &Path) -> usize {
+        fs::read_dir(path)
+            .expect("read the compilation cache")
+            .map(|entry| entry.expect("read a compilation-cache entry").path())
+            .map(|entry| {
+                if entry.is_dir() {
+                    file_count(&entry)
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
 
     /// Every range the address floor denies, with the reason it is on the list.
     ///
@@ -352,6 +413,37 @@ mod tests {
         assert_memory_ceiling(&engine, MEMORY_CAP_BYTES);
         assert_eq!(engine.host_memory(), default_host_memory_budgets());
         assert_eq!(engine.total_core_instances(), Some(DEFAULT_CORE_INSTANCES));
+    }
+
+    #[test]
+    fn a_serving_engine_persists_compiled_components_in_its_declared_cache() {
+        let cache_dir = cache_test_path();
+        let engine = build_engine_with_host_memory_and_compilation_cache(
+            &[],
+            default_host_memory_budgets(),
+            &cache_dir,
+        )
+        .expect("build the cached serving engine");
+        let bytes = wat::parse_str("(component)").expect("encode an empty component");
+        Component::new(engine.inner(), &bytes).expect("compile through the cached engine");
+
+        assert!(
+            file_count(&cache_dir) > 0,
+            "compiling through the serving engine must create a persistent cache artifact"
+        );
+        drop(engine);
+        fs::remove_dir_all(cache_dir).expect("remove the isolated compilation cache");
+    }
+
+    #[test]
+    fn a_relative_compilation_cache_path_is_refused() {
+        let error = build_engine_with_host_memory_and_compilation_cache(
+            &[],
+            default_host_memory_budgets(),
+            Path::new("relative-cache"),
+        )
+        .expect_err("a relative cache path must be refused before host startup");
+        assert!(error.to_string().contains("relative-cache"), "{error:#}");
     }
 
     /// wamn-0h0g.17.3 made the sizing configuration, so the restored guard pins

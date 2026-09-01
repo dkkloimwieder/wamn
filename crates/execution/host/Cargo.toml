@@ -16,12 +16,13 @@ wamn-router = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wash-runtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
+futures-util = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 tracing-opentelemetry = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
