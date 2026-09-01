@@ -70,6 +70,11 @@ impl Backend for GuestBackend {
         )
     }
 
+    fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), ProviderError> {
+        wamn::flow_http_routing::routing::validate_input(attachment_id, payload)
+            .map_err(|_| ProviderError)
+    }
+
     fn try_acquire_route(
         &mut self,
         attachment_id: &str,
@@ -167,7 +172,6 @@ fn route_definition(
 ) -> Result<RouteDefinition, ProviderError> {
     use wamn::flow_http_routing::routing;
 
-    let input_schema = serde_json::from_str(&route.input_schema).map_err(|_| ProviderError)?;
     let body_limit = usize::try_from(route.body_limit).map_err(|_| ProviderError)?;
     let mapped_limit = usize::try_from(route.mapped_limit).map_err(|_| ProviderError)?;
     Ok(RouteDefinition {
@@ -194,7 +198,6 @@ fn route_definition(
                 },
             })
             .collect(),
-        input_schema,
         body_limit,
         mapped_limit,
     })

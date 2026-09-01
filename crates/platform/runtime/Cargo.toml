@@ -10,6 +10,7 @@ test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
+boon = { workspace = true }
 wash-runtime = { workspace = true }
 wasmtime = { workspace = true }
 wamn-component-policy = { workspace = true }

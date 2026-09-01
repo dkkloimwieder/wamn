@@ -12,19 +12,22 @@
 //! # Attachment-owned and adapter-owned fields
 //!
 //! An attachment definition may author `input-schema` and
-//! `raw-body-bytes.maximum`; this projection preserves those values. Their
-//! documented fallbacks apply only when the corresponding authored field is
-//! absent. The mapped-payload ceiling has no attachment carrier and remains
-//! adapter-governed; each fallback is justified at its own field in
-//! [`route_definition`].
+//! `raw-body-bytes.maximum`. The former is compiled once per canonical schema
+//! hash into this process's immutable release projection; the latter is
+//! projected to the adapter. Their documented fallbacks apply only when the
+//! corresponding authored field is absent. The mapped-payload ceiling has no
+//! attachment carrier and remains adapter-governed; each fallback is justified
+//! at its own field in [`route_definition`].
 
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use boon::{Compiler, Draft, SchemaIndex, Schemas};
 use opentelemetry::KeyValue;
 use serde_json::Value;
+use tracing::Instrument as _;
 use wamn_catalog::{
     AttachmentKind, NO_AUTHENTICATION_MODE, PAT_AUTHENTICATION_MODE, ServingAttachment,
     ServingManifest,
@@ -232,10 +235,8 @@ impl Drop for RoutePermit {
 /// resolver and matched verbatim by the adapter.
 const WILDCARD_HOST: &str = "*";
 
-/// The JSON Schema that constrains nothing — already this system's spelling for an
-/// absent entry guard (an event entry's `entry-input-schema-guard` is required to
-/// be exactly `true`).
-const UNCONSTRAINED_INPUT_SCHEMA: &str = "true";
+const INPUT_SCHEMA_URI: &str = "mem://route-input.json";
+const SCHEMA_INVALID: &str = "schema-invalid";
 
 /// A byte ceiling that can never bind, so the adapter's own limit governs.
 ///
@@ -253,6 +254,92 @@ const AUTHENTICATION_UNAVAILABLE_CODE: &str = "authentication-unavailable";
 /// mechanism — the caller can do nothing to satisfy a policy nothing implements.
 const UNSUPPORTED_POLICY_STATUS: u16 = 501;
 const UNSUPPORTED_POLICY_CODE: &str = "auth-policy-unsupported";
+
+struct CompiledInputSchema {
+    schemas: Schemas,
+    index: SchemaIndex,
+}
+
+enum InputSchemaValidator {
+    Compiled(CompiledInputSchema),
+    Invalid,
+}
+
+/// Process-lifetime validation projection of the immutable serving manifest.
+struct InputSchemaValidators {
+    attachment_hashes: HashMap<String, String>,
+    validators: HashMap<String, InputSchemaValidator>,
+}
+
+impl InputSchemaValidators {
+    fn new(release: Option<&ReleaseManifestWeld>) -> Self {
+        let Some(release) = release else {
+            return Self {
+                attachment_hashes: HashMap::new(),
+                validators: HashMap::new(),
+            };
+        };
+        let mut attachment_hashes = HashMap::new();
+        let mut validators = HashMap::new();
+        for (attachment_id, attachment) in &release.manifest().attachments {
+            if !carries_http_route(attachment.kind)
+                || route_definition(attachment_id, attachment).is_none()
+            {
+                continue;
+            }
+            let schema = attachment
+                .definition
+                .get("input-schema")
+                .cloned()
+                .unwrap_or(Value::Bool(true));
+            let hash = wamn_execution_contract::canonical_json_sha256(&schema);
+            attachment_hashes.insert(attachment_id.clone(), hash.clone());
+            validators
+                .entry(hash.clone())
+                .or_insert_with(|| compile_input_schema(&hash, schema));
+        }
+        Self {
+            attachment_hashes,
+            validators,
+        }
+    }
+
+    fn validate(&self, attachment_id: &str, payload: &str) -> Result<(), &'static str> {
+        let hash = self
+            .attachment_hashes
+            .get(attachment_id)
+            .ok_or(SCHEMA_INVALID)?;
+        let validator = self.validators.get(hash).ok_or(SCHEMA_INVALID)?;
+        let payload = serde_json::from_str(payload).map_err(|_| SCHEMA_INVALID)?;
+        match validator {
+            InputSchemaValidator::Compiled(compiled) => compiled
+                .schemas
+                .validate(&payload, compiled.index)
+                .map_err(|_| SCHEMA_INVALID),
+            InputSchemaValidator::Invalid => Err(SCHEMA_INVALID),
+        }
+    }
+}
+
+fn compile_input_schema(hash: &str, schema: Value) -> InputSchemaValidator {
+    let mut compiler = Compiler::new();
+    compiler.set_default_draft(Draft::V2020_12);
+    let mut schemas = Schemas::new();
+    let compiled = compiler
+        .add_resource(INPUT_SCHEMA_URI, schema)
+        .and_then(|()| compiler.compile(INPUT_SCHEMA_URI, &mut schemas));
+    match compiled {
+        Ok(index) => InputSchemaValidator::Compiled(CompiledInputSchema { schemas, index }),
+        Err(error) => {
+            tracing::warn!(
+                schema_hash = hash,
+                error = %error,
+                "release route input schema is invalid"
+            );
+            InputSchemaValidator::Invalid
+        }
+    }
+}
 
 /// Host-owned proof of an originating caller and its exact operation grants.
 ///
@@ -356,6 +443,7 @@ pub struct FlowHttpRouting {
     /// made where it is visible, at the construction site in
     /// `services/host/src/host.rs`, not here behind an `Option`.
     release: Option<Arc<ReleaseManifestWeld>>,
+    input_schemas: InputSchemaValidators,
     authentication: Option<Arc<RouteAuthentication>>,
     limiter: Arc<RouteLimiter>,
 }
@@ -370,6 +458,14 @@ impl std::fmt::Debug for FlowHttpRouting {
                 "release",
                 &self.release.as_deref().map(|weld| weld.release()),
             )
+            .field(
+                "input_schema_count",
+                &self.input_schemas.attachment_hashes.len(),
+            )
+            .field(
+                "compiled_input_schema_count",
+                &self.input_schemas.validators.len(),
+            )
             .field("route_in_flight_limit", &self.limiter.limit)
             .field("authentication_configured", &self.authentication.is_some())
             .finish_non_exhaustive()
@@ -382,8 +478,10 @@ impl FlowHttpRouting {
         release: Option<Arc<ReleaseManifestWeld>>,
         route_in_flight_limit: RouteInFlightLimit,
     ) -> Self {
+        let input_schemas = InputSchemaValidators::new(release.as_deref());
         Self {
             release,
+            input_schemas,
             authentication: None,
             limiter: RouteLimiter::new(route_in_flight_limit),
         }
@@ -422,6 +520,10 @@ impl FlowHttpRouting {
             .is_some_and(|attachment| carries_http_route(attachment.kind)))
     }
 
+    fn validate_input(&self, attachment_id: &str, payload: &str) -> Result<(), &'static str> {
+        self.input_schemas.validate(attachment_id, payload)
+    }
+
     async fn authenticate(
         &self,
         attachment_id: &str,
@@ -447,55 +549,64 @@ impl FlowHttpRouting {
                 code: UNSUPPORTED_POLICY_CODE.to_string(),
             });
         }
-        let authentication = self
-            .authentication
-            .as_ref()
-            .ok_or_else(authentication_unavailable)?;
-        let token = required_bearer_token(headers)?;
-        let principal = authenticate_pat(authentication.identity_reader.as_ref(), token)
-            .await
-            .map_err(|error| {
-                tracing::warn!(error = %error, "route PAT authentication unavailable");
-                authentication_unavailable()
-            })?
-            .ok_or_else(unauthorized)?;
-        let principal = principal.principal();
-        if principal.kind() != PrincipalKind::Service
-            || principal.subject() != authentication.expected_subject.as_ref()
-        {
-            return Err(unauthorized());
-        }
-        let roles = project_roles(
-            authentication.identity_reader.as_ref(),
-            principal.id(),
-            &authentication.org,
-            &authentication.project,
-        )
-        .await
-        .map_err(|error| {
-            tracing::warn!(error = %error, "route caller role lookup unavailable");
-            authentication_unavailable()
-        })?;
-        if !roles.iter().any(|role| role.as_str() == ROUTE_CALLER_ROLE) {
-            return Err(unauthorized());
-        }
-        let permissions = authentication
-            .postgres
-            .operation_permissions(
+        let span = tracing::info_span!(
+            target: "wamn::route",
+            "wamn.route.authenticate",
+            wamn.attachment_id = %attachment_id,
+        );
+        async {
+            let authentication = self
+                .authentication
+                .as_ref()
+                .ok_or_else(authentication_unavailable)?;
+            let token = required_bearer_token(headers)?;
+            let principal = authenticate_pat(authentication.identity_reader.as_ref(), token)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(error = %error, "route PAT authentication unavailable");
+                    authentication_unavailable()
+                })?
+                .ok_or_else(unauthorized)?;
+            let principal = principal.principal();
+            if principal.kind() != PrincipalKind::Service
+                || principal.subject() != authentication.expected_subject.as_ref()
+            {
+                return Err(unauthorized());
+            }
+            let roles = project_roles(
+                authentication.identity_reader.as_ref(),
+                principal.id(),
+                &authentication.org,
                 &authentication.project,
-                &manifest.release.tenant_id,
-                ROUTE_CALLER_ROLE,
             )
             .await
             .map_err(|error| {
-                tracing::warn!(error = %error, "route operation grants unavailable");
+                tracing::warn!(error = %error, "route caller role lookup unavailable");
                 authentication_unavailable()
             })?;
-        Ok(Some(AuthenticatedCaller {
-            attachment_id: attachment_id.into(),
-            principal_id: principal.id().as_str().into(),
-            permissions: Arc::new(permissions.into_iter().collect()),
-        }))
+            if !roles.iter().any(|role| role.as_str() == ROUTE_CALLER_ROLE) {
+                return Err(unauthorized());
+            }
+            let permissions = authentication
+                .postgres
+                .operation_permissions(
+                    &authentication.project,
+                    &manifest.release.tenant_id,
+                    ROUTE_CALLER_ROLE,
+                )
+                .await
+                .map_err(|error| {
+                    tracing::warn!(error = %error, "route operation grants unavailable");
+                    authentication_unavailable()
+                })?;
+            Ok(Some(AuthenticatedCaller {
+                attachment_id: attachment_id.into(),
+                principal_id: principal.id().as_str().into(),
+                permissions: Arc::new(permissions.into_iter().collect()),
+            }))
+        }
+        .instrument(span)
+        .await
     }
 
     /// Exercise production route authentication from an integration proof.
@@ -597,10 +708,6 @@ fn route_definition(
     attachment: &ServingAttachment,
 ) -> Option<RouteDefinition> {
     let route = attachment.definition.get("route")?;
-    let input_schema = match attachment.definition.get("input-schema") {
-        Some(schema) => serde_json::to_string(schema).ok()?,
-        None => UNCONSTRAINED_INPUT_SCHEMA.to_string(),
-    };
     let body_limit = match attachment.definition.get("raw-body-bytes") {
         Some(raw_body_bytes) => {
             let authored = raw_body_bytes.get("maximum")?.as_u64()?;
@@ -622,7 +729,6 @@ fn route_definition(
         path: route.get("path")?.as_str()?.to_string(),
         method: route.get("method")?.as_str()?.to_string(),
         mappings,
-        input_schema,
         body_limit,
         // No authored mapped-payload ceiling exists. This value leaves the
         // adapter's own mapped-byte limit in charge rather than inventing a
@@ -752,6 +858,17 @@ impl routing::Host for ActiveCtx<'_> {
         Ok(Ok(caller
             .map(|caller| self.table.push(caller))
             .transpose()?))
+    }
+
+    async fn validate_input(
+        &mut self,
+        attachment_id: String,
+        payload: String,
+    ) -> wash_runtime::wasmtime::Result<Result<(), String>> {
+        let plugin = plugin_of(self)?;
+        Ok(plugin
+            .validate_input(&attachment_id, &payload)
+            .map_err(str::to_owned))
     }
 
     async fn try_acquire(
@@ -977,27 +1094,27 @@ mod tests {
         );
     }
 
-    /// An omitted attachment field leaves the downstream authority in charge.
+    /// Omitted attachment fields leave their downstream authorities in charge.
     #[test]
     fn omitted_projection_fields_defer_to_their_real_authority() {
         let manifest = one_http_route();
+        let mount = Mount::holding(&manifest, "unconstrained-input");
+        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
 
         let served = route_definitions(&manifest, "POST", "api.example.test");
 
         let [definition] = served.as_slice() else {
             panic!("exactly one attachment matches this request");
         };
-        assert_eq!(
-            serde_json::from_str::<Value>(&definition.input_schema)
-                .expect("the guest parses this with serde_json and 503s if it cannot"),
-            Value::Bool(true)
-        );
         assert_eq!(definition.body_limit, ADAPTER_GOVERNED_BYTES);
         assert_eq!(definition.mapped_limit, ADAPTER_GOVERNED_BYTES);
+        plugin
+            .validate_input("orders", r#"{"any":"json"}"#)
+            .expect("the absent input schema is the unconstrained true schema");
     }
 
     #[test]
-    fn authored_input_schema_and_raw_body_limit_are_projected_exactly() {
+    fn authored_input_schema_and_raw_body_limit_stay_with_their_owners() {
         let input_schema = json!({
             "type": "array",
             "minItems": 1,
@@ -1005,6 +1122,9 @@ mod tests {
             "items": {
                 "type": "object",
                 "required": ["request_id"],
+                "properties": {
+                    "request_id": {"type": "string"},
+                },
                 "additionalProperties": false,
             },
         });
@@ -1015,19 +1135,110 @@ mod tests {
             "orders".to_string(),
             attachment(AttachmentKind::Http, definition),
         )]));
+        let mount = Mount::holding(&manifest, "authored-input");
+        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
 
         let served = route_definitions(&manifest, "POST", "api.example.test");
 
         let [definition] = served.as_slice() else {
             panic!("exactly one attachment matches this request");
         };
-        assert_eq!(
-            serde_json::from_str::<Value>(&definition.input_schema)
-                .expect("the projected schema remains JSON"),
-            input_schema
-        );
         assert_eq!(definition.body_limit, 1_048_576);
         assert_eq!(definition.mapped_limit, ADAPTER_GOVERNED_BYTES);
+        plugin
+            .validate_input("orders", r#"[{"request_id":"r-1"}]"#)
+            .expect("the authored schema accepts its matching payload");
+        assert_eq!(
+            plugin.validate_input("orders", r#"{"request_id":"r-1"}"#),
+            Err(SCHEMA_INVALID)
+        );
+    }
+
+    #[test]
+    fn canonical_schema_hash_deduplicates_reordered_schemas_and_isolates_distinct_ones() {
+        let first: Value = serde_json::from_str(
+            r#"{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}"#,
+        )
+        .expect("first schema parses");
+        let reordered: Value = serde_json::from_str(
+            r#"{"properties":{"id":{"type":"string"}},"required":["id"],"type":"object"}"#,
+        )
+        .expect("reordered schema parses");
+        let distinct = json!({"type": "integer"});
+        let with_schema = |id: &str, schema: Value| {
+            let mut definition = orders_definition();
+            definition["id"] = json!(id);
+            definition["route"]["path"] = json!(format!("/{id}"));
+            definition["input-schema"] = schema;
+            attachment(AttachmentKind::Http, definition)
+        };
+        let manifest = release_manifest(BTreeMap::from([
+            ("first".to_string(), with_schema("first", first)),
+            ("reordered".to_string(), with_schema("reordered", reordered)),
+            ("distinct".to_string(), with_schema("distinct", distinct)),
+        ]));
+        let mount = Mount::holding(&manifest, "schema-dedup");
+        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
+
+        assert_eq!(
+            plugin.input_schemas.attachment_hashes["first"],
+            plugin.input_schemas.attachment_hashes["reordered"]
+        );
+        assert_ne!(
+            plugin.input_schemas.attachment_hashes["first"],
+            plugin.input_schemas.attachment_hashes["distinct"]
+        );
+        assert_eq!(plugin.input_schemas.validators.len(), 2);
+        plugin
+            .validate_input("first", r#"{"id":"order-1"}"#)
+            .expect("the shared object schema accepts an object");
+        plugin
+            .validate_input("reordered", r#"{"id":"order-2"}"#)
+            .expect("the reordered schema uses the same validator");
+        plugin
+            .validate_input("distinct", "7")
+            .expect("the distinct integer schema keeps its own validator");
+        assert_eq!(
+            plugin.validate_input("distinct", r#"{"id":"order-1"}"#),
+            Err(SCHEMA_INVALID)
+        );
+    }
+
+    #[test]
+    fn invalid_schema_and_nonmatching_payload_share_the_exact_refusal() {
+        let mut invalid_definition = orders_definition();
+        invalid_definition["route"]["path"] = json!("/invalid");
+        invalid_definition["input-schema"] = json!({"type": 7});
+        let mut string_definition = orders_definition();
+        string_definition["route"]["path"] = json!("/string");
+        string_definition["input-schema"] = json!({"type": "string"});
+        let manifest = release_manifest(BTreeMap::from([
+            (
+                "invalid".to_string(),
+                attachment(AttachmentKind::Http, invalid_definition),
+            ),
+            (
+                "string".to_string(),
+                attachment(AttachmentKind::Http, string_definition),
+            ),
+        ]));
+        let mount = Mount::holding(&manifest, "schema-invalid");
+        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
+        let invalid_hash = &plugin.input_schemas.attachment_hashes["invalid"];
+
+        assert!(matches!(
+            plugin.input_schemas.validators.get(invalid_hash),
+            Some(InputSchemaValidator::Invalid)
+        ));
+        assert_eq!(
+            plugin.validate_input("invalid", r#""anything""#),
+            Err(SCHEMA_INVALID)
+        );
+        assert_eq!(plugin.validate_input("string", "7"), Err(SCHEMA_INVALID));
+        assert_eq!(
+            plugin.validate_input("missing", r#""anything""#),
+            Err(SCHEMA_INVALID)
+        );
     }
 
     #[test]

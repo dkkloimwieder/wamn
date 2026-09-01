@@ -1,6 +1,5 @@
 //! Thin HTTP adapter from a released attachment to inline router delivery.
 
-use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -58,7 +57,6 @@ pub struct RouteDefinition {
     pub path: String,
     pub method: String,
     pub mappings: Vec<Mapping>,
-    pub input_schema: Value,
     pub body_limit: usize,
     pub mapped_limit: usize,
 }
@@ -209,6 +207,7 @@ pub trait Backend {
         attachment_id: &str,
         headers: &[Header],
     ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection>;
+    fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), ProviderError>;
     fn try_acquire_route(
         &mut self,
         attachment_id: &str,
@@ -274,10 +273,11 @@ fn try_handle(
         &query,
         &head.headers,
     )?;
-    validate_schema(&matched.definition.input_schema, &mapped)
-        .map_err(|_| error_response(400, "schema-invalid"))?;
     let payload =
         serde_json::to_string(&mapped).map_err(|_| error_response(400, "mapping-failed"))?;
+    backend
+        .validate_input(&matched.definition.attachment_id, &payload)
+        .map_err(|_| error_response(400, "schema-invalid"))?;
     let mapped_limit = matched.definition.mapped_limit.min(limits.mapped_bytes);
     if payload.len() > mapped_limit {
         return Err(error_response(413, "mapped-payload-too-large"));
@@ -604,19 +604,6 @@ fn set_pointer(root: &mut Value, pointer: &str, value: Value) -> Result<(), Http
             .or_insert_with(|| Value::Object(Map::new()));
     }
     Err(error_response(400, "mapping-pointer"))
-}
-
-fn validate_schema(schema: &Value, value: &Value) -> Result<(), ()> {
-    let mut compiler = Compiler::new();
-    compiler.set_default_draft(Draft::V2020_12);
-    compiler
-        .add_resource("mem://route-input.json", schema.clone())
-        .map_err(|_| ())?;
-    let mut schemas = Schemas::new();
-    let index = compiler
-        .compile("mem://route-input.json", &mut schemas)
-        .map_err(|_| ())?;
-    schemas.validate(value, index).map_err(|_| ())
 }
 
 fn trace_context(headers: &[Header]) -> Option<TraceContext> {

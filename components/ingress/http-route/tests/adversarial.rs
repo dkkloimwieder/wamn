@@ -16,6 +16,7 @@ const AUTHENTICATED_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
 enum Fault {
     None,
     Routes,
+    Schema,
     Permit,
     Deliver,
 }
@@ -34,6 +35,7 @@ struct FakeBackend {
     delivery: Result<DeliveryOutcome, DeliveryError>,
     fault: Fault,
     authenticated_attachments: Vec<String>,
+    validated_inputs: Vec<(String, String)>,
     deliveries: Vec<DeliveryRequest<String>>,
     next_delivery_id: u64,
     permit_available: bool,
@@ -49,6 +51,7 @@ impl FakeBackend {
             delivery: Ok(DeliveryOutcome::Respond(r#"{"ok":true}"#.to_string())),
             fault: Fault::None,
             authenticated_attachments: Vec::new(),
+            validated_inputs: Vec::new(),
             deliveries: Vec::new(),
             next_delivery_id: 1,
             permit_available: true,
@@ -80,6 +83,14 @@ impl Backend for FakeBackend {
         self.authenticated_attachments
             .push(attachment_id.to_string());
         self.auth.clone()
+    }
+
+    fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), ProviderError> {
+        self.validated_inputs
+            .push((attachment_id.to_string(), payload.to_string()));
+        (self.fault != Fault::Schema)
+            .then_some(())
+            .ok_or(ProviderError)
     }
 
     fn try_acquire_route(
@@ -180,17 +191,6 @@ fn route() -> RouteDefinition {
                 cardinality: Cardinality::One,
             },
         ],
-        input_schema: json!({
-            "type": "object",
-            "required": ["amount", "receipt", "tags", "store"],
-            "properties": {
-                "amount": {"type": "number"},
-                "receipt": {"type": "string"},
-                "tags": {"type": "array"},
-                "store": {"type": "string"}
-            },
-            "additionalProperties": false
-        }),
         body_limit: 1024,
         mapped_limit: 1024,
     }
@@ -267,6 +267,11 @@ fn partial_body_selected_attachment_mapping_and_delivery() {
     assert_eq!(backend.authenticated_attachments, ["attachment-a"]);
     assert_eq!(body.reads, 3);
     let request = &backend.deliveries[0];
+    assert_eq!(
+        backend.validated_inputs,
+        [("attachment-a".to_string(), request.payload.clone())],
+        "the host validates the same mapped bytes the router receives"
+    );
     assert_eq!(request.attachment_id, "attachment-a");
     assert_eq!(request.delivery_id.len(), 32);
     assert_eq!(request.caller.as_deref(), Some(AUTHENTICATED_USER_ID));
@@ -369,7 +374,6 @@ fn route_precedence_is_static_then_parameter_then_catch_all() {
     static_route.path = "/receipts/special".to_string();
     static_route.attachment_id = "static".to_string();
     static_route.mappings.clear();
-    static_route.input_schema = json!({});
     let mut parameter = static_route.clone();
     parameter.path = "/receipts/{id}".to_string();
     parameter.attachment_id = "parameter".to_string();
@@ -427,6 +431,9 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
         let mut selected = route();
         selected.body_limit = body_limit;
         let mut backend = FakeBackend::new(selected);
+        if name == "schema" {
+            backend.fault = Fault::Schema;
+        }
         if let Some(rejection) = auth {
             backend.auth = Err(rejection);
         }
@@ -441,6 +448,10 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
         );
         if name == "auth" {
             assert_eq!(body.reads, 0, "auth must precede body reads");
+        }
+        if name == "schema" {
+            assert_eq!(error_code(&output.body), "schema-invalid");
+            assert_eq!(backend.validated_inputs.len(), 1);
         }
     }
 
@@ -483,7 +494,6 @@ fn default_raw_body_ceiling_accepts_one_mebibyte_and_refuses_the_next_byte() {
 
     let mut selected = route();
     selected.mappings.clear();
-    selected.input_schema = json!({});
     selected.body_limit = usize::MAX;
     selected.mapped_limit = usize::MAX;
 

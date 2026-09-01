@@ -35,7 +35,6 @@ interface routing {
     path: string,
     method: string,
     mappings: list<mapping>,
-    input-schema: string,
     body-limit: u64,
     mapped-limit: u64,
   }
@@ -57,6 +56,10 @@ interface routing {
   /// Authenticate after route selection. The host re-derives policy from the
   /// welded attachment; none is an explicitly anonymous policy.
   authenticate: func(attachment-id: string, headers: list<header>) -> result<option<authenticated-caller>, auth-rejection>;
+
+  /// Validate the adapter's mapped JSON against the selected attachment's
+  /// process-cached input schema.
+  validate-input: func(attachment-id: string, payload: string) -> result<_, string>;
 
   /// Acquire immediately or return none when this attachment is at capacity.
   try-acquire: func(attachment-id: string) -> result<option<route-permit>, string>;

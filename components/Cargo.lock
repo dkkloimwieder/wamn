@@ -3,28 +3,6 @@
 version = 4
 
 [[package]]
-name = "ahash"
-version = "0.8.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
-dependencies = [
- "cfg-if",
- "getrandom",
- "once_cell",
- "version_check",
- "zerocopy",
-]
-
-[[package]]
-name = "aho-corasick"
-version = "1.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -35,12 +13,6 @@ name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
-
-[[package]]
-name = "appendlist"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e149dc73cd30538307e7ffa2acd3d2221148eaeed4871f246657b1c3eaa1cbd2"
 
 [[package]]
 name = "autocfg"
@@ -79,32 +51,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "boon"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baa187da765010b70370368c49f08244b1ae5cae1d5d33072f76c8cb7112fe3e"
-dependencies = [
- "ahash",
- "appendlist",
- "base64",
- "fluent-uri",
- "idna",
- "once_cell",
- "percent-encoding",
- "regex",
- "regex-syntax",
- "serde",
- "serde_json",
- "url",
-]
-
-[[package]]
-name = "borrow-or-share"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
-
-[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -140,7 +86,7 @@ dependencies = [
 name = "connection-http-standard"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -292,16 +238,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluent-uri"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1918b65d96df47d3591bed19c5cca17e3fa5d0707318e4b5ef2eae01764df7e5"
-dependencies = [
- "borrow-or-share",
- "ref-cast",
-]
-
-[[package]]
 name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -406,18 +342,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "getrandom"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
-dependencies = [
- "cfg-if",
- "libc",
- "r-efi",
- "wasip2",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -468,10 +392,9 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 name = "http-route"
 version = "0.1.0"
 dependencies = [
- "boon",
  "serde",
  "serde_json",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -681,7 +604,7 @@ dependencies = [
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-materializer",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -784,18 +707,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "r-efi"
-version = "5.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
-
-[[package]]
 name = "receiving-purchase-order-get"
 version = "0.1.0"
 dependencies = [
  "futures-executor",
  "wamn-receiving-data-access",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -804,7 +721,7 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "wamn-receiving-data-access",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -813,7 +730,7 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "wamn-receiving-data-access",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -822,7 +739,7 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "wamn-receiving-data-access",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -831,7 +748,7 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "wamn-receiving-data-access",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -840,7 +757,7 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "wamn-receiving-data-access",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -851,55 +768,6 @@ checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
 ]
-
-[[package]]
-name = "ref-cast"
-version = "1.0.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e440fb4e4b4147295338efb76001ab9e4efc0e5839df2c47fc5ac2381d365c3"
-dependencies = [
- "ref-cast-impl",
-]
-
-[[package]]
-name = "ref-cast-impl"
-version = "1.0.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.4",
-]
-
-[[package]]
-name = "regex"
-version = "1.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
-name = "regex-automata"
-version = "0.4.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-syntax",
-]
-
-[[package]]
-name = "regex-syntax"
-version = "0.8.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rustversion"
@@ -1140,7 +1008,7 @@ name = "std-virtualization-probe"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1341,7 +1209,7 @@ dependencies = [
  "log",
  "sqlx",
  "sqlx-core",
- "wit-bindgen 0.44.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1357,15 +1225,6 @@ dependencies = [
  "uuid",
  "wamn-execution-contract",
  "wamn-postgres-sqlx",
-]
-
-[[package]]
-name = "wasip2"
-version = "1.0.4+wasi-0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
-dependencies = [
- "wit-bindgen 0.57.1",
 ]
 
 [[package]]
@@ -1462,12 +1321,6 @@ dependencies = [
  "wit-bindgen-rt",
  "wit-bindgen-rust-macro",
 ]
-
-[[package]]
-name = "wit-bindgen"
-version = "0.57.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wit-bindgen-core"
@@ -1584,26 +1437,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "synstructure",
-]
-
-[[package]]
-name = "zerocopy"
-version = "0.8.56"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "556764e583adb45a9f8d413c2a147fa7e8d821e48e12b14fd560b607998b75eb"
-dependencies = [
- "zerocopy-derive",
-]
-
-[[package]]
-name = "zerocopy-derive"
-version = "0.8.56"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2ab42fc20575779bd240faa45f94a74256f755c0fa9e89f0ede20d91d0cdfc1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
