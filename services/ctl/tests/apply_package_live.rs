@@ -85,6 +85,7 @@ fn copy_receiving_package_as(root: &Path, package_id: &str, schema: &str) {
         .values_mut()
     {
         model["schema"] = serde_json::Value::String(schema.to_owned());
+        model["owner"] = serde_json::Value::String(package_id.to_owned());
     }
     std::fs::write(
         &manifest_path,
@@ -97,6 +98,91 @@ fn copy_receiving_package_as(root: &Path, package_id: &str, schema: &str) {
         .expect("read copied package migration")
         .replace("receiving.", &format!("{schema}."));
     std::fs::write(migration_path, migration).expect("write copied package migration");
+}
+
+fn copy_overlay_package(
+    root: &Path,
+    package_id: &str,
+    model_id: &str,
+    operation: &str,
+    fields: &[&str],
+    constraints: &[&str],
+    migration: &str,
+) {
+    copy_receiving_package(root);
+    let manifest_path = root.join("wamn.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path).expect("read copied overlay manifest"),
+    )
+    .expect("parse copied overlay manifest");
+    manifest["package"] = serde_json::json!({
+        "id": package_id,
+        "version": "3.0.0"
+    });
+    manifest["base_dependencies"] = serde_json::json!({
+        "base_receiving": {
+            "package": "wamn_receiving",
+            "version": "1.0.0",
+            "digest": format!("sha256:{}", "a".repeat(64)),
+            "operations": ["receiving.record_receipt"]
+        }
+    });
+    manifest["custom_operations"] = serde_json::json!({});
+
+    let models = manifest["models"]
+        .as_object_mut()
+        .expect("overlay models are an object");
+    models.retain(|name, _| name == model_id);
+    let model = models
+        .get_mut(model_id)
+        .expect("selected base model exists");
+    model["owner"] = serde_json::Value::String("wamn_receiving".into());
+    model
+        .as_object_mut()
+        .expect("overlay model is an object")
+        .remove("client_field_extensible");
+    model["field_owners"] = serde_json::Value::Object(
+        fields
+            .iter()
+            .map(|field| {
+                (
+                    (*field).to_owned(),
+                    serde_json::Value::String(package_id.to_owned()),
+                )
+            })
+            .collect(),
+    );
+    model["constraint_owners"] = serde_json::Value::Object(
+        constraints
+            .iter()
+            .map(|constraint| {
+                (
+                    (*constraint).to_owned(),
+                    serde_json::Value::String(package_id.to_owned()),
+                )
+            })
+            .collect(),
+    );
+    model["operations"]
+        .as_object_mut()
+        .expect("model operations are an object")
+        .retain(|name, _| format!("{model_id}.{name}") == operation);
+    manifest["components"]
+        .as_object_mut()
+        .expect("components are an object")
+        .retain(|_, component| {
+            component["operations"]
+                .as_array()
+                .is_some_and(|operations| operations == &[serde_json::json!(operation)])
+        });
+
+    std::fs::write(
+        manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize overlay manifest"),
+    )
+    .expect("write overlay manifest");
+    std::fs::write(root.join("migrations/0001_initial.sql"), migration)
+        .expect("write exact overlay migration");
 }
 
 fn set_package_identity(root: &Path, version: &str, predecessor: Option<&str>) {
@@ -239,6 +325,11 @@ async fn write_identity(client: &Client) -> Vec<String> {
                SELECT 'migration:' || ordinal::text || ':' || xmin::text \
                  FROM catalog.package_migrations WHERE tenant_id = $1 \
                UNION ALL \
+               SELECT 'definition:' || schema_name || ':' || relation_name || ':' || \
+                      definition_kind || ':' || definition_name || ':' || \
+                      owner_package_id || ':' || client_field_extensible::text || ':' || xmin::text \
+                 FROM catalog.package_definition_owners WHERE tenant_id = $1 \
+               UNION ALL \
                SELECT 'entity:' || package_id || ':' || entity_id || ':' || xmin::text \
                  FROM receiving.wamn_entities \
                UNION ALL \
@@ -355,6 +446,208 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .await
         .expect("exact replay observes no pending work");
     assert_eq!(write_identity(&client).await, first_identity);
+
+    let alter_base =
+        fixture_root().with_file_name(format!("apply-package-alter-base-{}", std::process::id()));
+    copy_overlay_package(
+        &alter_base,
+        "client_alter_receiving",
+        "purchase_order",
+        "purchase_order.update",
+        &[],
+        &[],
+        "ALTER TABLE receiving.purchase_order ALTER COLUMN status SET DEFAULT 'complete';",
+    );
+    let alter_error = apply(&url, &alter_base)
+        .await
+        .expect_err("an overlay cannot alter a base-owned field");
+    let alter_error = alter_error
+        .downcast_ref::<apply_package::ApplyPackageError>()
+        .expect("base field alteration is a typed ownership refusal");
+    assert_eq!(
+        alter_error.kind(),
+        apply_package::ApplyPackageErrorKind::BaseDefinitionMutation
+    );
+    assert_eq!(alter_error.schema(), Some("receiving"));
+    assert_eq!(alter_error.relation(), Some("purchase_order"));
+    assert_eq!(alter_error.definition(), Some("status"));
+    assert_eq!(alter_error.owner_package(), Some("wamn_receiving"));
+    assert_eq!(write_identity(&client).await, first_identity);
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT column_default FROM information_schema.columns \
+                  WHERE table_schema = 'receiving' AND table_name = 'purchase_order' \
+                    AND column_name = 'status'",
+                &[],
+            )
+            .await
+            .expect("read base status default after refused alteration")
+            .get::<_, Option<String>>(0)
+            .as_deref(),
+        Some("'open'::text")
+    );
+
+    let drop_base =
+        fixture_root().with_file_name(format!("apply-package-drop-base-{}", std::process::id()));
+    copy_overlay_package(
+        &drop_base,
+        "client_drop_receiving",
+        "purchase_order",
+        "purchase_order.update",
+        &[],
+        &[],
+        "ALTER TABLE receiving.purchase_order DROP COLUMN status;",
+    );
+    let drop_error = apply(&url, &drop_base)
+        .await
+        .expect_err("an overlay cannot drop a base-owned field");
+    let drop_error = drop_error
+        .downcast_ref::<apply_package::ApplyPackageError>()
+        .expect("base field removal is a typed ownership refusal");
+    assert_eq!(
+        drop_error.kind(),
+        apply_package::ApplyPackageErrorKind::BaseDefinitionMutation
+    );
+    assert_eq!(drop_error.definition(), Some("status"));
+    assert_eq!(write_identity(&client).await, first_identity);
+    assert!(
+        client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                  WHERE table_schema = 'receiving' AND table_name = 'purchase_order' \
+                    AND column_name = 'status')",
+                &[],
+            )
+            .await
+            .expect("read base field after refused removal")
+            .get::<_, bool>(0)
+    );
+
+    let nonextensible = fixture_root().with_file_name(format!(
+        "apply-package-nonextensible-{}",
+        std::process::id()
+    ));
+    copy_overlay_package(
+        &nonextensible,
+        "client_receipt_extension",
+        "receipt",
+        "receipt.get",
+        &["acme_receipt_flag"],
+        &[],
+        "ALTER TABLE receiving.receipt ADD COLUMN acme_receipt_flag boolean NOT NULL DEFAULT false;",
+    );
+    let nonextensible_error = apply(&url, &nonextensible)
+        .await
+        .expect_err("a base relation must explicitly admit client definitions");
+    let nonextensible_error = nonextensible_error
+        .downcast_ref::<apply_package::ApplyPackageError>()
+        .expect("missing extensibility is a typed ownership refusal");
+    assert_eq!(
+        nonextensible_error.kind(),
+        apply_package::ApplyPackageErrorKind::RelationNotClientExtensible
+    );
+    assert_eq!(write_identity(&client).await, first_identity);
+
+    let overlay =
+        fixture_root().with_file_name(format!("apply-package-acme-overlay-{}", std::process::id()));
+    copy_overlay_package(
+        &overlay,
+        "client_acme_receiving",
+        "purchase_order",
+        "purchase_order.update",
+        &["acme_inspection_required", "acme_quality_status"],
+        &["purchase_order_acme_quality_status_check"],
+        "ALTER TABLE receiving.purchase_order \
+             ADD COLUMN acme_inspection_required boolean NOT NULL DEFAULT false; \
+         ALTER TABLE receiving.purchase_order \
+             ADD COLUMN acme_quality_status text NOT NULL DEFAULT 'not_required'; \
+         ALTER TABLE receiving.purchase_order \
+             ADD CONSTRAINT purchase_order_acme_quality_status_check \
+             CHECK (acme_quality_status IN ('not_required', 'pending', 'approved', 'rejected'));",
+    );
+    apply(&url, &overlay)
+        .await
+        .expect("the exact client overlay applies after its exact base");
+    assert_eq!(
+        client
+            .query(
+                "SELECT definition_kind, definition_name, owner_package_id, \
+                        client_field_extensible \
+                   FROM catalog.package_definition_owners \
+                  WHERE tenant_id = $1 AND schema_name = 'receiving' \
+                    AND relation_name = 'purchase_order' \
+                    AND ((definition_kind = 'relation' AND definition_name = 'purchase_order') \
+                      OR (definition_kind = 'field' AND definition_name IN \
+                          ('status', 'acme_inspection_required', 'acme_quality_status')) \
+                      OR (definition_kind = 'constraint' AND definition_name = \
+                          'purchase_order_acme_quality_status_check')) \
+                  ORDER BY definition_kind, definition_name COLLATE \"C\"",
+                &[&TENANT],
+            )
+            .await
+            .expect("read exact base and overlay definition owners")
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    row.get::<_, String>(1),
+                    row.get::<_, String>(2),
+                    row.get::<_, bool>(3),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "constraint".into(),
+                "purchase_order_acme_quality_status_check".into(),
+                "client_acme_receiving".into(),
+                false,
+            ),
+            (
+                "field".into(),
+                "acme_inspection_required".into(),
+                "client_acme_receiving".into(),
+                false,
+            ),
+            (
+                "field".into(),
+                "acme_quality_status".into(),
+                "client_acme_receiving".into(),
+                false,
+            ),
+            (
+                "field".into(),
+                "status".into(),
+                "wamn_receiving".into(),
+                false,
+            ),
+            (
+                "relation".into(),
+                "purchase_order".into(),
+                "wamn_receiving".into(),
+                true,
+            ),
+        ]
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT package_id FROM receiving.wamn_entities \
+                  WHERE entity_id = 'purchase_order'",
+                &[],
+            )
+            .await
+            .expect("read shared relation source identity")
+            .get::<_, String>(0),
+        "wamn_receiving",
+        "definition ownership must not rebind the base CDC entity identity"
+    );
+    let overlay_identity = write_identity(&client).await;
+    apply(&url, &overlay)
+        .await
+        .expect("exact overlay replay is a no-op");
+    assert_eq!(write_identity(&client).await, overlay_identity);
 
     assert_eq!(
         client
@@ -729,4 +1022,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .await
         .expect("clean package-runner schemas");
     std::fs::remove_dir_all(package).expect("remove package fixture directory");
+    for fixture in [alter_base, drop_base, nonextensible, overlay] {
+        std::fs::remove_dir_all(fixture).expect("remove overlay package fixture directory");
+    }
 }

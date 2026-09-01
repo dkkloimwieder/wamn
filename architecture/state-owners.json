@@ -801,6 +801,25 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
+      "id": "catalog.package_definition_owners",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control",
+        "ctl-apply-package"
+      ],
+      "readers": [
+        "schema-control",
+        "ctl-apply-package"
+      ],
+      "compatibility_horizon": "immutable-package-history",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
       "id": "catalog.effective_release_packages",
       "plane": "project",
       "semantic_owner": "catalog-model",

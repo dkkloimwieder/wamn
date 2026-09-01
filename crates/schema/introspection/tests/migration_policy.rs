@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wamn_schema_introspection::migration_policy::{
-    MigrationPolicyError, MigrationPolicyErrorKind, validate_migration_file,
+    DefinitionAction, DefinitionKind, MigrationPolicyError, MigrationPolicyErrorKind,
+    inspect_migration_definition_mutations, validate_migration_file,
     validate_migration_file_for_schemas,
 };
 
@@ -88,6 +89,91 @@ ALTER TABLE receiving.purchase_order
 
     validate_migration_file(artifact.path(), "receiving")
         .expect("the two client fields and named check are the admitted overlay DDL");
+}
+
+#[test]
+fn reports_definition_mutations_from_the_artifact_loader() {
+    let artifact = TempArtifact::write(
+        "sql",
+        r#"
+CREATE TABLE receiving.quality_inspection (id uuid);
+ALTER TABLE receiving.purchase_order ADD COLUMN acme_flag boolean NOT NULL DEFAULT false;
+ALTER TABLE receiving.purchase_order ADD CONSTRAINT purchase_order_acme_flag_check CHECK (acme_flag);
+ALTER TABLE receiving.purchase_order ALTER COLUMN status SET DEFAULT 'complete';
+ALTER TABLE receiving.purchase_order DROP CONSTRAINT purchase_order_status_check;
+DROP TABLE receiving.purchase_order;
+"#,
+    );
+    let bytes = fs::read(artifact.path()).expect("read mutation fixture bytes");
+    let mutations = inspect_migration_definition_mutations(artifact.path(), &bytes, &["receiving"])
+        .expect("the loader reports definition targets independently of admission");
+
+    let observed = mutations
+        .iter()
+        .map(|mutation| {
+            (
+                mutation.action(),
+                mutation.kind(),
+                mutation.schema(),
+                mutation.relation(),
+                mutation.definition(),
+                mutation.statement_index(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        observed,
+        vec![
+            (
+                DefinitionAction::Create,
+                DefinitionKind::Relation,
+                "receiving",
+                "quality_inspection",
+                "quality_inspection",
+                1,
+            ),
+            (
+                DefinitionAction::Add,
+                DefinitionKind::Field,
+                "receiving",
+                "purchase_order",
+                "acme_flag",
+                2,
+            ),
+            (
+                DefinitionAction::Add,
+                DefinitionKind::Constraint,
+                "receiving",
+                "purchase_order",
+                "purchase_order_acme_flag_check",
+                3,
+            ),
+            (
+                DefinitionAction::Alter,
+                DefinitionKind::Field,
+                "receiving",
+                "purchase_order",
+                "status",
+                4,
+            ),
+            (
+                DefinitionAction::Drop,
+                DefinitionKind::Constraint,
+                "receiving",
+                "purchase_order",
+                "purchase_order_status_check",
+                5,
+            ),
+            (
+                DefinitionAction::Drop,
+                DefinitionKind::Relation,
+                "receiving",
+                "purchase_order",
+                "purchase_order",
+                6,
+            ),
+        ]
+    );
 }
 
 #[test]

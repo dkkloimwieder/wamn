@@ -37,6 +37,77 @@ pub enum MigrationPolicyErrorKind {
     UnsupportedStatement,
 }
 
+/// Managed PostgreSQL definition addressed by a migration statement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DefinitionKind {
+    Relation,
+    Field,
+    Constraint,
+}
+
+impl DefinitionKind {
+    /// Stable catalog spelling for the ownership ledger.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Relation => "relation",
+            Self::Field => "field",
+            Self::Constraint => "constraint",
+        }
+    }
+}
+
+/// Structural action one migration statement takes on a managed definition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DefinitionAction {
+    Create,
+    Add,
+    Alter,
+    Drop,
+}
+
+/// One schema-qualified definition mutation extracted by the migration loader.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DefinitionMutation {
+    action: DefinitionAction,
+    kind: DefinitionKind,
+    schema: Box<str>,
+    relation: Box<str>,
+    definition: Box<str>,
+    statement_index: usize,
+}
+
+impl DefinitionMutation {
+    /// Structural action applied to the definition.
+    pub const fn action(&self) -> DefinitionAction {
+        self.action
+    }
+
+    /// Definition grain addressed by the statement.
+    pub const fn kind(&self) -> DefinitionKind {
+        self.kind
+    }
+
+    /// Schema selected explicitly by the migration.
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
+
+    /// Relation containing the definition.
+    pub fn relation(&self) -> &str {
+        &self.relation
+    }
+
+    /// Unqualified definition name; relation actions repeat the relation name.
+    pub fn definition(&self) -> &str {
+        &self.definition
+    }
+
+    /// One-based statement position inside the artifact.
+    pub const fn statement_index(&self) -> usize {
+        self.statement_index
+    }
+}
+
 /// Contextual refusal from the migration-artifact boundary.
 #[derive(Debug)]
 pub struct MigrationPolicyError {
@@ -127,6 +198,40 @@ pub fn validate_migration_bytes_for_schemas(
     configured_schemas: &[&str],
 ) -> Result<(), MigrationPolicyError> {
     let path = path.as_ref();
+    let statements = artifact_statements(path, bytes, configured_schemas)?;
+
+    for (index, tokens) in statements.iter().enumerate() {
+        validate_statement(tokens, configured_schemas, path, index + 1)?;
+    }
+    Ok(())
+}
+
+/// Extract definition targets from the exact migration artifact bytes.
+///
+/// This is not a second admission path: callers must still invoke the policy
+/// validator before execution. It exposes the artifact loader's structured
+/// answer so the package applier can enforce definition ownership before DDL.
+pub fn inspect_migration_definition_mutations(
+    path: impl AsRef<Path>,
+    bytes: &[u8],
+    configured_schemas: &[&str],
+) -> Result<Vec<DefinitionMutation>, MigrationPolicyError> {
+    let path = path.as_ref();
+    let statements = artifact_statements(path, bytes, configured_schemas)?;
+    let mut mutations = Vec::new();
+    for (index, tokens) in statements.iter().enumerate() {
+        if let Some(mutation) = definition_mutation(tokens, configured_schemas, path, index + 1)? {
+            mutations.push(mutation);
+        }
+    }
+    Ok(mutations)
+}
+
+fn artifact_statements<'a>(
+    path: &Path,
+    bytes: &'a [u8],
+    configured_schemas: &[&str],
+) -> Result<Vec<Vec<Token<'a>>>, MigrationPolicyError> {
     if path.extension() != Some(OsStr::new("sql")) {
         return Err(policy_error(
             MigrationPolicyErrorKind::NotSqlArtifact,
@@ -160,11 +265,7 @@ pub fn validate_migration_bytes_for_schemas(
             "strict package manifest declares no application schema",
         ));
     }
-
-    for (index, tokens) in statements.iter().enumerate() {
-        validate_statement(tokens, configured_schemas, path, index + 1)?;
-    }
-    Ok(())
+    Ok(statements)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,6 +275,138 @@ enum Token<'a> {
     StringLiteral(&'a str),
     Opaque,
     Symbol(u8),
+}
+
+fn definition_mutation(
+    tokens: &[Token<'_>],
+    configured_schemas: &[&str],
+    path: &Path,
+    statement_index: usize,
+) -> Result<Option<DefinitionMutation>, MigrationPolicyError> {
+    if words(tokens, 0, &["create", "table"]) {
+        return qualified_definition_mutation(
+            tokens,
+            2,
+            DefinitionAction::Create,
+            DefinitionKind::Relation,
+            None,
+            configured_schemas,
+            path,
+            statement_index,
+        );
+    }
+    if words(tokens, 0, &["drop", "table"]) {
+        let relation_index = if words(tokens, 2, &["if", "exists"]) {
+            4
+        } else {
+            2
+        };
+        return qualified_definition_mutation(
+            tokens,
+            relation_index,
+            DefinitionAction::Drop,
+            DefinitionKind::Relation,
+            None,
+            configured_schemas,
+            path,
+            statement_index,
+        );
+    }
+    if !words(tokens, 0, &["alter", "table"]) {
+        return Ok(None);
+    }
+
+    let (action, kind, definition_index) = if words(tokens, 5, &["add", "column"]) {
+        (DefinitionAction::Add, DefinitionKind::Field, Some(7))
+    } else if words(tokens, 5, &["add", "constraint"]) {
+        (DefinitionAction::Add, DefinitionKind::Constraint, Some(7))
+    } else if words(tokens, 5, &["drop", "column"]) {
+        let index = if words(tokens, 7, &["if", "exists"]) {
+            9
+        } else {
+            7
+        };
+        (DefinitionAction::Drop, DefinitionKind::Field, Some(index))
+    } else if words(tokens, 5, &["drop", "constraint"]) {
+        let index = if words(tokens, 7, &["if", "exists"]) {
+            9
+        } else {
+            7
+        };
+        (
+            DefinitionAction::Drop,
+            DefinitionKind::Constraint,
+            Some(index),
+        )
+    } else if words(tokens, 5, &["alter", "column"]) || words(tokens, 5, &["rename", "column"]) {
+        (DefinitionAction::Alter, DefinitionKind::Field, Some(7))
+    } else if words(tokens, 5, &["alter", "constraint"])
+        || words(tokens, 5, &["rename", "constraint"])
+    {
+        (DefinitionAction::Alter, DefinitionKind::Constraint, Some(7))
+    } else {
+        (DefinitionAction::Alter, DefinitionKind::Relation, None)
+    };
+    qualified_definition_mutation(
+        tokens,
+        2,
+        action,
+        kind,
+        definition_index,
+        configured_schemas,
+        path,
+        statement_index,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the complete lexical coordinates of one mutation"
+)]
+fn qualified_definition_mutation(
+    tokens: &[Token<'_>],
+    relation_index: usize,
+    action: DefinitionAction,
+    kind: DefinitionKind,
+    definition_index: Option<usize>,
+    configured_schemas: &[&str],
+    path: &Path,
+    statement_index: usize,
+) -> Result<Option<DefinitionMutation>, MigrationPolicyError> {
+    let (Some(Token::Word(schema)), Some(Token::Symbol(b'.')), Some(Token::Word(relation))) = (
+        tokens.get(relation_index).copied(),
+        tokens.get(relation_index + 1).copied(),
+        tokens.get(relation_index + 2).copied(),
+    ) else {
+        return Ok(None);
+    };
+    if !configured_schemas.contains(&schema) {
+        return refuse_statement(
+            MigrationPolicyErrorKind::CrossSchemaMutation,
+            path,
+            statement_index,
+            format!(
+                "schema {schema:?} is outside configured application schemas {configured_schemas:?}"
+            ),
+        );
+    }
+    let definition = match definition_index {
+        Some(index) => {
+            let Some(Token::Word(definition)) = tokens.get(index).copied() else {
+                return Ok(None);
+            };
+            definition
+        }
+        None => relation,
+    };
+    Ok(Some(DefinitionMutation {
+        action,
+        kind,
+        schema: schema.into(),
+        relation: relation.into(),
+        definition: definition.into(),
+        statement_index,
+    }))
 }
 
 fn policy_error(

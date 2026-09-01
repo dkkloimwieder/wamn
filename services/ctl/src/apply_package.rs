@@ -15,6 +15,11 @@ use wamn_schema_control::{
     AppliedPackage, MigrationSource, PackageDirectory, PackageMigrationError, RecordedMigration,
     SqlStatement, plan_package_migrations,
 };
+use wamn_schema_generator::{ModelDeclaration, PackageManifest};
+use wamn_schema_introspection::migration_policy::{
+    DefinitionAction, DefinitionKind, DefinitionMutation, MigrationPolicyError,
+    MigrationPolicyErrorKind, inspect_migration_definition_mutations,
+};
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
@@ -36,6 +41,59 @@ SELECT package.package_version FROM catalog.packages AS package \
           AND successor.package_id = package.package_id \
           AND successor.predecessor_version = package.package_version\
    )";
+const SELECT_DEFINITION_OWNER_SQL: &str = "\
+SELECT owner_package_id, client_field_extensible \
+  FROM catalog.package_definition_owners \
+ WHERE tenant_id = $1 AND schema_name = $2 AND relation_name = $3 \
+   AND definition_kind = $4 AND definition_name = $5";
+const INSERT_DEFINITION_OWNER_SQL: &str = "\
+INSERT INTO catalog.package_definition_owners \
+    (tenant_id, schema_name, relation_name, definition_kind, definition_name, \
+     owner_package_id, client_field_extensible) \
+VALUES ($1, $2, $3, $4, $5, $6, $7) \
+ON CONFLICT (tenant_id, schema_name, relation_name, definition_kind, definition_name) \
+DO NOTHING";
+const SELECT_RELATION_PRESENT_SQL: &str = "\
+SELECT EXISTS (\
+    SELECT 1 FROM pg_catalog.pg_class AS relation \
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+    WHERE namespace.nspname = $1 AND relation.relname = $2 AND relation.relkind = 'r'\
+)";
+const SELECT_FIELD_PRESENT_SQL: &str = "\
+SELECT EXISTS (\
+    SELECT 1 FROM pg_catalog.pg_attribute AS field \
+    JOIN pg_catalog.pg_class AS relation ON relation.oid = field.attrelid \
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+    WHERE namespace.nspname = $1 AND relation.relname = $2 \
+      AND relation.relkind = 'r' AND field.attname = $3 \
+      AND field.attnum > 0 AND NOT field.attisdropped\
+)";
+const SELECT_CONSTRAINT_PRESENT_SQL: &str = "\
+SELECT EXISTS (\
+    SELECT 1 FROM pg_catalog.pg_constraint AS definition \
+    JOIN pg_catalog.pg_class AS relation ON relation.oid = definition.conrelid \
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+    WHERE namespace.nspname = $1 AND relation.relname = $2 \
+      AND relation.relkind = 'r' AND definition.conname = $3 \
+      AND definition.contype IN ('p', 'u', 'f', 'c')\
+)";
+const SELECT_RELATION_DEFINITIONS_SQL: &str = "\
+SELECT definition_kind, definition_name FROM (\
+    SELECT 'field'::text AS definition_kind, field.attname::text AS definition_name, \
+           field.attnum::int AS ordering \
+      FROM pg_catalog.pg_attribute AS field \
+      JOIN pg_catalog.pg_class AS relation ON relation.oid = field.attrelid \
+      JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+     WHERE namespace.nspname = $1 AND relation.relname = $2 \
+       AND relation.relkind = 'r' AND field.attnum > 0 AND NOT field.attisdropped \
+    UNION ALL \
+    SELECT 'constraint'::text, definition.conname::text, 1000000 \
+      FROM pg_catalog.pg_constraint AS definition \
+      JOIN pg_catalog.pg_class AS relation ON relation.oid = definition.conrelid \
+      JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+     WHERE namespace.nspname = $1 AND relation.relname = $2 \
+       AND relation.relkind = 'r' AND definition.contype IN ('p', 'u', 'f', 'c')\
+) AS definitions ORDER BY ordering, definition_kind, definition_name COLLATE \"C\"";
 
 /// Stable apply-package refusal prefix.
 pub const APPLY_PACKAGE_REFUSAL: &str = "apply-package-refused";
@@ -43,6 +101,17 @@ pub const APPLY_PACKAGE_REFUSAL: &str = "apply-package-refused";
 pub const PACKAGE_VERSION_SEALED_REFUSAL: &str = "package-version-sealed";
 /// A new coordinate must extend the one installed leaf for its package family.
 pub const PREDECESSOR_NOT_CURRENT_REFUSAL: &str = "predecessor-not-current";
+/// An overlay attempted to mutate a definition owned by another package.
+pub const BASE_DEFINITION_MUTATION_REFUSAL: &str = "base-definition-mutation-refused";
+/// A shared relation did not publish additive client-field authority.
+pub const RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL: &str = "relation-not-client-extensible";
+/// A migration addition lacks its exact manifest ownership declaration.
+pub const DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL: &str =
+    "definition-owner-declaration-missing";
+/// A live definition lacks or disagrees with its durable owner fact.
+pub const DEFINITION_OWNER_CONFLICT_REFUSAL: &str = "definition-owner-conflict";
+/// PostgreSQL did not expose the definition a migration reported creating.
+pub const DEFINITION_NOT_FOUND_REFUSAL: &str = "definition-not-found";
 
 /// Remedy-distinct apply-package refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +119,11 @@ pub enum ApplyPackageErrorKind {
     PackageVersionSealed,
     PredecessorNotCurrent,
     PredecessorPrefixMismatch,
+    BaseDefinitionMutation,
+    RelationNotClientExtensible,
+    DefinitionOwnerDeclarationMissing,
+    DefinitionOwnerConflict,
+    DefinitionNotFound,
 }
 
 impl ApplyPackageErrorKind {
@@ -60,6 +134,11 @@ impl ApplyPackageErrorKind {
             Self::PredecessorPrefixMismatch => {
                 wamn_schema_control::PackageMigrationErrorKind::PredecessorPrefixMismatch.as_str()
             }
+            Self::BaseDefinitionMutation => BASE_DEFINITION_MUTATION_REFUSAL,
+            Self::RelationNotClientExtensible => RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
+            Self::DefinitionOwnerDeclarationMissing => DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,
+            Self::DefinitionOwnerConflict => DEFINITION_OWNER_CONFLICT_REFUSAL,
+            Self::DefinitionNotFound => DEFINITION_NOT_FOUND_REFUSAL,
         }
     }
 }
@@ -72,6 +151,11 @@ pub struct ApplyPackageError {
     predecessor_version: Option<String>,
     current_version: Option<String>,
     path: Option<String>,
+    schema: Option<String>,
+    relation: Option<String>,
+    definition_kind: Option<DefinitionKind>,
+    definition: Option<String>,
+    owner_package: Option<String>,
     detail: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
@@ -96,6 +180,22 @@ impl ApplyPackageError {
     pub fn path(&self) -> Option<&str> {
         self.path.as_deref()
     }
+
+    pub fn schema(&self) -> Option<&str> {
+        self.schema.as_deref()
+    }
+
+    pub fn relation(&self) -> Option<&str> {
+        self.relation.as_deref()
+    }
+
+    pub fn definition(&self) -> Option<&str> {
+        self.definition.as_deref()
+    }
+
+    pub fn owner_package(&self) -> Option<&str> {
+        self.owner_package.as_deref()
+    }
 }
 
 impl fmt::Display for ApplyPackageError {
@@ -116,6 +216,21 @@ impl fmt::Display for ApplyPackageError {
         }
         if let Some(path) = &self.path {
             write!(formatter, "; file={path}")?;
+        }
+        if let Some(schema) = &self.schema {
+            write!(formatter, "; schema={schema}")?;
+        }
+        if let Some(relation) = &self.relation {
+            write!(formatter, "; relation={relation}")?;
+        }
+        if let Some(kind) = self.definition_kind {
+            write!(formatter, "; definition-kind={}", kind.as_str())?;
+        }
+        if let Some(definition) = &self.definition {
+            write!(formatter, "; definition={definition}")?;
+        }
+        if let Some(owner) = &self.owner_package {
+            write!(formatter, "; owner-package={owner}")?;
         }
         write!(formatter, "; {}", self.detail)
     }
@@ -151,12 +266,38 @@ struct ApplyOutcome {
     changed: bool,
 }
 
+#[derive(Debug)]
+struct PlannedDefinitionMutation {
+    relative_path: Box<str>,
+    mutation: DefinitionMutation,
+}
+
+#[derive(Debug)]
+struct DeferredMigrationPolicyError {
+    relative_path: Box<str>,
+    source: MigrationPolicyError,
+}
+
+#[derive(Debug)]
+struct MigrationPolicyPlan {
+    mutations: Vec<PlannedDefinitionMutation>,
+    deferred: Option<DeferredMigrationPolicyError>,
+}
+
+#[derive(Debug)]
+struct StoredDefinitionOwner {
+    package_id: String,
+    client_field_extensible: bool,
+}
+
 pub async fn run(args: ApplyPackageArgs) -> anyhow::Result<()> {
     ensure!(!args.tenant.is_empty(), "tenant must not be empty");
     let directory = read_package_directory(&args.package)?;
     let presented = plan_package_migrations(&directory, None)
         .context("validate package directory before database work")?;
-    validate_migration_policy(&args.package, &directory, &presented)?;
+    let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
+        .context("parse strict package manifest for definition ownership")?;
+    let migration_policy = validate_migration_policy(&args.package, &directory, &presented)?;
     let coordinate = presented.coordinate.clone();
     let coordinate_text = format!(
         "{}@{}",
@@ -168,7 +309,15 @@ pub async fn run(args: ApplyPackageArgs) -> anyhow::Result<()> {
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = apply(&mut client, &args.tenant, &coordinate_text, &directory).await;
+    let result = apply(
+        &mut client,
+        &args.tenant,
+        &coordinate_text,
+        &directory,
+        &manifest,
+        migration_policy,
+    )
+    .await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -195,7 +344,7 @@ fn validate_migration_policy(
     package_root: &Path,
     directory: &PackageDirectory,
     plan: &wamn_schema_control::PackageMigrationPlan,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<MigrationPolicyPlan> {
     let mut schemas = plan
         .models
         .iter()
@@ -207,16 +356,55 @@ fn validate_migration_policy(
         !schemas.is_empty(),
         "package-migration-schema-missing: manifest must map at least one model to an application schema"
     );
+    let mut mutations = Vec::new();
+    let mut deferred = None;
     for migration in &directory.migrations {
         let path = package_root.join(&migration.relative_path);
-        wamn_schema_introspection::migration_policy::validate_migration_bytes_for_schemas(
-            &path,
-            &migration.bytes,
-            &schemas,
-        )
-        .with_context(|| format!("validate {} before apply", migration.relative_path))?;
+        let inspected =
+            inspect_migration_definition_mutations(&path, &migration.bytes, &schemas)
+                .with_context(|| format!("inspect {} before apply", migration.relative_path))?;
+        let validation =
+            wamn_schema_introspection::migration_policy::validate_migration_bytes_for_schemas(
+                &path,
+                &migration.bytes,
+                &schemas,
+            );
+        match validation {
+            Ok(()) => {}
+            Err(source)
+                if source.kind() == MigrationPolicyErrorKind::UnsupportedStatement
+                    && inspected.iter().any(|mutation| {
+                        matches!(
+                            mutation.action(),
+                            DefinitionAction::Alter | DefinitionAction::Drop
+                        )
+                    }) =>
+            {
+                if deferred.is_none() {
+                    deferred = Some(DeferredMigrationPolicyError {
+                        relative_path: migration.relative_path.clone().into_boxed_str(),
+                        source,
+                    });
+                }
+            }
+            Err(source) => {
+                return Err(source)
+                    .with_context(|| format!("validate {} before apply", migration.relative_path));
+            }
+        }
+        mutations.extend(
+            inspected
+                .into_iter()
+                .map(|mutation| PlannedDefinitionMutation {
+                    relative_path: migration.relative_path.clone().into_boxed_str(),
+                    mutation,
+                }),
+        );
     }
-    Ok(())
+    Ok(MigrationPolicyPlan {
+        mutations,
+        deferred,
+    })
 }
 
 async fn apply(
@@ -224,6 +412,8 @@ async fn apply(
     tenant: &str,
     coordinate_text: &str,
     directory: &PackageDirectory,
+    manifest: &PackageManifest,
+    migration_policy: MigrationPolicyPlan,
 ) -> anyhow::Result<ApplyOutcome> {
     let presented =
         plan_package_migrations(directory, None).context("validate package directory")?;
@@ -272,18 +462,54 @@ async fn apply(
     };
     let applied_count = plan.pending.len();
     let migration_changed = !plan.is_noop();
+    let pending_paths = plan
+        .pending
+        .iter()
+        .map(|migration| migration.relative_path.as_str())
+        .collect::<BTreeSet<_>>();
+    let MigrationPolicyPlan {
+        mutations,
+        deferred,
+    } = migration_policy;
+    let pending_mutations = mutations
+        .iter()
+        .filter(|planned| pending_paths.contains(planned.relative_path.as_ref()))
+        .collect::<Vec<_>>();
+
+    validate_definition_ownership_before_apply(
+        &tx,
+        tenant,
+        coordinate_text,
+        &package_id,
+        manifest,
+        &pending_mutations,
+    )
+    .await?;
+    if let Some(deferred) = deferred {
+        return Err(deferred.source)
+            .with_context(|| format!("validate {} before apply", deferred.relative_path));
+    }
 
     ensure_model_schemas(&tx, &plan).await?;
     for statement in &plan.statements {
         execute(&tx, statement, &coordinate_text).await?;
     }
-    reconcile_entity_maps(&tx, &plan).await?;
+    let ownership_changed = reconcile_definition_ownership(
+        &tx,
+        tenant,
+        coordinate_text,
+        &package_id,
+        manifest,
+        &pending_mutations,
+    )
+    .await?;
+    reconcile_entity_maps(&tx, &plan, manifest).await?;
     let operation_grants =
         reconcile_package_operation_grants(&tx, &directory.manifest_bytes, tenant).await?;
     tx.commit().await.context("commit whole package suffix")?;
     Ok(ApplyOutcome {
         migrations_applied: applied_count,
-        changed: migration_changed || !operation_grants.is_noop(),
+        changed: migration_changed || ownership_changed || !operation_grants.is_noop(),
     })
 }
 
@@ -336,6 +562,11 @@ fn predecessor_not_current_error(
         predecessor_version: declared_version.map(str::to_owned),
         current_version: Some(current_version.to_owned()),
         path: None,
+        schema: None,
+        relation: None,
+        definition_kind: None,
+        definition: None,
+        owner_package: None,
         detail: "declare the current installed package version as predecessor_version".into(),
         source: None,
     }
@@ -365,6 +596,11 @@ fn predecessor_prefix_error(
         predecessor_version: Some(predecessor_version.to_owned()),
         current_version: None,
         path,
+        schema: None,
+        relation: None,
+        definition_kind: None,
+        definition: None,
+        owner_package: None,
         detail,
         source: source.map(|source| Box::new(source) as Box<dyn std::error::Error + Send + Sync>),
     }
@@ -389,9 +625,597 @@ async fn ensure_model_schemas(
     Ok(())
 }
 
+async fn validate_definition_ownership_before_apply(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    coordinate: &str,
+    package_id: &str,
+    manifest: &PackageManifest,
+    mutations: &[&PlannedDefinitionMutation],
+) -> anyhow::Result<()> {
+    validate_manifest_definition_owners(manifest)?;
+    for planned in mutations {
+        let mutation = &planned.mutation;
+        match mutation.action() {
+            DefinitionAction::Create => {
+                preflight_create_relation(tx, tenant, coordinate, package_id, manifest, planned)
+                    .await?;
+            }
+            DefinitionAction::Add => {
+                preflight_add_definition(tx, tenant, coordinate, package_id, manifest, planned)
+                    .await?;
+            }
+            DefinitionAction::Alter | DefinitionAction::Drop => {
+                preflight_existing_definition_mutation(tx, tenant, coordinate, package_id, planned)
+                    .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_manifest_definition_owners(manifest: &PackageManifest) -> anyhow::Result<()> {
+    let admitted = std::iter::once(manifest.package.id.as_str())
+        .chain(
+            manifest
+                .base_dependencies
+                .values()
+                .map(|dependency| dependency.package.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    for (model_id, model) in &manifest.models {
+        for (definition, owner) in std::iter::once(("relation", model.owner.as_str()))
+            .chain(
+                model
+                    .field_owners
+                    .iter()
+                    .map(|(field, owner)| (field.as_str(), owner.as_str())),
+            )
+            .chain(
+                model
+                    .constraint_owners
+                    .iter()
+                    .map(|(constraint, owner)| (constraint.as_str(), owner.as_str())),
+            )
+        {
+            ensure!(
+                admitted.contains(owner),
+                "definition-owner-undeclared: {model_id}.{definition} names {owner}, which is neither the package nor a declared base"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn preflight_create_relation(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    coordinate: &str,
+    package_id: &str,
+    manifest: &PackageManifest,
+    planned: &PlannedDefinitionMutation,
+) -> anyhow::Result<()> {
+    let mutation = &planned.mutation;
+    if let Some(owner) = load_definition_owner(
+        tx,
+        tenant,
+        mutation.schema(),
+        mutation.relation(),
+        DefinitionKind::Relation,
+        mutation.relation(),
+    )
+    .await?
+    {
+        let kind = if owner.package_id == package_id {
+            ApplyPackageErrorKind::DefinitionOwnerConflict
+        } else {
+            ApplyPackageErrorKind::BaseDefinitionMutation
+        };
+        return Err(definition_error(
+            kind,
+            coordinate,
+            planned,
+            Some(owner.package_id.as_str()),
+            "CREATE TABLE cannot replace an existing managed relation",
+        )
+        .into());
+    }
+    if definition_present(
+        tx,
+        mutation.schema(),
+        mutation.relation(),
+        DefinitionKind::Relation,
+        mutation.relation(),
+    )
+    .await?
+    {
+        return Err(definition_error(
+            ApplyPackageErrorKind::DefinitionOwnerConflict,
+            coordinate,
+            planned,
+            None,
+            "the live relation has no durable definition owner",
+        )
+        .into());
+    }
+    if let Some(model) = model_for_relation(manifest, mutation.schema(), mutation.relation())
+        && model.owner != package_id
+    {
+        return Err(definition_error(
+            ApplyPackageErrorKind::DefinitionOwnerDeclarationMissing,
+            coordinate,
+            planned,
+            Some(model.owner.as_str()),
+            "a package may create only a relation it declares as its own",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+async fn preflight_add_definition(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    coordinate: &str,
+    package_id: &str,
+    manifest: &PackageManifest,
+    planned: &PlannedDefinitionMutation,
+) -> anyhow::Result<()> {
+    let mutation = &planned.mutation;
+    let Some(relation_owner) = load_definition_owner(
+        tx,
+        tenant,
+        mutation.schema(),
+        mutation.relation(),
+        DefinitionKind::Relation,
+        mutation.relation(),
+    )
+    .await?
+    else {
+        return Err(definition_error(
+            ApplyPackageErrorKind::DefinitionOwnerConflict,
+            coordinate,
+            planned,
+            None,
+            "the target relation has no durable definition owner",
+        )
+        .into());
+    };
+
+    if relation_owner.package_id != package_id {
+        if !relation_owner.client_field_extensible {
+            return Err(definition_error(
+                ApplyPackageErrorKind::RelationNotClientExtensible,
+                coordinate,
+                planned,
+                Some(relation_owner.package_id.as_str()),
+                "the base package must declare client_field_extensible before an overlay adds definitions",
+            )
+            .into());
+        }
+        let Some(model) = model_for_relation(manifest, mutation.schema(), mutation.relation())
+        else {
+            return Err(definition_error(
+                ApplyPackageErrorKind::DefinitionOwnerDeclarationMissing,
+                coordinate,
+                planned,
+                Some(relation_owner.package_id.as_str()),
+                "the overlay manifest must name the shared relation and its base owner",
+            )
+            .into());
+        };
+        if model.owner != relation_owner.package_id
+            || explicit_definition_owner(model, mutation.kind(), mutation.definition())
+                != Some(package_id)
+        {
+            return Err(definition_error(
+                ApplyPackageErrorKind::DefinitionOwnerDeclarationMissing,
+                coordinate,
+                planned,
+                Some(relation_owner.package_id.as_str()),
+                "an additive shared-relation definition must explicitly name the applying package as owner",
+            )
+            .into());
+        }
+    } else if let Some(model) = model_for_relation(manifest, mutation.schema(), mutation.relation())
+        && explicit_definition_owner(model, mutation.kind(), mutation.definition())
+            .is_some_and(|owner| owner != package_id)
+    {
+        return Err(definition_error(
+            ApplyPackageErrorKind::DefinitionOwnerDeclarationMissing,
+            coordinate,
+            planned,
+            explicit_definition_owner(model, mutation.kind(), mutation.definition()),
+            "a package cannot add a definition declared as another package's property",
+        )
+        .into());
+    }
+
+    if let Some(owner) = load_definition_owner(
+        tx,
+        tenant,
+        mutation.schema(),
+        mutation.relation(),
+        mutation.kind(),
+        mutation.definition(),
+    )
+    .await?
+    {
+        let kind = if owner.package_id == package_id {
+            ApplyPackageErrorKind::DefinitionOwnerConflict
+        } else {
+            ApplyPackageErrorKind::BaseDefinitionMutation
+        };
+        return Err(definition_error(
+            kind,
+            coordinate,
+            planned,
+            Some(owner.package_id.as_str()),
+            "ADD cannot replace an existing managed definition",
+        )
+        .into());
+    }
+    if definition_present(
+        tx,
+        mutation.schema(),
+        mutation.relation(),
+        mutation.kind(),
+        mutation.definition(),
+    )
+    .await?
+    {
+        return Err(definition_error(
+            ApplyPackageErrorKind::DefinitionOwnerConflict,
+            coordinate,
+            planned,
+            None,
+            "the live definition has no durable definition owner",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+async fn preflight_existing_definition_mutation(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    coordinate: &str,
+    package_id: &str,
+    planned: &PlannedDefinitionMutation,
+) -> anyhow::Result<()> {
+    let mutation = &planned.mutation;
+    if let Some(owner) = load_definition_owner(
+        tx,
+        tenant,
+        mutation.schema(),
+        mutation.relation(),
+        mutation.kind(),
+        mutation.definition(),
+    )
+    .await?
+    {
+        if owner.package_id != package_id {
+            return Err(definition_error(
+                ApplyPackageErrorKind::BaseDefinitionMutation,
+                coordinate,
+                planned,
+                Some(owner.package_id.as_str()),
+                "an overlay may not alter or drop a definition owned by its base",
+            )
+            .into());
+        }
+    } else if definition_present(
+        tx,
+        mutation.schema(),
+        mutation.relation(),
+        mutation.kind(),
+        mutation.definition(),
+    )
+    .await?
+    {
+        return Err(definition_error(
+            ApplyPackageErrorKind::DefinitionOwnerConflict,
+            coordinate,
+            planned,
+            None,
+            "the live definition has no durable definition owner",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+async fn reconcile_definition_ownership(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    coordinate: &str,
+    package_id: &str,
+    manifest: &PackageManifest,
+    mutations: &[&PlannedDefinitionMutation],
+) -> anyhow::Result<bool> {
+    let mut changed = false;
+    for planned in mutations {
+        let mutation = &planned.mutation;
+        match mutation.action() {
+            DefinitionAction::Create => {
+                ensure_definition_present(tx, coordinate, planned).await?;
+                let extensible =
+                    model_for_relation(manifest, mutation.schema(), mutation.relation())
+                        .filter(|model| model.owner == package_id)
+                        .is_some_and(|model| model.client_field_extensible);
+                changed |= insert_definition_owner(
+                    tx,
+                    tenant,
+                    coordinate,
+                    planned,
+                    DefinitionKind::Relation,
+                    mutation.relation(),
+                    package_id,
+                    extensible,
+                )
+                .await?;
+                for row in tx
+                    .query(
+                        SELECT_RELATION_DEFINITIONS_SQL,
+                        &[&mutation.schema(), &mutation.relation()],
+                    )
+                    .await
+                    .context("read server-derived relation definitions")?
+                {
+                    let kind = match row.get::<_, String>(0).as_str() {
+                        "field" => DefinitionKind::Field,
+                        "constraint" => DefinitionKind::Constraint,
+                        value => unreachable!("closed server definition kind {value}"),
+                    };
+                    let definition = row.get::<_, String>(1);
+                    changed |= insert_definition_owner(
+                        tx,
+                        tenant,
+                        coordinate,
+                        planned,
+                        kind,
+                        &definition,
+                        package_id,
+                        false,
+                    )
+                    .await?;
+                }
+            }
+            DefinitionAction::Add => {
+                ensure_definition_present(tx, coordinate, planned).await?;
+                changed |= insert_definition_owner(
+                    tx,
+                    tenant,
+                    coordinate,
+                    planned,
+                    mutation.kind(),
+                    mutation.definition(),
+                    package_id,
+                    false,
+                )
+                .await?;
+            }
+            DefinitionAction::Alter | DefinitionAction::Drop => {
+                unreachable!("migration policy refuses non-additive DDL before execution")
+            }
+        }
+    }
+    Ok(changed)
+}
+
+async fn ensure_definition_present(
+    tx: &Transaction<'_>,
+    coordinate: &str,
+    planned: &PlannedDefinitionMutation,
+) -> anyhow::Result<()> {
+    let mutation = &planned.mutation;
+    if definition_present(
+        tx,
+        mutation.schema(),
+        mutation.relation(),
+        mutation.kind(),
+        mutation.definition(),
+    )
+    .await?
+    {
+        Ok(())
+    } else {
+        Err(definition_error(
+            ApplyPackageErrorKind::DefinitionNotFound,
+            coordinate,
+            planned,
+            None,
+            "PostgreSQL did not expose the definition after its migration statement",
+        )
+        .into())
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameters are the exact durable definition-owner row"
+)]
+async fn insert_definition_owner(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    coordinate: &str,
+    planned: &PlannedDefinitionMutation,
+    kind: DefinitionKind,
+    definition: &str,
+    package_id: &str,
+    client_field_extensible: bool,
+) -> anyhow::Result<bool> {
+    let mutation = &planned.mutation;
+    let inserted = tx
+        .execute(
+            INSERT_DEFINITION_OWNER_SQL,
+            &[
+                &tenant,
+                &mutation.schema(),
+                &mutation.relation(),
+                &kind.as_str(),
+                &definition,
+                &package_id,
+                &client_field_extensible,
+            ],
+        )
+        .await
+        .context("record server-derived definition owner")?;
+    if inserted == 1 {
+        return Ok(true);
+    }
+    let existing = load_definition_owner(
+        tx,
+        tenant,
+        mutation.schema(),
+        mutation.relation(),
+        kind,
+        definition,
+    )
+    .await?
+    .expect("the conflicting definition owner row exists");
+    if existing.package_id == package_id
+        && existing.client_field_extensible == client_field_extensible
+    {
+        Ok(false)
+    } else {
+        Err(definition_error_for_parts(
+            ApplyPackageErrorKind::DefinitionOwnerConflict,
+            coordinate,
+            planned,
+            kind,
+            definition,
+            Some(existing.package_id.as_str()),
+            "the durable owner fact disagrees with the applying package",
+        )
+        .into())
+    }
+}
+
+async fn load_definition_owner(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    schema: &str,
+    relation: &str,
+    kind: DefinitionKind,
+    definition: &str,
+) -> anyhow::Result<Option<StoredDefinitionOwner>> {
+    tx.query_opt(
+        SELECT_DEFINITION_OWNER_SQL,
+        &[&tenant, &schema, &relation, &kind.as_str(), &definition],
+    )
+    .await
+    .context("read durable definition owner")
+    .map(|row| {
+        row.map(|row| StoredDefinitionOwner {
+            package_id: row.get(0),
+            client_field_extensible: row.get(1),
+        })
+    })
+}
+
+async fn definition_present(
+    tx: &Transaction<'_>,
+    schema: &str,
+    relation: &str,
+    kind: DefinitionKind,
+    definition: &str,
+) -> anyhow::Result<bool> {
+    let row = match kind {
+        DefinitionKind::Relation => {
+            tx.query_one(SELECT_RELATION_PRESENT_SQL, &[&schema, &relation])
+                .await
+        }
+        DefinitionKind::Field => {
+            tx.query_one(SELECT_FIELD_PRESENT_SQL, &[&schema, &relation, &definition])
+                .await
+        }
+        DefinitionKind::Constraint => {
+            tx.query_one(
+                SELECT_CONSTRAINT_PRESENT_SQL,
+                &[&schema, &relation, &definition],
+            )
+            .await
+        }
+    }
+    .context("read server definition presence")?;
+    Ok(row.get(0))
+}
+
+fn model_for_relation<'a>(
+    manifest: &'a PackageManifest,
+    schema: &str,
+    relation: &str,
+) -> Option<&'a ModelDeclaration> {
+    manifest
+        .models
+        .values()
+        .find(|model| model.schema == schema && model.table == relation)
+}
+
+fn explicit_definition_owner<'a>(
+    model: &'a ModelDeclaration,
+    kind: DefinitionKind,
+    definition: &str,
+) -> Option<&'a str> {
+    match kind {
+        DefinitionKind::Relation => Some(model.owner.as_str()),
+        DefinitionKind::Field => model.field_owners.get(definition).map(String::as_str),
+        DefinitionKind::Constraint => model.constraint_owners.get(definition).map(String::as_str),
+    }
+}
+
+fn definition_error(
+    kind: ApplyPackageErrorKind,
+    coordinate: &str,
+    planned: &PlannedDefinitionMutation,
+    owner_package: Option<&str>,
+    detail: impl Into<String>,
+) -> ApplyPackageError {
+    definition_error_for_parts(
+        kind,
+        coordinate,
+        planned,
+        planned.mutation.kind(),
+        planned.mutation.definition(),
+        owner_package,
+        detail,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments preserve exact refusal context at the effect boundary"
+)]
+fn definition_error_for_parts(
+    kind: ApplyPackageErrorKind,
+    coordinate: &str,
+    planned: &PlannedDefinitionMutation,
+    definition_kind: DefinitionKind,
+    definition: &str,
+    owner_package: Option<&str>,
+    detail: impl Into<String>,
+) -> ApplyPackageError {
+    ApplyPackageError {
+        kind,
+        coordinate: coordinate.to_owned(),
+        predecessor_version: None,
+        current_version: None,
+        path: Some(planned.relative_path.to_string()),
+        schema: Some(planned.mutation.schema().to_owned()),
+        relation: Some(planned.mutation.relation().to_owned()),
+        definition_kind: Some(definition_kind),
+        definition: Some(definition.to_owned()),
+        owner_package: owner_package.map(str::to_owned),
+        detail: detail.into(),
+        source: None,
+    }
+}
+
 async fn reconcile_entity_maps(
     tx: &Transaction<'_>,
     plan: &wamn_schema_control::PackageMigrationPlan,
+    manifest: &PackageManifest,
 ) -> anyhow::Result<()> {
     let schemas = plan
         .models
@@ -405,6 +1229,11 @@ async fn reconcile_entity_maps(
     }
 
     for model in &plan.models {
+        let relation_owner = &manifest
+            .models
+            .get(&model.model_id)
+            .expect("the migration plan preserves every manifest model")
+            .owner;
         let schema = wamn_schema_control::BareSchemaName::new(&model.schema)
             .context("validate manifest model schema for entity-map query")?;
         let mapping_sql = format!(
@@ -439,14 +1268,12 @@ async fn reconcile_entity_maps(
         if let (Some(mapped_package), Some(mapped_entity)) =
             (mapped_package.as_deref(), mapped_entity.as_deref())
         {
-            if mapped_package != plan.coordinate.package_id()
-                || mapped_entity != model.model_id.as_str()
-            {
+            if mapped_package != relation_owner || mapped_entity != model.model_id.as_str() {
                 bail!(
                     "package-entity-oid-rebind-refused: {}.{} is already mapped to {mapped_package}/{mapped_entity}; cannot rebind it to {}/{}",
                     model.schema,
                     model.table,
-                    plan.coordinate.package_id(),
+                    relation_owner,
                     model.model_id
                 );
             }
@@ -457,7 +1284,7 @@ async fn reconcile_entity_maps(
         let mapped = tx
             .execute(
                 &wamn_control_provision::sql::upsert_entity_map_sql(&model.schema),
-                &[&plan.coordinate.package_id(), &model.model_id, &model.table],
+                &[relation_owner, &model.model_id, &model.table],
             )
             .await
             .with_context(|| {
@@ -530,6 +1357,11 @@ async fn execute(
             predecessor_version: None,
             current_version: None,
             path: None,
+            schema: None,
+            relation: None,
+            definition_kind: None,
+            definition: None,
+            owner_package: None,
             detail: "already belongs to an effective release; create and apply a new package version for additional migrations".into(),
             source: Some(Box::new(source)),
         }

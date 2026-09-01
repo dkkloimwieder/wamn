@@ -210,6 +210,33 @@ CREATE TABLE catalog.package_migrations (
         REFERENCES catalog.packages (tenant_id, package_id, package_version)
 );
 
+-- Definition identity is independent from the OID-keyed application entity
+-- map: shared relations retain their source package while fields and named
+-- constraints added by an overlay retain their own package owner.
+CREATE TABLE catalog.package_definition_owners (
+    tenant_id              text    NOT NULL CHECK (tenant_id <> ''),
+    schema_name            text    NOT NULL
+        CHECK (schema_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
+    relation_name          text    NOT NULL
+        CHECK (relation_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
+    definition_kind        text    NOT NULL
+        CHECK (definition_kind IN ('relation', 'field', 'constraint')),
+    definition_name        text    NOT NULL
+        CHECK (definition_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
+    owner_package_id       text    NOT NULL
+        CHECK (owner_package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
+    client_field_extensible boolean NOT NULL DEFAULT false,
+    CONSTRAINT package_definition_owners_pkey PRIMARY KEY (
+        tenant_id, schema_name, relation_name, definition_kind, definition_name
+    ),
+    CONSTRAINT package_definition_owners_relation_shape_check CHECK (
+        definition_kind <> 'relation' OR definition_name = relation_name
+    ),
+    CONSTRAINT package_definition_owners_extensibility_check CHECK (
+        definition_kind = 'relation' OR NOT client_field_extensible
+    )
+);
+
 CREATE TABLE catalog.effective_releases (
     tenant_id                   text        NOT NULL CHECK (tenant_id <> ''),
     effective_release_id        int         NOT NULL CHECK (effective_release_id > 0),
@@ -681,7 +708,8 @@ DECLARE
     relation_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'packages', 'package_migrations', 'effective_releases',
+        'packages', 'package_migrations', 'package_definition_owners',
+        'effective_releases',
         'effective_release_packages', 'effective_release_heads',
         'component_library', 'connection_requirements', 'connection_instances',
         'connection_generations', 'connection_bindings', 'wirings',
@@ -714,7 +742,8 @@ DECLARE
     relation_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'packages', 'package_migrations', 'effective_releases',
+        'packages', 'package_migrations', 'package_definition_owners',
+        'effective_releases',
         'effective_release_packages', 'component_library',
         'connection_requirements', 'connection_generations',
         'connection_bindings', 'wirings', 'wiring_tombstones',
