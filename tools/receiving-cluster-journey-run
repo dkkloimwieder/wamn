@@ -523,17 +523,17 @@ run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
   certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s
 
 host_base=$work_dir/host-base.yaml
-awk -v namespace="$namespace" -v tag="$host_tag" '
+awk -v target_namespace="$namespace" -v tag="$host_tag" '
   /^    tag: dev$/ { print "    tag: " tag; next }
-  /^      namespace: wamn-system$/ { print "      namespace: " namespace; next }
+  /^      namespace: wamn-system$/ { print "      namespace: " target_namespace; next }
   { print }
 ' "$repo_root/deploy/platform/values-host-default.yaml" >"$host_base"
 host_overlay=$work_dir/host-receiving.yaml
-awk -v namespace="$namespace" -v component_base="$component_artifact_base" \
+awk -v target_namespace="$namespace" -v component_base="$component_artifact_base" \
     -v release_base="$release_artifact_base" -v digest="$manifest_digest" \
     -v guest="$guest_secret_name" -v executor="$executor_platform_secret_name" \
     -v identity="$identity_secret_name" -v http="$http_secret_name" '
-  /^      namespace: wamn-system$/ { print "      namespace: " namespace; next }
+  /^      namespace: wamn-system$/ { print "      namespace: " target_namespace; next }
   /^              name: wamn-host-db$/ { print "              name: " guest; next }
   /^              name: wamn-executor-platform-acme--receiving--dev$/ {
     print "              name: " executor; next
@@ -632,9 +632,9 @@ jq -e --arg namespace "$namespace" '
 ' >/dev/null "$evidence_dir/hosts.json"
 
 workload_manifest=$work_dir/flow-http.yaml
-awk -v namespace="$namespace" -v image="$flow_http_ref" -v host="$route_host" '
-  /^  namespace: wamn-system$/ { print "  namespace: " namespace; next }
-  /^      environment: wamn-system$/ { print "      environment: " namespace; next }
+awk -v target_namespace="$namespace" -v image="$flow_http_ref" -v host="$route_host" '
+  /^  namespace: wamn-system$/ { print "  namespace: " target_namespace; next }
+  /^      environment: wamn-system$/ { print "      environment: " target_namespace; next }
   /^          image: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/flow-http:dev$/ {
     print "          image: " image; next
   }
