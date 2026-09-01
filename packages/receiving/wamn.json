@@ -781,50 +781,7 @@
     }
   },
   "components": {
-    "purchase_order_get": {
-      "operations": [
-        "purchase_order.get"
-      ],
-      "connections": [
-        "postgres"
-      ]
-    },
-    "purchase_order_query": {
-      "operations": [
-        "purchase_order.query"
-      ],
-      "connections": [
-        "postgres"
-      ]
-    },
-    "purchase_order_update": {
-      "operations": [
-        "purchase_order.update"
-      ],
-      "connections": [
-        "postgres"
-      ]
-    },
-    "receipt_get": {
-      "operations": [
-        "receipt.get"
-      ],
-      "connections": [
-        "postgres"
-      ]
-    },
-    "receipt_query": {
-      "operations": [
-        "receipt.query"
-      ],
-      "connections": [
-        "postgres"
-      ]
-    },
-    "receiving_record_receipt": {
-      "operations": [
-        "receiving.record_receipt"
-      ],
+    "receiving": {
       "connections": [
         "postgres"
       ]

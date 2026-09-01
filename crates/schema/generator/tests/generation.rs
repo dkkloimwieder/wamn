@@ -4,9 +4,9 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
-    AuthoredSql, GenerateErrorKind, GeneratedPackage, GenerationInput, GenerationProvenance,
-    OperationVisibility, PackageManifest, corpus_sha256, generate, validate_operation_vocabulary,
-    validate_parity_json,
+    AuthoredSql, CrudAction, GenerateErrorKind, GeneratedPackage, GenerationInput,
+    GenerationProvenance, OperationVisibility, PackageManifest, corpus_sha256, generate,
+    validate_operation_vocabulary, validate_parity_json,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
@@ -540,16 +540,7 @@ fn manifest() -> Value {
         },
         "connections": {"postgres": {"interface": "wamn:postgres@0.1.0"}},
         "components": {
-            "purchase_order_get": {
-                "operations": ["purchase_order.get"],
-                "connections": ["postgres"]
-            },
-            "purchase_order_query": {
-                "operations": ["purchase_order.query"],
-                "connections": ["postgres"]
-            },
-            "purchase_order_update": {
-                "operations": ["purchase_order.update"],
+            "receiving": {
                 "connections": ["postgres"]
             }
         }
@@ -707,13 +698,10 @@ fn overlay_manifest() -> Value {
             }
         }
     });
-    overlay["components"]["quality_load_purchase_order_detail"] = json!({
-        "operations": ["quality.load_purchase_order_detail"],
-        "connections": ["postgres"]
-    });
-    overlay["components"]["quality_create_inspection"] = json!({
-        "operations": ["quality.create_inspection"],
-        "connections": ["postgres"]
+    overlay["components"] = json!({
+        "client_acme_receiving": {
+            "connections": ["postgres"]
+        }
     });
     overlay
 }
@@ -744,6 +732,7 @@ fn overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain() {
     );
     let projection = &parsed.custom_operations["quality.load_purchase_order_detail"];
     assert_eq!(projection.visibility(), OperationVisibility::Public);
+    assert_eq!(projection.component(), None);
     assert_eq!(
         projection.permission(),
         Some("quality.load_purchase_order_detail")
@@ -839,6 +828,17 @@ fn overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions() {
 
 #[test]
 fn custom_operation_kinds_visibility_permissions_and_registration_are_closed() {
+    let mut empty_component = overlay_manifest();
+    empty_component["custom_operations"]["quality.load_purchase_order_detail"]["component"] =
+        json!("");
+    let error = validate_operation_vocabulary(&parsed_manifest(&empty_component))
+        .expect_err("an empty custom-operation component was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
+    assert_eq!(
+        error.context(),
+        "operation quality.load_purchase_order_detail component must not be empty"
+    );
+
     let mut private_permission = overlay_manifest();
     private_permission["custom_operations"]["quality.create_inspection"]["permission"] =
         json!("quality.create_inspection");
@@ -987,81 +987,82 @@ fn operation_error_details_are_required_closed_and_exact() {
 }
 
 #[test]
-fn shared_operation_vocabulary_refuses_non_singular_unknown_repeated_and_missing_components() {
-    let mut non_singular = manifest();
-    non_singular["components"]["purchase_order_get"]["operations"] =
-        json!(["purchase_order.get", "purchase_order.query"]);
-    let error = validate_operation_vocabulary(&parsed_manifest(&non_singular))
-        .expect_err("a component owning multiple operations was accepted");
-    assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
+fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
+    let single = parsed_manifest(&manifest());
     assert_eq!(
-        error.context(),
-        "purchase_order_get must declare exactly one operation"
+        validate_operation_vocabulary(&single).unwrap(),
+        BTreeSet::from([
+            "purchase_order.get".to_owned(),
+            "purchase_order.query".to_owned(),
+            "purchase_order.update".to_owned(),
+        ])
     );
-    assert_eq!(
-        run(&catalog(false), &non_singular, &QUERY_SOURCES)
-            .expect_err("generation accepted a component owning multiple operations")
-            .kind(),
-        GenerateErrorKind::InvalidComponent
+    assert!(
+        single.models["purchase_order"].operations[&CrudAction::Get]
+            .component
+            .is_none()
     );
 
     let mut empty = manifest();
-    empty["components"]["purchase_order_get"]["operations"] = json!([]);
+    empty["models"]["purchase_order"]["operations"]["get"]["component"] = json!("");
     let error = validate_operation_vocabulary(&parsed_manifest(&empty))
-        .expect_err("a component owning no operation was accepted");
+        .expect_err("an empty component name was accepted");
     assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
     assert_eq!(
         error.context(),
-        "purchase_order_get must declare exactly one operation"
+        "operation purchase_order.get component must not be empty"
     );
 
     let mut unknown = manifest();
-    unknown["components"]["purchase_order_get"]["operations"] = json!(["purchase_order.delete"]);
+    unknown["models"]["purchase_order"]["operations"]["get"]["component"] = json!("missing");
+    let error = validate_operation_vocabulary(&parsed_manifest(&unknown))
+        .expect_err("an unknown component was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
     assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&unknown))
-            .expect_err("unknown grouped operation was accepted")
-            .kind(),
-        GenerateErrorKind::InvalidComponent
-    );
-    assert_eq!(
-        run(&catalog(false), &unknown, &QUERY_SOURCES)
-            .expect_err("generation accepted an unknown grouped operation")
-            .kind(),
-        GenerateErrorKind::InvalidComponent
+        error.context(),
+        "operation purchase_order.get references unknown component missing"
     );
 
-    let mut repeated = manifest();
-    repeated["components"]["purchase_order_update"]["operations"] = json!(["purchase_order.get"]);
+    let mut identical = manifest();
+    identical["components"]["duplicate"] = json!({"connections": ["postgres"]});
+    for operation in ["get", "query", "update"] {
+        identical["models"]["purchase_order"]["operations"][operation]["component"] =
+            json!(if operation == "query" {
+                "duplicate"
+            } else {
+                "receiving"
+            });
+    }
+    let error = validate_operation_vocabulary(&parsed_manifest(&identical))
+        .expect_err("an identical-requirement split was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
     assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&repeated))
-            .expect_err("repeated grouped operation was accepted")
-            .kind(),
-        GenerateErrorKind::InvalidComponent
-    );
-    assert_eq!(
-        run(&catalog(false), &repeated, &QUERY_SOURCES)
-            .expect_err("generation accepted a repeated grouped operation")
-            .kind(),
-        GenerateErrorKind::InvalidComponent
+        error.context(),
+        "components duplicate and receiving have identical requirement sets"
     );
 
-    let mut missing = manifest();
-    missing["components"]
-        .as_object_mut()
-        .expect("components object")
-        .remove("purchase_order_update");
+    let mut distinct = manifest();
+    distinct["connections"]["reporting"] = json!({"interface": "wamn:postgres@0.1.0"});
+    distinct["components"]["reporting"] = json!({"connections": ["reporting"]});
+    distinct["models"]["purchase_order"]["operations"]["query"]["component"] = json!("reporting");
+    let error = validate_operation_vocabulary(&parsed_manifest(&distinct))
+        .expect_err("a multi-component manifest omitted explicit operation grouping");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidComponent);
     assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&missing))
-            .expect_err("ungrouped declared operation was accepted")
-            .kind(),
-        GenerateErrorKind::InvalidComponent
+        error.context(),
+        "operation purchase_order.get must name a component when the manifest declares multiple components"
     );
-    assert_eq!(
-        run(&catalog(false), &missing, &QUERY_SOURCES)
-            .expect_err("generation accepted an ungrouped declared operation")
-            .kind(),
-        GenerateErrorKind::InvalidComponent
-    );
+
+    for operation in ["get", "update"] {
+        distinct["models"]["purchase_order"]["operations"][operation]["component"] =
+            json!("receiving");
+    }
+    validate_operation_vocabulary(&parsed_manifest(&distinct))
+        .expect("distinct requirement groups with explicit operation membership");
+
+    let mut old_grouping = manifest();
+    old_grouping["components"]["receiving"]["operations"] = json!(["purchase_order.get"]);
+    assert!(PackageManifest::from_slice(&serde_json::to_vec(&old_grouping).unwrap()).is_err());
 }
 
 #[test]

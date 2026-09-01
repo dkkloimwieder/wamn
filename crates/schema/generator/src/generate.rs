@@ -534,7 +534,6 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
         }
     }
     validate_connections(manifest)?;
-    validate_components(manifest)?;
     validate_authored_sources(manifest, input.authored_sql)?;
     Ok(())
 }
@@ -1467,26 +1466,6 @@ fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError>
                 GenerateErrorKind::InvalidConnection,
                 format!("{name} must import {POSTGRES_INTERFACE}"),
             ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_components(manifest: &PackageManifest) -> Result<(), GenerateError> {
-    for (name, component) in &manifest.components {
-        if component.connections.is_empty() {
-            return Err(GenerateError::new(
-                GenerateErrorKind::InvalidComponent,
-                format!("{name} must declare connections"),
-            ));
-        }
-        for connection in &component.connections {
-            if !manifest.connections.contains_key(connection) {
-                return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidComponent,
-                    format!("{name} references unknown connection {connection}"),
-                ));
-            }
         }
     }
     Ok(())

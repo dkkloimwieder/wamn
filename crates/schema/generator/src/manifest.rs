@@ -26,6 +26,8 @@ pub struct CommandDeclaration {
     pub visibility: OperationVisibility,
     #[serde(default)]
     pub permission: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
     pub connection: String,
     pub transaction: CommandTransaction,
     pub automatic_retry: bool,
@@ -77,6 +79,15 @@ impl CustomOperationDeclaration {
         }
     }
 
+    /// Optional package-local component group; omission selects the sole group.
+    pub fn component(&self) -> Option<&str> {
+        match self {
+            Self::Projection(declaration) => declaration.component.as_deref(),
+            Self::Command(declaration) => declaration.component.as_deref(),
+            Self::EventHandler(declaration) => declaration.component.as_deref(),
+        }
+    }
+
     /// Detailed transaction command declaration, when this is a command.
     pub const fn command(&self) -> Option<&CommandDeclaration> {
         match self {
@@ -101,6 +112,8 @@ pub struct ProjectionDeclaration {
     pub visibility: OperationVisibility,
     #[serde(default)]
     pub permission: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
 }
 
 /// Public or private post-commit handler and its exact event source.
@@ -110,6 +123,8 @@ pub struct EventHandlerDeclaration {
     pub visibility: OperationVisibility,
     #[serde(default)]
     pub permission: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
     pub registration: EventRegistrationDeclaration,
 }
 
@@ -399,9 +414,10 @@ impl PackageManifest {
 /// This is the shared semantic authority for generation and production grant
 /// reconciliation. The package and local operation identities obey the naming
 /// law, every operation names itself as its permission token, and every
-/// declared operation owns exactly one component artifact. Components with
-/// zero or multiple operations, and unknown, repeated, or missing members,
-/// refuse.
+/// declared operation belongs to exactly one component artifact. A sole
+/// component is the implicit package default; multi-component manifests name
+/// every membership explicitly. Empty, unknown, unused, or requirement-
+/// identical component groups refuse.
 pub fn validate_operation_vocabulary(
     manifest: &PackageManifest,
 ) -> Result<BTreeSet<String>, GenerateError> {
@@ -409,6 +425,7 @@ pub fn validate_operation_vocabulary(
     validate_base_dependencies(manifest)?;
 
     let mut declared = BTreeSet::new();
+    let mut component_by_operation = BTreeMap::new();
     for (model_name, model) in &manifest.models {
         validate_identifier(model_name, "operation module")?;
         for (action, operation) in &model.operations {
@@ -427,6 +444,7 @@ pub fn validate_operation_vocabulary(
                     format!("manifest repeats declared operation {identity}"),
                 ));
             }
+            component_by_operation.insert(identity.clone(), operation.component.as_deref());
             validate_access_error_details(&identity, *action, &operation.error_details)?;
         }
     }
@@ -439,41 +457,112 @@ pub fn validate_operation_vocabulary(
                 format!("manifest repeats declared operation {operation_name}"),
             ));
         }
+        component_by_operation.insert(operation_name.clone(), operation.component());
         if let Some(command) = operation.command() {
             validate_command_error_details(operation_name, &command.error_details)?;
         }
     }
 
+    validate_component_groups(manifest, &component_by_operation)?;
+    Ok(declared)
+}
+
+fn validate_component_groups(
+    manifest: &PackageManifest,
+    component_by_operation: &BTreeMap<String, Option<&str>>,
+) -> Result<(), GenerateError> {
     if manifest.components.is_empty() {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidComponent,
-            "manifest declares no component grouping",
+            "manifest declares no component requirements",
         ));
     }
-    let mut grouped = BTreeSet::new();
+
+    let mut requirement_sets = BTreeMap::<BTreeSet<&str>, &str>::new();
     for (name, component) in &manifest.components {
-        validate_identifier(name, "component")?;
-        if component.operations.len() != 1 {
+        if name.is_empty() {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidComponent,
-                format!("{name} must declare exactly one operation"),
+                "component name must not be empty",
             ));
         }
-        let operation = &component.operations[0];
-        if !declared.contains(operation) || !grouped.insert(operation.clone()) {
+        validate_identifier(name, "component")?;
+        if component.connections.is_empty() {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidComponent,
-                format!("{name} references unknown or repeated operation {operation}"),
+                format!("{name} must declare connections"),
+            ));
+        }
+        let requirements = component
+            .connections
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        if requirements.len() != component.connections.len() {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidComponent,
+                format!("{name} repeats a connection requirement"),
+            ));
+        }
+        for connection in &requirements {
+            if !manifest.connections.contains_key(*connection) {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidComponent,
+                    format!("{name} references unknown connection {connection}"),
+                ));
+            }
+        }
+        if let Some(existing) = requirement_sets.insert(requirements, name) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidComponent,
+                format!("components {existing} and {name} have identical requirement sets"),
             ));
         }
     }
-    if grouped != declared {
+
+    let implicit = (manifest.components.len() == 1)
+        .then(|| manifest.components.keys().next().expect("one component"));
+    let mut grouped = manifest
+        .components
+        .keys()
+        .map(|name| (name.as_str(), 0_usize))
+        .collect::<BTreeMap<_, _>>();
+    for (operation, requested) in component_by_operation {
+        let component = match requested {
+            Some("") => {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidComponent,
+                    format!("operation {operation} component must not be empty"),
+                ));
+            }
+            Some(name) => {
+                validate_identifier(name, "component")?;
+                *name
+            }
+            None => implicit.map(String::as_str).ok_or_else(|| {
+                GenerateError::new(
+                    GenerateErrorKind::InvalidComponent,
+                    format!(
+                        "operation {operation} must name a component when the manifest declares multiple components"
+                    ),
+                )
+            })?,
+        };
+        let Some(count) = grouped.get_mut(component) else {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidComponent,
+                format!("operation {operation} references unknown component {component}"),
+            ));
+        };
+        *count += 1;
+    }
+    if let Some((component, _)) = grouped.iter().find(|(_, count)| **count == 0) {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidComponent,
-            "every operation must be grouped exactly once",
+            format!("component {component} groups no operations"),
         ));
     }
-    Ok(declared)
+    Ok(())
 }
 
 fn validate_custom_operation(
@@ -905,6 +994,8 @@ impl CrudAction {
 #[serde(deny_unknown_fields)]
 pub struct OperationDeclaration {
     pub permission: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
     pub error_details: BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
     #[serde(default)]
     pub authored_sql: Option<AuthoredSqlDeclaration>,
@@ -1071,10 +1162,9 @@ pub struct ConnectionDeclaration {
     pub interface: String,
 }
 
-/// Grouping of registered operations into a future component artifact.
+/// Import requirements for one package-local component group.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ComponentDeclaration {
-    pub operations: Vec<String>,
     pub connections: Vec<String>,
 }
