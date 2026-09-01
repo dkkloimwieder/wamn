@@ -88,7 +88,7 @@ const RESIDUE: &str = "wamn_receiving@1.0.0::obsolete.operation";
 const PACKAGE_ID: &str = "wamn_receiving";
 const PACKAGE_VERSION: &str = "1.0.0";
 const RELEASE_ID: u32 = 1;
-const ROUTE_AUTHORITY: &str = "receiving.localhost.direct";
+const ROUTE_AUTHORITY: &str = "receiving.localhost";
 const RAW_BODY_LIMIT: usize = 1024 * 1024;
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const COMPONENTS: [(&str, &str); 6] = [
@@ -1408,6 +1408,7 @@ async fn publish_journey_release(
         packages: vec![PackageCoordinate::new(PACKAGE_ID, PACKAGE_VERSION)?],
         wirings,
         attachments: publication_root().join("attachments.json"),
+        route_host: Some(ROUTE_AUTHORITY.to_owned()),
         registrations: publication_root().join("registrations.json"),
     })
     .await

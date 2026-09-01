@@ -161,9 +161,9 @@ fn package_owned_inputs_declare_the_exact_six_route_closure() {
         assert_eq!(attachment.auth_policy, serde_json::json!({"mode": "pat"}));
         assert_eq!(attachment.definition["id"], operation.attachment);
         assert_eq!(attachment.definition["kind"], "http");
-        assert_eq!(
-            attachment.definition["route"]["host"],
-            "receiving.localhost.direct"
+        assert!(
+            attachment.definition["route"].get("host").is_none(),
+            "package attachments leave route hostnames to the deployment overlay"
         );
         assert_eq!(attachment.definition["route"]["method"], "POST");
         assert_eq!(attachment.definition["route"]["path"], operation.route);

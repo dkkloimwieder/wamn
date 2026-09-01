@@ -4,11 +4,11 @@
     "package-id": "wamn_receiving",
     "wiring-id": "purchase_order_get",
     "wiring-version": 1,
-    "definition-hash": "sha256:6c71b033475231b73e178a4ec2a45861d73816bb065150ea16130ff56f934157",
+    "definition-hash": "sha256:aa3411356694d4a6a224d42ca6b34bc9f28cfd88f5a07aa53fd61bb87f2bbba1",
     "definition": {
       "id": "purchase-order-get-http",
       "kind": "http",
-      "route": {"host": "receiving.localhost.direct", "path": "/purchase_order/get", "method": "POST"},
+      "route": {"path": "/purchase_order/get", "method": "POST"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",
@@ -33,11 +33,11 @@
     "package-id": "wamn_receiving",
     "wiring-id": "purchase_order_query",
     "wiring-version": 1,
-    "definition-hash": "sha256:48d21ae7caca5bc71d837d5294fbe49d923b9a8d5b876b50615cc1f662420a98",
+    "definition-hash": "sha256:f778f59783fd49fc1afc00d733fb068b4f43f161dffac4aa0eb21ae7f448cc0a",
     "definition": {
       "id": "purchase-order-query-http",
       "kind": "http",
-      "route": {"host": "receiving.localhost.direct", "path": "/purchase_order/query", "method": "POST"},
+      "route": {"path": "/purchase_order/query", "method": "POST"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",
@@ -80,11 +80,11 @@
     "package-id": "wamn_receiving",
     "wiring-id": "purchase_order_update",
     "wiring-version": 1,
-    "definition-hash": "sha256:99fd57332ee3b4a862a41b52fdcb28350378be123e16e84ebb0e2ee2478a62bf",
+    "definition-hash": "sha256:9ded5b10c3e29a6ab36b7add270a41010a619adf6e05df449683063994173847",
     "definition": {
       "id": "purchase-order-update-http",
       "kind": "http",
-      "route": {"host": "receiving.localhost.direct", "path": "/purchase_order/update", "method": "POST"},
+      "route": {"path": "/purchase_order/update", "method": "POST"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",
@@ -117,11 +117,11 @@
     "package-id": "wamn_receiving",
     "wiring-id": "receipt_get",
     "wiring-version": 1,
-    "definition-hash": "sha256:280c4d24056bc7208adb595fd1af3115bb0d2af6cf2bf5b7bc6186aa36d79d8d",
+    "definition-hash": "sha256:a557410fb61431e9e00560f9946434935c844e1175a12276a9dc291969b6358c",
     "definition": {
       "id": "receipt-get-http",
       "kind": "http",
-      "route": {"host": "receiving.localhost.direct", "path": "/receipt/get", "method": "POST"},
+      "route": {"path": "/receipt/get", "method": "POST"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",
@@ -146,11 +146,11 @@
     "package-id": "wamn_receiving",
     "wiring-id": "receipt_query",
     "wiring-version": 1,
-    "definition-hash": "sha256:e37dc15c6617d91f41f19cd322f87c6e8da54a5758c5679c8c1b6819c0c3430f",
+    "definition-hash": "sha256:055e672e20cbfd29b74a2285f3d05e4d547637bc5d61aa99ff6109c2fea6de2b",
     "definition": {
       "id": "receipt-query-http",
       "kind": "http",
-      "route": {"host": "receiving.localhost.direct", "path": "/receipt/query", "method": "POST"},
+      "route": {"path": "/receipt/query", "method": "POST"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",
@@ -176,11 +176,11 @@
     "package-id": "wamn_receiving",
     "wiring-id": "receiving_record_receipt",
     "wiring-version": 1,
-    "definition-hash": "sha256:b05c845d10f8eb8302cab1fdc4a750b25e6a279b30bb75dcaa1402ec4aec71e7",
+    "definition-hash": "sha256:496de6b67604e420aaf924fea7b686ae817aa9954b7fcfa5b80f69d08544a825",
     "definition": {
       "id": "receiving-record-receipt-http",
       "kind": "http",
-      "route": {"host": "receiving.localhost.direct", "path": "/receiving/record_receipt", "method": "POST"},
+      "route": {"path": "/receiving/record_receipt", "method": "POST"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",

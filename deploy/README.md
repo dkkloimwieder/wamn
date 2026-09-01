@@ -215,7 +215,8 @@ wamn-ctl publish-release \
   --run-schema "$RUN_SCHEMA" \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
   --wiring "$PACKAGE_ID@$PACKAGE_VERSION::$WIRING_ID=$WIRING_VERSION" \
-  --attachments attachments.json --registrations registrations.json
+  --attachments attachments.json --route-host "$ROUTE_HOST" \
+  --registrations registrations.json
 
 # 2. PUSH the frozen bytes as an OCI artifact, read back from the snapshot the
 #    mint wrote rather than from a file, and re-print the same digest.
@@ -247,6 +248,9 @@ helm upgrade --install -n wamn-system wamn-host \
   -f deploy/platform/values-host-receiving-pat.yaml
 kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
 ```
+
+`--route-host` is required for routed attachments. It is deployment overlay
+data; package-owned attachment definitions remain hostname-free.
 
 `$PUSH_BASE` and the base written into the templates name the same repository
 reached by two different authorities: a publisher outside the cluster pushes

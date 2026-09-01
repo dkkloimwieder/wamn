@@ -179,6 +179,7 @@ pub enum MintManifestErrorKind {
     UnauthenticatedRegisteredOperation,
     ClosureConflict,
     Document,
+    RouteHostRequired,
     EnvironmentPolicyAbsent,
     EnvironmentPolicyMismatch,
 }
@@ -193,6 +194,7 @@ impl MintManifestErrorKind {
             Self::UnauthenticatedRegisteredOperation => "unauthenticated-registered-operation",
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
+            Self::RouteHostRequired => "route-host-required",
             Self::EnvironmentPolicyAbsent => "environment-policy-not-converged",
             Self::EnvironmentPolicyMismatch => "environment-policy-environment-mismatch",
         }
@@ -295,6 +297,9 @@ pub struct PublishReleaseArgs {
     pub wirings: Vec<ReleaseWiringTarget>,
     #[arg(long)]
     pub attachments: PathBuf,
+    /// Deployment-owned hostname applied to every HTTP route.
+    #[arg(long)]
+    pub route_host: Option<String>,
     #[arg(long)]
     pub registrations: PathBuf,
 }
@@ -330,7 +335,9 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         !args.verified_publisher_principal.is_empty(),
         "verified-publisher-principal must not be empty"
     );
-    let attachments = read_document(&args.attachments, "attachments")?;
+    let authored_attachments = read_document(&args.attachments, "attachments")?;
+    let attachments =
+        resolve_route_host_overlay(&authored_attachments, args.route_host.as_deref())?;
     let registrations = read_document(&args.registrations, "registrations")?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -735,6 +742,78 @@ fn validate_attachment_definition_hashes(
         }
     }
     Ok(())
+}
+
+/// Resolve deployment-owned route identity without letting package content
+/// become a second hostname emitter.
+fn resolve_route_host_overlay(
+    authored: &BTreeMap<String, ServingAttachment>,
+    route_host: Option<&str>,
+) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+    validate_attachment_definition_hashes(authored)?;
+    let first_routed = authored.iter().find(|(_, attachment)| {
+        matches!(
+            attachment.kind,
+            wamn_catalog::AttachmentKind::Http | wamn_catalog::AttachmentKind::Studio
+        )
+    });
+    let Some((first_attachment_id, _)) = first_routed else {
+        return Ok(authored.clone());
+    };
+    let route_host = route_host.filter(|host| !host.is_empty()).ok_or_else(|| {
+        MintManifestError::new(
+            MintManifestErrorKind::RouteHostRequired,
+            format!(
+                "attachment {first_attachment_id:?} requires deployment route host; pass --route-host"
+            ),
+        )
+    })?;
+    if route_host != "*"
+        && (route_host.contains('/') || route_host.chars().any(char::is_whitespace))
+    {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::Document,
+            format!("deployment route host {route_host:?} is invalid"),
+        ));
+    }
+    let route_host = route_host.to_ascii_lowercase();
+    let mut resolved = authored.clone();
+    for (attachment_id, attachment) in &mut resolved {
+        if !matches!(
+            attachment.kind,
+            wamn_catalog::AttachmentKind::Http | wamn_catalog::AttachmentKind::Studio
+        ) {
+            continue;
+        }
+        let route = attachment
+            .definition
+            .as_object_mut()
+            .and_then(|definition| definition.get_mut("route"))
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| {
+                MintManifestError::new(
+                    MintManifestErrorKind::Document,
+                    format!("attachment {attachment_id:?} carries no route object"),
+                )
+            })?;
+        if route.contains_key("host") {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::Document,
+                format!(
+                    "attachment {attachment_id:?} authors route.host; remove it and pass --route-host"
+                ),
+            ));
+        }
+        route.insert(
+            "host".to_owned(),
+            serde_json::Value::String(route_host.clone()),
+        );
+        attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
+            wamn_execution_contract::canonical_json_sha256(&attachment.definition),
+        )
+        .expect("the shared canonicalizer emits a valid definition hash");
+    }
+    Ok(resolved)
 }
 
 async fn establish_release(
@@ -1212,7 +1291,7 @@ mod tests {
         let definition = serde_json::json!({
             "id": "receiving-http",
             "kind": "http",
-            "route": {"host": "receiving.example", "path": "/receipt/get", "method": "POST"},
+            "route": {"path": "/receipt/get", "method": "POST"},
         });
         let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
@@ -1238,6 +1317,73 @@ mod tests {
         )]))
         .expect_err("changed definition bytes cannot retain the old identity");
         assert_eq!(error.kind(), MintManifestErrorKind::Document);
+    }
+
+    #[test]
+    fn release_mint_requires_and_applies_the_deployment_route_host() {
+        let definition = serde_json::json!({
+            "id": "receiving-http",
+            "kind": "http",
+            "route": {"path": "/receipt/get", "method": "POST"},
+        });
+        let authored_hash = wamn_execution_contract::canonical_json_sha256(&definition);
+        let attachment = ServingAttachment {
+            kind: wamn_catalog::AttachmentKind::Http,
+            package_id: "wamn_receiving".to_owned(),
+            wiring_id: "receipt_get".to_owned(),
+            wiring_version: 1,
+            definition_hash: wamn_catalog::DefinitionHash::parse(authored_hash.clone())
+                .expect("the canonicalizer emits a valid definition hash"),
+            definition,
+            auth_policy: serde_json::json!({"mode": "pat"}),
+            registered_operation: Some("wamn_receiving@1.0.0::receipt.get".to_owned()),
+        };
+        let authored = BTreeMap::from([("receiving-http".to_owned(), attachment)]);
+
+        let missing = resolve_route_host_overlay(&authored, None)
+            .expect_err("a routed release requires its deployment hostname");
+        assert_eq!(missing.kind(), MintManifestErrorKind::RouteHostRequired);
+        assert!(missing.detail().contains("receiving-http"));
+        assert!(missing.detail().contains("--route-host"));
+
+        let resolved = resolve_route_host_overlay(&authored, Some("Route.Example"))
+            .expect("the deployment overlay resolves the route hostname");
+        assert!(
+            authored["receiving-http"].definition["route"]
+                .get("host")
+                .is_none()
+        );
+        assert_eq!(
+            resolved["receiving-http"].definition["route"]["host"],
+            "route.example"
+        );
+        assert_ne!(
+            resolved["receiving-http"].definition_hash.as_str(),
+            authored_hash
+        );
+        assert_eq!(
+            resolved["receiving-http"].definition_hash.as_str(),
+            wamn_execution_contract::canonical_json_sha256(&resolved["receiving-http"].definition)
+        );
+
+        let mut package_authored = authored;
+        package_authored
+            .get_mut("receiving-http")
+            .expect("the attachment exists")
+            .definition["route"]["host"] = serde_json::json!("package.example");
+        let definition_hash = wamn_execution_contract::canonical_json_sha256(
+            &package_authored["receiving-http"].definition,
+        );
+        package_authored
+            .get_mut("receiving-http")
+            .expect("the attachment exists")
+            .definition_hash = wamn_catalog::DefinitionHash::parse(definition_hash)
+            .expect("the canonicalizer emits a valid definition hash");
+        let package_host = resolve_route_host_overlay(&package_authored, Some("route.example"))
+            .expect_err("package content cannot author a deployment hostname");
+        assert_eq!(package_host.kind(), MintManifestErrorKind::Document);
+        assert!(package_host.detail().contains("remove it"));
+        assert!(package_host.detail().contains("--route-host"));
     }
 
     fn closure_component(component: &str, registered_operation: Option<&str>) -> AdmittedComponent {
