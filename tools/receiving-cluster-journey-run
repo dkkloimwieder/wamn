@@ -316,6 +316,7 @@ chmod 0600 "$htpasswd_file"
 postgres_owned=true
 run_sensitive postgres docker run --detach --name "$postgres_container" --network kind \
   --env POSTGRES_PASSWORD=probe \
+  --publish 127.0.0.1::5432 \
   --volume "$repo_root/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro" \
   postgres:18
 registry_owned=true
@@ -327,6 +328,8 @@ run docker run --detach --name "$registry_container" --network kind \
 
 postgres_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
   "$postgres_container")
+postgres_host_port=$(docker port "$postgres_container" 5432/tcp)
+postgres_host_port=${postgres_host_port##*:}
 registry_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
   "$registry_container")
 for address in "$postgres_ip" "$registry_ip"; do
@@ -339,16 +342,24 @@ if [[ "$postgres_ip" == "$registry_ip" ]]; then
   echo "owned PostgreSQL and registry containers share one address" >&2
   exit 1
 fi
+if [[ ! "$postgres_host_port" =~ ^[1-9][0-9]*$ ]]; then
+  echo "owned PostgreSQL has no loopback host port" >&2
+  exit 1
+fi
 
 # The PostgreSQL image opens a temporary server while applying init scripts,
 # then stops it and starts the final server. An early pg_isready can observe the
 # temporary process and race the restart. Require the second readiness marker
-# and prove the exact host-side address before handing it to production verbs.
+# over its mapped loopback port, then separately prove the kind-network address
+# handed to production verbs and emitted into the original Secret artifacts.
 postgres_ready=false
 for _ in $(seq 1 90); do
   readiness_markers=$(docker logs "$postgres_container" 2>&1 \
     | grep -Fc 'database system is ready to accept connections' || true)
   if [[ $readiness_markers -ge 2 ]] &&
+     PGPASSWORD=probe psql -h 127.0.0.1 -p "$postgres_host_port" -U postgres -d postgres \
+       -Atqc 'SELECT current_setting('\''server_version_num'\'')::int >= 180000' \
+       | grep -Fx t >/dev/null &&
      PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 -U postgres -d postgres \
        -Atqc 'SELECT current_setting('\''server_version_num'\'')::int >= 180000' \
        | grep -Fx t >/dev/null; then
