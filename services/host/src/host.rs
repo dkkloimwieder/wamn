@@ -552,7 +552,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None => None,
     };
     let postgres = Arc::new(
-        WamnPostgres::from_env(postgres_credentials).context("wamn:postgres plugin init")?,
+        WamnPostgres::from_env_for_project(&args.project, postgres_credentials)
+            .context("wamn:postgres plugin init")?,
     );
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let router_driver = match release.as_ref() {

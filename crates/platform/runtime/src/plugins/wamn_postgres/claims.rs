@@ -615,6 +615,25 @@ fn starts_with_keyword(head: &str, kw: &str) -> bool {
     }
 }
 
+fn bind_composed_project(
+    mut projects: HashMap<String, ProjectConfig>,
+    project: &str,
+    credentials: Option<ClassCredentials>,
+    cfg: &WamnPostgresConfig,
+) -> anyhow::Result<HashMap<String, ProjectConfig>> {
+    if let Some(credentials) = credentials {
+        anyhow::ensure!(
+            !projects.contains_key(project),
+            "project {project:?} has both an explicit composition credential and a WAMN_PG_PROJECTS_FILE entry"
+        );
+        projects.insert(
+            project.to_owned(),
+            ProjectConfig::from_global(credentials, cfg),
+        );
+    }
+    Ok(projects)
+}
+
 impl WamnPostgres {
     /// Plugin over a single default database (the [`WamnPostgresConfig`]
     /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
@@ -677,15 +696,45 @@ impl WamnPostgres {
     pub fn from_env(credentials: Option<ClassCredentials>) -> anyhow::Result<Self> {
         let cfg = WamnPostgresConfig::from_env();
         let default = credentials.map(|credentials| ProjectConfig::from_global(credentials, &cfg));
-        let mut projects = HashMap::new();
-        if let Ok(path) = std::env::var("WAMN_PG_PROJECTS_FILE") {
-            let text = std::fs::read_to_string(&path)
-                .with_context(|| format!("read WAMN_PG_PROJECTS_FILE {path}"))?;
-            projects = StaticCredentialProvider::projects_from_json(&text, &cfg)?;
-        }
+        let projects = Self::configured_projects(&cfg)?;
         Ok(Self::with_provider(Arc::new(
             StaticCredentialProvider::new(projects, default),
         )))
+    }
+
+    /// Build from the deployment's configuration with the composition root's
+    /// credential bound to its declared project rather than the default key.
+    ///
+    /// A per-project serving host already carries the trusted project identity.
+    /// Registering that host's Secret under `default` makes every named-project
+    /// lookup refuse despite having the exact credential. A mounted projects
+    /// file may still supply other projects, but it cannot name this project a
+    /// second time.
+    pub fn from_env_for_project(
+        project: &str,
+        credentials: Option<ClassCredentials>,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            valid_project(project),
+            "invalid composed project {project:?}: 1-64 chars of [A-Za-z0-9_-] required"
+        );
+        let cfg = WamnPostgresConfig::from_env();
+        let projects =
+            bind_composed_project(Self::configured_projects(&cfg)?, project, credentials, &cfg)?;
+        Ok(Self::with_provider(Arc::new(
+            StaticCredentialProvider::new(projects, None),
+        )))
+    }
+
+    fn configured_projects(
+        cfg: &WamnPostgresConfig,
+    ) -> anyhow::Result<HashMap<String, ProjectConfig>> {
+        let Ok(path) = std::env::var("WAMN_PG_PROJECTS_FILE") else {
+            return Ok(HashMap::new());
+        };
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("read WAMN_PG_PROJECTS_FILE {path}"))?;
+        StaticCredentialProvider::projects_from_json(&text, cfg)
     }
 
     /// Build a deadpool pool for one resolved credential.
@@ -2110,6 +2159,61 @@ mod tests {
                 .is_none(),
             "composing without a credential must resolve nothing, not reach for \
              an ambient one"
+        );
+    }
+
+    #[test]
+    fn a_serving_host_binds_its_credential_to_the_declared_project() {
+        let executor_platform_url = "postgres://executor-platform@db/host-receiving";
+        let composed = WamnPostgres::from_env_for_project(
+            "receiving",
+            Some(
+                ClassCredentials::default()
+                    .with_class(AuthorityClass::ExecutorPlatform, executor_platform_url),
+            ),
+        )
+        .expect("compose the declared project credential");
+        let resolved = composed
+            .provider
+            .resolve("receiving", AuthorityClass::ExecutorPlatform, None)
+            .expect("resolve the declared project")
+            .expect("the declared project has an executor-platform credential");
+        assert_eq!(
+            resolved.database_url, executor_platform_url,
+            "the host's exact credential must resolve under its trusted project"
+        );
+        assert!(
+            composed
+                .provider
+                .resolve(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
+                .expect("resolve the unrelated default project")
+                .is_none(),
+            "binding a named project must not mint a default-project alias"
+        );
+    }
+
+    #[test]
+    fn a_serving_host_refuses_an_invalid_declared_project() {
+        let error = WamnPostgres::from_env_for_project("receiving.prod", None)
+            .err()
+            .expect("an invalid project must refuse before reading ambient configuration");
+        assert!(error.to_string().contains("invalid composed project"));
+    }
+
+    #[test]
+    fn an_explicit_project_credential_refuses_a_second_source() {
+        let cfg = WamnPostgresConfig::from_env();
+        let credentials = ClassCredentials::every_class(guest_url("acme", "host-receiving"));
+        let projects = HashMap::from([(
+            "receiving".to_owned(),
+            ProjectConfig::from_global(credentials.clone(), &cfg),
+        )]);
+        let error = bind_composed_project(projects, "receiving", Some(credentials), &cfg)
+            .expect_err("two credential sources for one project must refuse");
+        assert!(
+            error.to_string().contains(
+                "both an explicit composition credential and a WAMN_PG_PROJECTS_FILE entry"
+            )
         );
     }
 
