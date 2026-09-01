@@ -13,6 +13,7 @@ use deadpool_postgres::{Manager, ManagerConfig, Object, Pool, RecyclingMethod, R
 use serde::Deserialize;
 use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
+use tracing::Instrument as _;
 
 use wamn_catalog::ManifestDigest;
 use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
@@ -1741,18 +1742,25 @@ impl WamnPostgres {
         project: &str,
         tenant: Option<&str>,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
-        let pp = self.ensure_pool(class, project, tenant)?;
-        let obj = pp.pool.get().await.map_err(|e| {
-            tracing::warn!(
-                project,
-                class = class.as_str(),
-                lifecycle = PoolLifecycle::for_class(class).label(),
-                error = %e,
-                "wamn:postgres pool checkout failed"
-            );
-            PgError::ConnectionUnavailable
-        })?;
-        Ok((obj, pp))
+        async {
+            let pp = self.ensure_pool(class, project, tenant)?;
+            let obj = pp.pool.get().await.map_err(|e| {
+                tracing::warn!(
+                    project,
+                    class = class.as_str(),
+                    lifecycle = PoolLifecycle::for_class(class).label(),
+                    error = %e,
+                    "wamn:postgres pool checkout failed"
+                );
+                PgError::ConnectionUnavailable
+            })?;
+            Ok((obj, pp))
+        }
+        .instrument(tracing::info_span!(
+            "wamn.postgres.acquire",
+            wamn.authority_class = class.as_str(),
+        ))
+        .await
     }
 
     /// Check out a connection reserved for guest-visible `wamn:postgres` calls.

@@ -142,26 +142,34 @@ pub(super) async fn run_query(
     params: &[SqlValue],
     row_limit: u64,
 ) -> Result<RowSet, PgError> {
-    reject_claim_mutation(sql)?;
-    let stmt = conn
-        .prepare_cached(sql)
-        .await
-        .map_err(|e| map_pg_error(&e))?;
-    let columns = columns_of(&stmt);
-    let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
-    let stream = conn
-        .query_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
-        .await
-        .map_err(|e| map_pg_error(&e))?;
-    futures_util::pin_mut!(stream);
-    let mut rows = Vec::new();
-    while let Some(row) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
-        if rows.len() as u64 >= row_limit {
-            return Err(PgError::RowLimitExceeded(row_limit));
+    async {
+        reject_claim_mutation(sql)?;
+        let stmt = conn
+            .prepare_cached(sql)
+            .await
+            .map_err(|e| map_pg_error(&e))?;
+        let columns = columns_of(&stmt);
+        let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
+        let stream = conn
+            .query_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
+            .await
+            .map_err(|e| map_pg_error(&e))?;
+        futures_util::pin_mut!(stream);
+        let mut rows = Vec::new();
+        while let Some(row) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
+            if rows.len() as u64 >= row_limit {
+                return Err(PgError::RowLimitExceeded(row_limit));
+            }
+            rows.push(decode_row(&row)?);
         }
-        rows.push(decode_row(&row)?);
+        Ok(RowSet { columns, rows })
     }
-    Ok(RowSet { columns, rows })
+    .instrument(tracing::info_span!(
+        "wamn.postgres.statement",
+        db.system = "postgresql",
+        db.operation = "query",
+    ))
+    .await
 }
 
 pub(super) async fn run_execute(
@@ -169,15 +177,23 @@ pub(super) async fn run_execute(
     sql: &str,
     params: &[SqlValue],
 ) -> Result<u64, PgError> {
-    reject_claim_mutation(sql)?;
-    let stmt = conn
-        .prepare_cached(sql)
-        .await
-        .map_err(|e| map_pg_error(&e))?;
-    let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
-    conn.execute_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
-        .await
-        .map_err(|e| map_pg_error(&e))
+    async {
+        reject_claim_mutation(sql)?;
+        let stmt = conn
+            .prepare_cached(sql)
+            .await
+            .map_err(|e| map_pg_error(&e))?;
+        let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
+        conn.execute_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
+            .await
+            .map_err(|e| map_pg_error(&e))
+    }
+    .instrument(tracing::info_span!(
+        "wamn.postgres.statement",
+        db.system = "postgresql",
+        db.operation = "execute",
+    ))
+    .await
 }
 
 fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPostgres>> {

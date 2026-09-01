@@ -10,7 +10,7 @@ usage: receiving-cluster-journey-run [--apply] [--measure-startup] --evidence-di
 Without --apply, print the immutable plan and exit.
 
   --apply              Build and run the journey, then tear down owned resources
-  --measure-startup    Measure cold/warm runtime startup and first request, then stop
+  --measure-startup    Measure cold/restart startup and two warm requests, then stop
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
 The fixed scratch cluster is wamn-receiving-journey. Every Kubernetes and Helm
@@ -59,7 +59,7 @@ if [[ "$apply" != true ]]; then
   printf '  namespace: %s\n' "$namespace"
   printf '  route host: %s (setup overlay only)\n' "$route_host"
   if [[ "$measure_startup" == true ]]; then
-    printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold startup/request -> same-Pod warm startup/request -> exact teardown\n'
+    printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> exact teardown\n'
   else
     printf '  order: build -> production mint/attest -> operator 2.8.0 -> host 2.8.0 -> schedule -> EndpointSlice -> HTTP -> cross-environment refusal -> exact teardown\n'
   fi
@@ -536,6 +536,13 @@ run helm upgrade --install --create-namespace --kubeconfig "$kubeconfig" \
   --version "$chart_version" -f "$repo_root/deploy/infra/values-wamn.yaml" \
   -f "$operator_values" --wait --timeout 5m
 
+if [[ "$measure_startup" == true ]]; then
+  run "${kube[@]}" apply -f "$repo_root/deploy/infra/tempo.yaml"
+  run "${kube[@]}" apply -f "$repo_root/deploy/infra/otel-collector.yaml"
+  run "${kube[@]}" -n "$system_namespace" wait --for=condition=Available \
+    deployment/tempo deployment/otel-collector --timeout=120s
+fi
+
 ca_source=$work_dir/wasmcloud-ca-source.json
 ca_copy=$work_dir/wasmcloud-ca-copy.json
 "${kube[@]}" -n "$system_namespace" get secret wasmcloud-ca -o json >"$ca_source"
@@ -565,7 +572,7 @@ awk -v target_namespace="$namespace" -v tag="$host_tag" -v replicas="$host_repli
 host_overlay=$work_dir/host-receiving.yaml
 awk -v target_namespace="$namespace" -v component_base="$component_artifact_base" \
     -v release_base="$release_artifact_base" -v digest="$manifest_digest" \
-    -v replicas="$host_replicas" \
+    -v replicas="$host_replicas" -v trace_enabled="$measure_startup" \
     -v guest="$guest_secret_name" -v executor="$executor_platform_secret_name" \
     -v identity="$identity_secret_name" -v http="$http_secret_name" '
   /^      namespace: wamn-system$/ { print "      namespace: " target_namespace; next }
@@ -579,6 +586,15 @@ awk -v target_namespace="$namespace" -v component_base="$component_artifact_base
   }
   /^              name: wamn-http-admitter-acme--receiving--dev$/ {
     print "              name: " http; next
+  }
+  /name: WAMN_WASMTIME_CACHE_DIR/ {
+    print
+    if (trace_enabled == "true") {
+      print "        - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector.wamn-system.svc.cluster.local:4317 }"
+      print "        - { name: OTEL_BSP_SCHEDULE_DELAY, value: \"1\" }"
+      print "        - { name: OTEL_BSP_MAX_EXPORT_BATCH_SIZE, value: \"1\" }"
+    }
+    next
   }
   /^          value: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/components$/ {
     print "          value: " component_base; next
@@ -601,6 +617,12 @@ for expected in "$namespace" "$component_artifact_base" "$release_artifact_base"
     exit 1
   }
 done
+if [[ "$measure_startup" == true ]]; then
+  grep -F -- 'OTEL_EXPORTER_OTLP_ENDPOINT' "$host_overlay" >/dev/null || {
+    echo "rendered measurement overlay omitted OTLP export" >&2
+    exit 1
+  }
+fi
 run helm upgrade --install --kubeconfig "$kubeconfig" --kube-context "$context" \
   --namespace "$namespace" wamn-host "$chart" --version "$chart_version" \
   -f "$host_base" -f "$host_overlay" --wait --timeout 5m
@@ -831,7 +853,7 @@ jq -e --slurpfile service "$evidence_dir/flow-http-service.json" \
 
 if [[ "$measure_startup" == true ]]; then
   run_startup_request() {
-    local phase=$1 request_id=$2 job="startup-request-$1"
+    local phase=$1 request_id=$2 trace_id=$3 parent_span_id=$4 job="startup-request-$1"
     local manifest=$work_dir/$job.yaml
     cat >"$manifest" <<EOF
 apiVersion: batch/v1
@@ -863,6 +885,7 @@ spec:
                 --header 'Host: $route_host' \\
                 --header 'Content-Type: application/json' \\
                 --header "Authorization: Bearer \$ROUTE_CALLER_PAT" \\
+                --header 'traceparent: 00-$trace_id-$parent_span_id-01' \\
                 --data '[{"request_id":"$request_id","id":"00000000-0000-0000-0000-000000000301"}]' \\
                 'http://flow-http.$namespace.svc.cluster.local/purchase_order/get')
               set -- \$metrics
@@ -909,9 +932,106 @@ EOF
       }
     ' "$evidence_dir/first-request-$phase.log" \
       >"$evidence_dir/first-request-$phase.receipt"
+    printf '%s\n' "$trace_id" >"$evidence_dir/first-request-$phase.trace-id"
   }
 
-  run_startup_request cold startup-cold
+  trace_is_complete() {
+    local trace_file=$1 expect_executor=$2
+    jq -e --arg expect_executor "$expect_executor" '
+      def spans: [.batches[]?.scopeSpans[]?.spans[]?];
+      def attr($span; $key):
+        ([$span.attributes[]? |
+          select(.key == $key) | .value.stringValue][0] // "");
+      spans as $spans |
+      def count_named($name):
+        [$spans[] | select(.name == $name)] | length;
+      def count_acquired($class):
+        [$spans[] |
+          select(.name == "wamn.postgres.acquire" and
+                 attr(.; "wamn.authority_class") == $class)] | length;
+      count_named("wamn.route.authenticate") == 1 and
+      count_named("wamn.router.resolve") == 1 and
+      count_named("wamn.component.pull") == 1 and
+      count_named("wamn.component.compile") == 1 and
+      count_named("wamn.component.linker_setup") == 1 and
+      count_named("wamn.component.link") == 1 and
+      count_named("wamn.component.instantiate") == 1 and
+      count_acquired("callable-http") == 1 and
+      count_acquired("guest-sql") == 1 and
+      count_named("wamn.postgres") > 0 and
+      count_named("wamn.postgres.statement") == 1 and
+      if $expect_executor == "true" then
+        count_acquired("executor-platform") == 1
+      else
+        count_acquired("executor-platform") == 0
+      end
+    ' >/dev/null "$trace_file"
+  }
+
+  collect_trace_breakdown() {
+    local phase=$1 trace_id=$2 expect_executor=$3
+    local trace_file=$evidence_dir/trace-$phase.json
+    local breakdown_file=$evidence_dir/trace-breakdown-$phase.json
+    local proxy_path=/api/v1/namespaces/$system_namespace/services/http:tempo:3200/proxy/api/traces/$trace_id
+    local http_total_ms
+    record_command "${kube[@]}" get --raw "$proxy_path"
+    if ! "${kube[@]}" get --raw "$proxy_path" >"$trace_file" ||
+       ! trace_is_complete "$trace_file" "$expect_executor"; then
+      echo "$phase trace is incomplete at collection" >&2
+      exit 1
+    fi
+    http_total_ms=$(sed -n 's/.* total_ms=\([0-9.]*\)$/\1/p' \
+      "$evidence_dir/first-request-$phase.receipt")
+    [[ "$http_total_ms" =~ ^[0-9]+\.[0-9]+$ ]] || {
+      echo "$phase request has no total timing" >&2
+      exit 1
+    }
+    jq --arg phase "$phase" --argjson http_total_ms "$http_total_ms" '
+      def spans: [.batches[]?.scopeSpans[]?.spans[]?];
+      def attr($span; $key):
+        ([$span.attributes[]? |
+          select(.key == $key) | .value.stringValue][0] // "");
+      def ms($span):
+        (($span.endTimeUnixNano | tonumber) -
+         ($span.startTimeUnixNano | tonumber)) / 1000000;
+      spans as $spans |
+      def named($name):
+        ([$spans[] | select(.name == $name) | ms(.)] | add // 0);
+      def acquired($class):
+        ([$spans[] |
+          select(.name == "wamn.postgres.acquire" and
+                 attr(.; "wamn.authority_class") == $class) |
+          ms(.)] | add // 0);
+      {
+        verdict: "pass",
+        phase: $phase,
+        http_total_ms: $http_total_ms,
+        authentication_ms: named("wamn.route.authenticate"),
+        resolution_ms: named("wamn.router.resolve"),
+        artifact_pull_ms: named("wamn.component.pull"),
+        compile_ms: named("wamn.component.compile"),
+        linker_setup_ms: named("wamn.component.linker_setup"),
+        link_ms: named("wamn.component.link"),
+        instantiate_ms: named("wamn.component.instantiate"),
+        executor_platform_acquire_ms: acquired("executor-platform"),
+        callable_http_acquire_ms: acquired("callable-http"),
+        guest_sql_acquire_ms: acquired("guest-sql"),
+        sql_ms: named("wamn.postgres.statement"),
+        guest_db_call_ms: named("wamn.postgres")
+      }
+    ' "$trace_file" >"$breakdown_file"
+    jq -r '[.phase, .http_total_ms, .authentication_ms, .resolution_ms,
+      .artifact_pull_ms, .compile_ms, .linker_setup_ms, .link_ms, .instantiate_ms,
+      .executor_platform_acquire_ms, .callable_http_acquire_ms,
+      .guest_sql_acquire_ms, .sql_ms, .guest_db_call_ms] | @tsv' "$breakdown_file" |
+      awk '{
+        printf "verdict=pass phase=%s http_total_ms=%.3f auth_ms=%.3f resolve_ms=%.3f pull_ms=%.3f compile_ms=%.3f linker_setup_ms=%.3f link_ms=%.3f instantiate_ms=%.3f executor_platform_acquire_ms=%.3f callable_http_acquire_ms=%.3f guest_sql_acquire_ms=%.3f sql_ms=%.3f guest_db_call_ms=%.3f\n",
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+      }' >"$evidence_dir/trace-breakdown-$phase.receipt"
+  }
+
+  run_startup_request cold startup-cold \
+    11111111111111111111111111111111 1111111111111111
   record_command "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
     find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
       -printf '<inode> <mtime> <size> <path>\n'
@@ -946,7 +1066,7 @@ EOF
     >"$evidence_dir/host-warm.log"
   "${kube[@]}" -n "$namespace" logs --previous --timestamps "$measurement_pod" -c host \
     >"$evidence_dir/host-cold-previous.log"
-  warm_startup_ms=$(runtime_startup_ms "$evidence_dir/host-warm.log")
+  restart_startup_ms=$(runtime_startup_ms "$evidence_dir/host-warm.log")
 
   for _ in $(seq 1 120); do
     "${kube[@]}" -n "$namespace" get workloads -o json \
@@ -980,7 +1100,14 @@ EOF
     .items[0].endpoints[0].conditions.serving == true' \
     >/dev/null "$evidence_dir/flow-http-endpointslices-warm.json"
 
-  run_startup_request warm startup-warm
+  run_startup_request restart-first startup-restart-first \
+    22222222222222222222222222222222 2222222222222222
+  run_startup_request steady startup-steady \
+    33333333333333333333333333333333 3333333333333333
+  collect_trace_breakdown restart-first \
+    22222222222222222222222222222222 true
+  collect_trace_breakdown steady \
+    33333333333333333333333333333333 false
   "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
     find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
       -printf '%i %T@ %s %p\n' \
@@ -991,8 +1118,8 @@ EOF
     | sort >"$evidence_dir/cache-warm.sha256"
   cmp "$evidence_dir/cache-cold.txt" "$evidence_dir/cache-warm.txt"
   cmp "$evidence_dir/cache-cold.sha256" "$evidence_dir/cache-warm.sha256"
-  printf 'verdict=pass pod_uid=%s cold_startup_ms=%s warm_startup_ms=%s cache_entries=%s\n' \
-    "$measurement_uid" "$cold_startup_ms" "$warm_startup_ms" \
+  printf 'verdict=pass pod_uid=%s cold_startup_ms=%s restart_startup_ms=%s cache_entries=%s\n' \
+    "$measurement_uid" "$cold_startup_ms" "$restart_startup_ms" \
     "$(awk 'END { print NR }' "$evidence_dir/cache-warm.txt")" \
     >"$evidence_dir/runtime-startup.receipt"
   run_complete=true

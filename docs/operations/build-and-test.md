@@ -977,11 +977,14 @@ tools/receiving-cluster-journey-run --apply \
 
 `wamn-10yt.8` measures the same published release under runtime-operator
 2.8.0's unchanged TCP liveness and readiness probes. It records cold runtime
-startup plus the first authenticated routed request, restarts the container in
-that same Pod, records the warm startup and first-request timings, and proves
-the compiled cache remained byte- and inode-identical. Listener readiness is
-not evidence that the full release closure is resident; exact released wirings
-resolve on demand.
+startup and a cache-seeding authenticated request, restarts the container in
+that same Pod, then records the restart-first and immediate steady-state
+requests. A disposable Tempo/OTel pair receives the real request traces; the
+receipts split authentication, resolution, artifact pull, compilation, linking,
+instantiation, SQL, and the ExecutorPlatform, CallableHttp, and GuestSql
+connection acquisitions. The gate also proves the compiled cache remained byte-
+and inode-identical. Listener readiness is not evidence that the full release
+closure is resident; exact released wirings resolve on demand.
 
 ```bash
 tools/receiving-cluster-journey-run --apply --measure-startup \

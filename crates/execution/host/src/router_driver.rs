@@ -732,7 +732,10 @@ impl RouterDriver {
     /// invoker. The caller owns acting on the terminal verdict.
     pub async fn execute(&self, request: RouterDriverRequest) -> anyhow::Result<RouterDelivery> {
         self.validate_request_scope(&request)?;
-        let active = self.resolve(&request).await?;
+        let active = self
+            .resolve(&request)
+            .instrument(tracing::info_span!("wamn.router.resolve"))
+            .await?;
         self.validate_wiring_closure(&request, &active)?;
         self.execute_resolved(request, active, ExecutionClosure::Released)
             .await
@@ -747,6 +750,7 @@ impl RouterDriver {
         self.validate_candidate_target(&request.target)?;
         let active = self
             .resolve_candidate(&request.target, &request.binding_world)
+            .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
         self.validate_candidate_closure(&request.target, &active)?;
         let component_bytes = self.fetch_candidate_components(&active).await?;
@@ -1283,7 +1287,11 @@ impl RouterDriver {
         let bytes = match candidate_bytes {
             Some(bytes) => bytes.as_slice(),
             None => {
-                pulled_bytes = self.source.pull_verified(component).await?;
+                pulled_bytes = self
+                    .source
+                    .pull_verified(component)
+                    .instrument(tracing::info_span!("wamn.component.pull"))
+                    .await?;
                 pulled_bytes.as_slice()
             }
         };
@@ -1387,7 +1395,8 @@ impl NodeInstance {
         tenant_id: &str,
         component_fact: &AdmittedComponent,
     ) -> anyhow::Result<Self> {
-        let component = Self::compile(engine, bytes)?;
+        let component = tracing::info_span!("wamn.component.compile")
+            .in_scope(|| Self::compile(engine, bytes))?;
         Self::instantiate_compiled(
             engine,
             component,
@@ -1419,87 +1428,99 @@ impl NodeInstance {
         tenant_id: &str,
         component_fact: &AdmittedComponent,
     ) -> anyhow::Result<Self> {
-        let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        let local = wash_runtime::types::LocalResources {
-            allowed_hosts: Arc::clone(&allowed_hosts),
-            ..Default::default()
-        };
-        let connection_http = Arc::new(ConnectionHttp::new(
-            Arc::clone(&postgres),
-            credentials,
-            tenant_id,
-            config.project.as_str(),
-            allowed_hosts,
-            Some(release),
-        ));
-        let loopback = Arc::new(std::sync::Mutex::new(
-            wash_runtime::sockets::loopback::Network::default(),
-        ));
-        let mut workload = WorkloadComponent::new(
-            "router-driver",
-            "router-driver",
-            "wamn",
-            component_fact.component.as_str(),
-            component,
-            linker,
-            Vec::new(),
-            local,
-            loopback,
-            InstancePolicy::Ephemeral,
-        );
-        let imports = workload.world().imports;
-        // The driver has one credential-exact project. Route every named
-        // Postgres instance through that same trusted project rather than
-        // bypassing the plugin's `(implements ...)` binder with a raw linker.
-        let imports: HashSet<_> = imports
-            .into_iter()
-            .map(|mut interface| {
-                if interface.namespace == "wamn"
-                    && interface.package == "postgres"
-                    && interface.name.is_some()
-                {
+        let (mut store, mut workload, connection_http, scope) = async {
+            let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
+            wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+            let local = wash_runtime::types::LocalResources {
+                allowed_hosts: Arc::clone(&allowed_hosts),
+                ..Default::default()
+            };
+            let connection_http = Arc::new(ConnectionHttp::new(
+                Arc::clone(&postgres),
+                credentials,
+                tenant_id,
+                config.project.as_str(),
+                allowed_hosts,
+                Some(release),
+            ));
+            let loopback = Arc::new(std::sync::Mutex::new(
+                wash_runtime::sockets::loopback::Network::default(),
+            ));
+            let mut workload = WorkloadComponent::new(
+                "router-driver",
+                "router-driver",
+                "wamn",
+                component_fact.component.as_str(),
+                component,
+                linker,
+                Vec::new(),
+                local,
+                loopback,
+                InstancePolicy::Ephemeral,
+            );
+            let imports = workload.world().imports;
+            // The driver has one credential-exact project. Route every named
+            // Postgres instance through that same trusted project rather than
+            // bypassing the plugin's `(implements ...)` binder with a raw linker.
+            let imports: HashSet<_> = imports
+                .into_iter()
+                .map(|mut interface| {
+                    if interface.namespace == "wamn"
+                        && interface.package == "postgres"
+                        && interface.name.is_some()
+                    {
+                        interface
+                            .config
+                            .insert("project".to_owned(), config.project.clone());
+                    }
                     interface
-                        .config
-                        .insert("project".to_owned(), config.project.clone());
+                })
+                .collect();
+            {
+                let mut item = WorkloadItem::Component(&mut workload);
+                postgres
+                    .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
+                    .await?;
+                logging
+                    .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
+                    .await?;
+                if WitInterfaces::new(&imports).contains("wamn", "connection", &["http"]) {
+                    connection_http::add_to_linker(item.linker())?;
                 }
-                interface
-            })
-            .collect();
-        {
-            let mut item = WorkloadItem::Component(&mut workload);
-            postgres
-                .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
-                .await?;
-            logging
-                .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
-                .await?;
-            if WitInterfaces::new(&imports).contains("wamn", "connection", &["http"]) {
-                connection_http::add_to_linker(item.linker())?;
             }
+            let scope: Box<str> = workload.id().into();
+            // Linker setup is not an identity bind. In particular WamnLogging's
+            // plugin hook seeds even an empty claim. Clear every registry before
+            // component instantiation so start functions cannot exercise tenant
+            // authority; `bind_identity` is the sole identity installation point.
+            postgres.revoke_session_claims(&scope);
+            logging.clear_claim(&scope);
+            connection_http.revoke_invocation(&scope);
+            let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> =
+                HashMap::new();
+            plugins.insert(WAMN_POSTGRES_ID, Arc::clone(&postgres) as _);
+            plugins.insert(WAMN_LOGGING_ID, Arc::clone(&logging) as _);
+            plugins.insert(CONNECTION_HTTP_ID, Arc::clone(&connection_http) as _);
+            let ctx = Ctx::builder(scope.to_string(), scope.to_string())
+                .with_plugins(plugins)
+                .build();
+            let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
+            // Instantiation executes guest start code, so it needs the same bounded
+            // ceiling as a call. One tick is only 10 ms and interrupts valid
+            // virtualized std components before their instance is ready.
+            store.set_epoch_deadline(deadline_ticks(bounded_node_deadline_ms(None)));
+            Ok::<_, anyhow::Error>((store, workload, connection_http, scope))
         }
-        let scope: Box<str> = workload.id().into();
-        // Linker setup is not an identity bind. In particular WamnLogging's
-        // plugin hook seeds even an empty claim. Clear every registry before
-        // component instantiation so start functions cannot exercise tenant
-        // authority; `bind_identity` is the sole identity installation point.
-        postgres.revoke_session_claims(&scope);
-        logging.clear_claim(&scope);
-        connection_http.revoke_invocation(&scope);
-        let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
-        plugins.insert(WAMN_POSTGRES_ID, Arc::clone(&postgres) as _);
-        plugins.insert(WAMN_LOGGING_ID, Arc::clone(&logging) as _);
-        plugins.insert(CONNECTION_HTTP_ID, Arc::clone(&connection_http) as _);
-        let ctx = Ctx::builder(scope.to_string(), scope.to_string())
-            .with_plugins(plugins)
-            .build();
-        let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
-        // Instantiation executes guest start code, so it needs the same bounded
-        // ceiling as a call. One tick is only 10 ms and interrupts valid
-        // virtualized std components before their instance is ready.
-        store.set_epoch_deadline(deadline_ticks(bounded_node_deadline_ms(None)));
+        .instrument(tracing::info_span!("wamn.component.linker_setup"))
+        .await?;
         let compiled = workload.component().clone();
-        let node = bindings::Node::instantiate_async(&mut store, &compiled, workload.linker())
+        let pre = tracing::info_span!("wamn.component.link").in_scope(|| {
+            let pre = workload.linker().instantiate_pre(&compiled)?;
+            bindings::NodePre::new(pre)
+        })?;
+        let node = pre
+            .instantiate_async(&mut store)
+            .instrument(tracing::info_span!("wamn.component.instantiate"))
             .await
             .map_err(|error| anyhow::anyhow!("instantiate wamn:node: {error}"))?;
         Ok(Self {
