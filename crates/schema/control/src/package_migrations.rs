@@ -12,7 +12,7 @@ use std::fmt;
 
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::PackageCoordinate;
-use wamn_schema_generator::PackageManifest;
+use wamn_schema_generator::{PackageManifest, validate_operation_vocabulary};
 
 use crate::{SqlStatement, Value};
 
@@ -236,6 +236,14 @@ pub fn plan_package_migrations(
         PackageMigrationError::with_source(
             PackageMigrationErrorKind::InvalidManifest,
             "wamn.json does not match the strict package manifest",
+            source,
+        )
+        .at_path(PACKAGE_MANIFEST_PATH)
+    })?;
+    validate_operation_vocabulary(&manifest).map_err(|source| {
+        PackageMigrationError::with_source(
+            PackageMigrationErrorKind::InvalidManifest,
+            "wamn.json has an invalid semantic manifest vocabulary",
             source,
         )
         .at_path(PACKAGE_MANIFEST_PATH)
@@ -755,6 +763,35 @@ mod tests {
         let again = plan_package_migrations(&directory(), Some(&applied)).unwrap();
         assert!(again.is_noop());
         assert!(again.statements.is_empty());
+    }
+
+    #[test]
+    fn package_application_refuses_invalid_custom_operation_semantics() {
+        let mut directory = directory();
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&directory.manifest_bytes).expect("fixture is JSON");
+        manifest["custom_operations"] = serde_json::json!({
+            "quality.create_inspection": {
+                "kind": "projection",
+                "visibility": "private",
+                "permission": "quality.create_inspection"
+            }
+        });
+        directory.manifest_bytes = serde_json::to_vec(&manifest).expect("serialize manifest");
+
+        let error = plan_package_migrations(&directory, None)
+            .expect_err("package application admitted a private permission");
+        assert_eq!(error.kind(), PackageMigrationErrorKind::InvalidManifest);
+        assert!(
+            error
+                .to_string()
+                .contains("invalid semantic manifest vocabulary")
+        );
+        assert!(
+            error
+                .source()
+                .is_some_and(|source| source.to_string().contains("must not declare a permission"))
+        );
     }
 
     #[test]

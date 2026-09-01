@@ -101,7 +101,7 @@ impl OverlayPackage {
                     }
                 }
             },
-            "commands": {},
+            "custom_operations": {},
             "connections": {
                 "postgres": {"interface": "wamn:postgres@0.1.0"}
             },

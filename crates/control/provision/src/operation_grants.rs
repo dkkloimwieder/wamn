@@ -11,7 +11,7 @@ use std::error::Error as StdError;
 
 use wamn_pg_core::quote_literal;
 use wamn_schema_generator::{
-    PackageManifest, canonical_operation_identity, canonical_operation_prefix,
+    OperationVisibility, PackageManifest, canonical_operation_identity, canonical_operation_prefix,
     validate_operation_vocabulary,
 };
 
@@ -165,9 +165,10 @@ impl OperationGrantReconcileResult {
 
 /// Derive the package-qualified operation tokens from strict manifest bytes.
 ///
-/// Component `operations` members are the package-local callable-operation
-/// vocabulary. Prefixing each with the manifest's sole package coordinate
-/// yields the same grant identity carried by generated operation contracts.
+/// Public component `operations` members are the package-local callable-operation
+/// vocabulary. Private custom operations remain callable only from declared
+/// internal wirings and never become route-caller grants. Prefixing each public
+/// member with the package coordinate yields the generated grant identity.
 pub fn operation_grant_tokens(
     manifest_bytes: &[u8],
 ) -> Result<BTreeSet<String>, OperationGrantError> {
@@ -184,13 +185,19 @@ fn manifest_operation_grants(
             source,
         )
     })?;
-    let local_tokens = validate_operation_vocabulary(&manifest).map_err(|source| {
+    let mut local_tokens = validate_operation_vocabulary(&manifest).map_err(|source| {
         OperationGrantError::with_source(
             OperationGrantErrorKind::InvalidManifest,
             "operation-grant manifest has an invalid operation vocabulary",
             source,
         )
     })?;
+    local_tokens.retain(|token| {
+        manifest
+            .custom_operations
+            .get(token)
+            .is_none_or(|operation| operation.visibility() == OperationVisibility::Public)
+    });
     let coordinate_prefix = canonical_operation_prefix(&manifest.package).map_err(|source| {
         OperationGrantError::with_source(
             OperationGrantErrorKind::InvalidManifest,
@@ -320,6 +327,27 @@ mod tests {
             .into_iter()
             .collect()
         );
+    }
+
+    #[test]
+    fn private_custom_operations_never_become_route_caller_grants() {
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(RECEIVING_MANIFEST).expect("fixture is JSON");
+        let operation = &mut manifest["custom_operations"]["receiving.record_receipt"];
+        operation["visibility"] = serde_json::json!("private");
+        operation
+            .as_object_mut()
+            .expect("operation is an object")
+            .remove("permission");
+        let bytes = serde_json::to_vec(&manifest).expect("serialize private operation fixture");
+
+        let grants = operation_grant_tokens(&bytes).expect("private operation remains valid");
+        assert!(
+            !grants
+                .iter()
+                .any(|grant| grant.ends_with("::receiving.record_receipt"))
+        );
+        assert_eq!(grants.len(), 5);
     }
 
     #[test]

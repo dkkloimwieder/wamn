@@ -471,7 +471,7 @@ async fn seed_with_client(
     let package_manifest = serde_json::json!({
         "package": {"id": PACKAGE, "version": PACKAGE_VERSION},
         "models": {},
-        "commands": {},
+        "custom_operations": {},
         "queries": {},
         "connections": {},
         "components": {},

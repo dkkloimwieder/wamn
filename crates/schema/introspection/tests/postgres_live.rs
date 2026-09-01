@@ -277,8 +277,8 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
     );
     assert_eq!(
         server_tables.len(),
-        6,
-        "the real migration created six tables"
+        7,
+        "the real migration created seven tables"
     );
     assert!(
         first
@@ -353,6 +353,45 @@ ALTER TABLE receiving.purchase_order
 }
 
 async fn assert_additive_columns(client: &Client) {
+    for (index, quality_status) in ["not_required", "pending", "approved", "rejected"]
+        .into_iter()
+        .enumerate()
+    {
+        let purchase_order_number = format!("quality-status-{index}");
+        client
+            .execute(
+                "INSERT INTO receiving.purchase_order \
+                    (purchase_order_number, supplier_id, acme_quality_status) \
+                 VALUES ($1, gen_random_uuid(), $2)",
+                &[&purchase_order_number, &quality_status],
+            )
+            .await
+            .unwrap_or_else(|error| {
+                panic!("quality status {quality_status:?} was refused: {error}")
+            });
+    }
+    let invalid_status = client
+        .execute(
+            "INSERT INTO receiving.purchase_order \
+                (purchase_order_number, supplier_id, acme_quality_status) \
+             VALUES ('quality-status-invalid', gen_random_uuid(), 'unknown')",
+            &[],
+        )
+        .await
+        .expect_err("an undeclared quality status was admitted");
+    assert_eq!(
+        invalid_status
+            .as_db_error()
+            .map(|error| error.code().code()),
+        Some("23514")
+    );
+    assert_eq!(
+        invalid_status
+            .as_db_error()
+            .and_then(|error| error.constraint()),
+        Some("purchase_order_acme_quality_status_check")
+    );
+
     let server_columns = client
         .query(
             "SELECT attribute.attname::text, \
