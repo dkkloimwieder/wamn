@@ -362,13 +362,14 @@ ALTER TABLE receiving.purchase_order
 ALTER TABLE receiving.purchase_order
     ADD CONSTRAINT purchase_order_acme_quality_status_check
     CHECK (acme_quality_status IN (
-        'not_required', 'pending', 'approved', 'rejected'
+        'not_required', 'pending', 'approved'
     ));
 ```
 
 [Owner-ruling correction, 2026-09-01 — `acme_quality_status` is non-null text
 with the `not_required` sentinel; the nullable TypeScript spelling was a
-document defect.]
+document defect. Only states reachable through current operations are admitted;
+`rejected` arrives only with a named reject operation.]
 
 The migration is accepted only because `receiving.purchase_order` is declared extensible and the new column is recorded as client-owned.
 
@@ -429,6 +430,12 @@ route, permission, and test
 ```
 
 The base Receiving API and base command remain unchanged.
+
+`quality.approve_inspection` keys the inspection by `receipt_id`; no second
+inspection identity exists. Its result includes `purchase_order_row_version`
+because approval advances the purchase order row version, and the client needs
+the new value for a subsequent edit without an avoidable
+`concurrency_conflict`.
 
 ## 6. Scenario B — client preprocessing through a BFF
 
@@ -836,8 +843,7 @@ export interface AcmePurchaseOrderUpdateInput {
     acme_quality_status?:
       | "not_required"
       | "pending"
-      | "approved"
-      | "rejected";
+      | "approved";
   };
 }
 ```

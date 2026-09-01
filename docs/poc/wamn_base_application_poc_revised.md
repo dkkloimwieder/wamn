@@ -698,13 +698,14 @@ ALTER TABLE receiving.purchase_order
 ALTER TABLE receiving.purchase_order
     ADD CONSTRAINT purchase_order_acme_quality_status_check
     CHECK (acme_quality_status IN (
-        'not_required', 'pending', 'approved', 'rejected'
+        'not_required', 'pending', 'approved'
     ));
 ```
 
 [Owner-ruling correction, 2026-09-01 — `acme_quality_status` is non-null text
 with the `not_required` sentinel; nullable and sentinel spellings of “none” are
-not both admitted.]
+not both admitted. Only states reachable through current operations are
+admitted; `rejected` arrives only with a named reject operation.]
 
 The client separately selects where the field is exposed:
 
