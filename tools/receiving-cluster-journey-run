@@ -757,7 +757,7 @@ run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
 jq -e '
   .spec.replicas == 1 and .status.currentReplicas == 1 and
   .status.replicas.expected == 1 and .status.replicas.current == 1 and
-  .status.replicas.ready == 1 and .status.replicas.unavailable == 0 and
+  .status.replicas.ready == 1 and (.status.replicas.unavailable // 0) == 0 and
   (.status.currentReplicaSet.name | type == "string" and length > 0) and
   any(.status.conditions[]?; .type == "Ready" and .status == "True")
 ' >/dev/null "$evidence_dir/flow-http-deployment.json"
