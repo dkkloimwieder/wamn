@@ -953,6 +953,28 @@ registry services unchanged and stopped. Cleanup removes only this Compose
 project, its volumes, and its validated scratch path. Never substitute shared
 infrastructure or the frozen cluster.
 
+### `[RECEIVING-CLUSTER-JOURNEY]` — released flow-http scheduling and reachability
+
+This gate wraps the production Receiving route journey above, then installs the
+pinned operator 2.8.0 release before the pinned host 2.8.0 release on its own
+three-node kind cluster. It proves three Ready default-group Hosts, native
+Workload scheduling, the operator-managed EndpointSlice, the exact typed
+`route-not-found` response through `receiving.localhost`, and the native
+`CrossEnvironmentSchedulingDenied` refusal. The 404 proves only HTTP routing
+and guest execution; the Kubernetes objects independently prove the other arms.
+
+```bash
+tools/receiving-cluster-journey-run --apply \
+  --evidence-dir /tmp/wamn-receiving-cluster-evidence
+```
+
+The helper refuses a dirty source tree or a pre-existing scratch cluster. Every
+Kubernetes and Helm command names its private kubeconfig/context; it never
+addresses the frozen `kind-wamn` cluster. PostgreSQL, authenticated OCI,
+cluster, port-forward, and the uniquely tagged debug host image are exact-owned
+scratch resources. Cleanup absence and a SHA-256 evidence inventory are part of
+the passing verdict.
+
 ### Other live gates that carry their command in-source
 
 These have no section tag; the file's own doc comment is the recipe of record.

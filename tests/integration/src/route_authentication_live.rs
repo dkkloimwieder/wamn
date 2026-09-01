@@ -889,6 +889,8 @@ struct JourneyInputs {
     component_artifact_base: String,
     release_artifact_base: String,
     registry_auth_file: PathBuf,
+    host_secret_directory: PathBuf,
+    host_secret_namespace: String,
 }
 
 impl JourneyInputs {
@@ -901,6 +903,10 @@ impl JourneyInputs {
             )?,
             release_artifact_base: required_journey("WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE")?,
             registry_auth_file: required_journey_path("WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE")?,
+            host_secret_directory: required_journey_path(
+                "WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY",
+            )?,
+            host_secret_namespace: required_journey("WAMN_RECEIVING_ROUTE_SECRET_NAMESPACE")?,
         })
     }
 }
@@ -1120,16 +1126,21 @@ async fn prepare_journey_credentials(
     system_url: &str,
     project_url: &str,
     root: &Path,
+    host_secret_directory: &Path,
+    host_secret_namespace: &str,
 ) -> anyhow::Result<JourneyCredentials> {
     async fn prepare(
         family: WorkloadRoleFamily,
         system_url: &str,
         target_url: Option<&str>,
         root: &Path,
+        namespace: &str,
         name: &str,
     ) -> anyhow::Result<String> {
         let secret = root.join(format!("{name}.json"));
-        provision_project_env::run(generation_args(family, system_url, target_url, &secret))
+        let mut args = generation_args(family, system_url, target_url, &secret);
+        args.namespace = namespace.to_owned();
+        provision_project_env::run(args)
             .await
             .with_context(|| format!("prepare the production {name} generation"))?;
         secret_value(&secret, "url")
@@ -1140,7 +1151,8 @@ async fn prepare_journey_credentials(
             WorkloadRoleFamily::App,
             system_url,
             Some(project_url),
-            root,
+            host_secret_directory,
+            host_secret_namespace,
             "guest-sql",
         )
         .await?,
@@ -1148,7 +1160,8 @@ async fn prepare_journey_credentials(
             WorkloadRoleFamily::ExecutorPlatform,
             system_url,
             Some(project_url),
-            root,
+            host_secret_directory,
+            host_secret_namespace,
             "executor-platform",
         )
         .await?,
@@ -1156,7 +1169,8 @@ async fn prepare_journey_credentials(
             WorkloadRoleFamily::HttpAdmitter,
             system_url,
             Some(project_url),
-            root,
+            host_secret_directory,
+            host_secret_namespace,
             "http-admitter",
         )
         .await?,
@@ -1164,7 +1178,8 @@ async fn prepare_journey_credentials(
             WorkloadRoleFamily::IdentityReader,
             system_url,
             None,
-            root,
+            host_secret_directory,
+            host_secret_namespace,
             "identity-reader",
         )
         .await?,
@@ -1173,6 +1188,7 @@ async fn prepare_journey_credentials(
             system_url,
             None,
             root,
+            "wamn-system",
             "control-author",
         )
         .await?,
@@ -1181,6 +1197,7 @@ async fn prepare_journey_credentials(
             system_url,
             Some(project_url),
             root,
+            "wamn-system",
             "management-admitter",
         )
         .await?,
@@ -1778,7 +1795,14 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
     let (project, project_task) = connect(&route.database_url).await?;
     install_journey_project(project.as_ref(), &route.database_url).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
-    let credentials = prepare_journey_credentials(&system_url, &route.database_url, root).await?;
+    let credentials = prepare_journey_credentials(
+        &system_url,
+        &route.database_url,
+        root,
+        &inputs.host_secret_directory,
+        &inputs.host_secret_namespace,
+    )
+    .await?;
     reconcile_package_data_access::run(ReconcilePackageDataAccessArgs {
         package: package_root(),
         database_url: route.database_url.clone(),

@@ -11,12 +11,14 @@
 # here would silently discard the base profile's replicas, listener, mounts,
 # CA, and resource limits.
 #
-# The identity-reader and CallableHttp Secrets are production outputs of
-# `wamn-ctl provision-project-env`. Both references are explicitly mandatory;
-# an absent Secret leaves the host Pod unstartable. The route-caller bearer
-# Secret is intentionally not mounted here: callers present that PAT, while the
-# host verifies it against sysdb and derives the expected environment-scoped
-# service subject from this trusted org/project plus the released environment.
+# The identity-reader, ExecutorPlatform, and CallableHttp Secrets are production
+# outputs of `wamn-ctl provision-project-env`. All three references are
+# explicitly mandatory; an absent Secret leaves the host Pod unstartable. The
+# ExecutorPlatform carrier is required before a serving host can preload the
+# release's frozen wiring closure. The route-caller bearer Secret is
+# intentionally not mounted here: callers present that PAT, while the host
+# verifies it against sysdb and derives the expected environment-scoped service
+# subject from this trusted org/project plus the released environment.
 # Human org-user membership remains owned by the identity epic and Slice v; it
 # is not fabricated as deployment configuration here.
 #
@@ -56,6 +58,12 @@ runtime:
           valueFrom:
             secretKeyRef:
               name: wamn-identity-reader-acme--receiving--dev
+              key: url
+              optional: false
+        - name: WAMN_EXECUTOR_PLATFORM_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-executor-platform-acme--receiving--dev
               key: url
               optional: false
         - name: WAMN_HTTP_ADMITTER_PG_URL

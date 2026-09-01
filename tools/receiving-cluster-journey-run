@@ -1,0 +1,844 @@
+#!/usr/bin/env bash
+# Prove the Receiving release on one disposable cluster without addressing kind-wamn.
+
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: receiving-cluster-journey-run [--apply] --evidence-dir DIR
+
+Without --apply, print the immutable plan and exit.
+
+  --apply              Build and run the journey, then tear down owned resources
+  --evidence-dir DIR   New directory retaining commands and machine evidence
+
+The fixed scratch cluster is wamn-receiving-journey. Every Kubernetes and Helm
+command carries its private kubeconfig and context. The frozen kind-wamn cluster
+is never a target.
+EOF
+}
+
+apply=false
+evidence_dir=
+while (($#)); do
+  case "$1" in
+    --apply) apply=true; shift ;;
+    --evidence-dir) evidence_dir=${2-}; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd -- "$script_dir/.." && pwd)
+cd -- "$repo_root"
+
+head=$(git rev-parse --verify HEAD)
+short_head=${head:0:12}
+cluster=wamn-receiving-journey
+context=kind-wamn-receiving-journey
+namespace=wamn-receiving-journey
+system_namespace=wamn-system
+chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
+chart_version=2.8.0
+route_host=receiving.localhost
+run_id=$$
+host_tag=receiving-${short_head}-${run_id}-debug
+host_image=wamn-host:${host_tag}
+postgres_container=wamn-receiving-pg18-${short_head}-${run_id}
+registry_container=wamn-receiving-registry-${short_head}-${run_id}
+cargo_target_dir=${CARGO_TARGET_DIR:-$repo_root/target}
+
+if [[ "$apply" != true ]]; then
+  printf 'Receiving cluster journey dry-run (no mutation)\n'
+  printf '  source: %s\n' "$head"
+  printf '  cluster/context: %s / %s\n' "$cluster" "$context"
+  printf '  namespace: %s\n' "$namespace"
+  printf '  route host: %s (setup overlay only)\n' "$route_host"
+  printf '  order: build -> production mint/attest -> operator 2.8.0 -> host 2.8.0 -> schedule -> EndpointSlice -> HTTP -> cross-environment refusal -> exact teardown\n'
+  exit 0
+fi
+
+if [[ -z "$evidence_dir" ]]; then
+  usage
+  exit 2
+fi
+if [[ -n $(git status --porcelain --untracked-files=normal) ]]; then
+  echo "refusing to build a non-clean source tree; commit the final tip first" >&2
+  exit 2
+fi
+if [[ $(uname -m) != x86_64 ]]; then
+  echo "the debug host image requires an x86_64 build host" >&2
+  exit 2
+fi
+for required in awk bash cargo chmod cmp cp curl date docker find flock git grep head helm \
+    install jq kind kubectl mkdir openssl psql rm sed seq sha256sum sleep sort tee \
+    timeout tr wash xargs; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "required executable not found: $required" >&2
+    exit 2
+  fi
+done
+if [[ -e "$evidence_dir" ]]; then
+  echo "--evidence-dir must not already exist: $evidence_dir" >&2
+  exit 2
+fi
+mkdir -m 0700 -- "$evidence_dir"
+evidence_dir=$(cd -- "$evidence_dir" && pwd)
+commands_record=$evidence_dir/commands.log
+: >"$commands_record"
+
+record_command() {
+  local argument
+  printf '%s ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$commands_record"
+  for argument in "$@"; do
+    printf '%q ' "$argument" >>"$commands_record"
+  done
+  printf '\n' >>"$commands_record"
+}
+
+run() {
+  record_command "$@"
+  "$@"
+}
+
+run_sensitive() {
+  local label=$1
+  shift
+  record_command "$label" '<credential-bearing arguments redacted>'
+  "$@"
+}
+
+work_dir=$(mktemp -d)
+kubeconfig=$work_dir/kubeconfig
+kind_config=$work_dir/kind-config.yaml
+cluster_owned=false
+postgres_owned=false
+registry_owned=false
+host_image_owned=false
+run_complete=false
+
+cleanup() {
+  local status=$? cleanup_failed=false
+  trap - EXIT HUP INT TERM
+  set +e
+
+  if [[ "$cluster_owned" == true ]] &&
+     kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
+    record_command kind delete cluster --name "$cluster"
+    kind delete cluster --name "$cluster" >/dev/null 2>&1 || cleanup_failed=true
+  fi
+  if [[ "$postgres_owned" == true ]] &&
+     docker container inspect "$postgres_container" >/dev/null 2>&1; then
+    record_command docker rm --force --volumes "$postgres_container"
+    docker rm --force --volumes "$postgres_container" >/dev/null 2>&1 || cleanup_failed=true
+  fi
+  if [[ "$registry_owned" == true ]] &&
+     docker container inspect "$registry_container" >/dev/null 2>&1; then
+    record_command docker rm --force --volumes "$registry_container"
+    docker rm --force --volumes "$registry_container" >/dev/null 2>&1 || cleanup_failed=true
+  fi
+  if [[ "$host_image_owned" == true ]] &&
+     docker image inspect "$host_image" >/dev/null 2>&1; then
+    record_command docker image rm "$host_image"
+    docker image rm "$host_image" >/dev/null 2>&1 || cleanup_failed=true
+  fi
+
+  if kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
+    cleanup_failed=true
+  fi
+  if docker container inspect "$postgres_container" >/dev/null 2>&1; then
+    cleanup_failed=true
+  fi
+  if docker container inspect "$registry_container" >/dev/null 2>&1; then
+    cleanup_failed=true
+  fi
+  if docker image inspect "$host_image" >/dev/null 2>&1; then
+    cleanup_failed=true
+  fi
+  record_command rm -rf -- "$work_dir"
+  rm -rf -- "$work_dir" || cleanup_failed=true
+  [[ ! -e "$work_dir" ]] || cleanup_failed=true
+
+  if [[ "$cleanup_failed" == false ]]; then
+    printf 'verdict=pass cluster=%s containers=%s,%s image=%s\n' \
+      "$cluster" "$postgres_container" "$registry_container" "$host_image" \
+      >"$evidence_dir/cleanup.receipt"
+  else
+    printf 'verdict=fail cluster=%s containers=%s,%s image=%s\n' \
+      "$cluster" "$postgres_container" "$registry_container" "$host_image" \
+      >"$evidence_dir/cleanup.receipt"
+    [[ $status -ne 0 ]] || status=1
+  fi
+
+  if [[ $status -eq 0 && "$run_complete" == true && "$cleanup_failed" == false ]]; then
+    printf 'RECEIVING CLUSTER JOURNEY PASS source=%s namespace=%s host=%s\n' \
+      "$head" "$namespace" "$route_host" >"$evidence_dir/journey.receipt"
+    (
+      cd -- "$evidence_dir" || exit 1
+      find . -maxdepth 1 -type f ! -name evidence.sha256 -print0 \
+        | sort -z | xargs -0 sha256sum >evidence.sha256
+    ) || status=1
+  elif [[ $status -eq 0 ]]; then
+    status=1
+  fi
+
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
+lock_file=${TMPDIR:-/tmp}/wamn-receiving-cluster-journey.lock
+exec 9>"$lock_file"
+if ! flock -n 9; then
+  echo "another Receiving cluster journey owns the fixed scratch name" >&2
+  exit 2
+fi
+if kind get clusters | grep -Fx -- "$cluster" >/dev/null; then
+  echo "refusing pre-existing kind cluster: $cluster" >&2
+  exit 2
+fi
+for container in "$postgres_container" "$registry_container"; do
+  if docker container inspect "$container" >/dev/null 2>&1; then
+    echo "refusing pre-existing container: $container" >&2
+    exit 2
+  fi
+done
+if docker image inspect "$host_image" >/dev/null 2>&1; then
+  echo "refusing pre-existing host image: $host_image" >&2
+  exit 2
+fi
+
+awk '
+  /^    extraPortMappings:/ { skipping = 1; next }
+  skipping && /^      / { next }
+  { skipping = 0; print }
+' "$repo_root/deploy/infra/kind-config.yaml" >"$kind_config"
+if [[ $(grep -c '^  - role:' "$kind_config") -ne 3 ]] ||
+   grep -q 'extraPortMappings\|hostPort:' "$kind_config"; then
+  echo "rendered kind config did not retain exactly three nodes without host ports" >&2
+  exit 2
+fi
+
+run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+  "$repo_root/tools/build-components" m1
+run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+  cargo build --locked -p wamn-host -p wamn-ctl
+
+flow_http_wasm=$cargo_target_dir/wasm32-wasip2/debug/http_route.wasm
+component_directory=$cargo_target_dir/virtualized/std-empty-environment
+components=(purchase_order_get purchase_order_query purchase_order_update receipt_get \
+  receipt_query receiving_record_receipt)
+for component in "${components[@]}"; do
+  [[ -s "$component_directory/$component.wasm" ]] || {
+    echo "missing virtualized Receiving component: $component" >&2
+    exit 1
+  }
+done
+[[ -s "$flow_http_wasm" ]] || {
+  echo "missing built flow-http component: $flow_http_wasm" >&2
+  exit 1
+}
+: >"$evidence_dir/component-bytes.sha256"
+sha256sum "$flow_http_wasm" >>"$evidence_dir/component-bytes.sha256"
+for component in "${components[@]}"; do
+  sha256sum "$component_directory/$component.wasm" \
+    >>"$evidence_dir/component-bytes.sha256"
+done
+
+host_context=$work_dir/host-image
+mkdir -- "$host_context"
+install -m 0755 "$cargo_target_dir/debug/wamn-host" "$host_context/wamn-host"
+cat >"$host_context/Dockerfile" <<EOF
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \\
+ && rm -rf /var/lib/apt/lists/*
+COPY wamn-host /usr/local/bin/wamn-host
+ENV HOME=/tmp
+LABEL wamn.dev/source-head="$head" wamn.dev/build-profile="debug"
+ENTRYPOINT ["/usr/local/bin/wamn-host"]
+EOF
+host_image_owned=true
+run docker build --platform=linux/amd64 --provenance=false \
+  --file "$host_context/Dockerfile" --tag "$host_image" "$host_context"
+docker image inspect "$host_image" >"$evidence_dir/host-image.json"
+jq -e --arg head "$head" '
+  .[0].Config.Labels["wamn.dev/source-head"] == $head and
+  .[0].Config.Labels["wamn.dev/build-profile"] == "debug"
+' >/dev/null "$evidence_dir/host-image.json"
+
+cluster_owned=true
+run kind create cluster --name "$cluster" --config "$kind_config" \
+  --kubeconfig "$kubeconfig"
+kube=(kubectl --kubeconfig "$kubeconfig" --context "$context")
+run "${kube[@]}" wait --for=condition=Ready nodes --all --timeout=180s
+run "${kube[@]}" create namespace "$namespace"
+"${kube[@]}" get nodes -o json >"$evidence_dir/nodes.json"
+jq -e '
+  (.items | length == 3) and
+  ([.items[].metadata.name] | unique | length == 3) and
+  all(.items[];
+    .status.nodeInfo.architecture == "amd64" and
+    any(.status.conditions[]?; .type == "Ready" and .status == "True"))
+' >/dev/null "$evidence_dir/nodes.json"
+run kind load docker-image "$host_image" --name "$cluster"
+
+: >"$evidence_dir/host-image-nodes.jsonl"
+first_image_tuple=
+while IFS= read -r node; do
+  inspect=$(docker exec "$node" crictl inspecti -o json "$host_image")
+  runtime_digest=$(jq -er '
+    [.status.repoDigests[]? |
+     capture("@(?<digest>sha256:[0-9a-f]{64})$").digest] | unique |
+    if length == 1 then .[0] else error("runtime digest missing or ambiguous") end
+  ' <<<"$inspect")
+  config_id=$(jq -er '.status.id | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$inspect")
+  tuple="$runtime_digest $config_id"
+  if [[ -z "$first_image_tuple" ]]; then
+    first_image_tuple=$tuple
+  elif [[ "$first_image_tuple" != "$tuple" ]]; then
+    echo "host image tuple differs across kind nodes" >&2
+    exit 1
+  fi
+  jq -cn --arg node "$node" --arg digest "$runtime_digest" --arg config "$config_id" \
+    '{node:$node,runtime_digest:$digest,config_id:$config}' \
+    >>"$evidence_dir/host-image-nodes.jsonl"
+done < <(kind get nodes --name "$cluster" | sort)
+read -r host_runtime_digest host_config_id <<<"$first_image_tuple"
+
+registry_username=wamn-receiving-journey
+registry_password=$(openssl rand -hex 32)
+htpasswd_file=$work_dir/htpasswd
+run_sensitive htpasswd docker run --rm -i --entrypoint htpasswd httpd:2-alpine \
+  -Bni "$registry_username" <<<"$registry_password" >"$htpasswd_file"
+chmod 0600 "$htpasswd_file"
+
+postgres_owned=true
+run_sensitive postgres docker run --detach --name "$postgres_container" --network kind \
+  --env POSTGRES_PASSWORD=probe \
+  --volume "$repo_root/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro" \
+  postgres:18
+registry_owned=true
+run docker run --detach --name "$registry_container" --network kind \
+  --env REGISTRY_AUTH=htpasswd \
+  --env 'REGISTRY_AUTH_HTPASSWD_REALM=WAMN Receiving cluster journey' \
+  --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+  --volume "$htpasswd_file:/auth/htpasswd:ro" registry:2
+
+for _ in $(seq 1 90); do
+  if docker exec "$postgres_container" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+docker exec "$postgres_container" pg_isready -U postgres -d postgres >/dev/null
+
+postgres_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
+  "$postgres_container")
+registry_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
+  "$registry_container")
+for address in "$postgres_ip" "$registry_ip"; do
+  if [[ ! "$address" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "owned container has no kind-network IPv4 address: $address" >&2
+    exit 1
+  fi
+done
+if [[ "$postgres_ip" == "$registry_ip" ]]; then
+  echo "owned PostgreSQL and registry containers share one address" >&2
+  exit 1
+fi
+
+registry_authority=$registry_ip:5000
+docker_config_directory=$work_dir/docker
+mkdir -- "$docker_config_directory"
+jq -n --arg authority "$registry_authority" --arg username "$registry_username" \
+  --arg password "$registry_password" \
+  '{auths:{($authority):{username:$username,password:$password}}}' \
+  >"$docker_config_directory/config.json"
+chmod 0600 "$docker_config_directory/config.json"
+curl_config=$work_dir/curl.conf
+printf 'user = "%s:%s"\n' "$registry_username" "$registry_password" >"$curl_config"
+chmod 0600 "$curl_config"
+for _ in $(seq 1 60); do
+  if curl --config "$curl_config" --silent --show-error --connect-timeout 2 \
+      --max-time 5 --output /dev/null \
+      "http://$registry_authority/v2/"; then
+    break
+  fi
+  sleep 1
+done
+test "$(curl --silent --connect-timeout 2 --max-time 5 --output /dev/null \
+  --write-out '%{http_code}' \
+  "http://$registry_authority/v2/")" = 401
+test "$(curl --config "$curl_config" --silent --show-error --connect-timeout 2 \
+  --max-time 5 --output /dev/null --write-out '%{http_code}' \
+  "http://$registry_authority/v2/")" = 200
+unset registry_password
+
+system_url=postgresql://postgres:probe@$postgres_ip:5432/postgres
+component_artifact_base=$registry_authority/wamn/components
+release_artifact_base=$registry_authority/wamn/releases
+host_secret_directory=$work_dir/host-secrets
+install -d -m 0700 "$host_secret_directory"
+record_command cargo test production_receiving_release_serves_all_six_pat_routes_with_correlated_traces \
+  '<disposable PostgreSQL and OCI inputs redacted>'
+WAMN_RECEIVING_ROUTE_PG18_URL="$system_url" \
+WAMN_RECEIVING_ROUTE_COMPONENT_DIRECTORY="$component_directory" \
+WAMN_RECEIVING_ROUTE_FLOW_HTTP_WASM="$flow_http_wasm" \
+WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE="$component_artifact_base" \
+WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE="$release_artifact_base" \
+WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE="$docker_config_directory/config.json" \
+WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY="$host_secret_directory" \
+WAMN_RECEIVING_ROUTE_SECRET_NAMESPACE="$namespace" \
+CARGO_TARGET_DIR="$cargo_target_dir" \
+RUSTC_WRAPPER= \
+  cargo test -p wamn-proof-integration --lib --locked --offline \
+  route_authentication_live::production_receiving_release_serves_all_six_pat_routes_with_correlated_traces \
+  -- --ignored --exact --nocapture --test-threads=1 \
+  2>&1 | tee "$evidence_dir/production-route.log"
+
+flow_http_push_ref=$registry_authority/wamn/flow-http:$host_tag
+record_command env DOCKER_CONFIG="$docker_config_directory" wash push \
+  --insecure --allow-latest --output json "$flow_http_push_ref" "$flow_http_wasm"
+DOCKER_CONFIG="$docker_config_directory" wash push --insecure --allow-latest \
+  --output json "$flow_http_push_ref" "$flow_http_wasm" \
+  >"$evidence_dir/flow-http-push.json"
+jq -e '.success == true and (.digest | test("^sha256:[0-9a-f]{64}$"))' \
+  >/dev/null "$evidence_dir/flow-http-push.json"
+flow_http_digest=$(jq -er '.digest' "$evidence_dir/flow-http-push.json")
+flow_http_ref=$registry_authority/wamn/flow-http@$flow_http_digest
+
+instance_suffix=$(PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 -U postgres \
+  -d postgres -Atqc \
+  "SELECT instance_suffix FROM registry.project_envs WHERE org='acme' AND project='receiving' AND env='dev'")
+if [[ ! "$instance_suffix" =~ ^[a-z0-9]{8}$ ]]; then
+  echo "production provisioning emitted an invalid project instance suffix" >&2
+  exit 1
+fi
+project_database=wamn-db-acme--receiving--dev--$instance_suffix
+project_url=postgresql://postgres:probe@$postgres_ip:5432/$project_database
+ctl=$cargo_target_dir/debug/wamn-ctl
+run_sensitive print-release-env "$ctl" print-release-env \
+  --database-url "$project_url" --tenant receiving-route-auth \
+  --effective-release-id 1 --artifact-base "$release_artifact_base" \
+  >"$evidence_dir/print-release-env.receipt"
+mapfile -t digest_lines < <(grep -E '^--release-manifest-digest=sha256:[0-9a-f]{64}$' \
+  "$evidence_dir/print-release-env.receipt")
+if [[ ${#digest_lines[@]} -ne 1 ]]; then
+  echo "print-release-env did not emit exactly one release digest" >&2
+  exit 1
+fi
+manifest_digest=${digest_lines[0]#*=}
+
+guest_secret=$host_secret_directory/guest-sql.json
+executor_platform_secret=$host_secret_directory/executor-platform.json
+identity_secret=$host_secret_directory/identity-reader.json
+http_secret=$host_secret_directory/http-admitter.json
+mapfile -t emitted_host_secrets < <(find "$host_secret_directory" -maxdepth 1 -type f \
+  -name '*.json' -printf '%f\n' | sort)
+expected_host_secrets=(executor-platform.json guest-sql.json http-admitter.json identity-reader.json)
+if [[ "${emitted_host_secrets[*]}" != "${expected_host_secrets[*]}" ]]; then
+  echo "production journey did not emit exactly the four host credential Secrets" >&2
+  exit 1
+fi
+
+for secret in "$guest_secret" "$executor_platform_secret" "$identity_secret" "$http_secret"; do
+  jq -e --arg namespace "$namespace" --arg host "$postgres_ip" '
+    .metadata.namespace == $namespace and
+    (.metadata.name | type == "string" and length > 0) and
+    (.stringData.url | type == "string" and contains("@" + $host + ":5432/"))
+  ' >/dev/null "$secret"
+  run "${kube[@]}" apply -f "$secret"
+done
+guest_secret_name=$(jq -er '.metadata.name' "$guest_secret")
+executor_platform_secret_name=$(jq -er '.metadata.name' "$executor_platform_secret")
+identity_secret_name=$(jq -er '.metadata.name' "$identity_secret")
+http_secret_name=$(jq -er '.metadata.name' "$http_secret")
+
+registry_pull=$work_dir/registry-pull.yaml
+record_command "${kube[@]}" -n "$namespace" create secret generic wamn-registry-pull \
+  --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson='<redacted>' \
+  --dry-run=client -o yaml
+"${kube[@]}" -n "$namespace" create secret generic wamn-registry-pull \
+  --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson="$docker_config_directory/config.json" \
+  --dry-run=client -o yaml >"$registry_pull"
+run "${kube[@]}" apply -f "$registry_pull"
+
+run "${kube[@]}" apply -f "$repo_root/deploy/infra/cert-manager.yaml"
+run "${kube[@]}" -n cert-manager wait --for=condition=Available \
+  deployment --all --timeout=240s
+operator_values=$work_dir/operator-values.yaml
+cat >"$operator_values" <<EOF
+operator:
+  watchNamespaces: [$namespace]
+  hostNamespaces: [$namespace]
+  allowSharedHosts: false
+EOF
+run helm upgrade --install --create-namespace --kubeconfig "$kubeconfig" \
+  --kube-context "$context" --namespace "$system_namespace" wamn "$chart" \
+  --version "$chart_version" -f "$repo_root/deploy/infra/values-wamn.yaml" \
+  -f "$operator_values" --wait --timeout 5m
+
+ca_source=$work_dir/wasmcloud-ca-source.json
+ca_copy=$work_dir/wasmcloud-ca-copy.json
+"${kube[@]}" -n "$system_namespace" get secret wasmcloud-ca -o json >"$ca_source"
+jq 'del(.metadata) | .metadata = {name:"wasmcloud-ca",namespace:"cert-manager"}' \
+  "$ca_source" >"$ca_copy"
+run "${kube[@]}" apply -f "$ca_copy"
+run "${kube[@]}" apply -f "$repo_root/deploy/infra/wasmcloud-ca-issuer.yaml"
+run "${kube[@]}" wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s
+environment_certs=$work_dir/host-environment-certs.yaml
+sed "s/__ENVIRONMENT_NAMESPACE__/$namespace/g" \
+  "$repo_root/deploy/platform/host-environment-certs.example.yaml" >"$environment_certs"
+run "${kube[@]}" apply -f "$environment_certs"
+run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
+  certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s
+
+host_base=$work_dir/host-base.yaml
+awk -v namespace="$namespace" -v tag="$host_tag" '
+  /^    tag: dev$/ { print "    tag: " tag; next }
+  /^      namespace: wamn-system$/ { print "      namespace: " namespace; next }
+  { print }
+' "$repo_root/deploy/platform/values-host-default.yaml" >"$host_base"
+host_overlay=$work_dir/host-receiving.yaml
+awk -v namespace="$namespace" -v component_base="$component_artifact_base" \
+    -v release_base="$release_artifact_base" -v digest="$manifest_digest" \
+    -v guest="$guest_secret_name" -v executor="$executor_platform_secret_name" \
+    -v identity="$identity_secret_name" -v http="$http_secret_name" '
+  /^      namespace: wamn-system$/ { print "      namespace: " namespace; next }
+  /^              name: wamn-host-db$/ { print "              name: " guest; next }
+  /^              name: wamn-executor-platform-acme--receiving--dev$/ {
+    print "              name: " executor; next
+  }
+  /^              name: wamn-identity-reader-acme--receiving--dev$/ {
+    print "              name: " identity; next
+  }
+  /^              name: wamn-http-admitter-acme--receiving--dev$/ {
+    print "              name: " http; next
+  }
+  /^          value: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/components$/ {
+    print "          value: " component_base; next
+  }
+  /^        - "--release-artifact-base=/ {
+    print "        - \"--release-artifact-base=" release_base "\""; next
+  }
+  /^        - "--release-manifest-digest=/ {
+    print "        - \"--release-manifest-digest=" digest "\""
+    print "        - \"--allow-insecure-registries\""
+    next
+  }
+  { print }
+' "$repo_root/deploy/platform/values-host-receiving-pat.yaml" >"$host_overlay"
+for expected in "$namespace" "$component_artifact_base" "$release_artifact_base" \
+    "$manifest_digest" "$guest_secret_name" "$executor_platform_secret_name" \
+    "$identity_secret_name" "$http_secret_name"; do
+  grep -F -- "$expected" "$host_overlay" >/dev/null || {
+    echo "rendered host overlay omitted $expected" >&2
+    exit 1
+  }
+done
+run helm upgrade --install --kubeconfig "$kubeconfig" --kube-context "$context" \
+  --namespace "$namespace" wamn-host "$chart" --version "$chart_version" \
+  -f "$host_base" -f "$host_overlay" --wait --timeout 5m
+run "${kube[@]}" -n "$namespace" rollout status \
+  deployment/hostgroup-default --timeout=240s
+
+helm list --kubeconfig "$kubeconfig" --kube-context "$context" --all-namespaces -o json \
+  >"$evidence_dir/helm-releases.json"
+jq -e --arg namespace "$namespace" '
+  ([.[] | select(.name == "wamn" and .namespace == "wamn-system" and
+                 .status == "deployed" and .chart == "runtime-operator-2.8.0" and
+                 .app_version == "2.8.0")] | length == 1) and
+  ([.[] | select(.name == "wamn-host" and .namespace == $namespace and
+                 .status == "deployed" and .chart == "runtime-operator-2.8.0" and
+                 .app_version == "2.8.0")] | length == 1)
+' >/dev/null "$evidence_dir/helm-releases.json"
+"${kube[@]}" -n "$namespace" get deployment hostgroup-default -o json \
+  >"$evidence_dir/host-deployment.json"
+jq -e --arg image "$host_image" '
+  .status.observedGeneration == .metadata.generation and
+  .spec.replicas == 3 and .status.updatedReplicas == 3 and
+  .status.readyReplicas == 3 and .status.availableReplicas == 3 and
+  any(.spec.template.spec.containers[]?; .image == $image)
+' >/dev/null "$evidence_dir/host-deployment.json"
+host_selector=$(jq -er '
+  .spec.selector.matchLabels | to_entries |
+  if length == 0 then error("empty host selector")
+  else map("\(.key)=\(.value)") | join(",") end
+' "$evidence_dir/host-deployment.json")
+"${kube[@]}" -n "$namespace" get pods -l "$host_selector" -o json \
+  >"$evidence_dir/host-pods.json"
+jq -e --arg image "$host_image" --arg image_id "$host_runtime_digest" '
+  (.items | length == 3) and all(.items[];
+    ([.spec.containers[]? | select(.image == $image) | .name] |
+      if length == 1 then .[0] else null end) as $container |
+    ($container != null and
+     any(.status.containerStatuses[]?;
+       .name == $container and .ready == true and
+       ((.imageID // "") | endswith($image_id)))))
+' >/dev/null "$evidence_dir/host-pods.json"
+
+for _ in $(seq 1 120); do
+  if "${kube[@]}" -n "$system_namespace" get hosts -l hostgroup=default -o json \
+      >"$work_dir/hosts.json" 2>/dev/null &&
+     jq -e --arg namespace "$namespace" '
+       (.items | length == 3) and
+       ([.items[].hostId] | unique | length == 3) and
+       all(.items[];
+         .metadata.labels.hostgroup == "default" and .environment == $namespace and
+         (.hostId | length > 0) and (.hostname | length > 0) and .httpPort == 80 and
+         any(.status.conditions[]?; .type == "Ready" and .status == "True"))
+     ' >/dev/null "$work_dir/hosts.json"; then
+    break
+  fi
+  sleep 2
+done
+cp "$work_dir/hosts.json" "$evidence_dir/hosts.json"
+jq -e --arg namespace "$namespace" '
+  (.items | length == 3) and
+  ([.items[].hostId] | unique | length == 3) and
+  all(.items[];
+    .metadata.labels.hostgroup == "default" and .environment == $namespace and
+    (.hostId | length > 0) and (.hostname | length > 0) and .httpPort == 80 and
+    any(.status.conditions[]?; .type == "Ready" and .status == "True"))
+' >/dev/null "$evidence_dir/hosts.json"
+
+workload_manifest=$work_dir/flow-http.yaml
+awk -v namespace="$namespace" -v image="$flow_http_ref" -v host="$route_host" '
+  /^  namespace: wamn-system$/ { print "  namespace: " namespace; next }
+  /^      environment: wamn-system$/ { print "      environment: " namespace; next }
+  /^          image: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/flow-http:dev$/ {
+    print "          image: " image; next
+  }
+  /interfaces: \[incoming-handler\]/ {
+    print
+    print "          config:"
+    print "            host: " host
+    next
+  }
+  /wamn\.tenant:/ { print "              wamn.tenant: \"receiving-route-auth\""; next }
+  /wamn\.environment:/ { print "              wamn.environment: \"dev\""; next }
+  /wamn\.project:/ { print "              wamn.project: \"receiving\""; next }
+  /wamn\.schema:/ { print "              wamn.schema: \"receiving\""; next }
+  { print }
+' "$repo_root/deploy/platform/http-route-workload.example.yaml" >"$workload_manifest"
+if [[ $(grep -Fc -- "$route_host" "$workload_manifest") -ne 1 ]]; then
+  echo "rendered workload must carry exactly one setup-owned route host" >&2
+  exit 1
+fi
+run "${kube[@]}" apply -f "$workload_manifest"
+run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
+  workloaddeployment/flow-http --timeout=240s
+"${kube[@]}" -n "$namespace" get workloaddeployment flow-http -o json \
+  >"$evidence_dir/flow-http-deployment.json"
+jq -e '
+  .spec.replicas == 1 and .status.currentReplicas == 1 and
+  .status.replicas.expected == 1 and .status.replicas.current == 1 and
+  .status.replicas.ready == 1 and .status.replicas.unavailable == 0 and
+  (.status.currentReplicaSet.name | type == "string" and length > 0) and
+  any(.status.conditions[]?; .type == "Ready" and .status == "True")
+' >/dev/null "$evidence_dir/flow-http-deployment.json"
+replicaset_name=$(jq -er '.status.currentReplicaSet.name' \
+  "$evidence_dir/flow-http-deployment.json")
+"${kube[@]}" -n "$namespace" get workloadreplicaset "$replicaset_name" -o json \
+  >"$evidence_dir/flow-http-replicaset.json"
+replicaset_uid=$(jq -er '.metadata.uid' "$evidence_dir/flow-http-replicaset.json")
+for _ in $(seq 1 120); do
+  "${kube[@]}" -n "$namespace" get workloads -o json >"$work_dir/workloads.json"
+  if jq -e --arg uid "$replicaset_uid" '
+      [.items[] | select(any(.metadata.ownerReferences[]?; .uid == $uid))] | length == 1
+    ' >/dev/null "$work_dir/workloads.json"; then
+    break
+  fi
+  sleep 2
+done
+jq -e --arg uid "$replicaset_uid" '
+  [.items[] | select(any(.metadata.ownerReferences[]?; .uid == $uid))] |
+  if length == 1 then .[0] else error("positive Workload missing or ambiguous") end
+' "$work_dir/workloads.json" >"$evidence_dir/flow-http-workload.json"
+jq -e --arg namespace "$namespace" \
+  --arg host_id "$(jq -r '.status.hostId' "$evidence_dir/flow-http-workload.json")" \
+  --slurpfile hosts "$evidence_dir/hosts.json" '
+  .status.conditions as $conditions |
+  .status.environment == $namespace and (.status.hostId | length > 0) and
+  .status.hostId == $host_id and any($hosts[0].items[]; .hostId == $host_id) and
+  all(["Config","HostSelection","Placement","Sync","Ready"][];
+    . as $type | any($conditions[]?; .type == $type and .status == "True"))
+' >/dev/null "$evidence_dir/flow-http-workload.json"
+
+for _ in $(seq 1 120); do
+  "${kube[@]}" -n "$namespace" get endpointslices \
+    -l 'kubernetes.io/service-name=flow-http,wasmcloud.dev/route-manager=true' -o json \
+    >"$work_dir/endpointslices.json"
+  if jq -e '(.items | length == 1) and (.items[0].endpoints | length == 1)' \
+      >/dev/null "$work_dir/endpointslices.json"; then
+    break
+  fi
+  sleep 2
+done
+cp "$work_dir/endpointslices.json" "$evidence_dir/flow-http-endpointslices.json"
+"${kube[@]}" -n "$namespace" get service flow-http -o json \
+  >"$evidence_dir/flow-http-service.json"
+jq -e --slurpfile service "$evidence_dir/flow-http-service.json" \
+  --slurpfile hosts "$evidence_dir/hosts.json" \
+  --slurpfile pods "$evidence_dir/host-pods.json" \
+  --slurpfile workload "$evidence_dir/flow-http-workload.json" '
+  (.items | length == 1) and .items[0] as $slice |
+  $service[0] as $service |
+  $workload[0].status.hostId as $host_id |
+  ($hosts[0].items | map(select(.hostId == $host_id))) as $selected_hosts |
+  ($slice.endpoints[0].addresses[0]) as $address |
+  ($selected_hosts | length == 1) and
+  $slice.addressType == "IPv4" and
+  $slice.metadata.labels["kubernetes.io/service-name"] == "flow-http" and
+  $slice.metadata.labels["wasmcloud.dev/route-manager"] == "true" and
+  any($slice.metadata.ownerReferences[]?;
+    .uid == $service.metadata.uid and .kind == "Service" and .controller == true) and
+  ($slice.ports | length == 1) and $slice.ports[0].name == "http" and
+  $slice.ports[0].protocol == "TCP" and $slice.ports[0].port == $selected_hosts[0].httpPort and
+  ($slice.endpoints | length == 1) and ($slice.endpoints[0].addresses | length == 1) and
+  $slice.endpoints[0].conditions.ready == true and
+  $slice.endpoints[0].conditions.serving == true and
+  any($pods[0].items[]; .status.podIP == $address) and
+  (($selected_hosts[0].hostname == $address) or
+   any($pods[0].items[];
+     .metadata.name == $selected_hosts[0].hostname and .status.podIP == $address))
+' >/dev/null "$evidence_dir/flow-http-endpointslices.json"
+
+probe_manifest=$work_dir/flow-http-reachability.yaml
+cat >"$probe_manifest" <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flow-http-reachability
+  namespace: $namespace
+spec:
+  activeDeadlineSeconds: 60
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: probe
+          image: $host_image
+          imagePullPolicy: Never
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              headers=/tmp/headers
+              body=/tmp/body
+              status=\$(curl --silent --show-error --connect-timeout 5 --max-time 15 \\
+                --dump-header "\$headers" --output "\$body" --write-out '%{http_code}' \\
+                --header 'Host: $route_host' \\
+                'http://flow-http.$namespace.svc.cluster.local/no-such-route')
+              content_type=\$(sed -n 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//p' "\$headers" \\
+                | tr -d '\r' | head -n 1)
+              test "\$status" = 404
+              test "\$content_type" = application/json
+              printf '%s' '{"error":{"code":"route-not-found"}}' >/tmp/expected
+              cmp -s /tmp/expected "\$body"
+              printf '%s\n' 'RECEIVING_HTTP_PROBE {"status":404,"content_type":"application/json","host":"$route_host","body":{"error":{"code":"route-not-found"}}}'
+EOF
+run "${kube[@]}" apply -f "$probe_manifest"
+run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
+  job/flow-http-reachability --timeout=90s
+"${kube[@]}" -n "$namespace" get job flow-http-reachability -o json \
+  >"$evidence_dir/flow-http-probe-job.json"
+"${kube[@]}" -n "$namespace" get pods -l job-name=flow-http-reachability -o json \
+  >"$evidence_dir/flow-http-probe-pod.json"
+jq -e '.status.succeeded == 1 and
+  any(.status.conditions[]?; .type == "Complete" and .status == "True")' \
+  >/dev/null "$evidence_dir/flow-http-probe-job.json"
+jq -e --arg image "$host_image" --arg image_id "$host_runtime_digest" '
+  (.items | length == 1) and .items[0] as $pod |
+  $pod.status.phase == "Succeeded" and
+  ($pod.spec.containers | length == 1) and $pod.spec.containers[0].image == $image and
+  ($pod.status.containerStatuses | length == 1) and
+  $pod.status.containerStatuses[0].ready == false and
+  (($pod.status.containerStatuses[0].imageID // "") | endswith($image_id))
+' >/dev/null "$evidence_dir/flow-http-probe-pod.json"
+"${kube[@]}" -n "$namespace" logs job/flow-http-reachability \
+  >"$evidence_dir/flow-http-probe.log"
+if [[ $(grep -Fc 'RECEIVING_HTTP_PROBE ' "$evidence_dir/flow-http-probe.log") -ne 1 ]]; then
+  echo "flow-http probe did not emit exactly one typed-refusal receipt" >&2
+  exit 1
+fi
+sed -n 's/^RECEIVING_HTTP_PROBE //p' "$evidence_dir/flow-http-probe.log" \
+  >"$evidence_dir/flow-http-response.json"
+jq -e --arg host "$route_host" '
+  . == {status:404,content_type:"application/json",host:$host,
+        body:{error:{code:"route-not-found"}}}
+' >/dev/null "$evidence_dir/flow-http-response.json"
+
+negative_manifest=$work_dir/cross-environment-workload.json
+jq --arg name flow-http-cross-environment --arg environment "${namespace}-denied" '
+  del(.metadata.annotations, .metadata.creationTimestamp, .metadata.generateName,
+      .metadata.finalizers, .metadata.generation, .metadata.managedFields,
+      .metadata.ownerReferences,
+      .metadata.resourceVersion, .metadata.uid, .status) |
+  .metadata.name = $name |
+  .metadata.labels = {app:$name} |
+  .spec.environment = $environment |
+  del(.spec.hostId)
+' "$evidence_dir/flow-http-workload.json" >"$negative_manifest"
+run "${kube[@]}" apply -f "$negative_manifest"
+for _ in $(seq 1 120); do
+  if "${kube[@]}" -n "$namespace" get workload flow-http-cross-environment -o json \
+      >"$work_dir/cross-environment-workload.json" 2>/dev/null &&
+     jq -e '
+       any(.status.conditions[]?; .type == "HostSelection" and .status == "False")
+     ' >/dev/null "$work_dir/cross-environment-workload.json"; then
+    break
+  fi
+  sleep 2
+done
+cp "$work_dir/cross-environment-workload.json" \
+  "$evidence_dir/cross-environment-workload.json"
+negative_uid=$(jq -er '.metadata.uid' "$evidence_dir/cross-environment-workload.json")
+jq -e --arg expected "${namespace}-denied" '
+  .spec.environment == $expected and
+  ((.status.hostId // "") == "") and ((.status.environment // "") == "") and
+  any(.status.conditions[]?;
+    .type == "HostSelection" and .status == "False" and
+    (.message | contains("allowSharedHosts"))) and
+  ([.status.conditions[]? | select(.type == "Ready" and .status == "True")] | length == 0)
+' >/dev/null "$evidence_dir/cross-environment-workload.json"
+for _ in $(seq 1 60); do
+  "${kube[@]}" -n "$namespace" get events -o json >"$work_dir/events.json"
+  if jq -e --arg uid "$negative_uid" '
+      [.items[] | select(.involvedObject.uid == $uid and .type == "Warning" and
+        .reason == "CrossEnvironmentSchedulingDenied" and .action == "Reject")] | length >= 1
+    ' >/dev/null "$work_dir/events.json"; then
+    break
+  fi
+  sleep 2
+done
+jq --arg uid "$negative_uid" '
+  [.items[] | select(.involvedObject.uid == $uid and .type == "Warning" and
+    .reason == "CrossEnvironmentSchedulingDenied" and .action == "Reject")]
+' "$work_dir/events.json" >"$evidence_dir/cross-environment-events.json"
+jq -e 'length >= 1' >/dev/null "$evidence_dir/cross-environment-events.json"
+
+jq -n --arg source "$head" --arg namespace "$namespace" \
+  --arg digest "$manifest_digest" --arg host "$route_host" '
+  {
+    schema:"wamn-receiving-cluster-journey/v0.1",
+    verdict:"pass",
+    source:$source,
+    namespace:$namespace,
+    release_manifest_digest:$digest,
+    route_host:$host,
+    passing_arms:[
+      "production-mint-and-attestation",
+      "operator-before-host-2.8.0",
+      "three-ready-default-hosts",
+      "flow-http-workload-ready",
+      "operator-endpointslice",
+      "exact-route-not-found-reachability",
+      "cross-environment-scheduling-refusal"
+    ],
+    reachability_scope:"The exact 404 proves HTTP routing and guest execution only."
+  }
+' >"$evidence_dir/verdict.json"
+run_complete=true

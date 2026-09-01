@@ -597,6 +597,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         "WAMN_PROJECT",
         "WAMN_SCHEMA",
         "WAMN_SYSTEM_URL",
+        "WAMN_EXECUTOR_PLATFORM_PG_URL",
         "WAMN_HTTP_ADMITTER_PG_URL",
     ] {
         assert!(
@@ -634,6 +635,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         "WAMN_PROJECT",
         "WAMN_SCHEMA",
         "WAMN_SYSTEM_URL",
+        "WAMN_EXECUTOR_PLATFORM_PG_URL",
         "WAMN_HTTP_ADMITTER_PG_URL",
     ];
     let base_env = base_container["env"]
@@ -660,7 +662,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
             .expect("rendered Receiving host carries env")
             .len(),
         base_env.len() + receiving_names.len(),
-        "Receiving overlay must add exactly its five scoped environment entries"
+        "Receiving overlay must add exactly its six scoped environment entries"
     );
 
     for (name, expected) in [
@@ -678,6 +680,10 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         (
             "WAMN_SYSTEM_URL",
             "wamn-identity-reader-acme--receiving--dev",
+        ),
+        (
+            "WAMN_EXECUTOR_PLATFORM_PG_URL",
+            "wamn-executor-platform-acme--receiving--dev",
         ),
         (
             "WAMN_HTTP_ADMITTER_PG_URL",
