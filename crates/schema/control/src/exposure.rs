@@ -106,7 +106,6 @@ impl AttachmentKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct HttpRoute {
-    pub host: String,
     pub path: String,
     pub method: String,
 }
@@ -154,7 +153,6 @@ pub struct FlowExposure<'a> {
 pub struct ResolvedAttachment {
     pub attachment: Attachment,
     pub definition_hash: String,
-    pub normalized_host: Option<String>,
     pub normalized_path: Option<String>,
     pub normalized_template: Option<String>,
     pub normalized_method: Option<String>,
@@ -225,8 +223,7 @@ pub fn resolve_exposure(
         validate_mappings(&attachment.mappings)?;
         if let Some(key) = route.as_ref().map(|route| {
             (
-                route.host.clone(),
-                canonical_route_template(&route.path),
+                canonical_http_route_template(&route.path),
                 route.method.clone(),
             )
         }) && !route_keys.insert(key)
@@ -252,11 +249,10 @@ pub fn resolve_exposure(
         resolved.push(ResolvedAttachment {
             attachment: normalized_attachment,
             definition_hash,
-            normalized_host: route.as_ref().map(|route| route.host.clone()),
             normalized_path: route.as_ref().map(|route| route.path.clone()),
             normalized_template: route
                 .as_ref()
-                .map(|route| canonical_route_template(&route.path)),
+                .map(|route| canonical_http_route_template(&route.path)),
             normalized_method: route.as_ref().map(|route| route.method.clone()),
         });
     }
@@ -305,17 +301,18 @@ fn validate_route(attachment: &Attachment) -> Result<Option<HttpRoute>, Exposure
     let Some(route) = &attachment.route else {
         return Ok(None);
     };
-    let host = route.host.to_ascii_lowercase();
-    if host != "*" && (host.is_empty() || host.contains('/') || host.contains(' ')) {
-        return Err(error("invalid-http-host", &attachment.id));
-    }
+    normalize_http_route(route, &attachment.id).map(Some)
+}
+
+/// Validate and normalize an authored route without adding deployment identity.
+pub fn normalize_http_route(route: &HttpRoute, subject: &str) -> Result<HttpRoute, ExposureError> {
     let method = route.method.to_ascii_uppercase();
     if method.is_empty() || !method.bytes().all(|byte| byte.is_ascii_uppercase()) {
-        return Err(error("invalid-http-method", &attachment.id));
+        return Err(error("invalid-http-method", subject));
     }
-    let path = normalize_path(&route.path)
-        .ok_or_else(|| error("invalid-http-path-template", &attachment.id))?;
-    Ok(Some(HttpRoute { host, path, method }))
+    let path =
+        normalize_path(&route.path).ok_or_else(|| error("invalid-http-path-template", subject))?;
+    Ok(HttpRoute { path, method })
 }
 
 fn normalize_path(path: &str) -> Option<String> {
@@ -350,7 +347,8 @@ fn normalize_path(path: &str) -> Option<String> {
     )
 }
 
-fn canonical_route_template(path: &str) -> String {
+/// Collapse authored parameter names into the runtime route-collision key.
+pub fn canonical_http_route_template(path: &str) -> String {
     path.split('/')
         .map(|segment| {
             if segment.starts_with("{*") {
@@ -474,7 +472,6 @@ mod tests {
                 flow_id: "f1".into(),
                 source_id: "erp-keys".into(),
                 route: Some(HttpRoute {
-                    host: "*".into(),
                     path: "/receipts/".into(),
                     method: "post".into(),
                 }),
@@ -505,6 +502,31 @@ mod tests {
                 .strip_prefix("sha256:")
                 .is_some_and(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
         );
+    }
+
+    #[test]
+    fn authored_route_schema_refuses_a_hostname() {
+        let authored = serde_json::json!({
+            "sources": [{
+                "id": "erp-keys",
+                "kind": "auth",
+                "definition": {"policy": "api-key"}
+            }],
+            "attachments": [{
+                "id": "receive",
+                "kind": "http",
+                "flow-id": "f1",
+                "source-id": "erp-keys",
+                "route": {
+                    "host": "package.example",
+                    "path": "/receipts",
+                    "method": "POST"
+                },
+                "run-deadline-ms": 10000
+            }]
+        });
+        serde_json::from_value::<ExposureRelease>(authored)
+            .expect_err("package exposure cannot deserialize deployment hostname data");
     }
 
     #[test]

@@ -21,7 +21,10 @@ use wamn_catalog::{
     validate_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
-use wamn_schema_control::BareSchemaName;
+use wamn_schema_control::{
+    BareSchemaName, HttpRoute as AuthoredHttpRoute, canonical_http_route_template,
+    normalize_http_route,
+};
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const INSERT_RELEASE_SQL: &str = "\
@@ -179,7 +182,7 @@ pub enum MintManifestErrorKind {
     UnauthenticatedRegisteredOperation,
     ClosureConflict,
     Document,
-    RouteHostRequired,
+    RouteHostUnbound,
     EnvironmentPolicyAbsent,
     EnvironmentPolicyMismatch,
 }
@@ -194,7 +197,7 @@ impl MintManifestErrorKind {
             Self::UnauthenticatedRegisteredOperation => "unauthenticated-registered-operation",
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
-            Self::RouteHostRequired => "route-host-required",
+            Self::RouteHostUnbound => "route-host-unbound",
             Self::EnvironmentPolicyAbsent => "environment-policy-not-converged",
             Self::EnvironmentPolicyMismatch => "environment-policy-environment-mismatch",
         }
@@ -750,6 +753,7 @@ fn resolve_route_host_overlay(
     authored: &BTreeMap<String, ServingAttachment>,
     route_host: Option<&str>,
 ) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+    validate_authored_attachment_routes(authored)?;
     validate_attachment_definition_hashes(authored)?;
     let first_routed = authored.iter().find(|(_, attachment)| {
         matches!(
@@ -762,7 +766,7 @@ fn resolve_route_host_overlay(
     };
     let route_host = route_host.filter(|host| !host.is_empty()).ok_or_else(|| {
         MintManifestError::new(
-            MintManifestErrorKind::RouteHostRequired,
+            MintManifestErrorKind::RouteHostUnbound,
             format!(
                 "attachment {first_attachment_id:?} requires deployment route host; pass --route-host"
             ),
@@ -796,14 +800,6 @@ fn resolve_route_host_overlay(
                     format!("attachment {attachment_id:?} carries no route object"),
                 )
             })?;
-        if route.contains_key("host") {
-            return Err(MintManifestError::new(
-                MintManifestErrorKind::Document,
-                format!(
-                    "attachment {attachment_id:?} authors route.host; remove it and pass --route-host"
-                ),
-            ));
-        }
         route.insert(
             "host".to_owned(),
             serde_json::Value::String(route_host.clone()),
@@ -814,6 +810,61 @@ fn resolve_route_host_overlay(
         .expect("the shared canonicalizer emits a valid definition hash");
     }
     Ok(resolved)
+}
+
+/// Admit only package-owned route coordinates. The deployment hostname is
+/// deliberately absent from this schema and joins at publication.
+fn validate_authored_attachment_routes(
+    authored: &BTreeMap<String, ServingAttachment>,
+) -> Result<(), MintManifestError> {
+    let mut route_keys = BTreeSet::new();
+    for (attachment_id, attachment) in authored {
+        if attachment.definition.pointer("/route/host").is_some() {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::Document,
+                format!(
+                    "attachment {attachment_id:?} authors route.host; remove it and pass --route-host"
+                ),
+            ));
+        }
+        if !matches!(
+            attachment.kind,
+            wamn_catalog::AttachmentKind::Http | wamn_catalog::AttachmentKind::Studio
+        ) {
+            continue;
+        }
+        let route = attachment
+            .definition
+            .get("route")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let route = serde_json::from_value::<AuthoredHttpRoute>(route).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::Document,
+                format!(
+                    "attachment {attachment_id:?} route must contain exactly string path and method fields"
+                ),
+                error,
+            )
+        })?;
+        let route = normalize_http_route(&route, attachment_id).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::Document,
+                format!("attachment {attachment_id:?} carries an invalid route"),
+                error,
+            )
+        })?;
+        let key = (canonical_http_route_template(&route.path), route.method);
+        if !route_keys.insert(key) {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::Document,
+                format!(
+                    "attachment {attachment_id:?} duplicates another attachment's canonical path and method"
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 async fn establish_release(
@@ -1286,6 +1337,13 @@ mod tests {
 
     const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+    fn refresh_definition_hash(attachment: &mut ServingAttachment) {
+        attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
+            wamn_execution_contract::canonical_json_sha256(&attachment.definition),
+        )
+        .expect("the canonicalizer emits a valid definition hash");
+    }
+
     #[test]
     fn release_mint_binds_each_attachment_hash_to_its_definition() {
         let definition = serde_json::json!({
@@ -1342,7 +1400,8 @@ mod tests {
 
         let missing = resolve_route_host_overlay(&authored, None)
             .expect_err("a routed release requires its deployment hostname");
-        assert_eq!(missing.kind(), MintManifestErrorKind::RouteHostRequired);
+        assert_eq!(missing.kind(), MintManifestErrorKind::RouteHostUnbound);
+        assert_eq!(missing.kind().as_str(), "route-host-unbound");
         assert!(missing.detail().contains("receiving-http"));
         assert!(missing.detail().contains("--route-host"));
 
@@ -1366,24 +1425,61 @@ mod tests {
             wamn_execution_contract::canonical_json_sha256(&resolved["receiving-http"].definition)
         );
 
-        let mut package_authored = authored;
+        let mut package_authored = authored.clone();
         package_authored
             .get_mut("receiving-http")
             .expect("the attachment exists")
             .definition["route"]["host"] = serde_json::json!("package.example");
-        let definition_hash = wamn_execution_contract::canonical_json_sha256(
-            &package_authored["receiving-http"].definition,
+        refresh_definition_hash(
+            package_authored
+                .get_mut("receiving-http")
+                .expect("the attachment exists"),
         );
-        package_authored
-            .get_mut("receiving-http")
-            .expect("the attachment exists")
-            .definition_hash = wamn_catalog::DefinitionHash::parse(definition_hash)
-            .expect("the canonicalizer emits a valid definition hash");
-        let package_host = resolve_route_host_overlay(&package_authored, Some("route.example"))
+        let package_host = resolve_route_host_overlay(&package_authored, None)
             .expect_err("package content cannot author a deployment hostname");
         assert_eq!(package_host.kind(), MintManifestErrorKind::Document);
         assert!(package_host.detail().contains("remove it"));
         assert!(package_host.detail().contains("--route-host"));
+
+        let mut non_routed = package_authored;
+        non_routed
+            .get_mut("receiving-http")
+            .expect("the attachment exists")
+            .kind = wamn_catalog::AttachmentKind::Internal;
+        let package_host = resolve_route_host_overlay(&non_routed, None)
+            .expect_err("every attachment kind refuses an authored route hostname");
+        assert_eq!(package_host.kind(), MintManifestErrorKind::Document);
+
+        let mut extra_route_field = authored.clone();
+        extra_route_field
+            .get_mut("receiving-http")
+            .expect("the attachment exists")
+            .definition["route"]["port"] = serde_json::json!(443);
+        refresh_definition_hash(
+            extra_route_field
+                .get_mut("receiving-http")
+                .expect("the attachment exists"),
+        );
+        let extra = resolve_route_host_overlay(&extra_route_field, Some("route.example"))
+            .expect_err("package route schema admits only path and method");
+        assert_eq!(extra.kind(), MintManifestErrorKind::Document);
+        assert!(extra.detail().contains("exactly string path and method"));
+
+        let mut colliding = authored;
+        let first = colliding
+            .get_mut("receiving-http")
+            .expect("the attachment exists");
+        first.definition["route"]["path"] = serde_json::json!("/receipt/{id}");
+        refresh_definition_hash(first);
+        let mut second = first.clone();
+        second.definition["id"] = serde_json::json!("receiving-http-alias");
+        second.definition["route"]["path"] = serde_json::json!("/receipt/{receipt_id}");
+        refresh_definition_hash(&mut second);
+        colliding.insert("receiving-http-alias".to_owned(), second);
+        let collision = resolve_route_host_overlay(&colliding, Some("route.example"))
+            .expect_err("one overlay host cannot carry ambiguous route templates");
+        assert_eq!(collision.kind(), MintManifestErrorKind::Document);
+        assert!(collision.detail().contains("canonical path and method"));
     }
 
     fn closure_component(component: &str, registered_operation: Option<&str>) -> AdmittedComponent {

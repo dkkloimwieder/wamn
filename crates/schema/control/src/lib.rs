@@ -17,7 +17,7 @@ pub mod sql;
 pub use exposure::{
     Attachment, AttachmentKind, Cardinality, ExposureError, ExposureRelease, FlowExposure,
     HttpRoute, InputMapping, MappingSource, ResolvedAttachment, Source, SourceKind,
-    resolve_exposure,
+    canonical_http_route_template, normalize_http_route, resolve_exposure,
 };
 pub use model::{SqlStatement, Value};
 pub use package_migrations::{

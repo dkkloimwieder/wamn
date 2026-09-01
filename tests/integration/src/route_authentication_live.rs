@@ -88,7 +88,6 @@ const RESIDUE: &str = "wamn_receiving@1.0.0::obsolete.operation";
 const PACKAGE_ID: &str = "wamn_receiving";
 const PACKAGE_VERSION: &str = "1.0.0";
 const RELEASE_ID: u32 = 1;
-const ROUTE_AUTHORITY: &str = "receiving.localhost";
 const RAW_BODY_LIMIT: usize = 1024 * 1024;
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const COMPONENTS: [(&str, &str); 6] = [
@@ -888,6 +887,7 @@ struct JourneyInputs {
     flow_http_wasm: PathBuf,
     component_artifact_base: String,
     release_artifact_base: String,
+    route_host: String,
     registry_auth_file: PathBuf,
     host_secret_directory: PathBuf,
     host_secret_namespace: String,
@@ -902,6 +902,7 @@ impl JourneyInputs {
                 "WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE",
             )?,
             release_artifact_base: required_journey("WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE")?,
+            route_host: required_journey("WAMN_RECEIVING_ROUTE_HOST")?,
             registry_auth_file: required_journey_path("WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE")?,
             host_secret_directory: required_journey_path(
                 "WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY",
@@ -1425,7 +1426,7 @@ async fn publish_journey_release(
         packages: vec![PackageCoordinate::new(PACKAGE_ID, PACKAGE_VERSION)?],
         wirings,
         attachments: publication_root().join("attachments.json"),
-        route_host: Some(ROUTE_AUTHORITY.to_owned()),
+        route_host: Some(inputs.route_host.clone()),
         registrations: publication_root().join("registrations.json"),
     })
     .await
@@ -1623,6 +1624,7 @@ async fn invoke_journey_route(
     flow_http: &Component,
     routing: Arc<FlowHttpRouting>,
     bridge: Arc<RouterDeliveryBridge>,
+    route_host: &str,
     path: &str,
     bearer: Option<&str>,
     traceparent: &str,
@@ -1680,7 +1682,7 @@ async fn invoke_journey_route(
     let body = Full::new(body).map_err(|never| -> ErrorCode { match never {} });
     let mut request = Request::builder()
         .method(Method::POST)
-        .uri(format!("http://{ROUTE_AUTHORITY}{path}"))
+        .uri(format!("http://{route_host}{path}"))
         .header("content-type", "application/json")
         .header("traceparent", traceparent);
     if let Some(bearer) = bearer {
@@ -1875,6 +1877,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         &flow_http,
         Arc::clone(&routing),
         Arc::clone(&bridge),
+        &inputs.route_host,
         "/purchase_order/get",
         Some(&route.token),
         &traceparent,
@@ -1896,6 +1899,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         &flow_http,
         Arc::clone(&routing),
         Arc::clone(&bridge),
+        &inputs.route_host,
         "/purchase_order/query",
         Some(&route.token),
         &traceparent,
@@ -1919,6 +1923,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         &flow_http,
         Arc::clone(&routing),
         Arc::clone(&bridge),
+        &inputs.route_host,
         "/purchase_order/update",
         Some(&route.token),
         &traceparent,
@@ -1941,6 +1946,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         &flow_http,
         Arc::clone(&routing),
         Arc::clone(&bridge),
+        &inputs.route_host,
         "/receiving/record_receipt",
         Some(&route.token),
         &traceparent,
@@ -1970,6 +1976,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         &flow_http,
         Arc::clone(&routing),
         Arc::clone(&bridge),
+        &inputs.route_host,
         "/receipt/get",
         Some(&route.token),
         &traceparent,
@@ -1989,6 +1996,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         &flow_http,
         Arc::clone(&routing),
         Arc::clone(&bridge),
+        &inputs.route_host,
         "/receipt/query",
         Some(&route.token),
         &traceparent,
@@ -2010,6 +2018,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         &flow_http,
         Arc::clone(&routing),
         Arc::clone(&bridge),
+        &inputs.route_host,
         "/purchase_order/get",
         None,
         &unauthorized_parent,
@@ -2031,6 +2040,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         &flow_http,
         Arc::clone(&routing),
         Arc::clone(&bridge),
+        &inputs.route_host,
         "/purchase_order/get",
         Some(&route.token),
         &oversized_parent,
